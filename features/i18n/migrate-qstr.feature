@@ -15,6 +15,8 @@ Feature: ljos migrate writes qsTr as a tagged template
   as Qt's, which still runs.
 
   Scenario: Text, values and counts are written in the message
+    Each `.arg` fills the lowest-numbered `%N` left, wherever it stands.
+    Qt's `%n` is the count as it is, and `%Ln` the count grouped.
     Given the file "Main.qml":
       """qml
       import QtQuick
@@ -23,7 +25,9 @@ Feature: ljos migrate writes qsTr as a tagged template
         property string name: "Ada"
         property string open: qsTr("Open")
         property string of: qsTr("%1 of %2").arg(name).arg(count)
+        property string back: qsTr("%2 of %1").arg(name).arg(count)
         property string files: qsTr("%n file(s)", "", count)
+        property string grouped: qsTr("%Ln file(s)", "", count)
       }
       """
     When the author runs "ljos migrate --write ."
@@ -36,7 +40,9 @@ Feature: ljos migrate writes qsTr as a tagged template
         property string name: "Ada"
         property string open: t`Open`
         property string of: t`${name} of ${count}`
-        property string files: plural(count, { other: "# file(s)" })
+        property string back: t`${count} of ${name}`
+        property string files: plural(count, { other: `${count} file(s)` })
+        property string grouped: plural(count, { other: "# file(s)" })
       }
       """
 
@@ -69,10 +75,11 @@ Feature: ljos migrate writes qsTr as a tagged template
       """qml
       import QtQuick
       Rectangle {
-        width: 240; height: 40; color: "white"
-        property int count: 3
+        width: 320; height: 40; color: "white"
+        property int count: 12345
         property string name: "Ada"
         Text { text: qsTr("%1 has %n file(s)", "", count).arg(name) }
+        Text { y: 20; text: qsTr("%Ln file(s)", "", count) }
       }
       """
     When the author runs "ljos migrate app"
@@ -96,3 +103,62 @@ Feature: ljos migrate writes qsTr as a tagged template
       kept Main.qml:4:26: `qsTr` of a value that is not written out
       1 files, 0 lowered, 1 kept
       """
+
+  Scenario: A text two files translate differently keeps each file's translation
+    Given the file "FileMenu.qml":
+      """qml
+      import QtQuick
+      Item { property string open: qsTr("Open") }
+      """
+    And the file "Door.qml":
+      """qml
+      import QtQuick
+      Item { property string open: qsTr("Open") }
+      """
+    And the file "app_is.ts":
+      """xml
+      <TS version="2.1" language="is">
+      <context><name>FileMenu</name>
+        <message><source>Open</source><translation>Opna</translation></message></context>
+      <context><name>Door</name>
+        <message><source>Open</source><translation>Opnaðu</translation></message></context>
+      </TS>
+      """
+    When the author runs "ljos migrate --write --catalogue app_is.ts ."
+    Then the file "FileMenu.qml" is:
+      """qml
+      import Ljos.Ui
+      import Ljos.Core
+      Item { property string open: t({ message: "Open", context: "FileMenu" }) }
+      """
+    And the file "Door.qml" is:
+      """qml
+      import Ljos.Ui
+      import Ljos.Core
+      Item { property string open: t({ message: "Open", context: "Door" }) }
+      """
+
+  Scenario: Two calls that would be one message with two translations keep their files
+    Qt's disambiguation and a qsTranslate context both become the context of `t`.
+    Given the file "Main.qml":
+      """qml
+      import QtQuick
+      Item { property string open: qsTr("Open", "menu") }
+      """
+    And the file "Other.qml":
+      """qml
+      import QtQuick
+      Item { property string open: qsTranslate("menu", "Open") }
+      """
+    And the file "app_is.ts":
+      """xml
+      <TS version="2.1" language="is">
+      <context><name>Main</name>
+        <message><source>Open</source><comment>menu</comment><translation>Opna valmynd</translation></message></context>
+      <context><name>menu</name>
+        <message><source>Open</source><translation>Opna</translation></message></context>
+      </TS>
+      """
+    When the author runs "ljos migrate --catalogue app_is.ts ."
+    Then the command's output mentions "kept Main.qml"
+    And the command's output mentions "kept Other.qml"
