@@ -675,6 +675,14 @@ pub trait Environment: Backend {
         ))
     }
 
+    /// A web view waits `wait` for the storage of a profile made a moment
+    /// ago before its page fails, until the scenario ends.
+    fn profile_wait(&mut self, _wait: std::time::Duration) -> Result<()> {
+        Err(BackendError::NotImplemented(
+            "a set time for web views to wait for a new profile",
+        ))
+    }
+
     /// The application replaces the engine's log handler with one that
     /// keeps nothing.
     fn own_log_handler(&mut self) -> Result<()> {
