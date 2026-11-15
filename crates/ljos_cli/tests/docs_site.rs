@@ -209,6 +209,12 @@ fn projects(all: &[Block], problems: &mut Vec<String>) -> Vec<Project> {
             continue;
         }
         let grouped = block.attr("group").map(str::to_owned);
+        if block.attr("files").is_some() && (tag != "qml" || block.attr("file").is_some()) {
+            problems.push(format!(
+                "{}: `files=` goes on the root block of an example, a `qml` block without `file=`",
+                block.at()
+            ));
+        }
         match tag {
             "qml" => {}
             "ts" | "typescript" => {
@@ -283,11 +289,13 @@ fn projects(all: &[Block], problems: &mut Vec<String>) -> Vec<Project> {
                 block.at()
             ));
         }
+        let files = vec![("Main.qml".to_owned(), harnessed(block, problems))];
+        let assets = assets(block, &files, problems);
         out.push(Project {
             key: format!("{}#{}", block.page, block.nth),
             at: block.at(),
-            files: vec![("Main.qml".to_owned(), harnessed(block, problems))],
-            assets: assets(block, problems),
+            files,
+            assets,
             before,
             after: after.flatten(),
         });
@@ -321,19 +329,12 @@ fn projects(all: &[Block], problems: &mut Vec<String>) -> Vec<Project> {
             }
             files.push((name, harnessed(block, problems)));
         }
-        for block in members.iter().filter(|block| block.attr("files").is_some()) {
-            if !std::ptr::eq(*block, *root) {
-                problems.push(format!(
-                    "{}: `files=` goes on the root block of group `{group}`",
-                    block.at()
-                ));
-            }
-        }
+        let assets = assets(root, &files, problems);
         out.push(Project {
             key: format!("{page}#{}", root.nth),
             at: root.at(),
             files,
-            assets: assets(root, problems),
+            assets,
             before: members.iter().any(|block| block.flags.contains("before")),
             after: None,
         });
@@ -341,8 +342,9 @@ fn projects(all: &[Block], problems: &mut Vec<String>) -> Vec<Project> {
     out
 }
 
-/// The files a root block's `files=a,b` names, each one in docs/site/files.
-fn assets(block: &Block, problems: &mut Vec<String>) -> Vec<String> {
+/// The files a root block's `files=a,b` names, each one in docs/site/files
+/// and none named like a file the example shows, which it would replace.
+fn assets(block: &Block, files: &[(String, String)], problems: &mut Vec<String>) -> Vec<String> {
     let Some(names) = block.attr("files") else {
         return Vec::new();
     };
@@ -351,6 +353,11 @@ fn assets(block: &Block, problems: &mut Vec<String>) -> Vec<String> {
         if name.is_empty() || name.contains(['/', '\\']) || name.starts_with('.') {
             problems.push(format!(
                 "{}: `files={names}`: `{name}` is not a file name of docs/site/{FILES}",
+                block.at()
+            ));
+        } else if files.iter().any(|(shown, _)| shown == name) {
+            problems.push(format!(
+                "{}: `files=` names {name}, which a block of the example already is",
                 block.at()
             ));
         } else if !site().join(FILES).join(name).is_file() {
@@ -837,6 +844,32 @@ fn a_data_block_of_a_group_is_a_file_of_its_example() {
     let problems = page_problems("p.md", unnamed);
     assert!(
         problems.iter().any(|p| p.contains("give it `file=`")),
+        "{problems:#?}"
+    );
+
+    // `files=` anywhere but an example's root block is refused, not ignored.
+    for misplaced in [
+        "```json file=a.json group=g files=photo.jpg\n[]\n```\n\n```qml group=g\nItem {}\n```\n",
+        "```qml file=Card.qml group=g files=photo.jpg\nItem {}\n```\n\n```qml group=g\nCard {}\n```\n",
+        "```json files=photo.jpg\n[]\n```\n",
+    ] {
+        let problems = page_problems("p.md", misplaced);
+        assert!(
+            problems
+                .iter()
+                .any(|p| p.contains("`files=` goes on the root block")),
+            "{misplaced}: {problems:#?}"
+        );
+    }
+
+    // An asset named like a file the example shows would replace it.
+    let shadowed = "```text file=photo.jpg group=g\nnot a picture\n```\n\n\
+        ```qml group=g files=photo.jpg\nItem {}\n```\n";
+    let problems = page_problems("p.md", shadowed);
+    assert!(
+        problems
+            .iter()
+            .any(|p| p.contains("a block of the example already is")),
         "{problems:#?}"
     );
 
