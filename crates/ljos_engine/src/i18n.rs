@@ -804,10 +804,29 @@ pub(crate) const PRELUDE: &str = r##"
   };
   // A template whose text is not written where it is called: its values
   // are numbered, as the compiler numbers them.
+  // The compiler's escaping, so both give one text the same key: a run
+  // of braces quoted once, an apostrophe doubled where it would quote.
+  const escape = (s) => {
+    let out = "", quoted = false;
+    for (let i = 0; i < s.length; i++) {
+      const c = s[i];
+      if (c === "{" || c === "}") {
+        if (!quoted) { out += "'"; quoted = true; }
+        out += c;
+      } else if (c === "'") {
+        const next = s[i + 1];
+        out += quoted || next === undefined || "'{}#|".includes(next) ? "''" : "'";
+      } else {
+        if (quoted) { out += "'"; quoted = false; }
+        out += c;
+      }
+    }
+    return quoted ? out + "'" : out;
+  };
   const ofTemplate = (strings, values) => {
     let message = "";
     strings.forEach((s, i) => {
-      message += s.replace(/'/g, "''").replace(/[{}#]/g, "'$&'");
+      message += escape(s);
       if (i < values.length) message += "{" + i + "}";
     });
     return [message, values.map((_, i) => String(i)).join(",")];
