@@ -140,6 +140,13 @@ struct Held {
 
 impl Held {
     fn hold(self: &Arc<Self>, stream: TcpStream) {
+        // Looked at, and the thread listed, under the lock `release` takes,
+        // so no thread is listed after the list was taken to be joined.
+        let released = self.released.lock().unwrap_or_else(PoisonError::into_inner);
+        if *released {
+            // The server has gone: closed with no answer at once.
+            return;
+        }
         let held = Arc::clone(self);
         let thread = std::thread::Builder::new()
             .name("ljos-bdd-web-held".to_owned())
@@ -158,13 +165,16 @@ impl Held {
                 .unwrap_or_else(PoisonError::into_inner)
                 .push(thread);
         }
+        drop(released);
     }
 
     fn release(&self) {
-        *self.released.lock().unwrap_or_else(PoisonError::into_inner) = true;
-        self.release.notify_all();
-        let threads =
-            std::mem::take(&mut *self.threads.lock().unwrap_or_else(PoisonError::into_inner));
+        let threads = {
+            let mut released = self.released.lock().unwrap_or_else(PoisonError::into_inner);
+            *released = true;
+            self.release.notify_all();
+            std::mem::take(&mut *self.threads.lock().unwrap_or_else(PoisonError::into_inner))
+        };
         for thread in threads {
             let _ = thread.join();
         }
@@ -603,6 +613,26 @@ mod tests {
         held.set_read_timeout(None).unwrap();
         let mut rest = Vec::new();
         held.read_to_end(&mut rest).unwrap();
+        assert!(rest.is_empty(), "closed with no answer");
+    }
+
+    #[test]
+    fn held_once_released_is_closed_at_once_and_left_to_no_one() {
+        let held = Arc::new(Held::default());
+        held.release();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (stream, _) = listener.accept().unwrap();
+        held.hold(stream);
+        assert!(
+            held.threads
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .is_empty(),
+            "a thread listed after release is never joined"
+        );
+        let mut rest = Vec::new();
+        client.read_to_end(&mut rest).unwrap();
         assert!(rest.is_empty(), "closed with no answer");
     }
 
