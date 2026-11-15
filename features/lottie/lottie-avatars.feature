@@ -8,15 +8,14 @@
 @ljos-only
 Feature: Real Lottie files play as their author drew them
   Two animations exported from Blender's grease pencil by its Lottie add-on
-  (Lottie 5.5.6, 24 Hz, 512 by 512): a dance that sways left and
-  right in a second, and a genie that grows out of nothing into a face in two.
-  Each was exported with a preview GIF at 320 by 320, a picture every
-  40 ms, whose picture N is the file's frame N + 1, and some of those
-  pictures are kept beside the files. Here the animation is drawn at the
-  GIF's size and sent to the frame of one of them once it is ready (the genie is large enough to be
+  (Lottie 5.5.6, 24 Hz, 512 by 512): a dance that sways left and right in a
+  second, and a genie that grows out of nothing into a face in two. Each was
+  exported with a preview GIF at 320 by 320, a picture every 40 ms, whose
+  picture N is the file's frame N + 1, and some of those pictures are kept
+  beside the files. Here the animation is drawn at the GIF's size and sent to
+  the frame of one of them once it is ready (the genie is large enough to be
   read off the UI thread, so it is not ready when the component completes),
-  and the window's top left, the root's 320 by 320, should look like the
-  GIF.
+  and the window's top left, the root's 320 by 320, should look like the GIF.
 
   A GIF has 256 colours at most, and its encoder dithers flat colours and
   moves an edge's blend, so no pixel can be pinned. The comparison blurs both
@@ -24,8 +23,8 @@ Feature: Real Lottie files play as their author drew them
   difference as CIE76 ΔE: 2.3 is just noticeable, and black to white is 100.
   At most 0.1 % of the pixels (102 of 320 by 320) may differ by more than
   ΔE 15. Ljós's pictures come within ΔE 10 of the GIF's everywhere, the
-  palette's error; the dance a 24th of a second away has 0.2 % of its pixels further
-  than ΔE 15, and a lean to the other side 13 %.
+  palette's error; the dance a 24th of a second away has 0.2 % of its pixels
+  further than ΔE 15, and a lean to the other side 13 %.
 
   Rule: The genie grows out of nothing into the face
 
