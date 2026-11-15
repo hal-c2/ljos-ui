@@ -103,6 +103,10 @@ name = "kept_passes"
 required-features = ["gpu", "snippets"]
 
 [[test]]
+name = "timed_frames"
+required-features = ["gpu"]
+
+[[test]]
 name = "instance_rows"
 required-features = ["gpu"]
 

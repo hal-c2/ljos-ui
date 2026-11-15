@@ -211,6 +211,13 @@ pub fn snapshot() -> RenderStats {
     record().stats
 }
 
+/// The frames the host has ended that drew a scene, which says which
+/// frames' GPU time is read: the renderer times every target drawn in one
+/// frame of so many.
+pub fn frames_ended() -> u64 {
+    record().stats.frames
+}
+
 /// The longest frame since the last call, which starts the next count.
 pub fn take_longest_frame() -> f64 {
     std::mem::take(&mut record().stats.longest_frame_seconds)
