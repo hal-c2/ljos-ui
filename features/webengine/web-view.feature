@@ -991,6 +991,32 @@ Feature: A web page in a WebEngineView
     Then the log has no warning matching "before .* of its scripts reached the renderer"
     And the property "seen" of "view" is "yes yes"
 
+  # A script set once the view's url made its browser is told to the
+  # renderer after the blank page: the first page waits for it too.
+  @api-QtWebEngine.WebEngineView.userScripts
+  Scenario: A script given after the view's url still runs in its first page
+    Given the QML:
+      """qml
+      import QtQuick
+      import QtWebEngine
+      WebEngineView {
+        id: view; objectName: "view"
+        width: 200; height: 100
+        property string seen: ""
+        onLoadingChanged: info => { if (info.status === WebEngineView.LoadSucceededStatus)
+          runJavaScript("window.marked", r => seen += (seen ? " " : "") + r) }
+        function show(name) {
+          url = Qt.resolvedUrl(name)
+          userScripts.collection = [{ name: "mark", sourceCode: "window.marked = 'yes'",
+            injectionPoint: WebEngineScript.DocumentCreation, worldId: WebEngineScript.MainWorld }]
+        }
+      }
+      """
+    When the method "show" of "view" is called with "page.html"
+    And 2 seconds pass
+    Then the log has no warning matching "before .* of its scripts reached the renderer"
+    And the property "seen" of "view" is "yes"
+
   @api-QtWebEngine.WebEngineView.javaScriptConsoleMessage
   Scenario: What the page writes to its console reaches the view with its level
     Given the text file "console.html":
