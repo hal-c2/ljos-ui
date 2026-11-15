@@ -602,19 +602,37 @@ pub fn escape(text: &str) -> String {
 }
 
 fn escape_into(out: &mut String, text: &str) {
+    // One quote per run of braces: `'}''}'` would read as `}'}`, the `''`
+    // between two quotes being an apostrophe.
+    let mut quoted = false;
     let mut chars = text.chars().peekable();
     while let Some(c) = chars.next() {
         match c {
+            '{' | '}' => {
+                if !quoted {
+                    out.push('\'');
+                    quoted = true;
+                }
+                out.push(c);
+            }
+            '\'' if quoted => out.push_str("''"),
             // At the end of a text a placeholder may follow, whose `{`
             // would make the apostrophe a quote.
             '\'' => match chars.peek() {
                 Some('\'' | '{' | '}' | '#' | '|') | None => out.push_str("''"),
                 Some(_) => out.push('\''),
             },
-            '{' => out.push_str("'{'"),
-            '}' => out.push_str("'}'"),
-            c => out.push(c),
+            c => {
+                if quoted {
+                    out.push('\'');
+                    quoted = false;
+                }
+                out.push(c);
+            }
         }
+    }
+    if quoted {
+        out.push('\'');
     }
 }
 
@@ -697,6 +715,8 @@ mod tests {
         assert_eq!(message("t`'${x}'`"), "''{x}''");
         assert_eq!(message("t`it''s`"), "it'''s");
         assert_eq!(escape("50% #1"), "50% #1");
+        assert_eq!(escape("}} {{x"), "'}}' '{{'x");
+        assert_eq!(escape("{'}"), "'{''}'");
     }
 
     #[test]
