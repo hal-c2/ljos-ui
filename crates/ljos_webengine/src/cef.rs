@@ -4012,6 +4012,43 @@ mod tests {
     }
 
     #[test]
+    fn two_answers_to_one_origin_are_written_at_once_with_answered_free() {
+        let answered = Mutex::new(HashMap::new());
+        let key = ("https://a.example".to_owned(), 7);
+        // Each write waits for the other to be writing too: with a lock
+        // held across the write, the second could not start and the first
+        // gives up.
+        let writing = (Mutex::new(0), std::sync::Condvar::new());
+        let write = || {
+            let (count, met) = &writing;
+            let mut n = Shared::lock(count);
+            *n += 1;
+            met.notify_all();
+            let (n, waited) = met
+                .wait_timeout_while(n, Duration::from_secs(10), |n| *n < 2)
+                .unwrap_or_else(PoisonError::into_inner);
+            drop(n);
+            if waited.timed_out() {
+                return Err(std::io::Error::other("the other answer never wrote"));
+            }
+            Ok(())
+        };
+        std::thread::scope(|s| {
+            for allow in [true, false] {
+                let (answered, key, write) = (&answered, key.clone(), &write);
+                s.spawn(move || {
+                    written_then_kept(answered, Keep::Never, Some(key), allow, write)
+                        .expect("written")
+                });
+            }
+        });
+        // Both were written, so both were recorded: the map keeps one
+        // answer for the origin, the one recorded last.
+        let kept = Shared::lock(&answered).get(&key).copied();
+        assert!(kept.is_some(), "an answer written down is remembered");
+    }
+
+    #[test]
     fn an_answer_not_written_down_is_not_remembered() {
         let key = || Some(("https://a.example".to_owned(), 7));
         let answered = Mutex::new(HashMap::new());
