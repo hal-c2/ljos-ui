@@ -142,6 +142,7 @@ pub fn material(
         "cmf_",
     )?;
     let functions = Functions::of(&fragment_src);
+    let lit_failure = shaded.then(|| lit_failure(&fragment_src)).flatten();
     let mut wgsl = String::from(LIT);
     wgsl.push_str(&vs);
     wgsl.push_str(&the_scenes_probe(fs));
@@ -159,7 +160,8 @@ pub fn material(
         textures.to_vec(),
         reads_depth,
     )
-    .reading_screen(screen))
+    .reading_screen(screen)
+    .failing_where_lit(lit_failure.map(|e| e.to_string())))
 }
 
 /// A pass of an Effect: its fragment snippet runs over the whole output,
@@ -374,6 +376,60 @@ impl Functions {
             post: defines(src, "POST_PROCESS"),
         }
     }
+}
+
+/// The functions called once for each light, which a shader Qt makes for
+/// a model a light reaches declares before the snippet.
+const PER_LIGHT: [&str; 4] = [
+    "DIRECTIONAL_LIGHT",
+    "POINT_LIGHT",
+    "SPOT_LIGHT",
+    "SPECULAR_LIGHT",
+];
+
+/// Why a shaded fragment snippet does not compile where a light reaches its
+/// model, if it does not: the first function called for each light written
+/// while the default float precision is lowp or mediump.
+// Qt 6.11: such a function is another overload of the one Qt declares
+// ("overloaded functions must have the same parameter precision
+// qualifiers"), so the model is not drawn where a light reaches it; it
+// still casts its shadow. Measured on qml6 6.12.0.
+fn lit_failure(src: &str) -> Option<SnippetError> {
+    let tokens = tokens(src);
+    let mut depth = 0usize;
+    let mut default = "highp";
+    for (i, t) in tokens.iter().enumerate() {
+        match *t {
+            "{" => depth += 1,
+            "}" => depth = depth.saturating_sub(1),
+            "precision" if depth == 0 => {
+                if let (Some(q), Some(&"float")) = (tokens.get(i + 1), tokens.get(i + 2)) {
+                    default = q;
+                }
+            }
+            name if depth == 0
+                && default != "highp"
+                && PER_LIGHT.contains(&name)
+                && i > 0
+                && tokens[i - 1] == "void"
+                && tokens.get(i + 1) == Some(&"(") =>
+            {
+                // The tokens are slices of `src`, so where one starts is its
+                // pointer's distance from the text's.
+                let at = t.as_ptr() as usize - src.as_ptr() as usize;
+                return Some(SnippetError::Compile {
+                    stage: "fragment",
+                    line: src[..at].matches('\n').count() as u32 + 1,
+                    message: format!(
+                        "{name} is written under `precision {default} float;`, which does not \
+                         compile where a light reaches the model"
+                    ),
+                });
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// A `VARYING type name;` of a snippet: its name and how many floats.
@@ -1649,6 +1705,43 @@ mod tests {
             code,
             "const float A = 1.0;\nfloat b ;\nvec2 c[2] ;\n\nfloat d, e = 1.0;\nstruct S { float f; };\nfloat g(float h) { float i = h; return i; }\n#ifdef X\nfloat j = k;\n#endif\n"
         );
+    }
+
+    #[test]
+    fn a_light_function_under_a_low_default_precision_fails_where_lit() {
+        let fails = |src: &str| lit_failure(&strip_comments(src)).map(|e| e.to_string());
+        assert_eq!(
+            fails("precision lowp float;\nvoid MAIN() { }\n\nvoid DIRECTIONAL_LIGHT() { }\n")
+                .as_deref(),
+            Some(
+                "fragment shader, line 4: DIRECTIONAL_LIGHT is written under `precision lowp \
+                 float;`, which does not compile where a light reaches the model"
+            )
+        );
+        assert!(fails("precision mediump float; void SPECULAR_LIGHT() { }").is_some());
+        // Where it is written counts, and a function's own statement does not.
+        for ok in [
+            "void DIRECTIONAL_LIGHT() { }\nprecision lowp float;",
+            "precision lowp float; precision highp float; void POINT_LIGHT() { }",
+            "void SPOT_LIGHT() { precision lowp float; }",
+            "precision lowp int; void SPOT_LIGHT() { }",
+            "precision lowp float; void AMBIENT_LIGHT() { } void IBL_PROBE() { } void POST_PROCESS() { }",
+            "// precision lowp float;\nvoid DIRECTIONAL_LIGHT() { }",
+        ] {
+            assert_eq!(fails(ok), None, "{ok}");
+        }
+        let program = |shaded| {
+            material(
+                None,
+                Some("precision lowp float; void MAIN() { } void DIRECTIONAL_LIGHT() { }"),
+                shaded,
+                &[],
+                &[],
+            )
+            .unwrap()
+        };
+        assert!(program(true).lit_failure().is_some());
+        assert!(program(false).lit_failure().is_none());
     }
 
     #[test]

@@ -467,24 +467,38 @@ struct Made {
 #[derive(Debug)]
 struct Failed(snippet::SnippetError);
 
-/// The failures an engine has warned of. The failures are the thread's,
+/// The failures an engine has warned of, and the programs that do not
+/// compile where a light reaches their model. Both are the thread's,
 /// shared by its engines, but each engine has its own warnings to tell.
-/// A weak reference keeps a failure's address from being reused while it
-/// is listed, so the address names it.
+/// A weak reference keeps an address from being reused while it is
+/// listed, so the address names what it is.
 #[derive(Default)]
-struct Told(RefCell<Vec<Weak<Failed>>>);
+struct Told {
+    failed: RefCell<Vec<Weak<Failed>>>,
+    lit: RefCell<Vec<Weak<Program>>>,
+}
 
 impl Told {
     /// Whether `failed` is new to this engine, which is told of it now.
     fn first(&self, failed: &Arc<Failed>) -> bool {
-        let mut told = self.0.borrow_mut();
-        if told.iter().any(|t| t.as_ptr() == Arc::as_ptr(failed)) {
-            return false;
-        }
-        told.retain(|t| t.strong_count() > 0);
-        told.push(Arc::downgrade(failed));
-        true
+        first_of(&self.failed, failed)
     }
+
+    /// Whether this engine is yet to be told that `program` does not
+    /// compile where lit, which it is now.
+    fn first_lit(&self, program: &Arc<Program>) -> bool {
+        first_of(&self.lit, program)
+    }
+}
+
+fn first_of<T>(told: &RefCell<Vec<Weak<T>>>, it: &Arc<T>) -> bool {
+    let mut told = told.borrow_mut();
+    if told.iter().any(|t| t.as_ptr() == Arc::as_ptr(it)) {
+        return false;
+    }
+    told.retain(|t| t.strong_count() > 0);
+    told.push(Arc::downgrade(it));
+    true
 }
 
 /// What became of a program's text, while some object holds it.
@@ -594,8 +608,7 @@ fn program<T: QmlType>(
                     | snippet::SnippetError::Unsupported { stage, .. } => match *stage {
                         "vertex" if !key.vertex_code.is_empty() => "__vertexShaderCode".to_owned(),
                         "vertex" => key.vertex.clone(),
-                        _ if !key.fragment_code.is_empty() => "__fragmentShaderCode".to_owned(),
-                        _ => key.fragment.clone(),
+                        _ => fragment_file(&key),
                     },
                     snippet::SnippetError::Program(_) => {
                         format!("{} and {}", key.vertex, key.fragment)
@@ -613,10 +626,27 @@ fn program<T: QmlType>(
         failed
     });
     let program = made.as_ref().ok().cloned();
+    // Told where the program is first held, as the lights that reach the
+    // model come and go.
+    if let Some(p) = &program
+        && let Some(why) = p.lit_failure()
+        && e.extension::<Told>().first_lit(p)
+    {
+        e.warn(format!("QtQuick3D {who}: {}: {why}", fragment_file(&key)));
+    }
     let _ = e.with(obj, |t: &T| {
         *cache(t).0.borrow_mut() = Some((key, made));
     });
     program
+}
+
+/// What a warning about the fragment snippet calls it.
+fn fragment_file(key: &Key) -> String {
+    if key.fragment_code.is_empty() {
+        key.fragment.clone()
+    } else {
+        "__fragmentShaderCode".to_owned()
+    }
 }
 
 /// `url` resolved against the file that wrote `obj`; empty for none.
