@@ -2284,11 +2284,14 @@ impl<V: Clone + 'static> Graph<V> {
             let node = i.nodes.get_mut(n).ok_or(ReactiveError::DeadNode(n))?;
             // A run still going that read `n` has no edge to it until it
             // finishes; it would keep the old value with no mark to run
-            // again (`mark_observers` sends it one).
+            // again (`mark_observers` sends it one). `read_stamp` names only
+            // the last reader: a nested run that read `n` and is gone leaves
+            // an outer one holding `n` in its reads with another stamp.
             let read_by_a_run = node.read_stamp != 0
-                && i.frames
-                    .iter()
-                    .any(|f| f.stamp == node.read_stamp && f.node.is_some_and(|r| r != n));
+                && i.frames.iter().any(|f| {
+                    f.node.is_some_and(|r| r != n)
+                        && (f.stamp == node.read_stamp || f.reads.contains(&n))
+                });
             let Kind::Property(p) = &mut node.kind else {
                 return Err(ReactiveError::NotAProperty(n));
             };

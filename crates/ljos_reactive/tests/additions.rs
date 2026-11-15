@@ -981,6 +981,27 @@ fn an_animated_value_is_given_quietly_only_where_nothing_could_miss_it() {
     assert_eq!(*refused.borrow(), Some(Ok(false)));
     assert_eq!(g.get(b), 10);
 
+    // A nested run that read the property and is over leaves the outer run
+    // still holding it, under another stamp.
+    let refused = Rc::new(RefCell::new(None));
+    let seen = refused.clone();
+    let c = g.property(r, 30).unwrap();
+    let inner = g.binding(r, 0, move |g| g.get(c)).unwrap();
+    let outer = g
+        .binding(r, 0, move |g| {
+            let first = g.get(c);
+            let nested = g.get(inner);
+            if seen.borrow().is_none() {
+                let given = g.give_animated_quietly(c, 40);
+                *seen.borrow_mut() = Some(given);
+            }
+            first + nested
+        })
+        .unwrap();
+    g.get(outer);
+    assert_eq!(*refused.borrow(), Some(Ok(false)));
+    assert_eq!(g.get(c), 30);
+
     // A noted property's owner is told of each change.
     let noted = g.property(r, 0).unwrap();
     g.set_noted(noted).unwrap();
