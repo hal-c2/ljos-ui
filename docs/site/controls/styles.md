@@ -98,18 +98,21 @@ For `Universal`, `Universal.theme` accepts `Universal.Light`, `Universal.Dark` (
 import QtQuick
 import QtQuick.Controls.Universal
 
-Column {
-    padding: 12
-    spacing: 12
-    Universal.theme: Universal.Dark
+Pane {
+    id: pane
+    property bool dark: true
+    Universal.theme: dark ? Universal.Dark : Universal.Light
 
-    Button {
-        text: "Universal button"
-    }
+    Column {
+        spacing: 12
 
-    Pane {
+        Button {
+            text: pane.dark ? "Switch to light" : "Switch to dark"
+            onClicked: pane.dark = !pane.dark
+        }
+
         Label {
-            text: "Dark theme inherited"
+            text: pane.dark ? "Dark theme inherited" : "Light theme inherited"
         }
     }
 }

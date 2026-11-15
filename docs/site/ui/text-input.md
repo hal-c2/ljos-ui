@@ -42,19 +42,26 @@ The `TextEdit` wraps its text at word boundaries inside 180 pixels, and double-c
 import Ljos.Ui
 
 Item {
-    width: 200; height: 40
+    width: 200; height: 60
 
     TextInput {
+        id: field
         width: 180
         readOnly: true
         focus: true
         text: "Copy this text"
         selectByMouse: true
     }
+
+    Text {
+        y: 30
+        color: "#606060"
+        text: field.selectedText === "" ? "Nothing selected" : `Selected: ${field.selectedText}`
+    }
 }
 ```
 
-In this read-only `TextInput`, the user can select and copy with `Ctrl+C`, while typing and Backspace do nothing.
+In this read-only `TextInput`, the user can select and copy with `Ctrl+C`, while typing and Backspace do nothing. The line below shows what is selected.
 
 ## Selection, undo and the clipboard
 

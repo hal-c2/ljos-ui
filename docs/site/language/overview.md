@@ -119,24 +119,32 @@ Item {
 The name `parent` depends on the type of object it is read from. An `Item` has a visual `parent` property, and a `Timer` has a `parent` property that points to the object it is declared in. A plain `QtObject` has no `parent` property of its own, so reading `parent` inside a `QtObject` looks further out and resolves to `parent` on the root object of the file.
 
 ```qml
-pragma Scripts: JavaScript
 import Ljos.Ui
 import Ljos.Core
 
 Item {
     id: root
+    width: 200
+    height: 40
     property int step: 3
     property int ticks: 0
 
     Timer {
         id: timer
-        property int twice: parent.step * 2
-        interval: 50
-        running: true
-        onTriggered: parent.ticks += parent.step
+        property int twice: root.step * 2
+        interval: 500
+        repeat: true
+        running: root.ticks < 30
+        onTriggered: root.ticks += root.step
+    }
+
+    Text {
+        text: `ticks ${root.ticks}, twice the step ${timer.twice}`
     }
 }
 ```
+
+The `Timer` here names the `Item` by its `id`, `root`, which reads the same wherever the timer is declared. It counts up in steps of 3 and stops at 30.
 
 In a script expression, a QML type name is also a value that can appear on the right-hand side of `instanceof`. You can test `object instanceof Item`, `object instanceof Rectangle`, or `object instanceof MyComponent` for built-in types, file components, and inline components alike.Iterating over a QML object with `for (var n in obj)` lists the properties of its base types first, then the properties the type adds, followed by base signals and the type's own signals.
 
