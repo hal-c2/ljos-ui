@@ -706,6 +706,53 @@ View3D {
     assert_eq!(names, ["tint", "level", "picture"]);
 }
 
+// A map's every tile is a CustomMaterial of the same two files
+// (osmbuildings): one program serves them all, translated once and
+// compiled on the device once, whatever each tile's values.
+#[test]
+fn custom_materials_of_the_same_snippets_draw_with_one_program() {
+    let (e, view) = load(
+        r##"
+View3D {
+    Model { source: "#Cube"
+        materials: CustomMaterial { shadingMode: CustomMaterial.Unshaded; property real level: 0.5
+            __fragmentShaderCode: "void MAIN() { FRAGCOLOR = vec4(level); }" } }
+    Model { source: "#Cube"
+        materials: CustomMaterial { shadingMode: CustomMaterial.Unshaded; property real level: 0.25
+            __fragmentShaderCode: "void MAIN() { FRAGCOLOR = vec4(level); }" } }
+    Model { source: "#Cube"
+        materials: CustomMaterial { shadingMode: CustomMaterial.Unshaded; property real level: 0.5
+            __fragmentShaderCode: "void MAIN() { FRAGCOLOR = vec4(level, 0.0, 0.0, 1.0); }" } }
+    Model { source: "#Cube"
+        materials: CustomMaterial { property real level: 0.5
+            __fragmentShaderCode: "void MAIN() { FRAGCOLOR = vec4(level); }" } }
+}
+"##,
+    );
+    let built = scene::build(&e, view);
+    let programs: Vec<_> = built
+        .walk()
+        .iter()
+        .filter_map(|(_, n, _)| match &n.kind {
+            NodeKind::Model(m) => match &m.material {
+                Material::Custom(c) => Some(c.program.clone()),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect();
+    assert_eq!(programs.len(), 4, "every model draws");
+    let same = |a: usize, b: usize| std::sync::Arc::ptr_eq(&programs[a], &programs[b]);
+    assert!(same(0, 1), "the same snippets share their program");
+    assert!(!same(0, 2), "other code is another program");
+    assert!(!same(0, 3), "a shaded material is another program");
+    assert_eq!(
+        custom::counts::TRANSLATED.with(std::cell::Cell::get),
+        3,
+        "each program's snippets are translated once"
+    );
+}
+
 /// The mapping read through a name-keyed graph, as the web holds its
 /// objects, builds the scene the engine builds from the same QML.
 mod same_mapping {
