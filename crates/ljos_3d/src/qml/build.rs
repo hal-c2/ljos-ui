@@ -682,8 +682,8 @@ pub(super) fn environment<S: SceneSource>(s: &S, view: S::Object, env: S::Object
         } else {
             1
         };
-    let light_probe = s
-        .object(env, P::LightProbe)
+    let probe = s.object(env, P::LightProbe);
+    let light_probe = probe
         .and_then(|t| texture(s, view, t))
         .map(|texture| LightProbe {
             texture,
@@ -695,7 +695,9 @@ pub(super) fn environment<S: SceneSource>(s: &S, view: S::Object, env: S::Object
     let clear = || Background::Color(color(s, env, P::ClearColor, se::CLEAR_COLOR));
     let background = match int(s, env, P::BackgroundMode, se::BACKGROUND_MODE) {
         background::COLOR => clear(),
-        background::SKY_BOX if light_probe.is_some() => Background::SkyBox,
+        // A probe that is set but has no picture, still loading, missing or
+        // with no source, draws no sky and leaves the view transparent.
+        background::SKY_BOX if probe.is_some() => Background::SkyBox,
         // Qt 6.11: a sky box with no picture to show, a SkyBox with no
         // lightProbe or a SkyBoxCubeMap with no skyBoxCubeMap, is the clear
         // colour. A cube map is not built, so a SkyBoxCubeMap always is.
