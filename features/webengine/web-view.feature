@@ -1163,7 +1163,7 @@ Feature: A web page in a WebEngineView
     Then the property "seen" of "root" is "true true true"
 
   @api-QtWebEngine.WebEngineView.devToolsView @api-QtWebEngine.WebEngineView.inspectedView
-  Scenario: A view told to inspect another is its DevTools view until let go
+  Scenario: A view told to inspect another is its DevTools view
     Given the QML:
       """qml
       import QtQuick
@@ -1173,19 +1173,72 @@ Feature: A web page in a WebEngineView
         width: 200; height: 200
         WebEngineView { id: page; width: 200; height: 100; url: Qt.resolvedUrl("page.html") }
         WebEngineView { id: tools; y: 100; width: 200; height: 100; inspectedView: page }
-        function linked() { return (tools.inspectedView === page) + " " + (page.devToolsView === tools) }
-        property string before: ""
+        property string seen: (tools.inspectedView === page) + " " + (page.devToolsView === tools)
+          + " " + tools.url.toString().startsWith("devtools://devtools/")
+      }
+      """
+    When 4 seconds pass
+    Then the property "seen" of "root" is "true true true"
+
+  @api-QtWebEngine.WebEngineView.devToolsView @api-QtWebEngine.WebEngineView.inspectedView
+  Scenario: A DevTools view let go of inspects nothing more
+    Given the QML:
+      """qml
+      import QtQuick
+      import QtWebEngine
+      Item {
+        id: root; objectName: "root"
+        width: 200; height: 200
+        WebEngineView { id: page; width: 200; height: 100; url: Qt.resolvedUrl("page.html") }
+        WebEngineView { id: tools; y: 100; width: 200; height: 100; inspectedView: page }
         property string after: ""
         Timer {
           interval: 3000; running: true
           onTriggered: {
-            root.before = root.linked() + " " + tools.url.toString().startsWith("devtools://devtools/")
             page.devToolsView = null
-            root.after = root.linked()
+            root.after = (tools.inspectedView === page) + " " + (page.devToolsView === tools)
           }
         }
       }
       """
     When 4 seconds pass
-    Then the property "before" of "root" is "true true true"
-    And the property "after" of "root" is "false false"
+    Then the property "after" of "root" is "false false"
+
+  # A front end stops a page at a `debugger` statement: once it goes,
+  # nobody is left to go on from there, so the page goes on by itself.
+  @api-QtWebEngine.WebEngineView.devToolsView
+  Scenario: A page stopped by its DevTools goes on once they are let go
+    Given the text file "stops.html":
+      """
+      <!doctype html>
+      <html><head><title>Stops</title>
+      <script>function go() { debugger; document.title = "went on" }</script>
+      </head><body></body></html>
+      """
+    And the QML:
+      """qml
+      import QtQuick
+      import QtWebEngine
+      Item {
+        id: root; objectName: "root"
+        width: 200; height: 200
+        WebEngineView {
+          id: page; objectName: "page"; width: 200; height: 100
+          url: Qt.resolvedUrl("stops.html")
+          devToolsView: tools
+        }
+        WebEngineView { id: tools; y: 100; width: 200; height: 100 }
+        property string stopped: ""
+        Timer {
+          id: stop; interval: 4000; running: true
+          onTriggered: { page.runJavaScript("setTimeout(go, 0)"); release.start() }
+        }
+        Timer {
+          id: release; interval: 1500
+          onTriggered: { root.stopped = page.title; page.devToolsView = null }
+        }
+      }
+      """
+    When 9 seconds pass
+    Then the property "stopped" of "root" is "Stops"
+    And the property "title" of "page" is "went on"
