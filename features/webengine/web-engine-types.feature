@@ -205,11 +205,29 @@ Feature: The types of QtWebEngine
         Component.onCompleted: {
           note(WebEngine.defaultProfile); note(anon); note(moving)
           moving.offTheRecord = true; note(moving)
-          moving.offTheRecord = false; note(moving)
         }
       }
       """
-    Then the property "seen" of "root" is "1 1 2 1 2"
+    Then the property "seen" of "root" is "1 1 2 1"
+
+  @api-QtWebEngine.WebEngineProfile.persistentPermissionsPolicy @api-QtWebEngine.WebEngineProfile.offTheRecord
+  Scenario: A profile back on disk keeps answers as it was told again
+    Given the QML:
+      """qml
+      import QtQuick
+      import QtWebEngine
+      Item {
+        objectName: "root"
+        WebEngineProfile {
+          id: back; storageName: "Back"; offTheRecord: true
+          persistentPermissionsPolicy: WebEngineProfile.StoreOnDisk
+        }
+        property string seen: ""
+        function note(p) { seen += (seen ? " " : "") + p.persistentPermissionsPolicy }
+        Component.onCompleted: { note(back); back.offTheRecord = false; note(back) }
+      }
+      """
+    Then the property "seen" of "root" is "1 2"
 
   @api-QtWebEngine.WebEngine.script
   Scenario: A script made by the singleton holds what it was given
