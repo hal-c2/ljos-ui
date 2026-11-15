@@ -364,6 +364,17 @@ impl Engine {
                 }
                 // After `allocated`: a delegate's path has its row in it.
                 self.reload_assign(&cr, root, scripted);
+                // Made while a binding evaluates (a singleton its
+                // expression names first): the flushes the creation runs
+                // run only what it changes, and what was queued before
+                // waits until the binding has its value. Run there, an
+                // observer queued earlier (a 3D node's position, say)
+                // reads the binding while it is still being worked out,
+                // which faults in JS; qml6 says nothing.
+                let _own = self
+                    .graph()
+                    .binding_evaluating()
+                    .then(|| self.own_queue(self.changes_so_far()));
                 let mut making = sliced::Making::new(cr, root, props, how);
                 loop {
                     if let Some(r) = making.step(self, &|| false) {
