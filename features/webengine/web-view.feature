@@ -992,7 +992,9 @@ Feature: A web page in a WebEngineView
     And the property "seen" of "view" is "yes yes"
 
   # A script set once the view's url made its browser is told to the
-  # renderer after the blank page: the first page waits for it too.
+  # renderer after the blank page: the first page waits for it too. A
+  # method step only settles; CEF's work runs when a wait delivers it, so
+  # the blank page cannot load between the two steps.
   @api-QtWebEngine.WebEngineView.userScripts
   Scenario: A script given after the view's url still runs in its first page
     Given the QML:
