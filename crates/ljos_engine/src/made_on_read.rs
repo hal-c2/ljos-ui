@@ -233,6 +233,13 @@ impl Engine {
         let kept = self.keeper(obj, prop).is_some();
         if kept {
             drop(self.take_maker(obj, prop));
+            return;
+        }
+        // Out for a read: it is not to be put back.
+        for (o, p, gone) in self.inner.kept_in_hand.borrow_mut().iter_mut() {
+            if (*o, *p) == (obj, prop) {
+                *gone = true;
+            }
         }
     }
 
@@ -447,9 +454,24 @@ impl Engine {
                 // A tracked read is a binding's (or a painter's): it
                 // observes the property from now on.
                 let follows = self.inner.tracking.get() > 0;
-                // Untracked, as a maker is. It stays the keeper, back
-                // before it is told, so that it may then let go.
+                // Untracked, as a maker is. It stays the keeper unless it
+                // let go meanwhile (a write to another property it keeps
+                // wakes it), back before it is told, so that it may then
+                // let go.
+                self.inner
+                    .kept_in_hand
+                    .borrow_mut()
+                    .push((obj, prop, false));
                 self.untrack(|| keep(self, obj, prop, Kept::Read));
+                let gone = self
+                    .inner
+                    .kept_in_hand
+                    .borrow_mut()
+                    .pop()
+                    .is_some_and(|(_, _, gone)| gone);
+                if gone {
+                    return;
+                }
                 self.give_maker_back(obj, prop, Maker::Kept(keep));
                 if follows {
                     self.untrack(|| keep(self, obj, prop, Kept::Observed));
