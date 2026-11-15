@@ -824,7 +824,11 @@ fn a_data_block_of_a_group_is_a_file_of_its_example() {
     let [project] = &projects[..] else {
         panic!("one example, not {}", projects.len());
     };
-    let names: Vec<_> = project.files.iter().map(|(name, _)| name.as_str()).collect();
+    let names: Vec<_> = project
+        .files
+        .iter()
+        .map(|(name, _)| name.as_str())
+        .collect();
     assert_eq!(names, ["rows.json", "Main.qml"]);
     assert_eq!(project.assets, ["photo.jpg"]);
 
