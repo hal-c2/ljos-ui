@@ -125,7 +125,7 @@ mod held {
 
 #[cfg(not(target_arch = "wasm32"))]
 mod held {
-    use std::collections::{HashMap, HashSet, VecDeque};
+    use std::collections::{HashMap, VecDeque};
     use std::sync::{Arc, Condvar, LazyLock, Mutex, MutexGuard, PoisonError, Weak};
     use std::time::Instant;
 
@@ -140,17 +140,36 @@ mod held {
         /// The reader whose upload kept them.
         by_whom: u64,
         image: Weak<dyn TexturePixels>,
+        /// Other wrappers of the same pixels that readers uploaded: they
+        /// may share them with `image`, so they go when it goes.
+        others: Vec<Weak<dyn TexturePixels>>,
         /// The readers that have their copy.
         by: Vec<u64>,
+    }
+
+    impl Held {
+        /// Every wrapper this keeps, `image` first.
+        fn wrappers(self) -> Vec<Weak<dyn TexturePixels>> {
+            let mut all = self.others;
+            all.insert(0, self.image);
+            all
+        }
+
+        fn keeps(&self, wrapper: &Weak<dyn TexturePixels>) -> bool {
+            Weak::ptr_eq(&self.image, wrapper)
+                || self.others.iter().any(|w| Weak::ptr_eq(w, wrapper))
+        }
     }
 
     #[derive(Default)]
     struct Due {
         /// The live readers, by id.
         readers: HashMap<u64, Kind>,
-        /// The readers inside a frame: what they lack is not let go until
-        /// the frame ends, however long it takes.
-        drawing: HashSet<u64>,
+        /// The readers inside a frame, with how many of their frames are
+        /// open (a renderer draws a reflection or what is behind a view in
+        /// a frame inside its own): what they lack is not let go until the
+        /// outermost ends, however long it takes.
+        drawing: HashMap<u64, u32>,
         /// What is kept, by image id and the kind it was uploaded as.
         held: HashMap<(u64, Kind), Held>,
         /// The same, in the order they are due: [`HOLD`] is the same for
@@ -171,28 +190,39 @@ mod held {
         /// Whether a reader of `kind` that has no copy is inside a frame.
         fn awaited(&self, kind: Kind, by: &[u64]) -> bool {
             self.drawing
-                .iter()
+                .keys()
                 .any(|id| self.readers.get(id) == Some(&kind) && !by.contains(id))
         }
 
-        /// Takes the hold of `key` away, and its image when no hold of the
-        /// other kind is left for it: an image lets its pixels go for every
-        /// kind at once.
-        fn take(&mut self, key: (u64, Kind)) -> Option<Arc<dyn TexturePixels>> {
-            let held = self.held.remove(&key)?;
-            if self.held_as_other(key) {
-                return None;
+        /// Takes the hold of `key` away, and lets its wrappers go.
+        fn take(&mut self, key: (u64, Kind)) -> Vec<Arc<dyn TexturePixels>> {
+            match self.held.remove(&key) {
+                Some(held) => self.release(key, held.wrappers()),
+                None => Vec::new(),
             }
-            held.image.upgrade()
         }
 
-        /// Whether the image of `key` is also kept as the other kind.
-        fn held_as_other(&self, (id, kind): (u64, Kind)) -> bool {
+        /// The wrappers of the image of `key` that go now: none while the
+        /// image is kept as the other kind, whose hold takes them, as an
+        /// image lets its pixels go for every kind at once.
+        fn release(
+            &mut self,
+            (id, kind): (u64, Kind),
+            wrappers: Vec<Weak<dyn TexturePixels>>,
+        ) -> Vec<Arc<dyn TexturePixels>> {
             let other = match kind {
                 Kind::Maps => Kind::Probes,
                 Kind::Probes => Kind::Maps,
             };
-            self.held.contains_key(&(id, other))
+            if let Some(h) = self.held.get_mut(&(id, other)) {
+                for w in wrappers {
+                    if !h.keeps(&w) {
+                        h.others.push(w);
+                    }
+                }
+                return Vec::new();
+            }
+            wrappers.iter().filter_map(Weak::upgrade).collect()
         }
 
         /// Starts the clock of what `reader` kept in the frame that ends.
@@ -220,7 +250,7 @@ mod held {
                 .filter(|(key, h)| h.due.is_some_and(|at| at <= now) && !self.awaited(key.1, &h.by))
                 .map(|(key, _)| *key)
                 .collect();
-            due.into_iter().filter_map(|key| self.take(key)).collect()
+            due.into_iter().flat_map(|key| self.take(key)).collect()
         }
     }
 
@@ -257,23 +287,33 @@ mod held {
                 .collect();
             covered
                 .into_iter()
-                .filter_map(|key| d.take(key))
+                .flat_map(|key| d.take(key))
                 .collect::<Vec<_>>()
         };
         let_go(images);
     }
 
     pub(super) fn frame_began(readers: &[u64]) {
-        due().drawing.extend(readers);
+        let mut d = due();
+        for reader in readers {
+            *d.drawing.entry(*reader).or_insert(0) += 1;
+        }
     }
 
-    /// The frame of `readers` ended: the clock of what they kept starts,
-    /// and what waited only for them while it was due goes.
+    /// A frame of `readers` ended. When it was their outermost, the clock
+    /// of what they kept starts, and what waited only for them while it
+    /// was due goes.
     pub(super) fn frame_ended(readers: &[u64]) {
         let images = {
             let mut d = due();
             let now = Instant::now();
             for reader in readers {
+                if let Some(open) = d.drawing.get_mut(reader) {
+                    *open -= 1;
+                    if *open > 0 {
+                        continue;
+                    }
+                }
                 d.drawing.remove(reader);
                 d.frame_ended(*reader, now);
             }
@@ -305,16 +345,15 @@ mod held {
         now_go: &mut Vec<Arc<dyn TexturePixels>>,
     ) {
         let key = (image.0.id(), reader.kind);
+        let wrapper = Arc::downgrade(&image.0);
         let mut by = vec![reader.id];
         let mut due = None;
         let mut by_whom = reader.id;
-        if let Some(h) = d.held.get(&key) {
-            if !std::ptr::addr_eq(h.image.as_ptr(), Arc::as_ptr(&image.0)) {
-                // Another wrapper of the same pixels: the readers that have
-                // its copy have this one's, and it goes now, as this does
-                // when they all have it.
-                now_go.extend(h.image.upgrade());
-            }
+        let mut others = Vec::new();
+        if let Some(h) = d.held.remove(&key) {
+            // The readers that have another wrapper of the same pixels
+            // have this one's; that wrapper may share the pixels with this
+            // one, so it is kept with it.
             for id in &h.by {
                 if !by.contains(id) {
                     by.push(*id);
@@ -322,16 +361,15 @@ mod held {
             }
             due = h.due;
             by_whom = h.by_whom;
+            others = h.wrappers();
+            others.retain(|w| !Weak::ptr_eq(w, &wrapper));
         }
         if d.all_have(reader.kind, &by) || !started(d) {
-            d.held.remove(&key);
-            // The other kind's hold lets the pixels go when it is done.
-            if !d.held_as_other(key) {
-                now_go.push(Arc::clone(&image.0));
-            }
+            others.insert(0, wrapper);
+            now_go.extend(d.release(key, others));
             return;
         }
-        if due.is_none() && !d.drawing.contains(&by_whom) {
+        if due.is_none() && !d.drawing.contains_key(&by_whom) {
             // Kept outside a frame: the clock starts now.
             let at = Instant::now() + HOLD;
             due = Some(at);
@@ -345,7 +383,8 @@ mod held {
             Held {
                 due,
                 by_whom,
-                image: Arc::downgrade(&image.0),
+                image: wrapper,
+                others,
                 by,
             },
         );
@@ -390,5 +429,95 @@ mod held {
             };
             let_go(images);
         }
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod tests {
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::{Arc, Mutex};
+
+    use super::*;
+    use crate::texture::{PixelEncoding, TexturePixels, fresh_pixels_id};
+
+    /// One wrapper of pixels it may share with others, and how often it
+    /// was told to let them go.
+    #[derive(Debug)]
+    struct Wrapper {
+        id: u64,
+        pixels: Arc<Mutex<Option<Vec<u8>>>>,
+        let_go: AtomicUsize,
+    }
+
+    impl TexturePixels for Wrapper {
+        fn id(&self) -> u64 {
+            self.id
+        }
+        fn size(&self) -> [u32; 2] {
+            [1, 1]
+        }
+        fn encoding(&self) -> PixelEncoding {
+            PixelEncoding::Srgb8Straight
+        }
+        fn opaque(&self) -> bool {
+            true
+        }
+        fn with_pixels(&self, f: &mut dyn FnMut(&[u8])) {
+            f(self.pixels.lock().unwrap().as_deref().unwrap_or_default());
+        }
+        fn uploaded(&self) {
+            self.let_go.fetch_add(1, Ordering::Relaxed);
+            *self.pixels.lock().unwrap() = None;
+        }
+    }
+
+    fn wrapper(id: u64, pixels: &Arc<Mutex<Option<Vec<u8>>>>) -> (TextureImage, Arc<Wrapper>) {
+        let w = Arc::new(Wrapper {
+            id,
+            pixels: Arc::clone(pixels),
+            let_go: AtomicUsize::new(0),
+        });
+        (TextureImage(w.clone()), w)
+    }
+
+    fn pixels() -> Arc<Mutex<Option<Vec<u8>>>> {
+        Arc::new(Mutex::new(Some(vec![0; 4])))
+    }
+
+    #[test]
+    fn a_frame_drawn_inside_a_frame_does_not_end_it() {
+        let first = Reader::new(Kind::Maps);
+        let maps = Reader::new(Kind::Maps);
+        let probes = Reader::new(Kind::Probes);
+        let outer = Frame::begin([&maps, &probes]);
+        // A reflection drawn before the maps are reached.
+        drop(Frame::begin([&maps, &probes]));
+        let (image, w) = wrapper(fresh_pixels_id(), &pixels());
+        uploaded(&first, [&image]);
+        std::thread::sleep(HOLD + std::time::Duration::from_millis(300));
+        assert_eq!(
+            w.let_go.load(Ordering::Relaxed),
+            0,
+            "let go while a renderer that lacks them still draws its frame"
+        );
+        drop(outer);
+    }
+
+    #[test]
+    fn a_wrapper_another_replaced_is_kept_with_it() {
+        let [one, two, three] = [(); 3].map(|()| Reader::new(Kind::Maps));
+        let shared = pixels();
+        let id = fresh_pixels_id();
+        let (first, first_w) = wrapper(id, &shared);
+        let (second, _) = wrapper(id, &shared);
+        uploaded(&one, [&first]);
+        uploaded(&two, [&second]);
+        assert_eq!(
+            first_w.let_go.load(Ordering::Relaxed),
+            0,
+            "the first wrapper let the pixels go while a reader still lacks them"
+        );
+        assert!(shared.lock().unwrap().is_some());
+        drop(three);
     }
 }
