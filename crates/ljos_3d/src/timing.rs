@@ -12,11 +12,18 @@
 //! waits for the GPU and nothing polls for it: a target drawn once keeps
 //! its last reading until it is drawn again.
 //!
-//! Only one drawing in [`TIMED_EVERY`] is timed. The timestamps, their
+//! Only one frame in [`TIMED_EVERY`] is timed. The timestamps, their
 //! resolve and the read back cost the processor at submit whether or not
 //! anything waits: on `ljos_shell`'s GL device, a quarter to two fifths of
 //! a millisecond a frame, more than the rest of the submit. A reading a
 //! few times a second tells a frame's GPU time as well as one a frame.
+//!
+//! Which frames are timed is counted by the frames the host has ended
+//! ([`crate::stats::frame_end`]), not by each target's own drawings: a
+//! host sums its targets' readings into one frame's GPU time, so every
+//! target drawn in a timed frame is timed with it. A target drawn again
+//! before the host ends a frame, as under a host that never ends one,
+//! counts its own drawings instead.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, Ordering};
@@ -57,8 +64,8 @@ pub fn timing_features(adapter: &wgpu::Adapter) -> wgpu::Features {
     adapter.features() & wgpu::Features::TIMESTAMP_QUERY
 }
 
-/// A target's drawings that are timed: the first, then one in every this
-/// many. At sixty frames a second, about four readings a second.
+/// Frames that are timed: one in every this many. At sixty frames a
+/// second, about four readings a second.
 pub const TIMED_EVERY: u32 = 16;
 
 /// The queries: the first shadow pass's start and the last's end, the
@@ -91,7 +98,9 @@ pub(crate) struct Timer {
     /// frames, for a frame not timed, and for one that found every read
     /// in use.
     this: Option<usize>,
-    /// Drawings begun, which say which are timed.
+    /// The frames the host had ended when this target was last drawn.
+    frame: Option<u64>,
+    /// Drawings begun, which say which are timed while no frame ends.
     drawings: u32,
     /// Nanoseconds a timestamp tick is on this queue.
     period: f32,
@@ -151,6 +160,7 @@ impl Timer {
             ),
             reads: std::array::from_fn(read),
             this: None,
+            frame: None,
             drawings: 0,
             period: 1.0,
             last: None,
@@ -204,9 +214,15 @@ impl Timer {
                 _ => {}
             }
         }
-        // u32::MAX + 1 is a multiple of TIMED_EVERY, so the count wraps in
-        // step.
-        let timed = self.drawings.is_multiple_of(TIMED_EVERY);
+        let frame = crate::stats::frames_ended();
+        let timed = if self.frame == Some(frame) {
+            // u32::MAX + 1 is a multiple of TIMED_EVERY, so the count wraps
+            // in step.
+            self.drawings.is_multiple_of(TIMED_EVERY)
+        } else {
+            frame.is_multiple_of(u64::from(TIMED_EVERY))
+        };
+        self.frame = Some(frame);
         self.drawings = self.drawings.wrapping_add(1);
         self.this = if timed {
             self.reads
