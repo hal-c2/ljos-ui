@@ -1005,14 +1005,15 @@ Feature: A web page in a WebEngineView
         property string seen: ""
         onLoadingChanged: info => { if (info.status === WebEngineView.LoadSucceededStatus)
           runJavaScript("window.marked", r => seen += (seen ? " " : "") + r) }
-        function show(name) {
-          url = Qt.resolvedUrl(name)
+        function show(name) { url = Qt.resolvedUrl(name) }
+        function mark() {
           userScripts.collection = [{ name: "mark", sourceCode: "window.marked = 'yes'",
             injectionPoint: WebEngineScript.DocumentCreation, worldId: WebEngineScript.MainWorld }]
         }
       }
       """
     When the method "show" of "view" is called with "page.html"
+    And the method "mark" of "view" is called
     And 2 seconds pass
     Then the log has no warning matching "before .* of its scripts reached the renderer"
     And the property "seen" of "view" is "yes"
