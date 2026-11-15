@@ -10,7 +10,9 @@ Feature: What a View3D shows behind its scene
   camera, so a view with no camera has no sky to show and the items under
   it show through. A sky box with no picture to show, a SkyBox with no
   lightProbe or a SkyBoxCubeMap with no skyBoxCubeMap, fills the view with
-  the clear colour instead.
+  the clear colour instead. A lightProbe that is set but has no picture,
+  because its file is missing or it has no source, draws no sky and is not
+  the clear colour either.
 
   # The probe is an ordinary picture of #808080, which the sky box shows as
   # #7a7a7a. The window is #202020; the view is the 100 by 100 square at 50,
@@ -133,3 +135,30 @@ Feature: What a View3D shows behind its scene
         | SkyBox        | through a camera | PerspectiveCamera { z: 300 } |
         | SkyBox        | with no camera   |                              |
         | SkyBoxCubeMap | through a camera | PerspectiveCamera { z: 300 } |
+
+    # Qt warns "Cannot open" for the missing file and draws no sky; the
+    # sky box is not the clear colour, so the window shows through.
+    Scenario Outline: A light probe with no picture yet, <probe>, is not the clear colour
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick3D
+        Rectangle {
+          width: 200; height: 200; color: "#202020"
+          View3D {
+            x: 50; y: 50; width: 100; height: 100
+            environment: SceneEnvironment {
+              backgroundMode: SceneEnvironment.SkyBox; clearColor: "#ff0000"
+              lightProbe: <texture>
+            }
+            PerspectiveCamera { z: 300 }
+          }
+        }
+        """
+      Then the pixel at 100, 100 of the window is within 2 of "#202020"
+      And the pixel at 55, 55 of the window is within 2 of "#202020"
+
+      Examples:
+        | probe                    | texture                           |
+        | a file that is missing   | Texture { source: "missing.png" } |
+        | a texture with no source | Texture {}                        |

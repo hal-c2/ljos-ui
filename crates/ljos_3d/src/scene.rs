@@ -907,8 +907,8 @@ pub enum Background {
     Transparent,
     Color(Color),
     /// The light probe, around the scene, seen through the camera: a view
-    /// with no camera shows none. A sky box with no probe is built as the
-    /// clear colour.
+    /// with no camera shows none, and neither does a probe with no picture
+    /// yet. A sky box with no lightProbe set is built as the clear colour.
     SkyBox,
 }
 
