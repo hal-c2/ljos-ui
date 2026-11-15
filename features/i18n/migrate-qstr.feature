@@ -86,6 +86,24 @@ Feature: ljos migrate writes qsTr as a tagged template
     And the author runs "ljos render app --out lowered.png --settle 0 --compat lower"
     Then the pictures "kept.png" and "lowered.png" have the same pixels
 
+  Scenario Outline: A count not known to be a whole number keeps its file
+    Qt shows the count truncated, and a template shows it as it is.
+    Given the file "Main.qml":
+      """qml
+      import QtQuick
+      Item {
+        property <type> count: 2
+        property string files: qsTr("%n file(s)", "", count)
+      }
+      """
+    When the author runs "ljos migrate ."
+    Then the command's output mentions "kept Main.qml:4:"
+
+    Examples:
+      | type |
+      | real |
+      | var  |
+
   Scenario: Values reordered with a call in them keep their file
     A template works out its values left to right, Qt's `.arg` in call order.
     Given the file "Main.qml":
