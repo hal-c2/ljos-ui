@@ -576,8 +576,10 @@ mod tests {
             f(self.pixels.lock().unwrap().as_deref().unwrap_or_default());
         }
         fn uploaded(&self) {
-            self.let_go.fetch_add(1, Ordering::Relaxed);
+            // Counted once they are gone, so a test that saw the count
+            // sees them gone.
             *self.pixels.lock().unwrap() = None;
+            self.let_go.fetch_add(1, Ordering::Release);
         }
     }
 
@@ -618,7 +620,7 @@ mod tests {
     fn let_go_soon(w: &Wrapper) -> bool {
         let until = std::time::Instant::now() + std::time::Duration::from_secs(10);
         while std::time::Instant::now() < until {
-            if w.let_go.load(Ordering::Relaxed) > 0 {
+            if w.let_go.load(Ordering::Acquire) > 0 {
                 return true;
             }
             std::thread::sleep(std::time::Duration::from_millis(20));
