@@ -236,10 +236,36 @@ impl Engine {
             return;
         }
         // Out for a read: it is not to be put back.
-        for (o, p, gone) in self.inner.kept_in_hand.borrow_mut().iter_mut() {
+        for (o, p, _, gone) in self.inner.kept_in_hand.borrow_mut().iter_mut() {
             if (*o, *p) == (obj, prop) {
                 *gone = true;
             }
+        }
+    }
+
+    /// Whether `keep` is the keeper of `prop` ([`Engine::keep_on_read`]),
+    /// out for a read or not. A keeper that was told [`Kept::Given`] is not,
+    /// and another may keep the property since: an animation started on it.
+    pub fn is_kept_by(&self, obj: ObjectId, prop: PropIndex, keep: KeepOnRead) -> bool {
+        let (obj, prop) = self.redirect(obj, prop);
+        if self
+            .keeper(obj, prop)
+            .is_some_and(|k| std::ptr::fn_addr_eq(k, keep))
+        {
+            return true;
+        }
+        self.inner
+            .kept_in_hand
+            .borrow()
+            .iter()
+            .any(|&(o, p, k, gone)| (o, p) == (obj, prop) && !gone && std::ptr::fn_addr_eq(k, keep))
+    }
+
+    /// [`Engine::stop_keeping`] if `keep` is the keeper of `prop`, and
+    /// nothing if another keeps it ([`Engine::is_kept_by`]).
+    pub fn stop_keeping_by(&self, obj: ObjectId, prop: PropIndex, keep: KeepOnRead) {
+        if self.is_kept_by(obj, prop, keep) {
+            self.stop_keeping(obj, prop);
         }
     }
 
@@ -518,14 +544,14 @@ impl Engine {
                 self.inner
                     .kept_in_hand
                     .borrow_mut()
-                    .push((obj, prop, false));
+                    .push((obj, prop, keep, false));
                 self.untrack(|| keep(self, obj, prop, Kept::Read));
                 let gone = self
                     .inner
                     .kept_in_hand
                     .borrow_mut()
                     .pop()
-                    .is_some_and(|(_, _, gone)| gone);
+                    .is_some_and(|(_, _, _, gone)| gone);
                 if gone {
                     return;
                 }

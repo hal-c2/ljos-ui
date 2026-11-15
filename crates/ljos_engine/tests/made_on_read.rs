@@ -208,3 +208,69 @@ fn a_binding_worked_out_again_reads_a_value_made_on_read_anew() {
     // A property with no binding has nothing to work out.
     assert!(!h.engine.work_out_again(item, index(&h, item, "alone")));
 }
+
+thread_local! {
+    static AGAIN: Cell<Option<(ObjectId, PropIndex)>> = const { Cell::new(None) };
+    static ANSWERS: std::cell::RefCell<Vec<bool>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Asks, in the middle of the read, that the binding in `AGAIN` be worked
+/// out again, and notes the answer.
+fn asks_again(e: &Engine, _: ObjectId, _: PropIndex) -> Value {
+    if let Some((o, p)) = AGAIN.with(Cell::get) {
+        ANSWERS.with(|a| a.borrow_mut().push(e.work_out_again(o, p)));
+    }
+    Value::Real(1.0)
+}
+
+const READ_IN_A_RUN: &str = "import QtQuick\nItem {\n  property real t: 0\n  property real u: 0\n  property real a: t * 2\n  property real c: a + u\n}";
+
+#[test]
+fn a_binding_that_is_running_is_not_worked_out_again() {
+    let h = engine();
+    let item = h.load(READ_IN_A_RUN);
+    let (t, a) = (index(&h, item, "t"), index(&h, item, "a"));
+    AGAIN.with(|g| g.set(Some((item, a))));
+    ANSWERS.with(|x| x.borrow_mut().clear());
+    // `a` reads `t` as it runs: its maker asks for `a` again.
+    h.engine.make_on_read_by(item, t, asks_again).unwrap();
+    assert_eq!(h.num(item, "a"), 2.0);
+    assert_eq!(ANSWERS.with(|x| x.take()), [false]);
+}
+
+#[test]
+fn a_binding_a_running_binding_has_read_is_not_worked_out_again() {
+    let h = engine();
+    let item = h.load(READ_IN_A_RUN);
+    let (u, a) = (index(&h, item, "u"), index(&h, item, "a"));
+    AGAIN.with(|g| g.set(Some((item, a))));
+    ANSWERS.with(|x| x.borrow_mut().clear());
+    // `c` has read `a` when it reads `u`: worked out again, `a` would
+    // come back to `c` as a loop.
+    h.engine.make_on_read_by(item, u, asks_again).unwrap();
+    assert_eq!(h.num(item, "c"), 1.0);
+    assert_eq!(ANSWERS.with(|x| x.take()), [false]);
+    // Once the run is over, it is.
+    assert!(h.engine.work_out_again(item, a));
+}
+
+/// A keeper that is not `keeping`.
+fn another(_: &Engine, _: ObjectId, _: PropIndex, _: Kept) {}
+
+#[test]
+fn a_keeper_lets_go_only_of_what_it_keeps_itself() {
+    let h = engine();
+    let (item, k) = kept(&h);
+    assert!(h.engine.is_kept_by(item, k, keeping));
+    assert!(!h.engine.is_kept_by(item, k, another));
+    // Given a value, it is no longer kept; another comes to keep it.
+    h.set(item, "k", Value::Real(3.0));
+    h.engine.keep_on_read(item, k, another).unwrap();
+    h.engine.stop_keeping_by(item, k, keeping);
+    assert!(
+        h.engine.is_kept_by(item, k, another),
+        "it stays the other's"
+    );
+    h.engine.stop_keeping_by(item, k, another);
+    assert!(!h.engine.is_made_on_read(item, k));
+}

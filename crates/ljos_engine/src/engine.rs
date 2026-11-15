@@ -38,6 +38,7 @@ use crate::cx::Cx;
 use crate::error::EngineError;
 use crate::ids::{ContextId, MethodIndex, ObjectId, PropIndex, PropKey};
 use crate::log::LogState;
+use crate::made_on_read::KeepOnRead;
 use crate::meta::{
     CompleteThunk, Declared, MetaObject, MetaRef, Prop, PropertyAccess, PropertyFlags, WriteFilter,
 };
@@ -97,7 +98,7 @@ pub(crate) struct Inner {
     /// The kept properties whose keeper is being told of a read, and
     /// whether it let go meanwhile ([`Engine::stop_keeping`]): its maker is
     /// out then, and is put back only if it did not.
-    pub(crate) kept_in_hand: RefCell<Vec<(ObjectId, PropIndex, bool)>>,
+    pub(crate) kept_in_hand: RefCell<Vec<(ObjectId, PropIndex, KeepOnRead, bool)>>,
     /// Depth of completion hooks on the stack.
     completing: Cell<u32>,
     pub(crate) log: RefCell<LogState>,
