@@ -61,12 +61,23 @@ impl Device3d {
         let find = |name: &str| {
             CString::new(name).map_or(std::ptr::null(), |name| lookup(name.as_c_str()))
         };
+        // Fences done at once. GL keeps the commands in order, and every
+        // read wgpu makes of a buffer (glMapBufferRange, glGetBufferSubData)
+        // waits for the writes before it, so a fence only tells wgpu when it
+        // may map or let go of what a submission used. Asking for one costs
+        // each submit a glFenceSync, and the next a glGetSynciv and a
+        // glDeleteSync: on radeonsi a quarter of a millisecond, two thirds of
+        // the submit of a spinning cube. Mapping before the GPU is done waits
+        // in GL instead, which only a timing read asks for, a drawing after
+        // the one it reads.
+        let options = wgpu::GlBackendOptions {
+            fence_behavior: wgpu::GlFenceBehavior::AutoFinish,
+            ..wgpu::GlBackendOptions::default()
+        };
         // SAFETY: the caller made the context current, and keeps it so for
         // everything the adapter makes.
-        let exposed = unsafe {
-            wgpu::hal::gles::Adapter::new_external(find, wgpu::GlBackendOptions::default())
-        }
-        .ok_or("wgpu cannot use the GL context (it needs GL 3.3 or GLES 3)")?;
+        let exposed = unsafe { wgpu::hal::gles::Adapter::new_external(find, options) }
+            .ok_or("wgpu cannot use the GL context (it needs GL 3.3 or GLES 3)")?;
         // No backend of its own: the adapter is the context's, and wgpu's
         // GL backend would start an EGL display of its own for nothing
         // (4.7 ms of the first frame on radeonsi).
@@ -562,6 +573,7 @@ mod tests {
                     continue;
                 }
             };
+            submissions_are_done_when_made(&h, &device);
             run_rounds(&h, &mut device);
             time_a_view(&h, &mut device);
             drop(device);
@@ -573,9 +585,49 @@ mod tests {
         }
     }
 
-    /// A view drawn frame after frame has its GPU time read back a frame or
-    /// two later, where the device could be asked to time it: the painter
-    /// never polls, and the readings come back with its submits.
+    /// A submission is done as soon as it is made, before the GPU has
+    /// drawn it: GL keeps the commands in order, and wgpu asks the driver
+    /// for no fence at each submit.
+    fn submissions_are_done_when_made(h: &Headless, device: &Device3d) {
+        let texture = device.device.create_texture(&wgpu::TextureDescriptor {
+            label: None,
+            size: wgpu::Extent3d {
+                width: 2048,
+                height: 2048,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let mut encoder = device
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        drop(encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &view,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::RED),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            ..wgpu::RenderPassDescriptor::default()
+        }));
+        device.queue.submit([encoder.finish()]);
+        let status = device.device.poll(wgpu::PollType::Poll).unwrap();
+        assert!(status.is_queue_empty(), "on {}: {status:?}", h.name);
+    }
+
+    /// A view drawn frame after frame has its first drawing's GPU time read
+    /// back two frames later, where the device could be asked to time it:
+    /// the painter never polls, and the readings come back with its
+    /// submits.
     fn time_a_view(h: &Headless, device: &mut Device3d) {
         let timed = device
             .device
