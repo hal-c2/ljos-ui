@@ -105,6 +105,8 @@ fn sample() -> CompiledFile {
                         comment: Some("files".into()),
                         plural: Some(3),
                         is_plural: true,
+                        id: None,
+                        placeholders: Vec::new(),
                     }),
                     span: span(81, 90),
                 },

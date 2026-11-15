@@ -29,7 +29,7 @@ pub mod color;
 /// Bumped whenever the serialised shape changes, or what the compiled
 /// functions ask of the engine, so a cache written by an older compiler is
 /// rebuilt instead of misread.
-pub const IR_VERSION: u32 = 14;
+pub const IR_VERSION: u32 = 15;
 
 macro_rules! index {
     ($(#[$doc:meta])* $name:ident) => {
@@ -667,16 +667,23 @@ pub struct EnumRef {
 pub struct Translatable {
     pub kind: TranslationKind,
     /// `qsTr`: the file's stem, or `pragma Translator`. `qsTranslate`: its
-    /// first argument. Empty for `qsTrId`.
+    /// first argument. Empty for `qsTrId`. A message's own context, or empty.
     pub context: String,
     /// The source text, or for `qsTrId` the id.
     pub source: String,
-    /// The disambiguation.
+    /// The disambiguation; a [`TranslationKind::Message`]'s comment for
+    /// its translators.
     pub comment: Option<String>,
     /// `n` of a plural form, when it is a literal.
     pub plural: Option<i64>,
     /// Whether the call has an `n` at all (it may be an expression).
     pub is_plural: bool,
+    /// A [`TranslationKind::Message`]'s explicit id: the catalogue key in
+    /// place of `source`.
+    pub id: Option<String>,
+    /// A [`TranslationKind::Message`]'s placeholders, in the order their
+    /// values are passed.
+    pub placeholders: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -688,6 +695,11 @@ pub enum TranslationKind {
     /// `QT_TR_NOOP` and friends: only marked for the catalogue; the value is
     /// the source text.
     NoOp,
+    /// `` t`…` ``, `plural`, `select`, `selectOrdinal`, `msg` of
+    /// `Ljos.Core`: `source` is an ICU message, `context` its context (`""`
+    /// for none), looked up in the catalogues' ICU messages, never among
+    /// `qsTr`'s.
+    Message,
 }
 
 /// The file's JavaScript: one ES module with a function per expression

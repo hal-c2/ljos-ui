@@ -351,6 +351,9 @@ pub enum Builtin {
     TrNoop,
     /// `QT_TRANSLATE_NOOP`: the second argument.
     TranslateNoop,
+    /// A `t` message the compiler read: `(message, context, key, names,
+    /// …values)`, `names` the values' names joined by commas.
+    Message,
     /// `String.prototype.arg`.
     Arg,
     /// `Number.prototype.toFixed`.
