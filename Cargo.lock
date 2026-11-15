@@ -4438,6 +4438,7 @@ dependencies = [
  "ljos_example_qtjennydemo",
  "ljos_folderlistmodel",
  "ljos_xml",
+ "serde_json",
 ]
 
 [[package]]
