@@ -133,6 +133,34 @@ Feature: A web page in a WebEngineView
     When 2 seconds pass
     Then the property "seen" of "view" is "hidden"
 
+  # CEF never readies storage it cannot set up, so a view stops waiting
+  # for it in the end. A view that waits no time stops at once, before CEF
+  # can have readied the storage. Its next page makes its browser again.
+  @ljos-only @api-QtWebEngine.WebEngineView.loadingChanged @api-QtWebEngine.WebEngineView.url
+  Scenario: A view whose new profile was not ready in time fails its first page and loads its next
+    Given a web view waits 0 seconds for a new profile's storage
+    And the QML:
+      """qml
+      import QtQuick
+      import QtWebEngine
+      WebEngineView {
+        objectName: "view"; width: 200; height: 100
+        property string seen: ""
+        profile: WebEngineProfile { storageName: "NotReady"; offTheRecord: false }
+        url: Qt.resolvedUrl("page.html")
+        onLoadingChanged: info => seen += (seen ? " " : "") + info.status + ":" + info.errorCode
+        function next() { url = Qt.resolvedUrl("second.html") }
+      }
+      """
+    When 1 second passes
+    Then the property "seen" of "view" is "0:0 3:-2"
+    And the log has a warning matching "cannot show .*page\.html: its profile's storage was not ready after 0 s"
+    When the wait for a new profile's storage changes to 10 seconds
+    And the method "next" of "view" is called
+    And 2 seconds pass
+    Then the property "seen" of "view" is "0:0 3:-2 0:0 2:200"
+    And the property "title" of "view" is "Second Page"
+
   # A browser made already would run it on its blank page, and hand back 1.
   @api-QtWebEngine.WebEngineView.runJavaScript
   Scenario: A script asked of a view while its new profile is made has no page to run in
