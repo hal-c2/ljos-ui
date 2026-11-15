@@ -309,16 +309,17 @@ static HOLD_PROFILES: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicB
 /// go. CEF readies storage with work it does not announce, at no moment a
 /// test can name; held, a view of the profile waits for as long as the
 /// test says, and is shown when the test says. A held profile is no work
-/// of the web engine's: a view waiting for it keeps nothing awake, and its
-/// wait ends at the next turn something else asks for once it is over.
+/// of the web engine's from when it is made, readied yet or not: a view
+/// waiting for it keeps nothing awake, and its wait does not run out until
+/// the profile is let go. A wait of no time still fails the page at once.
 /// Turning it off holds no later profile and lets none go.
 pub fn hold_new_profiles(hold: bool) {
     HOLD_PROFILES.store(hold, std::sync::atomic::Ordering::Relaxed);
 }
 
-/// Whether a profile made now is held.
-#[cfg(feature = "cef")]
-pub(crate) fn holding_profiles() -> bool {
+/// Whether a profile kept on disk made now is held (see
+/// [`hold_new_profiles`]).
+pub fn holding_profiles() -> bool {
     HOLD_PROFILES.load(std::sync::atomic::Ordering::Relaxed)
 }
 

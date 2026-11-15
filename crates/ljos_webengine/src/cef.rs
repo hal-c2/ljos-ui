@@ -316,13 +316,14 @@ fn unborn() -> bool {
                         continue;
                     };
                     match u.waiting {
-                        Some(w) if w.over(now) => {
+                        // A profile held unready is no work of the web
+                        // engine's, and its view's wait does not run out
+                        // until the test lets it go: CEF's own work can
+                        // keep the machine's clock running past any wait.
+                        Some(w) if w.over(now) && !u.held() => {
                             u.waiting = None;
                             late.push((shared.clone(), w.wait));
                         }
-                        // A profile held unready is no work of the web
-                        // engine's: its wait ends at the next turn
-                        // something else asks for.
                         Some(_) => waiting |= !u.held(),
                         None => {}
                     }
@@ -824,7 +825,8 @@ struct Profile {
 #[derive(Default)]
 struct Readiness {
     ready: bool,
-    /// Readied by CEF and held unready by [`crate::hold_new_profiles`].
+    /// Held unready by [`crate::hold_new_profiles`], from when the profile
+    /// is made until a test lets it go.
     held: bool,
     /// Views whose browser waits for the context.
     waiting: Vec<std::sync::Weak<Shared>>,
@@ -850,7 +852,6 @@ wrap_request_context_handler! {
             let mut readied = Shared::lock(&READIED);
             readied.storage.insert(self.name.clone());
             if self.held {
-                Shared::lock(&self.ready).held = true;
                 readied.held.push((self.name.clone(), self.ready.clone()));
                 return;
             }
@@ -963,7 +964,13 @@ fn context_for(
         accept_language_list: cef_string(&spec.accept_language),
         ..Default::default()
     };
-    let ready = Arc::new(Mutex::new(Readiness::default()));
+    // Held from the start, not from when CEF readies it: a view waiting
+    // for it is no work of the web engine's however late CEF is.
+    let held = crate::backend::holding_profiles() && !spec.off_the_record;
+    let ready = Arc::new(Mutex::new(Readiness {
+        held,
+        ..Readiness::default()
+    }));
     let journal = (!cache.is_empty()).then(|| Path::new(&cache).join(FORGET_FILE));
     let mut handler = ProfileReady::new(
         ready.clone(),
@@ -971,7 +978,7 @@ fn context_for(
         // Keyed as `g.contexts` is, so an off-the-record profile never
         // answers for the one on disk of its name.
         profile_key(spec),
-        crate::backend::holding_profiles() && !spec.off_the_record,
+        held,
     );
     let context = request_context_create_context(Some(&settings), Some(&mut handler))?;
     if let Some(journal) = journal {
@@ -3221,7 +3228,7 @@ fn begin(e: &Engine, shared: &Arc<Shared>, mut start: Start) -> Result<(), Strin
                 waiting: waiting_from(wait),
             });
             // Still made once the profile is ready, for its next page.
-            wait_for_profile(&shared, wait);
+            wait_for_profile(shared, wait);
         }
         profile => make_browser(shared, &start, profile.map(|(c, _)| c))?,
     }
