@@ -36,7 +36,9 @@ QtObject {
     Component.onCompleted: {
         const args = Qt.application.arguments;
         const dashes = args.indexOf("--");
-        const component = Qt.createComponent("file://" + args[dashes + 1]);
+        // `#` and `?` in a path would start a fragment or a query.
+        const path = encodeURI(args[dashes + 1]).replace(/#/g, "%23").replace(/\?/g, "%3F");
+        const component = Qt.createComponent("file://" + path);
         if (component.status !== Component.Ready) {
             console.log("renderstats-error " + component.errorString());
             Qt.exit(2);
@@ -54,7 +56,13 @@ QtObject {
                 Qt.exit(2);
                 return;
             }
-            scene[call]();
+            try {
+                scene[call]();
+            } catch (e) {
+                console.log("renderstats-error " + call + "() threw " + e);
+                Qt.exit(2);
+                return;
+            }
         }
         // A view the calls made (a Loader's) is there now; one made later is not counted.
         find(scene.contentItem !== undefined ? scene.contentItem : scene);
