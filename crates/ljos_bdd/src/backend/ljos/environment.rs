@@ -10,6 +10,10 @@ use super::{
 };
 use crate::backend::{Environment, Result};
 
+/// How long [`Environment::profile_ready`] waits for the web engine: the
+/// longest a view waits for a new profile unless a scenario says otherwise.
+const PROFILE_READY_WAIT: Duration = ljos_webengine::PROFILE_WAIT;
+
 impl Environment for LjosBackend {
     fn system_fonts(&mut self) -> Result<()> {
         if self.live.is_some() {
@@ -68,6 +72,35 @@ impl Environment for LjosBackend {
         // scenario.
         ljos_webengine::set_profile_wait(Some(wait));
         Ok(())
+    }
+
+    fn hold_new_profiles(&mut self) -> Result<()> {
+        // Every profile of the process: the runner stops holding before
+        // each scenario.
+        ljos_webengine::hold_new_profiles(true);
+        Ok(())
+    }
+
+    fn profile_ready(&mut self, storage_name: &str) -> Result<()> {
+        let since = std::time::Instant::now();
+        // CEF readies storage on the Engine thread, in the work the view's
+        // wait keeps asking for, which a finish waits for.
+        while !ljos_webengine::profile_readied(storage_name) {
+            if since.elapsed() >= PROFILE_READY_WAIT {
+                return Err(failed(format!(
+                    "the web engine had not readied the storage of profile {storage_name:?} after {} s{}",
+                    PROFILE_READY_WAIT.as_secs(),
+                    ljos_webengine::unavailable()
+                        .map(|why| format!(": {why}"))
+                        .unwrap_or_default()
+                )));
+            }
+            self.live()?.drive(|d| d.finish_promised())?;
+            // Nothing promised (a view that no longer waits) returns at once.
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        ljos_webengine::let_profile_go(storage_name);
+        self.live()?.settle()
     }
 
     fn js_clock_stalled(&mut self, stall: Duration) -> Result<()> {

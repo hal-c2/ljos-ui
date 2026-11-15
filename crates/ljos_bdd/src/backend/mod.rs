@@ -683,6 +683,23 @@ pub trait Environment: Backend {
         ))
     }
 
+    /// A profile kept on disk made from now on stays unready once the web
+    /// engine has readied its storage, until [`Environment::profile_ready`]
+    /// lets it go, or the scenario ends.
+    fn hold_new_profiles(&mut self) -> Result<()> {
+        Err(BackendError::NotImplemented(
+            "a new profile held unready by the scenario",
+        ))
+    }
+
+    /// Waits until the web engine has readied the storage of the profile
+    /// named `storage_name`, and lets it go if it is held.
+    fn profile_ready(&mut self, _storage_name: &str) -> Result<()> {
+        Err(BackendError::NotImplemented(
+            "waiting for a new profile's storage to be ready",
+        ))
+    }
+
     /// The application replaces the engine's log handler with one that
     /// keeps nothing.
     fn own_log_handler(&mut self) -> Result<()> {
