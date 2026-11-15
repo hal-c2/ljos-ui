@@ -1471,7 +1471,11 @@ translated text.
   the plan to keep `qsTr`): `` t`${n} minutes ago` `` is the message
   `{n} minutes ago` in the catalogue. A value is a placeholder named
   after it when it is a bare name, and numbered (`{0}`, `{1}`) otherwise,
-  so a translator sees each value and can move it. Counts and choices are
+  so a translator sees each value and can move it. Text written in the
+  template is text: the lowering quotes ICU's `{`, `}` and `'` the way
+  ICU does (`` t`Use {braces}` `` is `Use '{braces}'` in the catalogue)
+  and shows `Use {braces}`; in a form of `plural`, `#` is the count and
+  `'#'` a hash. Counts and choices are
   `plural(n, { one: "# file", other: "# files" })`,
   `select(role, { admin: "…", other: "…" })` and
   `selectOrdinal(n, { one: "#st", … })`, which are ICU MessageFormat's
@@ -1508,9 +1512,12 @@ key is its context and its text, or its id.
 - `qsTr("Open")` → `` t`Open` ``; `qsTr("%1 of %2").arg(a).arg(b)` →
   `` t`${a} of ${b}` ``. Each `.arg` of one argument fills the
   lowest-numbered `%N` still left, as Qt's does, wherever that `%N`
-  stands: `qsTr("%2 of %1").arg(a).arg(b)` → `` t`${b} of ${a}` ``. Any
-  other `.arg` (two arguments, a field width, a number format) keeps the
-  file.
+  stands: `qsTr("%2 of %1").arg(a).arg(b)` → `` t`${b} of ${a}` ``. A
+  template works its values out left to right and Qt's `.arg` calls in
+  call order, so where the order changes each value must be a name, a
+  member of one or a literal, which give the same either way; anything
+  else (`.arg(next())`) keeps the file. Any other `.arg` (two arguments,
+  a field width, a number format) keeps the file too.
 - `qsTr("%n file(s)", "", n)` → `` plural(n, { other: `${n} file(s)` }) ``,
   and `%Ln` → `#`. Qt's `%n` is the count without grouping and `%Ln` the
   count as the locale writes it; in a form, `{n}` is `String(n)` and `#`
@@ -1522,9 +1529,12 @@ key is its context and its text, or its id.
   made when the count is an `int`, and otherwise keeps the file.
 - `qsTr(text, "disambiguation")` → `t({ message: "text", context:
   "disambiguation" })`; `qsTranslate("Ctx", "x")` → `t({ message: "x",
-  context: "Ctx" })`; `qsTrId("id")` → `t({ id: "id" })`;
-  `QT_TR_NOOP("x")` → `` msg`x` ``. `qsTr` of a value that is not written
-  out keeps the file.
+  context: "Ctx" })`; `qsTrId("id")` → `t({ id: "id" })`.
+  `qsTr` of a value that is not written out keeps the file, and so does
+  `QT_TR_NOOP` and its family: its value is a string to Qt, used where
+  migrate cannot follow it (shown, compared, passed to `qsTr`), and
+  `` msg`x` `` is a message descriptor, not a string, so the two cannot
+  stand for each other.
 - `ljos migrate --catalogue app_is.ts` writes the `.ts` catalogue's
   translations as `is.po` with the same rewrite, so a migrated file keeps
   them. A `.ts` message's key has a context Qt adds itself, the file's

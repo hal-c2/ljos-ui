@@ -108,6 +108,18 @@ Feature: Messages: translated text written as a tagged template
 
   Rule: Values are placeholders named after them
 
+    Scenario: Braces written in the text are text
+      Given the QML:
+        """qml
+        import Ljos.Ui
+        import Ljos.Core
+        Item {
+          objectName: "root"
+          property string shown: t`Use {braces}`
+        }
+        """
+      Then the property "shown" of "root" is "Use {braces}"
+
     Scenario: A value is shown where the translation puts it, and again when it changes
       Given the QML:
         """qml

@@ -46,7 +46,7 @@ Feature: ljos migrate writes qsTr as a tagged template
       }
       """
 
-  Scenario: Contexts, ids and marked texts keep what they say
+  Scenario: Contexts and ids keep what they say
     Given the file "Main.qml":
       """qml
       import QtQuick
@@ -54,7 +54,6 @@ Feature: ljos migrate writes qsTr as a tagged template
         property string a: qsTr("Open", "menu")
         property string b: qsTranslate("Dialog", "Close")
         property string c: qsTrId("nav.home")
-        property var d: QT_TR_NOOP("Later")
       }
       """
     When the author runs "ljos migrate --write ."
@@ -66,7 +65,6 @@ Feature: ljos migrate writes qsTr as a tagged template
         property string a: t({ message: "Open", context: "menu" })
         property string b: t({ message: "Close", context: "Dialog" })
         property string c: t({ id: "nav.home" })
-        property var d: msg`Later`
       }
       """
 
@@ -87,6 +85,31 @@ Feature: ljos migrate writes qsTr as a tagged template
     When the author runs "ljos render app --out kept.png --settle 0 --compat keep"
     And the author runs "ljos render app --out lowered.png --settle 0 --compat lower"
     Then the pictures "kept.png" and "lowered.png" have the same pixels
+
+  Scenario: Values reordered with a call in them keep their file
+    A template works out its values left to right, Qt's `.arg` in call order.
+    Given the file "Main.qml":
+      """qml
+      import QtQuick
+      Item {
+        property int n: 0
+        function next() { n += 1; return n }
+        property string shown: qsTr("%2 of %1").arg(next()).arg(next())
+      }
+      """
+    When the author runs "ljos migrate ."
+    Then the command's output mentions "kept Main.qml:5:"
+
+  Scenario: A text marked for later keeps its file
+    Given the file "Main.qml":
+      """qml
+      import QtQuick
+      Item {
+        property string later: QT_TR_NOOP("Later")
+      }
+      """
+    When the author runs "ljos migrate ."
+    Then the command's output mentions "kept Main.qml:3:"
 
   Scenario: qsTr of a text that is not written out keeps its file
     Given the file "Main.qml":
