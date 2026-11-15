@@ -540,6 +540,22 @@ mod tests {
     }
 
     #[test]
+    fn a_connection_that_sends_nothing_is_let_go_while_the_server_runs() {
+        let server = WebServer::start().unwrap();
+        let silent = TcpStream::connect(("127.0.0.1", server.port)).unwrap();
+        silent
+            .set_read_timeout(Some(std::time::Duration::from_secs(10)))
+            .unwrap();
+        let mut rest = Vec::new();
+        let read = (&silent).read_to_end(&mut rest);
+        assert!(
+            matches!(read, Ok(0)),
+            "the silent connection was not let go: {read:?} {rest:?}"
+        );
+        drop(server);
+    }
+
+    #[test]
     fn a_streamed_body_ends_without_another_request() {
         let server = WebServer::start().unwrap();
         server.stream_bytes("a.mp4", 1);

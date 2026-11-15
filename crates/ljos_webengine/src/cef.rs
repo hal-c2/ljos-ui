@@ -3653,6 +3653,11 @@ impl Page for CefPage {
     }
 
     fn set_scripts(&self, scripts: &[Script]) {
+        // A popup being adopted gets its start's scripts once made.
+        if let Some((start, _)) = Shared::lock(&self.shared.adopting).as_mut() {
+            start.scripts = scripts.to_vec();
+            return;
+        }
         if let Some(u) = Shared::lock(&self.shared.unborn).as_mut() {
             u.start.scripts = scripts.to_vec();
             return;
