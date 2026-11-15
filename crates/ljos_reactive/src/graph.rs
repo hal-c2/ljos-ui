@@ -2271,9 +2271,9 @@ impl<V: Clone + 'static> Graph<V> {
     /// marking or running anything: what [`Graph::write_animated`] would
     /// leave behind when no edge leads out of `n`, for a read in the middle
     /// of another node's run. Only for a property with no observer,
-    /// binding, override or hold, while nothing is journaled; otherwise this
-    /// returns `false`, nothing is changed, and the caller writes the usual
-    /// way.
+    /// binding, override, hold or note handler, that no run still going has
+    /// read, while nothing is journaled; otherwise this returns `false`,
+    /// nothing is changed, and the caller writes the usual way.
     pub fn give_animated_quietly(&self, n: NodeId, v: V) -> Result<bool, ReactiveError> {
         let old = {
             let mut g = self.inner.borrow_mut();
@@ -2282,10 +2282,19 @@ impl<V: Clone + 'static> Graph<V> {
                 return Ok(false);
             }
             let node = i.nodes.get_mut(n).ok_or(ReactiveError::DeadNode(n))?;
+            // A run still going that read `n` has no edge to it until it
+            // finishes; it would keep the old value with no mark to run
+            // again (`mark_observers` sends it one).
+            let read_by_a_run = node.read_stamp != 0
+                && i.frames
+                    .iter()
+                    .any(|f| f.stamp == node.read_stamp && f.node.is_some_and(|r| r != n));
             let Kind::Property(p) = &mut node.kind else {
                 return Err(ReactiveError::NotAProperty(n));
             };
             let quiet = node.observers.is_empty()
+                && !read_by_a_run
+                && !node.flags.has(Flags::NOTED)
                 && p.overrides.is_empty()
                 && !p.is_bound()
                 && node.state == NodeState::Clean
