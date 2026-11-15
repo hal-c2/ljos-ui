@@ -288,6 +288,15 @@ pub(crate) fn item_at(e: &Engine, obj: ObjectId, uv: [f32; 2]) -> Option<(Object
     })
 }
 
+/// A file's picture, let go if no view draws it: a scene holds what the
+/// states it is not in show, and what its emitters show before they emit.
+/// A view that draws it later reads the file again.
+fn unless_drawn(image: ImageHandle) -> TextureImage {
+    let image = TextureImage::new(ImagePixels(image));
+    image.let_go_unless_drawn();
+    image
+}
+
 /// The picture at `url`, read the first time a view asks for it.
 fn image(e: &Engine, view: ObjectId, obj: ObjectId, url: &str) -> Option<TextureImage> {
     if url.is_empty() {
@@ -324,7 +333,7 @@ fn image(e: &Engine, view: ObjectId, obj: ObjectId, url: &str) -> Option<Texture
     // A small local picture is there for the first frame, as an Image's.
     let now = item::texture_now(e, url);
     let state = match now {
-        Some(Ok(image)) => State::Ready(TextureImage::new(ImagePixels(image))),
+        Some(Ok(image)) => State::Ready(unless_drawn(image)),
         Some(Err(ref err)) => {
             e.warn(format!("QtQuick3D Texture: {url}: {err}"));
             State::Failed
@@ -344,7 +353,7 @@ fn image(e: &Engine, view: ObjectId, obj: ObjectId, url: &str) -> Option<Texture
     item::load_texture(e, url, move |e, result| {
         let failed = result.as_ref().err().map(ToString::to_string);
         let state = match result {
-            Ok(image) => State::Ready(TextureImage::new(ImagePixels(image))),
+            Ok(image) => State::Ready(unless_drawn(image)),
             Err(_) => State::Failed,
         };
         let views = e
