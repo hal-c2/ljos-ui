@@ -99,6 +99,10 @@ name = "frame_counts"
 required-features = ["gpu"]
 
 [[test]]
+name = "kept_passes"
+required-features = ["gpu", "snippets"]
+
+[[test]]
 name = "instance_rows"
 required-features = ["gpu"]
 

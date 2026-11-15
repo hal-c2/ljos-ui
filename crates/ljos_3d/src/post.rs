@@ -222,10 +222,33 @@ struct Pooled {
 }
 
 /// A target's pictures between the passes, kept while their size and
-/// format stay.
+/// format stay, and what its passes bound.
 #[derive(Default)]
 pub(crate) struct Buffers {
     pool: HashMap<u32, Pooled>,
+    /// The last run's passes in the order they ran. A run whose passes
+    /// bind what the last one's did (any frame of a scene whose effects
+    /// stay) makes no buffer or group, and writes only uniforms that
+    /// changed.
+    passes: Vec<Kept>,
+    /// How many of `passes` this run has come to.
+    used: usize,
+}
+
+/// What a pass of the chain binds besides its uniforms. Equal when they
+/// are the same objects.
+#[derive(Clone, PartialEq)]
+pub(crate) enum Bind {
+    Layout(wgpu::BindGroupLayout),
+    View(wgpu::TextureView),
+    Sampler(wgpu::Sampler),
+}
+
+struct Kept {
+    binds: Vec<Bind>,
+    buffer: wgpu::Buffer,
+    group: wgpu::BindGroup,
+    written: Vec<u8>,
 }
 
 impl Buffers {
@@ -251,6 +274,56 @@ impl Buffers {
     /// not need.
     pub(crate) fn clear(&mut self) {
         self.pool.clear();
+        self.passes.clear();
+        self.used = 0;
+    }
+
+    /// The group of the run's next pass, which binds `binds` and a uniform
+    /// block of `bytes`. The last run's pass in this place is kept while it
+    /// binds the same, its block written again only when the bytes
+    /// differ; otherwise `make` makes a group for a new block.
+    fn group(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        binds: &[Bind],
+        bytes: &[u8],
+        make: impl FnOnce(&wgpu::Buffer) -> wgpu::BindGroup,
+    ) -> wgpu::BindGroup {
+        let at = self.used;
+        self.used += 1;
+        if let Some(kept) = self.passes.get_mut(at)
+            && kept.binds == binds
+            && kept.written.len() == bytes.len()
+        {
+            if kept.written != bytes {
+                crate::counted::write_buffer(queue, &kept.buffer, 0, bytes);
+                kept.written.copy_from_slice(bytes);
+            }
+            return kept.group.clone();
+        }
+        let buffer = crate::counted::create_buffer_init(
+            device,
+            &wgpu::util::BufferInitDescriptor {
+                label: Some("ljos_3d post"),
+                contents: bytes,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            },
+        );
+        let group = make(&buffer);
+        let kept = Kept {
+            binds: binds.to_vec(),
+            buffer,
+            group: group.clone(),
+            written: bytes.to_vec(),
+        };
+        // Runs use the passes in order, so `at` is at most their count.
+        if at < self.passes.len() {
+            self.passes[at] = kept;
+        } else {
+            self.passes.push(kept);
+        }
+        group
     }
 }
 
@@ -516,50 +589,61 @@ impl<'a> Chain<'a> {
     ) {
         let mut u = *base;
         u.texel = [1.0 / texel[0] as f32, 1.0 / texel[1] as f32, dir[0], dir[1]];
-        let buffer = crate::counted::create_buffer_init(
-            self.device,
-            &wgpu::util::BufferInitDescriptor {
-                label: Some("ljos_3d post"),
-                contents: bytemuck::bytes_of(&u),
-                usage: wgpu::BufferUsages::UNIFORM,
-            },
-        );
         let none = self.none();
-        let group = crate::counted::create_bind_group(
-            self.device,
-            &wgpu::BindGroupDescriptor {
-                label: Some("ljos_3d post"),
-                layout: &self.pipes.layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: buffer.as_entire_binding(),
+        let [b, depth, c, d] = [p.b, depth, c, d].map(|v| v.unwrap_or(&none));
+        let binds = [
+            Bind::Layout(self.pipes.layout.clone()),
+            Bind::View(p.a.clone()),
+            Bind::View(b.clone()),
+            Bind::View(depth.clone()),
+            Bind::Sampler(self.pipes.sampler.clone()),
+            Bind::View(c.clone()),
+            Bind::View(d.clone()),
+        ];
+        let (device, pipes) = (self.device, &*self.pipes);
+        let group = self.buffers.group(
+            device,
+            self.queue,
+            &binds,
+            bytemuck::bytes_of(&u),
+            |buffer| {
+                crate::counted::create_bind_group(
+                    device,
+                    &wgpu::BindGroupDescriptor {
+                        label: Some("ljos_3d post"),
+                        layout: &pipes.layout,
+                        entries: &[
+                            wgpu::BindGroupEntry {
+                                binding: 0,
+                                resource: buffer.as_entire_binding(),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 1,
+                                resource: wgpu::BindingResource::TextureView(p.a),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 2,
+                                resource: wgpu::BindingResource::TextureView(b),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 3,
+                                resource: wgpu::BindingResource::TextureView(depth),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 4,
+                                resource: wgpu::BindingResource::Sampler(&pipes.sampler),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 5,
+                                resource: wgpu::BindingResource::TextureView(c),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 6,
+                                resource: wgpu::BindingResource::TextureView(d),
+                            },
+                        ],
                     },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::TextureView(p.a),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: wgpu::BindingResource::TextureView(p.b.unwrap_or(&none)),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 3,
-                        resource: wgpu::BindingResource::TextureView(depth.unwrap_or(&none)),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 4,
-                        resource: wgpu::BindingResource::Sampler(&self.pipes.sampler),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 5,
-                        resource: wgpu::BindingResource::TextureView(c.unwrap_or(&none)),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 6,
-                        resource: wgpu::BindingResource::TextureView(d.unwrap_or(&none)),
-                    },
-                ],
+                )
             },
         );
         let timestamp_writes = self.stamp(p.last);
@@ -592,6 +676,7 @@ impl<'a> Chain<'a> {
 
     /// Runs the chain from the scene drawn into [`SCENE`].
     pub(crate) fn run(mut self) {
+        self.buffers.used = 0;
         let size = self.size;
         let base = self.uniform();
         let env = self.environment;
@@ -716,6 +801,9 @@ impl<'a> Chain<'a> {
         }
 
         self.finish(&base, &env.post, current);
+        // A pass the scene no longer has lets go of what it bound.
+        let used = self.buffers.used;
+        self.buffers.passes.truncate(used);
     }
 
     fn glow(&mut self, base: &PostUniform, levels: u32, current: u32, out: u32) {
@@ -1150,19 +1238,18 @@ impl<'a> Chain<'a> {
                 ],
             };
             let bytes = programs::block(program, &header, &pass.values);
-            let buffer = crate::counted::create_buffer_init(
-                device,
-                &wgpu::util::BufferInitDescriptor {
-                    label: Some("ljos_3d effect"),
-                    contents: &bytes,
-                    usage: wgpu::BufferUsages::UNIFORM,
-                },
-            );
             // Made first, as the group is made from the program's layout.
             self.programs.effect_pipeline(device, program, format);
-            let group = self
-                .programs
-                .group(device, program, &buffer, &textures, depth, None);
+            let mut binds = vec![Bind::Layout(self.programs.layout(program).clone())];
+            for (view, sampler) in &textures {
+                binds.push(Bind::View(view.clone()));
+                binds.push(Bind::Sampler(sampler.clone()));
+            }
+            binds.extend(depth.map(|d| Bind::View(d.clone())));
+            let programs = &*self.programs;
+            let group = self.buffers.group(device, queue, &binds, &bytes, |buffer| {
+                programs.group(device, program, buffer, &textures, depth, None)
+            });
             // The final pass comes after every effect, so none ends the time.
             let timestamp_writes = self.stamp(false);
             let pipeline = self.programs.effect_pipeline(device, program, format);
