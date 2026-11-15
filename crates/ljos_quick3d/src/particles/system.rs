@@ -12,7 +12,7 @@ use ljos::item::ljos_3d::particles::{
     burst as emit_burst, hidden_in, keep_up, look as seen_at, reset_state, run_emitter, run_trail,
 };
 use ljos::item::{FrameAnimation, frame_time_due, frames_only_while};
-use ljos::ljos_engine::{Prop, WriteKind};
+use ljos::ljos_engine::{Kept, Prop, WriteKind};
 use ljos::prelude::*;
 
 use super::affectors;
@@ -133,6 +133,10 @@ pub struct ParticleSystem3D {
     /// The chance it was given, for when it is told to use it.
     #[qml(skip)]
     chance: u32,
+    /// The bindings that read its time while nothing shows what they
+    /// read: each is worked out again when it is read, not on each frame.
+    #[qml(skip)]
+    quiet: Vec<(ObjectId, PropIndex)>,
 }
 
 impl Default for ParticleSystem3D {
@@ -155,6 +159,7 @@ impl Default for ParticleSystem3D {
             declared: None,
             timed: false,
             chance: 0,
+            quiet: Vec::new(),
         }
     }
 }
@@ -176,11 +181,9 @@ impl ParticleSystem3D {
         e.set_internal(me, ParticleSystem3D::LOGGING_DATA, Some(log))?;
         let clock = e.create_native(FrameAnimation::default(), Some(me))?;
         // Its time is read by its step while it is shown, or by whatever
-        // else reads it. Hidden and read by nobody, the clock rides along
-        // with the frames others ask for and asks for none.
-        frames_only_while(e, clock, move |e| {
-            e.is_observed(me, ParticleSystem3D::TIME.index)
-        });
+        // else reads it. Hidden and read by nobody that shows it, the clock
+        // rides along with the frames others ask for and asks for none.
+        frames_only_while(e, clock, move |e| seen(e, me));
         cx.with_mut(|s: &mut ParticleSystem3D| {
             s.clock = Some(clock);
             s.declared = Some(declared);
@@ -212,6 +215,11 @@ impl ParticleSystem3D {
                 // last one: that time is the system's before the clock stops.
                 if !(running && !paused) {
                     bank(e, me, clock);
+                    // Its time stays as it is: what reads it is up to date.
+                    let held = e
+                        .with(me, |s: &ParticleSystem3D| s.quiet.clone())
+                        .unwrap_or_default();
+                    let_go(e, me, &held);
                 }
                 // A write of `paused` above comes back here with it false.
                 let _ = e.write(
@@ -239,8 +247,74 @@ fn tick(e: &Engine, me: ObjectId) {
         return;
     };
     let _ = e.set_internal(me, ParticleSystem3D::TIME, gone.floor() as i32);
-    if !e.is_observed(me, ParticleSystem3D::TIME.index) {
+    if !seen(e, me) {
         let _ = e.make_on_read_by(me, ParticleSystem3D::TIME.index, made_time);
+    }
+}
+
+/// Whether what reads its time shows it: an effect, a handler, a watch or
+/// a binding the scene or an effect follows. Bindings that only bindings
+/// read, which nothing shows (an affector's `duration` from the time of a
+/// hidden system), are not: they are worked out again when they are read
+/// (`follow_time`), and the time is made then.
+fn seen(e: &Engine, me: ObjectId) -> bool {
+    let time = ParticleSystem3D::TIME.index;
+    let held = e
+        .with(me, |s: &ParticleSystem3D| s.quiet.clone())
+        .unwrap_or_default();
+    let Some(chain) = e.lazy_readers(me, time) else {
+        let_go(e, me, &held);
+        return true;
+    };
+    // Another's to make on read (a resting animation's), it cannot be kept
+    // here as well.
+    if chain
+        .iter()
+        .any(|&(o, p)| !held.contains(&(o, p)) && e.is_made_on_read(o, p))
+    {
+        let_go(e, me, &held);
+        return true;
+    }
+    for &(o, p) in &held {
+        if !chain.contains(&(o, p)) {
+            e.stop_keeping(o, p);
+        }
+    }
+    for &(o, p) in &chain {
+        // Kept still, or given a value or a binding since (told `Given`).
+        if !held.contains(&(o, p)) || !e.is_made_on_read(o, p) {
+            let _ = e.keep_on_read(o, p, follow_time);
+        }
+    }
+    if held != chain {
+        let _ = e.with_mut(me, |s: &mut ParticleSystem3D| s.quiet = chain);
+    }
+    false
+}
+
+/// Lets go of the bindings it kept (`seen`): they follow the time as it is
+/// written from now on.
+fn let_go(e: &Engine, me: ObjectId, held: &[(ObjectId, PropIndex)]) {
+    if held.is_empty() {
+        return;
+    }
+    for &(o, p) in held {
+        e.stop_keeping(o, p);
+    }
+    let _ = e.with_mut(me, |s: &mut ParticleSystem3D| s.quiet.clear());
+}
+
+/// Keeps a binding that reads the time of a system nobody sees (`seen`).
+/// Read, it is worked out again, and reads the time as it is made then.
+/// Something that comes to observe it may show it: the frame that wakes
+/// asks the system again whether its time is seen.
+fn follow_time(e: &Engine, obj: ObjectId, prop: PropIndex, kept: Kept) {
+    match kept {
+        Kept::Read => {
+            e.work_out_again(obj, prop);
+        }
+        Kept::Observed => e.request_wake(),
+        Kept::Given => {}
     }
 }
 
