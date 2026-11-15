@@ -29,20 +29,17 @@ Feature: An animation nobody watches
         NumberAnimation {
           id: spin; objectName: "spin"; target: spin; property: "phase"
           property real phase: 0
-          from: 0; to: 360; duration: 1000; loops: Animation.Infinite
-        }
+          from: 0; to: 360; duration: 1000; loops: Animation.Infinite }
         NumberAnimation {
           id: once; objectName: "once"; target: once; property: "phase"
           property real phase: 0
           from: 0; to: 100; duration: 100
-          onFinished: root.log += "finished "
-        }
+          onFinished: root.log += "finished " }
         NumberAnimation {
           id: slow; objectName: "slow"; target: slow; property: "phase"
           property real phase: 0
           from: 0; to: 100; duration: 1000
-          onFinished: root.log += "slow finished "
-        }
+          onFinished: root.log += "slow finished " }
         function look() { looked = spin.phase }
         function follow() { seen = Qt.binding(function() { return spin.phase }) }
         function listen() { spin.phaseChanged.connect(function() { heard++ }) }
