@@ -2282,16 +2282,9 @@ impl<V: Clone + 'static> Graph<V> {
                 return Ok(false);
             }
             let node = i.nodes.get_mut(n).ok_or(ReactiveError::DeadNode(n))?;
-            // A run still going that read `n` has no edge to it until it
-            // finishes; it would keep the old value with no mark to run
-            // again (`mark_observers` sends it one). `read_stamp` names only
-            // the last reader, and none once a run takes its reads back
-            // (`take_reads_since`): a nested run that read `n` leaves an
-            // outer one holding `n` in its reads under another stamp.
-            let read_by_a_run = i.frames.iter().any(|f| {
-                f.node.is_some_and(|r| r != n)
-                    && (f.stamp == node.read_stamp || f.reads.contains(&n))
-            });
+            // A run still going that read `n` would keep the old value with
+            // no mark to run again (`mark_observers` sends it one).
+            let read_by_a_run = read_by_a_run(&i.frames, n, node.read_stamp);
             let Kind::Property(p) = &mut node.kind else {
                 return Err(ReactiveError::NotAProperty(n));
             };
@@ -2989,6 +2982,25 @@ impl<V: Clone + 'static> Graph<V> {
         }
         node.flags.set(Flags::NOTED, true);
         Ok(())
+    }
+
+    /// Whether the note handler is told of the property's changes
+    /// ([`Graph::set_noted`]).
+    pub fn is_noted(&self, n: NodeId) -> bool {
+        self.inner
+            .borrow()
+            .nodes
+            .get(n)
+            .is_some_and(|node| node.flags.has(Flags::NOTED))
+    }
+
+    /// Whether a run still going, other than `n`'s own, has read `n`: run
+    /// again now, `n` would change what that run already holds.
+    pub fn is_read_by_a_run(&self, n: NodeId) -> bool {
+        let i = self.inner.borrow();
+        i.nodes
+            .get(n)
+            .is_some_and(|node| read_by_a_run(&i.frames, n, node.read_stamp))
     }
 
     /// Who is told of the noted properties' changes ([`Graph::set_noted`]).
@@ -4070,6 +4082,17 @@ fn note<V>(noted: &mut Waiting, n: NodeId, node: &mut Node<V>) {
         node.flags.set(Flags::NOTE_DUE, true);
         p.noted_at = noted.push(n);
     }
+}
+
+/// Whether a run still going that is not `n`'s own read `n` (last read in
+/// a run stamped `read_stamp`). It has no edge to `n` until it finishes;
+/// `read_stamp` names only the last reader, and none once a run takes its
+/// reads back (`take_reads_since`): a nested run that read `n` leaves an
+/// outer one holding `n` in its reads under another stamp.
+fn read_by_a_run(frames: &[Frame], n: NodeId, read_stamp: u64) -> bool {
+    frames
+        .iter()
+        .any(|f| f.node.is_some_and(|r| r != n) && (f.stamp == read_stamp || f.reads.contains(&n)))
 }
 
 /// Lifts ([`lift`]) what of `node` (`n`) waits to be told, its hook or,
