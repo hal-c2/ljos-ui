@@ -1201,8 +1201,14 @@ impl Asked {
                 ..
             } => {
                 // Chromium keeps the answer as the origin's; what the
-                // profile is not to keep goes once the page has it.
-                write_down(shared, &origin, kind);
+                // profile is not to keep goes once the page has it. One it
+                // could not write down might outlive a run that ends
+                // badly, so the page has no answer from the view at all.
+                if let Err(why) = write_down(shared, &origin, kind) {
+                    not_written(&origin, &why);
+                    callback.cont(PermissionRequestResult::IGNORE);
+                    return;
+                }
                 callback.cont(if allow {
                     PermissionRequestResult::ACCEPT
                 } else {
@@ -1225,7 +1231,13 @@ impl Asked {
                 if !origin.starts_with("file:")
                     && let Some(profile) = shared.host().and_then(|h| h.request_context())
                 {
-                    write_down(shared, &origin, NOTIFICATIONS_KIND);
+                    if let Err(why) = write_down(shared, &origin, NOTIFICATIONS_KIND) {
+                        // Chromium is not told: the page hears what it
+                        // had, and nothing is left to forget.
+                        not_written(&origin, &why);
+                        pass_to_chromium(shared, context, number, Pending::Ignore);
+                        return;
+                    }
                     let origin = cef_string(&origin);
                     profile.set_content_setting(
                         Some(&origin),
@@ -1303,12 +1315,12 @@ const FORGET_FILE: &str = "ljos-forget-answers";
 /// `origin` is to be given an answer to asking for `kind` that its profile
 /// on disk is not to keep: it goes in the profile's journal first, so a
 /// run that ends any way at all has it forgotten.
-fn write_down(shared: &Shared, origin: &str, kind: i32) {
+fn write_down(shared: &Shared, origin: &str, kind: i32) -> std::io::Result<()> {
     if shared.keep == Keep::Always {
-        return;
+        return Ok(());
     }
     let Some(mut context) = shared.host().and_then(|h| h.request_context()) else {
-        return;
+        return Ok(());
     };
     // One already listed is in the journal since it was first given.
     let journal = GLOBAL.with(|g| match g.try_borrow().as_deref() {
@@ -1324,19 +1336,28 @@ fn write_down(shared: &Shared, origin: &str, kind: i32) {
         }
         _ => None,
     });
-    if let Some(journal) = journal {
-        append_journal(&journal, origin, kind);
+    match journal {
+        Some(journal) => append_journal(&journal, origin, kind),
+        None => Ok(()),
     }
 }
 
-fn append_journal(journal: &Path, origin: &str, kind: i32) {
+fn append_journal(journal: &Path, origin: &str, kind: i32) -> std::io::Result<()> {
     use std::io::Write as _;
     let line = format!("{kind}\t{origin}\n");
-    let _ = std::fs::OpenOptions::new()
+    let mut file = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
-        .open(journal)
-        .and_then(|mut f| f.write_all(line.as_bytes()).and_then(|()| f.sync_data()));
+        .open(journal)?;
+    file.write_all(line.as_bytes())?;
+    file.sync_data()
+}
+
+/// The view's answer to `origin` could not be written down to be forgotten.
+fn not_written(origin: &str, why: &std::io::Error) {
+    eprintln!(
+        "ljos_webengine: the answer to {origin} was not given: its profile could not write it down to forget it ({why})"
+    );
 }
 
 /// The answers a journal lists; a line that is not one is skipped.
@@ -3526,8 +3547,8 @@ mod tests {
         let dir = tempfile::tempdir().expect("a directory");
         let journal = dir.path().join(FORGET_FILE);
         assert!(read_journal(&journal).is_empty());
-        append_journal(&journal, "https://a.example", 7);
-        append_journal(&journal, "http://127.0.0.1:8080", 8);
+        append_journal(&journal, "https://a.example", 7).expect("written");
+        append_journal(&journal, "http://127.0.0.1:8080", 8).expect("written");
         let mut text = std::fs::read_to_string(&journal).unwrap();
         text.push_str("not an answer\n");
         std::fs::write(&journal, text).unwrap();
@@ -3538,6 +3559,13 @@ mod tests {
                 ("http://127.0.0.1:8080".to_owned(), 8)
             ]
         );
+    }
+
+    #[test]
+    fn a_journal_that_cannot_be_written_says_so() {
+        let dir = tempfile::tempdir().expect("a directory");
+        let journal = dir.path().join("gone").join(FORGET_FILE);
+        assert!(append_journal(&journal, "https://a.example", 7).is_err());
     }
 
     #[test]
