@@ -21,3 +21,5 @@ white and written as an indexed PNG with the GIF frame's own colours, nothing el
 The `.blend` files, the `.lottie` archives and the GIFs themselves are not kept.
 
 `features/lottie/lottie-avatars.feature` compares Ljós's frames with these pictures.
+`bench/lottie-avatars.qml` plays four of each at once against qml6 (`mise run bench
+lottie-avatars`; the results are in `docs/BENCHMARKS.md`).
