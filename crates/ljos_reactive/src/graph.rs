@@ -2370,6 +2370,17 @@ impl<V: Clone + 'static> Graph<V> {
         self.inner.borrow().batch_depth > 0
     }
 
+    /// Whether the innermost computation running now is a property's
+    /// binding, untracked reads inside it included: that property's value
+    /// is still to come, and what reads it meanwhile reads it as it was.
+    pub fn binding_evaluating(&self) -> bool {
+        let i = self.inner.borrow();
+        i.eval_stack
+            .last()
+            .and_then(|n| i.nodes.get(*n))
+            .is_some_and(|n| matches!(n.kind, Kind::Property(_)))
+    }
+
     /// Defers the effect flush until `f` returns (Qt's property update
     /// group). Nested batches flush once, at the outermost end. Reads
     /// inside the batch pull current values.

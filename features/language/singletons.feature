@@ -247,6 +247,53 @@ Feature: Singleton types written in QML
       Then the property "same" of "root" is true
       And the property "twice" of "root" is 4
 
+
+    # toycustomizer's eyes read `currentElement`, a binding whose first
+    # read makes a ListModel singleton. Qt says nothing; making the
+    # singleton must not run what was waiting before it, which would read
+    # the binding while it is still being worked out. A 3D node's position
+    # is what waits; the run makes the file as an application does. The
+    # oracle has no `ljos run`; qml6 was run on the file by hand.
+    @ljos-only
+    Scenario: Making it inside a binding runs nothing that waited on that binding
+      Given the file "zoo/qmldir":
+        """
+        singleton Animals Animals.qml
+        """
+      And the file "zoo/Animals.qml":
+        """qml
+        pragma Singleton
+        import QtQuick
+        ListModel {
+          ListElement { name: "bear"; x: 1; y: 2; w: 1 }
+        }
+        """
+      And the file "Main.qml":
+        """qml
+        import QtQuick
+        import QtQuick3D
+        import "zoo"
+        Item {
+          width: 100; height: 100
+          View3D {
+            anchors.fill: parent
+            Node {
+              id: node
+              property var current: Animals.get(0)
+              Node {
+                objectName: node.current.name + "Eyes"
+                position: Qt.vector3d(node.current.x, node.current.y, 0)
+                rotation: Qt.quaternion(node.current.w, 0, 0, 0)
+              }
+            }
+          }
+          Component.onCompleted: Qt.quit()
+        }
+        """
+      When the author runs "ljos run Main.qml --headless"
+      Then the command exits with status 0
+      And the command's output does not mention "TypeError"
+
   Rule: It is not a type to make objects of
 
     Scenario: An object of the type does not load
