@@ -195,8 +195,9 @@ fn part<S: SceneSource>(s: &S, view: S::Object, obj: S::Object) -> Option<Part<S
     if !s.is(obj, T::Node) {
         return None;
     }
-    let mut n = Node::new(kind(s, view, obj)).with_transform(transform(s, obj));
-    n.visible = on(s, obj, P::Visible, d::node::VISIBLE);
+    let visible = on(s, obj, P::Visible, d::node::VISIBLE);
+    let mut n = Node::new(kind(s, view, obj, visible)).with_transform(transform(s, obj));
+    n.visible = visible;
     n.opacity = num(s, obj, P::Opacity, d::node::OPACITY);
     let is_model = s.is(obj, T::Model);
     if is_model {
@@ -282,6 +283,7 @@ fn add_parts<S: SceneSource>(
 ) {
     let materials = s.objects(obj, P::Materials);
     let own = &part.nodes[0].1;
+    let shown = own.visible;
     let (casts, receives, instancing) = (
         own.casts_shadows,
         own.receives_shadows,
@@ -291,7 +293,7 @@ fn add_parts<S: SceneSource>(
         // "If the number of materials is less than the sub-meshes, the
         // last material in the list is used for subsequent sub-meshes."
         let m = materials.get(i).or(materials.last()).copied();
-        let Some(material) = material_of(s, view, m) else {
+        let Some(material) = material_of(s, view, m, shown) else {
             continue;
         };
         let mut n = Node::new(NodeKind::Model(Model {
