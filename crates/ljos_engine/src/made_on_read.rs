@@ -531,6 +531,57 @@ impl Engine {
         }
     }
 
+    /// A read of `prop`, which `keep` keeps, is about to happen: the
+    /// keeper brings its value up to date. A keeper that hands the property
+    /// over as it is read has given no value, so the one that keeps it now
+    /// is asked in its place: else the read would get what was last stored.
+    fn read_kept(&self, obj: ObjectId, prop: PropIndex, mut keep: KeepOnRead) {
+        // Keepers that hand the property to each other on every read would
+        // never settle; past this many the read takes what is stored, and
+        // the last keeper keeps it.
+        const MOST_HANDED: u32 = 8;
+        // A tracked read is a binding's (or a painter's): it observes the
+        // property from now on.
+        let follows = self.inner.tracking.get() > 0;
+        let mut handed = 0;
+        loop {
+            // Untracked, as a maker is. It stays the keeper unless it let
+            // go meanwhile (a write to another property it keeps wakes it),
+            // back before it is told, so that it may then let go.
+            self.inner
+                .kept_in_hand
+                .borrow_mut()
+                .push((obj, prop, keep, false));
+            self.untrack(|| keep(self, obj, prop, Kept::Read));
+            let gone = self
+                .inner
+                .kept_in_hand
+                .borrow_mut()
+                .pop()
+                .is_some_and(|(_, _, _, gone)| gone);
+            if !gone {
+                self.give_maker_back(obj, prop, Maker::Kept(keep));
+                if follows {
+                    self.untrack(|| keep(self, obj, prop, Kept::Observed));
+                }
+                return;
+            }
+            // Handed over as it was read, or let go of.
+            let Some(now) = self.keeper(obj, prop) else {
+                return;
+            };
+            handed += 1;
+            if handed == MOST_HANDED {
+                if follows {
+                    self.untrack(|| now(self, obj, prop, Kept::Observed));
+                }
+                return;
+            }
+            drop(self.take_maker(obj, prop));
+            keep = now;
+        }
+    }
+
     /// A read of `prop` is about to happen: its value is made first if it
     /// is still to be.
     pub(crate) fn make_if_due(&self, obj: ObjectId, prop: PropIndex) {
@@ -540,36 +591,7 @@ impl Engine {
             Some(Maker::Value(make)) => self.untrack(|| make(self)),
             Some(Maker::By(make)) => self.untrack(|| make(self, obj, prop)),
             Some(Maker::Kept(keep)) => {
-                // A tracked read is a binding's (or a painter's): it
-                // observes the property from now on.
-                let follows = self.inner.tracking.get() > 0;
-                // Untracked, as a maker is. It stays the keeper unless it
-                // let go meanwhile (a write to another property it keeps
-                // wakes it), back before it is told, so that it may then
-                // let go.
-                self.inner
-                    .kept_in_hand
-                    .borrow_mut()
-                    .push((obj, prop, keep, false));
-                self.untrack(|| keep(self, obj, prop, Kept::Read));
-                let gone = self
-                    .inner
-                    .kept_in_hand
-                    .borrow_mut()
-                    .pop()
-                    .is_some_and(|(_, _, _, gone)| gone);
-                if gone {
-                    // Handed over as it was read: the one that keeps it now
-                    // is the one to tell.
-                    if follows && let Some(now) = self.keeper(obj, prop) {
-                        self.untrack(|| now(self, obj, prop, Kept::Observed));
-                    }
-                    return;
-                }
-                self.give_maker_back(obj, prop, Maker::Kept(keep));
-                if follows {
-                    self.untrack(|| keep(self, obj, prop, Kept::Observed));
-                }
+                self.read_kept(obj, prop, keep);
                 return;
             }
             Some(Maker::Bind(bind)) => {
