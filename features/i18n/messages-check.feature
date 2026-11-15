@@ -4,12 +4,13 @@
 #   https://lingui.dev/ref/macro
 # `ljos check` is Ljós's own: there is nothing of Qt's to compare with.
 
-@ljos-only @headless @backlog
+@ljos-only @headless
 Feature: Checking translated text
   `ljos check` holds a file of Ljós's API to its own way of translating:
   a message is written out where it is, so a translator gets all of it,
   and `qsTr` is Qt's, for Qt's QML only.
 
+  @backlog
   Scenario: qsTr in a file of Ljós's API names the tagged template
     Given the file "Title.qml":
       """qml
@@ -63,6 +64,7 @@ Feature: Checking translated text
       ljos: 1 errors
       """
 
+  @backlog
   Scenario: A count and the words around it are one message
     Given the file "Ago.qml":
       """qml

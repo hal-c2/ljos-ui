@@ -156,6 +156,7 @@ Objects are named by `objectName`; `a/b` finds `b` below `a`. Properties may be 
 | `Given the file "X.qml":` + doc string | make `X.qml` available; nothing is created yet. The name may be a path (`kit/Badge.qml`), and a file named `qmldir` (`kit/qmldir`) describes the module of its directory |
 | `Given the files of the module Ljos.Design` | make the files `ljos design export` writes available in `Ljos/Design`, so that `import Ljos.Design` finds the module in the scenario's directory on either backend |
 | `Given the translation file "X.ts":` + doc string | make the translations of a Qt Linguist file (doc string labelled `xml`) available for the language its `language` attribute names; give it before the QML |
+| `Given the translation file "X.po":` + doc string | make the `t` messages of a PO catalogue (doc string labelled `po`) available for the language its `Language:` header names, or else its file name; Ljós only |
 | `Given an assistive technology is listening` | the accessibility tree is read from here on, so later steps see it follow each change |
 | `Given the application starts with the locale environment "LANG=en_US.UTF-8 LC_TIME=de_DE.UTF-8"` | the locale variables the application starts with (`LANG`, `LANGUAGE`, `LC_ALL`, `LC_MESSAGES`, `LC_NUMERIC`, `LC_TIME`, `LC_COLLATE`), each `NAME=value`, separated by spaces; the others are unset. Without it a scenario starts in `LANG=en_US.UTF-8`. Give it before the QML |
 | `Given the system setting "color scheme" is "dark"` | what the system says before the application starts: `"color scheme"` (`"light"`, `"dark"`), `"contrast"` (`"normal"`, `"high"`), `"reduced motion"` and `"screen reader"` (`true`, `false`), `"font scale"` (a number; `1` is the size the application was written for) (`@ljos-only`: the oracle cannot be given a system) |
@@ -483,8 +484,7 @@ come after the QML. Showing it runs no frame: it is given the frames the applica
 ### Planned (backlog scenarios may use them; not built yet)
 
 `When the agent clicks the reference of the "role" named "name"` · `When the object "o" is destroyed` ·
-`Then the signal "s" of "o" has fired once` · `Given the translation file "X.po":` + doc string (a PO
-catalogue, its language its `Language:` header; `features/i18n/messages.feature`).
+`Then the signal "s" of "o" has fired once`.
 
 ## Adding a backend operation
 

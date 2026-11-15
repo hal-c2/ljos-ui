@@ -539,10 +539,12 @@ pub trait Files: Backend {
 /// What the application starts with (a style, a locale, a clock, fonts)
 /// and what the system says while it runs (settings, the language).
 pub trait Environment: Backend {
-    /// Make the translations of a Qt Linguist `.ts` file available for the
-    /// language its `language` attribute names. Nothing is shown in that
-    /// language until it is the UI language.
-    fn translation(&mut self, name: &str, ts: &str) -> Result<()>;
+    /// Make the translations of a Qt Linguist `.ts` file, or of a PO
+    /// catalogue of messages (`.po`), available for the language it names
+    /// (a `.ts` file's `language` attribute, a `.po` file's `Language:`
+    /// header or else its file name). Nothing is shown in that language
+    /// until it is the UI language.
+    fn translation(&mut self, name: &str, text: &str) -> Result<()>;
 
     /// What assigning `Qt.uiLanguage` does.
     fn set_ui_language(&mut self, language: &str) -> Result<()>;

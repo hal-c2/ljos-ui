@@ -240,12 +240,18 @@ impl Environment for LjosBackend {
         self.apply_or_queue(HostSetting::LinkColour(colour))
     }
 
-    // The `.ts` file is read as it is, the way a development build reads
-    // one; a shipped application would have compiled it to `.ljl`.
-    fn translation(&mut self, name: &str, ts: &str) -> Result<()> {
-        let catalog = ljos_i18n::ts::TsFile::read(ts)
-            .map_err(|e| failed(format!("{name}: {e}")))?
-            .catalog();
+    // The file is read as it is, the way a development build reads one; a
+    // shipped application would have compiled it to `.ljl`.
+    fn translation(&mut self, name: &str, text: &str) -> Result<()> {
+        let catalog = if name.ends_with(".po") {
+            ljos_i18n::po::PoFile::parse(text)
+                .map_err(|e| failed(format!("{name}: {e}")))?
+                .catalog(name)
+        } else {
+            ljos_i18n::ts::TsFile::read(text)
+                .map_err(|e| failed(format!("{name}: {e}")))?
+                .catalog()
+        };
         match self.live.as_mut() {
             Some(live) => {
                 live.engine.install_catalog(Box::new(catalog));

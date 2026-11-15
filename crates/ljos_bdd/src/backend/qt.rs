@@ -974,6 +974,9 @@ impl Environment for QtBackend {
     }
 
     fn translation(&mut self, name: &str, ts: &str) -> Result<()> {
+        if !name.ends_with(".ts") {
+            return Err(BackendError::NotImplemented("a catalogue Qt does not read"));
+        }
         self.translations.insert(name.to_owned(), ts.to_owned());
         self.cache = None;
         Ok(())
