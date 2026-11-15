@@ -32,6 +32,9 @@ struct Held {
     frame: u64,
     bounds: Option<(BoundsKey, (Vec3, f32))>,
     order: Option<(OrderKey, Vec<u32>)>,
+    /// The rows last pushed, made again only when their key changes: a
+    /// frame that moves no copy copies them instead of building each.
+    rows: Option<(RowsKey, Vec<InstanceRow>)>,
 }
 
 /// The table, how many of it are drawn, and the spheres round the model in
@@ -40,6 +43,9 @@ type BoundsKey = (u64, usize, Vec<[u32; 4]>);
 /// The table, how many are drawn, where the table's space is seen from, and
 /// a copy's origin in it, to the bit.
 type OrderKey = (u64, usize, [[u32; 4]; 4], [u32; 3]);
+/// The table, how many are drawn, whether they are drawn opaque, and the
+/// order they are drawn in, if not the table's.
+type RowsKey = (u64, usize, bool, Option<OrderKey>);
 
 /// An instanced model's copies this frame.
 pub(crate) struct Copies {
@@ -105,7 +111,7 @@ impl HeldCopies {
             InstanceRow::new(&e.transform, color, e.custom)
         };
         // Sorting copies the depth test decides between changes no picture.
-        match model.view.filter(|_| !model.depth_decides) {
+        let order_key = match model.view.filter(|_| !model.depth_decides) {
             Some(view) => {
                 let to_view = *view * model.global;
                 let key = (table, entries.len(), bits4x4(&to_view), bits3(model.origin));
@@ -125,14 +131,26 @@ impl HeldCopies {
                     order.sort_by(|a, b| b.0.total_cmp(&a.0));
                     held.order = Some((key, order.into_iter().map(|(_, i)| i).collect()));
                 }
-                let (_, order) = held.order.as_ref().expect("sorted above");
-                rows.extend(order.iter().map(|&i| row(&entries[i as usize])));
+                Some(key)
             }
             None => {
                 held.order = None;
-                rows.extend(entries.iter().map(row));
+                None
             }
+        };
+        let rows_key = (table, entries.len(), model.opaque, order_key);
+        if held.rows.as_ref().is_none_or(|(k, _)| *k != rows_key) {
+            let (_, made) = held.rows.get_or_insert_with(|| (rows_key, Vec::new()));
+            made.clear();
+            match &held.order {
+                Some((_, order)) => {
+                    made.extend(order.iter().map(|&i| row(&entries[i as usize])));
+                }
+                None => made.extend(entries.iter().map(row)),
+            }
+            held.rows.as_mut().expect("made above").0 = rows_key;
         }
+        rows.extend_from_slice(&held.rows.as_ref().expect("made above").1);
         let key = (
             table,
             entries.len(),
@@ -251,6 +269,46 @@ mod tests {
             "{centre:?}"
         );
         assert!((radius - 2.0 * 123f32.sqrt()).abs() < 1e-3, "{radius}");
+    }
+
+    #[test]
+    fn the_rows_kept_are_made_again_for_another_table_or_count() {
+        let spheres = [(Vec3::ZERO, 1.0)];
+        let mut held = HeldCopies::default();
+        let mut push = |instancing: &Instancing, opaque: bool| {
+            let mut rows = Vec::new();
+            held.begin();
+            held.push(
+                &model(instancing, Mat4::IDENTITY, &spheres, None, opaque, opaque),
+                &mut rows,
+            );
+            held.end();
+            rows
+        };
+        let want = |xs: &[f32], alpha: f32| {
+            xs.iter()
+                .map(|&x| {
+                    InstanceRow::new(&at(x, 0.0, 1.0).transform, [1.0, 1.0, 1.0, alpha], [0.0; 4])
+                })
+                .collect::<Vec<_>>()
+        };
+        let table = |xs: &[f32]| {
+            Instancing::new(Arc::new(InstanceTable::new(
+                xs.iter().map(|&x| at(x, 0.0, 0.5)).collect(),
+            )))
+        };
+        let one = table(&[1.0, 2.0]);
+        assert!(push(&one, true) == want(&[1.0, 2.0], 1.0));
+        assert!(push(&one, true) == want(&[1.0, 2.0], 1.0));
+        // Copies that blend keep their alpha.
+        assert!(push(&one, false) == want(&[1.0, 2.0], 0.5));
+        // A table of as many copies, elsewhere.
+        assert!(push(&table(&[3.0, 4.0]), true) == want(&[3.0, 4.0], 1.0));
+        // Fewer of the same table drawn.
+        let mut fewer = table(&[5.0, 6.0]);
+        assert!(push(&fewer, true) == want(&[5.0, 6.0], 1.0));
+        fewer.count = Some(1);
+        assert!(push(&fewer, true) == want(&[5.0], 1.0));
     }
 
     #[test]
