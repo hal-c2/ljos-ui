@@ -27,6 +27,23 @@ Feature: Checking translated text
       ljos: 1 errors
       """
 
+  Scenario: A text marked for later is written with msg by hand
+    Given the file "Later.qml":
+      """qml
+      import Ljos.Ui
+      import Ljos.Core
+      Item {
+        property string later: QT_TR_NOOP("Later")
+      }
+      """
+    When the files are checked
+    Then the check reports:
+      """
+      Later.qml:4:26: error: `QT_TR_NOOP` is Qt's: write msg`…` (Ljos.Core) and translate it with t(…) where it is shown [qt-tr]
+      1 files, 1 errors, 0 warnings
+      ljos: 1 errors
+      """
+
   Scenario: A form that is not written out cannot be translated
     Given the file "Files.qml":
       """qml
