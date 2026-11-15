@@ -657,13 +657,24 @@ fn retool(e: &Engine, page: ObjectId) {
     if shown.is_some() {
         b.close_dev_tools();
     }
-    let _ = e.with_mut::<WebEngineView, _>(page, |v| v.run.tools_shown = want);
-    if let Some(tools) = want
-        && let Some(url) = b.dev_tools_url()
-    {
-        // The front end is a page like any other, loaded as one.
-        let _ = e.set_internal(tools, WebEngineView::URL, Url(Atom::from(url.as_str())));
-    }
+    // Shown only once there is a front end to show: one that could not
+    // start is tried again the next time the views are linked.
+    let shown = want.and_then(|tools| match b.dev_tools_url() {
+        Some(url) => {
+            // The front end is a page like any other, loaded as one.
+            let _ = e.set_internal(tools, WebEngineView::URL, Url(Atom::from(url.as_str())));
+            Some(tools)
+        }
+        None => {
+            e.log(
+                LogLevel::Warning,
+                crate::CATEGORY,
+                "WebEngineView cannot show its page's DevTools: they did not start".to_owned(),
+            );
+            None
+        }
+    });
+    let _ = e.with_mut::<WebEngineView, _>(page, |v| v.run.tools_shown = shown);
 }
 
 /// The page of `me` asks for a new window, and waits to hear where it
