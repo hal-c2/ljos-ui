@@ -36,6 +36,9 @@ struct Decoded {
     encoding: PixelEncoding,
     pixels: Mutex<Option<Vec<u8>>>,
     decodes: Arc<AtomicUsize>,
+    /// How long reading the pixels takes: a renderer that reads them
+    /// is that much longer in its frame.
+    slow: Duration,
 }
 
 impl Decoded {
@@ -81,6 +84,7 @@ impl TexturePixels for Decoded {
         true
     }
     fn with_pixels(&self, f: &mut dyn FnMut(&[u8])) {
+        std::thread::sleep(self.slow);
         let mut pixels = self.pixels.lock().unwrap();
         let pixels = pixels.get_or_insert_with(|| self.decode());
         f(pixels);
@@ -93,13 +97,27 @@ impl TexturePixels for Decoded {
 /// An image decoded once already, and the count of decodes after that.
 fn decoded(encoding: PixelEncoding) -> (TextureImage, Arc<Decoded>, Arc<AtomicUsize>) {
     static NEXT: AtomicU64 = AtomicU64::new(1);
+    wrapped(
+        NEXT.fetch_add(1, Ordering::Relaxed),
+        encoding,
+        Duration::ZERO,
+    )
+}
+
+/// Pixels with the id `id`, decoded once already, read in `slow`.
+fn wrapped(
+    id: u64,
+    encoding: PixelEncoding,
+    slow: Duration,
+) -> (TextureImage, Arc<Decoded>, Arc<AtomicUsize>) {
     let decodes = Arc::new(AtomicUsize::new(0));
     let image = Decoded {
-        id: NEXT.fetch_add(1, Ordering::Relaxed),
+        id: id << 32,
         side: 16,
         encoding,
         pixels: Mutex::new(None),
         decodes: Arc::clone(&decodes),
+        slow,
     };
     *image.pixels.lock().unwrap() = Some(image.decode());
     decodes.store(0, Ordering::Relaxed);
@@ -177,6 +195,70 @@ fn a_map_and_a_probe_two_devices_draw_are_decoded_once() {
     // Both have their copies: nothing is left to keep them for.
     assert!(!map_pixels.resident(), "the map's pixels are kept");
     assert!(!probe_pixels.resident(), "the probe's pixels are kept");
+}
+
+#[test]
+fn a_device_slow_to_reach_an_image_is_waited_for() {
+    let Some(mut first) = offscreen() else { return };
+    let mut second = another(&first);
+    // A renderer reads the probe before the maps: each device spends
+    // longer than pixels are kept for an idle one before it gets to the
+    // map, as a slow device does compiling what it draws.
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    let (probe, _, _) = wrapped(
+        NEXT.fetch_add(1, Ordering::Relaxed) | 1 << 31,
+        PixelEncoding::Rgbe,
+        Duration::from_millis(1500),
+    );
+    let (map, pixels, decodes) = decoded(PixelEncoding::Srgb8Straight);
+    let s = scene(mapped(&map), Some(probe));
+    first.render(&s, SIDE, SIDE).unwrap();
+    second.render(&s, SIDE, SIDE).unwrap();
+    assert_eq!(
+        decodes.load(Ordering::Relaxed),
+        0,
+        "let go while the second device was drawing"
+    );
+    assert!(!pixels.resident(), "kept after both have their copies");
+}
+
+#[test]
+fn an_image_two_devices_read_as_a_map_and_a_probe_is_decoded_once() {
+    let Some(mut first) = offscreen() else { return };
+    let mut second = another(&first);
+    let (image, pixels, decodes) = decoded(PixelEncoding::Srgb8Straight);
+    let s = scene(mapped(&image), Some(image.clone()));
+    first.render(&s, SIDE, SIDE).unwrap();
+    second.render(&s, SIDE, SIDE).unwrap();
+    assert_eq!(
+        decodes.load(Ordering::Relaxed),
+        0,
+        "let go as a probe while the map waited"
+    );
+    assert!(!pixels.resident(), "kept after both have their copies");
+}
+
+#[test]
+fn the_same_pixels_in_two_wrappers_are_let_go_together() {
+    let Some(mut first) = offscreen() else { return };
+    let mut second = another(&first);
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    let id = NEXT.fetch_add(1, Ordering::Relaxed) | 1 << 30;
+    let (one, one_pixels, _) = wrapped(id, PixelEncoding::Srgb8Straight, Duration::ZERO);
+    let (other, other_pixels, decodes) = wrapped(id, PixelEncoding::Srgb8Straight, Duration::ZERO);
+    first
+        .render(&scene(mapped(&one), None), SIDE, SIDE)
+        .unwrap();
+    second
+        .render(&scene(mapped(&other), None), SIDE, SIDE)
+        .unwrap();
+    assert_eq!(decodes.load(Ordering::Relaxed), 0);
+    // Both devices have the pixels: neither wrapper keeps them.
+    assert!(
+        !one_pixels.resident(),
+        "the first wrapper's pixels are kept"
+    );
+    assert!(!other_pixels.resident(), "the second's are kept");
 }
 
 #[test]

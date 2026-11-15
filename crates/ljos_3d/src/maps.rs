@@ -104,6 +104,11 @@ pub(crate) struct Maps {
 }
 
 impl Maps {
+    /// Who this renderer's uploads of this kind are kept by.
+    pub(crate) fn reader(&self) -> &crate::uploads::Reader {
+        &self.reader
+    }
+
     pub(crate) fn new(device: &wgpu::Device) -> Self {
         let mut entries = Vec::with_capacity(MAPS * 2);
         for i in 0..MAPS as u32 {
