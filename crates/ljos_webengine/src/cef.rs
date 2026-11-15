@@ -826,6 +826,15 @@ wrap_request_context_handler! {
     }
 }
 
+/// What tells one profile from another: pages of the same key share one.
+fn profile_key(spec: &ProfileSpec) -> String {
+    if spec.off_the_record {
+        format!("\0otr:{}", spec.storage_name)
+    } else {
+        spec.storage_name.clone()
+    }
+}
+
 /// The request context of a profile: one per storage name, so views of
 /// one profile share cookies and caches. One kept off the record is in
 /// memory only.
@@ -834,11 +843,7 @@ fn context_for(
     g: &mut Global,
     spec: &ProfileSpec,
 ) -> Option<(RequestContext, Arc<Mutex<Readiness>>)> {
-    let key = if spec.off_the_record {
-        format!("\0otr:{}", spec.storage_name)
-    } else {
-        spec.storage_name.clone()
-    };
+    let key = profile_key(spec);
     if let Some(p) = g.contexts.get(&key) {
         return Some((p.context.clone(), p.ready.clone()));
     }
@@ -1088,6 +1093,8 @@ struct Shared {
     /// The new windows this page opened in views that CEF has not made
     /// yet, by CEF's popup id, with the address each was to show.
     popups: Mutex<HashMap<c_int, (std::sync::Weak<Shared>, String)>>,
+    /// Which profile the page is in (see [`profile_key`]).
+    profile: OnceLock<String>,
     /// The page's DevTools, while a view shows them.
     inspector: Mutex<Option<Arc<Inspector>>>,
 }
@@ -1565,6 +1572,7 @@ impl Shared {
             unborn: Mutex::default(),
             adopting: Mutex::default(),
             popups: Mutex::default(),
+            profile: OnceLock::new(),
             inspector: Mutex::default(),
         }
     }
@@ -1589,6 +1597,9 @@ impl Shared {
         let Some(inspector) = Self::lock(&self.inspector).clone() else {
             return;
         };
+        if inspector.ended() {
+            self.release_debugger();
+        }
         let messages = {
             let mut dev = Self::lock(&self.dev);
             inspector.take(|| {
@@ -1603,7 +1614,24 @@ impl Shared {
     fn close_inspector(&self) {
         if let Some(inspector) = Self::lock(&self.inspector).take() {
             inspector.close();
+            if !self.closing.load(Ordering::Relaxed) && Self::lock(&self.browser).is_some() {
+                self.release_debugger();
+            }
         }
+    }
+
+    /// A front end that went may have left the page stopped at one of its
+    /// breakpoints, with nobody to go on from it: the page goes on, and
+    /// breaks no more. The view's own domains stay on.
+    fn release_debugger(&self) {
+        let out = {
+            let mut dev = Self::lock(&self.dev);
+            vec![
+                dev.call("Debugger.resume", json!({}), Pending::Ignore),
+                dev.call("Debugger.disable", json!({}), Pending::Ignore),
+            ]
+        };
+        self.send_dev(out);
     }
 
     /// Whether the browser is still on its blank first page.
@@ -2294,6 +2322,7 @@ wrap_life_span_handler! {
             let me = self.shared.sink.view();
             let opened =
                 crate::view::ask_new_window(&e, me, &url, destination, geometry, user_initiated)
+                    .filter(|view| same_profile(&e, &self.shared, *view))
                     .and_then(|view| adopt(&e, view, Made::Opened).map(|a| (view, a)));
             let (Some((view, adopted)), Some(window_info), Some(client), Some(settings)) =
                 (opened, window_info, client, settings)
@@ -2355,9 +2384,12 @@ wrap_life_span_handler! {
             let adopting = Shared::lock(&self.shared.adopting).take();
             if let (Some((start, made)), Some(browser)) = (adopting, browser) {
                 // The view let its page go while CEF was making it: nobody
-                // would ever close it.
+                // would ever close it. It is the view's browser until CEF
+                // says it closed, so shutting down waits for it too.
                 if self.shared.closing.load(Ordering::Relaxed) {
-                    if let Some(host) = browser.host() {
+                    let host = browser.host();
+                    *Shared::lock(&self.shared.browser) = Some(browser.clone());
+                    if let Some(host) = host {
                         host.close_browser(1);
                     }
                     return;
@@ -3203,6 +3235,7 @@ fn shared_for(e: &Engine, sink: Sink, start: &Start) -> Arc<Shared> {
         },
         start.zoom,
     ));
+    let _ = shared.profile.set(profile_key(&start.profile));
     ENGINES.with(|engines| {
         let mut engines = engines.borrow_mut();
         engines.retain(|(s, _)| s.strong_count() > 0);
@@ -3322,6 +3355,24 @@ fn register(e: &Engine, page: &std::rc::Rc<CefPage>) -> Result<(), String> {
         });
         g.browsers.push(page.shared.clone());
     })
+}
+
+/// Whether `view` would show its pages in the profile `opener`'s page is
+/// in: a page opened in a view of another profile is not shown there.
+// Qt 6.11: openIn on a view of another profile leaves that view as it
+// was, showing nothing of the request.
+fn same_profile(e: &Engine, opener: &Shared, view: ObjectId) -> bool {
+    let theirs = crate::view::start_for(e, view).map(|s| profile_key(&s.profile));
+    let same = theirs.as_ref() == opener.profile.get();
+    if !same {
+        e.log(
+            LogLevel::Warning,
+            crate::CATEGORY,
+            "WebEngineNewWindowRequest.openIn: a page cannot open in a view of another profile"
+                .to_owned(),
+        );
+    }
+    same
 }
 
 /// What CEF is given to make a browser of its own (a page's new window)

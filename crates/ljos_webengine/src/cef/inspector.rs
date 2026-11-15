@@ -59,6 +59,9 @@ pub(super) struct Inspector {
     /// Connections whose opening request is still being read.
     opening: AtomicUsize,
     link: Mutex<Link>,
+    /// Has the browser's thread take what the front end sent, and see
+    /// that one went.
+    wake: Box<dyn Fn() + Send + Sync>,
 }
 
 #[derive(Default)]
@@ -71,6 +74,8 @@ struct Link {
     inbox: VecDeque<Vec<u8>>,
     /// The id the page answers with, and the one the front end asked with.
     asked: HashMap<i32, Json>,
+    /// A front end went since the browser's thread last looked.
+    ended: bool,
 }
 
 impl Inspector {
@@ -87,11 +92,12 @@ impl Inspector {
             stop: AtomicBool::new(false),
             opening: AtomicUsize::new(0),
             link: Mutex::default(),
+            wake: Box::new(wake),
         });
         let serving = Arc::clone(&me);
         std::thread::Builder::new()
             .name("ljos-devtools".to_owned())
-            .spawn(move || serving.serve(&listener, Arc::new(wake)))?;
+            .spawn(move || serving.serve(&listener))?;
         Ok(me)
     }
 
@@ -139,6 +145,12 @@ impl Inspector {
         out
     }
 
+    /// Whether a front end went since this was last asked: what it left
+    /// the page in is then for the browser's thread to undo.
+    pub(super) fn ended(&self) -> bool {
+        std::mem::take(&mut self.lock().ended)
+    }
+
     /// A message from the page: the front end hears its events, and the
     /// answers to what it asked, which are then its alone (`true`).
     pub(super) fn heard(&self, message: &[u8]) -> bool {
@@ -177,6 +189,7 @@ impl Inspector {
         if serial.is_some_and(|s| s != link.serial) {
             return;
         }
+        link.ended |= serial.is_some();
         link.out = None;
         link.asked.clear();
         link.inbox.clear();
@@ -185,7 +198,7 @@ impl Inspector {
         }
     }
 
-    fn serve(self: &Arc<Self>, listener: &TcpListener, wake: Arc<dyn Fn() + Send + Sync>) {
+    fn serve(self: &Arc<Self>, listener: &TcpListener) {
         for stream in listener.incoming() {
             if self.stop.load(Ordering::Acquire) {
                 break;
@@ -199,14 +212,14 @@ impl Inspector {
             // talking, or never finishes asking, holds no later one up.
             // One front end at a time: the newest is the one shown, and
             // the one before is let go (see `converse`).
-            let (me, wake) = (Arc::clone(self), Arc::clone(&wake));
+            let me = Arc::clone(self);
             let spawned = std::thread::Builder::new()
                 .name("ljos-devtools-in".to_owned())
                 .spawn(move || {
                     let reader = me.handshake(stream);
                     me.opening.fetch_sub(1, Ordering::AcqRel);
                     if let Some(reader) = reader {
-                        me.converse(reader, &*wake);
+                        me.converse(reader);
                     }
                 });
             if spawned.is_err() {
@@ -217,19 +230,14 @@ impl Inspector {
 
     /// The front end's opening request, answered: `None` when it is not
     /// the front end's, or not one for this page.
-    fn handshake(&self, stream: TcpStream) -> Option<BufReader<TcpStream>> {
-        // A connection that never finishes asking holds nobody up for long:
-        // each read may take only what is left of the whole request's time.
-        let deadline = Instant::now() + OPENING_TIME;
-        let timer = stream.try_clone().ok()?;
-        let left = || {
-            let left = deadline.saturating_duration_since(Instant::now());
-            (!left.is_zero() && timer.set_read_timeout(Some(left)).is_ok()).then_some(())
-        };
-        let mut reader = BufReader::new(stream);
+    fn handshake(&self, stream: TcpStream) -> Option<BufReader<Socket>> {
+        // A connection that never finishes asking holds nobody up for long.
+        let mut reader = BufReader::new(Socket {
+            stream,
+            deadline: Some(Instant::now() + OPENING_TIME),
+        });
         let mut opening = (&mut reader).take(OPENING);
         let mut line = String::new();
-        left()?;
         opening.read_line(&mut line).ok()?;
         let mut words = line.split_whitespace();
         let ours = words.next() == Some("GET")
@@ -239,7 +247,6 @@ impl Inspector {
             let mut header = String::new();
             // Past `OPENING` it reads as ended: a request that long is
             // nobody's to answer.
-            left()?;
             match opening.read_line(&mut header) {
                 Ok(0) | Err(_) => return None,
                 Ok(_) if header.trim().is_empty() => break,
@@ -258,7 +265,7 @@ impl Inspector {
         // Only DevTools' own pages may connect: a page that learned the
         // address still cannot drive the one inspected.
         let from_dev_tools = origin.is_none_or(|o| o.starts_with("devtools://"));
-        let stream = reader.get_mut();
+        let stream = &mut reader.get_mut().stream;
         let Some(key) = key.filter(|_| ours && from_dev_tools) else {
             let _ = stream.write_all(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n");
             return None;
@@ -274,14 +281,14 @@ impl Inspector {
         );
         stream.write_all(answer.as_bytes()).ok()?;
         stream.set_read_timeout(None).ok()?;
+        reader.get_mut().deadline = None;
         Some(reader)
     }
 
     /// Passes what the front end sends on until it goes.
-    fn converse(&self, mut reader: BufReader<TcpStream>, wake: &dyn Fn()) {
-        let (Ok(writing), Ok(socket)) =
-            (reader.get_ref().try_clone(), reader.get_ref().try_clone())
-        else {
+    fn converse(&self, mut reader: BufReader<Socket>) {
+        let stream = &reader.get_ref().stream;
+        let (Ok(writing), Ok(socket)) = (stream.try_clone(), stream.try_clone()) else {
             return;
         };
         let (out, written) = sync_channel(BACKLOG);
@@ -322,10 +329,32 @@ impl Inspector {
                     }
                     link.inbox.push_back(payload);
                 }
-                wake();
+                (self.wake)();
             }
         }
         self.drop_link(Some(serial));
+        // What it left the page in is undone on the browser's thread.
+        (self.wake)();
+    }
+}
+
+/// A connection, read until a deadline for all of it rather than for each
+/// read: a peer sending a byte now and then cannot stretch it.
+struct Socket {
+    stream: TcpStream,
+    deadline: Option<Instant>,
+}
+
+impl Read for Socket {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        if let Some(deadline) = self.deadline {
+            let left = deadline.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                return Err(io::ErrorKind::TimedOut.into());
+            }
+            self.stream.set_read_timeout(Some(left))?;
+        }
+        self.stream.read(buf)
     }
 }
 
@@ -488,6 +517,7 @@ mod tests {
             stop: AtomicBool::new(false),
             opening: AtomicUsize::new(0),
             link: Mutex::default(),
+            wake: Box::new(|| {}),
         };
         let (out, written) = sync_channel(8);
         {
@@ -515,5 +545,33 @@ mod tests {
         // Events go to both.
         assert!(!inspector.heard(br#"{"method":"Page.loadEventFired"}"#));
         assert!(written.try_recv().is_ok());
+        // A front end that goes leaves the page to be released, once;
+        // closing the inspector is the browser thread's own doing.
+        assert!(!inspector.ended());
+        inspector.drop_link(None);
+        assert!(!inspector.ended());
+        let serial = inspector.lock().serial;
+        inspector.drop_link(Some(serial));
+        assert!(inspector.ended());
+        assert!(!inspector.ended());
+    }
+
+    #[test]
+    fn an_opening_request_has_one_deadline_for_all_of_it() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let mut peer = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (stream, _) = listener.accept().unwrap();
+        peer.write_all(b"GET").unwrap();
+        let mut socket = Socket {
+            stream,
+            deadline: Some(Instant::now() + Duration::from_millis(200)),
+        };
+        let mut buf = [0u8; 8];
+        assert_eq!(socket.read(&mut buf).unwrap(), 3);
+        // Past the deadline, even a peer that is still sending is not read.
+        std::thread::sleep(Duration::from_millis(250));
+        peer.write_all(b" /").unwrap();
+        let err = socket.read(&mut buf).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::TimedOut);
     }
 }

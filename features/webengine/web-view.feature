@@ -420,6 +420,43 @@ Feature: A web page in a WebEngineView
     And 2 seconds pass
     Then the property "seen" of "root" is "false no opener true"
 
+  # A page lives in one profile: asked to open in a view of another, the
+  # view stays as it was, and the page that asked gets no window.
+  @api-QtWebEngine.WebEngineNewWindowRequest.openIn @api-QtWebEngine.WebEngineView.profile
+  Scenario: A page asked to open in a view of another profile is not shown there
+    Given the text file "opener.html":
+      """
+      <!doctype html><html><head><title>waiting</title></head>
+      <body style="margin:0"><div onclick="document.title = window.open('popup.html') ? 'opened' : 'refused'" style="height:100px; background:#ff0000"></div></body></html>
+      """
+    And the text file "popup.html":
+      """
+      <!doctype html><html><head><title>popup</title></head><body></body></html>
+      """
+    And the QML:
+      """qml
+      import QtQuick
+      import QtWebEngine
+      Item {
+        id: root; objectName: "root"
+        width: 200; height: 200
+        WebEngineProfile { id: other; storageName: "other"; offTheRecord: true }
+        WebEngineView {
+          id: opener; width: 200; height: 100
+          profile: WebEngineProfile { storageName: "mine"; offTheRecord: true }
+          url: Qt.resolvedUrl("opener.html")
+          onNewWindowRequested: request => request.openIn(popup)
+        }
+        WebEngineView { id: popup; y: 100; width: 200; height: 100; profile: other }
+        property string seen: popup.title + "|" + popup.url + "|" + (popup.profile === other)
+      }
+      """
+    When 2 seconds pass
+    And the user presses the pointer at 100, 50
+    And the user releases the pointer at 100, 50
+    And 2 seconds pass
+    Then the property "seen" of "root" is "||true"
+
   @api-QtWebEngine.WebEngineView.triggerWebAction @api-QtWebEngine.WebEngineNewWindowRequest.requestedUrl
   Scenario: Viewing a page's source asks for a new window showing it
     Given the QML:
