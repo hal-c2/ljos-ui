@@ -9,8 +9,11 @@ Feature: What will wake the application
   running animations, answers it waits for (a file read, a fetch, a
   dialog), pictures loading and messages posted, each with the object it
   is for and where that is declared. What only listens for news that may
-  never come, a file watcher, is listed apart. An application at rest
-  has nothing scheduled: the 0 % CPU rule made visible.
+  never come, a file watcher, is listed apart. An animation says how it
+  goes: stepping with every frame, resting while nothing reads what it
+  moves (scheduled only for its end), or, a clock whose work nobody sees,
+  riding along with the frames of others. An application at rest has
+  nothing scheduled: the 0 % CPU rule made visible.
 
   Scenario: An application at rest has nothing to wake it
     Given the QML:
@@ -87,6 +90,50 @@ Feature: What will wake the application
     Then the answer's "/scheduled" is 1
     And the answer's "/processes/0/source" is "animation"
     And the answer's "/processes/0/locator" is "id=slide"
+    And the answer's "/processes/0/pace" is "stepping"
+
+  Scenario: An endless animation of what nothing reads rests and wakes nothing
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        id: root
+        property real phase: 0
+        NumberAnimation { id: spin; target: root; property: "phase"; to: 360; duration: 1000; loops: Animation.Infinite; running: true }
+      }
+      """
+    And the inspector is connected
+    When 100 milliseconds pass
+    And the agent calls the tool "app_processes" with:
+      """json
+      {"kind": "waker"}
+      """
+    Then the answer's "/scheduled" is 0
+    And the answer's "/processes" has 1 entry
+    And the answer's "/processes/0/locator" is "id=spin"
+    And the answer's "/processes/0/pace" is "resting"
+    And the answer's text contains "resting, endless: asks for no frame"
+
+  Scenario: An animation of what nothing reads rests until its end
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        id: root
+        property real phase: 0
+        NumberAnimation { id: spin; target: root; property: "phase"; to: 360; duration: 1000; running: true }
+      }
+      """
+    And the inspector is connected
+    When 100 milliseconds pass
+    And the agent calls the tool "app_processes" with:
+      """json
+      {"kind": "waker"}
+      """
+    Then the answer's "/scheduled" is 1
+    And the answer's "/processes/0/pace" is "resting"
+    And the answer's "/processes/0/left_us" is at least 800000
+    And the answer's text contains "resting, wakes at its end in"
 
   Scenario: A file being read is an answer the application waits for, gone once it came
     Given the text file "feed.xml":
