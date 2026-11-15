@@ -345,7 +345,11 @@ fn model<S: SceneSource>(s: &S, view: S::Object, obj: S::Object, shown: bool) ->
 /// A model that is not `shown` leaves out a part of a `CustomMaterial`:
 /// Qt makes a material's shaders when it first draws them, so a hidden
 /// model's snippets are neither translated nor warned of. Its `visible`
-/// is read with it, so showing it reads it again.
+/// is read with it, so showing it reads it again. Hiding or showing such
+/// a model so changes its node's kind (a `Model` is a `Group` while
+/// hidden, its mesh's parts gone), which costs a reshape rather than a
+/// patch of `visible`; the material keeps its program, so the snippets
+/// are not translated again.
 pub(super) fn material_of<S: SceneSource>(
     s: &S,
     view: S::Object,

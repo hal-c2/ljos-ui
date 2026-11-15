@@ -322,15 +322,19 @@ struct Key {
     textures: Vec<String>,
 }
 
-/// The program last made for an object; `None` when its snippets did not
-/// make one, so a broken file is reported once.
+/// The program last made for an object; an error when its snippets did
+/// not make one, so a broken file is reported once. The error holds the
+/// failure others of the same text share, when its text was read.
 #[derive(Debug, Default)]
-struct Cache(RefCell<Option<(Key, Option<Arc<Program>>)>>);
+struct Cache(RefCell<Option<(Key, Tried)>>);
+
+/// The program an object's snippets made, or the failure they share.
+type Tried = Result<Arc<Program>, Option<Arc<Failed>>>;
 
 impl Cache {
     fn get(&self, key: &Key) -> Option<Option<Arc<Program>>> {
         match &*self.0.borrow() {
-            Some((k, p)) if k == key => Some(p.clone()),
+            Some((k, p)) if k == key => Some(p.as_ref().ok().cloned()),
             _ => None,
         }
     }
@@ -456,35 +460,74 @@ struct Made {
     textures: Vec<String>,
 }
 
+/// Text that makes no program. The objects that tried it hold it, so the
+/// next object of the same text is neither translated nor warned of
+/// again: a map's tiles of one broken file warn once, not once a tile.
+#[derive(Debug)]
+struct Failed;
+
+/// What became of a program's text, while some object holds it.
+enum Shared {
+    Program(Weak<Program>),
+    Failed(Weak<Failed>),
+}
+
+impl Shared {
+    fn held(&self) -> bool {
+        match self {
+            Self::Program(p) => p.strong_count() > 0,
+            Self::Failed(f) => f.strong_count() > 0,
+        }
+    }
+}
+
 thread_local! {
-    /// The programs some object draws with, by what they were made of. A
-    /// program is pure data, so the engines of a thread share them.
-    static MADE: RefCell<HashMap<Made, Weak<Program>>> = RefCell::new(HashMap::new());
+    /// What some object draws with, or failed to make, by what it was
+    /// made of. A program is pure data, so the engines of a thread share
+    /// them.
+    static MADE: RefCell<HashMap<Made, Shared>> = RefCell::new(HashMap::new());
 }
 
 /// The program `made` describes: one an object draws with already, or
-/// one `make` makes of its text.
+/// one `make` makes of its text. Text that makes none gives the failure
+/// to hold, with why the first time and nothing once that was told.
 fn made_of(
     made: Made,
     make: impl FnOnce(Option<&str>, Option<&str>) -> Result<Program, snippet::SnippetError>,
-) -> Result<Arc<Program>, snippet::SnippetError> {
-    if let Some(p) = MADE.with_borrow(|m| m.get(&made).and_then(Weak::upgrade)) {
-        return Ok(p);
+) -> Result<Arc<Program>, (Arc<Failed>, Option<snippet::SnippetError>)> {
+    let had = MADE.with_borrow(|m| match m.get(&made) {
+        Some(Shared::Program(p)) => p.upgrade().map(Ok),
+        Some(Shared::Failed(f)) => f.upgrade().map(|f| Err((f, None))),
+        None => None,
+    });
+    if let Some(had) = had {
+        return had;
     }
     #[cfg(test)]
     counts::TRANSLATED.with(|n| n.set(n.get() + 1));
-    let p = Arc::new(make(made.vertex.as_deref(), made.fragment.as_deref())?);
+    let (now, shared) = match make(made.vertex.as_deref(), made.fragment.as_deref()) {
+        Ok(p) => {
+            let p = Arc::new(p);
+            let shared = Shared::Program(Arc::downgrade(&p));
+            (Ok(p), shared)
+        }
+        Err(err) => {
+            let f = Arc::new(Failed);
+            let shared = Shared::Failed(Arc::downgrade(&f));
+            (Err((f, Some(err))), shared)
+        }
+    };
     MADE.with_borrow_mut(|m| {
         // Only a miss gets here, which costs a translation: going over the
         // rest to let go of what no object holds costs little beside it.
-        m.retain(|_, p| p.strong_count() > 0);
-        m.insert(made, Arc::downgrade(&p));
+        m.retain(|_, s| s.held());
+        m.insert(made, shared);
     });
-    Ok(p)
+    now
 }
 
 /// The program `key` names, made with `make` from the snippets' text the
-/// first time; a failure is warned of, naming the file, and remembered.
+/// first time; a failure is warned of once, naming the file, and remembered.
 fn program<T: QmlType>(
     e: &Engine,
     obj: ObjectId,
@@ -507,8 +550,8 @@ fn program<T: QmlType>(
         text(&key.vertex_code, &key.vertex),
         text(&key.fragment_code, &key.fragment),
     ) {
-        (Err(err), _) => Err(format!("{}: {err}", key.vertex)),
-        (_, Err(err)) => Err(format!("{}: {err}", key.fragment)),
+        (Err(err), _) => Err((None, Some(format!("{}: {err}", key.vertex)))),
+        (_, Err(err)) => Err((None, Some(format!("{}: {err}", key.fragment)))),
         (Ok(v), Ok(f)) => made_of(
             Made {
                 who,
@@ -520,33 +563,36 @@ fn program<T: QmlType>(
             },
             make,
         )
-        .map_err(|err| {
-            let file = match &err {
-                snippet::SnippetError::Compile { stage, .. }
-                | snippet::SnippetError::Unsupported { stage, .. } => match *stage {
-                    "vertex" if !key.vertex_code.is_empty() => "__vertexShaderCode".to_owned(),
-                    "vertex" => key.vertex.clone(),
-                    _ if !key.fragment_code.is_empty() => "__fragmentShaderCode".to_owned(),
-                    _ => key.fragment.clone(),
-                },
-                snippet::SnippetError::Program(_) => {
-                    format!("{} and {}", key.vertex, key.fragment)
-                }
-            };
-            format!("{file}: {err}")
+        .map_err(|(failed, err)| {
+            let why = err.map(|err| {
+                let file = match &err {
+                    snippet::SnippetError::Compile { stage, .. }
+                    | snippet::SnippetError::Unsupported { stage, .. } => match *stage {
+                        "vertex" if !key.vertex_code.is_empty() => "__vertexShaderCode".to_owned(),
+                        "vertex" => key.vertex.clone(),
+                        _ if !key.fragment_code.is_empty() => "__fragmentShaderCode".to_owned(),
+                        _ => key.fragment.clone(),
+                    },
+                    snippet::SnippetError::Program(_) => {
+                        format!("{} and {}", key.vertex, key.fragment)
+                    }
+                };
+                format!("{file}: {err}")
+            });
+            (Some(failed), why)
         }),
     };
-    let made = match made {
-        Ok(p) => Some(p),
-        Err(why) => {
+    let made = made.map_err(|(failed, why)| {
+        if let Some(why) = why {
             e.warn(format!("QtQuick3D {who}: {why}"));
-            None
         }
-    };
-    let _ = e.with(obj, |t: &T| {
-        *cache(t).0.borrow_mut() = Some((key, made.clone()));
+        failed
     });
-    made
+    let program = made.as_ref().ok().cloned();
+    let _ = e.with(obj, |t: &T| {
+        *cache(t).0.borrow_mut() = Some((key, made));
+    });
+    program
 }
 
 /// `url` resolved against the file that wrote `obj`; empty for none.
