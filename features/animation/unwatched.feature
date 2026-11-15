@@ -9,11 +9,12 @@
 
 @ljos-only
 Feature: An animation nobody watches
-  An animation of a property that nothing binds to, listens to or draws asks
-  for no frames. Its value is worked out when it is read, so a script sees
-  the value of that moment. Something that starts to watch the property
-  catches the animation up and keeps it going frame by frame, and an
-  animation with an end still finishes on time.
+  An animation of a property that nothing binds to, listens to or draws
+  schedules nothing. Its value is worked out when it is read, so a script
+  sees the value of that moment. Something that starts to watch the property
+  catches the animation up and keeps it going, a value given to the property
+  lasts only until the animation's next step, and an animation with an end
+  still finishes on time, sooner when the system asks for reduced motion.
 
   Background:
     Given the QML:
@@ -35,6 +36,12 @@ Feature: An animation nobody watches
           property real phase: 0
           from: 0; to: 100; duration: 100
           onFinished: root.log += "finished "
+        }
+        NumberAnimation {
+          id: slow; objectName: "slow"; target: slow; property: "phase"
+          property real phase: 0
+          from: 0; to: 100; duration: 1000
+          onFinished: root.log += "slow finished "
         }
         function look() { looked = spin.phase }
         function follow() { seen = Qt.binding(function() { return spin.phase }) }
@@ -63,7 +70,7 @@ Feature: An animation nobody watches
     When 250 milliseconds pass
     Then the property "seen" of "root" is within 1 of 180
 
-  Scenario: A change handler hears an animation frame by frame
+  Scenario: A change handler hears every change of an animation
     When the method "start" of "spin" is called
     And 100 milliseconds pass
     And the method "listen" of "root" is called
@@ -79,3 +86,20 @@ Feature: An animation nobody watches
     And the property "running" of "once" is false
     And the property "phase" of "once" is 100
     And the application has nothing scheduled
+
+  Scenario: A value given to an animation nobody watches lasts until its next step
+    When the method "start" of "spin" is called
+    And 250 milliseconds pass
+    And the property "phase" of "spin" is set to 5
+    And 250 milliseconds pass
+    Then the property "phase" of "spin" is within 1 of 180
+    And the application has nothing scheduled
+
+  Scenario: An animation nobody watches ends at once when the system asks for reduced motion
+    When the method "start" of "slow" is called
+    And 200 milliseconds pass
+    And the system setting "reduced motion" changes to true
+    And 16 milliseconds pass
+    Then the property "log" of "root" is "slow finished "
+    And the property "running" of "slow" is false
+    And the property "phase" of "slow" is 100

@@ -882,7 +882,7 @@ pub(crate) fn tick(engine: &Engine, now: Time) {
                 continue;
             }
             if run.resting.get() {
-                if !wakes_at(engine, run, now) {
+                if !wakes_at(engine, run, now, calm) {
                     continue;
                 }
                 wake(engine, &d, run);
@@ -907,9 +907,11 @@ pub(crate) fn tick(engine: &Engine, now: Time) {
     d.last_frame.set(Some((now, engine.now())));
 }
 
-/// Whether a resting run steps in the frame at `now`: it ends by then, or
-/// something has come to observe what it moves.
-fn wakes_at(engine: &Engine, run: &Run, now: Time) -> bool {
+/// Whether a resting run steps in the frame at `now`: it ends by then,
+/// something has come to observe what it moves, or the system's reduced
+/// motion setting is no longer the one it is timed for (`calm`), so its end
+/// moves (`follow_motion`) and its one wake with it.
+fn wakes_at(engine: &Engine, run: &Run, now: Time, calm: bool) -> bool {
     let last = *run.last.get().get_or_insert(now);
     run.last.set(Some(last));
     let t = run
@@ -919,6 +921,7 @@ fn wakes_at(engine: &Engine, run: &Run, now: Time) -> bool {
     run.timeline.borrow().as_deref().is_none_or(|timeline| {
         timeline.is_done()
             || (!timeline.is_endless() && t >= timeline.total())
+            || (!timeline.is_endless() && timeline.calm() != calm)
             || !timeline.unwatched(engine)
     })
 }
