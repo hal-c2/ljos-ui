@@ -42,6 +42,18 @@ QtObject {
             entry = "file://" + encodeURI(entry).replace(/#/g, "%23").replace(/\?/g, "%3F")
         }
         const component = Qt.createComponent(entry)
+        // A network entry is still loading when it is made.
+        if (component.status === Component.Loading) {
+            component.statusChanged.connect(() => {
+                if (component.status !== Component.Loading)
+                    start(entry, component)
+            })
+        } else {
+            start(entry, component)
+        }
+    }
+
+    function start(entry, component) {
         if (component.status !== Component.Ready) {
             fail(component.errorString())
             return
