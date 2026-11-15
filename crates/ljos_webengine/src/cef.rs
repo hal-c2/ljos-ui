@@ -2903,13 +2903,8 @@ pub(crate) fn start(
                 focus: None,
                 since: waiting_from(wait),
             });
-            if wait.is_zero() {
-                // Still made once the profile is ready, for its next page.
-                not_born(&shared, &not_ready(wait));
-            } else {
-                // CEF readies the context with work it does not announce.
-                told_work();
-            }
+            // Still made once the profile is ready, for its next page.
+            wait_for_profile(&shared, wait);
         }
         profile => make_browser(&shared, &start, profile.map(|(c, _)| c))?,
     }
@@ -3001,9 +2996,19 @@ fn reborn(shared: &Arc<Shared>) {
     };
     if ready {
         born(shared);
-    } else if wait.is_zero() {
+    } else {
+        wait_for_profile(shared, wait);
+    }
+}
+
+/// A view whose profile is not ready waits `wait` for it, or, when that is
+/// no time, fails its page now; a view's first page and its next one wait
+/// alike.
+fn wait_for_profile(shared: &Arc<Shared>, wait: Duration) {
+    if wait.is_zero() {
         not_born(shared, &not_ready(wait));
     } else {
+        // CEF readies the context with work it does not announce.
         told_work();
     }
 }

@@ -287,6 +287,7 @@ pub fn set_profile_wait(wait: Option<std::time::Duration>) {
 }
 
 /// How long a view waits for a new profile's storage now.
+#[cfg(feature = "cef")]
 pub(crate) fn profile_wait() -> std::time::Duration {
     match PROFILE_WAIT_MS.load(std::sync::atomic::Ordering::Relaxed) {
         u64::MAX => PROFILE_WAIT,
