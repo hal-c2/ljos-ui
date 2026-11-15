@@ -155,7 +155,8 @@ impl PoFile {
                     field = None;
                 }
                 started = true;
-                let (kind, rest) = comment.split_at(comment.chars().next().map_or(0, char::len_utf8));
+                let (kind, rest) =
+                    comment.split_at(comment.chars().next().map_or(0, char::len_utf8));
                 let rest = rest.strip_prefix(' ').unwrap_or(rest);
                 match kind {
                     "." if rest == EXPLICIT_ID => entry.explicit_id = true,
@@ -251,9 +252,10 @@ impl PoFile {
         let name = Path::new(file)
             .file_name()
             .map_or_else(|| file.to_owned(), |n| n.to_string_lossy().into_owned());
-        let language = self.language.clone().unwrap_or_else(|| {
-            name.strip_suffix(".po").unwrap_or(&name).to_owned()
-        });
+        let language = self
+            .language
+            .clone()
+            .unwrap_or_else(|| name.strip_suffix(".po").unwrap_or(&name).to_owned());
         let mut catalog = Catalog::new(&language);
         catalog.set_file(&name);
         for entry in &self.entries {
@@ -288,11 +290,16 @@ impl PoFile {
         }
         let mut entries: Vec<&PoEntry> = self.entries.iter().collect();
         entries.sort_by(|a, b| {
-            (a.obsolete, a.id.as_bytes(), a.context.as_deref().map(str::as_bytes)).cmp(&(
-                b.obsolete,
-                b.id.as_bytes(),
-                b.context.as_deref().map(str::as_bytes),
-            ))
+            (
+                a.obsolete,
+                a.id.as_bytes(),
+                a.context.as_deref().map(str::as_bytes),
+            )
+                .cmp(&(
+                    b.obsolete,
+                    b.id.as_bytes(),
+                    b.context.as_deref().map(str::as_bytes),
+                ))
         });
         for entry in entries {
             out.push('\n');
@@ -474,11 +481,19 @@ msgstr "Tvær\nlínur"
         let ids: Vec<_> = again.entries.iter().map(|e| e.id.as_str()).collect();
         assert_eq!(
             ids,
-            ["Close", "Hello {name}", "Open", "Save", "Two\nlines", "nav.home", "Gone"]
+            [
+                "Close",
+                "Hello {name}",
+                "Open",
+                "Save",
+                "Two\nlines",
+                "nav.home",
+                "Gone"
+            ]
         );
-        assert!(written.contains(
-            "#. js-lingui-explicit-id\n#. Default: Home\nmsgid \"nav.home\"\n"
-        ));
+        assert!(
+            written.contains("#. js-lingui-explicit-id\n#. Default: Home\nmsgid \"nav.home\"\n")
+        );
         assert!(written.contains("#~ msgid \"Gone\"\n#~ msgstr \"Farið\"\n"));
         assert!(written.contains("msgid \"\"\n\"Two\\n\"\n\"lines\"\n"));
     }

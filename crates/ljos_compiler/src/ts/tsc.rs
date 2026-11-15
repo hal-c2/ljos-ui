@@ -53,7 +53,8 @@ impl Layout {
     /// Deno has no `rootDirs`: an import map sends what a body imports, and
     /// every import of an `.lts` module, where the module would be.
     fn deno_imports(&self) -> String {
-        let mut map: Vec<(String, String)> = vec![(CORE_MODULE.to_owned(), format!("./{CORE_FILE}"))];
+        let mut map: Vec<(String, String)> =
+            vec![(CORE_MODULE.to_owned(), format!("./{CORE_FILE}"))];
         // What `rootDirs` makes one tree for tsc: an import from any of the
         // three directories finds a module in `m`, and an `.lts` module's
         // declaration in `types`. A declaration imports what its module
@@ -84,7 +85,6 @@ impl Layout {
 
 /// Where `@ljos/core` is declared for the checker, beside the files.
 pub const CORE_FILE: &str = "ljos-core.ts";
-
 
 /// A program that checks TypeScript.
 #[derive(Debug, Clone, PartialEq, Eq)]

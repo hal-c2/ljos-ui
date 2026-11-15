@@ -292,11 +292,10 @@ fn translatable(t: &Translatable) -> String {
         (true, None) => " n=?".into(),
         _ => String::new(),
     };
-    let id = t
-        .id
-        .as_deref()
-        .map(|id| format!(" id={id:?}"))
-        .unwrap_or_default();
+    let id =
+        t.id.as_deref()
+            .map(|id| format!(" id={id:?}"))
+            .unwrap_or_default();
     let values = if t.placeholders.is_empty() {
         String::new()
     } else {

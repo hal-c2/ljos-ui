@@ -516,7 +516,10 @@ mod tests {
         assert_eq!(hello(&i), "Hello Ada");
         i.set_ui_language("is-IS");
         assert_eq!(hello(&i), "Halló Ada");
-        assert_eq!(i.message("menu", "Open", "Open", &values(&[])), "Opna valmynd");
+        assert_eq!(
+            i.message("menu", "Open", "Open", &values(&[])),
+            "Opna valmynd"
+        );
         assert_eq!(i.message("", "Open", "Open", &values(&[])), "Open");
         assert_eq!(i.message("", "nav.home", "Home", &values(&[])), "Heim");
         assert_eq!(i.translate("", "Hello {name}", "", None), "Hello {name}");

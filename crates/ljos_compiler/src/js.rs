@@ -637,7 +637,11 @@ impl Reader<'_, '_> {
         let within = self.analysis.messages.iter().any(|site| {
             site.span.start <= local.start
                 && local.end <= site.span.end
-                && site.message.as_ref().ok().is_none_or(|call| call.covers(local))
+                && site
+                    .message
+                    .as_ref()
+                    .ok()
+                    .is_none_or(|call| call.covers(local))
         });
         if within {
             return;
