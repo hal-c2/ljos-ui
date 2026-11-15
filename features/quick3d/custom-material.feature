@@ -285,6 +285,33 @@ Feature: CustomMaterial runs the author's shader snippets
         """
       Then the pixel at 100, 100 of the window is within 6 of "#00ff00"
 
+    # Many models of the same text, as the tiles of a map are, share what
+    # it is translated into; each still reads its own properties.
+    Scenario: Models of the same text each draw with their own values
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick3D
+        Rectangle {
+          width: 200; height: 200; color: "black"
+          View3D {
+            anchors.fill: parent
+            environment: SceneEnvironment { clearColor: "#202020"; backgroundMode: SceneEnvironment.Color }
+            OrthographicCamera { z: 600 }
+            Model { source: "#Rectangle"; x: -50; materials: CustomMaterial {
+              shadingMode: CustomMaterial.Unshaded; property real level: 1.0
+              __fragmentShaderCode: "void MAIN() { FRAGCOLOR = vec4(level, 0.0, 0.0, 1.0); }"
+            } }
+            Model { source: "#Rectangle"; x: 50; materials: CustomMaterial {
+              shadingMode: CustomMaterial.Unshaded; property real level: 0.5
+              __fragmentShaderCode: "void MAIN() { FRAGCOLOR = vec4(level, 0.0, 0.0, 1.0); }"
+            } }
+          }
+        }
+        """
+      Then the pixel at 50, 100 of the window is within 2 of "#ff0000"
+      And the pixel at 150, 100 of the window is within 2 of "#800000"
+
     Scenario: The vertex text moves it
       Given the QML:
         """qml

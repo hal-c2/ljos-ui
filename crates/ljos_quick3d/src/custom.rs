@@ -8,7 +8,8 @@
 //! property animating its value costs a block of numbers, not a compile.
 
 use std::cell::RefCell;
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Weak};
 
 use ljos::item;
 use ljos::item::ljos_3d::{
@@ -440,12 +441,54 @@ fn read_snippet(e: &Engine, url: &str) -> Result<String, String> {
     String::from_utf8(bytes).map_err(|_| "not UTF-8 text".to_owned())
 }
 
+/// What a program is made of once its files are read. Objects alike in
+/// it draw with one program, which is translated, and compiled on the
+/// device, once: a map's tiles are as many materials of the same two
+/// files. The text is the key, not the file's name, so an edited file
+/// makes a program of its own.
+#[derive(PartialEq, Eq, Hash)]
+struct Made {
+    who: &'static str,
+    vertex: Option<String>,
+    fragment: Option<String>,
+    shaded: bool,
+    uniforms: Vec<(String, UniformKind)>,
+    textures: Vec<String>,
+}
+
+thread_local! {
+    /// The programs some object draws with, by what they were made of. A
+    /// program is pure data, so the engines of a thread share them.
+    static MADE: RefCell<HashMap<Made, Weak<Program>>> = RefCell::new(HashMap::new());
+}
+
+/// The program `made` describes: one an object draws with already, or
+/// one `make` makes of its text.
+fn made_of(
+    made: Made,
+    make: impl FnOnce(Option<&str>, Option<&str>) -> Result<Program, snippet::SnippetError>,
+) -> Result<Arc<Program>, snippet::SnippetError> {
+    if let Some(p) = MADE.with_borrow(|m| m.get(&made).and_then(Weak::upgrade)) {
+        return Ok(p);
+    }
+    #[cfg(test)]
+    counts::TRANSLATED.with(|n| n.set(n.get() + 1));
+    let p = Arc::new(make(made.vertex.as_deref(), made.fragment.as_deref())?);
+    MADE.with_borrow_mut(|m| {
+        // Only a miss gets here, which costs a translation: going over the
+        // rest to let go of what no object holds costs little beside it.
+        m.retain(|_, p| p.strong_count() > 0);
+        m.insert(made, Arc::downgrade(&p));
+    });
+    Ok(p)
+}
+
 /// The program `key` names, made with `make` from the snippets' text the
 /// first time; a failure is warned of, naming the file, and remembered.
 fn program<T: QmlType>(
     e: &Engine,
     obj: ObjectId,
-    who: &str,
+    who: &'static str,
     cache: fn(&T) -> &Cache,
     key: Key,
     make: impl FnOnce(Option<&str>, Option<&str>) -> Result<Program, snippet::SnippetError>,
@@ -466,7 +509,18 @@ fn program<T: QmlType>(
     ) {
         (Err(err), _) => Err(format!("{}: {err}", key.vertex)),
         (_, Err(err)) => Err(format!("{}: {err}", key.fragment)),
-        (Ok(v), Ok(f)) => make(v.as_deref(), f.as_deref()).map_err(|err| {
+        (Ok(v), Ok(f)) => made_of(
+            Made {
+                who,
+                vertex: v,
+                fragment: f,
+                shaded: key.shaded,
+                uniforms: key.uniforms.clone(),
+                textures: key.textures.clone(),
+            },
+            make,
+        )
+        .map_err(|err| {
             let file = match &err {
                 snippet::SnippetError::Compile { stage, .. }
                 | snippet::SnippetError::Unsupported { stage, .. } => match *stage {
@@ -483,7 +537,7 @@ fn program<T: QmlType>(
         }),
     };
     let made = match made {
-        Ok(p) => Some(Arc::new(p)),
+        Ok(p) => Some(p),
         Err(why) => {
             e.warn(format!("QtQuick3D {who}: {why}"));
             None
@@ -721,5 +775,15 @@ fn buffer(e: &Engine, b: ObjectId) -> EffectBuffer {
             2 => Tiling::MirroredRepeat,
             _ => Tiling::ClampToEdge,
         },
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod counts {
+    use std::cell::Cell;
+
+    thread_local! {
+        /// The programs made of snippets' text on this thread.
+        pub(crate) static TRANSLATED: Cell<usize> = const { Cell::new(0) };
     }
 }
