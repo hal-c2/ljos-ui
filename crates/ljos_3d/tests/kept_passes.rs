@@ -216,4 +216,28 @@ fn a_moving_scene_through_every_pass_makes_no_buffers_or_groups_once_warm() {
         pixels(&gpu, &first) != want,
         "the exposure and the effect change the picture"
     );
+
+    // The chain changes shape: a frame without the effect moves every pass
+    // after it to another place, and the next frame, with the effect back,
+    // moves them home. What each place keeps is matched with what its pass
+    // binds, so the target draws what a fresh one draws.
+    let mut bare = scene(&dim, 3.0, 0.5, 0.5);
+    let mut env = bare.environment().clone();
+    env.effects.clear();
+    bare.set_environment(env);
+    frame(&gpu, &mut target, &bare);
+    let mut fresh_bare = Target::new(gpu.device(), &gpu.renderer(), [SIDE, SIDE]);
+    frame(&gpu, &mut fresh_bare, &bare);
+    let without = pixels(&gpu, &fresh_bare);
+    assert!(
+        pixels(&gpu, &target) == without,
+        "the kept passes drew another picture without the effect"
+    );
+    frame(&gpu, &mut target, &scene(&dim, 3.0, 0.5, 0.5));
+    let back = pixels(&gpu, &target);
+    assert!(
+        back == want,
+        "the kept passes drew another picture with the effect back"
+    );
+    assert!(without != want, "the effect changes the picture");
 }
