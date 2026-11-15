@@ -7,7 +7,7 @@
 # Qt translates with qsTr, which a file of Ljós's API does not have (§4.3.1): these messages are
 # Ljós's own, so there is nothing of Qt's to compare with. qsTr in Qt's QML is in catalogue.feature.
 
-@ljos-only @headless @backlog
+@ljos-only @headless
 Feature: Messages: translated text written as a tagged template
   A file of Ljós's API translates its text with `t`, a tagged template
   from `Ljos.Core`: `` t`Hello ${name}` ``. The catalogue holds the message
@@ -289,7 +289,7 @@ Feature: Messages: translated text written as a tagged template
   Rule: Messages live in modules too
 
     Scenario: A module's function translates when a binding calls it
-      Given the file "greet.lts":
+      Given the file "greet.ts":
         """ts
         import { t } from "@ljos/core"
         export function hello(name: string): string {
@@ -299,7 +299,7 @@ Feature: Messages: translated text written as a tagged template
       And the QML:
         """qml
         import Ljos.Ui
-        import "greet.lts" as Greet
+        import "greet.ts" as Greet
         Item {
           objectName: "root"
           property string hello: Greet.hello("Ada")
@@ -309,7 +309,7 @@ Feature: Messages: translated text written as a tagged template
       Then the property "hello" of "root" is "Halló Ada"
 
     Scenario: A message marked with msg is translated where it is shown
-      Given the file "menu.lts":
+      Given the file "menu.ts":
         """ts
         import { msg, type MessageDescriptor } from "@ljos/core"
         export const items: readonly [MessageDescriptor, MessageDescriptor] =
@@ -319,7 +319,7 @@ Feature: Messages: translated text written as a tagged template
         """qml
         import Ljos.Ui
         import Ljos.Core
-        import "menu.lts" as Menu
+        import "menu.ts" as Menu
         Item {
           objectName: "root"
           property string first: t(Menu.items[0])

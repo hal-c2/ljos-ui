@@ -53,6 +53,14 @@ fn the_translation_file(w: &mut LjosWorld, name: String, step: &Step) -> StepRes
     w.each(|b| b.environment()?.translation(&name, ts))
 }
 
+// A PO catalogue of `t` messages, as a translator hands it over. Its
+// `Language:` header says which language it is for, or else its name.
+#[given(regex = r#"^the translation file "([^"]+\.po)":$"#)]
+fn the_po_file(w: &mut LjosWorld, name: String, step: &Step) -> StepResult {
+    let po = docstring(step)?;
+    w.each(|b| b.environment()?.translation(&name, &po))
+}
+
 // An image the QML can name by a relative URL. It is made here, in one
 // colour, so that no binary file has to live beside the scenarios.
 #[given(regex = r#"^an? (\d+) by (\d+) image file "([^"]+)" filled with "(#[0-9a-fA-F]+)"$"#)]
