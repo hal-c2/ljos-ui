@@ -304,3 +304,46 @@ fn a_keeper_another_takes_the_place_of_as_it_is_read_keeps_nothing() {
     );
     assert!(!h.engine.is_kept_by(item, k, handing_over));
 }
+
+/// Hands the property it keeps to `another` as it is read, and the other
+/// lets go of it at once.
+fn handing_over_to_none(e: &Engine, me: ObjectId, prop: PropIndex, kept: Kept) {
+    if kept == Kept::Read {
+        e.keep_on_read(me, prop, another).unwrap();
+        e.stop_keeping(me, prop);
+    }
+}
+
+#[test]
+fn a_keeper_handed_over_as_it_is_read_is_not_put_back_when_the_other_lets_go() {
+    let h = engine();
+    let item = h.load(KEPT);
+    let k = index(&h, item, "k");
+    h.engine
+        .keep_on_read(item, k, handing_over_to_none)
+        .unwrap();
+    let _ = h.num(item, "k");
+    assert!(!h.engine.is_made_on_read(item, k));
+}
+
+/// Hands the property it keeps to `keeping` as it is read.
+fn handing_over_to_keeping(e: &Engine, me: ObjectId, prop: PropIndex, kept: Kept) {
+    if kept == Kept::Read {
+        e.keep_on_read(me, prop, keeping).unwrap();
+    }
+}
+
+#[test]
+fn a_keeper_handed_a_property_as_a_binding_reads_it_is_told_it_is_observed() {
+    let h = engine();
+    let item = h.load(KEPT);
+    let k = index(&h, item, "k");
+    h.engine
+        .keep_on_read(item, k, handing_over_to_keeping)
+        .unwrap();
+    told();
+    h.set(item, "on", Value::Bool(true));
+    assert_eq!(h.num(item, "seen"), 0.0);
+    assert_eq!(told(), [Kept::Observed]);
+    assert!(!h.engine.is_made_on_read(item, k));
+}

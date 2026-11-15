@@ -559,6 +559,11 @@ impl Engine {
                     .pop()
                     .is_some_and(|(_, _, _, gone)| gone);
                 if gone {
+                    // Handed over as it was read: the one that keeps it now
+                    // is the one to tell.
+                    if follows && let Some(now) = self.keeper(obj, prop) {
+                        self.untrack(|| now(self, obj, prop, Kept::Observed));
+                    }
                     return;
                 }
                 self.give_maker_back(obj, prop, Maker::Kept(keep));
