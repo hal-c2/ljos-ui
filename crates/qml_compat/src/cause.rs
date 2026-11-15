@@ -322,8 +322,14 @@ pub enum Message {
     IdWithValues { name: String },
     /// `qsTranslate` given a disambiguation beside its context.
     TwoContexts { name: String },
-    /// A text marked for later, filled now.
-    MarkedFilled { name: String },
+    /// `QT_TR_NOOP` and its family: a string to Qt, which `msg` is not.
+    Marked { name: String },
+    /// A value written in another place than where it stands that is not
+    /// a name, a member of one or a literal, so it may read differently.
+    Moved { name: String },
+    /// A count that is not an `int`, which Qt cuts and `String(n)` does
+    /// not.
+    NotWhole { name: String },
     /// A counted text that says `#`, `{` or `}`, which `plural` reads.
     CountedBraces { name: String },
     /// The name the rewrite writes is another of the file's.
@@ -734,9 +740,17 @@ impl fmt::Display for Message {
                 f,
                 "`{name}` has a disambiguation beside its context, and a message of `t` has one context"
             ),
-            Message::MarkedFilled { name } => write!(
+            Message::Marked { name } => write!(
                 f,
-                "`{name}` marks a text for later and fills it now, which `msg` does not"
+                "`{name}`'s value is a string to Qt and `msg`'s a message descriptor, so neither stands for the other"
+            ),
+            Message::Moved { name } => write!(
+                f,
+                "a value of `{name}` is written in another place than where it stands, and is not a name, a member of one or a literal"
+            ),
+            Message::NotWhole { name } => write!(
+                f,
+                "the count of `{name}` is not known to be an `int`, which Qt cuts to whole and `plural` does not"
             ),
             Message::CountedBraces { name } => write!(
                 f,
