@@ -285,7 +285,7 @@ fn loading() -> bool {
                 let live = Shared::lock(&shared.browser).is_some()
                     || Shared::lock(&shared.unborn)
                         .as_ref()
-                        .is_some_and(|u| u.since.is_some());
+                        .is_some_and(|u| u.waiting.is_some());
                 live && !shared.closing.load(Ordering::Relaxed)
                     && (shared.booting() || Shared::lock(&shared.load).url.is_some())
             }),
@@ -301,7 +301,6 @@ fn loading() -> bool {
 /// the pump turning for good.
 fn unborn() -> bool {
     let now = Instant::now();
-    let wait = crate::backend::profile_wait();
     let (waiting, late) = GLOBAL
         .try_with(|g| match g.try_borrow().as_deref() {
             Ok(Some(Ok(global))) => {
@@ -312,10 +311,10 @@ fn unborn() -> bool {
                     let Some(u) = unborn.as_mut() else {
                         continue;
                     };
-                    match u.since {
-                        Some(since) if now.duration_since(since) >= wait => {
-                            u.since = None;
-                            late.push(shared.clone());
+                    match u.waiting {
+                        Some(w) if w.over(now) => {
+                            u.waiting = None;
+                            late.push((shared.clone(), w.wait));
                         }
                         Some(_) => waiting = true,
                         None => {}
@@ -327,7 +326,7 @@ fn unborn() -> bool {
         })
         .unwrap_or_default();
     // Failed with the Global let go: the view hears of it on its own.
-    for shared in late {
+    for (shared, wait) in late {
         not_born(&shared, &not_ready(wait));
     }
     waiting
@@ -341,10 +340,28 @@ fn not_ready(wait: Duration) -> String {
     )
 }
 
-/// Since when a view waits for its profile, now; `None` when it may not
+/// A view's wait for its profile, starting now; `None` when it may not
 /// wait at all.
-fn waiting_from(wait: Duration) -> Option<Instant> {
-    (!wait.is_zero()).then(Instant::now)
+fn waiting_from(wait: Duration) -> Option<Waiting> {
+    (!wait.is_zero()).then(|| Waiting {
+        since: Instant::now(),
+        wait,
+    })
+}
+
+/// How long a view waits for its profile, from when. The wait is the one
+/// set when it started: a view already waiting keeps it when
+/// [`crate::set_profile_wait`] changes it.
+#[derive(Clone, Copy, Debug)]
+struct Waiting {
+    since: Instant,
+    wait: Duration,
+}
+
+impl Waiting {
+    fn over(self, now: Instant) -> bool {
+        now.duration_since(self.since) >= self.wait
+    }
 }
 
 /// After a turn: a follow-up, unless the browser has been quiet long
@@ -1093,9 +1110,9 @@ struct Unborn {
     context: RequestContext,
     ready: Arc<Mutex<Readiness>>,
     focus: Option<bool>,
-    /// Since when it waits for the profile; `None` once it stopped
-    /// waiting with no browser made.
-    since: Option<Instant>,
+    /// Its wait for the profile; `None` once it stopped waiting with no
+    /// browser made.
+    waiting: Option<Waiting>,
 }
 
 /// The blank page a browser starts on. What every page gets (the
@@ -2901,7 +2918,7 @@ pub(crate) fn start(
                 context,
                 ready,
                 focus: None,
-                since: waiting_from(wait),
+                waiting: waiting_from(wait),
             });
             // Still made once the profile is ready, for its next page.
             wait_for_profile(&shared, wait);
@@ -2937,7 +2954,7 @@ fn born(shared: &Arc<Shared>) {
             }
         }
         Err(why) => {
-            u.since = None;
+            u.waiting = None;
             *Shared::lock(&shared.unborn) = Some(u);
             not_born(shared, &why);
         }
@@ -2977,7 +2994,7 @@ fn reborn(shared: &Arc<Shared>) {
     let wait = crate::backend::profile_wait();
     let ready = {
         let mut unborn = Shared::lock(&shared.unborn);
-        let Some(u) = unborn.as_mut().filter(|u| u.since.is_none()) else {
+        let Some(u) = unborn.as_mut().filter(|u| u.waiting.is_none()) else {
             return;
         };
         let mut r = Shared::lock(&u.ready);
@@ -2990,7 +3007,7 @@ fn reborn(shared: &Arc<Shared>) {
             {
                 r.waiting.push(Arc::downgrade(shared));
             }
-            u.since = waiting_from(wait);
+            u.waiting = waiting_from(wait);
         }
         r.ready
     };
@@ -3605,6 +3622,16 @@ mod tests {
                 ("http://127.0.0.1:8080".to_owned(), 8)
             ]
         );
+    }
+
+    #[test]
+    fn a_wait_for_a_profile_keeps_the_time_it_started_with() {
+        assert!(waiting_from(Duration::ZERO).is_none(), "no time is no wait");
+        // What `unborn` checks a wait by: the time it started with, not
+        // the setting now.
+        let w = waiting_from(Duration::from_secs(10)).expect("a wait");
+        assert!(!w.over(w.since + Duration::from_secs(1)));
+        assert!(w.over(w.since + Duration::from_secs(10)));
     }
 
     #[test]
