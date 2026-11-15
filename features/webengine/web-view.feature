@@ -161,6 +161,28 @@ Feature: A web page in a WebEngineView
     Then the property "seen" of "view" is "0:0 3:-2 0:0 2:200"
     And the property "title" of "view" is "Second Page"
 
+  # A view waits as long as it was set to when it began: a wait set to no
+  # time while it waits fails no page.
+  @ljos-only @api-QtWebEngine.WebEngineView.loadingChanged
+  Scenario: A view already waiting for its new profile keeps its wait when the wait is set shorter
+    Given a web view waits 10 seconds for a new profile's storage
+    And the QML:
+      """qml
+      import QtQuick
+      import QtWebEngine
+      WebEngineView {
+        objectName: "view"; width: 200; height: 100
+        property string seen: ""
+        profile: WebEngineProfile { storageName: "Shortened"; offTheRecord: false }
+        url: Qt.resolvedUrl("page.html")
+        onLoadingChanged: info => seen += (seen ? " " : "") + info.status + ":" + info.errorCode
+      }
+      """
+    When the wait for a new profile's storage changes to 0 seconds
+    And 2 seconds pass
+    Then the property "seen" of "view" is "0:0 2:200"
+    And the log has no warning matching "was not ready"
+
   # A browser made already would run it on its blank page, and hand back 1.
   @api-QtWebEngine.WebEngineView.runJavaScript
   Scenario: A script asked of a view while its new profile is made has no page to run in
