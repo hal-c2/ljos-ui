@@ -2354,6 +2354,14 @@ wrap_life_span_handler! {
         fn on_after_created(&self, browser: Option<&mut Browser>) {
             let adopting = Shared::lock(&self.shared.adopting).take();
             if let (Some((start, made)), Some(browser)) = (adopting, browser) {
+                // The view let its page go while CEF was making it: nobody
+                // would ever close it.
+                if self.shared.closing.load(Ordering::Relaxed) {
+                    if let Some(host) = browser.host() {
+                        host.close_browser(1);
+                    }
+                    return;
+                }
                 attach(&self.shared, browser.clone(), &start, made);
             }
         }

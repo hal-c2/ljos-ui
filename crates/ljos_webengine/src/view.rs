@@ -618,6 +618,13 @@ pub(crate) fn show_in(e: &Engine, view: ObjectId, browser: Rc<dyn Browser>) {
     if let Some(old) = old {
         old.close();
     }
+    // A closed browser answers no more scripts: what was asked of it is let
+    // go, so nothing waits on it for ever. Its callbacks are not called; the
+    // page they asked of is gone.
+    let unanswered = e
+        .with_mut::<WebEngineView, _>(view, |v| std::mem::take(&mut v.run.scripts))
+        .unwrap_or_default();
+    drop(unanswered);
     // A new browser shows no DevTools yet.
     let _ = e.with_mut::<WebEngineView, _>(view, |v| v.run.tools_shown = None);
     retool(e, view);
