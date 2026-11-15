@@ -283,6 +283,25 @@ mod tests {
 
     use super::perceptual_difference;
 
+    /// The ΔE 15 the scenarios allow is only what it was calibrated as if
+    /// CIELAB is: known colours land where the standard puts them.
+    #[test]
+    fn colours_land_where_cielab_puts_them() {
+        for (srgb, want) in [
+            ([1.0, 1.0, 1.0], [100.0, 0.0, 0.0]),
+            ([0.0, 0.0, 0.0], [0.0, 0.0, 0.0]),
+            ([1.0, 0.0, 0.0], [53.24, 80.09, 67.20]),
+            ([0.0, 1.0, 0.0], [87.73, -86.18, 83.18]),
+            ([0.0, 0.0, 1.0], [32.30, 79.19, -107.86]),
+            ([0.5, 0.5, 0.5], [53.39, 0.0, 0.0]),
+        ] {
+            let got = super::lab(srgb);
+            for (g, w) in got.iter().zip(want) {
+                assert!((g - w).abs() < 0.1, "{srgb:?} is {got:?}, not {want:?}");
+            }
+        }
+    }
+
     fn avatar(name: &str) -> RgbaImage {
         RgbaImage::from_png(&super::super::files::feature_file("lottie/avatars", name).unwrap())
             .unwrap()
