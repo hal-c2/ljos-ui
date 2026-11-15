@@ -1,8 +1,8 @@
 //! A web server of the scenario's own, on the loopback interface: what an
 //! application fetches over HTTP comes from here, never from the internet.
 //! Both backends reach it (`qml6` is another process), so it listens on a
-//! real port and answers on a thread of its own. It stops with the
-//! scenario.
+//! real port and answers each connection on a thread of its own. It stops
+//! with the scenario, ending every connection still open.
 //!
 //! The QML names it as `$SERVER`, which a scenario's files have replaced
 //! by `http://127.0.0.1:<port>` before they are loaded.
@@ -50,7 +50,56 @@ pub struct WebServer {
     files: Files,
     stop: Arc<AtomicBool>,
     held: Arc<Held>,
+    open: Arc<Open>,
     thread: Option<JoinHandle<()>>,
+}
+
+/// Connections being answered, each on a thread of its own: Chromium opens
+/// connections ahead of the requests it may send, and keeps some it never
+/// sends one on, so one waited on alone would keep every other request,
+/// and the server's stopping, waiting behind it.
+#[derive(Debug, Default)]
+struct Open {
+    connections: Mutex<Vec<(TcpStream, JoinHandle<()>)>>,
+}
+
+impl Open {
+    fn answer(&self, stream: TcpStream, files: &Files, refused: &str, held: &Arc<Held>) {
+        let Ok(own) = stream.try_clone() else {
+            return;
+        };
+        let (files, refused, held) = (Arc::clone(files), refused.to_owned(), Arc::clone(held));
+        let thread = std::thread::Builder::new()
+            .name("ljos-bdd-web-answer".to_owned())
+            .spawn(move || answer(stream, &files, &refused, &held));
+        let mut connections = self
+            .connections
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        connections.retain(|(_, thread)| !thread.is_finished());
+        if let Ok(thread) = thread {
+            connections.push((own, thread));
+        }
+    }
+
+    /// Ends every connection still open, a request read or not, and waits
+    /// for each thread to see it end.
+    fn close(&self) -> Option<Box<dyn std::any::Any + Send>> {
+        let connections = std::mem::take(
+            &mut *self
+                .connections
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner),
+        );
+        let mut panic = None;
+        for (stream, thread) in connections {
+            let _ = stream.shutdown(Shutdown::Both);
+            if let Err(why) = thread.join() {
+                panic.get_or_insert(why);
+            }
+        }
+        panic
+    }
 }
 
 /// Connections to [`HELD`], each waited out on a thread of its own so the
@@ -112,8 +161,14 @@ impl WebServer {
         let files = Files::default();
         let stop = Arc::new(AtomicBool::new(false));
         let held = Arc::new(Held::default());
+        let open = Arc::new(Open::default());
         let thread = {
-            let (files, stop, held) = (Arc::clone(&files), Arc::clone(&stop), Arc::clone(&held));
+            let (files, stop, held, open) = (
+                Arc::clone(&files),
+                Arc::clone(&stop),
+                Arc::clone(&held),
+                Arc::clone(&open),
+            );
             std::thread::Builder::new()
                 .name("ljos-bdd-web".to_owned())
                 .spawn(move || {
@@ -123,10 +178,8 @@ impl WebServer {
                         if stop.load(Ordering::Acquire) {
                             break;
                         }
-                        // One at a time: a scenario's few requests are
-                        // small, and an answer is written whole at once.
                         if let Ok(stream) = stream {
-                            answer(stream, &files, &refused, &held);
+                            open.answer(stream, &files, &refused, &held);
                         }
                     }
                 })
@@ -137,6 +190,7 @@ impl WebServer {
             files,
             stop,
             held,
+            open,
             thread: Some(thread),
         })
     }
@@ -178,9 +232,14 @@ impl Drop for WebServer {
         let joined = self.thread.take().map(JoinHandle::join);
         // After the server is gone: nothing more is held from then on.
         self.held.release();
+        let answering = self.open.close();
         // A server that panicked fails the scenario that used it, unless
         // that scenario is failing already.
-        if let Some(Err(panic)) = joined
+        let panic = match joined {
+            Some(Err(panic)) => Some(panic),
+            _ => answering,
+        };
+        if let Some(panic) = panic
             && !std::thread::panicking()
         {
             std::panic::resume_unwind(panic);
@@ -409,6 +468,32 @@ mod tests {
         let mut reply = String::new();
         stream.read_to_string(&mut reply).unwrap();
         reply
+    }
+
+    #[test]
+    fn a_connection_that_sends_nothing_keeps_neither_answers_nor_stopping_waiting() {
+        let server = WebServer::start().unwrap();
+        server.serve("a.txt", b"hello".to_vec());
+        // As Chromium opens one ahead of a request it never sends.
+        let silent = TcpStream::connect(("127.0.0.1", server.port)).unwrap();
+        let reply = get(&server, "/a.txt");
+        assert!(reply.ends_with("\r\n\r\nhello"), "{reply}");
+        let (stopped, told) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            drop(server);
+            let _ = stopped.send(());
+        });
+        assert!(
+            told.recv_timeout(std::time::Duration::from_secs(10))
+                .is_ok(),
+            "the server did not stop while a connection had sent it nothing"
+        );
+        let mut rest = Vec::new();
+        let read = (&silent).read_to_end(&mut rest);
+        assert!(
+            matches!(read, Ok(0)) || read.is_err(),
+            "the silent connection was ended: {read:?} {rest:?}"
+        );
     }
 
     #[test]
