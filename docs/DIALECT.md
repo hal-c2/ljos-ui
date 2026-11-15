@@ -425,7 +425,8 @@ a home in Ljós's API, and `ljos migrate` writes it:
 | `Qt.openUrlExternally(u)`, `Qt.platform` | `App.openUrlExternally(u)`, `App.platform` (built) | `Ljos.Core` |
 | `Qt.application.name`, `version`, `organization`, `domain`, `displayName`, `arguments`, `state`, `layoutDirection`, `screens`, `onAboutToQuit` | `App.name` and the others; `App.onQuitting` | `Ljos.Core` |
 | `Qt.uiLanguage` | `App.language`, reactive and writable | `Ljos.Core` |
-| `qsTr`, `qsTranslate`, `qsTrId`, `QT_TR*_NOOP` (globals, not `Qt`'s members) | `` t`…` ``, `plural`, `select`, `selectOrdinal`, `msg` (§4.13) | `Ljos.Core` |
+| `qsTr`, `qsTranslate`, `qsTrId` (globals, not `Qt`'s members) | `` t`…` ``, `plural`, `select`, `selectOrdinal` (§4.13) | `Ljos.Core` |
+| `QT_TR*_NOOP` | `msg`, by hand: Qt's value is a string and `msg`'s a descriptor, so each place it is shown changes to `t(descriptor)`; migrate keeps the file (§4.13) | `Ljos.Core` |
 | `Qt.locale(name?)` | `Locale.current`, `Locale.named(name)` | `Ljos.Core` |
 | `Qt.formatDate/Time/DateTime(d, f)` | `Locale.current.formatDate(d, f)` and the others | `Ljos.Core` |
 | `Qt.styleHints.*` | `App.hints.*`, the same members | `Ljos.Core` |
@@ -1518,6 +1519,11 @@ key is its context and its text, or its id.
   member of one or a literal, which give the same either way; anything
   else (`.arg(next())`) keeps the file. Any other `.arg` (two arguments,
   a field width, a number format) keeps the file too.
+  DECISION: a value that itself holds a `%N` is shown as it is. Qt's
+  chained `.arg` fills it again (`.arg("%2").arg("x")` gives "x of x"),
+  which Qt's own documentation warns against; the template does not, and
+  migrate does not keep a file for it, since no value can be proven free
+  of `%` before it runs.
 - `qsTr("%n file(s)", "", n)` → `` plural(n, { other: `${n} file(s)` }) ``,
   and `%Ln` → `#`. Qt's `%n` is the count without grouping and `%Ln` the
   count as the locale writes it; in a form, `{n}` is `String(n)` and `#`
@@ -3200,7 +3206,7 @@ print. Those the checker builds are marked ✓.
 | ✓ `ts-match-exhaustive` | A `match` with no `default` covers every case of its subject, which must be a union of literals, a plain enum or a discriminated union; on any other subject it needs a `default` (§4.18). |
 | ✓ `ts-is-binding` | A binding of `x is pattern` is read only where the `is` is known `true` (§4.18). |
 | `qt-global` | No `Qt` in a file of Ljós's API; the fix names the member's home (§4.3.1). |
-| `qt-tr` | No `qsTr`, `qsTranslate`, `qsTrId` or `QT_TR*_NOOP` in a file of Ljós's API; the fix is `ljos migrate`'s rewrite to `t` (§4.13). |
+| `qt-tr` | No `qsTr`, `qsTranslate`, `qsTrId` or `QT_TR*_NOOP` in a file of Ljós's API. For the first three the fix is `ljos migrate`'s rewrite to `t` (§4.13); `QT_TR*_NOOP` has no rewrite, and its message says to write `msg` by hand and translate it where it is shown. |
 | `i18n-literal` | A message and the forms of `plural`, `select` and `selectOrdinal` are written out (a string or a template), so they can be extracted (§4.13). |
 | `i18n-other` | The forms of `plural`, `select` and `selectOrdinal` have `other` (§4.13). |
 | `i18n-concat` (warning) | A translated text is not joined to another value with `+`: the two are one message (§4.13). |
