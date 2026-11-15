@@ -187,7 +187,9 @@ mod held {
         /// When they go: [`UNSHOWN`] after a frame ended. `None` until one
         /// does, as nothing could have drawn them before.
         due: Option<Instant>,
-        image: Weak<dyn TexturePixels>,
+        /// Every wrapper of them that asked: textures with one source
+        /// share the cache's picture, and any of them may go first.
+        images: Vec<Weak<dyn TexturePixels>>,
     }
 
     #[derive(Default)]
@@ -304,7 +306,9 @@ mod held {
                 images.extend(
                     unshown
                         .into_iter()
-                        .filter_map(|id| self.unshown.remove(&id)?.image.upgrade()),
+                        .filter_map(|id| self.unshown.remove(&id))
+                        .flat_map(|u| u.images)
+                        .filter_map(|w| w.upgrade()),
                 );
             }
             images
@@ -343,10 +347,15 @@ mod held {
     pub(super) fn unless_drawn(image: &TextureImage) {
         let mut d = due();
         if started(&mut d) {
-            d.unshown.entry(image.0.id()).or_insert_with(|| Unshown {
+            let wrapper = Arc::downgrade(&image.0);
+            let u = d.unshown.entry(image.0.id()).or_insert_with(|| Unshown {
                 due: None,
-                image: Arc::downgrade(&image.0),
+                images: Vec::new(),
             });
+            u.images.retain(|w| w.strong_count() > 0);
+            if !u.images.iter().any(|w| Weak::ptr_eq(w, &wrapper)) {
+                u.images.push(wrapper);
+            }
         }
     }
 
@@ -432,8 +441,16 @@ mod held {
         now_go: &mut Vec<Arc<dyn TexturePixels>>,
     ) {
         let key = (image.0.id(), reader.kind);
-        d.unshown.remove(&key.0);
         let wrapper = Arc::downgrade(&image.0);
+        // The other wrappers that waited to be drawn go with this one.
+        let unshown: Vec<_> = d
+            .unshown
+            .remove(&key.0)
+            .map(|u| u.images)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|w| w.strong_count() > 0 && !Weak::ptr_eq(w, &wrapper))
+            .collect();
         let mut by = vec![reader.id];
         let mut due = None;
         let mut by_whom = reader.id;
@@ -451,6 +468,11 @@ mod held {
             by_whom = h.by_whom;
             others = h.wrappers();
             others.retain(|w| !Weak::ptr_eq(w, &wrapper));
+        }
+        for w in unshown {
+            if !others.iter().any(|o| Weak::ptr_eq(o, &w)) {
+                others.push(w);
+            }
         }
         if d.all_have(reader.kind, &by) || !started(d) {
             others.insert(0, wrapper);
@@ -621,6 +643,42 @@ mod tests {
         );
         drop(drawing);
         assert!(let_go_soon(&w), "kept after the frame ended without them");
+    }
+
+    #[test]
+    fn undrawn_pixels_go_though_the_first_wrapper_of_them_went() {
+        let maps = Reader::new(Kind::Maps);
+        let probes = Reader::new(Kind::Probes);
+        let shared = pixels();
+        let id = fresh_pixels_id();
+        // Two textures with one source share the cache's picture.
+        let (first, first_w) = wrapper(id, &shared);
+        let (second, second_w) = wrapper(id, &shared);
+        unless_drawn(&first);
+        unless_drawn(&second);
+        drop((first, first_w));
+        drop(Frame::begin([&maps, &probes]));
+        assert!(
+            let_go_soon(&second_w),
+            "kept because the wrapper that asked first went"
+        );
+        assert!(shared.lock().unwrap().is_none());
+    }
+
+    #[test]
+    fn an_undrawn_wrapper_goes_with_another_of_its_pixels_that_was_uploaded() {
+        let maps = Reader::new(Kind::Maps);
+        let id = fresh_pixels_id();
+        let (undrawn, undrawn_w) = wrapper(id, &pixels());
+        let (drawn, drawn_w) = wrapper(id, &pixels());
+        unless_drawn(&undrawn);
+        uploaded(&maps, [&drawn]);
+        assert!(let_go_soon(&drawn_w), "the uploaded wrapper was kept");
+        assert!(
+            let_go_soon(&undrawn_w),
+            "the undrawn wrapper was forgotten when another was uploaded"
+        );
+        drop((undrawn, drawn));
     }
 
     #[test]
