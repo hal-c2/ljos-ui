@@ -11,7 +11,7 @@ use ljos_3d::offscreen::{Offscreen, Rgba, read_back};
 use ljos_3d::{
     AmbientOcclusion, Background, Camera, Color, DefaultMaterial, Environment, Fade, Instance,
     InstanceTable, Instancing, Light, Material, MeshSource, Model, Node, NodeId, NodeKind,
-    PostProcess, Primitive, Scene, Shadow, Target, Transform,
+    PostProcess, Primitive, Scene, Shadow, TIMED_EVERY, Target, Transform,
 };
 
 const SIDE: u32 = 200;
@@ -418,6 +418,44 @@ fn a_targets_gpu_time_is_read_a_frame_or_two_later() {
             target.shadow_passes() > 0
         );
     }
+}
+
+/// Timing a drawing costs the processor at submit: on GL, writing the
+/// timestamps, resolving and reading them back took a quarter to two fifths
+/// of a millisecond a frame. A target is timed on its first drawing and
+/// then on one in every [`TIMED_EVERY`].
+#[test]
+fn a_target_is_timed_one_drawing_in_so_many() {
+    let Some(mut gpu) = offscreen() else { return };
+    if !gpu
+        .device
+        .features()
+        .contains(wgpu::Features::TIMESTAMP_QUERY)
+    {
+        eprintln!(
+            "SKIPPED: {} has no timestamps read without waiting",
+            gpu.adapter.name
+        );
+        return;
+    }
+    let every = TIMED_EVERY as usize;
+    let mut s = sunlit(Some(Shadow::default()));
+    let mut target = Target::new(&gpu.device, &gpu.renderer, [SIDE, SIDE]);
+    let mut read = Vec::new();
+    // Drawing 2·every is read two drawings later.
+    for x in 0..2 * every + 3 {
+        s.scene.node_mut(s.cube).unwrap().transform = at(x as f32, 0.0, 100.0);
+        settled_frame(&mut gpu, &s.scene, &mut target);
+        if target.take_gpu_time().is_some() {
+            read.push(x);
+        }
+    }
+    assert_eq!(
+        read,
+        [2, every + 2, 2 * every + 2],
+        "drawings 0, {every} and {} timed",
+        2 * every
+    );
 }
 
 #[test]

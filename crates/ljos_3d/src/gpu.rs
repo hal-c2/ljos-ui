@@ -555,9 +555,10 @@ impl Target {
     }
 
     /// How long the GPU took to draw the picture (its shadow maps and its
-    /// scene pass) the last time that was read back: one or two drawings
-    /// behind, as nothing waits for the GPU. `None` where the device was
-    /// not asked for [`crate::timing_features`], or before a reading.
+    /// scene pass) the last time that was read back: of a drawing one in
+    /// [`crate::TIMED_EVERY`], two drawings behind it, as nothing waits for
+    /// the GPU. `None` where the device was not asked for
+    /// [`crate::timing_features`], or before a reading.
     pub fn last_gpu_time(&self) -> Option<std::time::Duration> {
         self.timer.as_ref().and_then(crate::timing::Timer::last)
     }
