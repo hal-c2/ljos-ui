@@ -20,7 +20,7 @@ Ljós is a **general-purpose framework**. Its first consumer is HAL-C2 (`~/dev/h
 6. **Hot code update.** In development a saved file patches the running app and keeps its state. In production a signed bundle can update QML, JS and assets without a store release, within store policy.
 7. **Desktop and mobile from one engine.** Linux, macOS and Windows come first, then Android, then iOS.
 8. **Off-screen content costs close to nothing.** Anything not painted does no layout, paint or GPU work. Anything not visible does no binding work unless something observes it. An idle app uses 0 % CPU.
-9. **Accessible and localisable from the start.** Every item can produce an AccessKit node. Text is shaped with bidi. `qsTr` works against real catalogues, with a language switch at runtime.
+9. **Accessible and localisable from the start.** Every item can produce an AccessKit node. Text is shaped with bidi. Ljós's own API translates with a tagged template, `` t`Hello ${name}` ``, against real catalogues, with a language switch at runtime; Qt's `qsTr` keeps working in compat.
 10. **Every behaviour is specified in Gherkin** and checked against real Qt wherever that is possible (section 18).
 
 **Non-goals (for now)**
@@ -210,7 +210,7 @@ ljos-ui/
 │   │                           gesture arena, ScrollPhysics, TextInputClient
 │   ├── ljos_a11y/              a11y pass, role table, live regions, SystemPrefs model
 │   ├── ljos_design/            design rules (codes, limits), colour maths, motion and palette tokens; no deps
-│   ├── ljos_i18n/              Catalog, I18n, .ts import/export, .ljl, ICU4X glue
+│   ├── ljos_i18n/              Catalog, I18n, ICU messages, .po and .ts import/export, .ljl, ICU4X glue
 │   ├── ljos_render/            RenderTree, DisplayList, B0 epaint, R vello_cpu, B1 wgpu
 │   ├── ljos_shader/            ShaderEffect programs: GLSL 440 → GLSL ES 300 / GL 330 with
 │   │                           naga [feature compile], std140 reflection, `.ljsh` artifacts
@@ -455,7 +455,7 @@ pub trait Reactive {
 
 **Provenance.** Each property has a provenance bit, *assigned* or *bound*. Hot reload uses it (section 12).
 
-**Translations.** Every `qsTr` reads `I18n::revision`. Changing the language bumps one node, and only the translated bindings re-evaluate, visible ones first (section 15).
+**Translations.** Every `t` message and every `qsTr` reads `I18n::revision`. Changing the language bumps one node, and only the translated bindings re-evaluate, visible ones first (section 15).
 
 **Crate choices.** `slotmap` is used. `salsa` is used only in the compiler and LSP. `reactive_graph` and `sycamore-reactive` are design references only (01 §3.3).
 
@@ -1270,7 +1270,7 @@ Source: 05 §3.1.
 - **Static lints** in `ljos check` flag:
   - interactive items with no name;
   - images with no name or `ignored`;
-  - `qsTr` called with a non-literal.
+  - a message whose text is not written out (`i18n-literal`; `qsTr` of a non-literal in compat).
 - **As built (M1).**
   - The role table covers every documented `Accessible.Role`, with a test that none is missing. Checked, mixed, pressed, expanded, disabled, read-only and selected states, value ranges, and `position_in_set`/`size_of_set` for ComboBox and Menu rows are told. Default roles and states of controls are a reading of the documentation: what Qt hands to assistive technology by default cannot be read from QML.
   - `SystemPrefs` (`ljos_a11y::prefs`) is reported by the host (`report_system_prefs`, a `HostPrefs` naming only what it heard) and set by the application or a test (`set_system_prefs`, `update_system_prefs`; `ljos::system` on the facade). `Qt.styleHints.colorScheme`, `.accessibility.contrastPreference` and `.accessibility.motionPreference` read it; `fontScale`, `screenReaderActive` and `font.scaleWithSystem` are Ljós extensions. Reduced motion takes what moves to its end at once, keeps fades and colour changes at most 150 ms (`ljos_design::limits::motion::REDUCED_FADE_MAX_MS`), and lets endless animations run at their own pace; a popup or StackView page that would move in or out fades instead, and a change of the setting while something runs goes on from where it is. Timers and scrolling are unaffected.
@@ -1299,26 +1299,83 @@ Source: 05 §3.1.
 
 ## 15. Localisation
 
-Source: 05 §3.4.
+Source: 05 §3.4. Amended 2026-11-15: Ljós's own API translates with a tagged template, as
+[Lingui](https://lingui.dev/) does, and `qsTr` is Qt's, kept for compat. This replaces the plan that
+kept a `.ts` catalogue for every file and rejected MessageFormat because existing QML is written
+against `qsTr`: Qt is the way in, and its QML keeps running as written, but it does not decide how a
+Ljós file says what it means.
 
-- **Catalogue.** Qt-compatible, keyed by `(context = file stem or pragma Translator, source, disambiguation)`.
-  - `.ts` is the translator-facing format. Ljós reads and writes it with quick-xml 0.42, round-tripping comments and locations.
-  - At runtime Ljós uses its own binary `.ljl`, which can be memory-mapped.
-  - In development, `.ts` files are read directly and watched, so translations hot-reload.
-  - Ljós never reads `.qm`.
-- **`I18n`** holds a fallback chain (for example `is-IS → is → en`) and three signals: `revision`, `ui_language` and `locale`.
-  - Setting `Qt.uiLanguage` swaps the chain, bumps `revision`, and updates the layout direction.
-  - Only visible translated bindings re-evaluate immediately. The rest are marked dirty and re-evaluate when shown.
-  - The signals live in the engine (`ljos_engine::i18n`), where bindings can read them through the graph; `ljos_i18n` is plain data and has no reactive dependency. The engine links it without the `ts` feature, so a shipped app has no XML parser.
-- **Plurals.**
-  - `%n` uses ICU4X `PluralRules` 2.3. The mapping from `.ts` numerus forms to CLDR categories is validated against `.ts` fixtures produced by running `lupdate` as a black box, never against Qt's plural tables.
-  - Where Qt's numerus forms for a language differ from CLDR's categories, a small override table written from Qt's documented plural rules and checked against those fixtures sits beside ICU4X, so an existing `.ts` file keeps its forms.
-  - `%1…%9` use `String.prototype.arg` with `QString::arg` semantics. This, `qsTr` and `%n` are needed from M1.
-- **Formatting.** `Qt.locale()` is built from ICU4X decimal, datetime and collator data. Qt's format tokens get a small formatter of Ljós's own.
-- **ICU4X data.** Use `compiled_data` in development. Release builds use blob data trimmed by datagen to the shipped locales and markers. The size on Android is still to be measured.
-- **RTL.** `LayoutMirroring` is resolved per item. Text uses Parley's base direction, and `Start`/`End` alignment resolves against it. AccessKit gets `text_direction` and `language`. Snapshots in Hebrew and Arabic go into the gallery.
-- **Extraction.** `ljos i18n extract` walks the qml-solid AST for `qsTr`, `qsTranslate`, `qsTrId` and `QT_*_NOOP`, honours the `//:` `//~` `//=` comments, and merges into `.ts`. `--check` mode runs in CI.
-- **Rejected:** Fluent as the primary format, since existing QML code is written against `qsTr` (HAL-C2 alone has 1,562 calls); gettext; and MessageFormat 2, which has no ICU4X crate yet.
+- **Messages.** A file of Ljós's API writes `` t`Hello ${name}` `` (DIALECT.md §4.13). `t`, `msg`,
+  `plural`, `select` and `selectOrdinal` are `Ljos.Core` names; a module imports them from
+  `"@ljos/core"`. All of it is TC39 syntax (a tagged template, calls, object literals).
+  - The compiler lowers each to an ICU MessageFormat message: a bare name is a named placeholder
+    (`{name}`), any other value a numbered one (`{0}`), `plural(n, {…})` is `{n, plural, …}`, a
+    number key an exact match (`=0`). One function in `ljos_compiler::i18n` does it, and the
+    compiler, the checker, `ljos i18n extract` and `ljos migrate` all call it, so a message has one
+    key everywhere.
+  - `t({ message, context, comment, id })` gives a context, a translator's note or an id of its own;
+    the key is `(context, id or message)`. `` msg`…` `` marks a message to translate where it is
+    shown, as `QT_TR_NOOP` did.
+  - The IR holds the message as a `Translatable` of kind `Message`; with no values it is a
+    `Literal::Translatable`, otherwise a builtin call with its values, in every tier. Runtime crates
+    read `ljos_ir` only, so the message syntax never reaches them.
+- **Catalogue.** PO, Lingui's flavour: ICU MessageFormat in `msgid` and `msgstr`, `msgctxt` for the
+  context, `#.` for the translator's note, `#:` for where the message is used, `#~` for a translated
+  message that left the sources.
+  - DECISION: PO, because every translation tool and service reads it (Weblate, Crowdin, Poedit,
+    Lokalise, Transifex), it is Lingui's default, it keeps notes, origins, contexts and obsolete
+    entries, and it diffs a line at a time. Plurals are inside the ICU message, so gettext's
+    `Plural-Forms` and its runtime are not used. Lingui's JSON was the alternative; it has no place
+    for a note or an origin that every tool reads.
+  - A catalogue is `<language>.po`, its language the header's `Language:`. In development it is read
+    directly and watched, so translations hot-reload; a shipped app reads `.ljl`, its own binary
+    format, which can be memory-mapped and needs no parser for either PO or `.ts`.
+  - **Compat.** `qsTr`, `qsTranslate`, `qsTrId` and `QT_*_NOOP` keep Qt's catalogue: `.ts`, keyed by
+    `(context = file stem or pragma Translator, source, disambiguation)`, read and written with
+    quick-xml 0.42, round-tripping comments and locations. Ljós never reads `.qm`. A `t` message
+    never looks in a `.ts` file and a `qsTr` never looks in a `.po` file.
+- **Formatting a message.** `ljos_i18n::message` parses and formats ICU MessageFormat (literal text
+  and its apostrophe quoting, `{arg}`, `plural` with `=N` and `#`, `select`, `selectordinal`), with
+  ICU4X `PluralRules` 2.3 for the cardinal and ordinal categories. `#` is the count in the locale's
+  digits and grouping; a plain `{arg}` is the value as text. A message is parsed once per catalogue
+  entry, never per call.
+- **Fallback.** The chain is `is-IS → is → source`, and the source message is formatted with the
+  source language's rules (English). A translation that does not parse, or names a value its message
+  does not have, is not used: the source is shown and the log gets one warning naming the file, line
+  and placeholder.
+- **`I18n`** holds the fallback chain and three signals: `revision`, `ui_language` and `locale`.
+  - Setting `App.language` (Ljós) or `Qt.uiLanguage` (compat), which are one state, swaps the chain,
+    bumps `revision`, and updates the layout direction.
+  - Only visible translated bindings re-evaluate immediately. The rest are marked dirty and
+    re-evaluate when shown. Nothing polls.
+  - The signals live in the engine (`ljos_engine::i18n`), where bindings can read them through the
+    graph; `ljos_i18n` is plain data and has no reactive dependency. The engine links it without the
+    `ts` and `po` features, so a shipped app has no XML or PO parser.
+- **Qt's plurals (compat).**
+  - `%n` uses ICU4X `PluralRules` 2.3. The mapping from `.ts` numerus forms to CLDR categories is
+    validated against `.ts` fixtures produced by running `lupdate` as a black box, never against
+    Qt's plural tables.
+  - Where Qt's numerus forms for a language differ from CLDR's categories, a small override table
+    written from Qt's documented plural rules and checked against those fixtures sits beside ICU4X,
+    so an existing `.ts` file keeps its forms.
+  - `%1…%9` use `String.prototype.arg` with `QString::arg` semantics.
+- **Formatting.** `Locale.current` (`Qt.locale()` in compat) is built from ICU4X decimal, datetime
+  and collator data. Qt's format tokens get a small formatter of Ljós's own.
+- **ICU4X data.** Use `compiled_data` in development. Release builds use blob data trimmed by
+  datagen to the shipped locales and markers. The size on Android is still to be measured.
+- **RTL.** `LayoutMirroring` is resolved per item. Text uses Parley's base direction, and
+  `Start`/`End` alignment resolves against it. AccessKit gets `text_direction` and `language`.
+  Snapshots in Hebrew and Arabic go into the gallery.
+- **Extraction.** `ljos i18n extract <dir> -o is.po` writes the messages of `t` and its family to PO
+  (`.pot`: a template, with no translations), keeping translations and keeping a translated message
+  that left the sources as obsolete; `-o app_is.ts` writes `qsTr` and its family to `.ts` as
+  before, honouring the `//:` `//~` `//=` comments. `--check` mode runs in CI.
+- **Migration.** `ljos migrate` rewrites `qsTr` and its family to `t`, `plural`, `msg` (DIALECT.md
+  §4.13), and with `--catalogue app_is.ts` writes the catalogue's translations to `is.po` with the
+  same rewrite, so a migrated application keeps them.
+- **Rejected:** Fluent, whose syntax and tools are its own; gettext's runtime and its `Plural-Forms`;
+  Lingui's JSON catalogue (see above); and MessageFormat 2, which has no ICU4X crate yet and no
+  translation tool reads. A file of Ljós's API with `qsTr` (`qt-tr`).
 
 Localisation is tested on Ljós's own fixtures, including an Icelandic catalogue.
 
@@ -1814,6 +1871,7 @@ Each milestone ends on Gherkin exit criteria, not on lists of features. The spik
 - `FocusTree`, key dispatch, `Shortcut` and `StandardKey`.
 - The full a11y role table, the audit lints and `SystemPrefs`.
 - `qsTr`, `.ts` import/export, `.ljl`, switching language at runtime, `String.arg`, `%n`, and `ljos i18n extract`.
+- `t`, `plural`, `select`, `selectOrdinal` and `msg` with ICU MessageFormat, `.po` catalogues, `ljos migrate`'s rewrite of `qsTr` (section 15, amended 2026-11-15).
 
 **Engine and runtime**
 - Tier-1 VM, with the debug cross-check and a coverage report over the corpora.

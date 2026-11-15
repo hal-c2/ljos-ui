@@ -425,6 +425,7 @@ a home in Ljós's API, and `ljos migrate` writes it:
 | `Qt.openUrlExternally(u)`, `Qt.platform` | `App.openUrlExternally(u)`, `App.platform` (built) | `Ljos.Core` |
 | `Qt.application.name`, `version`, `organization`, `domain`, `displayName`, `arguments`, `state`, `layoutDirection`, `screens`, `onAboutToQuit` | `App.name` and the others; `App.onQuitting` | `Ljos.Core` |
 | `Qt.uiLanguage` | `App.language`, reactive and writable | `Ljos.Core` |
+| `qsTr`, `qsTranslate`, `qsTrId`, `QT_TR*_NOOP` (globals, not `Qt`'s members) | `` t`…` ``, `plural`, `select`, `selectOrdinal`, `msg` (§4.13) | `Ljos.Core` |
 | `Qt.locale(name?)` | `Locale.current`, `Locale.named(name)` | `Ljos.Core` |
 | `Qt.formatDate/Time/DateTime(d, f)` | `Locale.current.formatDate(d, f)` and the others | `Ljos.Core` |
 | `Qt.styleHints.*` | `App.hints.*`, the same members | `Ljos.Core` |
@@ -1110,7 +1111,8 @@ where Qt's views reset when a model is replaced.
   a script could edit it or read it as a model: its id is read other than
   as a view's `model:`, a view's model is read off it anywhere in the file
   (`list.model.count`, `ListView.view.model`), a value is not a literal
-  (`qsTr`), the view has sections (`section.property` or `section { … }`),
+  (a `qsTr` too, for now: the list could hold it as a `` t`…` `` binding,
+  which is still to build), the view has sections (`section.property` or `section { … }`),
   a delegate reads a role by its bare name, writes one, or reads `model`,
   or the file has other local types, inline components or a `Loader`.
 - `model.<role>` → `modelData.<role>` where the file shows a model of
@@ -1464,17 +1466,57 @@ translated text.
 - `Text.color` is the glyph colour, and keeps its name: §4.2's rule renames
   only the member that names something else on another type
   (`Rectangle.color` is a fill).
-- `qsTr("%1 of %2").arg(a).arg(b)` has its `.arg` count checked against
-  the placeholders. Plurals use `qsTr("%n minutes ago", "", n)`, and
-  concatenating a number into a translated string is a check warning
-  (rssnews's `'' + minutes + ' ' + qsTr("minutes ago")`).
+- Text is translated with `t`, a tagged template from `Ljos.Core`, as
+  Lingui writes it (decided 2026-11-15; this replaces §18's option and
+  the plan to keep `qsTr`): `` t`${n} minutes ago` `` is the message
+  `{n} minutes ago` in the catalogue. A value is a placeholder named
+  after it when it is a bare name, and numbered (`{0}`, `{1}`) otherwise,
+  so a translator sees each value and can move it. Counts and choices are
+  `plural(n, { one: "# file", other: "# files" })`,
+  `select(role, { admin: "…", other: "…" })` and
+  `selectOrdinal(n, { one: "#st", … })`, which are ICU MessageFormat's
+  `plural`, `select` and `selectordinal`, and nest inside `t`. A number
+  key is an exact match (`0: "No files"`, ICU's `=0`), and `other` is
+  required. `t({ message, context, comment, id })` says a context, a note
+  for the translator or an id of its own; `` msg`…` `` marks a message to
+  translate later, where it is shown (`t(descriptor)`). A module imports
+  them from `"@ljos/core"`. All of it is TC39's syntax: a tagged
+  template, calls and object literals, which `tsc` reads as written.
+- The message is checked by construction: its values are expressions, so
+  there is nothing to count. `ljos check` says three things more: a form
+  that is not written out (`plural(n, { other: words })`, `i18n-literal`)
+  cannot be extracted; forms without `other` are `i18n-other`; and a
+  translated text joined to a value with `+` is two messages, a warning
+  (`i18n-concat`, rssnews's `'' + minutes + ' ' + qsTr("minutes ago")`)
+  whose fix is one message, `` t`${minutes} minutes ago` ``.
+- `qsTr`, `qsTranslate`, `qsTrId` and `QT_TR*_NOOP` are Qt's, and like `Qt`
+  they are not in a file of Ljós's API (§4.3.1): `qt-tr` is a check error
+  whose fix is the rewrite below. A file in Qt's QML keeps them, and its
+  `.arg` count is checked against the `%1` placeholders there.
 
-**Option, not decided (§18):** a tagged template
-``tr`${n} minutes ago` `` that extracts to the same catalogue, checked by
-construction.
+DECISION: `t`, `msg`, `plural`, `select` and `selectOrdinal` are
+`Ljos.Core` names under §4.3's rule (seen by a file that imports it, and
+last, so `property string t` is the property). They are not globals of
+the engine, and a file in Qt's QML has none of them.
+
+DECISION: the catalogue of a Ljós file is PO with ICU MessageFormat in it,
+as Lingui writes it (ARCHITECTURE.md §15 gives the reasons); a message's
+key is its context and its text, or its id.
 
 **Lowering.**
 
+- `qsTr("Open")` → `` t`Open` ``; `qsTr("%1 of %2").arg(a).arg(b)` →
+  `` t`${a} of ${b}` `` (each `%N` filled by one `.arg` of one argument,
+  in order; otherwise the file is kept); `qsTr("%n file(s)", "", n)` →
+  `plural(n, { other: "# file(s)" })` (Qt's source text has one form, so
+  the rewrite writes `other`, and the English catalogue's forms become a
+  translation); `%Ln` → `#`; `qsTr(text, "disambiguation")` →
+  `t({ message: "text", context: "disambiguation" })`;
+  `qsTranslate("Ctx", "x")` → `t({ message: "x", context: "Ctx" })`;
+  `qsTrId("id")` → `t({ id: "id" })`; `QT_TR_NOOP("x")` → `` msg`x` ``.
+  `qsTr` of a value that is not written out keeps the file. `ljos migrate
+  --catalogue app_is.ts` writes the `.ts` catalogue's translations as
+  `is.po` with the same rewrite, so a migrated file keeps them.
 - `font.pixelSize` → `font.size`.
 - `font.pointSize: n` → `font.size: Screen.points(n)`. Points to pixels is
   the screen's logical DPI / 72, known only at run time and different per
@@ -1894,10 +1936,9 @@ function timeSinceEvent(pubDate: string): string {
     const published = Instant.parseRfc2822(pubDate)
     if (published === undefined) return pubDate
     return Clock.now(Clock.Resolution.Minute).since(published).minutes |> match (%) {
-        when if (% < 2):    qsTr("Just now");
-        when if (% < 60):   qsTr("%1 minutes ago").arg(%);
-        when if (% < 120):  qsTr("1 hour ago");
-        when if (% < 1440): Math.floor(% / 60) |> qsTr("%1 hours ago").arg(%);
+        when if (% < 2):    t`Just now`;
+        when if (% < 60):   plural(%, { one: "# minute ago", other: "# minutes ago" });
+        when if (% < 1440): plural(Math.floor(% / 60), { one: "# hour ago", other: "# hours ago" });
         default:            Locale.current.formatDate(published, Locale.Format.Long);
     }
 }
@@ -1906,8 +1947,8 @@ function timeSinceEvent(pubDate: string): string {
 The Ljós version is also reactive: it reads `Clock.now` once a minute
 (`Clock.Resolution.Minute` joins §4.3's `Second`), so the delegate's text
 keeps itself current where Qt's is computed once.
-And the translated strings now carry their number (`%1`), which Qt's
-concatenation could not give a translator.
+And the translated strings now carry their number (`#`), in a plural a
+translator can give each form of, which Qt's concatenation could not.
 
 **Lowering.** The pipe is compiled away (§4.21): the program that runs
 has no pipe in it. A chain is one arrow, called where it is written, whose
@@ -2123,13 +2164,13 @@ holds it to every status:
 ```qml
 Text {
     text: match (feed.state) {
-        when { status: "initial" or "pending" }:                      qsTr("Loading…");
-        when { status: "done", value: [] }:                           qsTr("Nothing new");
+        when { status: "initial" or "pending" }:                      t`Loading…`;
+        when { status: "done", value: [] }:                           t`Nothing new`;
         when { status: "done", value: [let only] }:                   only.title;
-        when { status: "done", let value } and if (value.length > 99): qsTr("99+ new");
-        when { status: "done", let value }:                           qsTr("%1 new").arg(value.length);
+        when { status: "done", let value } and if (value.length > 99): t`99+ new`;
+        when { status: "done", let value }:                           t`${value.length} new`;
         when { status: "failed", error: { name: "AbortError" } }:     "";
-        when { status: "failed" }:                                    qsTr("Could not load");
+        when { status: "failed" }:                                    t`Could not load`;
     }
 }
 ```
@@ -2427,9 +2468,9 @@ Task {
 Text {
     text: match (weather.state) {
         when { status: "initial" }:         "";
-        when { status: "pending" }:         qsTr("Loading…");
+        when { status: "pending" }:         t`Loading…`;
         when { status: "done", let value }: value.summary;
-        when { status: "failed" }:          qsTr("No forecast");
+        when { status: "failed" }:          t`No forecast`;
     }
 }
 ```
@@ -3123,6 +3164,10 @@ print. Those the checker builds are marked ✓.
 | ✓ `ts-match-exhaustive` | A `match` with no `default` covers every case of its subject, which must be a union of literals, a plain enum or a discriminated union; on any other subject it needs a `default` (§4.18). |
 | ✓ `ts-is-binding` | A binding of `x is pattern` is read only where the `is` is known `true` (§4.18). |
 | `qt-global` | No `Qt` in a file of Ljós's API; the fix names the member's home (§4.3.1). |
+| `qt-tr` | No `qsTr`, `qsTranslate`, `qsTrId` or `QT_TR*_NOOP` in a file of Ljós's API; the fix is `ljos migrate`'s rewrite to `t` (§4.13). |
+| `i18n-literal` | A message and the forms of `plural`, `select` and `selectOrdinal` are written out (a string or a template), so they can be extracted (§4.13). |
+| `i18n-other` | The forms of `plural`, `select` and `selectOrdinal` have `other` (§4.13). |
+| `i18n-concat` (warning) | A translated text is not joined to another value with `+`: the two are one message (§4.13). |
 | ✓ `ts-lts-syntax` | No `match`, `is` or `\|>` in a `.ts` module; the fix renames it to `.lts` and rewrites the imports that name it (§4.21). |
 | ✓ `module-clash` | No `name.ts` and `name.lts` in the same directory: one module name, one file (§4.21). |
 | `lts-export-type` | An `.lts` module's exports carry the types `isolatedDeclarations` asks for, so its declaration is TypeScript's own emit (§4.21). |
@@ -4103,7 +4148,6 @@ choice is the project lead's.
 | Choice | Options | Recommendation |
 |---|---|---|
 | Focus scopes (§4.10) | (a) every component root is an implicit scope; (b) explicit `FocusScope`, as Qt | (a): it is what the corpus's `forceActiveFocus` calls work around, and lowering writes `Focus.scope: false` where it would differ |
-| Translated text (§4.13) | (a) `qsTr` with `.arg` counts checked; (b) also a tagged template ``tr`…` ``; (c) only the template | (a) now, (b) later: (a) lowers with no edit, and (b) is sugar over the same catalogue |
 | Static rows (§4.8) | (a) typed lists with `key`, ListModel for edits; (b) a typed ListModel for everything | (a): constant tables cost nothing at start, and reducers return lists |
 | States (§4.9) | (a) typed unions plus `when:`; (b) a state-machine type | (a): 37 imperative assignments in 8 files do not pay for (b) |
 | Lists as persistent vectors (§4.8) | (a) plain arrays, diffed in O(n); (b) persistent vectors, O(changes) | (a) now, measure, then (b) if a view of thousands of rows shows it |
