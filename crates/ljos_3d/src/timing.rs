@@ -24,6 +24,13 @@
 //! target drawn in a timed frame is timed with it. A target drawn again
 //! before the host ends a frame, as under a host that never ends one,
 //! counts its own drawings instead.
+//!
+//! The frames counted are the process's, and a process with several
+//! windows ends each window's frames in turn. [`TIMED_EVERY`] is prime, so
+//! windows taking turns in any order that repeats more often than that are
+//! each timed one in so many of their own frames: with an even period, two
+//! windows drawn in turn would time one window's frames and never the
+//! other's.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, Ordering};
@@ -65,8 +72,9 @@ pub fn timing_features(adapter: &wgpu::Adapter) -> wgpu::Features {
 }
 
 /// Frames that are timed: one in every this many. At sixty frames a
-/// second, about four readings a second.
-pub const TIMED_EVERY: u32 = 16;
+/// second, three or four readings a second. Prime, so windows ending
+/// frames in turn are each timed (see the module's notes).
+pub const TIMED_EVERY: u32 = 17;
 
 /// The queries: the first shadow pass's start and the last's end, the
 /// scene pass's start and end, then the first post pass's start and the
@@ -101,7 +109,7 @@ pub(crate) struct Timer {
     /// The frames the host had ended when this target was last drawn.
     frame: Option<u64>,
     /// Drawings begun, which say which are timed while no frame ends.
-    drawings: u32,
+    drawings: u64,
     /// Nanoseconds a timestamp tick is on this queue.
     period: f32,
     last: Option<Duration>,
@@ -215,15 +223,14 @@ impl Timer {
             }
         }
         let frame = crate::stats::frames_ended();
-        let timed = if self.frame == Some(frame) {
-            // u32::MAX + 1 is a multiple of TIMED_EVERY, so the count wraps
-            // in step.
-            self.drawings.is_multiple_of(TIMED_EVERY)
+        let counted = if self.frame == Some(frame) {
+            self.drawings
         } else {
-            frame.is_multiple_of(u64::from(TIMED_EVERY))
+            frame
         };
+        let timed = counted.is_multiple_of(u64::from(TIMED_EVERY));
         self.frame = Some(frame);
-        self.drawings = self.drawings.wrapping_add(1);
+        self.drawings += 1;
         self.this = if timed {
             self.reads
                 .iter()

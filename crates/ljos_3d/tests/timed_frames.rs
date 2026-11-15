@@ -3,7 +3,8 @@
 //! timed together, whatever each was drawn in the frames before.
 //!
 //! One test, in a process of its own: the frames are the process's, and a
-//! second test ending frames beside it would add to them.
+//! second test ending frames beside it would add to them. Its parts follow
+//! on from the frames the one before ended.
 
 use ljos_3d::math::Vec3;
 use ljos_3d::offscreen::Offscreen;
@@ -107,4 +108,33 @@ fn the_targets_drawn_in_a_frame_are_timed_together() {
     let want = [2, every + 2, 2 * every + 2];
     assert_eq!(read_each, want, "frames 0, {every} and {} timed", 2 * every);
     assert_eq!(read_some, want, "timed in the same frames as the other");
+
+    // Two windows of one process, each drawing its view and ending its
+    // frame in turn, as the shell repaints them. Counted by the frames the
+    // process ended, a period the turns divide would time one window's
+    // frames and never the other's. Each is timed one in so many of its own
+    // frames.
+    let mut windows = [
+        Target::new(&gpu.device, &gpu.renderer, [SIDE, SIDE]),
+        Target::new(&gpu.device, &gpu.renderer, [SIDE, SIDE]),
+    ];
+    let mut read: [Vec<usize>; 2] = Default::default();
+    for frame in 0..6 * every + 6 {
+        let (w, own) = (frame % 2, frame / 2);
+        draw(&mut gpu, &scene(frame as f32), &mut windows[w]);
+        stats::frame_end(0.0);
+        gpu.device
+            .poll(wgpu::PollType::wait_indefinitely())
+            .unwrap();
+        if windows[w].take_gpu_time().is_some() {
+            read[w].push(own);
+        }
+    }
+    for (w, read) in read.iter().enumerate() {
+        assert!(read.len() >= 3, "window {w} read at its frames {read:?}");
+        assert!(
+            read.windows(2).all(|r| r[1] - r[0] == every),
+            "window {w} read at its frames {read:?}, not one in {every}"
+        );
+    }
 }
