@@ -364,6 +364,29 @@ fn a_property_handed_over_as_it_is_read_is_brought_up_to_date_by_the_new_keeper(
     assert!(h.engine.is_kept_by(item, k, keeping));
 }
 
+/// Gives a value of its own as it is read, then hands the property to
+/// `keeping`.
+fn giving_then_handing_over(e: &Engine, me: ObjectId, prop: PropIndex, kept: Kept) {
+    if kept == Kept::Read {
+        assert!(e.give_unobserved(me, prop, Value::Real(-2.0)));
+        e.keep_on_read(me, prop, keeping).unwrap();
+    }
+}
+
+#[test]
+fn the_keeper_a_property_is_handed_to_as_it_is_read_has_the_last_word() {
+    let h = engine();
+    let item = h.load(KEPT);
+    let k = index(&h, item, "k");
+    h.engine
+        .keep_on_read(item, k, giving_then_handing_over)
+        .unwrap();
+    told();
+    NEXT.with(|n| n.set(7.0));
+    assert_eq!(h.num(item, "k"), 7.0, "the new keeper's, not the old one's");
+    assert_eq!(told(), [Kept::Read]);
+}
+
 thread_local! {
     static PINGS: Cell<u32> = const { Cell::new(0) };
     static PONGS: Cell<u32> = const { Cell::new(0) };
