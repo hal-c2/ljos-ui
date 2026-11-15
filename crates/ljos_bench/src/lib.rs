@@ -52,6 +52,13 @@ pub struct App {
     pub ljos_args: Vec<String>,
     #[serde(default)]
     pub qt_args: Vec<String>,
+    /// The file `qml6` opens in place of `file`, with `qt_args` after it:
+    /// a launcher that starts the application as its own program does.
+    /// An example whose C++ calls functions of its root once it is made
+    /// is opened through `corpus/harness/launch.qml`, which makes the same
+    /// calls; Ljós makes them under `--example`.
+    #[serde(default)]
+    pub qt_file: Option<PathBuf>,
     /// Click a grid over it while measuring load.
     #[serde(default = "yes")]
     pub drive: bool,
@@ -107,6 +114,7 @@ impl App {
             size: None,
             ljos_args: Vec::new(),
             qt_args: Vec::new(),
+            qt_file: None,
             drive: true,
             clicks: Vec::new(),
             commands: BTreeMap::new(),
@@ -163,7 +171,7 @@ pub fn runtime(name: &str, app: &App, programs: &Programs) -> Option<Runtime> {
             for dir in &app.imports {
                 args.extend([OsString::from("-I"), dir.clone().into()]);
             }
-            args.push(app.file.clone().into());
+            args.push(app.qt_file.as_ref().unwrap_or(&app.file).clone().into());
             args.extend(app.qt_args.iter().map(OsString::from));
             (programs.qml6.clone(), args)
         }

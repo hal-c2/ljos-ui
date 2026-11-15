@@ -20,10 +20,11 @@ pub struct Bench {
     /// QML files to measure, each on its own.
     files: Vec<PathBuf>,
     /// A JSON manifest of applications: `{"apps": [{"id", "file",
-    /// "imports", "size", "ljos_args", "qt_args", "drive", "clicks",
+    /// "imports", "size", "ljos_args", "qt_args", "qt_file", "drive", "clicks",
     /// "commands", "qt", "dir", "env"}]}`; "clicks" are where to click, as fractions of the
     /// window, instead of the grid; "commands" are the same application
-    /// written for other toolkits, `{"runtime": [program, args…]}`.
+    /// written for other toolkits, `{"runtime": [program, args…]}`;
+    /// "qt_file" is what qml6 opens in place of "file".
     #[arg(long)]
     manifest: Option<PathBuf>,
     /// Runtimes, comma separated: `ljos` (`ljos run`), `qt` (`qml6`), and
@@ -259,6 +260,9 @@ impl Bench {
                 if let Some(dir) = &app.dir {
                     app.dir = Some(absolute(dir)?);
                     app.file = absolute(&app.file)?;
+                    if let Some(qt_file) = &app.qt_file {
+                        app.qt_file = Some(absolute(qt_file)?);
+                    }
                     for i in &mut app.imports {
                         *i = absolute(i)?;
                     }
