@@ -375,6 +375,9 @@ pub struct Model {
     pub level_of_detail_bias: f64,
     #[qml(skip)]
     pub(crate) mesh: RefCell<crate::mesh_source::Loaded>,
+    /// What `inverse_bind_poses` was read as.
+    #[qml(skip)]
+    pub(crate) poses: crate::skin::Poses,
 }
 
 impl Default for Model {
@@ -398,6 +401,7 @@ impl Default for Model {
             receives_reflections: d::model::RECEIVES_REFLECTIONS,
             level_of_detail_bias: d::model::LEVEL_OF_DETAIL_BIAS,
             mesh: RefCell::default(),
+            poses: crate::skin::Poses::default(),
         }
     }
 }

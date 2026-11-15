@@ -714,3 +714,56 @@ Item {{
     assert_eq!((read, materials), (1, 0));
     assert!(!diffuse_mapped(&kept(&e, view)));
 }
+
+#[test]
+fn a_moved_skinned_model_does_not_read_its_poses_again() {
+    let (e, _, root) = make(
+        r##"
+Item {
+    width: 100; height: 100
+    property QtObject view_: view
+    property QtObject model_: model
+    property QtObject skin_: skin
+    View3D {
+        id: view
+        anchors.fill: parent
+        PerspectiveCamera { z: 300 }
+        Node { id: hip }
+        Node { id: knee; y: 50 }
+        Model {
+            id: model; source: "#Rectangle"
+            skin: Skin {
+                id: skin
+                joints: [hip, knee]
+                inverseBindPoses: [Qt.matrix4x4(), Qt.matrix4x4(1, 0, 0, 0, 0, 1, 0, -50, 0, 0, 1, 0, 0, 0, 0, 1)]
+            }
+        }
+    }
+}
+"##,
+        false,
+    );
+    let view = named(&e, root, "view_");
+    synced(&e, view);
+    let pose_reads = |f: &dyn Fn() -> usize| {
+        skin::counts::POSE_READS.with(|c| c.set(0));
+        let read = f();
+        (read, skin::counts::POSE_READS.with(Cell::get))
+    };
+    let model = named(&e, root, "model_");
+    for x in [10.0, 20.0] {
+        write(&e, model, "x", x);
+        assert_eq!(pose_reads(&|| synced(&e, view)), (1, 0));
+    }
+    // Poses written anew are read once, for the view and the build both.
+    let shifted: Vec<Value> = [1, 0, 0, 0, 0, 1, 0, -60, 0, 0, 1, 0, 0, 0, 0, 1]
+        .into_iter()
+        .map(|n| Value::from(f64::from(n)))
+        .collect();
+    let poses = Value::List(std::sync::Arc::new(vec![
+        Value::List(std::sync::Arc::new(shifted.clone())),
+        Value::List(std::sync::Arc::new(shifted)),
+    ]));
+    write(&e, named(&e, root, "skin_"), "inverseBindPoses", poses);
+    assert_eq!(pose_reads(&|| synced(&e, view)), (1, 1));
+}
