@@ -36,6 +36,14 @@ const EXEMPT: &[&str] = &[
     "diff",
 ];
 
+/// The tags of blocks that are a data file of an example when they name a
+/// `group` and a `file`: what the example reads, shown on the page.
+const DATA: &[&str] = &["json", "xml", "text"];
+
+/// Where the files of examples that are not shown on a page live (a
+/// picture, a sound), each named by the root block's `files=`.
+const FILES: &str = "files";
+
 /// The page whose `qml before` blocks show Qt's QML next to what
 /// `ljos migrate` makes of it.
 const PORTING: &str = "language/porting-from-qt.md";
@@ -149,6 +157,8 @@ struct Project {
     key: String,
     at: String,
     files: Vec<(String, String)>,
+    /// What the root block's `files=` names, from docs/site/files.
+    assets: Vec<String>,
     before: bool,
     /// For a `before`, the key of the block after it, which is what
     /// `ljos migrate` makes of it.
@@ -205,6 +215,15 @@ fn projects(all: &[Block], problems: &mut Vec<String>) -> Vec<Project> {
                 if grouped.is_none() || block.attr("file").is_none() {
                     problems.push(format!(
                         "{}: a `{tag}` block is a file of an example: give it `file=` and `group=`",
+                        block.at()
+                    ));
+                    continue;
+                }
+            }
+            _ if grouped.is_some() && DATA.contains(&tag) => {
+                if block.attr("file").is_none() {
+                    problems.push(format!(
+                        "{}: a grouped `{tag}` block is a data file of an example: give it `file=`",
                         block.at()
                     ));
                     continue;
@@ -268,6 +287,7 @@ fn projects(all: &[Block], problems: &mut Vec<String>) -> Vec<Project> {
             key: format!("{}#{}", block.page, block.nth),
             at: block.at(),
             files: vec![("Main.qml".to_owned(), harnessed(block, problems))],
+            assets: assets(block, problems),
             before,
             after: after.flatten(),
         });
@@ -301,13 +321,46 @@ fn projects(all: &[Block], problems: &mut Vec<String>) -> Vec<Project> {
             }
             files.push((name, harnessed(block, problems)));
         }
+        for block in members.iter().filter(|block| block.attr("files").is_some()) {
+            if !std::ptr::eq(*block, *root) {
+                problems.push(format!(
+                    "{}: `files=` goes on the root block of group `{group}`",
+                    block.at()
+                ));
+            }
+        }
         out.push(Project {
             key: format!("{page}#{}", root.nth),
             at: root.at(),
             files,
+            assets: assets(root, problems),
             before: members.iter().any(|block| block.flags.contains("before")),
             after: None,
         });
+    }
+    out
+}
+
+/// The files a root block's `files=a,b` names, each one in docs/site/files.
+fn assets(block: &Block, problems: &mut Vec<String>) -> Vec<String> {
+    let Some(names) = block.attr("files") else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for name in names.split(',') {
+        if name.is_empty() || name.contains(['/', '\\']) || name.starts_with('.') {
+            problems.push(format!(
+                "{}: `files={names}`: `{name}` is not a file name of docs/site/{FILES}",
+                block.at()
+            ));
+        } else if !site().join(FILES).join(name).is_file() {
+            problems.push(format!(
+                "{}: `files=` names {name}, which docs/site/{FILES} does not have",
+                block.at()
+            ));
+        } else {
+            out.push(name.to_owned());
+        }
     }
     out
 }
@@ -558,6 +611,9 @@ fn verify(
     let id = project.key.replace(['/', '#', '.'], "_");
     let dir = root.join(&id);
     write(&dir, &project.files);
+    for name in &project.assets {
+        fs::copy(site().join(FILES).join(name), dir.join(name)).unwrap();
+    }
     let host_types = pending.is_some_and(|p| p.host_types);
     let shows_findings = pending.is_some_and(|p| p.shows_findings);
     let checked = ljos(&dir, &["check", "."]);
@@ -636,6 +692,9 @@ fn verify(
     if let Some(after) = after {
         let moved = root.join(format!("{id}_migrated"));
         write(&moved, &project.files);
+        for name in &project.assets {
+            fs::copy(site().join(FILES).join(name), moved.join(name)).unwrap();
+        }
         let Some((true, out)) = ljos(&moved, &["migrate", "--write", "."]) else {
             problems.push(format!(
                 "{} ({}): `ljos migrate --write` fails",
@@ -696,6 +755,7 @@ fn every_example_says_what_it_is_and_qml_passes_ljos_check_in_ljos_api() {
                 key: format!("harness/{name}#0"),
                 at: format!("docs/site/harness/{name}"),
                 files: vec![("Main.qml".to_owned(), text)],
+                assets: Vec::new(),
                 before: false,
                 after: None,
             });
@@ -752,6 +812,38 @@ fn page_problems(page: &str, text: &str) -> Vec<String> {
     let projects = projects(&blocks(page, text), &mut problems);
     afters(&projects, &mut problems);
     problems
+}
+
+#[test]
+fn a_data_block_of_a_group_is_a_file_of_its_example() {
+    let page = "```json file=rows.json group=g\n[]\n```\n\n\
+        ```qml group=g files=photo.jpg\nItem {}\n```\n";
+    let mut problems = Vec::new();
+    let projects = projects(&blocks("p.md", page), &mut problems);
+    assert_eq!(problems, Vec::<String>::new());
+    let [project] = &projects[..] else {
+        panic!("one example, not {}", projects.len());
+    };
+    let names: Vec<_> = project.files.iter().map(|(name, _)| name.as_str()).collect();
+    assert_eq!(names, ["rows.json", "Main.qml"]);
+    assert_eq!(project.assets, ["photo.jpg"]);
+
+    // A data block with no `file=` is not quietly shown as plain text.
+    let unnamed = "```json group=g\n[]\n```\n\n```qml group=g\nItem {}\n```\n";
+    let problems = page_problems("p.md", unnamed);
+    assert!(
+        problems.iter().any(|p| p.contains("give it `file=`")),
+        "{problems:#?}"
+    );
+
+    // A file named that docs/site/files does not have, or outside it.
+    let missing = "```qml files=nowhere.wav,../start/index.md\nItem {}\n```\n";
+    let problems = page_problems("p.md", missing);
+    assert!(
+        problems.iter().any(|p| p.contains("does not have"))
+            && problems.iter().any(|p| p.contains("is not a file name")),
+        "{problems:#?}"
+    );
 }
 
 #[test]

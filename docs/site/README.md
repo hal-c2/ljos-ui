@@ -12,6 +12,8 @@ ljos.dev runs the examples beside their code, so every fence says what its block
 - ` ```qml harness=<name> ` is a part of an app: `harness/<name>.qml` is the app, with one `//! snippet` line where the block goes, indented to match. Prefer making the block whole; keep the harnesses few.
 - ` ```qml before ` is QML written for Qt, on [Bringing existing QML](language/porting-from-qt.md) only. It passes `ljos check`, and the `qml` block after it is what `ljos migrate --write` makes of it.
 - An example of several files gives each block `group=<id>`, and every block but the root `qml` one `file=<Name>`: ` ```ts file=filter.ts group=filter `. A `ts` block is always a file of an example. A `javascript` block with `group=` is one too; without it, it is script run by the host.
+- A file an example reads that a reader should see (an XML feed, a JSON list) is a `json`, `xml` or `text` block of its group, with `file=`: ` ```xml file=feed.xml group=feed `. Its text is the file's.
+- A file an example needs that is not worth showing (a picture, a sound) sits in `files/`, and the example's root block names it: ` ```qml files=photo.jpg,beep.wav `. Every example that names it gets it beside `Main.qml`. An example names only files it has, so ljos.dev never asks a server for one.
 - Blocks that never run say what they are: `sh`, `rust`, `toml`, `json`, `text`, `xml`, `gherkin`, `javascript`, `diff`. A bare fence or another tag fails.
 
 `cargo test -p ljos_cli --test docs_site` holds every page to these rules, CI runs it when `docs/site` changes, and `crates/ljos_cli/tests/docs_site.txt` lists the examples that are not there yet and why. The list only shrinks: an entry that no longer applies fails the test.
