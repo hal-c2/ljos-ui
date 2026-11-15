@@ -21,7 +21,11 @@ fn docstring(step: &Step) -> Result<String, String> {
 
 fn strip_label(text: &str) -> &str {
     match text.split_once('\n') {
-        Some((first, rest)) if matches!(first.trim(), "qml" | "xml" | "js" | "ts" | "json" | "po") => rest,
+        Some((first, rest))
+            if matches!(first.trim(), "qml" | "xml" | "js" | "ts" | "json" | "po") =>
+        {
+            rest
+        }
         _ => text,
     }
 }
