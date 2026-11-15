@@ -41,7 +41,7 @@ Feature: Checking translated text
     When the files are checked
     Then the check reports:
       """
-      Files.qml:6:61: error: a form of `plural` is translated as written, so it is a string or a template, not `many` [i18n-literal]
+      Files.qml:6:64: error: a form of `plural` is translated as written, so it is a string or a template, not `many` [i18n-literal]
       1 files, 1 errors, 0 warnings
       ljos: 1 errors
       """

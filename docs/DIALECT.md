@@ -1506,17 +1506,38 @@ key is its context and its text, or its id.
 **Lowering.**
 
 - `qsTr("Open")` → `` t`Open` ``; `qsTr("%1 of %2").arg(a).arg(b)` →
-  `` t`${a} of ${b}` `` (each `%N` filled by one `.arg` of one argument,
-  in order; otherwise the file is kept); `qsTr("%n file(s)", "", n)` →
-  `plural(n, { other: "# file(s)" })` (Qt's source text has one form, so
-  the rewrite writes `other`, and the English catalogue's forms become a
-  translation); `%Ln` → `#`; `qsTr(text, "disambiguation")` →
-  `t({ message: "text", context: "disambiguation" })`;
-  `qsTranslate("Ctx", "x")` → `t({ message: "x", context: "Ctx" })`;
-  `qsTrId("id")` → `t({ id: "id" })`; `QT_TR_NOOP("x")` → `` msg`x` ``.
-  `qsTr` of a value that is not written out keeps the file. `ljos migrate
-  --catalogue app_is.ts` writes the `.ts` catalogue's translations as
-  `is.po` with the same rewrite, so a migrated file keeps them.
+  `` t`${a} of ${b}` ``. Each `.arg` of one argument fills the
+  lowest-numbered `%N` still left, as Qt's does, wherever that `%N`
+  stands: `qsTr("%2 of %1").arg(a).arg(b)` → `` t`${b} of ${a}` ``. Any
+  other `.arg` (two arguments, a field width, a number format) keeps the
+  file.
+- `qsTr("%n file(s)", "", n)` → `` plural(n, { other: `${n} file(s)` }) ``,
+  and `%Ln` → `#`. Qt's `%n` is the count without grouping and `%Ln` the
+  count as the locale writes it; in a form, `{n}` is `String(n)` and `#`
+  is grouped (ARCHITECTURE.md §15), so each keeps what it showed: 12345
+  stays "12345 file(s)" for `%n` and "12,345 file(s)" for `%Ln`. Qt's
+  source text has one form, so the rewrite writes `other`, and the
+  English catalogue's forms become a translation.
+- `qsTr(text, "disambiguation")` → `t({ message: "text", context:
+  "disambiguation" })`; `qsTranslate("Ctx", "x")` → `t({ message: "x",
+  context: "Ctx" })`; `qsTrId("id")` → `t({ id: "id" })`;
+  `QT_TR_NOOP("x")` → `` msg`x` ``. `qsTr` of a value that is not written
+  out keeps the file.
+- `ljos migrate --catalogue app_is.ts` writes the `.ts` catalogue's
+  translations as `is.po` with the same rewrite, so a migrated file keeps
+  them. A `.ts` message's key has a context Qt adds itself, the file's
+  name for `qsTr`, which a `t` message does not have: `qsTr("Open")` in
+  `FileMenu.qml` and in `Door.qml` are two messages there and one here.
+  When every context's translation of a text is the same, the rewrite is
+  `` t`Open` ``. When they differ, each file's call keeps its own as the
+  context, `t({ message: "Open", context: "FileMenu" })`, so no
+  translation is lost. Two calls that end with one context and one text
+  but have different translations (`qsTr("Open", "menu")`, whose
+  disambiguation becomes the context, and `qsTranslate("menu", "Open")`,
+  say) cannot both be kept;
+  migrate keeps their files as Qt's and names both calls. Without
+  `--catalogue` there is no translation to lose, and the rewrite is the
+  plain one.
 - `font.pixelSize` → `font.size`.
 - `font.pointSize: n` → `font.size: Screen.points(n)`. Points to pixels is
   the screen's logical DPI / 72, known only at run time and different per

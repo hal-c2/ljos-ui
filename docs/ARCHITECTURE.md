@@ -1372,7 +1372,10 @@ Ljós file says what it means.
   before, honouring the `//:` `//~` `//=` comments. `--check` mode runs in CI.
 - **Migration.** `ljos migrate` rewrites `qsTr` and its family to `t`, `plural`, `msg` (DIALECT.md
   §4.13), and with `--catalogue app_is.ts` writes the catalogue's translations to `is.po` with the
-  same rewrite, so a migrated application keeps them.
+  same rewrite, so a migrated application keeps them. A `.ts` key carries the file's name as its
+  context, which `t` does not, so where two files translate one text differently each call keeps
+  its file's name as the context; a conflict it cannot keep leaves the files as Qt's. Qt's `%n`
+  becomes `${n}` (ungrouped, as Qt shows it) and `%Ln` becomes `#` (grouped).
 - **Rejected:** Fluent, whose syntax and tools are its own; gettext's runtime and its `Plural-Forms`;
   Lingui's JSON catalogue (see above); and MessageFormat 2, which has no ICU4X crate yet and no
   translation tool reads. A file of Ljós's API with `qsTr` (`qt-tr`).
