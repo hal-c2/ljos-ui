@@ -379,7 +379,7 @@ type CasterKey = (
     [[[f32; 4]; 4]; 2],
 );
 
-#[derive(PartialEq)]
+#[derive(Default, PartialEq)]
 struct ShadowKey {
     layers: Vec<ShadowLayer>,
     casters: Vec<CasterKey>,
@@ -3314,29 +3314,40 @@ impl Renderer {
         let Some(shadows) = target.shadows.as_mut() else {
             return;
         };
-        let key = ShadowKey {
-            layers: plan.layers.clone(),
-            casters: casters
-                .iter()
-                .map(|c| {
-                    let revision = match c.mesh {
-                        MeshKey::Primitive(_) => 0,
-                        MeshKey::Custom(id) => self.custom[&id].revision,
-                    };
-                    (
-                        c.mesh,
-                        revision,
-                        c.world.0,
-                        c.cull,
-                        c.copies,
-                        [c.places.0.0, c.places.1.0],
-                    )
-                })
-                .collect(),
-            instances: instances.to_vec(),
-            joints: joints.to_vec(),
+        let caster = |c: &Caster| -> CasterKey {
+            let revision = match c.mesh {
+                MeshKey::Primitive(_) => 0,
+                MeshKey::Custom(id) => self.custom[&id].revision,
+            };
+            (
+                c.mesh,
+                revision,
+                c.world.0,
+                c.cull,
+                c.copies,
+                [c.places.0.0, c.places.1.0],
+            )
         };
-        if shadows.drawn.as_ref() == Some(&key) {
+        // Compared where they are, the rows and joints as the bytes the
+        // GPU is given: a frame whose shadows stay copies none of it,
+        // which an unskinned scene's 16 KB joint slot made costly.
+        let bytes = |a: &[u8], b: &[u8]| a == b;
+        let same = shadows.drawn.as_ref().is_some_and(|k| {
+            bytes(
+                bytemuck::cast_slice(&k.layers),
+                bytemuck::cast_slice(&plan.layers),
+            ) && k.casters.len() == casters.len()
+                && k.casters.iter().zip(casters).all(|(k, c)| *k == caster(c))
+                && bytes(
+                    bytemuck::cast_slice(&k.instances),
+                    bytemuck::cast_slice(instances),
+                )
+                && bytes(
+                    bytemuck::cast_slice(&k.joints),
+                    bytemuck::cast_slice(joints),
+                )
+        });
+        if same {
             return;
         }
         let stride = self.layer_stride as usize;
@@ -3386,6 +3397,15 @@ impl Renderer {
             }
             target.shadow_passes += 1;
         }
+        // The key's lists are filled again in place.
+        let mut key = shadows.drawn.take().unwrap_or_default();
+        key.layers.clone_from(&plan.layers);
+        key.casters.clear();
+        key.casters.extend(casters.iter().map(caster));
+        key.instances.clear();
+        key.instances.extend_from_slice(instances);
+        key.joints.clear();
+        key.joints.extend_from_slice(joints);
         shadows.drawn = Some(key);
     }
 
