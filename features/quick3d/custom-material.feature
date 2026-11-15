@@ -287,6 +287,113 @@ Feature: CustomMaterial runs the author's shader snippets
       Then the pixel at 100, 100 of the window is within 2 of "#1e1e1e"
       And the log has a warning matching "broken.frag"
 
+  # Measured on qml6 6.12.0 in a window: once a light reaches the model, Qt
+  # does not compile a function it calls for each light (DIRECTIONAL_LIGHT,
+  # POINT_LIGHT, SPOT_LIGHT, SPECULAR_LIGHT) that is written after a
+  # `precision lowp float;` or `precision mediump float;`, whether or not a
+  # light of that kind is there: "overloaded functions must have the same
+  # parameter precision qualifiers". It counts where the function is written,
+  # so a highp default after the low one undoes it. MAIN, AMBIENT_LIGHT,
+  # IBL_PROBE and POST_PROCESS compile under any, and an unshaded material
+  # calls none. The model is then not drawn, though it still casts its shadow.
+  Rule: A light function written under a low default precision does not compile where a light reaches the model
+
+    Scenario Outline: What the default precision is where the function is written
+      Given the text file "low.frag":
+        """
+        precision <precision> float;
+        void MAIN() { BASE_COLOR = vec4(0.0, 0.0, 0.0, 1.0); EMISSIVE_COLOR = vec3(0.5); SPECULAR_AMOUNT = 0.0; }
+        <then>
+        void <function>() { }
+        """
+      And the QML:
+        """qml
+        import QtQuick; import QtQuick3D
+        Rectangle { width: 200; height: 200; color: "black"
+          View3D { anchors.fill: parent
+            environment: SceneEnvironment { clearColor: "#202020"; backgroundMode: SceneEnvironment.Color }
+            OrthographicCamera { z: 600 }
+            DirectionalLight { }
+            Model { source: "#Rectangle"; materials: CustomMaterial { fragmentShader: "low.frag" } }
+          }
+        }
+        """
+      Then the pixel at 100, 100 of the window is within 3 of "<pixel>"
+
+      Examples:
+        | precision | then                    | function          | pixel   |
+        | lowp      |                         | DIRECTIONAL_LIGHT | #1e1e1e |
+        | mediump   |                         | DIRECTIONAL_LIGHT | #1e1e1e |
+        | lowp      |                         | POINT_LIGHT       | #1e1e1e |
+        | lowp      |                         | SPOT_LIGHT        | #1e1e1e |
+        | mediump   |                         | SPECULAR_LIGHT    | #1e1e1e |
+        | highp     |                         | DIRECTIONAL_LIGHT | #ffffff |
+        | lowp      | precision highp float;  | DIRECTIONAL_LIGHT | #ffffff |
+        | lowp      |                         | AMBIENT_LIGHT     | #ffffff |
+        | lowp      |                         | IBL_PROBE         | #ffffff |
+
+    Scenario: The model it leaves out is reported
+      Given the text file "low.frag":
+        """
+        precision lowp float;
+        void MAIN() { }
+        void DIRECTIONAL_LIGHT() { }
+        """
+      And the QML:
+        """qml
+        import QtQuick; import QtQuick3D
+        View3D { width: 200; height: 200
+          DirectionalLight { }
+          Model { source: "#Rectangle"; materials: CustomMaterial { fragmentShader: "low.frag" } }
+        }
+        """
+      Then the log has a warning matching "low.frag: fragment shader, line [0-9]+: DIRECTIONAL_LIGHT is written under `precision lowp float;`"
+
+    Scenario: A model no light reaches is drawn
+      Given the text file "low.frag":
+        """
+        precision lowp float;
+        void MAIN() { BASE_COLOR = vec4(0.0, 0.0, 0.0, 1.0); EMISSIVE_COLOR = vec3(0.5); }
+        void DIRECTIONAL_LIGHT() { }
+        """
+      And the QML:
+        """qml
+        import QtQuick; import QtQuick3D
+        Rectangle { width: 200; height: 200; color: "black"
+          View3D { anchors.fill: parent
+            environment: SceneEnvironment { clearColor: "#202020"; backgroundMode: SceneEnvironment.Color }
+            OrthographicCamera { z: 600 }
+            Model { source: "#Rectangle"; materials: CustomMaterial { fragmentShader: "low.frag" } }
+          }
+        }
+        """
+      Then the pixel at 100, 100 of the window is within 3 of "#bcbcbc"
+
+    # The square is 100 units in front of a white floor, and the light comes
+    # from 20 degrees to the right: its shadow falls 36 units to the left.
+    Scenario: The model left out still casts its shadow
+      Given the text file "low.frag":
+        """
+        precision lowp float;
+        void MAIN() { }
+        void DIRECTIONAL_LIGHT() { }
+        """
+      And the QML:
+        """qml
+        import QtQuick; import QtQuick3D
+        Rectangle { width: 200; height: 200; color: "black"
+          View3D { anchors.fill: parent
+            environment: SceneEnvironment { clearColor: "#202020"; backgroundMode: SceneEnvironment.Color }
+            OrthographicCamera { z: 600 }
+            DirectionalLight { eulerRotation.y: 20; castsShadow: true; shadowFactor: 100; shadowMapQuality: Light.ShadowMapQualityHigh }
+            Model { source: "#Rectangle"; scale: Qt.vector3d(3, 3, 1); materials: DefaultMaterial { diffuseColor: "white" } }
+            Model { source: "#Rectangle"; z: 100; materials: CustomMaterial { fragmentShader: "low.frag" } }
+          }
+        }
+        """
+      Then the pixel at 100, 100 of the window is within 3 of "#000000"
+      And the pixel at 135, 100 of the window is within 8 of "#f8f8f8"
+
   Rule: A shader's text can be written in QML
 
     Scenario: The fragment text draws the model
