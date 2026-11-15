@@ -2804,6 +2804,12 @@ const PRELUDE: &str = r##"
     defineProperty: () => false,
     deleteProperty: () => false,
   });
+  // The messages' macros are written out by the compiler where it can
+  // read them; the localisation prelude, which runs after this, has what
+  // is left to the program.
+  const choice = (name) => function () {
+    throw new Error(name + "() is a part of a message: write it in t`…` or msg`…`");
+  };
   Object.defineProperty(g, "__ljos_core", {
     value: Object.freeze({
       later: Qt.callLater,
@@ -2816,6 +2822,9 @@ const PRELUDE: &str = r##"
       bind: Qt.binding,
       matrix4x4: (...a) => g.Qt.matrix4x4(...a),
       Color: Object.freeze({ of: (v) => g.Qt.color(v) }),
+      t(...args) { return g.__ljos_t(...args); },
+      msg(...args) { return g.__ljos_msgOf(...args); },
+      plural: choice("plural"), select: choice("select"), selectOrdinal: choice("selectOrdinal"),
     }),
   });
 

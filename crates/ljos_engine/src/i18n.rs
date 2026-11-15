@@ -73,6 +73,36 @@ fn number(v: Option<&JsValue>) -> f64 {
     }
 }
 
+/// A host call of `__ljos_message`: `(message, context, key, names, …values)`.
+pub(crate) fn message_call(e: &Engine, a: &[JsValue]) -> String {
+    let names = string(a.get(3));
+    let names: Vec<&str> = if names.is_empty() {
+        Vec::new()
+    } else {
+        names.split(',').collect()
+    };
+    let values: Vec<ljos_i18n::Value> = a
+        .iter()
+        .skip(4)
+        .map(|v| match v {
+            JsValue::Number(n) => ljos_i18n::Value {
+                text: crate::number_to_string(*n),
+                number: Some(*n),
+            },
+            other => ljos_i18n::Value::text(string(Some(other))),
+        })
+        .collect();
+    let source = string(a.first());
+    let key = string(a.get(2));
+    e.message(
+        string(a.get(1)),
+        if key.is_empty() { source } else { key },
+        source,
+        &names,
+        &values,
+    )
+}
+
 /// `Locale.LongFormat` is the long width; `ShortFormat`, `NarrowFormat`
 /// and anything else is the short one, as a locale's formats have no
 /// narrow kind.
@@ -263,6 +293,37 @@ impl Engine {
         self.i18n().i18n.borrow().translate_id(id, n)
     }
 
+    /// A `t` message (``t`Hello ${name}` ``): the translation of `key` in
+    /// the UI language's fallback chain, or `source`, formatted with the
+    /// values `names` names, in order. The running binding will run again
+    /// when the language changes. A translation that cannot be used is
+    /// passed over, and said once.
+    pub fn message(
+        &self,
+        context: &str,
+        key: &str,
+        source: &str,
+        names: &[&str],
+        values: &[ljos_i18n::Value],
+    ) -> String {
+        self.track_translation();
+        let state = self.i18n();
+        let i18n = state.i18n.borrow();
+        let value = |name: &str| {
+            names
+                .iter()
+                .position(|n| *n == name)
+                .and_then(|i| values.get(i))
+        };
+        let text = i18n.message(context, key, source, &value);
+        let warnings = i18n.take_warnings();
+        drop(i18n);
+        for warning in warnings {
+            self.warn(warning);
+        }
+        text
+    }
+
     /// A translatable literal of compiled QML (`text: qsTr("Open")`), which
     /// never reaches JS.
     pub(crate) fn translate_literal(&self, t: &Translatable) -> String {
@@ -279,6 +340,13 @@ impl Engine {
                 n,
             ),
             TranslationKind::NoOp => t.source.clone(),
+            TranslationKind::Message => self.message(
+                &t.context,
+                t.id.as_deref().unwrap_or(&t.source),
+                &t.source,
+                &[],
+                &[],
+            ),
         }
     }
 
@@ -382,7 +450,13 @@ impl Engine {
             })
         };
         // The prelude below has checked the arguments, with Qt's messages.
-        let functions: [(&str, HostFn); 15] = [
+        let functions: [(&str, HostFn); 16] = [
+            (
+                // (message, context, key, "a,b", a, b): the prelude has
+                // made each value a number or a string.
+                "__ljos_message",
+                host(|e, a| Ok(JsValue::String(message_call(e, a)))),
+            ),
             (
                 "__ljos_tr",
                 host(|e, a| {
@@ -696,6 +770,62 @@ pub(crate) const PRELUDE: &str = r##"
     hostLog(2, "String.arg(): Argument missing: " + JSON.stringify(template) + ", "
       + JSON.stringify(number ? plainNumber(value) : show(value)));
     return template;
+  });
+
+  // `t` and its family (docs/I18N.md). The compiler writes a message it
+  // can read as a call of `__ljos_message`; what reaches these is `t(m)`
+  // of a message `msg` made, or a call the compiler could not see.
+  const hostMessage = g.__ljos_message;
+  const shown = (v) => {
+    if (typeof v === "number" || typeof v === "string") return v;
+    try { return String(v); } catch (e) { return "[object]"; }
+  };
+  define(g, "__ljos_message", function (message, context, key, names, ...values) {
+    return hostMessage(message, context, key, names, ...values.map(shown));
+  });
+  define(g, "__ljos_msg", function (message, context, key, names, ...values) {
+    const m = { id: key, message };
+    if (context) m.context = context;
+    if (names) {
+      const v = {};
+      names.split(",").forEach((name, i) => { v[name] = values[i]; });
+      m.values = Object.freeze(v);
+    }
+    return Object.freeze(m);
+  });
+  const ofDescriptor = (m) => {
+    if (m === null || typeof m !== "object") throw new TypeError("t(): the message is not a message msg made");
+    const message = typeof m.message === "string" ? m.message : (typeof m.id === "string" ? m.id : "");
+    const key = typeof m.id === "string" ? m.id : message;
+    const values = m.values && typeof m.values === "object" ? m.values : {};
+    const names = Object.keys(values);
+    return hostMessage(message, typeof m.context === "string" ? m.context : "", key,
+      names.join(","), ...names.map((name) => shown(values[name])));
+  };
+  // A template whose text is not written where it is called: its values
+  // are numbered, as the compiler numbers them.
+  const ofTemplate = (strings, values) => {
+    let message = "";
+    strings.forEach((s, i) => {
+      message += s.replace(/'/g, "''").replace(/[{}#]/g, "'$&'");
+      if (i < values.length) message += "{" + i + "}";
+    });
+    return [message, values.map((_, i) => String(i)).join(",")];
+  };
+  define(g, "__ljos_t", function t(m, ...values) {
+    if (Array.isArray(m) && Array.isArray(m.raw)) {
+      const [message, names] = ofTemplate(m, values);
+      return hostMessage(message, "", message, names, ...values.map(shown));
+    }
+    return ofDescriptor(m);
+  });
+  define(g, "__ljos_msgOf", function msg(m, ...values) {
+    if (Array.isArray(m) && Array.isArray(m.raw)) {
+      const [message, names] = ofTemplate(m, values);
+      return g.__ljos_msg(message, "", message, names, ...values);
+    }
+    if (m === null || typeof m !== "object") throw new TypeError("msg(): the message is not a template or a descriptor");
+    return g.__ljos_msg(m.message ?? m.id ?? "", m.context ?? "", m.id ?? m.message ?? "", "");
   });
 
   const Qt = g.Qt;
