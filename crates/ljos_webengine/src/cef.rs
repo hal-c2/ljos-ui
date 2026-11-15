@@ -1188,11 +1188,11 @@ impl Asked {
 
     fn answer(self, allow: bool, shared: &Shared) {
         told_work();
-        if shared.keep == Keep::Never
-            && let Some(key) = self.key()
-        {
-            Shared::lock(&shared.answered).insert(key, allow);
-        }
+        let key = self.key();
+        let give = |write: &dyn Fn() -> std::io::Result<()>| {
+            let mut answered = Shared::lock(&shared.answered);
+            written_then_kept(&mut answered, shared.keep, key.clone(), allow, write)
+        };
         match self {
             Asked::Prompt {
                 callback,
@@ -1204,7 +1204,7 @@ impl Asked {
                 // profile is not to keep goes once the page has it. One it
                 // could not write down might outlive a run that ends
                 // badly, so the page has no answer from the view at all.
-                if let Err(why) = write_down(shared, &origin, kind) {
+                if let Err(why) = give(&|| write_down(shared, &origin, kind)) {
                     not_written(&origin, &why);
                     callback.cont(PermissionRequestResult::IGNORE);
                     return;
@@ -1228,10 +1228,17 @@ impl Asked {
                 // The profile keeps the answer, as it does one to a prompt.
                 // Chromium refuses a file's page notifications itself, and
                 // one allowed them anyway never hears back.
-                if !origin.starts_with("file:")
-                    && let Some(profile) = shared.host().and_then(|h| h.request_context())
-                {
-                    if let Err(why) = write_down(shared, &origin, NOTIFICATIONS_KIND) {
+                let profile = if origin.starts_with("file:") {
+                    None
+                } else {
+                    shared.host().and_then(|h| h.request_context())
+                };
+                let written = give(&|| match profile {
+                    Some(_) => write_down(shared, &origin, NOTIFICATIONS_KIND),
+                    None => Ok(()),
+                });
+                if let Some(profile) = profile {
+                    if let Err(why) = written {
                         // Chromium is not told: the page hears what it
                         // had, and nothing is left to forget.
                         not_written(&origin, &why);
@@ -1261,6 +1268,25 @@ impl Asked {
             }
         }
     }
+}
+
+/// The view's answer is written down to be forgotten, by `write`, and only
+/// then remembered by a view whose profile keeps nothing: one that could
+/// not be written is not given, so a page asking again is asked again.
+fn written_then_kept(
+    answered: &mut HashMap<(String, i32), bool>,
+    keep: Keep,
+    key: Option<(String, i32)>,
+    allow: bool,
+    write: &dyn Fn() -> std::io::Result<()>,
+) -> std::io::Result<()> {
+    write()?;
+    if keep == Keep::Never
+        && let Some(key) = key
+    {
+        answered.insert(key, allow);
+    }
+    Ok(())
 }
 
 /// The page has the view's answer to `origin` asking for `kind`: the
@@ -3558,6 +3584,25 @@ mod tests {
                 ("https://a.example".to_owned(), 7),
                 ("http://127.0.0.1:8080".to_owned(), 8)
             ]
+        );
+    }
+
+    #[test]
+    fn an_answer_not_written_down_is_not_remembered() {
+        let key = || Some(("https://a.example".to_owned(), 7));
+        let mut answered = HashMap::new();
+        let failed = || Err(std::io::Error::other("the disk is full"));
+        assert!(written_then_kept(&mut answered, Keep::Never, key(), true, &failed).is_err());
+        assert!(answered.is_empty(), "the view would answer again by itself");
+        assert!(written_then_kept(&mut answered, Keep::Never, key(), true, &|| Ok(())).is_ok());
+        assert_eq!(answered.get(&key().unwrap()), Some(&true));
+        let mut kept_by_profile = HashMap::new();
+        assert!(
+            written_then_kept(&mut kept_by_profile, Keep::ThisRun, key(), true, &|| Ok(())).is_ok()
+        );
+        assert!(
+            kept_by_profile.is_empty(),
+            "the profile keeps it, not the view"
         );
     }
 
