@@ -332,6 +332,64 @@ Feature: CustomMaterial runs the author's shader snippets
         | lowp      |                         | AMBIENT_LIGHT     | #ffffff |
         | lowp      |                         | IBL_PROBE         | #ffffff |
 
+    # The snippet is compiled as desktop GLSL, where GL_ES is not defined.
+    Scenario Outline: A precision statement the preprocessor leaves out does not count
+      Given the text file "low.frag":
+        """
+        <before>
+        <condition>
+        precision <precision> float;
+        #endif
+        void MAIN() { BASE_COLOR = vec4(0.0, 0.0, 0.0, 1.0); EMISSIVE_COLOR = vec3(0.5); SPECULAR_AMOUNT = 0.0; }
+        void DIRECTIONAL_LIGHT() { }
+        """
+      And the QML:
+        """qml
+        import QtQuick; import QtQuick3D
+        Rectangle { width: 200; height: 200; color: "black"
+          View3D { anchors.fill: parent
+            environment: SceneEnvironment { clearColor: "#202020"; backgroundMode: SceneEnvironment.Color }
+            OrthographicCamera { z: 600 }
+            DirectionalLight { }
+            Model { source: "#Rectangle"; materials: CustomMaterial { fragmentShader: "low.frag" } }
+          }
+        }
+        """
+      Then the pixel at 100, 100 of the window is within 3 of "<pixel>"
+
+      Examples:
+        | before      | condition     | precision | pixel   |
+        |             | #ifdef GL_ES  | mediump   | #ffffff |
+        |             | #if 0         | lowp      | #ffffff |
+        |             | #ifndef GL_ES | mediump   | #1e1e1e |
+        |             | #if 1         | lowp      | #1e1e1e |
+        | #define LOW | #ifdef LOW    | lowp      | #1e1e1e |
+
+    Scenario: A light reaches only the models in its scope
+      Given the text file "low.frag":
+        """
+        precision lowp float;
+        void MAIN() { BASE_COLOR = vec4(0.0, 0.0, 0.0, 1.0); EMISSIVE_COLOR = vec3(0.5); SPECULAR_AMOUNT = 0.0; }
+        void DIRECTIONAL_LIGHT() { }
+        """
+      And the QML:
+        """qml
+        import QtQuick; import QtQuick3D
+        Rectangle { width: 200; height: 200; color: "black"
+          View3D { anchors.fill: parent
+            environment: SceneEnvironment { clearColor: "#202020"; backgroundMode: SceneEnvironment.Color }
+            OrthographicCamera { z: 600 }
+            DirectionalLight { scope: lit }
+            Node { id: lit
+              Model { x: -50; scale: Qt.vector3d(0.8, 0.8, 1); source: "#Rectangle"; materials: CustomMaterial { fragmentShader: "low.frag" } }
+            }
+            Model { x: 50; scale: Qt.vector3d(0.8, 0.8, 1); source: "#Rectangle"; materials: CustomMaterial { fragmentShader: "low.frag" } }
+          }
+        }
+        """
+      Then the pixel at 50, 100 of the window is within 3 of "#1e1e1e"
+      And the pixel at 150, 100 of the window is within 3 of "#bbbbbb"
+
     Scenario: The model it leaves out is reported
       Given the text file "low.frag":
         """
@@ -347,8 +405,10 @@ Feature: CustomMaterial runs the author's shader snippets
           Model { source: "#Rectangle"; materials: CustomMaterial { fragmentShader: "low.frag" } }
         }
         """
-      Then the log has a warning matching "low.frag: fragment shader, line [0-9]+: DIRECTIONAL_LIGHT is written under `precision lowp float;`"
+      Then the log has a warning matching "low.frag: fragment shader, line [0-9]+: DIRECTIONAL_LIGHT is written under `precision lowp float;`, so the model is not drawn where a light reaches it"
 
+    # Lights come and go, so the warning is given where the program is made,
+    # and says when it matters; qml6 prints nothing until a light reaches it.
     Scenario: A model no light reaches is drawn
       Given the text file "low.frag":
         """
@@ -368,6 +428,7 @@ Feature: CustomMaterial runs the author's shader snippets
         }
         """
       Then the pixel at 100, 100 of the window is within 3 of "#bcbcbc"
+      And the log has a warning matching "low.frag: .*not drawn where a light reaches it"
 
     # The square is 100 units in front of a white floor, and the light comes
     # from 20 degrees to the right: its shadow falls 36 units to the left.
