@@ -49,7 +49,14 @@ def link(directory, place, to):
             out.write(line + "\n")
 
 
+def not_checked_out(directory):
+    return (f"{os.path.relpath(directory, ROOT)} is not checked out: "
+            "run `git submodule update --init corpus/qtdoc` (or `mise run setup`) first")
+
+
 def names(directory, spec):
+    if not os.path.exists(os.path.join(directory, spec["listed"])):
+        sys.exit(not_checked_out(directory))
     with open(os.path.join(directory, spec["listed"])) as source:
         found = re.findall(r'^\s*"([^":]+\.\w+)",?\s*$', source.read(), re.M)
     if not found:
@@ -61,9 +68,6 @@ def missing(eid, directory, spec):
     """What of the example's assets is not where its build puts them. Its picture without them
     is another one: a view with no mesh is black, and a run of it measures nothing it draws."""
     if "listed" in spec:
-        if not os.path.exists(os.path.join(directory, spec["listed"])):
-            # The example is not checked out: what names its assets is missing with them.
-            return [spec["listed"]]
         places = [os.path.join(spec["beside"], name) for name in names(directory, spec)]
     else:
         places = list(spec.get("places", {}))
@@ -117,7 +121,13 @@ def main():
         for eid in sys.argv[2:]:
             if eid not in assets:
                 continue
-            gone = missing(eid, os.path.join(QTDOC, examples[eid]["dir"]), assets[eid])
+            directory = os.path.join(QTDOC, examples[eid]["dir"])
+            if not os.path.isdir(directory):
+                # Fetching its assets would not help: the example itself is not here.
+                bad = True
+                print(f"{eid}: {not_checked_out(directory)}", file=sys.stderr)
+                continue
+            gone = missing(eid, directory, assets[eid])
             if gone:
                 bad = True
                 print(f"{eid}: {len(gone)} of its downloaded assets are missing, {gone[0]} first; "
