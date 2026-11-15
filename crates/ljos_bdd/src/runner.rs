@@ -146,6 +146,7 @@ pub fn run() -> bool {
             .fail_on_skipped()
             .before(move |feature, rule, scenario, world| {
                 hook.scenario(feature, rule, scenario);
+                ljos_webengine::set_profile_wait(None);
                 let tags: Vec<String> = feature
                     .tags
                     .iter()

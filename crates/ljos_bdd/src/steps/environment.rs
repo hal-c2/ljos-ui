@@ -54,6 +54,19 @@ fn js_clock(w: &mut LjosWorld, secs: u64) -> StepResult {
     })
 }
 
+#[given(regex = r"^a web view waits (\d+(?:\.\d+)?) seconds? for a new profile's storage$")]
+fn profile_wait(w: &mut LjosWorld, secs: f64) -> StepResult {
+    w.each(|b| {
+        b.environment()?
+            .profile_wait(std::time::Duration::from_secs_f64(secs))
+    })
+}
+
+#[when(regex = r"^the wait for a new profile's storage changes to (\d+(?:\.\d+)?) seconds?$")]
+fn profile_wait_changes(w: &mut LjosWorld, secs: f64) -> StepResult {
+    profile_wait(w, secs)
+}
+
 #[when("the application sets a log handler of its own")]
 fn own_log_handler(w: &mut LjosWorld) -> StepResult {
     w.each(|b| b.environment()?.own_log_handler())

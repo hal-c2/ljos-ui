@@ -265,6 +265,35 @@ impl Sink {
     }
 }
 
+/// How long a view waits for the storage of a profile made a moment ago,
+/// unless [`set_profile_wait`] says otherwise.
+pub const PROFILE_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// What [`set_profile_wait`] set, in milliseconds; `u64::MAX` for
+/// [`PROFILE_WAIT`].
+static PROFILE_WAIT_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(u64::MAX);
+
+/// How long a view waits for the storage of a profile made a moment ago
+/// before its page fails; `None` is [`PROFILE_WAIT`]. CEF readies storage
+/// with work it does not announce, and never readies storage it cannot
+/// set up. A view that stopped waiting makes its browser again for its
+/// next page. One that waits no time stops at once: its first page fails
+/// unless the profile was ready.
+pub fn set_profile_wait(wait: Option<std::time::Duration>) {
+    let ms = wait.map_or(u64::MAX, |w| {
+        u64::try_from(w.as_millis()).unwrap_or(u64::MAX - 1)
+    });
+    PROFILE_WAIT_MS.store(ms, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// How long a view waits for a new profile's storage now.
+pub(crate) fn profile_wait() -> std::time::Duration {
+    match PROFILE_WAIT_MS.load(std::sync::atomic::Ordering::Relaxed) {
+        u64::MAX => PROFILE_WAIT,
+        ms => std::time::Duration::from_millis(ms),
+    }
+}
+
 /// Why a view cannot show pages; `None` when it can.
 pub fn unavailable() -> Option<String> {
     #[cfg(feature = "cef")]

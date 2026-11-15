@@ -294,16 +294,14 @@ fn loading() -> bool {
         .unwrap_or(false)
 }
 
-/// How long a view waits for its profile's request context before its
-/// page fails: one CEF never readies (storage it cannot set up) would
-/// otherwise keep the pump turning for good.
-const PROFILE_WAIT: Duration = Duration::from_secs(10);
-
 /// Whether a view waits for its profile's request context, which CEF
 /// readies with work it does not announce. One that has waited
-/// [`PROFILE_WAIT`] stops waiting, and its page fails.
+/// [`crate::set_profile_wait`]'s time stops waiting, and its page fails:
+/// one CEF never readies (storage it cannot set up) would otherwise keep
+/// the pump turning for good.
 fn unborn() -> bool {
     let now = Instant::now();
+    let wait = crate::backend::profile_wait();
     let (waiting, late) = GLOBAL
         .try_with(|g| match g.try_borrow().as_deref() {
             Ok(Some(Ok(global))) => {
@@ -315,7 +313,7 @@ fn unborn() -> bool {
                         continue;
                     };
                     match u.since {
-                        Some(since) if now.duration_since(since) >= PROFILE_WAIT => {
+                        Some(since) if now.duration_since(since) >= wait => {
                             u.since = None;
                             late.push(shared.clone());
                         }
@@ -330,15 +328,23 @@ fn unborn() -> bool {
         .unwrap_or_default();
     // Failed with the Global let go: the view hears of it on its own.
     for shared in late {
-        not_born(
-            &shared,
-            &format!(
-                "its profile's storage was not ready after {} s",
-                PROFILE_WAIT.as_secs()
-            ),
-        );
+        not_born(&shared, &not_ready(wait));
     }
     waiting
+}
+
+/// Why a view whose profile was not ready after `wait` shows no page.
+fn not_ready(wait: Duration) -> String {
+    format!(
+        "its profile's storage was not ready after {} s",
+        wait.as_secs_f64()
+    )
+}
+
+/// Since when a view waits for its profile, now; `None` when it may not
+/// wait at all.
+fn waiting_from(wait: Duration) -> Option<Instant> {
+    (!wait.is_zero()).then(Instant::now)
 }
 
 /// After a turn: a follow-up, unless the browser has been quiet long
@@ -2889,15 +2895,21 @@ pub(crate) fn start(
                 shared.started(&start.url);
                 Shared::lock(&shared.boot).url = Some(std::mem::take(&mut start.url));
             }
+            let wait = crate::backend::profile_wait();
             *Shared::lock(&shared.unborn) = Some(Unborn {
                 start,
                 context,
                 ready,
                 focus: None,
-                since: Some(Instant::now()),
+                since: waiting_from(wait),
             });
-            // CEF readies the context with work it does not announce.
-            told_work();
+            if wait.is_zero() {
+                // Still made once the profile is ready, for its next page.
+                not_born(&shared, &not_ready(wait));
+            } else {
+                // CEF readies the context with work it does not announce.
+                told_work();
+            }
         }
         profile => make_browser(&shared, &start, profile.map(|(c, _)| c))?,
     }
@@ -2967,6 +2979,7 @@ fn not_born(shared: &Arc<Shared>, why: &str) {
 /// browser is made again, at once in a profile that is ready by now, or
 /// once it is.
 fn reborn(shared: &Arc<Shared>) {
+    let wait = crate::backend::profile_wait();
     let ready = {
         let mut unborn = Shared::lock(&shared.unborn);
         let Some(u) = unborn.as_mut().filter(|u| u.since.is_none()) else {
@@ -2982,12 +2995,14 @@ fn reborn(shared: &Arc<Shared>) {
             {
                 r.waiting.push(Arc::downgrade(shared));
             }
-            u.since = Some(Instant::now());
+            u.since = waiting_from(wait);
         }
         r.ready
     };
     if ready {
         born(shared);
+    } else if wait.is_zero() {
+        not_born(shared, &not_ready(wait));
     } else {
         told_work();
     }

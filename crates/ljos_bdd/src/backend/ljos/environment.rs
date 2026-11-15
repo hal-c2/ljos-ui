@@ -63,6 +63,13 @@ impl Environment for LjosBackend {
         Ok(())
     }
 
+    fn profile_wait(&mut self, wait: Duration) -> Result<()> {
+        // Every view of the process: the runner sets it back before each
+        // scenario.
+        ljos_webengine::set_profile_wait(Some(wait));
+        Ok(())
+    }
+
     fn js_clock_stalled(&mut self, stall: Duration) -> Result<()> {
         self.js_stall = Some(stall);
         if let Some(live) = &self.live {
