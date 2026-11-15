@@ -510,16 +510,12 @@ fn named_storage(spec: &ProfileSpec) -> Option<&Path> {
     (!spec.off_the_record && path.is_absolute()).then_some(path)
 }
 
-/// The profile whose place CEF starts from: the starting view's when it
-/// names where it keeps its data, else the first profile alive that names
-/// one. A view kept off the record (or in the engine's own place) may be
-/// the first one shown while the profile the application cares about,
-/// which names a directory, waits behind it; that one still gets its
-/// directory.
+/// The profile whose place CEF starts from: the first profile made that
+/// names where it keeps its data, else the starting view's. Views start
+/// in no particular order, so the one starting CEF may be off the record,
+/// or of a profile made after the one the application named first; that
+/// one still gets its directory.
 fn root_profile(e: &Engine, starting: &ProfileSpec) -> ProfileSpec {
-    if named_storage(starting).is_some() {
-        return starting.clone();
-    }
     // Objects are kept in no order of their making.
     e.object_ids()
         .into_iter()
