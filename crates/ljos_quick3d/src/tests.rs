@@ -796,6 +796,34 @@ View3D {
     );
 }
 
+// The failure is the thread's, but each engine has its warnings: a
+// second engine loading the same broken text while the first still holds
+// it is told of it too, though it is not translated again.
+#[test]
+fn a_second_engine_is_warned_of_broken_snippets_the_first_holds() {
+    let qml = r##"
+View3D {
+    Model { source: "#Cube"
+        materials: CustomMaterial { shadingMode: CustomMaterial.Unshaded
+            __fragmentShaderCode: "void MAIN() { FRAGCOLOR = texture(otherTexture, UV0); }" } }
+}
+"##;
+    let warned = |e: &Engine| {
+        e.take_warnings()
+            .iter()
+            .filter(|w| w.contains("otherTexture"))
+            .count()
+    };
+    let before = translated();
+    let (a, a_view) = load(qml);
+    let _a = scene::build(&a, a_view);
+    assert_eq!(warned(&a), 1, "the first engine is told");
+    let (b, b_view) = load(qml);
+    let _b = scene::build(&b, b_view);
+    assert_eq!(warned(&b), 1, "and so is the second");
+    assert_eq!(translated() - before, 1, "which translates nothing again");
+}
+
 // Qt makes a material's shaders when it first draws them: the hidden
 // studio floor of fx-material-showroom, whose snippet samples a texture
 // its material never declares, warns of nothing until it is shown.
