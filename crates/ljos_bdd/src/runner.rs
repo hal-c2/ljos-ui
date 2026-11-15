@@ -146,6 +146,8 @@ pub fn run() -> bool {
             .fail_on_skipped()
             .before(move |feature, rule, scenario, world| {
                 hook.scenario(feature, rule, scenario);
+                // The wait is the process's, not the scenario's: one at a
+                // time (above) keeps a scenario's wait its own.
                 ljos_webengine::set_profile_wait(None);
                 let tags: Vec<String> = feature
                     .tags
