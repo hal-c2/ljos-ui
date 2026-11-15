@@ -967,7 +967,10 @@ impl<O: TypeOracle> Compiler<'_, '_, '_, O> {
         edits: &mut Vec<js::Edit>,
     ) {
         use crate::i18n::message::MessageErrorKind;
-        for site in messages.iter().filter(|site| core_names.contains(&site.callee)) {
+        for site in messages
+            .iter()
+            .filter(|site| core_names.contains(&site.callee))
+        {
             match &site.message {
                 Err(error) => {
                     let code = match error.kind {

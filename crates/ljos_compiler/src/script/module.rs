@@ -15,10 +15,10 @@ use ljos_ir::ScriptImport;
 use oxc_allocator::Allocator;
 use oxc_ast::ast::{
     CallExpression, Class, ClassElement, Declaration, Expression, FormalParameter,
-    ImportDeclaration, ImportDeclarationSpecifier, TaggedTemplateExpression,
-    ImportOrExportKind, MethodDefinitionType, PropertyDefinitionType, PropertyKey, Statement,
-    TSAsExpression, TSNonNullExpression, TSSatisfiesExpression, TSThisParameter, TSTypeAnnotation,
-    TSTypeAssertion, TSTypeParameterDeclaration, TSTypeParameterInstantiation,
+    ImportDeclaration, ImportDeclarationSpecifier, ImportOrExportKind, MethodDefinitionType,
+    PropertyDefinitionType, PropertyKey, Statement, TSAsExpression, TSNonNullExpression,
+    TSSatisfiesExpression, TSThisParameter, TSTypeAnnotation, TSTypeAssertion,
+    TSTypeParameterDeclaration, TSTypeParameterInstantiation, TaggedTemplateExpression,
 };
 use oxc_ast_visit::{Visit, walk};
 use oxc_parser::Parser;

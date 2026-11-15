@@ -1971,7 +1971,9 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
             }
             Expression::StaticMemberExpression(_) => Literal::Enum(self.enum_literal(expression)?),
             Expression::TaggedTemplateExpression(_) => return self.message_literal(expression),
-            Expression::CallExpression(call) if crate::i18n::message::call_message(call).is_some() => {
+            Expression::CallExpression(call)
+                if crate::i18n::message::call_message(call).is_some() =>
+            {
                 return self.message_literal(expression);
             }
             Expression::CallExpression(call) => {

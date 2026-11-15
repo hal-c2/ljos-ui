@@ -934,7 +934,12 @@ pub fn core_module() -> String {
         line.strip_prefix("declare ")
             .or_else(|| line.strip_prefix("interface ").map(|_| line))
             .or_else(|| line.strip_prefix("type ").map(|_| line))
-            .map(|rest| format!("export {}{rest}", if rest == line { "" } else { "declare " }))
+            .map(|rest| {
+                format!(
+                    "export {}{rest}",
+                    if rest == line { "" } else { "declare " }
+                )
+            })
     };
     for line in MESSAGES.lines() {
         out.push_str(&exported(line).unwrap_or_else(|| line.to_owned()));
