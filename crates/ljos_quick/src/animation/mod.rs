@@ -201,3 +201,26 @@ pub fn running_animation_count(engine: &Engine) -> usize {
 pub fn running_animations(engine: &Engine) -> Vec<(ObjectId, bool)> {
     driver::runs(engine)
 }
+
+/// How an animation under way goes: whether it asks for frames, and when
+/// it wakes the application if it asks for none.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AnimationPace {
+    /// Stepped on every frame, and asks for them.
+    Stepping,
+    /// Paused: asks for nothing until it is resumed.
+    Paused,
+    /// Nothing reads what it moves: no frame steps it, and the values are
+    /// worked out when they are read. It wakes the application only at its
+    /// end, `left` from now; never, when it is endless (`None`).
+    Resting { left: Option<Duration> },
+    /// A clock whose work nobody sees for now (`frames_only_while`):
+    /// stepped on the frames others ask for, it asks for none.
+    RidingAlong,
+}
+
+/// [`running_animations`] with how each goes. For an observer: what wakes
+/// the application, and what only looks as if it did.
+pub fn animation_paces(engine: &Engine) -> Vec<(ObjectId, AnimationPace)> {
+    driver::paces(engine)
+}

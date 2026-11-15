@@ -496,12 +496,39 @@ fn waker_rows(engine: &Engine, activity: &ProcessActivity, text: &mut String) ->
         );
         rows.push(row);
     }
-    for (anim, paused) in ljos_quick::running_animations(engine) {
-        if paused {
-            continue;
+    for (anim, pace) in ljos_quick::animation_paces(engine) {
+        use ljos_quick::AnimationPace;
+        // A resting one wakes the thread once, at its end: the driver
+        // keeps a timer for it. An endless one, or a clock that rides
+        // along, asks for nothing.
+        let (scheduled, name, how) = match pace {
+            AnimationPace::Paused => continue,
+            AnimationPace::Stepping => (true, "stepping", "running, every frame".to_owned()),
+            AnimationPace::Resting { left: Some(left) } => (
+                true,
+                "resting",
+                format!(
+                    "resting, wakes at its end in {:.1} ms",
+                    left.as_secs_f64() * 1000.0
+                ),
+            ),
+            AnimationPace::Resting { left: None } => (
+                false,
+                "resting",
+                "resting, endless: asks for no frame".to_owned(),
+            ),
+            AnimationPace::RidingAlong => (
+                false,
+                "riding_along",
+                "rides along with the frames of others, asks for none".to_owned(),
+            ),
+        };
+        let mut row = waker(engine, "animation", Some(anim), scheduled);
+        row["pace"] = json!(name);
+        if let AnimationPace::Resting { left: Some(left) } = pace {
+            row["left_us"] = json!(micros(left));
         }
-        let row = waker(engine, "animation", Some(anim), true);
-        let _ = writeln!(text, "animation {}: running, every frame", owner_text(&row));
+        let _ = writeln!(text, "animation {}: {how}", owner_text(&row));
         rows.push(row);
     }
     for p in ljos_platform::Platform::of(engine).promises() {
@@ -608,19 +635,28 @@ pub(crate) fn processes(
         let mut text = String::new();
         let rows = waker_rows(engine, &activity, &mut text);
         let scheduled = rows.iter().filter(|r| r["scheduled"] == true).count();
-        let _ = writeln!(
-            text,
-            "{}",
-            match (scheduled, rows.len() - scheduled) {
-                (0, 0) => "nothing will wake the UI thread".to_owned(),
-                (0, n) => format!("nothing is scheduled to wake the UI thread; {n} listening"),
-                (s, n) => format!("{s} scheduled to wake the UI thread, {n} listening"),
-            }
-        );
+        // An animation that asks for nothing listens for nothing either: it
+        // is under way, at rest.
+        let resting = rows
+            .iter()
+            .filter(|r| r["scheduled"] == false && r["source"] == "animation")
+            .count();
+        let listening = rows.len() - scheduled - resting;
+        let mut summary = match (scheduled, listening) {
+            (0, 0) if resting == 0 => "nothing will wake the UI thread".to_owned(),
+            (0, 0) => "nothing is scheduled to wake the UI thread".to_owned(),
+            (0, n) => format!("nothing is scheduled to wake the UI thread; {n} listening"),
+            (s, n) => format!("{s} scheduled to wake the UI thread, {n} listening"),
+        };
+        if resting > 0 {
+            let _ = write!(summary, "; {resting} under way at rest");
+        }
+        let _ = writeln!(text, "{summary}");
         let value = json!({
             "processes": rows,
             "scheduled": scheduled,
-            "listening": rows.len() - scheduled,
+            "listening": listening,
+            "resting": resting,
         });
         return ToolReply::from(value).with_text(text.trim_end().to_owned());
     }

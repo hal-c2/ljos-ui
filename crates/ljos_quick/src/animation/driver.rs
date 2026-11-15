@@ -28,6 +28,8 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use ljos_engine::{Engine, Kept, ObjectId, PropIndex, Value};
+
+use super::AnimationPace;
 use ljos_reactive::WriteKind;
 use ljos_runtime::{FrameScheduler, Time, TimerId, TimerKind};
 use rustc_hash::FxHashMap;
@@ -1015,6 +1017,54 @@ pub(crate) fn any_stepping(engine: &Engine) -> bool {
             .borrow()
             .iter()
             .any(|r| !r.cancelled.get() && !r.paused.get())
+}
+
+/// How each animation under way goes, as [`runs`] lists them.
+pub(crate) fn paces(engine: &Engine) -> Vec<(ObjectId, AnimationPace)> {
+    let d = driver(engine);
+    let now = d.now(engine);
+    let mut all: Vec<(ObjectId, AnimationPace)> = d
+        .runs
+        .borrow()
+        .iter()
+        .filter(|r| !r.cancelled.get())
+        .map(|r| {
+            let pace = if r.paused.get() {
+                AnimationPace::Paused
+            } else if r.resting.get() {
+                let timeline = r.timeline.borrow();
+                let left = timeline.as_deref().filter(|t| !t.is_endless()).map(|t| {
+                    // Not stepped while it rests: what went by since its
+                    // last frame is still to come off.
+                    let since = match (now, r.last.get()) {
+                        (Some(now), Some(last)) => now.saturating_since(last).as_micros(),
+                        _ => 0,
+                    };
+                    let left = t.total().saturating_sub(r.elapsed.get()).max(0);
+                    Duration::from_micros(
+                        u64::try_from(left)
+                            .unwrap_or(0)
+                            .saturating_sub(u64::try_from(since).unwrap_or(u64::MAX)),
+                    )
+                });
+                AnimationPace::Resting { left }
+            } else {
+                AnimationPace::Stepping
+            };
+            (r.anim, pace)
+        })
+        .collect();
+    let frames: Vec<ObjectId> = d.frames.borrow().clone();
+    for f in frames {
+        let wants = d.wants.borrow().get(&f).cloned();
+        // Asked unborrowed: what decides reads the engine.
+        let pace = match wants {
+            Some(w) if !engine.untrack(|| w(engine)) => AnimationPace::RidingAlong,
+            _ => AnimationPace::Stepping,
+        };
+        all.push((f, pace));
+    }
+    all
 }
 
 pub(crate) fn runs(engine: &Engine) -> Vec<(ObjectId, bool)> {
