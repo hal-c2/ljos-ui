@@ -729,6 +729,7 @@ View3D {
 }
 "##,
     );
+    let before = translated();
     let built = scene::build(&e, view);
     let programs: Vec<_> = built
         .walk()
@@ -747,9 +748,51 @@ View3D {
     assert!(!same(0, 2), "other code is another program");
     assert!(!same(0, 3), "a shaded material is another program");
     assert_eq!(
-        custom::counts::TRANSLATED.with(std::cell::Cell::get),
+        translated() - before,
         3,
         "each program's snippets are translated once"
+    );
+}
+
+/// The programs made of snippets' text on this thread so far.
+fn translated() -> usize {
+    custom::counts::TRANSLATED.with(std::cell::Cell::get)
+}
+
+// A map's tiles of one broken file warn once, as one program of it would,
+// not once a tile.
+#[test]
+fn custom_materials_of_the_same_broken_snippets_are_tried_and_warned_of_once() {
+    let (e, view) = load(
+        r##"
+View3D {
+    Model { source: "#Cube"
+        materials: CustomMaterial { shadingMode: CustomMaterial.Unshaded
+            __fragmentShaderCode: "void MAIN() { FRAGCOLOR = texture(missingTexture, UV0); }" } }
+    Model { source: "#Cube"
+        materials: CustomMaterial { shadingMode: CustomMaterial.Unshaded
+            __fragmentShaderCode: "void MAIN() { FRAGCOLOR = texture(missingTexture, UV0); }" } }
+}
+"##,
+    );
+    let before = translated();
+    let built = scene::build(&e, view);
+    assert_eq!(translated() - before, 1, "the text is translated once");
+    let warnings = e.take_warnings();
+    assert_eq!(
+        warnings
+            .iter()
+            .filter(|w| w.contains("missingTexture"))
+            .count(),
+        1,
+        "and warned of once: {warnings:?}"
+    );
+    assert!(
+        !built
+            .walk()
+            .iter()
+            .any(|(_, n, _)| matches!(n.kind, NodeKind::Model(_))),
+        "neither model draws"
     );
 }
 
@@ -768,7 +811,8 @@ View3D {
 }
 "##,
     );
-    let translated = || custom::counts::TRANSLATED.with(std::cell::Cell::get);
+    let before = translated();
+    let translated = || translated() - before;
     let warned = |e: &Engine| {
         e.take_warnings()
             .iter()
@@ -789,6 +833,13 @@ View3D {
             .any(|(_, n, _)| matches!(n.kind, NodeKind::Model(_))),
         "snippets that make no program leave the model out"
     );
+    for visible in [false, true] {
+        e.write_by_name(named(&e, view, "floor_"), "visible", Value::from(visible))
+            .expect("hidden and shown again");
+        let _ = scene::build(&e, view);
+    }
+    assert_eq!(translated(), 1, "shown again, nothing is translated again");
+    assert!(!warned(&e), "nor warned of again");
 }
 
 /// The mapping read through a name-keyed graph, as the web holds its
