@@ -337,6 +337,9 @@ pub struct Target {
     shadows: Option<Shadows>,
     /// Shadow maps drawn, a pass each, since the target was made.
     shadow_passes: u64,
+    /// The camera's layer the depth passes draw with, and what it holds:
+    /// made once, written when the camera moves.
+    camera_depth: Option<(wgpu::Buffer, wgpu::BindGroup, ShadowLayer)>,
     /// The GPU's timestamps of its frames, where the device has them.
     timer: Option<crate::timing::Timer>,
     /// What each custom material drawn binds, in the order drawn.
@@ -540,6 +543,7 @@ impl Target {
             drawn_models: 0,
             shadows: None,
             shadow_passes: 0,
+            camera_depth: None,
             timer: crate::timing::Timer::new(device),
             custom_slots: Vec::new(),
             post: Buffers::default(),
@@ -2958,7 +2962,8 @@ impl Renderer {
         // passes read.
         let picture = scene_view.as_ref().unwrap_or(&target.color_view);
         if let Some(depth) = &material_depth {
-            self.draw_depth(device, encoder, target, &draws, view_proj, depth, false);
+            let layer = self.camera_depth(device, queue, &mut target.camera_depth, view_proj);
+            self.draw_depth(encoder, target, &draws, &layer, depth, false);
         }
         let mut slot = 0;
         {
@@ -3056,7 +3061,8 @@ impl Renderer {
                 let depth = target
                     .post
                     .view(device, post::DEPTH_KEY, [w, h], post::DEPTH);
-                self.draw_depth(device, encoder, target, &draws, view_proj, &depth, true);
+                let layer = self.camera_depth(device, queue, &mut target.camera_depth, view_proj);
+                self.draw_depth(encoder, target, &draws, &layer, &depth, true);
             }
             if surface_pass {
                 self.draw_surfaces(device, encoder, target, &draws, bound, plain_maps);
@@ -3120,29 +3126,33 @@ impl Renderer {
         true
     }
 
-    /// Draws the depth the post-processing passes read: what writes depth
-    /// in the picture, seen from the camera.
-    #[allow(clippy::too_many_arguments)]
-    fn draw_depth(
+    /// The group the depth passes draw the camera's view with. Both passes
+    /// of a frame see one camera, so one buffer a target, written before
+    /// the submission, holds what each of them reads.
+    fn camera_depth(
         &self,
         device: &wgpu::Device,
-        encoder: &mut wgpu::CommandEncoder,
-        target: &Target,
-        draws: &[Draw],
+        queue: &wgpu::Queue,
+        kept: &mut Option<(wgpu::Buffer, wgpu::BindGroup, ShadowLayer)>,
         view_proj: Mat4,
-        depth: &wgpu::TextureView,
-        timed: bool,
-    ) {
+    ) -> wgpu::BindGroup {
         let layer = ShadowLayer {
             view_proj: view_proj.0,
             params: [0.0; 4],
         };
+        if let Some((buffer, group, written)) = kept {
+            if *written != layer {
+                crate::counted::write_buffer(queue, buffer, 0, bytemuck::bytes_of(&layer));
+                *written = layer;
+            }
+            return group.clone();
+        }
         let buffer = crate::counted::create_buffer_init(
             device,
             &wgpu::util::BufferInitDescriptor {
                 label: Some("ljos_3d camera depth"),
                 contents: bytemuck::bytes_of(&layer),
-                usage: wgpu::BufferUsages::UNIFORM,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             },
         );
         let group = crate::counted::create_bind_group(
@@ -3160,6 +3170,21 @@ impl Renderer {
                 }],
             },
         );
+        *kept = Some((buffer, group.clone(), layer));
+        group
+    }
+
+    /// Draws the depth the post-processing passes read: what writes depth
+    /// in the picture, seen from the camera.
+    fn draw_depth(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        target: &Target,
+        draws: &[Draw],
+        group: &wgpu::BindGroup,
+        depth: &wgpu::TextureView,
+        timed: bool,
+    ) {
         let mut pass = crate::counted::Pass::begin(
             encoder,
             &wgpu::RenderPassDescriptor {
@@ -3182,7 +3207,7 @@ impl Renderer {
                 ..Default::default()
             },
         );
-        pass.set_bind_group(0, &group, &[0]);
+        pass.set_bind_group(0, group, &[0]);
         let mut bound = None;
         for draw in draws {
             if !writes_camera_depth(draw) {

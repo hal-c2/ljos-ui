@@ -443,6 +443,11 @@ impl Programs {
             })
     }
 
+    /// The layout of `program`'s group, once the program is compiled.
+    pub(crate) fn layout(&self, program: &Program) -> &wgpu::BindGroupLayout {
+        &self.compiled[&program.id()].layout
+    }
+
     /// A group of `program` binding `buffer` as its block, `textures` in
     /// their order, `depth` where it reads the depth and `screen` where it
     /// reads the scene behind it.
