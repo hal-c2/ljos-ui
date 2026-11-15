@@ -263,6 +263,30 @@ Feature: CustomMaterial runs the author's shader snippets
       Then the log has a warning matching "broken.frag"
       And the pixel at 100, 100 of the window is within 2 of "#1e1e1e"
 
+    # Qt makes a material's shaders when it first draws them, so a model
+    # that starts hidden says nothing of its snippets until it is shown.
+    Scenario: A hidden model's broken snippet is reported once the model is shown
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick3D
+        Rectangle {
+          width: 200; height: 200; color: "black"
+          View3D {
+            anchors.fill: parent
+            environment: SceneEnvironment { clearColor: "#202020"; backgroundMode: SceneEnvironment.Color }
+            OrthographicCamera { z: 600 }
+            Model { objectName: "floor"; source: "#Rectangle"; visible: false
+              materials: CustomMaterial { shadingMode: CustomMaterial.Unshaded; fragmentShader: "broken.frag" } }
+          }
+        }
+        """
+      Then the pixel at 100, 100 of the window is within 2 of "#1e1e1e"
+      And the log has no warning matching "broken.frag"
+      When the property "visible" of "floor" is set to true
+      Then the pixel at 100, 100 of the window is within 2 of "#1e1e1e"
+      And the log has a warning matching "broken.frag"
+
   Rule: A shader's text can be written in QML
 
     Scenario: The fragment text draws the model

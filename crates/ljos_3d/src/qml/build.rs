@@ -232,9 +232,16 @@ pub(super) fn shadow<S: SceneSource>(s: &S, obj: S::Object) -> Option<Shadow> {
     })
 }
 
-pub(super) fn kind<S: SceneSource>(s: &S, view: S::Object, obj: S::Object) -> NodeKind {
+/// What `obj` is in the scene. `shown` is its own `visible`: see
+/// [`material_of`].
+pub(super) fn kind<S: SceneSource>(
+    s: &S,
+    view: S::Object,
+    obj: S::Object,
+    shown: bool,
+) -> NodeKind {
     if s.is(obj, T::Model) {
-        return model(s, view, obj).map_or(NodeKind::Group, NodeKind::Model);
+        return model(s, view, obj, shown).map_or(NodeKind::Group, NodeKind::Model);
     }
     if let Some(camera) = camera(s, obj) {
         return NodeKind::Camera(camera);
@@ -306,7 +313,7 @@ pub(super) fn kind<S: SceneSource>(s: &S, view: S::Object, obj: S::Object) -> No
 
 /// `None` for a mesh this renderer does not build yet: the node still
 /// places its children.
-fn model<S: SceneSource>(s: &S, view: S::Object, obj: S::Object) -> Option<Model> {
+fn model<S: SceneSource>(s: &S, view: S::Object, obj: S::Object, shown: bool) -> Option<Model> {
     let mesh = match s.object(obj, P::Geometry) {
         // The geometry wins over a source, as it is the application's
         // own mesh. One never updated has nothing to draw yet.
@@ -328,18 +335,25 @@ fn model<S: SceneSource>(s: &S, view: S::Object, obj: S::Object) -> Option<Model
     };
     // A built-in mesh has one part, drawn with the first material.
     let first = s.objects(obj, P::Materials).into_iter().next();
-    let material = material_of(s, view, first)?;
+    let material = material_of(s, view, first, shown)?;
     Some(Model { mesh, material })
 }
 
 /// What a mesh part is drawn with: `m`, or the default without one. `None`
 /// leaves the part out.
+///
+/// A model that is not `shown` leaves out a part of a `CustomMaterial`:
+/// Qt makes a material's shaders when it first draws them, so a hidden
+/// model's snippets are neither translated nor warned of. Its `visible`
+/// is read with it, so showing it reads it again.
 pub(super) fn material_of<S: SceneSource>(
     s: &S,
     view: S::Object,
     m: Option<S::Object>,
+    shown: bool,
 ) -> Option<Material> {
     match m {
+        Some(m) if !shown && s.is(m, T::CustomMaterial) => None,
         Some(m) => s.material(view, m),
         None => Some(Material::default()),
     }

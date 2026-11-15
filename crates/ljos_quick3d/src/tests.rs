@@ -753,6 +753,44 @@ View3D {
     );
 }
 
+// Qt makes a material's shaders when it first draws them: the hidden
+// studio floor of fx-material-showroom, whose snippet samples a texture
+// its material never declares, warns of nothing until it is shown.
+#[test]
+fn a_hidden_model_s_custom_material_is_made_once_it_is_shown() {
+    let (e, view) = load(
+        r##"
+View3D {
+    property QtObject floor_: floor
+    Model { id: floor; source: "#Rectangle"; visible: false
+        materials: CustomMaterial { shadingMode: CustomMaterial.Unshaded
+            __fragmentShaderCode: "void MAIN() { FRAGCOLOR = texture(paramsTexture, UV0); }" } }
+}
+"##,
+    );
+    let translated = || custom::counts::TRANSLATED.with(std::cell::Cell::get);
+    let warned = |e: &Engine| {
+        e.take_warnings()
+            .iter()
+            .any(|w| w.contains("paramsTexture"))
+    };
+    let _ = scene::build(&e, view);
+    assert_eq!(translated(), 0, "a hidden model's snippets wait");
+    assert!(!warned(&e), "nothing is warned of while it is hidden");
+    e.write_by_name(named(&e, view, "floor_"), "visible", Value::from(true))
+        .expect("shown");
+    let built = scene::build(&e, view);
+    assert_eq!(translated(), 1, "shown, its snippets are translated");
+    assert!(warned(&e), "and what they lack is warned of");
+    assert!(
+        !built
+            .walk()
+            .iter()
+            .any(|(_, n, _)| matches!(n.kind, NodeKind::Model(_))),
+        "snippets that make no program leave the model out"
+    );
+}
+
 /// The mapping read through a name-keyed graph, as the web holds its
 /// objects, builds the scene the engine builds from the same QML.
 mod same_mapping {
