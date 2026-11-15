@@ -99,7 +99,14 @@ impl Environment for LjosBackend {
             // Nothing promised (a view that no longer waits) returns at once.
             std::thread::sleep(Duration::from_millis(5));
         }
-        ljos_webengine::let_profile_go(storage_name);
+        // A profile readied while the scenario holds them is held; one
+        // that is not let go was made before the hold, or is not the one
+        // the scenario names.
+        if !ljos_webengine::let_profile_go(storage_name) && ljos_webengine::holding_profiles() {
+            return Err(failed(format!(
+                "the storage of profile {storage_name:?} is ready, but it was not held unready, so nothing was let go"
+            )));
+        }
         self.live()?.settle()
     }
 
