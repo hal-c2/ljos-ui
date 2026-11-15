@@ -93,16 +93,17 @@ Feature: ljos migrate writes qsTr as a tagged template
       import QtQuick
       Item {
         property <type> count: 2
-        property string files: qsTr("%n file(s)", "", count)
+        property string files: qsTr("%n file(s)", "", <count>)
       }
       """
     When the author runs "ljos migrate ."
     Then the command's output mentions "kept Main.qml:4:"
 
     Examples:
-      | type |
-      | real |
-      | var  |
+      | type | count     |
+      | real | count     |
+      | var  | count     |
+      | int  | count / 2 |
 
   Scenario: Values reordered with a call in them keep their file
     A template works out its values left to right, Qt's `.arg` in call order.

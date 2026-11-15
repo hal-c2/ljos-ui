@@ -108,17 +108,26 @@ Feature: Messages: translated text written as a tagged template
 
   Rule: Values are placeholders named after them
 
-    Scenario: Braces written in the text are text
+    Scenario Outline: Text written in the message is shown as written
       Given the QML:
         """qml
         import Ljos.Ui
         import Ljos.Core
         Item {
           objectName: "root"
-          property string shown: t`Use {braces}`
+          property int count: 3
+          property string shown: <message>
         }
         """
-      Then the property "shown" of "root" is "Use {braces}"
+      Then the property "shown" of "root" is "<shown>"
+
+      Examples:
+        | message                                   | shown        |
+        | t`Use {braces}`                           | Use {braces} |
+        | t`Don't save`                             | Don't save   |
+        | t`'{quoted}'`                             | '{quoted}'   |
+        | plural(count, { other: "# in '#'1" })     | 3 in #1      |
+        | plural(count, { other: "# don't fit" })   | 3 don't fit  |
 
     Scenario: A value is shown where the translation puts it, and again when it changes
       Given the QML:
@@ -302,8 +311,9 @@ Feature: Messages: translated text written as a tagged template
     Scenario: A message marked with msg is translated where it is shown
       Given the file "menu.lts":
         """ts
-        import { msg } from "@ljos/core"
-        export const items = [msg`Open`, msg({ id: "nav.home", message: "Home" })]
+        import { msg, type MessageDescriptor } from "@ljos/core"
+        export const items: readonly [MessageDescriptor, MessageDescriptor] =
+          [msg`Open`, msg({ id: "nav.home", message: "Home" })]
         """
       And the QML:
         """qml
