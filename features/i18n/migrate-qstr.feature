@@ -6,7 +6,7 @@
 #   https://lingui.dev/ref/macro
 # `ljos migrate` is Ljós's own; Qt's QML before it runs on Qt as catalogue.feature shows.
 
-@ljos-only @headless @backlog
+@ljos-only @headless
 Feature: ljos migrate writes qsTr as a tagged template
   qsTr is Qt's, so a file of Ljós's API translates with `t` instead. `ljos
   migrate` rewrites each call: the numbered `%1` of `.arg` become the
@@ -68,6 +68,8 @@ Feature: ljos migrate writes qsTr as a tagged template
       }
       """
 
+  # Needs i18n/runtime
+  @backlog
   Scenario: The file lowered shows what the file as written shows
     Given the file "app/Main.qml":
       """qml

@@ -1112,8 +1112,8 @@ where Qt's views reset when a model is replaced.
   a script could edit it or read it as a model: its id is read other than
   as a view's `model:`, a view's model is read off it anywhere in the file
   (`list.model.count`, `ListView.view.model`), a value is not a literal
-  (a `qsTr` too, for now: the list could hold it as a `` t`…` `` binding,
-  which is still to build), the view has sections (`section.property` or `section { … }`),
+  (a `qsTr` too, which then stays Qt's: the list could hold it as a
+  `` t`…` `` binding, which is still to build), the view has sections (`section.property` or `section { … }`),
   a delegate reads a role by its bare name, writes one, or reads `model`,
   or the file has other local types, inline components or a `Loader`.
 - `model.<role>` → `modelData.<role>` where the file shows a model of
@@ -1542,7 +1542,9 @@ key is its context and its text, or its id.
   `QT_TR_NOOP` and its family: its value is a string to Qt, used where
   migrate cannot follow it (shown, compared, passed to `qsTr`), and
   `` msg`x` `` is a message descriptor, not a string, so the two cannot
-  stand for each other.
+  stand for each other. Each value stays where it is
+  written, so what else the pass changes in it stays changed, and a call
+  over several lines keeps them.
 - `ljos migrate --catalogue app_is.ts` writes the `.ts` catalogue's
   translations as `is.po` with the same rewrite, so a migrated file keeps
   them. A `.ts` message's key has a context Qt adds itself, the file's
@@ -1559,6 +1561,23 @@ key is its context and its text, or its id.
   files as Qt's and names every call. Without
   `--catalogue` there is no translation to lose, and the rewrite is the
   plain one.
+
+DECISION: `t`, `plural` and `msg` are written under the rule `Qt`'s
+members are (§4.3): where one is another word of the file (outside
+strings and comments), a member of a type of its objects, or a file beside
+it, the file is kept; where the pass cannot see every name (an object of a
+type it does not know, or a delegate, whose row's roles come first), every
+`qsTr` of the file stays Qt's and still runs, and `ljos migrate` keeps
+`pragma Scripts: JavaScript` for it. A `ListElement`'s `qsTr` stays too,
+with its `ListModel`. `%1` with no `.arg` is text, as Qt shows it; `%L1`,
+`qsTrId` with a count or `.arg`, and `qsTranslate` with a disambiguation
+beside its context keep the file, since `t` does not say them yet; a
+counted text with `#`, `{` or `}` keeps it too, since `plural` reads them.
+A count beside a context is `t({ message: plural(n, { … }), context })`.
+
+DECISION: `qt-tr` holds in a file whose scripts are typed; under
+`pragma Scripts: JavaScript` the file is still Qt's JavaScript (§5).
+
 - `font.pixelSize` → `font.size`.
 - `font.pointSize: n` → `font.size: Screen.points(n)`. Points to pixels is
   the screen's logical DPI / 72, known only at run time and different per
@@ -3206,10 +3225,10 @@ print. Those the checker builds are marked ✓.
 | ✓ `ts-match-exhaustive` | A `match` with no `default` covers every case of its subject, which must be a union of literals, a plain enum or a discriminated union; on any other subject it needs a `default` (§4.18). |
 | ✓ `ts-is-binding` | A binding of `x is pattern` is read only where the `is` is known `true` (§4.18). |
 | `qt-global` | No `Qt` in a file of Ljós's API; the fix names the member's home (§4.3.1). |
-| `qt-tr` | No `qsTr`, `qsTranslate`, `qsTrId` or `QT_TR*_NOOP` in a file of Ljós's API. For the first three the fix is `ljos migrate`'s rewrite to `t` (§4.13); `QT_TR*_NOOP` has no rewrite, and its message says to write `msg` by hand and translate it where it is shown. |
+| ✓ `qt-tr` | No `qsTr`, `qsTranslate`, `qsTrId` or `QT_TR*_NOOP` in a file of Ljós's API. For the first three the fix is `ljos migrate`'s rewrite to `t` (§4.13); `QT_TR*_NOOP` has no rewrite, and its message says to write `msg` by hand and translate it where it is shown. |
 | `i18n-literal` | A message and the forms of `plural`, `select` and `selectOrdinal` are written out (a string or a template), so they can be extracted (§4.13). |
 | `i18n-other` | The forms of `plural`, `select` and `selectOrdinal` have `other` (§4.13). |
-| `i18n-concat` (warning) | A translated text is not joined to another value with `+`: the two are one message (§4.13). |
+| ✓ `i18n-concat` (warning) | A translated text is not joined to another value with `+`: the two are one message (§4.13). |
 | ✓ `ts-lts-syntax` | No `match`, `is` or `\|>` in a `.ts` module; the fix renames it to `.lts` and rewrites the imports that name it (§4.21). |
 | ✓ `module-clash` | No `name.ts` and `name.lts` in the same directory: one module name, one file (§4.21). |
 | `lts-export-type` | An `.lts` module's exports carry the types `isolatedDeclarations` asks for, so its declaration is TypeScript's own emit (§4.21). |
