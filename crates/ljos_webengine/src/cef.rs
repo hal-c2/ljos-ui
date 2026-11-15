@@ -1245,8 +1245,7 @@ impl Asked {
         told_work();
         let key = self.key();
         let give = |write: &dyn Fn() -> std::io::Result<()>| {
-            let mut answered = Shared::lock(&shared.answered);
-            written_then_kept(&mut answered, shared.keep, key.clone(), allow, write)
+            written_then_kept(&shared.answered, shared.keep, key.clone(), allow, write)
         };
         match self {
             Asked::Prompt {
@@ -1328,8 +1327,9 @@ impl Asked {
 /// The view's answer is written down to be forgotten, by `write`, and only
 /// then remembered by a view whose profile keeps nothing: one that could
 /// not be written is not given, so a page asking again is asked again.
+/// `answered` is not held while the disk is written to.
 fn written_then_kept(
-    answered: &mut HashMap<(String, i32), bool>,
+    answered: &Mutex<HashMap<(String, i32), bool>>,
     keep: Keep,
     key: Option<(String, i32)>,
     allow: bool,
@@ -1339,7 +1339,7 @@ fn written_then_kept(
     if keep == Keep::Never
         && let Some(key) = key
     {
-        answered.insert(key, allow);
+        Shared::lock(answered).insert(key, allow);
     }
     Ok(())
 }
@@ -4014,18 +4014,30 @@ mod tests {
     #[test]
     fn an_answer_not_written_down_is_not_remembered() {
         let key = || Some(("https://a.example".to_owned(), 7));
-        let mut answered = HashMap::new();
+        let answered = Mutex::new(HashMap::new());
         let failed = || Err(std::io::Error::other("the disk is full"));
-        assert!(written_then_kept(&mut answered, Keep::Never, key(), true, &failed).is_err());
-        assert!(answered.is_empty(), "the view would answer again by itself");
-        assert!(written_then_kept(&mut answered, Keep::Never, key(), true, &|| Ok(())).is_ok());
-        assert_eq!(answered.get(&key().unwrap()), Some(&true));
-        let mut kept_by_profile = HashMap::new();
+        assert!(written_then_kept(&answered, Keep::Never, key(), true, &failed).is_err());
         assert!(
-            written_then_kept(&mut kept_by_profile, Keep::ThisRun, key(), true, &|| Ok(())).is_ok()
+            Shared::lock(&answered).is_empty(),
+            "the view would answer again by itself"
+        );
+        // The disk is written with `answered` free: if it were held, this write fails.
+        let unheld = || {
+            drop(
+                answered
+                    .try_lock()
+                    .map_err(|_| std::io::Error::other("held"))?,
+            );
+            Ok(())
+        };
+        assert!(written_then_kept(&answered, Keep::Never, key(), true, &unheld).is_ok());
+        assert_eq!(Shared::lock(&answered).get(&key().unwrap()), Some(&true));
+        let kept_by_profile = Mutex::new(HashMap::new());
+        assert!(
+            written_then_kept(&kept_by_profile, Keep::ThisRun, key(), true, &|| Ok(())).is_ok()
         );
         assert!(
-            kept_by_profile.is_empty(),
+            Shared::lock(&kept_by_profile).is_empty(),
             "the profile keeps it, not the view"
         );
     }
