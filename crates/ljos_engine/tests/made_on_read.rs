@@ -342,8 +342,58 @@ fn a_keeper_handed_a_property_as_a_binding_reads_it_is_told_it_is_observed() {
         .keep_on_read(item, k, handing_over_to_keeping)
         .unwrap();
     told();
+    NEXT.with(|n| n.set(5.0));
     h.set(item, "on", Value::Bool(true));
-    assert_eq!(h.num(item, "seen"), 0.0);
-    assert_eq!(told(), [Kept::Observed]);
+    assert_eq!(h.num(item, "seen"), 5.0, "the read is the new keeper's");
+    assert_eq!(told(), [Kept::Read, Kept::Observed]);
     assert!(!h.engine.is_made_on_read(item, k));
+}
+
+#[test]
+fn a_property_handed_over_as_it_is_read_is_brought_up_to_date_by_the_new_keeper() {
+    let h = engine();
+    let item = h.load(KEPT);
+    let k = index(&h, item, "k");
+    h.engine
+        .keep_on_read(item, k, handing_over_to_keeping)
+        .unwrap();
+    told();
+    NEXT.with(|n| n.set(6.0));
+    assert_eq!(h.num(item, "k"), 6.0, "not the value stored before");
+    assert_eq!(told(), [Kept::Read]);
+    assert!(h.engine.is_kept_by(item, k, keeping));
+}
+
+thread_local! {
+    static PINGS: Cell<u32> = const { Cell::new(0) };
+    static PONGS: Cell<u32> = const { Cell::new(0) };
+}
+
+/// Hands the property to `pong` as it is read, without a value.
+fn ping(e: &Engine, me: ObjectId, prop: PropIndex, kept: Kept) {
+    if kept == Kept::Read {
+        PINGS.with(|n| n.set(n.get() + 1));
+        e.keep_on_read(me, prop, pong).unwrap();
+    }
+}
+
+/// Hands the property back to `ping` as it is read.
+fn pong(e: &Engine, me: ObjectId, prop: PropIndex, kept: Kept) {
+    if kept == Kept::Read {
+        PONGS.with(|n| n.set(n.get() + 1));
+        e.keep_on_read(me, prop, ping).unwrap();
+    }
+}
+
+#[test]
+fn keepers_that_hand_a_property_back_and_forth_as_it_is_read_do_not_hang_the_read() {
+    let h = engine();
+    let item = h.load(KEPT);
+    let k = index(&h, item, "k");
+    PINGS.with(|n| n.set(0));
+    PONGS.with(|n| n.set(0));
+    h.engine.keep_on_read(item, k, ping).unwrap();
+    assert_eq!(h.num(item, "k"), 0.0, "what was stored, once they give up");
+    assert!(PONGS.with(Cell::get) >= 1, "the new keeper was asked");
+    assert!(h.engine.is_made_on_read(item, k), "still kept");
 }
