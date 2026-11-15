@@ -66,6 +66,125 @@ fn window_is_reference(w: &mut LjosWorld, tolerance: u8) -> StepResult {
     })
 }
 
+/// The window against a picture of `features/` taken from another
+/// renderer (a GIF's frame, say), where no single pixel can be pinned: a
+/// GIF's palette dithers flat colours and moves an edge's blend, and two
+/// painters put an anti-aliased edge half a pixel apart. Each picture is
+/// first blurred by its 3 by 3 neighbourhood, which takes both out, and the
+/// two are then compared pixel by pixel by their CIE76 colour difference
+/// (ΔE, the distance in CIELAB; 2.3 is just noticeable, and black to white
+/// is 100). The step allows `share` per cent of the pixels to be further
+/// than `distance` apart, for the edges a blur cannot reconcile.
+#[then(
+    regex = r#"^the window's picture looks like the picture "([^"]+\.png)": at most (\d+(?:\.\d+)?) % of its pixels differ by more than ΔE (\d+(?:\.\d+)?)$"#
+)]
+fn window_looks_like(w: &mut LjosWorld, path: String, share: f64, distance: f64) -> StepResult {
+    let (dir, name) = path.rsplit_once('/').unwrap_or(("", &path));
+    let reference = ljos_render::RgbaImage::from_png(&super::files::feature_file(dir, name)?)
+        .map_err(|e| format!("the picture {path}: {e}"))?;
+    w.each(|b| {
+        let shown = ljos_render::RgbaImage::from_png(&b.grab()?)
+            .map_err(|e| BackendError::Failed(format!("the picture of the window: {e}")))?;
+        perceptual_difference(&shown, &reference, share, distance).map_err(BackendError::Failed)
+    })
+}
+
+/// [`window_looks_like`]'s measure, apart from where the pictures come from.
+fn perceptual_difference(
+    shown: &ljos_render::RgbaImage,
+    reference: &ljos_render::RgbaImage,
+    share: f64,
+    distance: f64,
+) -> Result<(), String> {
+    let (w, h) = (shown.width, shown.height);
+    if (w, h) != (reference.width, reference.height) {
+        return Err(format!(
+            "the window is {w} by {h}, the picture {} by {}",
+            reference.width, reference.height
+        ));
+    }
+    let (a, b) = (lab_blurred(shown), lab_blurred(reference));
+    let mut off = 0usize;
+    let mut worst = (0.0f64, 0, 0);
+    for (i, (p, q)) in a.iter().zip(&b).enumerate() {
+        let d = p
+            .iter()
+            .zip(q)
+            .map(|(p, q)| (p - q).powi(2))
+            .sum::<f64>()
+            .sqrt();
+        if d > distance {
+            off += 1;
+        }
+        if d > worst.0 {
+            #[allow(clippy::cast_possible_truncation)]
+            let i = i as u32;
+            worst = (d, i % w, i / w);
+        }
+    }
+    #[allow(clippy::cast_precision_loss)]
+    let seen = off as f64 * 100.0 / f64::from(w * h);
+    if seen <= share {
+        Ok(())
+    } else {
+        Err(format!(
+            "{seen:.2} % of the pixels ({off}) differ by more than ΔE {distance}; the most, \
+             ΔE {:.1}, at {}, {}",
+            worst.0, worst.1, worst.2
+        ))
+    }
+}
+
+/// Each pixel, laid over black, averaged with its neighbours (those inside
+/// the picture), in CIELAB under D65.
+fn lab_blurred(picture: &ljos_render::RgbaImage) -> Vec<[f64; 3]> {
+    let (w, h) = (picture.width, picture.height);
+    let rgb: Vec<[f64; 3]> = (0..h)
+        .flat_map(|y| (0..w).map(move |x| (x, y)))
+        .map(|(x, y)| over_black(picture.pixel(x, y)).map(|c| f64::from(c) / 255.0))
+        .collect();
+    let mut out = Vec::with_capacity(rgb.len());
+    for y in 0..h {
+        for x in 0..w {
+            let mut sum = [0.0; 3];
+            let mut n = 0.0;
+            for ny in y.saturating_sub(1)..=(y + 1).min(h - 1) {
+                for nx in x.saturating_sub(1)..=(x + 1).min(w - 1) {
+                    let c = rgb[(ny * w + nx) as usize];
+                    sum.iter_mut().zip(c).for_each(|(s, c)| *s += c);
+                    n += 1.0;
+                }
+            }
+            out.push(lab(sum.map(|s| s / n)));
+        }
+    }
+    out
+}
+
+/// CIELAB of an sRGB colour, channels 0 to 1.
+fn lab(srgb: [f64; 3]) -> [f64; 3] {
+    let [r, g, b] = srgb.map(|c| {
+        if c <= 0.04045 {
+            c / 12.92
+        } else {
+            ((c + 0.055) / 1.055).powf(2.4)
+        }
+    });
+    // sRGB to XYZ, each over the D65 white's.
+    let x = (0.4124 * r + 0.3576 * g + 0.1805 * b) / 0.950_47;
+    let y = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    let z = (0.0193 * r + 0.1192 * g + 0.9505 * b) / 1.088_83;
+    let f = |t: f64| {
+        if t > 216.0 / 24389.0 {
+            t.cbrt()
+        } else {
+            (24389.0 / 27.0 * t + 16.0) / 116.0
+        }
+    };
+    let (fx, fy, fz) = (f(x), f(y), f(z));
+    [116.0 * fy - 16.0, 500.0 * (fx - fy), 200.0 * (fy - fz)]
+}
+
 /// A pixel laid over black, as [`window_pixel_near`] reads one.
 fn over_black([r, g, b, a]: [u8; 4]) -> [u8; 3] {
     let over = |c: u8| ((u16::from(c) * u16::from(a) + 127) / 255) as u8;
@@ -129,4 +248,66 @@ fn window_pixel_seen(b: &mut dyn Backend, x: u32, y: u32) -> Result<[u8; 3], Bac
         )));
     }
     Ok(over_black(picture.pixel(x, y)))
+}
+
+#[cfg(test)]
+mod tests {
+    use ljos_render::RgbaImage;
+
+    use super::perceptual_difference;
+
+    fn avatar(name: &str) -> RgbaImage {
+        RgbaImage::from_png(&super::super::files::feature_file("lottie/avatars", name).unwrap())
+            .unwrap()
+    }
+
+    /// The picture dithered as a GIF's palette dithers it: every other
+    /// pixel a little lighter, the rest a little darker.
+    fn dithered(p: &RgbaImage) -> RgbaImage {
+        let mut out = p.clone();
+        for (i, px) in out.data.chunks_exact_mut(4).enumerate() {
+            let (x, y) = (i as u32 % p.width, i as u32 / p.width);
+            for c in &mut px[..3] {
+                *c = if (x + y) % 2 == 0 {
+                    c.saturating_add(12)
+                } else {
+                    c.saturating_sub(12)
+                };
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn a_picture_looks_like_itself_and_like_itself_dithered() {
+        let lean = avatar("dance-07.png");
+        perceptual_difference(&lean, &lean, 0.0, 0.0).unwrap();
+        perceptual_difference(&dithered(&lean), &lean, 0.1, 15.0).unwrap();
+    }
+
+    #[test]
+    fn a_lean_to_one_side_does_not_look_like_the_other() {
+        let err =
+            perceptual_difference(&avatar("dance-07.png"), &avatar("dance-19.png"), 0.1, 15.0)
+                .unwrap_err();
+        assert!(err.contains("differ by more than ΔE 15"), "{err}");
+    }
+
+    #[test]
+    fn the_genie_from_nothing_does_not_look_like_its_face() {
+        perceptual_difference(&avatar("genie-01.png"), &avatar("genie-41.png"), 0.1, 15.0)
+            .unwrap_err();
+    }
+
+    #[test]
+    fn pictures_of_two_sizes_never_look_alike() {
+        let err = perceptual_difference(
+            &RgbaImage::filled(2, 2, [255; 4]),
+            &RgbaImage::filled(3, 2, [255; 4]),
+            100.0,
+            100.0,
+        )
+        .unwrap_err();
+        assert!(err.contains("2 by 2"), "{err}");
+    }
 }

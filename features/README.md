@@ -179,6 +179,7 @@ Objects are named by `objectName`; `a/b` finds `b` below `a`. Properties may be 
 | `Given the media file "X"` | make a sound or a film of `features/multimedia/media` available beside the QML files under its own name |
 | `Given the sprite sheet "X"` | make an image of `features/animation/sprites` available beside the QML files under its own name: `strip.png` is four 16 by 16 frames in a row, red, green, blue and white; `sheet.png` the same four in two rows of two |
 | `Given the model file "X"` | make a glTF file of `features/quick3d/models` available beside the QML files under its own name; `gen.py` there writes them and says what each holds |
+| `Given the Lottie file "X.json"` | make a Lottie file of `features/lottie/avatars` available beside the QML files under its own name; the `README.md` there says where each comes from |
 | `Given a file "X.ttf" that is not a font` | make a file with that name and no font inside available |
 | `Given the text file "X":` + doc string | make a text file available beside the QML files, each line trimmed of the scenario's indentation |
 | `Given the user has the text file "path":` + doc string | a text file under the user's home directory (`.config/tool.conf`), which is `/home/user` in a scenario (`@ljos-only`: the oracle's home is the real one) |
@@ -288,6 +289,7 @@ setter tries to write `depth` and logs the error it gets.
 | `Then the log has N infos matching "regex"` / `Then the log has no info matching "regex"` | exactly that many info messages match, or none do |
 | `Then the log has no warning matching "regex"` / `Then the log has no warnings` | none do |
 | `Then the pixel at X, Y of the window is "#rrggbb"` / `is within T of "#rrggbb"` / `is not "#rrggbb"` | one pixel of the window's picture, laid over black; `T` is how far each of red, green and blue may be off (a blend is rounded differently by each painter); `is not` says only that something other than that colour is there, for a lit picture whose exact colours the scenario does not pin |
+| `Then the window's picture looks like the picture "dir/X.png": at most P % of its pixels differ by more than ΔE D` | the whole window against a picture of `features/` that another renderer drew (a GIF's frame), the same size: both are laid over black and blurred by their 3 by 3 neighbourhood, which takes out a GIF's dithering and a half-pixel move of an edge, and at most `P` per cent of the pixels may be more than CIE76 ΔE `D` apart (2.3 is just noticeable, black to white is 100) |
 | `Then the accessibility tree has a "role" named "name"` | role names are lower case: `button`, `checkbox`, `label` … |
 | `Then the accessibility tree has no "role" named "name"` | |
 | `Then the design audit finds nothing` | the design audit has no finding of any severity: the report of the last `When the design audit runs at …`, else an audit of the window as it is (`@ljos-only`) |
