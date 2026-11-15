@@ -11,6 +11,13 @@ use crate::world::LjosWorld;
 
 use super::{StepResult, docstring};
 
+// Before the QML: what nothing reads is not worked out, as in an
+// application `ljos run` runs.
+#[given("the application works out a binding only when it is read")]
+fn bindings_when_read(w: &mut LjosWorld) -> StepResult {
+    w.each(|b| b.application()?.bindings_when_read())
+}
+
 // Before the QML: a model the application writes in Rust. The table has
 // a `folder` and a `name` column; an empty folder is the top.
 #[given(

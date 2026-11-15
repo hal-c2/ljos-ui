@@ -200,6 +200,9 @@ pub struct LjosBackend {
     /// Tree models in Rust the QML is given, by name, before it is loaded.
     lazy_trees: Vec<(String, lazy::LazyTree)>,
     paged_models: Vec<(String, paged::PagedModel)>,
+    /// Bindings are worked out when they are read, as `ljos run` runs
+    /// them, rather than when they are installed and after every change.
+    bindings_when_read: bool,
     /// [`ljos_quick::texts_measured`] when the scenario started counting.
     measures_from: Option<u64>,
 }
@@ -473,6 +476,9 @@ impl LjosBackend {
         }
         for said in self.settings.drain(..) {
             apply(&live.engine, said);
+        }
+        if self.bindings_when_read {
+            live.engine.set_eager_bindings(false);
         }
         if let Some(vars) = self.locale_env.take() {
             let system = ljos_i18n::SystemLocale::from_vars(|k| {
@@ -1647,6 +1653,16 @@ impl Application for LjosBackend {
             .given
             .ok_or_else(|| failed("the application gave no window a Document"))?;
         fixtures::title(&live.engine, given).map_err(failed)
+    }
+
+    fn bindings_when_read(&mut self) -> Result<()> {
+        if self.live.is_some() {
+            return Err(failed(
+                "bindings are said to be worked out when read before the QML is loaded",
+            ));
+        }
+        self.bindings_when_read = true;
+        Ok(())
     }
 
     fn lazy_tree(&mut self, name: &str, delay_ms: u64, rows: &[(String, String)]) -> Result<()> {

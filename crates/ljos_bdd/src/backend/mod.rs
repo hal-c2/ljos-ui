@@ -972,6 +972,16 @@ pub trait Application: Backend {
         Err(BackendError::NotImplemented("a window given its singleton"))
     }
 
+    /// The application works out a binding when it is read, as `ljos run`
+    /// does, not when it is installed and after every change, as the
+    /// backend does to report binding loops when Qt does. Given before
+    /// anything is loaded.
+    fn bindings_when_read(&mut self) -> Result<()> {
+        Err(BackendError::NotImplemented(
+            "bindings worked out when read",
+        ))
+    }
+
     /// The application gives the QML a tree model named `name` that reads
     /// a folder's rows only when a view asks for them, and has them
     /// `delay_ms` later. `rows` are (folder, name) pairs, the folder ""
