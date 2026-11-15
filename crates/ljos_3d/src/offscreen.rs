@@ -102,6 +102,10 @@ impl Offscreen {
         width: u32,
         height: u32,
     ) -> Result<Rgba, OffscreenError> {
+        // The frame lasts until it is read back: a device that draws in
+        // software executes it at the submit, for longer than pixels are
+        // kept for another renderer.
+        let _frame = self.renderer.frame();
         let mut target = Target::new(&self.device, &self.renderer, [width, height]);
         let mut encoder = self
             .device
