@@ -150,7 +150,7 @@ For background and network loading:
 - A network URL starts in `Image.Loading` even when `asynchronous` is `false`, and updates its size when the picture arrives. If the server does not have the file, the error reports the server's reply.
 - A large local picture (over 512 by 512 pixels) reports `Ready` at once after reading only its header; its pixels are decoded on another thread at the drawn size and painted a moment later. <!-- check: large local picture background pixel decode after Ready is marked @ljos-only -->
 
-```qml
+```qml files=photo.jpg
 import Ljos.Ui
 
 Item {

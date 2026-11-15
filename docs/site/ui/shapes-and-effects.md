@@ -104,7 +104,7 @@ In a 2D canvas context, shadows default to opaque black (a blur of `0` or less i
 
 To display an SVG file as scalable vector paths rather than a rasterised bitmap, import `QtQuick.VectorImage` and use `VectorImage`. Its `implicitWidth` and `implicitHeight` come from the SVG file, `fillMode` defaults to `VectorImage.Stretch` (alongside `NoResize`, `PreserveAspectFit` and `PreserveAspectCrop`), and enlarging the item keeps its edges sharp. A missing SVG file leaves the item empty and logs a warning.
 
-```qml
+```qml files=logo.svg
 import QtQuick
 import QtQuick.VectorImage
 

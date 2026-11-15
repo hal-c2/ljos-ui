@@ -206,14 +206,14 @@ Here `dm.items.addGroups(1, 1, ["picked"])` puts row `1` (`"b"`) into the `picke
 
 With a `feed.xml` file beside `Main.qml`:
 
-```xml
+```xml file=feed.xml group=feed
 <rss><channel>
 <item id="a1"><title>First</title></item>
 <item id="a2"><title>Second</title></item>
 </channel></rss>
 ```
 
-```qml
+```qml group=feed
 import QtQuick
 import QtQml.XmlListModel
 
@@ -254,11 +254,11 @@ Be aware of how `XmlListModel` handles missing data, bad queries, and document l
 
 With a `rows.json` file beside `Main.qml`:
 
-```json
+```json file=rows.json group=rows
 [{"name": "Bread", "price": 3.5}, {"name": "Honey"}]
 ```
 
-```qml
+```qml group=rows
 import Ljos.Ui
 import Ljos.Models
 
