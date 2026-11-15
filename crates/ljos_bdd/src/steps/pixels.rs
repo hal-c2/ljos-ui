@@ -66,26 +66,53 @@ fn window_is_reference(w: &mut LjosWorld, tolerance: u8) -> StepResult {
     })
 }
 
-/// The window against a picture of `features/` taken from another
-/// renderer (a GIF's frame, say), where no single pixel can be pinned: a
-/// GIF's palette dithers flat colours and moves an edge's blend, and two
-/// painters put an anti-aliased edge half a pixel apart. Each picture is
-/// first blurred by its 3 by 3 neighbourhood, which takes both out, and the
-/// two are then compared pixel by pixel by their CIE76 colour difference
-/// (ΔE, the distance in CIELAB; 2.3 is just noticeable, and black to white
-/// is 100). The step allows `share` per cent of the pixels to be further
-/// than `distance` apart, for the edges a blur cannot reconcile.
+/// The window's top left, as large as the picture, against a picture of
+/// `features/` taken from another renderer (a GIF's frame, say), where no
+/// single pixel can be pinned: a GIF's palette dithers flat colours and
+/// moves an edge's blend, and two painters put an anti-aliased edge half a
+/// pixel apart. Each picture is first blurred by its 3 by 3 neighbourhood,
+/// which takes both out, and the two are then compared pixel by pixel by
+/// their CIE76 colour difference (ΔE, the distance in CIELAB; 2.3 is just
+/// noticeable, and black to white is 100). The step allows `share` per cent of the pixels to be further
+/// than `distance` apart, for the edges a blur cannot reconcile. The
+/// scenario's window is the driver's size whatever its root's, hence the
+/// top left: the root is at the window's origin.
 #[then(
-    regex = r#"^the window's picture looks like the picture "([^"]+\.png)": at most (\d+(?:\.\d+)?) % of its pixels differ by more than ΔE (\d+(?:\.\d+)?)$"#
+    regex = r#"^the top left of the window looks like the picture "([^"]+\.png)": at most (\d+(?:\.\d+)?) % of its pixels differ by more than ΔE (\d+(?:\.\d+)?)$"#
 )]
 fn window_looks_like(w: &mut LjosWorld, path: String, share: f64, distance: f64) -> StepResult {
     let (dir, name) = path.rsplit_once('/').unwrap_or(("", &path));
     let reference = ljos_render::RgbaImage::from_png(&super::files::feature_file(dir, name)?)
         .map_err(|e| format!("the picture {path}: {e}"))?;
     w.each(|b| {
-        let shown = ljos_render::RgbaImage::from_png(&b.grab()?)
+        let window = ljos_render::RgbaImage::from_png(&b.grab()?)
             .map_err(|e| BackendError::Failed(format!("the picture of the window: {e}")))?;
+        let shown =
+            top_left(&window, reference.width, reference.height).map_err(BackendError::Failed)?;
         perceptual_difference(&shown, &reference, share, distance).map_err(BackendError::Failed)
+    })
+}
+
+/// The `width` by `height` pixels at the top left of `picture`.
+fn top_left(
+    picture: &ljos_render::RgbaImage,
+    width: u32,
+    height: u32,
+) -> Result<ljos_render::RgbaImage, String> {
+    if width > picture.width || height > picture.height {
+        return Err(format!(
+            "the window is {} by {}, smaller than the picture's {width} by {height}",
+            picture.width, picture.height
+        ));
+    }
+    let row = |y: u32| {
+        let start = (y * picture.width * 4) as usize;
+        &picture.data[start..start + (width * 4) as usize]
+    };
+    Ok(ljos_render::RgbaImage {
+        width,
+        height,
+        data: (0..height).flat_map(row).copied().collect(),
     })
 }
 
@@ -265,7 +292,7 @@ mod tests {
     /// pixel a little lighter, the rest a little darker.
     fn dithered(p: &RgbaImage) -> RgbaImage {
         let mut out = p.clone();
-        for (i, px) in out.data.chunks_exact_mut(4).enumerate() {
+        for (i, px) in out.data.as_chunks_mut::<4>().0.iter_mut().enumerate() {
             let (x, y) = (i as u32 % p.width, i as u32 / p.width);
             for c in &mut px[..3] {
                 *c = if (x + y) % 2 == 0 {
@@ -297,6 +324,15 @@ mod tests {
     fn the_genie_from_nothing_does_not_look_like_its_face() {
         perceptual_difference(&avatar("genie-01.png"), &avatar("genie-41.png"), 0.1, 15.0)
             .unwrap_err();
+    }
+
+    #[test]
+    fn the_top_left_is_cut_from_the_window() {
+        let mut window = RgbaImage::filled(3, 2, [0, 0, 0, 255]);
+        window.data[4..8].copy_from_slice(&[9, 9, 9, 255]);
+        let corner = super::top_left(&window, 2, 1).unwrap();
+        assert_eq!(corner.data, [0, 0, 0, 255, 9, 9, 9, 255]);
+        assert!(super::top_left(&window, 4, 1).is_err());
     }
 
     #[test]

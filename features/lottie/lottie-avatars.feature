@@ -13,7 +13,10 @@ Feature: Real Lottie files play as their author drew them
   Each was exported with a preview GIF at 320 by 320, a frame every 40 ms,
   whose frame N is the file's frame N + 1, and some of those frames are kept
   beside the files. Here the animation is drawn at the GIF's size and sent
-  to one of those frames, and the window should look like the GIF.
+  to one of those frames once it is ready (the genie is large enough to be
+  read off the UI thread, so it is not ready when the component completes),
+  and the window's top left, the root's 320 by 320, should look like the
+  GIF.
 
   A GIF has 256 colours at most, and its encoder dithers flat colours and
   moves an edge's blend, so no pixel can be pinned. The comparison blurs both
@@ -36,17 +39,18 @@ Feature: Real Lottie files play as their author drew them
           width: 320; height: 320
           color: "white"
           LottieAnimation {
-            id: anim; objectName: "anim"
+            objectName: "anim"
             source: "hal-c2-genie.json"
             autoPlay: false
+            onStatusChanged: if (status === LottieAnimation.Ready) gotoAndStop(<frame>)
             scale: 320 / 512
             transformOrigin: Item.TopLeft
           }
         }
         """
-      When the method "gotoAndStop" of "anim" is called with <frame>
-      And 100 milliseconds pass
-      Then the window's picture looks like the picture "lottie/avatars/<picture>": at most 0.1 % of its pixels differ by more than ΔE 15
+      When 100 milliseconds pass
+      Then the property "status" of "anim" is 2
+      And the top left of the window looks like the picture "lottie/avatars/<picture>": at most 0.1 % of its pixels differ by more than ΔE 15
 
       Examples:
         | frame | picture      | what                                   |
@@ -68,17 +72,18 @@ Feature: Real Lottie files play as their author drew them
           width: 320; height: 320
           color: "white"
           LottieAnimation {
-            id: anim; objectName: "anim"
+            objectName: "anim"
             source: "hal-c2-dance.json"
             autoPlay: false
+            onStatusChanged: if (status === LottieAnimation.Ready) gotoAndStop(<frame>)
             scale: 320 / 512
             transformOrigin: Item.TopLeft
           }
         }
         """
-      When the method "gotoAndStop" of "anim" is called with <frame>
-      And 100 milliseconds pass
-      Then the window's picture looks like the picture "lottie/avatars/<picture>": at most 0.1 % of its pixels differ by more than ΔE 15
+      When 100 milliseconds pass
+      Then the property "status" of "anim" is 2
+      And the top left of the window looks like the picture "lottie/avatars/<picture>": at most 0.1 % of its pixels differ by more than ΔE 15
 
       Examples:
         | frame | picture      | what                 |
