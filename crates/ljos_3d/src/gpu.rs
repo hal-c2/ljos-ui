@@ -1943,6 +1943,14 @@ const CUBE_LOOKS: [([f32; 3], [f32; 3]); 6] = [
 ];
 
 impl Renderer {
+    /// Begins a frame of this renderer's uploads: what it uploads is kept
+    /// for other renderers from when the frame ends, and what it lacks is
+    /// not let go before. A host that does more with the frame after
+    /// [`Renderer::render`], such as reading it back, holds it that long.
+    pub(crate) fn frame(&self) -> crate::uploads::Frame {
+        crate::uploads::Frame::begin([self.maps.reader(), self.ibl.reader()])
+    }
+
     /// Draws what is round each reflection probe that something mirrors by,
     /// and says which that is of each model: of those whose box its own
     /// meets, the one whose middle is nearest.
@@ -2121,7 +2129,7 @@ impl Renderer {
             target.post.clear();
         }
         // What this frame uploads is kept for other renderers from when it ends.
-        let _frame = crate::uploads::Frame::begin([self.maps.reader(), self.ibl.reader()]);
+        let _frame = self.frame();
         self.maps.sweep();
         self.programs.sweep();
         self.ibl.sweep();
