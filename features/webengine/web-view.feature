@@ -468,18 +468,22 @@ Feature: A web page in a WebEngineView
     Then the property "seen" of "root" is "heard popup true"
 
   # The page that asked goes while the new window is being made: the view
-  # it was to open in still shows the page, on its own, with no opener.
+  # it was to open in is given the page's address, as a view opened in
+  # later is, so it shows the page on its own. Neither page reaches the
+  # other: the one that asked gets no window to name, and the one opened
+  # has no opener, however the browser orders the first one's going and
+  # the second one's first script.
   @api-QtWebEngine.WebEngineView.newWindowRequested @api-QtWebEngine.WebEngineNewWindowRequest.openIn
   Scenario: A page opened in another view shows even when the page that opened it goes at once
     Given the text file "opener.html":
       """
       <!doctype html><html><head><title>waiting</title></head>
-      <body style="margin:0"><div onclick="window.open('popup.html')" style="height:100px; background:#ff0000"></div></body></html>
+      <body style="margin:0"><div onclick="var w = window.open('popup.html'); if (w) w.name = 'named'" style="height:100px; background:#ff0000"></div></body></html>
       """
     And the text file "popup.html":
       """
       <!doctype html><html><head><title>popup</title></head><body><script>
-      if (!window.opener) document.title = "no opener"
+      document.title = (window.opener ? "opener" : "no opener") + ", " + (window.name || "not named")
       </script></body></html>
       """
     And the QML:
@@ -505,7 +509,7 @@ Feature: A web page in a WebEngineView
     And the user presses the pointer at 100, 50
     And the user releases the pointer at 100, 50
     And 2 seconds pass
-    Then the property "seen" of "root" is "false no opener true"
+    Then the property "seen" of "root" is "false no opener, not named true"
 
   # A page lives in one profile: asked to open in a view of another, the
   # view stays as it was, and the page that asked gets no window.

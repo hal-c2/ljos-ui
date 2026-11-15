@@ -18,8 +18,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use ljos_engine::{
-    Atom, Color, Cx, Engine, EngineError, LogLevel, NodeId, ObjectId, QmlObject, QmlType, Url,
-    Value, qml_impl,
+    Atom, Color, Cx, Engine, EngineError, LogLevel, NodeId, ObjectFlags, ObjectId, QmlObject,
+    QmlType, Url, Value, qml_impl,
 };
 use ljos_platform::{Platform, Reply};
 use ljos_quick::{Item, ItemPaint, TextEngine};
@@ -703,6 +703,20 @@ pub(crate) fn ask_new_window(
     new_window(e, me, &url, destination, geometry, user_initiated, true)
 }
 
+/// Whether `me` is on its way out: it, or what owns it, was destroyed and
+/// goes once the turn ends.
+fn going(e: &Engine, me: ObjectId) -> bool {
+    let mut at = Some(me);
+    while let Some(o) = at {
+        match e.flags(o) {
+            Some(f) if f.contains(ObjectFlags::PENDING_DELETE) => return true,
+            Some(_) => at = e.owner(o),
+            None => return true,
+        }
+    }
+    false
+}
+
 /// `WebEngineNavigationRequest.TypedNavigation`: a URL given to the view.
 const TYPED_NAVIGATION: i32 = 1;
 
@@ -1365,6 +1379,16 @@ fn new_window(
         // waits on it: it goes to the address instead.
         Some(view) if view == me => {
             open_request(e, me, url);
+            None
+        }
+        // The page's view was unloaded there and then: its browser closes
+        // once the turn ends, and the window, were it given one, might
+        // run its first script before that and see an opener, as the
+        // browser happened to order the two. The view goes to the address
+        // instead, a page with no opener, and the page that asked gets no
+        // window to reach.
+        Some(view) if going(e, me) => {
+            open_request(e, view, url);
             None
         }
         opened => opened.filter(|v| e.is_alive(*v)),
