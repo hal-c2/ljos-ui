@@ -145,6 +145,9 @@ pub struct Program {
     textures: Vec<String>,
     reads_depth: bool,
     screen: Screen,
+    /// Why it does not compile where a light reaches the model, if it
+    /// does not: the model is then drawn only into shadow maps.
+    lit_failure: Option<String>,
     /// Where each uniform is in the block, after the header.
     offsets: Vec<usize>,
     /// The bytes the uniforms take, a whole number of rows and at least
@@ -179,6 +182,7 @@ impl Program {
             textures,
             reads_depth,
             screen: Screen::None,
+            lit_failure: None,
             offsets,
             size: end.max(1).next_multiple_of(16),
         }
@@ -220,6 +224,18 @@ impl Program {
     #[cfg_attr(not(feature = "snippets"), allow(dead_code))]
     pub(crate) fn reading_screen(mut self, screen: Screen) -> Self {
         self.screen = screen;
+        self
+    }
+
+    /// Why it does not compile where a light reaches the model, if it
+    /// does not.
+    pub fn lit_failure(&self) -> Option<&str> {
+        self.lit_failure.as_deref()
+    }
+
+    #[cfg_attr(not(feature = "snippets"), allow(dead_code))]
+    pub(crate) fn failing_where_lit(mut self, why: Option<String>) -> Self {
+        self.lit_failure = why;
         self
     }
 

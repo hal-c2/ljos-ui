@@ -1482,16 +1482,7 @@ fn scope_uniform(
     scoped: &[(NodeId, u32, [f32; 4])],
 ) {
     for &(scope, bit, ambient) in scoped {
-        let mut at = Some(id);
-        let mut inside = false;
-        while let Some(n) = at {
-            if n == scope {
-                inside = true;
-                break;
-            }
-            at = scene.node(n).and_then(Node::parent);
-        }
-        if inside {
+        if inside(scene, id, scope) {
             for (sum, c) in u.ambient.iter_mut().zip(ambient) {
                 *sum += c;
             }
@@ -1499,6 +1490,24 @@ fn scope_uniform(
             u.flags[0] &= !bit;
         }
     }
+}
+
+/// Whether node `id` is `scope` or below it.
+fn inside(scene: &Scene, id: NodeId, scope: NodeId) -> bool {
+    let mut at = Some(id);
+    while let Some(n) = at {
+        if n == scope {
+            return true;
+        }
+        at = scene.node(n).and_then(Node::parent);
+    }
+    false
+}
+
+/// Whether any of the `count` lights reaches model `id`: one that lights
+/// the whole scene, or one scoped to a node it is inside.
+fn lit(scene: &Scene, id: NodeId, count: usize, scoped: &[(NodeId, u32, [f32; 4])]) -> bool {
+    count > scoped.len() || scoped.iter().any(|&(scope, ..)| inside(scene, id, scope))
 }
 
 /// The lit shader, with the tone mapping it shares with the sky box.
@@ -2622,6 +2631,15 @@ impl Renderer {
                     && outside(planes, centre, radius)
                 {
                     crate::stats::count(|c| c.models_culled += 1);
+                    continue;
+                }
+                // Qt 6.11: a program that does not compile once a light
+                // reaches its model leaves the model out of the picture,
+                // though not out of the shadow maps.
+                if let Material::Custom(m) = &model.material
+                    && m.program.lit_failure().is_some()
+                    && lit(scene, *id, count, &scoped)
+                {
                     continue;
                 }
                 let blends = model.material.blends() || transparent;
