@@ -18,7 +18,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use std::ffi::{CString, c_char, c_int};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Condvar, Mutex, OnceLock, PoisonError};
+use std::sync::{Arc, Condvar, LazyLock, Mutex, OnceLock, PoisonError};
 use std::time::{Duration, Instant};
 
 use ::cef::*;
@@ -289,7 +289,7 @@ fn loading() -> bool {
                 let live = Shared::lock(&shared.browser).is_some()
                     || Shared::lock(&shared.unborn)
                         .as_ref()
-                        .is_some_and(|u| u.waiting.is_some());
+                        .is_some_and(|u| u.waiting.is_some() && !u.held());
                 live && !shared.closing.load(Ordering::Relaxed)
                     && (shared.booting() || Shared::lock(&shared.load).url.is_some())
             }),
@@ -320,7 +320,10 @@ fn unborn() -> bool {
                             u.waiting = None;
                             late.push((shared.clone(), w.wait));
                         }
-                        Some(_) => waiting = true,
+                        // A profile held unready is no work of the web
+                        // engine's: its wait ends at the next turn
+                        // something else asks for.
+                        Some(_) => waiting |= !u.held(),
                         None => {}
                     }
                 }
@@ -821,12 +824,19 @@ struct Profile {
 #[derive(Default)]
 struct Readiness {
     ready: bool,
+    /// Readied by CEF and held unready by [`crate::hold_new_profiles`].
+    held: bool,
     /// Views whose browser waits for the context.
     waiting: Vec<std::sync::Weak<Shared>>,
 }
 
 wrap_request_context_handler! {
-    struct ProfileReady { ready: Arc<Mutex<Readiness>>, journal: Option<PathBuf> }
+    struct ProfileReady {
+        ready: Arc<Mutex<Readiness>>,
+        journal: Option<PathBuf>,
+        name: String,
+        held: bool
+    }
     impl RequestContextHandler {
         fn on_request_context_initialized(&self, context: Option<&mut RequestContext>) {
             // What a run that ended without shutting down left the
@@ -837,14 +847,15 @@ wrap_request_context_handler! {
                 }
                 let _ = std::fs::remove_file(journal);
             }
-            let waiting = {
-                let mut r = Shared::lock(&self.ready);
-                r.ready = true;
-                std::mem::take(&mut r.waiting)
-            };
-            for shared in waiting.iter().filter_map(std::sync::Weak::upgrade) {
-                born(&shared);
+            let mut readied = Shared::lock(&READIED);
+            readied.storage.insert(self.name.clone());
+            if self.held {
+                Shared::lock(&self.ready).held = true;
+                readied.held.push((self.name.clone(), self.ready.clone()));
+                return;
             }
+            drop(readied);
+            now_ready(&self.ready);
         }
     }
 }
@@ -856,6 +867,50 @@ fn profile_key(spec: &ProfileSpec) -> String {
     } else {
         spec.storage_name.clone()
     }
+}
+
+/// The profiles kept on disk whose storage CEF has readied, by storage
+/// name, and those of them [`crate::hold_new_profiles`] holds unready. One
+/// kept off the record is neither: it has the same storage name as the one
+/// on disk, and asking after that name means the one on disk.
+#[derive(Default)]
+struct Readied {
+    storage: HashSet<String>,
+    held: Vec<(String, Arc<Mutex<Readiness>>)>,
+}
+
+static READIED: LazyLock<Mutex<Readied>> = LazyLock::new(Mutex::default);
+
+/// A profile is ready: the views that waited for it are made.
+fn now_ready(ready: &Mutex<Readiness>) {
+    let waiting = {
+        let mut r = Shared::lock(ready);
+        r.ready = true;
+        r.held = false;
+        std::mem::take(&mut r.waiting)
+    };
+    for shared in waiting.iter().filter_map(std::sync::Weak::upgrade) {
+        born(&shared);
+    }
+}
+
+pub(crate) fn profile_readied(storage_name: &str) -> bool {
+    Shared::lock(&READIED).storage.contains(storage_name)
+}
+
+pub(crate) fn let_profile_go(storage_name: &str) -> bool {
+    let gone: Vec<_> = {
+        let mut readied = Shared::lock(&READIED);
+        let (gone, kept) = std::mem::take(&mut readied.held)
+            .into_iter()
+            .partition(|(name, _)| name == storage_name);
+        readied.held = kept;
+        gone
+    };
+    for (_, ready) in &gone {
+        now_ready(ready);
+    }
+    !gone.is_empty()
 }
 
 /// The request context of a profile: one per storage name, so views of
@@ -910,7 +965,14 @@ fn context_for(
     };
     let ready = Arc::new(Mutex::new(Readiness::default()));
     let journal = (!cache.is_empty()).then(|| Path::new(&cache).join(FORGET_FILE));
-    let mut handler = ProfileReady::new(ready.clone(), journal.clone());
+    let mut handler = ProfileReady::new(
+        ready.clone(),
+        journal.clone(),
+        // Keyed as `g.contexts` is, so an off-the-record profile never
+        // answers for the one on disk of its name.
+        profile_key(spec),
+        crate::backend::holding_profiles() && !spec.off_the_record,
+    );
     let context = request_context_create_context(Some(&settings), Some(&mut handler))?;
     if let Some(journal) = journal {
         g.journals.push((context.clone(), journal));
@@ -1145,6 +1207,13 @@ struct Unborn {
     /// Its wait for the profile; `None` once it stopped waiting with no
     /// browser made.
     waiting: Option<Waiting>,
+}
+
+impl Unborn {
+    /// Its profile is held unready (see [`crate::hold_new_profiles`]).
+    fn held(&self) -> bool {
+        Shared::lock(&self.ready).held
+    }
 }
 
 /// The blank page a browser starts on. What every page gets (the
