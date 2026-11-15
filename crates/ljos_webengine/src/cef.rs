@@ -3636,6 +3636,9 @@ mod tests {
 
     #[test]
     fn two_answers_to_one_origin_are_written_at_once_with_answered_free() {
+        // Answers run on the Engine thread today, so this pins down how long
+        // `written_then_kept` holds `answered`, not a race the app has: a
+        // writer that held it would keep any other locker waiting on disk.
         let answered = Mutex::new(HashMap::new());
         let key = ("https://a.example".to_owned(), 7);
         // Each write waits for the other to be writing too: with a lock
