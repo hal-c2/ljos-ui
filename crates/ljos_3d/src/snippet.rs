@@ -409,6 +409,11 @@ fn lit_failure(src: &str) -> Option<SnippetError> {
             "}" => depth = depth.saturating_sub(1),
             "precision" if depth == 0 => {
                 if let (Some(q), Some(&"float")) = (tokens.get(i + 1), tokens.get(i + 2)) {
+                    // A qualifier that is not one of GLSL's could not be
+                    // resolved here, so nothing is claimed.
+                    if !matches!(*q, "lowp" | "mediump" | "highp") {
+                        return None;
+                    }
                     default = q;
                 }
             }
@@ -438,11 +443,12 @@ fn lit_failure(src: &str) -> Option<SnippetError> {
 }
 
 /// `src` with the lines the preprocessor leaves out, and its directives,
-/// blanked, so lines keep their numbers; `None` when a condition that
-/// cannot be told here guards a precision statement or a light function.
-/// A condition is told when it is a number, or asks whether a name is
-/// defined that the snippet defines or that is GL_ES; the names Qt defines
-/// around the snippet are not known here.
+/// blanked, and the object-like macros it keeps expanded, so lines keep
+/// their numbers; `None` when a condition that cannot be told here guards a
+/// precision statement or a light function, or a function-like macro that
+/// could make one is used. A condition is told when it is a number, or asks
+/// whether a name is defined that the snippet defines or that is GL_ES; the
+/// names Qt defines around the snippet are not known here.
 fn preprocessed(src: &str) -> Option<String> {
     // Each open conditional: whether its current branch is kept, and
     // whether an earlier branch was, `None` where that cannot be told.
@@ -450,15 +456,25 @@ fn preprocessed(src: &str) -> Option<String> {
         kept: Option<bool>,
         taken: Option<bool>,
     }
+    struct Macro {
+        name: String,
+        takes_arguments: bool,
+        body: String,
+    }
     let mut open: Vec<Branch> = Vec::new();
-    let mut defined: Vec<&str> = Vec::new();
+    let mut macros: Vec<Macro> = Vec::new();
     // Names defined or undefined in a branch that cannot be told.
-    let mut unsure: Vec<&str> = Vec::new();
+    let mut unsure: Vec<String> = Vec::new();
     let mut out = String::with_capacity(src.len());
-    let mut directive = false;
+    // A directive continued onto the next line: the preprocessor joins
+    // backslash-newline pairs first, so it is one directive.
+    let mut continued: Option<String> = None;
+    let decides = |t: &str| {
+        t == "precision" || matches!(t, "lowp" | "mediump" | "highp") || PER_LIGHT.contains(&t)
+    };
     for line in src.split_inclusive('\n') {
         let text = line.trim_end_matches(['\n', '\r']);
-        let continued = text.ends_with('\\');
+        let newline = if line.ends_with('\n') { "\n" } else { "" };
         let kept = if open.iter().any(|b| b.kept == Some(false)) {
             Some(false)
         } else if open.iter().any(|b| b.kept.is_none()) {
@@ -466,17 +482,24 @@ fn preprocessed(src: &str) -> Option<String> {
         } else {
             Some(true)
         };
-        let is_directive = directive || text.trim_start().starts_with('#');
-        directive = is_directive && continued;
-        if is_directive {
-            out.push_str(if line.ends_with('\n') { "\n" } else { "" });
-            let words = tokens(text.trim_start().trim_start_matches('#'));
+        if continued.is_some() || text.trim_start().starts_with('#') {
+            out.push_str(newline);
+            let mut logical = continued.take().unwrap_or_default();
+            if let Some(head) = text.strip_suffix('\\') {
+                logical.push_str(head);
+                logical.push(' ');
+                continued = Some(logical);
+                continue;
+            }
+            logical.push_str(text);
+            let directive = logical.trim_start().trim_start_matches('#').trim_start();
+            let words = tokens(directive);
             let name = words.first().copied().unwrap_or("");
             let rest = &words[words.len().min(1)..];
             let known = |n: &str| {
-                if unsure.contains(&n) {
+                if unsure.iter().any(|u| u == n) {
                     None
-                } else if defined.contains(&n) {
+                } else if macros.iter().any(|m| m.name == n) {
                     Some(true)
                 } else if n == "GL_ES" {
                     Some(false)
@@ -494,12 +517,13 @@ fn preprocessed(src: &str) -> Option<String> {
                     _ => None,
                 }
             };
+            let target = rest.first().copied().unwrap_or("");
             match name {
                 "if" | "ifdef" | "ifndef" => {
                     let k = match name {
                         "if" => told(rest),
-                        "ifdef" => rest.first().and_then(|n| known(n)),
-                        _ => rest.first().and_then(|n| known(n)).map(|d| !d),
+                        "ifdef" => known(target),
+                        _ => known(target).map(|d| !d),
                     };
                     open.push(Branch { kept: k, taken: k });
                 }
@@ -521,24 +545,79 @@ fn preprocessed(src: &str) -> Option<String> {
                 "endif" => {
                     open.pop();
                 }
-                "define" | "undef" if kept.is_none() => unsure.extend(rest.first()),
-                "define" if kept == Some(true) => defined.extend(rest.first()),
-                "undef" if kept == Some(true) => defined.retain(|d| Some(d) != rest.first()),
+                "define" | "undef" if target.is_empty() => {}
+                "define" | "undef" if kept.is_none() => unsure.push(target.to_string()),
+                "define" | "undef" if kept == Some(true) => {
+                    // Kept unconditionally, so what is known of the name
+                    // from here on is this.
+                    unsure.retain(|u| u != target);
+                    macros.retain(|m| m.name != target);
+                    if name == "define" {
+                        let after = directive["define".len()..].trim_start();
+                        let after = &after[target.len().min(after.len())..];
+                        let takes_arguments = after.starts_with('(');
+                        let body = if takes_arguments {
+                            after.find(')').map_or("", |i| &after[i + 1..])
+                        } else {
+                            after
+                        };
+                        macros.push(Macro {
+                            name: target.to_string(),
+                            takes_arguments,
+                            body: body.trim().to_string(),
+                        });
+                    }
+                }
                 _ => {}
             }
             continue;
         }
+        if kept == Some(false) {
+            out.push_str(newline);
+            continue;
+        }
+        // What the line is once the macros it uses are expanded; a macro
+        // may name itself, so this goes only so deep.
+        let mut words: Vec<&str> = tokens(text);
+        let mut expanded = false;
+        for _ in 0..16 {
+            let mut changed = false;
+            let mut next = Vec::with_capacity(words.len());
+            for w in words {
+                match macros.iter().find(|m| m.name == w) {
+                    Some(m) if m.takes_arguments => {
+                        if tokens(&m.body).into_iter().any(decides) {
+                            return None;
+                        }
+                        next.push(w);
+                    }
+                    Some(m) => {
+                        next.extend(tokens(&m.body));
+                        changed = true;
+                    }
+                    None => next.push(w),
+                }
+            }
+            words = next;
+            expanded |= changed;
+            if !changed {
+                break;
+            }
+        }
         match kept {
+            Some(true) if expanded => {
+                out.push_str(&words.join(" "));
+                out.push_str(newline);
+            }
             Some(true) => out.push_str(line),
-            Some(false) => out.push_str(if line.ends_with('\n') { "\n" } else { "" }),
-            None => {
-                if tokens(text)
+            _ => {
+                if words
                     .iter()
                     .any(|t| *t == "precision" || PER_LIGHT.contains(t))
                 {
                     return None;
                 }
-                out.push_str(if line.ends_with('\n') { "\n" } else { "" });
+                out.push_str(newline);
             }
         }
     }
@@ -1888,6 +1967,26 @@ mod tests {
             ),
             (
                 "precision highp float;\n#if 0\nprecision lowp float;\n#endif",
+                None,
+            ),
+            // A continued directive is one directive.
+            (
+                "#define LIMIT(v) \\\n    if (v > 1.0) { v = 1.0; }\nprecision lowp float;",
+                Some(4),
+            ),
+            ("#if \\\n 1\nprecision lowp float;\n#endif", Some(5)),
+            // A name defined unconditionally is known from there on.
+            (
+                "#ifdef FOO\n#define LOW\n#endif\n#define LOW\n#ifdef LOW\nprecision lowp float;\n#endif",
+                Some(8),
+            ),
+            // Object-like macros are expanded; what cannot be is not told.
+            ("#define P highp\nprecision P float;", None),
+            ("#define P lowp\nprecision P float;", Some(3)),
+            ("#define LOW precision lowp float;\nLOW", Some(3)),
+            ("#define P(q) precision q float;\nP(lowp)", None),
+            (
+                "#ifdef FOO\n#define P lowp\n#endif\nprecision P float;",
                 None,
             ),
             // A name Qt may define around the snippet cannot be told.
