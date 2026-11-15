@@ -548,6 +548,45 @@ Feature: A web page in a WebEngineView
     And 2 seconds pass
     Then the property "seen" of "root" is "||true"
 
+  # Going as it asks changes nothing of that: the view of another profile
+  # is not given the page's address either.
+  @api-QtWebEngine.WebEngineNewWindowRequest.openIn @api-QtWebEngine.WebEngineView.profile
+  Scenario: A page that goes as it asks to open in a view of another profile is not shown there
+    Given the text file "opener.html":
+      """
+      <!doctype html><html><head><title>waiting</title></head>
+      <body style="margin:0"><div onclick="window.open('popup.html')" style="height:100px; background:#ff0000"></div></body></html>
+      """
+    And the text file "popup.html":
+      """
+      <!doctype html><html><head><title>popup</title></head><body></body></html>
+      """
+    And the QML:
+      """qml
+      import QtQuick
+      import QtWebEngine
+      Item {
+        id: root; objectName: "root"
+        width: 200; height: 200
+        WebEngineProfile { id: other; storageName: "other"; offTheRecord: true }
+        Loader {
+          id: holder; width: 200; height: 100
+          sourceComponent: WebEngineView {
+            profile: WebEngineProfile { storageName: "mine"; offTheRecord: true }
+            url: Qt.resolvedUrl("opener.html")
+            onNewWindowRequested: request => { request.openIn(popup); holder.active = false }
+          }
+        }
+        WebEngineView { id: popup; y: 100; width: 200; height: 100; profile: other }
+        property string seen: holder.active + "|" + popup.title + "|" + popup.url + "|" + (popup.profile === other)
+      }
+      """
+    When 2 seconds pass
+    And the user presses the pointer at 100, 50
+    And the user releases the pointer at 100, 50
+    And 2 seconds pass
+    Then the property "seen" of "root" is "false|||true"
+
   @api-QtWebEngine.WebEngineView.triggerWebAction @api-QtWebEngine.WebEngineNewWindowRequest.requestedUrl
   Scenario: Viewing a page's source asks for a new window showing it
     Given the QML:

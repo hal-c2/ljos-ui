@@ -705,7 +705,7 @@ pub(crate) fn ask_new_window(
 
 /// Whether `me` is on its way out: it, or what owns it, was destroyed and
 /// goes once the turn ends.
-fn going(e: &Engine, me: ObjectId) -> bool {
+pub(crate) fn going(e: &Engine, me: ObjectId) -> bool {
     let mut at = Some(me);
     while let Some(o) = at {
         match e.flags(o) {
@@ -715,6 +715,12 @@ fn going(e: &Engine, me: ObjectId) -> bool {
         }
     }
     false
+}
+
+/// `view` goes to the address a page asked a window for, as a view the
+/// window is opened in later does. The browser names it with its own URL.
+pub(crate) fn open_address(e: &Engine, view: ObjectId, url: &str) {
+    open_request(e, view, &from_browser_url(e, url));
 }
 
 /// `WebEngineNavigationRequest.TypedNavigation`: a URL given to the view.
@@ -1379,16 +1385,6 @@ fn new_window(
         // waits on it: it goes to the address instead.
         Some(view) if view == me => {
             open_request(e, me, url);
-            None
-        }
-        // The page's view was unloaded there and then: its browser closes
-        // once the turn ends, and the window, were it given one, might
-        // run its first script before that and see an opener, as the
-        // browser happened to order the two. The view goes to the address
-        // instead, a page with no opener, and the page that asked gets no
-        // window to reach.
-        Some(view) if going(e, me) => {
-            open_request(e, view, url);
             None
         }
         opened => opened.filter(|v| e.is_alive(*v)),
