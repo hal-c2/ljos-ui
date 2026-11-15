@@ -434,6 +434,12 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
             }
             _ => {}
         }
+        // Qt's translation functions, which `ljos migrate` writes as
+        // `Ljos.Core`'s; a file of the project or the context may still
+        // have one.
+        if self.qt_tr(name, id.span) && builtins::global(name).is_none() {
+            return Ty::ERROR;
+        }
         // DECISION: the globals TYPES.md lists are these, whatever QML's
         // scope has of the name.
         if let Some(global) = builtins::global(name) {
@@ -1837,6 +1843,7 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                 }
             }
             Expression::BinaryExpression(binary) => {
+                self.concat(binary);
                 let strict = matches!(
                     binary.operator,
                     BinaryOperator::StrictEquality | BinaryOperator::StrictInequality
