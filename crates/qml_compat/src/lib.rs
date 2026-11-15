@@ -37,7 +37,7 @@ use std::{collections::HashSet, ops::Range};
 use bindings::{Bindings, Node};
 use modules::{Ljos, Modules, Qt};
 use oxc_ast::ast::{
-    BindingIdentifier, CallExpression, ComputedMemberExpression, Expression, IdentifierReference,
+    Argument, BindingIdentifier, CallExpression, ComputedMemberExpression, Expression, IdentifierReference,
     StaticMemberExpression,
 };
 use oxc_ast_visit::{Visit, walk};
@@ -376,6 +376,7 @@ fn lower_parsed(
         scope: scope::Scope::new(modules, locals),
         read: HashSet::new(),
         fonts: Vec::new(),
+        ints: Vec::new(),
         changes: Vec::new(),
         listed: Vec::new(),
         given: None,
@@ -549,6 +550,9 @@ struct Pass<'s> {
     /// or an `alias` (`property alias face: label.font`): what a script may
     /// hold a font in.
     fonts: Vec<String>,
+    /// The properties the file declares as an `int`: a count `plural` reads
+    /// as Qt does (docs/DIALECT.md §4.13).
+    ints: Vec<String>,
     changes: Vec<Change>,
     /// The `ListModel`s with ids, and the rows they give.
     listed: Vec<(String, Rows)>,
@@ -844,6 +848,11 @@ impl<'s> Pass<'s> {
                         )
                     {
                         self.fonts.push(property.name.name.to_string());
+                    }
+                    if let Some(type_name) = &property.type_name
+                        && type_name.name.as_simple() == Some("int")
+                    {
+                        self.ints.push(property.name.name.to_string());
                     }
                     if let Some(value) = &property.value {
                         self.collect_value(value);
@@ -2339,6 +2348,65 @@ impl Script<'_, '_> {
         member_ty(on, name)
     }
 
+    /// Where the arguments that are an `int` start, of `call` and of the
+    /// calls its `.arg`s are made on: a count of one of Qt's functions is
+    /// rewritten only then.
+    fn wholes(&self, call: &CallExpression<'_>) -> Vec<u32> {
+        let mut wholes = Vec::new();
+        let mut call = call;
+        loop {
+            wholes.extend(
+                call.arguments
+                    .iter()
+                    .filter_map(Argument::as_expression)
+                    .map(|e| e.without_parentheses())
+                    .filter(|e| self.whole(e))
+                    .map(|e| e.span().start),
+            );
+            match call.callee.without_parentheses() {
+                Expression::StaticMemberExpression(member) => match member.object.without_parentheses() {
+                    Expression::CallExpression(inner) => call = inner,
+                    _ => return wholes,
+                },
+                _ => return wholes,
+            }
+        }
+    }
+
+    /// Whether `expression` is an `int`: a whole number written out, or a
+    /// name or member Qt's types or the file's declarations say is one, or
+    /// a `length`. What a parameter or a local holds is not followed.
+    fn whole(&self, expression: &Expression<'_>) -> bool {
+        let int = |ty: Ty, name: &str| match ty {
+            Ty::Exact(ty) | Ty::Derived(ty) => {
+                ty.property(name).is_some_and(|p| matches!(p.type_name, "int" | "QtQml.int"))
+            }
+            _ => false,
+        };
+        match expression {
+            Expression::NumericLiteral(n) => n.value.fract() == 0.0,
+            Expression::Identifier(id) => match self.meaning(&id.name, id.span.start) {
+                Meaning::Free => {
+                    int(self.scope, &id.name)
+                        || int(self.root, &id.name)
+                        || self.pass.ints.iter().any(|i| i == id.name.as_str())
+                }
+                _ => false,
+            },
+            Expression::StaticMemberExpression(member) => {
+                let name = member.property.name.as_str();
+                name == "length"
+                    || int(self.ty(&member.object), name)
+                    || matches!(
+                        member.object.without_parentheses(),
+                        Expression::Identifier(id)
+                            if matches!(self.meaning(&id.name, id.span.start), Meaning::Id(_))
+                    ) && self.pass.ints.iter().any(|i| i == name)
+            }
+            _ => false,
+        }
+    }
+
     /// Whether `expression`, whose type the pass does not know, may be a
     /// font: a name or a member called `font`, or one the file declares as a
     /// font, a `var` or an `alias`. What a function is given or a local holds is not
@@ -2574,6 +2642,7 @@ impl<'a> Visit<'a> for Script<'_, '_> {
             Ty::Exact(ty) | Ty::Derived(ty) if ty.name == "ListElement"
         );
         let source = self.pass.source;
+        let wholes = self.wholes(it);
         let own = &self.own;
         let scope = &self.pass.scope;
         self.pass.messages.call(
@@ -2581,6 +2650,7 @@ impl<'a> Visit<'a> for Script<'_, '_> {
             it,
             rewrite,
             |name, at| !own.binds(name, at) && scope.id(name).is_none(),
+            |count| wholes.contains(&count.span().start),
         );
         // A member of `Qt` called is told of with its arguments: some are
         // lowered by them (`Qt.darker(c, 2)`, `Qt.locale()`).

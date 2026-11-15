@@ -1562,7 +1562,7 @@ key is its context and its text, or its id.
   `--catalogue` there is no translation to lose, and the rewrite is the
   plain one.
 
-DECISION: `t`, `plural` and `msg` are written under the rule `Qt`'s
+DECISION: `t` and `plural` are written under the rule `Qt`'s
 members are (§4.3): where one is another word of the file (outside
 strings and comments), a member of a type of its objects, or a file beside
 it, the file is kept; where the pass cannot see every name (an object of a
@@ -1574,8 +1574,12 @@ and a `%N` written twice is its value twice. An `.arg` with no `%N` left
 keeps the file, as does `%0`, which Qt's documentation does not number.
 A value the message says in another place than where it is written (the
 count of `%n`, or a value `.arg` moves) is written there with what the pass
-changes in it; one that spans lines keeps the file, since the move would
-move the lines after it. `%L1`, `qsTrId` with a count or `.arg`, and
+changes in it, where it is a name, a member of one or a literal, since it is
+then read twice; one that spans lines keeps the file, since the move would
+move the lines after it. A count is known to be an `int` when it is a whole
+number written out, a property Qt's types or the file declare `int` (read
+unqualified, or on an id), or a `length`; what a parameter or a local holds
+is not followed. `%L1`, `qsTrId` with a count or `.arg`, and
 `qsTranslate` with a disambiguation beside its context keep the file,
 since `t` does not say them yet; a counted text with `#`, `{` or `}` keeps
 it too, since `plural` reads them. A count beside a context is

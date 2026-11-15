@@ -164,17 +164,14 @@ fn qs_tr_is_a_tagged_template() {
 }
 
 #[test]
-fn contexts_ids_and_marked_texts_keep_what_they_say() {
+fn contexts_and_ids_keep_what_they_say() {
     let text = lowered(
-        "import QtQuick\nItem {\n    property string a: qsTr(\"Open\", \"menu\")\n    property string b: qsTranslate(\"Dialog\", \"Close\")\n    property string c: qsTrId(\"nav.home\")\n    property var d: QT_TR_NOOP(\"Later\")\n    property var e: QT_TRANSLATE_NOOP(\"Ctx\", \"x\")\n    property var f: QT_TRID_NOOP(\"id\")\n    property string g: qsTr(\"%Ln file(s) in %1\", \"disk\", 2).arg(a)\n}\n",
+        "import QtQuick\nItem {\n    property string a: qsTr(\"Open\", \"menu\")\n    property string b: qsTranslate(\"Dialog\", \"Close\")\n    property string c: qsTrId(\"nav.home\")\n    property string g: qsTr(\"%Ln file(s) in %1\", \"disk\", 2).arg(a)\n}\n",
     );
     for line in [
         "a: t({ message: \"Open\", context: \"menu\" })",
         "b: t({ message: \"Close\", context: \"Dialog\" })",
         "c: t({ id: \"nav.home\" })",
-        "d: msg`Later`",
-        "e: msg({ message: \"x\", context: \"Ctx\" })",
-        "f: msg({ id: \"id\" })",
         "g: t({ message: plural(2, { other: `# file(s) in ${a}` }), context: \"disk\" })",
     ] {
         assert!(text.contains(line), "{line}\n{text}");
@@ -200,15 +197,29 @@ fn a_value_written_in_another_place_keeps_its_own_lowering() {
     // `.arg` fills the lowest-numbered `%N` left, so `r.color` moves
     // after `b`, and is `r.fill` there too; `%n` says the count again.
     let text = lowered(
-        "import QtQuick\nRectangle {\n    id: r\n    property string b: \"x\"\n    property string s: qsTr(\"%2 of %1, %1\").arg(r.color).arg(b)\n    property string n: qsTr(\"%1: %n\", \"\", r.width).arg(r.color)\n}\n",
+        "import QtQuick\nRectangle {\n    id: r\n    property int c: 2\n    property string b: \"x\"\n    property string s: qsTr(\"%2 of %1, %1\").arg(r.color).arg(b)\n    property string n: qsTr(\"%1: %n\", \"\", r.c).arg(r.color)\n}\n",
     );
     for line in [
         "s: t`${b} of ${r.fill}, ${r.fill}`",
-        "n: plural(r.width, { other: `${r.fill}: ${r.width}` })",
+        "n: plural(r.c, { other: `${r.fill}: ${r.c}` })",
     ] {
         assert!(text.contains(line), "{line}\n{text}");
     }
-    assert_eq!(text.lines().count(), 7, "{text}");
+    assert_eq!(text.lines().count(), 8, "{text}");
+}
+
+#[test]
+fn a_count_qt_s_types_say_is_an_int_is_rewritten() {
+    let text = lowered(
+        "import QtQuick\nText {\n    id: label\n    property string a: qsTr(\"%n line(s)\", \"\", lineCount)\n    property string b: qsTr(\"%n\", \"\", label.lineCount)\n    property string c: qsTr(\"%n\", \"\", a.length)\n}\n",
+    );
+    for line in [
+        "a: plural(lineCount, { other: `${lineCount} line(s)` })",
+        "b: plural(label.lineCount, { other: `${label.lineCount}` })",
+        "c: plural(a.length, { other: `${a.length}` })",
+    ] {
+        assert!(text.contains(line), "{line}\n{text}");
+    }
 }
 
 #[test]
@@ -218,7 +229,15 @@ fn a_message_that_cannot_be_written_out_keeps_the_file() {
         ("property string shown: qsTr(\"%1 %2\").arg(1, 2)", "not of one value"),
         ("property string shown: qsTr(\"%1\").arg(1).arg(2)", "no `%N` left"),
         ("property string shown: qsTr(\"%L1\").arg(1)", "a `%LN`"),
-        ("property string shown: qsTr(\"%2 %1\").arg(1 +\n        1).arg(2)", "spans lines"),
+        ("property string shown: qsTr(\"%2 %1\").arg(parent\n        .width).arg(2)", "spans lines"),
+        ("property string shown: qsTr(\"%2 %1\").arg(1 + 1).arg(2)", "not a name, a member of one or a literal"),
+        ("property string shown: qsTr(\"%1 %1\").arg(Date.now())", "not a name, a member of one or a literal"),
+        ("property string shown: qsTr(\"%n\", \"\", 2.5)", "not known to be an `int`"),
+        ("property string shown: qsTr(\"%n\", \"\", width)", "not known to be an `int`"),
+        ("property real n: 2; property string shown: qsTr(\"%Ln\", \"\", n)", "not known to be an `int`"),
+        ("property string later: QT_TR_NOOP(\"Later\")", "a string to Qt"),
+        ("property var later: QT_TRANSLATE_NOOP(\"C\", \"x\")", "a string to Qt"),
+        ("property var later: QT_TRID_NOOP(\"id\")", "a string to Qt"),
         ("property string shown: qsTrId(\"a\").arg(1)", "`t({ id })`"),
         ("property string shown: qsTranslate(\"C\", \"x\", \"d\")", "one context"),
         ("property var f: qsTr", "read as a value"),

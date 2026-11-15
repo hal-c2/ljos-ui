@@ -1,16 +1,18 @@
 //! Qt's translated texts written as Ljós's (docs/DIALECT.md §4.13):
 //! `qsTr("Open")` is `` t`Open` ``, `.arg` fills the message's values, a
 //! count is `plural`, a disambiguation or `qsTranslate`'s context is the
-//! message's context, and `QT_TR_NOOP` marks a message with `msg`.
+//! message's context. `QT_TR_NOOP` and its family keep the file: their
+//! value is a string to Qt, and `msg`'s is a message descriptor.
 //!
 //! A call is written out by replacing only what lies between its values:
 //! each value stays where it is, so what the rest of the pass changes in
 //! it is changed all the same, and no line is added or removed. A value
 //! the message says in another place, or twice (Qt's `%n` is the count
 //! beside `plural`'s, and `.arg`s fill `%2 of %1` out of order), is
-//! written there once every change is known ([`fill`]).
+//! written there once every change is known ([`fill`]). Only a value that
+//! reads the same twice is: a name, a member of one or a literal.
 //!
-//! `t`, `plural` and `msg` are `Ljos.Core`'s and come last in a lowered
+//! `t` and `plural` are `Ljos.Core`'s and come last in a lowered
 //! file, so the pass writes them only where each is no other name of the
 //! file ([`Members::free`](crate::qt_members::Members::free)); otherwise
 //! the file is kept.
@@ -138,13 +140,15 @@ impl Messages {
 
     /// `call`, where it calls one of Qt's functions (a `.arg` of one too)
     /// whose name `global` says is the global's. `rewrite` is false where
-    /// the call stays as written (a `ListElement`'s value).
+    /// the call stays as written (a `ListElement`'s value). `whole` says
+    /// whether a count is an `int`.
     pub(crate) fn call(
         &mut self,
         source: &str,
         call: &CallExpression<'_>,
         rewrite: bool,
         global: impl Fn(&str, u32) -> bool,
+        whole: impl Fn(&Expression<'_>) -> bool,
     ) {
         let Some(chain) = Chain::of(call).filter(|c| global(c.name, c.callee_at)) else {
             return;
@@ -155,7 +159,7 @@ impl Messages {
             return;
         }
         self.handled.push(at);
-        match chain.write(source, self.filled.copies.len()) {
+        match chain.write(source, self.filled.copies.len(), &whole) {
             Ok(written) => {
                 for name in written.names {
                     if !self.names.iter().any(|(n, _)| *n == name) {
@@ -232,8 +236,18 @@ impl<'c, 'a> Chain<'c, 'a> {
 
     /// The changes that write the call. Its copies are numbered from
     /// `copied`, the copies written before it.
-    fn write(&self, source: &str, copied: usize) -> Result<Written, Message> {
+    fn write(
+        &self,
+        source: &str,
+        copied: usize,
+        whole: &dyn Fn(&Expression<'_>) -> bool,
+    ) -> Result<Written, Message> {
         let arguments = &self.call.arguments;
+        if self.name.contains("NoOp") || self.name.contains("NOOP") {
+            return Err(Message::Marked {
+                name: self.name.to_owned(),
+            });
+        }
         if arguments.iter().any(Argument::is_spread) {
             return Err(self.not_written());
         }
@@ -241,23 +255,34 @@ impl<'c, 'a> Chain<'c, 'a> {
             .args
             .iter()
             .map(|arg| match arg.arguments.as_slice() {
-                [value] if !value.is_spread() => Ok(range(value.span())),
+                [value] if !value.is_spread() => Ok(Value::of(value)),
                 _ => Err(Message::Placeholders {
                     name: self.name.to_owned(),
                 }),
             })
             .collect::<Result<Vec<_>, _>>()?;
         let (form, max) = match self.name {
-            "qsTr" | "qsTrNoOp" | "QT_TR_NOOP" => (Form::Tr, 3),
-            "qsTranslate" | "qsTranslateNoOp" | "QT_TRANSLATE_NOOP" => (Form::Translate, 4),
+            "qsTr" => (Form::Tr, 3),
+            "qsTranslate" => (Form::Translate, 4),
             _ => (Form::Id, 2),
         };
         if arguments.is_empty() || arguments.len() > max {
             return Err(self.not_written());
         }
-        let marked = self.name.contains("NoOp") || self.name.contains("NOOP");
+        let count = |index: usize| -> Result<Option<Value>, Message> {
+            let Some(count) = arguments.get(index) else {
+                return Ok(None);
+            };
+            // Qt's count is whole (2.7 shows "2 file(s)"), `String(n)` not.
+            match count.as_expression() {
+                Some(n) if whole(n.without_parentheses()) => Ok(Some(Value::of(count))),
+                _ => Err(Message::NotWhole {
+                    name: self.name.to_owned(),
+                }),
+            }
+        };
         let mut message = Built {
-            tag: if marked { "msg" } else { "t" },
+            tag: "t",
             copied,
             ..Built::default()
         };
@@ -275,8 +300,8 @@ impl<'c, 'a> Chain<'c, 'a> {
             Form::Tr => {
                 let text = self.text(0)?.unwrap_or_default();
                 let context = self.text(1)?.filter(|c| !c.is_empty());
-                let count = arguments.get(2).map(|n| range(n.span()));
-                self.message(source, message, &text, context, count, &values, marked)
+                let count = count(2)?;
+                self.message(source, message, &text, context, count, &values)
             }
             Form::Translate => {
                 let context = self.text(0)?.unwrap_or_default();
@@ -286,34 +311,27 @@ impl<'c, 'a> Chain<'c, 'a> {
                         name: self.name.to_owned(),
                     });
                 }
-                let count = arguments.get(3).map(|n| range(n.span()));
+                let count = count(3)?;
                 let context = Some(context).filter(|c| !c.is_empty());
-                self.message(source, message, &text, context, count, &values, marked)
+                self.message(source, message, &text, context, count, &values)
             }
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn message(
         &self,
         source: &str,
         mut message: Built,
         text: &str,
         context: Option<String>,
-        count: Option<Range<usize>>,
-        values: &[Range<usize>],
-        marked: bool,
+        count: Option<Value>,
+        values: &[Value],
     ) -> Result<Written, Message> {
         let parts = parts(text, count.is_some(), values.len()).ok_or_else(|| {
             Message::Placeholders {
                 name: self.name.to_owned(),
             }
         })?;
-        if marked && (count.is_some() || !values.is_empty()) {
-            return Err(Message::MarkedFilled {
-                name: self.name.to_owned(),
-            });
-        }
         if count.is_some()
             && parts
                 .iter()
@@ -336,7 +354,7 @@ impl<'c, 'a> Chain<'c, 'a> {
         if let Some(count) = &count {
             message.uses.push("plural");
             message.text("plural(");
-            message.value(count.clone());
+            message.value(count.at.clone());
             message.text(", { other: ");
         }
         message.text(if templated { "`" } else { "\"" });
@@ -351,10 +369,20 @@ impl<'c, 'a> Chain<'c, 'a> {
                         _ => count.as_ref().expect("a count part has a count"),
                     };
                     message.text("${");
-                    message.value(value.clone());
+                    message.value(value.at.clone());
                     message.text("}");
                 }
             }
+        }
+        // A copy is a second reading of a value, so it reads the same only
+        // where the value is plain.
+        let plain = |at: &Range<usize>| {
+            count.iter().chain(values).any(|v| v.at == *at && v.plain)
+        };
+        if !message.copies.iter().all(plain) {
+            return Err(Message::Moved {
+                name: self.name.to_owned(),
+            });
         }
         if message
             .copies
@@ -375,6 +403,39 @@ impl<'c, 'a> Chain<'c, 'a> {
         // A count alone is `plural(…)`, untagged.
         message.untagged = !described && count.is_some();
         Ok(message.done(self.outer, source))
+    }
+}
+
+/// A value a message says: a count or what an `.arg` gives.
+struct Value {
+    at: Range<usize>,
+    /// A name, a member of one or a literal: what reads the same twice.
+    plain: bool,
+}
+
+impl Value {
+    fn of(argument: &Argument<'_>) -> Self {
+        Value {
+            at: range(argument.span()),
+            plain: argument
+                .as_expression()
+                .is_some_and(|e| plain(e.without_parentheses())),
+        }
+    }
+}
+
+fn plain(expression: &Expression<'_>) -> bool {
+    match expression {
+        Expression::Identifier(_)
+        | Expression::NumericLiteral(_)
+        | Expression::StringLiteral(_)
+        | Expression::BooleanLiteral(_)
+        | Expression::NullLiteral(_) => true,
+        Expression::TemplateLiteral(t) => t.expressions.is_empty(),
+        Expression::StaticMemberExpression(member) => {
+            plain(member.object.without_parentheses())
+        }
+        _ => false,
     }
 }
 
