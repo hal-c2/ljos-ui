@@ -5287,6 +5287,76 @@ frame into paths.
   and none once a finite animation has stopped or while it is hidden. The "nothing scheduled"
   scenarios in `features/lottie/` pin that.
 
+### Lottie: real avatar files, eight at once, against qml6 (2026-11-15)
+
+`bench/lottie-avatars.qml` is a 1024×512 white `Rectangle` holding eight `LottieAnimation`s on
+a grid, each at half size and looping for ever. Four play the HAL-C2 dance and four the genie,
+taken from `features/lottie/avatars/` (see its README). These are real exports from Blender's
+grease pencil, not generated files: Lottie 5.5.6, 24 fps, 512×512.
+
+| File | Size | Frames | Parse | One frame to paths, mean (worst) | Paths per frame |
+|---|---:|---:|---:|---:|---:|
+| `hal-c2-dance.json` | 175 kB | 24 | 3.13 ms | 3.9 µs (31.4 µs) | 14.0 |
+| `hal-c2-genie.json` | 307 kB | 47 | 6.41 ms | 6.8 µs (45.7 µs) | 16.3 |
+
+The genie is larger than `BACKGROUND_BYTES` (256 kB), so it is parsed off the UI thread. The
+dance is read while the component completes.
+
+To reproduce:
+
+```sh
+BENCH_DEFAULTS="--warm-up --repeat 3" mise run bench lottie-avatars
+cargo run --release -p ljos_lottie --example frame_time -- features/lottie/avatars/hal-c2-dance.json
+cargo run --release -p ljos_lottie --example frame_time -- features/lottie/avatars/hal-c2-genie.json
+```
+
+The figures are medians of 3 runs. Ljós was 7eda0582, a release build with thin LTO, and Qt was
+6.12.0. Both ran in headless sway with pixman, off-screen, on an AMD Ryzen AI Max+ 395. Load
+average was 3.0 to 12.6.
+
+Desktop profile:
+
+| Measure | Ljós | Qt | Ljós/Qt |
+|---|---:|---:|---:|
+| Time to first frame | 35.1 ms | 208 ms | ×0.17 |
+| CPU to first frame | 116 ms | 222 ms | ×0.52 |
+| Peak memory while starting | 61.3 MiB | 159 MiB | ×0.39 |
+| Settled memory | 36.6 MiB | 153 MiB | ×0.24 |
+| Settled private PSS | 29.2 MiB | 141 MiB | ×0.21 |
+| CPU while animating | 14.4 % | 36.6 % of a core | ×0.39 |
+| Wakeups | 6129/s | 24113/s | ×0.25 |
+| Frames shown | 45.2/s | 25.1/s | ×1.80 |
+| CPU per frame sent | 2.92 ms | 14.6 ms | ×0.20 |
+| 95th percentile frame interval | 32.3 ms | 41.4 ms | ×0.78 |
+| Input-to-frame latency, median | 10.0 ms | 18.3 ms | ×0.55 |
+| Mapped install | 176 MiB | 372 MiB | ×0.47 |
+
+pi-zero profile (256 MiB, 20 % of one core):
+
+| Measure | Ljós | Qt | Ljós/Qt |
+|---|---:|---:|---:|
+| Time to first frame | 714 ms | 1245 ms | ×0.57 |
+| CPU to first frame | 142 ms | 249 ms | ×0.57 |
+| Peak memory while starting | 44.6 MiB | 154 MiB | ×0.29 |
+| Settled memory | 32.0 MiB | 152 MiB | ×0.21 |
+| CPU, animating untouched | 8.29 % | 19.5 % | Qt at the quota |
+| Frames, animating untouched | 61.2/s | 15.7/s | ×3.90 |
+| 95th percentile frame interval, untouched | 16.4 ms | 80.2 ms | ×0.21 |
+| Slowest frame interval while driven | 32.6 ms | 100 ms | ×0.33 |
+| Input-to-frame latency, median | 8.02 ms | 34.6 ms | ×0.23 |
+| Wakeups | 446/s | 8267/s | ×0.05 |
+
+- Each file has a 24 fps clock, so a window showing all eight needs at most 24 new pictures a
+  second if their ticks line up. Ljós shows 45–61 a second. Each player counts its ticks from
+  the moment it started: the dance players start while the component completes, and the genie
+  players start when their background parse answers. The two groups therefore tick out of
+  phase, and the window is repainted for each. Each repaint costs about 3 ms of CPU, so this
+  is cheap here, but a shared tick would halve the repaints.
+- qml6 cannot keep up with 24 a second on the pi-zero profile: it is at the 20 % quota with
+  15.7 pictures a second. Ljós stays at 8 % of a core.
+- Interpreting the files is negligible: under 7 µs a frame each, so 55 µs for all eight.
+  Nearly all of the CPU goes to filling the paths in software.
+
 ### B23 (H2): the delegate track's baseline (2026-10-25)
 
 B18–B22 made each piece of a new delegate cheaper and the total stayed near 386 k, against
