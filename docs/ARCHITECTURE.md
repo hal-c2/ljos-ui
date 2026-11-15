@@ -1310,7 +1310,8 @@ Ljós file says what it means.
   `"@ljos/core"`. All of it is TC39 syntax (a tagged template, calls, object literals).
   - The compiler lowers each to an ICU MessageFormat message: a bare name is a named placeholder
     (`{name}`), any other value a numbered one (`{0}`), `plural(n, {…})` is `{n, plural, …}`, a
-    number key an exact match (`=0`). One function in `ljos_compiler::i18n` does it, and the
+    number key an exact match (`=0`). Text in the template is quoted as ICU quotes it (`{`, `}`,
+    `'`), so it is shown as written. One function in `ljos_compiler::i18n` does it, and the
     compiler, the checker, `ljos i18n extract` and `ljos migrate` all call it, so a message has one
     key everywhere.
   - `t({ message, context, comment, id })` gives a context, a translator's note or an id of its own;
@@ -1370,7 +1371,7 @@ Ljós file says what it means.
   (`.pot`: a template, with no translations), keeping translations and keeping a translated message
   that left the sources as obsolete; `-o app_is.ts` writes `qsTr` and its family to `.ts` as
   before, honouring the `//:` `//~` `//=` comments. `--check` mode runs in CI.
-- **Migration.** `ljos migrate` rewrites `qsTr` and its family to `t`, `plural`, `msg` (DIALECT.md
+- **Migration.** `ljos migrate` rewrites `qsTr` and its family to `t` and `plural` (DIALECT.md
   §4.13), and with `--catalogue app_is.ts` writes the catalogue's translations to `is.po` with the
   same rewrite, so a migrated application keeps them. A `.ts` key carries the file's name as its
   context, which `t` does not, so where two files translate one text differently each call keeps
