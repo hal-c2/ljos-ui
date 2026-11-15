@@ -430,6 +430,46 @@ Feature: A web page in a WebEngineView
     And 2 seconds pass
     Then the property "seen" of "root" is "heard popup true"
 
+  # The page that asked goes while the new window is being made: the view
+  # it was to open in still shows the page, on its own, with no opener.
+  @api-QtWebEngine.WebEngineView.newWindowRequested @api-QtWebEngine.WebEngineNewWindowRequest.openIn
+  Scenario: A page opened in another view shows even when the page that opened it goes at once
+    Given the text file "opener.html":
+      """
+      <!doctype html><html><head><title>waiting</title></head>
+      <body style="margin:0"><div onclick="window.open('popup.html')" style="height:100px; background:#ff0000"></div></body></html>
+      """
+    And the text file "popup.html":
+      """
+      <!doctype html><html><head><title>popup</title></head><body><script>
+      if (!window.opener) document.title = "no opener"
+      </script></body></html>
+      """
+    And the QML:
+      """qml
+      import QtQuick
+      import QtWebEngine
+      Item {
+        id: root; objectName: "root"
+        width: 200; height: 200
+        Loader {
+          id: holder; width: 200; height: 100
+          sourceComponent: WebEngineView {
+            url: Qt.resolvedUrl("opener.html")
+            onNewWindowRequested: request => { request.openIn(popup); holder.active = false }
+          }
+        }
+        WebEngineView { id: popup; y: 100; width: 200; height: 100 }
+        property string seen: holder.active + " " + popup.title + " "
+          + (popup.url.toString() === Qt.resolvedUrl("popup.html").toString())
+      }
+      """
+    When 2 seconds pass
+    And the user presses the pointer at 100, 50
+    And the user releases the pointer at 100, 50
+    And 2 seconds pass
+    Then the property "seen" of "root" is "false no opener true"
+
   @api-QtWebEngine.WebEngineView.triggerWebAction @api-QtWebEngine.WebEngineNewWindowRequest.requestedUrl
   Scenario: Viewing a page's source asks for a new window showing it
     Given the QML:

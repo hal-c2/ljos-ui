@@ -11,10 +11,10 @@
 use std::collections::{HashMap, VecDeque};
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::{Shutdown, TcpListener, TcpStream};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender, TrySendError, sync_channel};
 use std::sync::{Arc, Mutex, PoisonError};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde_json::{Value as Json, json};
 
@@ -31,6 +31,13 @@ const LARGEST: u64 = 64 << 20;
 /// connect before showing it knows the address, so what it sends is
 /// bounded before then too.
 const OPENING: u64 = 16 << 10;
+
+/// How long an opening request may take, all of it.
+const OPENING_TIME: Duration = Duration::from_secs(5);
+
+/// How many connections may be opening at once: more are let go at once,
+/// so a loop of connections holds no more threads than this.
+const OPENINGS: usize = 8;
 
 /// RFC 6455's key suffix.
 const GUID: &str = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
@@ -49,6 +56,8 @@ pub(super) struct Inspector {
     port: u16,
     token: String,
     stop: AtomicBool,
+    /// Connections whose opening request is still being read.
+    opening: AtomicUsize,
     link: Mutex<Link>,
 }
 
@@ -76,6 +85,7 @@ impl Inspector {
             port,
             token: bytes.iter().map(|b| format!("{b:02x}")).collect(),
             stop: AtomicBool::new(false),
+            opening: AtomicUsize::new(0),
             link: Mutex::default(),
         });
         let serving = Arc::clone(&me);
@@ -181,29 +191,45 @@ impl Inspector {
                 break;
             }
             let Ok(stream) = stream else { continue };
+            if self.opening.fetch_add(1, Ordering::AcqRel) >= OPENINGS {
+                self.opening.fetch_sub(1, Ordering::AcqRel);
+                continue;
+            }
             // Each connection on its own thread, so one that is still
             // talking, or never finishes asking, holds no later one up.
             // One front end at a time: the newest is the one shown, and
             // the one before is let go (see `converse`).
             let (me, wake) = (Arc::clone(self), Arc::clone(&wake));
-            let _ = std::thread::Builder::new()
+            let spawned = std::thread::Builder::new()
                 .name("ljos-devtools-in".to_owned())
                 .spawn(move || {
-                    if let Some(reader) = me.handshake(stream) {
+                    let reader = me.handshake(stream);
+                    me.opening.fetch_sub(1, Ordering::AcqRel);
+                    if let Some(reader) = reader {
                         me.converse(reader, &*wake);
                     }
                 });
+            if spawned.is_err() {
+                self.opening.fetch_sub(1, Ordering::AcqRel);
+            }
         }
     }
 
     /// The front end's opening request, answered: `None` when it is not
     /// the front end's, or not one for this page.
     fn handshake(&self, stream: TcpStream) -> Option<BufReader<TcpStream>> {
-        // A connection that never asks holds nobody up for long.
-        stream.set_read_timeout(Some(Duration::from_secs(5))).ok()?;
+        // A connection that never finishes asking holds nobody up for long:
+        // each read may take only what is left of the whole request's time.
+        let deadline = Instant::now() + OPENING_TIME;
+        let timer = stream.try_clone().ok()?;
+        let left = || {
+            let left = deadline.saturating_duration_since(Instant::now());
+            (!left.is_zero() && timer.set_read_timeout(Some(left)).is_ok()).then_some(())
+        };
         let mut reader = BufReader::new(stream);
         let mut opening = (&mut reader).take(OPENING);
         let mut line = String::new();
+        left()?;
         opening.read_line(&mut line).ok()?;
         let mut words = line.split_whitespace();
         let ours = words.next() == Some("GET")
@@ -213,6 +239,7 @@ impl Inspector {
             let mut header = String::new();
             // Past `OPENING` it reads as ended: a request that long is
             // nobody's to answer.
+            left()?;
             match opening.read_line(&mut header) {
                 Ok(0) | Err(_) => return None,
                 Ok(_) if header.trim().is_empty() => break,
@@ -279,9 +306,22 @@ impl Inspector {
             .name("ljos-devtools-out".to_owned())
             .spawn(move || write_frames(writing, &written));
         if writer.is_ok() {
-            let mut ping = |payload| self.lock().send(PONG, payload);
+            // What a connection that was replaced still had on its way is
+            // its own, not the new one's: it stops at the first of it.
+            let mut ping = |payload| {
+                let mut link = self.lock();
+                if link.serial == serial {
+                    link.send(PONG, payload);
+                }
+            };
             while let Ok(Some(payload)) = read_message(&mut reader, &mut ping) {
-                self.lock().inbox.push_back(payload);
+                {
+                    let mut link = self.lock();
+                    if link.serial != serial {
+                        break;
+                    }
+                    link.inbox.push_back(payload);
+                }
                 wake();
             }
         }
@@ -446,6 +486,7 @@ mod tests {
             port: 0,
             token: String::new(),
             stop: AtomicBool::new(false),
+            opening: AtomicUsize::new(0),
             link: Mutex::default(),
         };
         let (out, written) = sync_channel(8);
