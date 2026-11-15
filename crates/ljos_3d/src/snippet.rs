@@ -389,12 +389,17 @@ const PER_LIGHT: [&str; 4] = [
 
 /// Why a shaded fragment snippet does not compile where a light reaches its
 /// model, if it does not: the first function called for each light written
-/// while the default float precision is lowp or mediump.
+/// while the default float precision is lowp or mediump. Only what the
+/// preprocessor keeps counts, and a snippet whose precision or light
+/// functions sit under a condition that cannot be told here is not failed.
 // Qt 6.11: such a function is another overload of the one Qt declares
 // ("overloaded functions must have the same parameter precision
 // qualifiers"), so the model is not drawn where a light reaches it; it
-// still casts its shadow. Measured on qml6 6.12.0.
+// still casts its shadow. The snippet is compiled as desktop GLSL, so
+// GL_ES is not defined. Measured on qml6 6.12.0.
 fn lit_failure(src: &str) -> Option<SnippetError> {
+    let kept = preprocessed(src)?;
+    let src = kept.as_str();
     let tokens = tokens(src);
     let mut depth = 0usize;
     let mut default = "highp";
@@ -421,8 +426,8 @@ fn lit_failure(src: &str) -> Option<SnippetError> {
                     stage: "fragment",
                     line: src[..at].matches('\n').count() as u32 + 1,
                     message: format!(
-                        "{name} is written under `precision {default} float;`, which does not \
-                         compile where a light reaches the model"
+                        "{name} is written under `precision {default} float;`, so the model is \
+                         not drawn where a light reaches it"
                     ),
                 });
             }
@@ -430,6 +435,107 @@ fn lit_failure(src: &str) -> Option<SnippetError> {
         }
     }
     None
+}
+
+/// `src` with the lines the preprocessor leaves out, and its directives,
+/// blanked, so lines keep their numbers; `None` when a condition that
+/// cannot be told here guards a precision statement or a light function.
+/// A condition is told when it is a number, or asks whether a name is
+/// defined that the snippet defines or that is GL_ES; the names Qt defines
+/// around the snippet are not known here.
+fn preprocessed(src: &str) -> Option<String> {
+    // Each open conditional: whether its current branch is kept, and
+    // whether an earlier branch was, `None` where that cannot be told.
+    struct Branch {
+        kept: Option<bool>,
+        taken: Option<bool>,
+    }
+    let mut open: Vec<Branch> = Vec::new();
+    let mut defined: Vec<&str> = Vec::new();
+    let mut out = String::with_capacity(src.len());
+    let mut directive = false;
+    for line in src.split_inclusive('\n') {
+        let text = line.trim_end_matches(['\n', '\r']);
+        let continued = text.ends_with('\\');
+        let kept = if open.iter().any(|b| b.kept == Some(false)) {
+            Some(false)
+        } else if open.iter().any(|b| b.kept.is_none()) {
+            None
+        } else {
+            Some(true)
+        };
+        let is_directive = directive || text.trim_start().starts_with('#');
+        directive = is_directive && continued;
+        if is_directive {
+            out.push_str(if line.ends_with('\n') { "\n" } else { "" });
+            let words = tokens(text.trim_start().trim_start_matches('#'));
+            let name = words.first().copied().unwrap_or("");
+            let rest = &words[words.len().min(1)..];
+            let known = |n: &str| {
+                if defined.contains(&n) {
+                    Some(true)
+                } else if n == "GL_ES" {
+                    Some(false)
+                } else {
+                    None
+                }
+            };
+            let told = |rest: &[&str]| -> Option<bool> {
+                match rest {
+                    [n] if n.bytes().all(|b| b.is_ascii_digit()) => Some(!n.trim_start_matches('0').is_empty()),
+                    ["defined", n] | ["defined", "(", n, ")"] => known(n),
+                    ["!", "defined", n] | ["!", "defined", "(", n, ")"] => known(n).map(|d| !d),
+                    _ => None,
+                }
+            };
+            match name {
+                "if" | "ifdef" | "ifndef" => {
+                    let k = match name {
+                        "if" => told(rest),
+                        "ifdef" => rest.first().and_then(|n| known(n)),
+                        _ => rest.first().and_then(|n| known(n)).map(|d| !d),
+                    };
+                    open.push(Branch { kept: k, taken: k });
+                }
+                "elif" | "else" => {
+                    if let Some(b) = open.last_mut() {
+                        let k = match b.taken {
+                            Some(true) => Some(false),
+                            Some(false) if name == "else" => Some(true),
+                            Some(false) => told(rest),
+                            None => None,
+                        };
+                        b.taken = match (b.taken, k) {
+                            (Some(t), Some(k)) => Some(t || k),
+                            _ => None,
+                        };
+                        b.kept = k;
+                    }
+                }
+                "endif" => {
+                    open.pop();
+                }
+                "define" if kept == Some(true) => defined.extend(rest.first()),
+                "undef" if kept == Some(true) => defined.retain(|d| Some(d) != rest.first()),
+                _ => {}
+            }
+            continue;
+        }
+        match kept {
+            Some(true) => out.push_str(line),
+            Some(false) => out.push_str(if line.ends_with('\n') { "\n" } else { "" }),
+            None => {
+                if tokens(text)
+                    .iter()
+                    .any(|t| *t == "precision" || PER_LIGHT.contains(t))
+                {
+                    return None;
+                }
+                out.push_str(if line.ends_with('\n') { "\n" } else { "" });
+            }
+        }
+    }
+    Some(out)
 }
 
 /// A `VARYING type name;` of a snippet: its name and how many floats.
@@ -1715,7 +1821,7 @@ mod tests {
                 .as_deref(),
             Some(
                 "fragment shader, line 4: DIRECTIONAL_LIGHT is written under `precision lowp \
-                 float;`, which does not compile where a light reaches the model"
+                 float;`, so the model is not drawn where a light reaches it"
             )
         );
         assert!(fails("precision mediump float; void SPECULAR_LIGHT() { }").is_some());
@@ -1730,6 +1836,30 @@ mod tests {
         ] {
             assert_eq!(fails(ok), None, "{ok}");
         }
+        // What the preprocessor keeps counts, as on qml6.
+        let light = "\nvoid DIRECTIONAL_LIGHT() { }\n";
+        for (guarded, line) in [
+            ("#ifndef GL_ES\nprecision mediump float;\n#endif", Some(4)),
+            ("#ifdef GL_ES\nprecision highp float;\n#else\nprecision lowp float;\n#endif", Some(6)),
+            ("#if 1\nprecision lowp float;\n#endif", Some(4)),
+            ("#define LOW\n#ifdef LOW\nprecision lowp float;\n#endif", Some(5)),
+            ("#if defined(GL_ES)\n#elif 1\nprecision lowp float;\n#endif", Some(5)),
+            ("#define LOW\n#undef LOW\n#ifdef LOW\nprecision lowp float;\n#endif", None),
+            ("#ifdef GL_ES\nprecision mediump float;\n#endif", None),
+            ("precision highp float;\n#if 0\nprecision lowp float;\n#endif", None),
+            // A name Qt may define around the snippet cannot be told.
+            ("#ifdef QSHADER_VIEW_COUNT\nprecision lowp float;\n#endif", None),
+            ("precision lowp float;\n#if FOO > 1\nvoid POINT_LIGHT() { }\n#endif", None),
+        ] {
+            let src = format!("{guarded}{light}");
+            let at = lit_failure(&src).map(|e| match e {
+                SnippetError::Compile { line, .. } => line,
+                e => panic!("{e}"),
+            });
+            assert_eq!(at, line, "{guarded}");
+        }
+        // A condition that cannot be told around the rest does not hide it.
+        assert!(fails("precision lowp float;\n#ifdef FOO\nint x;\n#endif\nvoid SPOT_LIGHT() { }").is_some());
         let program = |shaded| {
             material(
                 None,
