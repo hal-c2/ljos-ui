@@ -118,6 +118,9 @@ pub fn check_project(
         return Ok(Outcome::Skipped);
     };
     let scratch = Scratch::new()?;
+    let core = scratch.path().join(tsc::CORE_FILE);
+    std::fs::write(&core, dts::core_module())
+        .map_err(|source| TsError::Io { path: core, source })?;
     let mut scripts: Vec<String> = Vec::new();
     // Each module is TypeScript's desugared (docs/DIALECT.md §4.21), and
     // what it says is moved back to the module as written. An `.lts`

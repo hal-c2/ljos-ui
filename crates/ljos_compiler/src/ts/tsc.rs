@@ -8,6 +8,7 @@ use std::{
 };
 
 use super::TsError;
+use crate::script::module::CORE_MODULE;
 
 /// The settings TypeScript checks with: the strict ones of
 /// docs/DIALECT.md §4, and no library but the language's own, with
@@ -52,7 +53,7 @@ impl Layout {
     /// Deno has no `rootDirs`: an import map sends what a body imports, and
     /// every import of an `.lts` module, where the module would be.
     fn deno_imports(&self) -> String {
-        let mut map: Vec<(String, String)> = Vec::new();
+        let mut map: Vec<(String, String)> = vec![(CORE_MODULE.to_owned(), format!("./{CORE_FILE}"))];
         // What `rootDirs` makes one tree for tsc: an import from any of the
         // three directories finds a module in `m`, and an `.lts` module's
         // declaration in `types`. A declaration imports what its module
@@ -72,9 +73,6 @@ impl Layout {
                 }
             }
         }
-        if map.is_empty() {
-            return String::new();
-        }
         let entries = map
             .iter()
             .map(|(from, to)| format!("    {from:?}: {to:?}"))
@@ -83,6 +81,10 @@ impl Layout {
         format!(",\n  \"imports\": {{\n{entries}\n  }}")
     }
 }
+
+/// Where `@ljos/core` is declared for the checker, beside the files.
+pub const CORE_FILE: &str = "ljos-core.ts";
+
 
 /// A program that checks TypeScript.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -136,7 +138,10 @@ impl Checker {
                     .join(", ");
                 let options = COMPILER_OPTIONS.replacen(
                     '{',
-                    &format!("{{\n    \"noEmit\": true,{}", layout.tsc_options()),
+                    &format!(
+                        "{{\n    \"noEmit\": true,\n    \"paths\": {{ \"{CORE_MODULE}\": [\"./{CORE_FILE}\"] }},{}",
+                        layout.tsc_options()
+                    ),
                     1,
                 );
                 (

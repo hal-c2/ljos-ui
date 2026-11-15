@@ -1970,6 +1970,10 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                 Literal::Object(fields)
             }
             Expression::StaticMemberExpression(_) => Literal::Enum(self.enum_literal(expression)?),
+            Expression::TaggedTemplateExpression(_) => return self.message_literal(expression),
+            Expression::CallExpression(call) if crate::i18n::message::call_message(call).is_some() => {
+                return self.message_literal(expression);
+            }
             Expression::CallExpression(call) => {
                 let (callee, args) = js::call_args(call)?;
                 let Expression::Identifier(id) = &call.callee else {
@@ -1990,6 +1994,29 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
             }
             _ => return None,
         })
+    }
+
+    /// A message of `Ljos.Core`'s macros that has no values: the same text
+    /// every time, in one language. One with values, or one that is not
+    /// right, is the function's to run or to refuse.
+    fn message_literal(&mut self, expression: &Expression<'a>) -> Option<Literal> {
+        let (name, span) = crate::i18n::message::callee(expression)?;
+        let core = self.lookup(name, span.start).is_some_and(|r| {
+            r.roles.is_empty() && matches!(r.target, Some(Target::Global(names::Global::Core)))
+        });
+        if !core {
+            return None;
+        }
+        let call = crate::i18n::message::message_of(expression)?.ok()?;
+        if call.kind != crate::i18n::message::MacroKind::T
+            || !call.placeholders.is_empty()
+            || call.given.is_some()
+        {
+            return None;
+        }
+        let translatable = message_translatable(&call)?;
+        self.translations.push(translatable.clone());
+        Some(Literal::Translatable(translatable))
     }
 
     fn is_global(&self, name: &str, offset: u32) -> bool {
@@ -2121,6 +2148,8 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                 comment,
                 plural,
                 is_plural,
+                id: None,
+                placeholders: Vec::new(),
             },
             is_static,
         ))
@@ -2614,7 +2643,25 @@ const fn same(a: &[u8], b: &[u8]) -> bool {
 }
 
 /// A string as a JavaScript literal.
-fn js_string(text: &str) -> String {
+/// What a catalogue lists of a message: `None` for `t(m)` of a message
+/// made elsewhere, which has its own.
+pub(crate) fn message_translatable(
+    call: &crate::i18n::message::MessageCall,
+) -> Option<Translatable> {
+    let source = call.message.clone().or_else(|| call.id.clone())?;
+    Some(Translatable {
+        kind: TranslationKind::Message,
+        context: call.context.clone().unwrap_or_default(),
+        source,
+        comment: call.comment.clone(),
+        plural: None,
+        is_plural: false,
+        id: call.id.clone(),
+        placeholders: call.placeholders.iter().map(|p| p.name.clone()).collect(),
+    })
+}
+
+pub(crate) fn js_string(text: &str) -> String {
     let mut out = String::with_capacity(text.len() + 2);
     out.push('"');
     for c in text.chars() {

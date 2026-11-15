@@ -302,6 +302,11 @@ pub const CORE_GLOBALS: &[&str] = &[
     "bind",
     "matrix4x4",
     "Color",
+    "t",
+    "msg",
+    "plural",
+    "select",
+    "selectOrdinal",
 ];
 
 /// Which global `name` is, if it is one.

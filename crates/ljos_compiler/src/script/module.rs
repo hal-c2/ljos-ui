@@ -14,7 +14,8 @@ use std::collections::HashSet;
 use ljos_ir::ScriptImport;
 use oxc_allocator::Allocator;
 use oxc_ast::ast::{
-    Class, ClassElement, Declaration, FormalParameter, ImportDeclarationSpecifier,
+    CallExpression, Class, ClassElement, Declaration, Expression, FormalParameter,
+    ImportDeclaration, ImportDeclarationSpecifier, TaggedTemplateExpression,
     ImportOrExportKind, MethodDefinitionType, PropertyDefinitionType, PropertyKey, Statement,
     TSAsExpression, TSNonNullExpression, TSSatisfiesExpression, TSThisParameter, TSTypeAnnotation,
     TSTypeAssertion, TSTypeParameterDeclaration, TSTypeParameterInstantiation,
@@ -22,6 +23,11 @@ use oxc_ast::ast::{
 use oxc_ast_visit::{Visit, walk};
 use oxc_parser::Parser;
 use oxc_span::{GetSpan, SourceType, Span};
+
+use crate::i18n::message::{self, MacroKind, MessageCall, MessageError};
+
+/// The module a TypeScript module imports `Ljos.Core`'s names from.
+pub const CORE_MODULE: &str = "@ljos/core";
 
 /// Whether `path` names a TypeScript module, which is imported as a script
 /// is: a `.ts` module, or an `.lts` one, which may use Ljós's syntax too. A
@@ -134,6 +140,8 @@ pub(crate) fn erase_text(key: &str, source: &str) -> Erased {
         edits: Vec::new(),
         out: Erased::default(),
         types: HashSet::new(),
+        macros: HashSet::new(),
+        lowered: Vec::new(),
     };
     // Names that are only types are not read at run time: an export of one
     // is the checker's, and gives an importer nothing.
@@ -175,6 +183,11 @@ struct Eraser<'s> {
     edits: Vec<Edit>,
     out: Erased,
     types: HashSet<String>,
+    /// The message macros the module imports from `@ljos/core` under their
+    /// own names.
+    macros: HashSet<String>,
+    /// The macro calls written as the runtime's calls, outermost first.
+    lowered: Vec<MessageCall>,
 }
 
 impl<'s> Eraser<'s> {
@@ -248,6 +261,9 @@ impl<'s> Eraser<'s> {
                     return self.blank_statement(import.span.start, import.span.end);
                 }
                 let path = import.source.value.as_str();
+                if path == CORE_MODULE {
+                    return self.core_import(import);
+                }
                 if !self.reachable(import.source.span, path) {
                     return;
                 }
@@ -380,6 +396,79 @@ impl<'s> Eraser<'s> {
         }
     }
 
+    /// `import { t, later } from "@ljos/core"`: what `Ljos.Core` gives a QML
+    /// file (docs/DIALECT.md §4.3), which the runtime holds for every
+    /// module.
+    fn core_import(&mut self, import: &ImportDeclaration<'_>) {
+        let mut names = Vec::new();
+        let specifiers: &[ImportDeclarationSpecifier<'_>] =
+            import.specifiers.as_ref().map_or(&[], |s| s.as_slice());
+        for specifier in specifiers {
+            let ImportDeclarationSpecifier::ImportSpecifier(it) = specifier else {
+                self.fault(
+                    specifier.span(),
+                    "`@ljos/core` gives its names, not a default nor a namespace: import them by name (`import { t } from \"@ljos/core\"`)",
+                );
+                return;
+            };
+            if it.import_kind == ImportOrExportKind::Type {
+                continue;
+            }
+            let imported = it.imported.name();
+            let local = it.local.name.as_str();
+            if !qml_front::names::CORE_GLOBALS.contains(&imported.as_str()) {
+                self.fault(
+                    it.imported.span(),
+                    format!("`@ljos/core` has no `{imported}`"),
+                );
+                continue;
+            }
+            if imported.as_str() == local {
+                if MacroKind::named(local).is_some() {
+                    self.macros.insert(local.to_string());
+                }
+                names.push(local.to_string());
+            } else {
+                names.push(format!("{}: {local}", quoted_key(imported.as_str())));
+            }
+        }
+        let text = if names.is_empty() {
+            ";".to_string()
+        } else {
+            format!("const {{ {} }} = __ljos_core;", names.join(", "))
+        };
+        self.replace_keeping_lines(import.span, text);
+    }
+
+    /// A macro call of a message, written where it is as the runtime's
+    /// call that gives the text. One inside another's message is part of
+    /// that one.
+    fn message(&mut self, callee: &Expression<'_>, span: Span) -> bool {
+        let Expression::Identifier(id) = callee else {
+            return false;
+        };
+        if !self.macros.contains(id.name.as_str())
+            || self.lowered.iter().any(|outer| outer.covers(span))
+        {
+            return false;
+        }
+        true
+    }
+
+    fn lower(&mut self, message: Result<MessageCall, MessageError>) {
+        match message {
+            Err(error) => self.fault(error.span, error.message),
+            Ok(call) => {
+                if let Some(lowering) = call.lowering() {
+                    for (span, text) in lowering {
+                        self.replace_keeping_lines(span, text);
+                    }
+                    self.lowered.push(call);
+                }
+            }
+        }
+    }
+
     /// A replacement on the first line of `span`, with its other lines kept
     /// as line breaks.
     fn replace_keeping_lines(&mut self, span: Span, text: String) {
@@ -440,6 +529,24 @@ impl<'s> Eraser<'s> {
 }
 
 impl<'a> Visit<'a> for Eraser<'_> {
+    fn visit_call_expression(&mut self, it: &CallExpression<'a>) {
+        if self.message(&it.callee, it.span)
+            && let Some(message) = message::call_message(it)
+        {
+            self.lower(message);
+        }
+        walk::walk_call_expression(self, it);
+    }
+
+    fn visit_tagged_template_expression(&mut self, it: &TaggedTemplateExpression<'a>) {
+        if self.message(&it.tag, it.span)
+            && let Some(message) = message::tagged_message(it)
+        {
+            self.lower(message);
+        }
+        walk::walk_tagged_template_expression(self, it);
+    }
+
     fn visit_declaration(&mut self, it: &Declaration<'a>) {
         if self.type_only(it) {
             let span = it.span();

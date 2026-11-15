@@ -7,6 +7,11 @@
 //! cannot compile yet. Which call a comment belongs to, and what counts as a
 //! written-out text, follow what `lupdate` of Qt 6.11 does with the same
 //! file, observed from outside.
+//!
+//! Ljós's own messages, `` t`…` `` and its family, are read by
+//! [`message::message_of`].
+
+pub mod message;
 
 use oxc_allocator::Allocator;
 use oxc_ast::ast::{Argument, BinaryExpression, CallExpression, Comment, Expression, Statement};
