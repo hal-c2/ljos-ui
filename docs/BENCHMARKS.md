@@ -5310,7 +5310,7 @@ cargo run --release -p ljos_lottie --example frame_time -- features/lottie/avata
 cargo run --release -p ljos_lottie --example frame_time -- features/lottie/avatars/hal-c2-genie.json
 ```
 
-The figures are medians of 3 runs. Ljós was 7eda0582, a release build with thin LTO, and Qt was
+The figures are medians of 3 runs. Ljós was 575eea15 (rebased from 7eda0582, where it was measured), a release build with thin LTO, and Qt was
 6.12.0. Both ran in headless sway with pixman, off-screen, on an AMD Ryzen AI Max+ 395. Load
 average was 3.0 to 12.6.
 
