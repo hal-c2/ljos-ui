@@ -151,3 +151,101 @@ fn a_member_named_as_a_font_s_off_a_font_is_kept_as_it_is() {
     );
     assert!(text.contains("border.width: bold ? 2 : 1"), "{text}");
 }
+
+#[test]
+fn qs_tr_is_a_tagged_template() {
+    let text = lowered(
+        "import QtQuick\nItem {\n    property int count: 3\n    property string name: \"Ada\"\n    property string open: qsTr(\"Open\")\n    property string of: qsTr(\"%1 of %2\").arg(name).arg(count)\n    property string files: qsTr(\"%n file(s)\", \"\", count)\n}\n",
+    );
+    assert_eq!(
+        text,
+        "pragma Scripts: JavaScript; import Ljos.Ui; import Ljos.Core\nItem {\n    property int count: 3\n    property string name: \"Ada\"\n    property string open: t`Open`\n    property string of: t`${name} of ${count}`\n    property string files: plural(count, { other: \"# file(s)\" })\n}\n"
+    );
+}
+
+#[test]
+fn contexts_ids_and_marked_texts_keep_what_they_say() {
+    let text = lowered(
+        "import QtQuick\nItem {\n    property string a: qsTr(\"Open\", \"menu\")\n    property string b: qsTranslate(\"Dialog\", \"Close\")\n    property string c: qsTrId(\"nav.home\")\n    property var d: QT_TR_NOOP(\"Later\")\n    property var e: QT_TRANSLATE_NOOP(\"Ctx\", \"x\")\n    property var f: QT_TRID_NOOP(\"id\")\n    property string g: qsTr(\"%Ln file(s) in %1\", \"disk\", 2).arg(a)\n}\n",
+    );
+    for line in [
+        "a: t({ message: \"Open\", context: \"menu\" })",
+        "b: t({ message: \"Close\", context: \"Dialog\" })",
+        "c: t({ id: \"nav.home\" })",
+        "d: msg`Later`",
+        "e: msg({ message: \"x\", context: \"Ctx\" })",
+        "f: msg({ id: \"id\" })",
+        "g: t({ message: plural(2, { other: `# file(s) in ${a}` }), context: \"disk\" })",
+    ] {
+        assert!(text.contains(line), "{line}\n{text}");
+    }
+}
+
+#[test]
+fn a_message_s_values_keep_their_own_lowering_and_lines() {
+    // A `Rectangle`'s `color` is its `fill`, inside a value too;
+    // a call over lines keeps its lines.
+    let text = lowered(
+        "import QtQuick\nRectangle {\n    id: r; Text {\n        text: qsTr(\"%1 and `${x}`\\\\\")\n            .arg(r.color)\n    }\n}\n",
+    );
+    assert!(
+        text.contains("text: t`${\nr.fill} and \\`\\${x}\\`\\\\`"),
+        "{text}"
+    );
+    assert_eq!(text.lines().count(), 7, "{text}");
+}
+
+#[test]
+fn a_message_that_cannot_be_written_out_keeps_the_file() {
+    for (source, why) in [
+        ("property string key: \"Open\"; property string shown: qsTr(key)", "`qsTr` of a value that is not written out"),
+        ("property string shown: qsTr(\"%2 %1\").arg(1).arg(2)", "not each filled"),
+        ("property string shown: qsTr(\"%1\").arg(1).arg(2)", "not each filled"),
+        ("property string shown: qsTr(\"%L1\").arg(1)", "not each filled"),
+        ("property string shown: qsTrId(\"a\").arg(1)", "`t({ id })`"),
+        ("property string shown: qsTranslate(\"C\", \"x\", \"d\")", "one context"),
+        ("property var f: qsTr", "read as a value"),
+        ("property string shown: qsTr(\"#%n\", \"\", 2)", "`plural` reads"),
+        ("property string t: \"x\"; property string shown: qsTr(\"x\")", "`t` is another name"),
+        ("function plural(n) { return n } property string shown: qsTr(\"%n\", \"\", 1)", "`plural` is another name"),
+    ] {
+        let why_kept = kept_for(&format!("import QtQuick\nItem {{\n    {source}\n}}\n"));
+        assert!(why_kept.contains(why), "{source}: {why_kept}");
+    }
+}
+
+#[test]
+fn a_word_in_a_string_or_a_comment_is_no_name() {
+    let text = lowered(
+        "import QtQuick\nItem {\n    // don't\n    property string a: \"can't\"\n    property string b: qsTr(\"Don't\")\n}\n",
+    );
+    assert!(text.contains("b: t`Don't`"), "{text}");
+}
+
+#[test]
+fn a_message_where_the_pass_cannot_see_every_name_stays_qt_s() {
+    // A delegate's row may have a role `t`; the file is lowered, and
+    // `qsTr` still runs.
+    let text = lowered(
+        "import QtQuick\nListView {\n    model: 3\n    delegate: Text { text: qsTr(\"Row\") }\n}\n",
+    );
+    assert!(text.contains("qsTr(\"Row\")"), "{text}");
+    assert!(!text.contains("Ljos.Core"), "{text}");
+}
+
+#[test]
+fn a_list_element_s_message_stays_qt_s() {
+    let text = lowered(
+        "import QtQuick\nItem {\n    property string a: qsTr(\"A\")\n    ListModel { ListElement { name: qsTr(\"B\") } }\n}\n",
+    );
+    assert!(text.contains("a: t`A`"), "{text}");
+    assert!(text.contains("name: qsTr(\"B\")"), "{text}");
+}
+
+#[test]
+fn a_local_named_qs_tr_is_the_script_s() {
+    let text = lowered(
+        "import QtQuick\nItem {\n    function f(qsTr) { return qsTr(\"x\") }\n}\n",
+    );
+    assert!(text.contains("return qsTr(\"x\")"), "{text}");
+}
