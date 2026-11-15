@@ -5348,13 +5348,14 @@ pi-zero profile (256 MiB, 20 % of one core):
 
 - Each file has a 24 fps clock, so a window showing all eight needs at most 24 new pictures a
   second if their ticks line up. Ljós shows 45–61 a second. Each player counts its ticks from
-  the moment it started: the dance players start while the component completes, and the genie
-  players start when their background parse answers. The two groups therefore tick out of
-  phase, and the window is repainted for each. Each repaint costs about 3 ms of CPU, so this
-  is cheap here, but a shared tick would halve the repaints.
+  the moment it started. The dance players all start while the component completes, but
+  each genie player starts when its own background parse answers. That gives up to five
+  phases (the dance group and each genie player), and the window is repainted for each,
+  until frame pacing caps it near 60 a second. Each repaint costs about 3 ms of CPU, so this
+  is cheap here, but a shared tick would bring the repaints down to 24 a second.
 - qml6 cannot keep up with 24 a second on the pi-zero profile: it is at the 20 % quota with
   15.7 pictures a second. Ljós stays at 8 % of a core.
-- Interpreting the files is negligible: under 7 µs a frame each, so 55 µs for all eight.
+- Interpreting the files is negligible: under 7 µs a frame each, so about 43 µs for all eight (4 × 3.9 + 4 × 6.8).
   Nearly all of the CPU goes to filling the paths in software.
 
 ### B23 (H2): the delegate track's baseline (2026-10-25)
