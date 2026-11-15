@@ -93,7 +93,7 @@ pub(super) struct Taken {
 /// method it changes it with. Chromium's own front ends each have a
 /// session of their own, which takes what it changed with it as it
 /// detaches; this one shares the view's session, which stays.
-const UNDONE: [(&str, &[(&str, &str)]); 11] = [
+const UNDONE: [(&str, &[(&str, &str)]); 13] = [
     (
         "Overlay.",
         &[
@@ -150,6 +150,20 @@ const UNDONE: [(&str, &[(&str, &str)]); 11] = [
         )],
     ),
     ("Debugger.", &[("Debugger.resume", "{}")]),
+    // The front end has workers and frames of the page attached to it,
+    // each held at its start until it says go on: with nobody left to
+    // say it, a worker the page starts after would never run.
+    (
+        "Target.setAutoAttach",
+        &[(
+            "Target.setAutoAttach",
+            r#"{"autoAttach":false,"waitForDebuggerOnStart":false,"flatten":true}"#,
+        )],
+    ),
+    (
+        "Target.setDiscoverTargets",
+        &[("Target.setDiscoverTargets", r#"{"discover":false}"#)],
+    ),
 ];
 
 /// Methods that override the user agent: the view's own override, if it
@@ -540,8 +554,9 @@ fn read_message(
             }
             n => u64::from(n),
         };
-        let total = length + message.as_ref().map_or(0, |m| m.len() as u64);
-        if total > LARGEST {
+        // A length near u64::MAX would wrap the sum: checked, not added.
+        let total = length.checked_add(message.as_ref().map_or(0, |m| m.len() as u64));
+        if total.is_none_or(|total| total > LARGEST) {
             return Err(io::Error::other("a DevTools message too large to hold"));
         }
         let mut mask = [0u8; 4];
@@ -634,6 +649,15 @@ mod tests {
     }
 
     #[test]
+    fn a_continuation_too_long_to_add_up_is_refused() {
+        let mut bytes = vec![TEXT, 1, b'{'];
+        bytes.extend([0x80, 127]);
+        bytes.extend(u64::MAX.to_be_bytes());
+        let mut reader = &bytes[..];
+        assert!(read_message(&mut reader, &mut |_| {}).is_err());
+    }
+
+    #[test]
     fn the_front_end_hears_its_answers_under_its_own_ids() {
         let inspector = Inspector {
             port: 0,
@@ -709,6 +733,7 @@ mod tests {
                 "Network.setCacheDisabled",
                 "Debugger.enable",
                 "Debugger.setBreakpointByUrl",
+                "Target.setAutoAttach",
                 "Runtime.enable",
                 "DOM.getDocument",
             ]
@@ -723,6 +748,7 @@ mod tests {
                 "Emulation.clearDeviceMetricsOverride",
                 "Network.setCacheDisabled",
                 "Debugger.resume",
+                "Target.setAutoAttach",
                 "Debugger.disable",
                 "Overlay.disable",
             ]

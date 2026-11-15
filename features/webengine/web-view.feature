@@ -1156,6 +1156,7 @@ Feature: A web page in a WebEngineView
 
   # A front end stops a page at a `debugger` statement: once it goes,
   # nobody is left to go on from there, so the page goes on by itself.
+  # A worker it would have held at its start runs too.
   @api-QtWebEngine.WebEngineView.devToolsView
   Scenario: A page stopped by its DevTools goes on once they are let go
     Given the text file "stops.html":
@@ -1185,10 +1186,16 @@ Feature: A web page in a WebEngineView
         }
         Timer {
           id: release; interval: 1500
-          onTriggered: { root.stopped = page.title; page.devToolsView = null }
+          onTriggered: { root.stopped = page.title; page.devToolsView = null; work.start() }
+        }
+        Timer {
+          id: work; interval: 1000
+          onTriggered: page.runJavaScript(
+            "const w = new Worker(URL.createObjectURL(new Blob([\"postMessage('worked')\"])));"
+            + "w.onmessage = e => document.title += ', ' + e.data")
         }
       }
       """
-    When 9 seconds pass
+    When 10 seconds pass
     Then the property "stopped" of "root" is "Stops"
-    And the property "title" of "page" is "went on"
+    And the property "title" of "page" is "went on, worked"
