@@ -2,7 +2,7 @@
 
 The two avatar animations of [hal-c2/lottie-animation](https://github.com/hal-c2/lottie-animation),
 `version2/`, at commit `1a9dbdae376677f8162ad04d8db12e3ab94484d7`, under its MIT licence (the
-same as Ljós's).
+same as Ljós's), whose notice is kept beside them in [`LICENSE`](LICENSE).
 
 | File | What it is |
 |---|---|
