@@ -950,6 +950,12 @@ impl Environment for QtBackend {
         Ok(())
     }
 
+    // Qt's profile has its storage once it is made: a view of it never
+    // waits for it.
+    fn profile_ready(&mut self, _storage_name: &str) -> Result<()> {
+        Ok(())
+    }
+
     // Qt always reads the machine's fonts.
     fn system_fonts(&mut self) -> Result<()> {
         Ok(())

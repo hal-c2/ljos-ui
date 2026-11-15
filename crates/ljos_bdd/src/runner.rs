@@ -149,6 +149,7 @@ pub fn run() -> bool {
                 // The wait is the process's, not the scenario's: one at a
                 // time (above) keeps a scenario's wait its own.
                 ljos_webengine::set_profile_wait(None);
+                ljos_webengine::hold_new_profiles(false);
                 let tags: Vec<String> = feature
                     .tags
                     .iter()

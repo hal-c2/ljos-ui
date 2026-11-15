@@ -67,6 +67,16 @@ fn profile_wait_changes(w: &mut LjosWorld, secs: f64) -> StepResult {
     profile_wait(w, secs)
 }
 
+#[given("a new profile's storage is held unready")]
+fn hold_new_profiles(w: &mut LjosWorld) -> StepResult {
+    w.each(|b| b.environment()?.hold_new_profiles())
+}
+
+#[when(regex = r#"^the storage of profile "([^"]*)" is ready$"#)]
+fn profile_ready(w: &mut LjosWorld, storage_name: String) -> StepResult {
+    w.each(|b| b.environment()?.profile_ready(&storage_name))
+}
+
 #[when("the application sets a log handler of its own")]
 fn own_log_handler(w: &mut LjosWorld) -> StepResult {
     w.each(|b| b.environment()?.own_log_handler())

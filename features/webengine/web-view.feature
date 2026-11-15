@@ -130,7 +130,9 @@ Feature: A web page in a WebEngineView
         }
       }
       """
-    When 2 seconds pass
+    When 1 second passes
+    And the storage of profile "Hidden" is ready
+    And 1 second passes
     Then the property "seen" of "view" is "hidden"
 
   # CEF never readies storage it cannot set up, so a view stops waiting
@@ -165,7 +167,8 @@ Feature: A web page in a WebEngineView
   # time while it waits fails no page.
   @ljos-only @api-QtWebEngine.WebEngineView.loadingChanged
   Scenario: A view already waiting for its new profile keeps its wait when the wait is set shorter
-    Given a web view waits 10 seconds for a new profile's storage
+    Given a new profile's storage is held unready
+    And a web view waits 10 seconds for a new profile's storage
     And the QML:
       """qml
       import QtQuick
@@ -179,9 +182,43 @@ Feature: A web page in a WebEngineView
       }
       """
     When the wait for a new profile's storage changes to 0 seconds
-    And 2 seconds pass
+    And 1 second passes
+    Then the log has no warning matching "was not ready"
+    And the property "seen" of "view" is "0:0"
+    When the storage of profile "Shortened" is ready
+    And 1 second passes
     Then the property "seen" of "view" is "0:0 2:200"
     And the log has no warning matching "was not ready"
+
+  # Its next page fails as its first did, for the same reason, and the
+  # view loads the page after the profile is ready.
+  @ljos-only @api-QtWebEngine.WebEngineView.loadingChanged @api-QtWebEngine.WebEngineView.url
+  Scenario: A view asked for its next page while its new profile is still not ready fails it too
+    Given a new profile's storage is held unready
+    And a web view waits 0 seconds for a new profile's storage
+    And the QML:
+      """qml
+      import QtQuick
+      import QtWebEngine
+      WebEngineView {
+        objectName: "view"; width: 200; height: 100
+        property string seen: ""
+        profile: WebEngineProfile { storageName: "StillNotReady"; offTheRecord: false }
+        url: Qt.resolvedUrl("page.html")
+        onLoadingChanged: info => seen += (seen ? " " : "") + info.status + ":" + info.errorCode
+        function next() { url = Qt.resolvedUrl("second.html") }
+      }
+      """
+    When 1 second passes
+    Then the property "seen" of "view" is "0:0 3:-2"
+    When the method "next" of "view" is called
+    And 1 second passes
+    Then the property "seen" of "view" is "0:0 3:-2 0:0 3:-2"
+    When the storage of profile "StillNotReady" is ready
+    And the method "next" of "view" is called
+    And 2 seconds pass
+    Then the property "seen" of "view" is "0:0 3:-2 0:0 3:-2 0:0 2:200"
+    And the property "title" of "view" is "Second Page"
 
   # A browser made already would run it on its blank page, and hand back 1.
   @api-QtWebEngine.WebEngineView.runJavaScript
