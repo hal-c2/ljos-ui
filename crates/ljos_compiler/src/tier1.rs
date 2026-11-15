@@ -1634,6 +1634,7 @@ impl<'p, 'a> Gen<'p, 'a> {
                     "qsTrId" => Builtin::QsTrId,
                     "QT_TR_NOOP" | "QT_TRID_NOOP" => Builtin::TrNoop,
                     "QT_TRANSLATE_NOOP" => Builtin::TranslateNoop,
+                    "__ljos_message" => Builtin::Message,
                     "Number" => Builtin::Number,
                     "String" => Builtin::String,
                     "Boolean" => Builtin::Boolean,
@@ -2037,6 +2038,7 @@ fn is_known_global(name: &str) -> bool {
             | "QT_TR_NOOP"
             | "QT_TRID_NOOP"
             | "QT_TRANSLATE_NOOP"
+            | "__ljos_message"
             | "arguments"
             | VALUE_AT
             | VALUE_IN

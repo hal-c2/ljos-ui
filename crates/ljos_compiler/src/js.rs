@@ -20,6 +20,8 @@ use oxc_ast::ast::{
     UnaryExpression, VariableDeclaration, VariableDeclarationKind,
 };
 use oxc_ast_visit::{Visit, walk};
+
+use crate::i18n::message::{self, MessageCall, MessageError};
 use oxc_parser::Parser;
 use oxc_semantic::{Scoping, SemanticBuilder};
 use oxc_span::{GetSpan, SourceType, Span};
@@ -200,6 +202,15 @@ pub(crate) struct Call {
     pub args: Vec<ArgValue>,
 }
 
+/// A call of a message macro (`` t`…` ``, `plural(…)`), its spans the
+/// script's.
+#[derive(Debug, Clone)]
+pub(crate) struct MessageSite {
+    pub span: Span,
+    pub callee: String,
+    pub message: Result<MessageCall, MessageError>,
+}
+
 /// Replace `span` of the script's text with `text`.
 #[derive(Debug, Clone)]
 pub(crate) struct Edit {
@@ -221,6 +232,10 @@ pub(crate) struct Analysis {
     /// `onClicked: function (mouse) { }` or `(mouse) => ...`.
     pub is_function_value: bool,
     pub calls: Vec<Call>,
+    /// The macros of `Ljos.Core`'s messages the script calls by a name
+    /// nothing in it declares, outermost first; one written inside another,
+    /// other than in a value it shows, is part of that one's message.
+    pub messages: Vec<MessageSite>,
     /// In order of appearance.
     pub type_members: Vec<TypeMember>,
     /// The chains a [`TypeMember`] can be on, outermost first.
@@ -598,6 +613,52 @@ struct Reader<'s, 'r> {
 }
 
 impl Reader<'_, '_> {
+    /// Keeps a macro's message, unless the name it is called by is
+    /// declared in the script, or the call is part of a message already
+    /// kept.
+    fn message_site(
+        &mut self,
+        callee: &Expression<'_>,
+        span: Span,
+        message: Result<MessageCall, MessageError>,
+    ) {
+        let Expression::Identifier(id) = callee else {
+            return;
+        };
+        let free = id
+            .reference_id
+            .get()
+            .is_some_and(|id| self.scoping.get_reference(id).symbol_id().is_none());
+        if !free || span.start < self.offset {
+            return;
+        }
+        let local = self.local(span);
+        // A broken outer call already says what is wrong with it.
+        let within = self.analysis.messages.iter().any(|site| {
+            site.span.start <= local.start
+                && local.end <= site.span.end
+                && site.message.as_ref().ok().is_none_or(|call| call.covers(local))
+        });
+        if within {
+            return;
+        }
+        let offset = self.offset;
+        let shift = |span: Span| {
+            Span::new(
+                span.start.saturating_sub(offset),
+                span.end.saturating_sub(offset),
+            )
+        };
+        let site = MessageSite {
+            span: local,
+            callee: id.name.to_string(),
+            message: message
+                .map(|call| call.map_spans(shift))
+                .map_err(|error| error.map_spans(shift)),
+        };
+        self.analysis.messages.push(site);
+    }
+
     /// A span of the wrapped program as one of the script's text.
     fn local(&self, span: Span) -> Span {
         Span::new(
@@ -1169,6 +1230,9 @@ impl<'a> Visit<'a> for Reader<'_, '_> {
     }
 
     fn visit_tagged_template_expression(&mut self, it: &TaggedTemplateExpression<'a>) {
+        if let Some(message) = message::tagged_message(it) {
+            self.message_site(&it.tag, it.span, message);
+        }
         self.not_values.push(it.tag.span());
         walk::walk_tagged_template_expression(self, it);
     }
@@ -1203,6 +1267,9 @@ impl<'a> Visit<'a> for Reader<'_, '_> {
     }
 
     fn visit_call_expression(&mut self, it: &CallExpression<'a>) {
+        if let Some(message) = message::call_message(it) {
+            self.message_site(&it.callee, it.span, message);
+        }
         self.not_values.push(it.callee.span());
         if let Some((callee, args)) = call_args(it)
             && let Expression::Identifier(id) = &it.callee

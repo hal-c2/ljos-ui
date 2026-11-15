@@ -143,6 +143,7 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
             edits.extend(js::completion_returns(text));
         }
         let mut plans: HashMap<(String, Vec<String>, bool), Plan> = HashMap::new();
+        let mut core_names: HashSet<String> = HashSet::new();
         let written: HashSet<&str> = analysis
             .free
             .iter()
@@ -204,6 +205,7 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                 && self.types.imports(qml_front::names::CORE)
             {
                 self.cores.insert(free.name.clone());
+                core_names.insert(free.name.clone());
             }
             if !refs.contains(&r) {
                 refs.push(r);
@@ -516,6 +518,7 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                 text: String::new(),
             });
         }
+        self.lower_messages(span, &analysis.messages, &core_names, &mut edits);
         let body = js::apply(text, &edits);
         let close = if body.contains("//") { "\n  " } else { "" };
         let wrapped = args.is_none() || analysis.uses_arguments;
@@ -953,6 +956,55 @@ fn attach((member, (module, name), object): &Attached) -> [js::Edit; 2] {
 /// attached reads', the last outermost. An optional call keeps its
 /// `this` (`OPTIONAL_CALL`). Where the chain waits after its first `?.`,
 /// the functions are `async` and the chain is waited for.
+impl<O: TypeOracle> Compiler<'_, '_, '_, O> {
+    /// Writes each call of a message macro of `Ljos.Core`'s as the call of
+    /// the runtime's that gives its text, or says why it cannot be.
+    fn lower_messages(
+        &mut self,
+        span: Span,
+        messages: &[js::MessageSite],
+        core_names: &HashSet<String>,
+        edits: &mut Vec<js::Edit>,
+    ) {
+        use crate::i18n::message::MessageErrorKind;
+        for site in messages.iter().filter(|site| core_names.contains(&site.callee)) {
+            match &site.message {
+                Err(error) => {
+                    let code = match error.kind {
+                        MessageErrorKind::Literal => Code::I18nLiteral,
+                        MessageErrorKind::Other => Code::I18nOther,
+                        MessageErrorKind::Shape => Code::Semantic,
+                    };
+                    self.diagnostics.push(Diagnostic::error(
+                        code,
+                        error.message.clone(),
+                        self.span(Span::new(
+                            span.start + error.span.start,
+                            span.start + error.span.end,
+                        )),
+                    ));
+                }
+                Ok(call) => {
+                    if let Some(translatable) = super::message_translatable(call) {
+                        self.translations.push(translatable);
+                    }
+                    let Some(lowering) = call.lowering() else {
+                        continue;
+                    };
+                    // The names the call's own text reads, its callee
+                    // among them, are the lowering's now.
+                    edits.retain(|edit| !call.covers(edit.span));
+                    edits.extend(
+                        lowering
+                            .into_iter()
+                            .map(|(span, text)| js::Edit { span, text }),
+                    );
+                }
+            }
+        }
+    }
+}
+
 fn chain_edits(
     chain: &js::OptionalChain,
     links: &[&js::Link],

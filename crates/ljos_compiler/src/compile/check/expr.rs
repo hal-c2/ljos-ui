@@ -590,6 +590,14 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                 let ret = value(self, name);
                 made(self, numbers(&["scalar", "x", "y", "z"]), ret)
             }
+            // The message macros: what a message is written with is the
+            // compiler's to hold (`i18n-literal`, `i18n-other`).
+            "t" | "plural" | "select" | "selectOrdinal" | "msg" => self.arena.function(Sig {
+                params: Box::new([]),
+                rest: Some(Ty::UNKNOWN),
+                ret: if name == "msg" { Ty::UNKNOWN } else { Ty::STRING },
+                guard: None,
+            }),
             "rgba" => colour(self, &["r", "g", "b"]),
             "hsla" => colour(self, &["h", "s", "l"]),
             "hsva" => colour(self, &["h", "s", "v"]),
@@ -2200,6 +2208,16 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                     web::awaited(&mut self.arena, ret)
                 } else {
                     ret
+                }
+            }
+            Expression::TaggedTemplateExpression(tagged) => {
+                let tag = self.expr(&tagged.tag, None);
+                for expression in &tagged.quasi.expressions {
+                    self.expr(expression, None);
+                }
+                match self.arena.kind(tag) {
+                    Kind::Function(sig) => sig.ret,
+                    _ => Ty::ERROR,
                 }
             }
             _ => Ty::ERROR,

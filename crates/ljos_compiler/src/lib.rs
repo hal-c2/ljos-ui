@@ -232,6 +232,11 @@ pub enum Code {
     TsconfigLts,
     /// The generated directory, `.ljos/`, cannot be written.
     LtsGenerated,
+    /// A part of a translated message that is not written out, which a
+    /// translator would never see: a form of `plural` held in a variable.
+    I18nLiteral,
+    /// The forms of `plural`, `select` or `selectOrdinal` with no `other`.
+    I18nOther,
 }
 
 impl Code {
@@ -279,6 +284,8 @@ impl Code {
             Code::LtsExportType => "lts-export-type",
             Code::TsconfigLts => "tsconfig-lts",
             Code::LtsGenerated => "lts-generated",
+            Code::I18nLiteral => "i18n-literal",
+            Code::I18nOther => "i18n-other",
         }
     }
 }

@@ -280,6 +280,7 @@ fn translatable(t: &Translatable) -> String {
         TranslationKind::Text => "tr",
         TranslationKind::Id => "trid",
         TranslationKind::NoOp => "noop",
+        TranslationKind::Message => "t",
     };
     let comment = t
         .comment
@@ -291,7 +292,20 @@ fn translatable(t: &Translatable) -> String {
         (true, None) => " n=?".into(),
         _ => String::new(),
     };
-    format!("{kind}({:?}, {:?}{plural}{comment})", t.context, t.source)
+    let id = t
+        .id
+        .as_deref()
+        .map(|id| format!(" id={id:?}"))
+        .unwrap_or_default();
+    let values = if t.placeholders.is_empty() {
+        String::new()
+    } else {
+        format!(" [{}]", t.placeholders.join(", "))
+    };
+    format!(
+        "{kind}({:?}, {:?}{id}{values}{plural}{comment})",
+        t.context, t.source
+    )
 }
 
 fn arg(arg: &Arg) -> String {

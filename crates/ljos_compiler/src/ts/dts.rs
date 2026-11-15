@@ -442,6 +442,7 @@ impl Api {
         out.push_str(WEB);
         if self.core {
             out.push_str(CORE_PRELUDE);
+            out.push_str(MESSAGES);
         }
         for ty in &self.types {
             self.write_type(&mut out, ty);
@@ -853,6 +854,8 @@ declare function hsva(h: number, s: number, v: number, a?: number): color;
 declare function url(url: string): url;
 declare const App: {
     readonly platform: { readonly os: string; readonly pluginName: string };
+    /** The UI language, which messages are translated into: one with `Qt.uiLanguage`. */
+    language: string;
     openUrlExternally(url: url): boolean;
     quit(): void;
 };
@@ -898,6 +901,57 @@ interface String {
     tint(tint: color): color;
 }
 ";
+
+/// The message macros of `Ljos.Core` (docs/I18N.md), as a QML file sees
+/// them and as `@ljos/core` exports them.
+const MESSAGES: &str = "
+/** A message `msg` made, for `t` to translate where it is shown. */
+interface Message {
+    readonly id: string;
+    readonly message: string;
+    readonly context?: string;
+    readonly values?: { readonly [name: string]: unknown };
+}
+/** Forms by plural category or `=N`; `other` is shown when none matches. */
+type PluralForms = { readonly other: string; readonly [form: string]: string };
+/** The text of a message in the UI language: ``t`Hello ${name}` ``. */
+declare function t(strings: TemplateStringsArray, ...values: readonly unknown[]): string;
+declare function t(message: Message | { readonly id: string; readonly message?: string; readonly context?: string; readonly comment?: string }): string;
+/** A message to translate where it is shown, with `t(message)`. */
+declare function msg(strings: TemplateStringsArray, ...values: readonly unknown[]): Message;
+declare function msg(descriptor: { readonly id?: string; readonly message?: string; readonly context?: string; readonly comment?: string }): Message;
+declare function plural(count: number, forms: PluralForms): string;
+declare function selectOrdinal(count: number, forms: PluralForms): string;
+declare function select(value: string, forms: { readonly other: string; readonly [choice: string]: string }): string;
+";
+
+/// What `@ljos/core` gives a TypeScript module: the messages, `later` and
+/// `App`. The value makers make the API's types, which a module does not
+/// see.
+pub fn core_module() -> String {
+    let mut out = String::from("// What `@ljos/core` gives a module (docs/DIALECT.md §4.3).\n");
+    let exported = |line: &str| {
+        line.strip_prefix("declare ")
+            .or_else(|| line.strip_prefix("interface ").map(|_| line))
+            .or_else(|| line.strip_prefix("type ").map(|_| line))
+            .map(|rest| format!("export {}{rest}", if rest == line { "" } else { "declare " }))
+    };
+    for line in MESSAGES.lines() {
+        out.push_str(&exported(line).unwrap_or_else(|| line.to_owned()));
+        out.push('\n');
+    }
+    out.push_str(
+        "export declare function later(f: (...args: readonly unknown[]) => unknown, ...args: readonly unknown[]): void;
+export declare const App: {
+    readonly platform: { readonly os: string; readonly pluginName: string };
+    language: string;
+    openUrlExternally(url: string): boolean;
+    quit(): void;
+};
+",
+    );
+    out
+}
 
 /// Whether `ty` is QtQml's `Component`, which the declarations make generic
 /// in what it creates.
