@@ -1526,7 +1526,9 @@ key is its context and its text, or its id.
   source text has one form, so the rewrite writes `other`, and the
   English catalogue's forms become a translation. Qt's count is a whole
   number (2.7 shows "2 file(s)") and `String(n)` is not, so the rewrite is
-  made when the count is an `int`, and otherwise keeps the file.
+  made when the count is known to be an `int` (an `int` property, an
+  integer literal, or an expression the checker types `int`); a `real`, a
+  `var`, a model's role or `a / b` keeps the file.
 - `qsTr(text, "disambiguation")` → `t({ message: "text", context:
   "disambiguation" })`; `qsTranslate("Ctx", "x")` → `t({ message: "x",
   context: "Ctx" })`; `qsTrId("id")` → `t({ id: "id" })`.
