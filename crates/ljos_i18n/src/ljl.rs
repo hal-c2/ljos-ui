@@ -484,7 +484,7 @@ mod tests {
         );
         c.insert_id("app-title", Translation::Text("Ljós".into()));
         c.insert_message("", "Hello {name}", "Halló {name}");
-        c.insert_message("menu", "Open", "Opna valmynd");
+        c.insert_message("menu", "Open", "Sýna valmynd");
         c
     }
 
@@ -542,7 +542,8 @@ mod tests {
         c.insert("Main", "Open", "", Translation::Text("Opna".into()));
         let bytes = write(&c).unwrap();
         assert_eq!(u32_at(&bytes, 4), Some(0));
-        assert_eq!(u32_at(&bytes, 16), Some(HEADER as u32));
+        // The texts table starts right after the short header.
+        assert_eq!(u32_at(&bytes, 20), Some(HEADER as u32));
     }
 
     #[test]
