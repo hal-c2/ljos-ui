@@ -2479,8 +2479,19 @@ wrap_life_span_handler! {
             let me = self.shared.sink.view();
             let opened =
                 crate::view::ask_new_window(&e, me, &url, destination, geometry, user_initiated)
-                    .filter(|view| same_profile(&e, &self.shared, *view))
-                    .and_then(|view| adopt(&e, view, Made::Opened).map(|a| (view, a)));
+                    .filter(|view| same_profile(&e, &self.shared, *view));
+            // The handler unloaded the view that asked: its browser closes
+            // once the turn ends, and a window made now might run its first
+            // script before that and see an opener, as CEF happened to order
+            // the two. The view goes to the address instead, a page with no
+            // opener, and the page that asked gets no window to reach.
+            if let Some(view) = opened
+                && crate::view::going(&e, me)
+            {
+                crate::view::open_address(&e, view, &url);
+                return 1;
+            }
+            let opened = opened.and_then(|view| adopt(&e, view, Made::Opened).map(|a| (view, a)));
             let (Some((view, adopted)), Some(window_info), Some(client), Some(settings)) =
                 (opened, window_info, client, settings)
             else {
