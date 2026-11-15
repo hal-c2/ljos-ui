@@ -347,8 +347,15 @@ mod held {
     pub(super) fn unless_drawn(image: &TextureImage) {
         let mut d = due();
         if started(&mut d) {
+            d.ask(image);
+        }
+    }
+
+    impl Due {
+        /// `image` goes unless a reader uploads it.
+        fn ask(&mut self, image: &TextureImage) {
             let wrapper = Arc::downgrade(&image.0);
-            let u = d.unshown.entry(image.0.id()).or_insert_with(|| Unshown {
+            let u = self.unshown.entry(image.0.id()).or_insert_with(|| Unshown {
                 due: None,
                 images: Vec::new(),
             });
@@ -358,6 +365,45 @@ mod held {
                 // A texture that just asked has missed no frame yet.
                 u.due = None;
             }
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use std::time::Duration;
+
+        use super::super::tests::{pixels, wrapper};
+        use super::*;
+        use crate::texture::fresh_pixels_id;
+
+        #[test]
+        fn a_texture_that_asks_late_has_a_frame_to_draw_the_pixels_in() {
+            let mut d = Due::default();
+            let id = fresh_pixels_id();
+            let shared = pixels();
+            let (early, _early_w) = wrapper(id, &shared);
+            let (late, _late_w) = wrapper(id, &shared);
+            let start = Instant::now();
+            d.ask(&early);
+            d.frame_ended(1, start);
+            // Another texture of the same source, made just before they go.
+            d.ask(&late);
+            assert!(
+                d.take_due(start + UNSHOWN + Duration::from_millis(1))
+                    .is_empty(),
+                "let go before a frame could draw the texture that just asked"
+            );
+            let ended = start + UNSHOWN;
+            d.frame_ended(1, ended);
+            assert!(
+                d.take_due(ended + UNSHOWN - Duration::from_millis(1))
+                    .is_empty()
+            );
+            assert_eq!(
+                d.take_due(ended + UNSHOWN).len(),
+                2,
+                "both wrappers go once a frame ended without them"
+            );
         }
     }
 
@@ -555,7 +601,7 @@ mod tests {
     /// One wrapper of pixels it may share with others, and how often it
     /// was told to let them go.
     #[derive(Debug)]
-    struct Wrapper {
+    pub(super) struct Wrapper {
         id: u64,
         pixels: Arc<Mutex<Option<Vec<u8>>>>,
         let_go: AtomicUsize,
@@ -585,7 +631,10 @@ mod tests {
         }
     }
 
-    fn wrapper(id: u64, pixels: &Arc<Mutex<Option<Vec<u8>>>>) -> (TextureImage, Arc<Wrapper>) {
+    pub(super) fn wrapper(
+        id: u64,
+        pixels: &Arc<Mutex<Option<Vec<u8>>>>,
+    ) -> (TextureImage, Arc<Wrapper>) {
         let w = Arc::new(Wrapper {
             id,
             pixels: Arc::clone(pixels),
@@ -594,7 +643,7 @@ mod tests {
         (TextureImage(w.clone()), w)
     }
 
-    fn pixels() -> Arc<Mutex<Option<Vec<u8>>>> {
+    pub(super) fn pixels() -> Arc<Mutex<Option<Vec<u8>>>> {
         Arc::new(Mutex::new(Some(vec![0; 4])))
     }
 
@@ -667,33 +716,6 @@ mod tests {
             "kept because the wrapper that asked first went"
         );
         assert!(shared.lock().unwrap().is_none());
-    }
-
-    #[test]
-    fn a_texture_that_asks_late_has_a_frame_to_draw_the_pixels_in() {
-        let maps = Reader::new(Kind::Maps);
-        let probes = Reader::new(Kind::Probes);
-        let shared = pixels();
-        let id = fresh_pixels_id();
-        let (early, _early_w) = wrapper(id, &shared);
-        let (late, late_w) = wrapper(id, &shared);
-        unless_drawn(&early);
-        drop(Frame::begin([&maps, &probes]));
-        std::thread::sleep(UNSHOWN - std::time::Duration::from_millis(300));
-        // Another texture of the same source, made just before they go.
-        unless_drawn(&late);
-        std::thread::sleep(std::time::Duration::from_millis(600));
-        assert_eq!(
-            late_w.let_go.load(Ordering::Acquire),
-            0,
-            "let go before a frame could draw the texture that just asked"
-        );
-        drop(Frame::begin([&maps, &probes]));
-        assert!(
-            let_go_soon(&late_w),
-            "kept after a frame ended without them"
-        );
-        drop((early, late));
     }
 
     #[test]
