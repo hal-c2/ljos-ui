@@ -94,6 +94,10 @@ pub(crate) struct Inner {
     /// handlers and `untrack`. A read creates a node only when this is
     /// non-zero, because only then is there a reader to depend on it.
     pub(crate) tracking: Cell<u32>,
+    /// The kept properties whose keeper is being told of a read, and
+    /// whether it let go meanwhile ([`Engine::stop_keeping`]): its maker is
+    /// out then, and is put back only if it did not.
+    pub(crate) kept_in_hand: RefCell<Vec<(ObjectId, PropIndex, bool)>>,
     /// Depth of completion hooks on the stack.
     completing: Cell<u32>,
     pub(crate) log: RefCell<LogState>,
@@ -312,6 +316,7 @@ impl Engine {
             root_context,
             registry: RefCell::new(Registry::new()),
             tracking: Cell::new(0),
+            kept_in_hand: RefCell::new(Vec::new()),
             completing: Cell::new(0),
             log: RefCell::new(LogState::default()),
             js: RefCell::new(None),
