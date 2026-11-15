@@ -83,13 +83,19 @@ Text {
 }
 ```
 
-It reads `POST names` and `content-type: application/json`: the header given wins over the one the body would set.
+Its first line is `POST` and the address: `names` on the desktop, which keeps the address as given, and in a browser the whole address `names` makes beside the page. The second reads `content-type: application/json`: the header given wins over the one the body would set.
 
 ## Stopping a request, and deadlines
 
 An `AbortController`'s `signal`, given as `signal`, stops the request when the controller aborts: the fetch rejects with the signal's reason, a `DOMException` named `AbortError` unless the script gave its own. `AbortSignal.timeout(ms)` is a signal that aborts by itself after `ms` milliseconds, with a `TimeoutError`, and `AbortSignal.any([...])` aborts with the first of several.
 
-```qml
+The example asks for `slow.json`, a file beside it:
+
+```json file=slow.json group=abort
+{ "answer": "too late" }
+```
+
+```qml group=abort
 import Ljos.Ui
 import Ljos.Core
 
