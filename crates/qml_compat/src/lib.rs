@@ -398,6 +398,7 @@ fn lower_parsed(
         changed: Vec::new(),
         requests: Vec::new(),
         messages: messages::Messages::default(),
+        filled: messages::Filled::default(),
         quoted: parsed
             .comments
             .iter()
@@ -413,6 +414,7 @@ fn lower_parsed(
             let mut changes = pass.changes;
             changes.sort_by_key(|c| c.range.start);
             changes.dedup();
+            messages::fill(source, &mut changes, &pass.filled);
             if let Some(at) = into_requests(&changes, &pass.requests) {
                 return kept(Cause::Xhr(Xhr::Moved), at);
             }
@@ -599,6 +601,8 @@ struct Pass<'s> {
     requests: Vec<Range<usize>>,
     /// The file's translated texts, written as Ljós's.
     messages: messages::Messages,
+    /// The values the file's messages say in another place.
+    filled: messages::Filled,
     /// Where the file's strings and comments are: a word there is no name.
     quoted: Vec<Range<usize>>,
 }
@@ -638,6 +642,7 @@ impl<'s> Pass<'s> {
             self.scope.modules.names(Ljos::Core);
         }
         self.changes.extend(messages.changes);
+        self.filled = messages.filled;
         Ok(())
     }
 

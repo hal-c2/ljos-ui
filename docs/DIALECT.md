@@ -1569,11 +1569,17 @@ it, the file is kept; where the pass cannot see every name (an object of a
 type it does not know, or a delegate, whose row's roles come first), every
 `qsTr` of the file stays Qt's and still runs, and `ljos migrate` keeps
 `pragma Scripts: JavaScript` for it. A `ListElement`'s `qsTr` stays too,
-with its `ListModel`. `%1` with no `.arg` is text, as Qt shows it; `%L1`,
-`qsTrId` with a count or `.arg`, and `qsTranslate` with a disambiguation
-beside its context keep the file, since `t` does not say them yet; a
-counted text with `#`, `{` or `}` keeps it too, since `plural` reads them.
-A count beside a context is `t({ message: plural(n, { … }), context })`.
+with its `ListModel`. A `%N` no `.arg` fills is text, as Qt shows it,
+and a `%N` written twice is its value twice. An `.arg` with no `%N` left
+keeps the file, as does `%0`, which Qt's documentation does not number.
+A value the message says in another place than where it is written (the
+count of `%n`, or a value `.arg` moves) is written there with what the pass
+changes in it; one that spans lines keeps the file, since the move would
+move the lines after it. `%L1`, `qsTrId` with a count or `.arg`, and
+`qsTranslate` with a disambiguation beside its context keep the file,
+since `t` does not say them yet; a counted text with `#`, `{` or `}` keeps
+it too, since `plural` reads them. A count beside a context is
+`t({ message: plural(n, { … }), context })`.
 
 DECISION: `qt-tr` holds in a file whose scripts are typed; under
 `pragma Scripts: JavaScript` the file is still Qt's JavaScript (§5).
