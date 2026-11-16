@@ -119,6 +119,32 @@ Feature: ljos migrate writes qsTr as a tagged template
     When the author runs "ljos migrate ."
     Then the command's output mentions "kept ./Main.qml:5:"
 
+  Scenario: A plain value reordered beside one that changes something keeps its file
+    `.arg(n).arg(n++)` reads `n` before it grows; written the other way round
+    it would read it after.
+    Given the file "Main.qml":
+      """qml
+      import QtQuick
+      Item {
+        property int n: 1
+        property string shown: qsTr("%2 %1").arg(n).arg(n++)
+      }
+      """
+    When the author runs "ljos migrate ."
+    Then the command's output mentions "kept ./Main.qml:4:"
+
+  Scenario: A length declared as a real number is no count
+    Given the file "Main.qml":
+      """qml
+      import QtQuick
+      Item {
+        Item { id: r; property real length: 2.5 }
+        property string files: qsTr("%n file(s)", "", r.length)
+      }
+      """
+    When the author runs "ljos migrate ."
+    Then the command's output mentions "kept ./Main.qml:4:"
+
   Scenario: A text marked for later keeps its file
     Given the file "Main.qml":
       """qml

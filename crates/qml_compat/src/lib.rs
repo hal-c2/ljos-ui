@@ -2385,11 +2385,17 @@ impl Script<'_, '_> {
                     Expression::Identifier(id)
                         if matches!(self.meaning(&id.name, id.span.start), Meaning::Id(_))
                 );
-                name == "length"
-                    || int(&[
-                        qt(self.ty(&member.object), name),
-                        on_id.then(|| declared(name)).flatten(),
-                    ])
+                let says = [
+                    qt(self.ty(&member.object), name),
+                    on_id.then(|| declared(name)).flatten(),
+                ];
+                // An array's or a string's `length` is whole; one a type
+                // or a declaration says is not an `int` is not.
+                if name == "length" {
+                    !says.contains(&Some(false))
+                } else {
+                    int(&says)
+                }
             }
             _ => false,
         }

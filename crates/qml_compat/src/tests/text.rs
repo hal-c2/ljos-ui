@@ -260,11 +260,19 @@ fn a_message_that_cannot_be_written_out_keeps_the_file() {
             "not a name, a member of one or a literal",
         ),
         (
+            "property int n: 1; property string shown: qsTr(\"%2 %1\").arg(n).arg(n++)",
+            "not a name, a member of one or a literal",
+        ),
+        (
             "property string shown: qsTr(\"%1 %1\").arg(Date.now())",
             "not a name, a member of one or a literal",
         ),
         (
             "property string shown: qsTr(\"%n\", \"\", 2.5)",
+            "not known to be an `int`",
+        ),
+        (
+            "Item { id: r; property real length: 2.5 } property string shown: qsTr(\"%n\", \"\", r.length)",
             "not known to be an `int`",
         ),
         (
