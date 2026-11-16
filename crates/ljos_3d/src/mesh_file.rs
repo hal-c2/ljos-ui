@@ -10,6 +10,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, Weak};
 
+use crate::custom::{MORPH_MAX, MorphTexels, Morphing};
 use crate::geometry::{ComponentType, CustomGeometry, PrimitiveType, Semantic};
 use crate::math::Vec3;
 
@@ -81,41 +82,128 @@ pub struct MeshFile {
     pub joints: u32,
     pub morph_targets: Option<MorphTargets>,
     morphed: Arc<Mutex<Morphed>>,
+    texels: Arc<Mutex<HashMap<usize, Weak<MorphTexels>>>>,
 }
 
-/// Geometries as morphed by a part and its targets' weights,
+/// Geometries as morphed by a part, its targets' weights and how far,
 /// so that a model whose weights hold still keeps one upload. Weak: what no
 /// scene holds any more goes.
-type Morphed = HashMap<(usize, Vec<u32>), Weak<CustomGeometry>>;
+type Morphed = HashMap<(usize, Vec<u32>, Morphing), Weak<CustomGeometry>>;
 
 impl MeshFile {
     /// Part `which`'s geometry gone towards the file's targets by `weights`,
     /// one per target. What a `MorphTarget` says it is of changes nothing, as
     /// in Qt 6.11: a shape goes towards all its mesh has of a target.
-    pub fn morphed(&self, which: usize, weights: &[f32]) -> Arc<CustomGeometry> {
+    /// `morphing` says how far: a program that goes towards the targets
+    /// itself is handed the part as the file has it.
+    pub fn morphed(
+        &self,
+        which: usize,
+        weights: &[f32],
+        morphing: Morphing,
+    ) -> Arc<CustomGeometry> {
         let part = &self.parts[which];
         let Some(morphs) = &self.morph_targets else {
             return part.geometry.clone();
         };
-        if weights.iter().all(|weight| *weight == 0.0) {
+        if morphing == Morphing::Itself || weights.iter().all(|weight| *weight == 0.0) {
             return part.geometry.clone();
         }
-        let key = (which, weights.iter().map(|w| w.to_bits()).collect());
+        let key = (
+            which,
+            weights.iter().map(|w| w.to_bits()).collect(),
+            morphing,
+        );
         let mut made = self.morphed.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(geometry) = made.get(&key).and_then(Weak::upgrade) {
             return geometry;
         }
         made.retain(|_, geometry| geometry.strong_count() > 0);
-        let geometry = Arc::new(morph_part(part, morphs, weights));
+        let geometry = Arc::new(morph_part(part, morphs, weights, morphing));
         made.insert(key, Arc::downgrade(&geometry));
         geometry
     }
+
+    /// What part `which`'s targets have of each of its vertices, for a
+    /// program that goes towards them itself; `None` where the file has no
+    /// targets. Where a target has nothing of an attribute, it has the
+    /// vertex's own.
+    pub fn texels(&self, which: usize) -> Option<Arc<MorphTexels>> {
+        let morphs = self.morph_targets.as_ref()?;
+        let mut made = self.texels.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(texels) = made.get(&which).and_then(Weak::upgrade) {
+            return Some(texels);
+        }
+        let texels = Arc::new(part_texels(&self.parts[which], morphs));
+        made.insert(which, Arc::downgrade(&texels));
+        Some(texels)
+    }
+}
+
+/// A texture row is this many vertices: within what WebGL 2 promises.
+const TEXEL_ROW: usize = 1024;
+
+fn part_texels(part: &Part, morphs: &MorphTargets) -> MorphTexels {
+    let source = &part.geometry;
+    let stride = source.stride().max(1);
+    let data = source.vertex_data();
+    let count = (morphs.count as usize).min(MORPH_MAX);
+    let vertices = part.corners.len();
+    let width = vertices.clamp(1, TEXEL_ROW);
+    let height = vertices.div_ceil(width).max(1);
+    let per_layer = width * height * 4;
+    let mut texels = vec![0.0; per_layer * (2 * count).max(1)];
+    let file_layer = morphs.width as usize * morphs.width as usize;
+    let own = |semantic, vertex: usize| -> [f32; 3] {
+        let mut out = [0.0; 3];
+        let Some(at) = source.attributes().iter().find(|a| a.semantic == semantic) else {
+            return out;
+        };
+        for (n, out) in out.iter_mut().enumerate() {
+            let i = vertex * stride + at.offset + n * 4;
+            if let Some(b) = data.get(i..i + 4) {
+                *out = f32::from_le_bytes([b[0], b[1], b[2], b[3]]);
+            }
+        }
+        out
+    };
+    for (kind, (semantic, name)) in [
+        (Semantic::Position, "attr_pos"),
+        (Semantic::Normal, "attr_norm"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let attribute = morphs.attributes.iter().position(|a| a == name);
+        for t in 0..count {
+            let layer = (2 * t + kind) * per_layer;
+            for (vertex, corner) in part.corners.iter().enumerate() {
+                let from_file = attribute.and_then(|a| {
+                    let texel =
+                        ((a * morphs.count as usize + t) * file_layer + *corner as usize) * 4;
+                    morphs.texels.get(texel..texel + 3)
+                });
+                let value = match from_file {
+                    Some(v) => [v[0], v[1], v[2]],
+                    None => own(semantic, vertex),
+                };
+                let at = layer + vertex * 4;
+                texels[at..at + 3].copy_from_slice(&value);
+            }
+        }
+    }
+    MorphTexels::new(count as u32, width as u32, height as u32, texels)
 }
 
 /// `part`'s geometry gone from its own values towards what each target has
 /// instead, by that target's weight: the file holds values, not changes, a
 /// layer per target of its first attribute, then of its next.
-fn morph_part(part: &Part, morphs: &MorphTargets, targets: &[f32]) -> CustomGeometry {
+fn morph_part(
+    part: &Part,
+    morphs: &MorphTargets,
+    targets: &[f32],
+    morphing: Morphing,
+) -> CustomGeometry {
     let source = &part.geometry;
     let stride = source.stride().max(1);
     let mut data = source.vertex_data().to_vec();
@@ -132,6 +220,9 @@ fn morph_part(part: &Part, morphs: &MorphTargets, targets: &[f32]) -> CustomGeom
             let Some((semantic, numbers)) = morph_layer(name) else {
                 continue;
             };
+            if morphing == Morphing::Facing && semantic != Semantic::Normal {
+                continue;
+            }
             let Some(at) = offset_of(semantic) else {
                 continue;
             };
@@ -695,6 +786,7 @@ fn read_mesh(bytes: &[u8], base: usize, version: u16) -> Result<MeshFile, MeshFi
         joints,
         morph_targets,
         morphed: Arc::default(),
+        texels: Arc::default(),
     })
 }
 

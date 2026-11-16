@@ -234,6 +234,9 @@ pub struct DefaultMaterial {
     pub index_of_refraction: f32,
     pub blend_mode: BlendMode,
     pub vertex_colors: bool,
+    /// The highlight is the light's colour alone, not the light's in the
+    /// surface's own, as the bars and points of a 3D graph have it.
+    pub specular_in_light_color: bool,
 }
 
 /// The maps of a [`DefaultMaterial`] past its diffuse one; each only once
@@ -269,6 +272,7 @@ impl Default for DefaultMaterial {
             index_of_refraction: 1.45,
             blend_mode: BlendMode::SourceOver,
             vertex_colors: false,
+            specular_in_light_color: false,
         }
     }
 }
@@ -540,7 +544,8 @@ impl Material {
                         || see_through(&m.maps.base_color)
                 }
                 AlphaMode::Blend => true,
-                AlphaMode::Opaque | AlphaMode::Mask => false,
+                // The colour's alpha cuts it out; its opacity still blends.
+                AlphaMode::Opaque | AlphaMode::Mask => m.opacity < 1.0 || m.maps.opacity.is_some(),
             },
             Material::Custom(m) => m.blends(),
         }

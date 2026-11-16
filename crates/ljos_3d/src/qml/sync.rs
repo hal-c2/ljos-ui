@@ -25,10 +25,11 @@ use super::build::{
     transform,
 };
 use super::{Built, Prop3d as P, SceneSource, Type3d as T, defaults as d};
+use crate::custom::{Morphing, Morphs};
 use crate::geometry::CustomGeometry;
 use crate::instancing::Skin;
 use crate::math::Mat4;
-use crate::scene::{Environment, MeshSource, Model, Node, NodeId, NodeKind, Scene};
+use crate::scene::{Environment, Material, MeshSource, Model, Node, NodeId, NodeKind, Scene};
 
 /// A part of a view read on its own: what a host tracks apart.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -233,23 +234,27 @@ fn part<S: SceneSource>(s: &S, view: S::Object, obj: S::Object) -> Option<Part<S
             .map(|t| num(s, t, P::Weight, d::morph_target::WEIGHT))
             .collect();
         let parts = file.parts.iter().enumerate();
-        let parts = parts.filter(|(_, p)| !p.empty);
-        add_parts(
-            s,
-            view,
-            obj,
-            &mut part,
-            parts.map(|(i, _)| (i, file.morphed(i, &weights))),
-        );
+        let parts = parts.filter(|(_, p)| !p.empty).map(|(i, _)| i);
+        // A custom material's vertex code says how much of the targets it
+        // leaves to the mesh and how much it reads itself.
+        add_parts(s, view, obj, &mut part, parts, |i, material| {
+            let Material::Custom(custom) = material else {
+                return file.morphed(i, &weights, Morphing::All);
+            };
+            let morphing = custom.program.morphing();
+            if morphing == Morphing::Itself {
+                custom.morphs = file.texels(i).map(|texels| Morphs {
+                    texels,
+                    weights: weights.clone(),
+                });
+            }
+            file.morphed(i, &weights, morphing)
+        });
     }
     if is_model && let Some(g) = given(s, obj) {
-        add_parts(
-            s,
-            view,
-            obj,
-            &mut part,
-            g.parts().iter().cloned().enumerate(),
-        );
+        add_parts(s, view, obj, &mut part, 0..g.parts().len(), |i, _| {
+            g.parts()[i].clone()
+        });
     }
     // A loaded model's nodes are the loader's first children. Each mesh is
     // named by the Model the loader made for it.
@@ -279,7 +284,8 @@ fn add_parts<S: SceneSource>(
     view: S::Object,
     obj: S::Object,
     part: &mut Part<S::Object>,
-    parts: impl Iterator<Item = (usize, Arc<CustomGeometry>)>,
+    parts: impl Iterator<Item = usize>,
+    mesh_of: impl Fn(usize, &mut Material) -> Arc<CustomGeometry>,
 ) {
     let materials = s.objects(obj, P::Materials);
     let own = &part.nodes[0].1;
@@ -289,13 +295,14 @@ fn add_parts<S: SceneSource>(
         own.receives_shadows,
         own.instancing.clone(),
     );
-    for (i, mesh) in parts {
+    for i in parts {
         // "If the number of materials is less than the sub-meshes, the
         // last material in the list is used for subsequent sub-meshes."
         let m = materials.get(i).or(materials.last()).copied();
-        let Some(material) = material_of(s, view, m, shown) else {
+        let Some(mut material) = material_of(s, view, m, shown) else {
             continue;
         };
+        let mesh = mesh_of(i, &mut material);
         let mut n = Node::new(NodeKind::Model(Model {
             mesh: MeshSource::Custom(mesh),
             material,
