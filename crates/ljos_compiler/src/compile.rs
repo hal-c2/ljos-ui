@@ -2034,12 +2034,20 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
     /// for translation has to be the same text to the tool that lists them
     /// and to the running program, and `qsTr` has to be the file's own (it
     /// carries the context), not the global one a look-up at run time finds.
+    /// So are the message macros of `Ljos.Core`, whose messages are lowered
+    /// as the file is compiled.
     fn lookup(&self, name: &str, offset: u32) -> Option<Resolution<O::Type>> {
         let mut resolution = self.names.lookup(name, offset)?;
-        if crate::js::TRANSLATIONS.contains(&name)
-            && resolution.aimed.is_none()
+        let global = if crate::js::TRANSLATIONS.contains(&name) {
+            names::global(name)
+        } else if crate::i18n::message::MACROS.contains(&name) && self.types.imports(names::CORE) {
+            Some(names::Global::Core)
+        } else {
+            None
+        };
+        if resolution.aimed.is_none()
             && matches!(resolution.target, Some(Target::Context { .. }))
-            && let Some(global) = names::global(name)
+            && let Some(global) = global
         {
             resolution.roles.clear();
             resolution.target = Some(Target::Global(global));

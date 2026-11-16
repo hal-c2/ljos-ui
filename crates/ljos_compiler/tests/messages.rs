@@ -110,3 +110,47 @@ Item {
     assert_eq!(message.source, "{0}");
     assert!(file.js.source.contains("select("), "{}", file.js.source);
 }
+
+#[test]
+fn a_choice_in_a_delegate_is_a_form_though_a_model_role_could_have_its_name() {
+    let (file, diagnostics) = compile(
+        r##"import QtQuick
+import Ljos.Core
+ListView {
+    model: 3
+    delegate: Text {
+        property int n: 2
+        text: t`${plural(n, { one: "# file", other: "# files" })}`
+    }
+}
+"##,
+    );
+    assert_eq!(diagnostics, []);
+    let message = file
+        .translations
+        .iter()
+        .find(|t| t.kind == TranslationKind::Message)
+        .unwrap_or_else(|| panic!("{:?}\n{}", file.translations, file.js.source));
+    assert_eq!(message.source, "{n, plural, one {# file} other {# files}}");
+}
+
+#[test]
+fn a_call_of_a_choice_the_document_binds_is_no_message_and_hides_none() {
+    let (file, diagnostics) = compile(
+        r##"import QtQuick
+import Ljos.Core
+Item {
+    function select(text) { return text }
+    property string label: select(t`Hi`)
+}
+"##,
+    );
+    assert_eq!(diagnostics, []);
+    let sources: Vec<&str> = file
+        .translations
+        .iter()
+        .filter(|t| t.kind == TranslationKind::Message)
+        .map(|t| t.source.as_str())
+        .collect();
+    assert_eq!(sources, ["Hi"]);
+}

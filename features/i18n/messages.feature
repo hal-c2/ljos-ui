@@ -435,6 +435,26 @@ Feature: Messages: translated text written as a tagged template
       When the UI language is set to "is"
       Then the property "label" of "root" is "Member (admin)"
 
+    Scenario: A count in a delegate is a form of its message, though the model could have a role of its name
+      Given the QML:
+        """qml
+        import Ljos.Ui
+        import Ljos.Core
+        Item {
+          Repeater {
+            model: 1
+            delegate: Item {
+              objectName: "row"
+              property int count: 2
+              property string files: t`${plural(count, { one: "# file", other: "# files" })}`
+            }
+          }
+        }
+        """
+      Then the property "files" of "row" is "2 files"
+      When the UI language is set to "is"
+      Then the property "files" of "row" is "2 skrár"
+
     Scenario: A message made where t is given it is lowered on its own
       Given the QML:
         """qml
