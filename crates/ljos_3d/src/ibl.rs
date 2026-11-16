@@ -570,10 +570,15 @@ impl Ibl {
                 });
             }
         }
+        // Qt sums what a probe gives all round over a quarter as many ways
+        // as a side is across, each read of the cube's first level: fewer
+        // ways, and no smaller level to even them out, than a light probe
+        // has, and a surface lit by it is as bright as those few say.
         for face in 0..6 {
             params.push(Params {
                 face,
-                samples: IRRADIANCE_SAMPLES,
+                samples: (across / 4).max(1),
+                last_level: 0.0,
                 ..base
             });
         }
