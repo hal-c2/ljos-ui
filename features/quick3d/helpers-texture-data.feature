@@ -96,6 +96,42 @@ Feature: A texture made of data
       | R8      | Uint8Array   | 255            | #ff0000 |
       | R32F    | Float32Array | 1              | #ff0000 |
 
+  # The colours are what Qt 6.11 paints of the same numbers, as
+  # hal-c2/ljos-web measured them (tests/quick3d.spec.js, data3d).
+  Scenario Outline: Fractions a DefaultMaterial reads are brought to light as Qt brings them
+    Given the QML:
+      """qml
+      import QtQuick
+      import QtQuick3D
+      import QtQuick3D.Helpers
+      Rectangle {
+        width: 200; height: 200; color: "black"
+        View3D {
+          anchors.fill: parent
+          OrthographicCamera { z: 600 }
+          Model {
+            source: "#Rectangle"; scale: Qt.vector3d(2, 2, 1)
+            materials: DefaultMaterial {
+              lighting: DefaultMaterial.NoLighting
+              diffuseMap: Texture {
+                textureData: ProceduralTextureData {
+                  width: 1; height: 1; format: TextureData.RGBA32F
+                  textureData: new Float32Array([<values>]).buffer
+                }
+              }
+            }
+          }
+        }
+      }
+      """
+    Then the pixel at 100, 100 of the window is within 3 of "<colour>"
+
+    Examples:
+      | values            | colour  |
+      | 2, 0.5, 0.05, 1   | #ff8007 |
+      | 0.1, 0.02, 0.8, 1 | #1600cc |
+      | 0.2, 0.2, 0.2, 1  | #323232 |
+
   Scenario: A compressed format is reported
     When the property "format" of "data" is set to 9
     Then the log has a warning matching "compressed"

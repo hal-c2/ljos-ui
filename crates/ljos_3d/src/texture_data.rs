@@ -220,7 +220,9 @@ pub fn rgbe(r: f32, g: f32, b: f32) -> [u8; 4] {
     // max = m * 2^e with m in [0.5, 1).
     let e = max.log2().floor() as i32 + 1;
     let scale = 256.0 / 2f32.powi(e);
-    let byte = |c: f32| (c * scale).min(255.0) as u8;
+    // The nearest mantissa, not the one below: a small channel beside a
+    // bright one has few steps, and cut down it is a step darker.
+    let byte = |c: f32| (c * scale).round().min(255.0) as u8;
     [byte(r), byte(g), byte(b), (e + 128).clamp(0, 255) as u8]
 }
 
@@ -260,6 +262,12 @@ mod tests {
         let [r, g, b] = decode(rgbe(4.0, 1.0, 0.25));
         assert!((r - 4.0).abs() < 0.04 && (g - 1.0).abs() < 0.04 && (b - 0.25).abs() < 0.04);
         assert_eq!(rgbe(0.0, 0.0, 0.0), [0; 4]);
+    }
+
+    #[test]
+    fn a_small_channel_is_the_nearest_step() {
+        // Beside 2, a step is 1/64: 0.2 is nearer 13 steps than 12.
+        assert_eq!(rgbe(2.0, 0.2, 0.0)[1], 13);
     }
 
     #[test]
