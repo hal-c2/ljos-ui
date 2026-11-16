@@ -11,6 +11,7 @@
 //! Ljós's own messages, `` t`…` `` and its family, are read by
 //! [`message::message_of`].
 
+pub mod extract;
 pub mod message;
 
 use oxc_allocator::Allocator;
