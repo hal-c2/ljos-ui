@@ -2515,19 +2515,22 @@ fn held(plan: Plan) -> Plan {
     let Some(Param { name, arg }) = &plan.param else {
         return plan;
     };
-    let (component, fallback) = match arg {
+    let (component, fallback, core) = match arg {
         Arg::Context {
             component,
             fallback,
             ..
         } => match fallback.as_deref() {
-            Some(Arg::Property { object, .. }) => (*component, Some(*object)),
+            Some(Arg::Property { object, .. }) => (*component, Some(*object), false),
             // An outer context is on the way out from the inner one.
-            None | Some(Arg::Context { .. }) => (*component, None),
+            None | Some(Arg::Context { .. }) => (*component, None, false),
+            // A macro's name a model's role may have: the role is written,
+            // and without one the script has the macro to change.
+            Some(Arg::Core(_)) => (*component, None, true),
             // An id or a type: nothing an assignment can change.
             Some(_) => return plan,
         },
-        Arg::Dynamic(_) => (None, None),
+        Arg::Dynamic(_) => (None, None, false),
         _ => return plan,
     };
     let through = format!("$w_{name}");
@@ -2539,6 +2542,7 @@ fn held(plan: Plan) -> Plan {
                 component,
                 name: name.clone(),
                 fallback,
+                core,
             },
         }),
         rewrite: Some(through),

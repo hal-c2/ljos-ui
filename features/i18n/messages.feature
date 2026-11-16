@@ -581,3 +581,43 @@ Feature: Messages: translated text written as a tagged template
       And the property "shown" of "row" is "Open"
       When the UI language is set to "is"
       Then the property "shown" of "row" is "Opna"
+
+    Scenario: A delegate that assigns to a name of a macro writes the model's role of that name
+      Given the QML:
+        """qml
+        import Ljos.Ui
+        import Ljos.Core
+        Item {
+          Repeater {
+            model: ListModel { ListElement { select: "chosen" } }
+            delegate: Item {
+              objectName: "row"
+              property string picked: select
+              function choose() { select += " again" }
+              Component.onCompleted: choose()
+            }
+          }
+        }
+        """
+      Then the property "picked" of "row" is "chosen again"
+
+    Scenario: A delegate that may assign to a name of a macro its model has no role of reads Ljos.Core's macro
+      Given the QML:
+        """qml
+        import Ljos.Ui
+        import Ljos.Core
+        Item {
+          Repeater {
+            model: 1
+            delegate: Item {
+              objectName: "row"
+              function kindOfT(never: bool) {
+                if (never) t = t
+                return typeof t
+              }
+              property string kind: kindOfT(false)
+            }
+          }
+        }
+        """
+      Then the property "kind" of "row" is "function"

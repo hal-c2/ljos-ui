@@ -2824,6 +2824,7 @@ impl Engine {
                 component,
                 name,
                 fallback,
+                core: from_core,
             } => {
                 let ctx = match component {
                     Some(c) => inst.find(*c).map_or(inst.context, |i| i.context),
@@ -2835,6 +2836,7 @@ impl Engine {
                     Some(Err(v)) => held(self.to_js(&v)),
                     None => match fallback.and_then(|r| inst.resolve(r)) {
                         Some(o) => self.to_js(&Value::Object(o)),
+                        None if *from_core => held(core(s, name)),
                         None if has_global(s, name) => held(global(s, name)),
                         // Nothing has the name: there is nothing to assign
                         // to, and reading it is the error it is anywhere.
