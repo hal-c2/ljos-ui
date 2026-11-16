@@ -35,11 +35,19 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
         let Some(instead) = instead(name) else {
             return false;
         };
-        self.report(
-            Code::QtTr,
-            format!("`{name}` is Qt's: use {instead} (Ljos.Core)"),
-            span,
-        );
+        if self.listed > 0 {
+            return false;
+        }
+        // A marked text has no rewrite: Qt's value is the string and
+        // `msg`'s a descriptor, so where it is shown changes too.
+        let message = if instead.starts_with("msg") {
+            format!(
+                "`{name}` is Qt's: write {instead} (Ljos.Core) and translate it with t(…) where it is shown"
+            )
+        } else {
+            format!("`{name}` is Qt's: use {instead} (Ljos.Core)")
+        };
+        self.report(Code::QtTr, message, span);
         true
     }
 
