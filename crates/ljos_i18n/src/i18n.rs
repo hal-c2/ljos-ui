@@ -38,8 +38,8 @@ const SOURCES_CACHED: usize = 4096;
 /// A message parsed once: `None` when it does not parse or names a value
 /// its source does not have, so it is warned about once and not used.
 type Parsed = Option<Rc<Message>>;
-/// A parsed translation and the source text it was checked against.
-type Checked = (Box<str>, Parsed);
+/// A translation parsed once for each source text it was checked against.
+type Checked = Vec<(Box<str>, Parsed)>;
 
 /// The localisation state of one application.
 pub struct I18n {
@@ -54,7 +54,8 @@ pub struct I18n {
     /// Translations of ICU messages, by catalogue and first form, parsed
     /// the first time they are used, with the source they were checked
     /// against: one id may be asked for with sources that name different
-    /// values, and each is checked again.
+    /// values, and each is checked once, so switching between them neither
+    /// parses again nor says a warning again.
     parsed: RefCell<HashMap<(usize, u32), Checked>>,
     /// Source messages, by their text.
     sources: RefCell<HashMap<Box<str>, Parsed>>,
@@ -315,8 +316,11 @@ impl I18n {
         source_text: &str,
         source: Option<&Message>,
     ) -> Parsed {
-        if let Some((checked, found)) = self.parsed.borrow().get(&(i, entry.first))
-            && **checked == *source_text
+        if let Some((_, found)) = self
+            .parsed
+            .borrow()
+            .get(&(i, entry.first))
+            .and_then(|checked| checked.iter().find(|(text, _)| **text == *source_text))
         {
             return found.clone();
         }
@@ -359,7 +363,9 @@ impl I18n {
         };
         self.parsed
             .borrow_mut()
-            .insert((i, entry.first), (source_text.into(), parsed.clone()));
+            .entry((i, entry.first))
+            .or_default()
+            .push((source_text.into(), parsed.clone()));
         parsed
     }
 
@@ -588,6 +594,26 @@ mod tests {
             ]
         );
         assert!(i.take_warnings().is_empty());
+    }
+
+    #[test]
+    fn one_id_with_two_sources_is_checked_once_for_each() {
+        let mut i = I18n::new();
+        i.install(messages());
+        i.set_ui_language("is");
+        let name = [("name", Value::text("Ada"))];
+        for _ in 0..3 {
+            assert_eq!(
+                i.message("", "Hello {name}", "Hello {name}", &values(&name)),
+                "Halló Ada"
+            );
+            assert_eq!(
+                i.message("", "Hello {name}", "Hello", &values(&name)),
+                "Hello"
+            );
+        }
+        let warnings = i.take_warnings();
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
     }
 
     #[test]
