@@ -325,7 +325,7 @@ pub enum Message {
     /// `QT_TR_NOOP` and its family: a string to Qt, which `msg` is not.
     Marked { name: String },
     /// A value written in another place than where it stands that is not
-    /// a name, a member of one or a literal, so it may read differently.
+    /// a name, a property of a QML object or value, or a literal, so it may read differently.
     Moved { name: String },
     /// A count that is not an `int`, which Qt cuts and `String(n)` does
     /// not.
@@ -746,7 +746,7 @@ impl fmt::Display for Message {
             ),
             Message::Moved { name } => write!(
                 f,
-                "a value of `{name}` is written in another place than where it stands, and is not a name, a member of one or a literal"
+                "a value of `{name}` is written in another place than where it stands, and is not a name, a property of a QML object or value, or a literal"
             ),
             Message::NotWhole { name } => write!(
                 f,

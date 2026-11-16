@@ -2645,6 +2645,7 @@ impl<'a> Visit<'a> for Script<'_, '_> {
             rewrite,
             |name, at| !self.own.binds(name, at) && self.pass.scope.id(name).is_none(),
             |count| self.whole(count.without_parentheses()),
+            |object| !matches!(self.ty(object), Ty::Unknown),
         );
         self.pass.messages = messages;
         // A member of `Qt` called is told of with its arguments: some are

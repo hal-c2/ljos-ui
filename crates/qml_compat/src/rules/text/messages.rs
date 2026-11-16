@@ -10,7 +10,7 @@
 //! the message says in another place, or twice (Qt's `%n` is the count
 //! beside `plural`'s, and `.arg`s fill `%2 of %1` out of order), is
 //! written there once every change is known ([`fill`]). Only a value that
-//! reads the same twice is: a name, a member of one or a literal.
+//! reads the same twice is: a name, a property of a QML object or value, or a literal.
 //!
 //! `t` and `plural` are `Ljos.Core`'s and come last in a lowered
 //! file, so the pass writes them only where each is no other name of the
@@ -141,7 +141,9 @@ impl Messages {
     /// `call`, where it calls one of Qt's functions (a `.arg` of one too)
     /// whose name `global` says is the global's. `rewrite` is false where
     /// the call stays as written (a `ListElement`'s value). `whole` says
-    /// whether a count is an `int`.
+    /// whether a count is an `int`, `object` whether a value is a QML
+    /// object or value of a known type, whose properties read the same
+    /// each time.
     pub(crate) fn call(
         &mut self,
         source: &str,
@@ -149,6 +151,7 @@ impl Messages {
         rewrite: bool,
         global: impl Fn(&str, u32) -> bool,
         whole: impl Fn(&Expression<'_>) -> bool,
+        object: impl Fn(&Expression<'_>) -> bool,
     ) {
         let Some(chain) = Chain::of(call).filter(|c| global(c.name, c.callee_at)) else {
             return;
@@ -159,7 +162,7 @@ impl Messages {
             return;
         }
         self.handled.push(at);
-        match chain.write(source, self.filled.copies.len(), &whole) {
+        match chain.write(source, self.filled.copies.len(), &whole, &object) {
             Ok(written) => {
                 for name in written.names {
                     if !self.names.iter().any(|(n, _)| *n == name) {
@@ -241,6 +244,7 @@ impl<'c, 'a> Chain<'c, 'a> {
         source: &str,
         copied: usize,
         whole: &dyn Fn(&Expression<'_>) -> bool,
+        object: &dyn Fn(&Expression<'_>) -> bool,
     ) -> Result<Written, Message> {
         let arguments = &self.call.arguments;
         if self.name.contains("NoOp") || self.name.contains("NOOP") {
@@ -255,7 +259,7 @@ impl<'c, 'a> Chain<'c, 'a> {
             .args
             .iter()
             .map(|arg| match arg.arguments.as_slice() {
-                [value] if !value.is_spread() => Ok(Value::of(value)),
+                [value] if !value.is_spread() => Ok(Value::of(value, object)),
                 _ => Err(Message::Placeholders {
                     name: self.name.to_owned(),
                 }),
@@ -275,7 +279,7 @@ impl<'c, 'a> Chain<'c, 'a> {
             };
             // Qt's count is whole (2.7 shows "2 file(s)"), `String(n)` not.
             match count.as_expression() {
-                Some(n) if whole(n.without_parentheses()) => Ok(Some(Value::of(count))),
+                Some(n) if whole(n.without_parentheses()) => Ok(Some(Value::of(count, object))),
                 _ => Err(Message::NotWhole {
                     name: self.name.to_owned(),
                 }),
@@ -409,22 +413,23 @@ impl<'c, 'a> Chain<'c, 'a> {
 /// A value a message says: a count or what an `.arg` gives.
 struct Value {
     at: Range<usize>,
-    /// A name, a member of one or a literal: what reads the same twice.
+    /// A name, a property of a QML object or value, or a literal: what reads the
+    /// same twice.
     plain: bool,
 }
 
 impl Value {
-    fn of(argument: &Argument<'_>) -> Self {
+    fn of(argument: &Argument<'_>, object: &dyn Fn(&Expression<'_>) -> bool) -> Self {
         Value {
             at: range(argument.span()),
             plain: argument
                 .as_expression()
-                .is_some_and(|e| plain(e.without_parentheses())),
+                .is_some_and(|e| plain(e.without_parentheses(), object)),
         }
     }
 }
 
-fn plain(expression: &Expression<'_>) -> bool {
+fn plain(expression: &Expression<'_>, object: &dyn Fn(&Expression<'_>) -> bool) -> bool {
     match expression {
         Expression::Identifier(_)
         | Expression::NumericLiteral(_)
@@ -432,7 +437,14 @@ fn plain(expression: &Expression<'_>) -> bool {
         | Expression::BooleanLiteral(_)
         | Expression::NullLiteral(_) => true,
         Expression::TemplateLiteral(t) => t.expressions.is_empty(),
-        Expression::StaticMemberExpression(member) => plain(member.object.without_parentheses()),
+        // A JavaScript object's member may be a getter that gives another
+        // value each read; a QML object's or value's property is read, not
+        // run. A string's or array's `length` is a data property, as
+        // `whole()` already counts on.
+        Expression::StaticMemberExpression(member) => {
+            let on = member.object.without_parentheses();
+            plain(on, object) && (object(on) || member.property.name == "length")
+        }
         _ => false,
     }
 }
