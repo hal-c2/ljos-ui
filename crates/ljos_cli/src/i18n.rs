@@ -319,7 +319,7 @@ fn is_source(path: &Path) -> bool {
 }
 
 /// Whether a `.ts` file's text is a Qt Linguist catalogue, which is XML.
-fn is_catalogue(text: &str) -> bool {
+pub(crate) fn is_catalogue(text: &str) -> bool {
     let start = text.trim_start_matches('\u{feff}').trim_start();
     start.starts_with("<?xml") || start.starts_with("<!DOCTYPE TS") || start.starts_with("<TS")
 }

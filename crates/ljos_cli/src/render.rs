@@ -83,6 +83,11 @@ pub struct Render {
     /// the pass cannot lower whole is compiled as it is written.
     #[arg(long, value_enum, default_value_t = Compat::Keep)]
     compat: Compat,
+    /// The UI language the application is shown in (`is`, `pt-BR`), as a
+    /// person whose system is set to it sees it: its catalogue in `i18n/`
+    /// translates the text. Without it, `en-US`, the same on every machine.
+    #[arg(long, value_name = "LANGUAGE")]
+    language: Option<String>,
 }
 
 /// What is done with a file written in Qt's QML (docs/DIALECT.md).
@@ -249,6 +254,13 @@ impl Render {
         // Read when the first text is made; most programs make none.
         ljos::dev::install_text_compiler(&engine, &[dir.as_path()]);
         stage_resources(&engine, &dir);
+        let main = dir.join(&self.entry);
+        load_catalogues(&engine, main.parent().unwrap_or(&dir), &mut |line| {
+            eprintln!("{line}");
+        });
+        if let Some(language) = &self.language {
+            engine.set_ui_language(language);
+        }
         let root = engine
             .create_from_url(&key, None, example_properties(self.example.as_deref()))
             .map_err(|e| anyhow::anyhow!("{e}"));
@@ -266,6 +278,61 @@ impl Render {
         }
         std::fs::write(&self.out, png).with_context(|| format!("writing {}", self.out.display()))
     }
+}
+
+/// The directory beside an application's main file that holds its
+/// catalogues, one file per language.
+pub(crate) const CATALOGUES: &str = "i18n";
+
+/// Installs every catalogue in [`CATALOGUES`] beside the main file, in
+/// `dir`: a `.po` file (its language the header's `Language:`, else the
+/// file's name), a `.ts` file of Qt Linguist, a compiled `.ljl`. The UI
+/// language picks among them as among any installed catalogues. One that
+/// cannot be read is said on `say` and left out; the others still load.
+/// A directory that is not there is no catalogue, and nothing is said.
+pub(crate) fn load_catalogues(engine: &Engine, dir: &Path, say: &mut dyn FnMut(&str)) {
+    let Ok(entries) = std::fs::read_dir(dir.join(CATALOGUES)) else {
+        return;
+    };
+    let mut files: Vec<PathBuf> = entries
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .filter(|path| path.is_file())
+        .collect();
+    // In name order, so two catalogues of one language are installed in
+    // the same order on every machine.
+    files.sort();
+    for path in files {
+        let name = format!(
+            "{CATALOGUES}/{}",
+            path.file_name().unwrap_or_default().to_string_lossy()
+        );
+        match read_catalogue(&path, &name) {
+            Ok(Some(messages)) => engine.install_catalog(messages),
+            Ok(None) => {}
+            Err(error) => say(&format!("ljos: {name}: {error}; it is not loaded")),
+        }
+    }
+}
+
+/// The catalogue in `path`, or `None` for a file of another kind.
+fn read_catalogue(path: &Path, name: &str) -> anyhow::Result<Option<Box<dyn ljos_i18n::Messages>>> {
+    let extension = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+    Ok(Some(match extension {
+        "po" => {
+            Box::new(ljos_i18n::po::PoFile::parse(&std::fs::read_to_string(path)?)?.catalog(name))
+        }
+        "ts" => {
+            let text = std::fs::read_to_string(path)?;
+            // A `.ts` is as often a TypeScript module the application keeps
+            // here (helpers, `msg` descriptors) as a Qt Linguist catalogue.
+            if !crate::i18n::is_catalogue(&text) {
+                return Ok(None);
+            }
+            Box::new(ljos_i18n::ts::TsFile::read(&text)?.catalog())
+        }
+        "ljl" => Box::new(ljos_i18n::Ljl::open(std::fs::read(path)?)?),
+        _ => return Ok(None),
+    }))
 }
 
 /// Makes the pictures the project's build keeps inside its program
@@ -544,6 +611,7 @@ mod tests {
             network: false,
             theme: None,
             compat: Compat::Keep,
+            language: None,
         };
         let mut notes = Notes::default();
         let result = r.render(&mut notes);
@@ -603,6 +671,7 @@ mod tests {
             network: true,
             theme: None,
             compat: Compat::Keep,
+            language: None,
         };
         r.render(&mut Notes::default()).unwrap();
         let image = ljos_render::RgbaImage::from_png(&std::fs::read(out).unwrap()).unwrap();
@@ -762,6 +831,7 @@ mod tests {
             network: false,
             theme: None,
             compat: Compat::Keep,
+            language: None,
         };
         r.render(&mut Notes::default()).unwrap();
         let image = ljos_render::RgbaImage::from_png(&std::fs::read(out).unwrap()).unwrap();
@@ -788,6 +858,7 @@ mod tests {
             network: false,
             theme: None,
             compat: Compat::Keep,
+            language: None,
         };
         let mut notes = Notes::default();
         r.render(&mut notes).unwrap();
