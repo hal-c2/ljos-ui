@@ -224,6 +224,92 @@ Feature: ljos migrate writes qsTr as a tagged template
       msgstr "Opna"
       """
 
+  Scenario: A file migrated in a later run finds the text still in its own context
+    A project migrated a file at a time asks the whole catalogue, not only the
+    files of one run, whether a text is translated two ways.
+    Given the file "FileMenu.qml":
+      """qml
+      import QtQuick
+      Item { property string open: qsTr("Open") }
+      """
+    And the file "Door.qml":
+      """qml
+      import QtQuick
+      Item { property string open: qsTr("Open") }
+      """
+    And the file "app_is.ts":
+      """xml
+      <TS version="2.1" language="is">
+      <context><name>FileMenu</name>
+        <message><source>Open</source><translation>Opna</translation></message></context>
+      <context><name>Door</name>
+        <message><source>Open</source><translation>Opnaðu</translation></message></context>
+      </TS>
+      """
+    When the author runs "ljos migrate --write --catalogue app_is.ts FileMenu.qml"
+    And the author runs "ljos migrate --write --catalogue app_is.ts Door.qml"
+    Then the file "FileMenu.qml" is:
+      """qml
+      import Ljos.Ui
+      import Ljos.Core
+      Item { property string open: t({ message: "Open", context: "FileMenu" }) }
+      """
+    And the file "is.po" is:
+      """po
+      msgid ""
+      msgstr ""
+      "MIME-Version: 1.0\n"
+      "Content-Type: text/plain; charset=UTF-8\n"
+      "Content-Transfer-Encoding: 8bit\n"
+      "Language: is\n"
+      "X-Generator: ljos i18n extract\n"
+
+      msgctxt "Door"
+      msgid "Open"
+      msgstr "Opnaðu"
+
+      msgctxt "FileMenu"
+      msgid "Open"
+      msgstr "Opna"
+      """
+
+  Scenario: A message the catalogue written already translates otherwise keeps its file
+    Given the file "Main.qml":
+      """qml
+      import QtQuick
+      Item { property string save: qsTr("Save") }
+      """
+    And the file "app_is.ts":
+      """xml
+      <TS version="2.1" language="is">
+      <context><name>Main</name>
+        <message><source>Save</source><translation>Geyma</translation></message></context>
+      </TS>
+      """
+    And the file "is.po":
+      """po
+      msgid "Save"
+      msgstr "Vista"
+      """
+    When the author runs "ljos migrate --catalogue app_is.ts Main.qml"
+    Then the command's output mentions "kept Main.qml:2:30: `Save` is one message to `t`, which is.po translates already as"
+
+  Scenario: A catalogue not updated since the call gained its count keeps the file
+    Given the file "Main.qml":
+      """qml
+      import QtQuick
+      Item { property int n: 2; property string files: qsTr("%n file(s)", "", n) }
+      """
+    And the file "app_is.ts":
+      """xml
+      <TS version="2.1" language="is">
+      <context><name>Main</name>
+        <message><source>%n file(s)</source><translation>skrár</translation></message></context>
+      </TS>
+      """
+    When the author runs "ljos migrate --catalogue app_is.ts Main.qml"
+    Then the command's output mentions "app_is.ts translates `%n file(s)` with one form, and the call is counted"
+
   Scenario: Two calls that would be one message with two translations keep their files
     Qt's disambiguation and a qsTranslate context both become the context of `t`.
     Given the file "Main.qml":
