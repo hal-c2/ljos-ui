@@ -51,7 +51,7 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
         );
         // A handler that is a function declares its own parameters: a name
         // of the signal's it does not declare is the document's, as Qt has it.
-        let shadowed = self.shadowed_choices(text, span.start);
+        let shadowed = self.shadowed_macros(text, span.start);
         let analysis = js::analyze_with(text, form, &known, &shadowed).and_then(|analysis| {
             if kind == BindingKind::Handler && analysis.is_function_value && !known.is_empty() {
                 js::analyze_with(text, form, &[], &shadowed)
@@ -124,24 +124,30 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
             .push(Diagnostic::error(Code::QtGlobal, message, span));
     }
 
-    /// The choices a message may hold (`select`, `plural`,
-    /// `selectOrdinal`) that the script names where the document binds
-    /// them itself: a call of one, outer or nested, is the document's, not
-    /// a message or a form of the message around it.
-    fn shadowed_choices(&self, text: &str, at: u32) -> Vec<&'static str> {
+    /// The names of `Ljos.Core`'s macros that the script names where the
+    /// document binds them itself: a call of one, outer or nested, is the
+    /// document's, not a message or a form of the message around it, so
+    /// what is inside it is read on its own.
+    fn shadowed_macros(&self, text: &str, at: u32) -> Vec<&'static str> {
         if !self.types.imports(qml_front::names::CORE) {
             return Vec::new();
         }
-        ["select", "plural", "selectOrdinal"]
-            .into_iter()
+        crate::i18n::message::MACROS
+            .iter()
+            .copied()
             .filter(|name| text.contains(name))
-            // Only an id or a property binds the name: a delegate's model
-            // role is any name the file has not, so the macro too.
+            // Only what the document declares binds the name: a delegate's
+            // model role is any name the file has not, so the macro too.
             .filter(|name| {
                 matches!(
                     self.lookup(name, at),
                     Some(Resolution {
-                        target: Some(Target::Id(_) | Target::Property { .. }),
+                        target: Some(
+                            Target::Id(_)
+                                | Target::Property { .. }
+                                | Target::Type(_)
+                                | Target::Namespace(_)
+                        ),
                         ..
                     })
                 )
@@ -1042,7 +1048,14 @@ impl<O: TypeOracle> Compiler<'_, '_, '_, O> {
                     };
                     // The names the call's own text reads, its callee
                     // among them, are the lowering's now.
-                    edits.retain(|edit| !call.covers(edit.span));
+                    // What is put at either end of the call, such as the
+                    // `return (` of a block's last statement, stays.
+                    let at_end = |edit: &js::Edit| {
+                        edit.span.is_empty()
+                            && (edit.span.start == call.span.start
+                                || edit.span.end == call.span.end)
+                    };
+                    edits.retain(|edit| !call.covers(edit.span) || at_end(edit));
                     edits.extend(
                         lowering
                             .into_iter()

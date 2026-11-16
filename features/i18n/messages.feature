@@ -64,6 +64,19 @@ Feature: Messages: translated text written as a tagged template
       When the UI language is set to ""
       Then the property "open" of "root" is "Open"
 
+    Scenario: A message a block ends with is what the block gives
+      Given the QML:
+        """qml
+        import Ljos.Ui
+        import Ljos.Core
+        Item {
+          objectName: "root"
+          property string open: { t`Open` }
+        }
+        """
+      When the UI language is set to "is"
+      Then the property "open" of "root" is "Opna"
+
     Scenario: A more specific language finds the catalogue of a less specific one
       Given the QML:
         """qml
@@ -129,6 +142,19 @@ Feature: Messages: translated text written as a tagged template
         | plural(count, { other: "# in '#'1" })     | 3 in #1      |
         | plural(count, { other: "# don't fit" })   | 3 don't fit  |
 
+    Scenario: A value written as a comma expression is its last part
+      Given the QML:
+        """qml
+        import Ljos.Ui
+        import Ljos.Core
+        Item {
+          objectName: "root"
+          property string name: "Ada"
+          property string greeting: t`Hello ${0, name}`
+        }
+        """
+      Then the property "greeting" of "root" is "Hello Ada"
+
     Scenario: A value is shown where the translation puts it, and again when it changes
       Given the QML:
         """qml
@@ -167,6 +193,19 @@ Feature: Messages: translated text written as a tagged template
         | 1     | 1 file   | 1 skrá    |
         | 3     | 3 files  | 3 skrár   |
         | 21    | 21 files | 21 skrá   |
+
+    Scenario: A count between braces in a form is still the count
+      Given the QML:
+        """qml
+        import Ljos.Ui
+        import Ljos.Core
+        Item {
+          objectName: "root"
+          property int count: 2
+          property string files: plural(count, { one: "{#} file", other: "{#} files" })
+        }
+        """
+      Then the property "files" of "root" is "{2} files"
 
     Scenario Outline: A number form is chosen before the language's forms
       Given the QML:
@@ -434,6 +473,19 @@ Feature: Messages: translated text written as a tagged template
         """
       When the UI language is set to "is"
       Then the property "label" of "root" is "Member (admin)"
+
+    Scenario: A count in a message given to the document's own t is still a form
+      Given the QML:
+        """qml
+        import Ljos.Ui
+        import Ljos.Core
+        Item {
+          objectName: "root"
+          function t(parts: TemplateStringsArray, value: string): string { return value }
+          property string files: t`${plural(2, { one: "# file", other: "# files" })}`
+        }
+        """
+      Then the property "files" of "root" is "2 files"
 
     Scenario: A count in a delegate is a form of its message, though the model could have a role of its name
       Given the QML:
