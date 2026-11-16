@@ -93,8 +93,11 @@ pub(super) fn document<'a, O: TypeOracle>(
     // lowered to is the compiler's, and a subject it repeats in each arm
     // is one place of the file.
     found.retain(|(code, _, span)| !(is_style(*code) && map.is_written(span.start)));
-    found.sort_by_key(|(_, _, span)| map.start(span.start));
-    found.dedup_by_key(|(_, _, span)| map.start(span.start));
+    // A sum's `i18n-concat` starts where its first value does, which may
+    // have a finding of its own; each is said.
+    let at = |code: &Code, span: &Span| (map.start(span.start), *code == Code::I18nConcat);
+    found.sort_by_key(|(code, _, span)| at(code, span));
+    found.dedup_by_key(|(code, _, span)| at(code, span));
     for (code, message, span) in found {
         let at = compiler.lines.map.start(span.start);
         // A name not in sight is the compiler's warning in Qt's QML; in
@@ -105,7 +108,7 @@ pub(super) fn document<'a, O: TypeOracle>(
                 .diagnostics
                 .retain(|d| !(d.code == Code::UnresolvedName && d.span.start == at));
         }
-        if compiler.diagnostics.iter().any(|d| d.span.start == at) {
+        if code != Code::I18nConcat && compiler.diagnostics.iter().any(|d| d.span.start == at) {
             continue;
         }
         let span = compiler.span(span);
