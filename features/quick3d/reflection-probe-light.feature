@@ -18,38 +18,25 @@ Feature: The light a reflection probe gives from all round
       import QtQuick3D
       Rectangle {
         width: 100; height: 100; color: "white"
+        component Wall: Model {
+          property color colour
+          source: "#Cube"; scale: Qt.vector3d(2, 2, 2)
+          materials: PrincipledMaterial { lighting: PrincipledMaterial.NoLighting; baseColor: colour }
+        }
         View3D {
           anchors.fill: parent
-          environment: SceneEnvironment {
-            backgroundMode: SceneEnvironment.Color; clearColor: "#204060"
-          }
+          environment: SceneEnvironment { backgroundMode: SceneEnvironment.Color; clearColor: "#204060" }
           OrthographicCamera { z: 500 }
           ReflectionProbe { boxSize: Qt.vector3d(2000, 2000, 2000) }
           Model {
-            source: "#Sphere"; scale: Qt.vector3d(0.8, 0.8, 0.8)
-            receivesReflections: true
+            source: "#Sphere"; scale: Qt.vector3d(0.8, 0.8, 0.8); receivesReflections: true
             materials: PrincipledMaterial { metalness: 0; roughness: 1; baseColor: "white" }
           }
-          Model {
-            source: "#Cube"; x: 300; scale: Qt.vector3d(2, 2, 2)
-            materials: PrincipledMaterial { lighting: PrincipledMaterial.NoLighting; baseColor: "#ff0000" }
-          }
-          Model {
-            source: "#Cube"; x: -300; scale: Qt.vector3d(2, 2, 2)
-            materials: PrincipledMaterial { lighting: PrincipledMaterial.NoLighting; baseColor: "#00ff00" }
-          }
-          Model {
-            source: "#Cube"; y: 300; scale: Qt.vector3d(2, 2, 2)
-            materials: PrincipledMaterial { lighting: PrincipledMaterial.NoLighting; baseColor: "#0000ff" }
-          }
-          Model {
-            source: "#Cube"; y: -300; scale: Qt.vector3d(2, 2, 2)
-            materials: PrincipledMaterial { lighting: PrincipledMaterial.NoLighting; baseColor: "#ffff00" }
-          }
-          Model {
-            source: "#Cube"; z: 900; scale: Qt.vector3d(4, 4, 4)
-            materials: PrincipledMaterial { lighting: PrincipledMaterial.NoLighting; baseColor: "#804020" }
-          }
+          Wall { x: 300; colour: "#ff0000" }
+          Wall { x: -300; colour: "#00ff00" }
+          Wall { y: 300; colour: "#0000ff" }
+          Wall { y: -300; colour: "#ffff00" }
+          Wall { z: 900; scale: Qt.vector3d(4, 4, 4); colour: "#804020" }
         }
       }
       """
