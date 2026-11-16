@@ -651,15 +651,20 @@ fn preprocessed(src: &str) -> Option<String> {
                         // the depth after them depend on which is kept.
                         let first = b.may_be[0];
                         let braces = b.may_be.iter().all(|d| *d == first).then_some(first);
+                        // Lines here on are scanned when every branch still
+                        // open is kept; otherwise they are left out too, and
+                        // the braces count toward the enclosing branch.
+                        let scanned = open.iter().all(|b| b.kept == Some(true));
                         match (open.last_mut(), braces) {
-                            (Some(outer), Some(d)) => outer.braces += d,
+                            (_, None) => scope_unknown = true,
                             // Whichever branch is kept opens or closes
                             // these, so the scan is given them.
-                            (None, Some(d)) => {
+                            (_, Some(d)) if scanned => {
                                 let brace = if d > 0 { "{" } else { "}" };
                                 out.push_str(&brace.repeat(d.unsigned_abs() as usize));
                             }
-                            (_, None) => scope_unknown = true,
+                            (Some(outer), Some(d)) => outer.braces += d,
+                            (None, Some(_)) => {}
                         }
                     }
                 }
@@ -2231,6 +2236,16 @@ mod tests {
             (
                 "#if 1 + 0\nvoid f() {\n#else\nvoid g() {\n#endif\nprecision lowp float;\n}",
                 None,
+            ),
+            // Inside a branch that is kept, they are given to the scan at
+            // once.
+            (
+                "#ifndef GL_ES\n#if FOO > 1\nvoid f() {\n#else\nvoid g() {\n#endif\nprecision lowp float;\n}\nvoid SPECULAR_LIGHT() { }\n#endif",
+                None,
+            ),
+            (
+                "#if 1\n#if FOO > 1\nvoid f() {\n#else\nvoid g() {\n#endif\n}\nprecision lowp float;\n#endif",
+                Some(10),
             ),
             (
                 "#ifdef FOO\nvoid f() {\n}\n#endif\nprecision lowp float;",
