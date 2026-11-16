@@ -160,7 +160,9 @@ pub(super) mod class {
     pub const LAYOUT: &[&str] = &["QQuickLayout", "QtQuick.Layouts.Layout"];
     pub const STACK_LAYOUT: &[&str] = &["QQuickStackLayout", "QtQuick.Layouts.StackLayout"];
     pub const TIMER: &[&str] = &["QQmlTimer", "QtQml.Timer"];
-    pub const TEXT: &[&str] = &["QQuickText", "QtQuick.Text"];
+    /// Ljós's own `Text` (`import Ljos.Ui`) is, like its `Rectangle`, a type
+    /// of its own built on `Item`.
+    pub const TEXT: &[&str] = &["QQuickText", "QtQuick.Text", "Ljos.Ui.Text"];
     pub const TEXT_INPUT: &[&str] = &[
         "QQuickTextInput",
         "QQuickTextEdit",

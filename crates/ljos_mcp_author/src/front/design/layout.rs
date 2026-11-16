@@ -28,14 +28,17 @@ const BOUNDED_WIDTH: &[&str] = &[
     "Layout.preferredWidth",
 ];
 
-/// What keeps text in its box.
+/// What keeps text in its box, in Qt's spelling and in Ljós's own API
+/// (`wrap` and `format` are `wrapMode` and `textFormat` there).
 const FITS: &[&str] = &[
     "elide",
     "wrapMode",
+    "wrap",
     "clip",
     "fontSizeMode",
     "maximumLineCount",
     "textFormat",
+    "format",
 ];
 
 /// Spacing, margins and padding, by name.
