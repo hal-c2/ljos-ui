@@ -18,8 +18,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use ljos_engine::{
-    Atom, Color, Cx, Engine, EngineError, LogLevel, NodeId, ObjectFlags, ObjectId, QmlObject,
-    QmlType, Url, Value, qml_impl,
+    Atom, Color, Cx, Engine, EngineError, LogLevel, NodeId, ObjectId, QmlObject, QmlType, Url,
+    Value, qml_impl,
 };
 use ljos_platform::{Platform, Reply};
 use ljos_quick::{Item, ItemPaint, TextEngine};
@@ -703,16 +703,19 @@ pub(crate) fn ask_new_window(
     new_window(e, me, &url, destination, geometry, user_initiated, true)
 }
 
-/// Whether `me` is on its way out: it, or what owns it, was destroyed and
-/// goes once the turn ends.
+/// Whether `me` is on its way out: it, or what owns it, was destroyed,
+/// now or for the end of the turn, or is the delegate of a row that left
+/// its view's model, as a tab a ListView shows does when its row goes.
 pub(crate) fn going(e: &Engine, me: ObjectId) -> bool {
+    if e.is_going(me) {
+        return true;
+    }
     let mut at = Some(me);
     while let Some(o) = at {
-        match e.flags(o) {
-            Some(f) if f.contains(ObjectFlags::PENDING_DELETE) => return true,
-            Some(_) => at = e.owner(o),
-            None => return true,
+        if ljos_quick::view_delegate_leaving(e, o) {
+            return true;
         }
+        at = e.owner(o);
     }
     false
 }
