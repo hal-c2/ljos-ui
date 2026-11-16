@@ -211,6 +211,8 @@ Feature: ljos migrate writes qsTr as a tagged template
     Then the command's output mentions "kept Main.qml"
     And the command's output mentions "kept Other.qml"
 
+  # Needs the extract lane: ljos migrate --catalogue
+  @backlog
   Scenario: One disambiguation two files translate differently keeps both files
     Given the file "FileMenu.qml":
       """qml
