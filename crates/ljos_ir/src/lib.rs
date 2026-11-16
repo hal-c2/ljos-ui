@@ -29,7 +29,7 @@ pub mod color;
 /// Bumped whenever the serialised shape changes, or what the compiled
 /// functions ask of the engine, so a cache written by an older compiler is
 /// rebuilt instead of misread.
-pub const IR_VERSION: u32 = 15;
+pub const IR_VERSION: u32 = 16;
 
 macro_rules! index {
     ($(#[$doc:meta])* $name:ident) => {
@@ -812,6 +812,10 @@ pub enum Arg {
     /// for nothing, and the function throws a ReferenceError where it reads
     /// the name.
     Dynamic(String),
+    /// What `Ljos.Core` gives the file under the name: only ever a fallback
+    /// of [`Arg::Context`], where a delegate reads a name of one of its
+    /// macros that the model may have as a role.
+    Core(String),
 }
 
 /// A free name an expression uses.

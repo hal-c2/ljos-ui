@@ -341,6 +341,7 @@ fn arg(arg: &Arg) -> String {
         }
         Arg::Property { object, name } => format!("{}.{name}", obj(*object)),
         Arg::Dynamic(name) => format!("dynamic {name}"),
+        Arg::Core(name) => format!("core {name}"),
     }
 }
 

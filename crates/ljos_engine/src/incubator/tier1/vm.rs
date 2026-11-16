@@ -340,7 +340,7 @@ impl Run<'_> {
                 .e
                 .singleton_object(ty, Some(inst.context))
                 .map(Value::Object),
-            Arg::Type(_) | Arg::Namespace { .. } | Arg::Holder { .. } => None,
+            Arg::Type(_) | Arg::Namespace { .. } | Arg::Holder { .. } | Arg::Core(_) => None,
         }
     }
 

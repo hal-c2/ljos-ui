@@ -168,7 +168,26 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
         if form == Form::Statement && kind == BindingKind::Property {
             edits.extend(js::completion_returns(text));
         }
-        let mut plans: HashMap<(String, Vec<String>, bool), Plan> = HashMap::new();
+        // A macro's name is two things in a delegate: a message written out
+        // is the macro's, any other read the model's role first.
+        let messages: HashSet<u32> = analysis
+            .free
+            .iter()
+            .filter(|free| {
+                crate::i18n::message::MACROS.contains(&free.name.as_str())
+                    && self.is_written(&free.name, span.start + free.span.start)
+            })
+            .map(|free| free.span.start)
+            .collect();
+        let key = |free: &js::Free| {
+            (
+                free.name.clone(),
+                free.chain.clone(),
+                free.instance_type,
+                messages.contains(&free.span.start),
+            )
+        };
+        let mut plans: HashMap<(String, Vec<String>, bool, bool), Plan> = HashMap::new();
         let mut core_names: HashSet<String> = HashSet::new();
         let written: HashSet<&str> = analysis
             .free
@@ -189,7 +208,7 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
         for free in &analysis.free {
             let offset = span.start + free.span.start;
             let plan = plans
-                .entry((free.name.clone(), free.chain.clone(), free.instance_type))
+                .entry(key(free))
                 .or_insert_with(|| {
                     let plan = self.resolve(&free.name, offset, &free.chain, scope);
                     let plan = if free.instance_type {
@@ -349,11 +368,7 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                     // engine passes in by value has no place to go back to.
                     let found = analysis.free.iter().find(|free| free.span.start == *start);
                     let through = found.and_then(|free| {
-                        let plan = plans.get(&(
-                            free.name.clone(),
-                            free.chain.clone(),
-                            free.instance_type,
-                        ))?;
+                        let plan = plans.get(&key(free))?;
                         plan.replace.is_none().then_some(())?;
                         Some((free, plan.rewrite.clone()?))
                     });
@@ -427,9 +442,7 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                         .free
                         .iter()
                         .filter(|free| free.span.start == start)
-                        .filter_map(|free| {
-                            plans.get(&(free.name.clone(), free.chain.clone(), free.instance_type))
-                        })
+                        .filter_map(|free| plans.get(&key(free)))
                         .any(|plan| {
                             matches!(
                                 plan.resolved,
@@ -674,6 +687,13 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
         // or what the target of a PropertyChanges has.
         let component = role.map(|c| CompIdx(c as u32));
         let fallback_arg = base.as_ref().and_then(|base| {
+            // `Ljos.Core`'s is a const of the module, which the function
+            // is not given: the engine reads it where the role is not.
+            if base.param.is_none()
+                && matches!(resolution.target, Some(Target::Global(Global::Core)))
+            {
+                return Some(Box::new(Arg::Core(name.to_string())));
+            }
             let param = base.param.as_ref()?;
             Some(Box::new(match (&base.rewrite, &param.arg) {
                 (Some(_), Arg::Object(object)) => Arg::Property {
