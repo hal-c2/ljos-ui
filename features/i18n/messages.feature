@@ -421,6 +421,20 @@ Feature: Messages: translated text written as a tagged template
         """
       Then the property "greeting" of "root" is "Hello Ada"
 
+    Scenario: A choice the document binds itself is a value the message shows
+      Given the QML:
+        """qml
+        import Ljos.Ui
+        import Ljos.Core
+        Item {
+          objectName: "root"
+          function select(role, forms) { return forms.other + " (" + role + ")" }
+          property string label: t`${select("admin", { other: "Member" })}`
+        }
+        """
+      When the UI language is set to "is"
+      Then the property "label" of "root" is "Member (admin)"
+
     Scenario: A message made where t is given it is lowered on its own
       Given the QML:
         """qml
