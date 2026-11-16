@@ -84,8 +84,17 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
             return;
         }
         let mut parts = Vec::new();
-        self.sum(&binary.left, &mut parts);
+        let mut inner = Vec::new();
+        sum(&binary.left, &mut parts, &mut inner);
         parts.push(&binary.right);
+        // A group that holds a text is a sum of its own and is said alone
+        // first: one message cannot hold another, and until the group is
+        // one text this sum has no single message to suggest. Its own left
+        // sums are then checked on their own too.
+        if parts.iter().any(|p| self.group_holds_text(p)) {
+            return;
+        }
+        self.summed.extend(inner);
         if !parts.iter().any(|p| self.translated(p)) {
             return;
         }
@@ -135,20 +144,36 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
         ) || self.translated(e)
     }
 
-    /// The values `e` adds, left to right; the sums inside it are this
-    /// one's, and say nothing of their own. Only the left side is stepped
-    /// into: `(a + b) + c` adds as `a + b + c` does, but in `a + (b + c)`
-    /// the group is added first, so it is one value (`n + (1 + 2)` is
-    /// never "n12"), and a text inside it is that group's own sum.
-    fn sum<'e>(&mut self, e: &'e Expression<'a>, parts: &mut Vec<&'e Expression<'a>>) {
+    /// Whether `e` is a sum, a group on the right of `+`, with a
+    /// translated text among the values it adds.
+    fn group_holds_text(&self, e: &Expression<'a>) -> bool {
         match e.without_parentheses() {
             Expression::BinaryExpression(inner) if inner.operator == BinaryOperator::Addition => {
-                self.summed.push(inner.span);
-                self.sum(&inner.left, parts);
-                parts.push(&inner.right);
+                self.holds_text(&inner.left) || self.holds_text(&inner.right)
             }
-            _ => parts.push(e),
+            _ => false,
         }
+    }
+
+    fn holds_text(&self, e: &Expression<'a>) -> bool {
+        self.group_holds_text(e) || self.translated(e)
+    }
+}
+
+/// The values `e` adds, left to right, and the spans of the sums inside it,
+/// which are this one's and say nothing of their own. Only the left side is
+/// stepped into: `(a + b) + c` adds as `a + b + c` does, but in
+/// `a + (b + c)` the group is added first, so it is one value
+/// (`n + (1 + 2)` is never "n12"), and a text inside it is that group's own
+/// sum.
+fn sum<'e, 'a>(e: &'e Expression<'a>, parts: &mut Vec<&'e Expression<'a>>, sums: &mut Vec<Span>) {
+    match e.without_parentheses() {
+        Expression::BinaryExpression(inner) if inner.operator == BinaryOperator::Addition => {
+            sums.push(inner.span);
+            sum(&inner.left, parts, sums);
+            parts.push(&inner.right);
+        }
+        _ => parts.push(e),
     }
 }
 

@@ -184,6 +184,24 @@ fn a_text_inside_a_group_is_the_group_s_sum() {
 }
 
 #[test]
+fn a_group_that_holds_a_text_is_said_alone() {
+    // One message cannot hold another (`t`a${t`b` + c}``): the group is
+    // said first, and the sum around it once the group is one text.
+    let found = found(
+        "import Ljos.Ui\nimport Ljos.Core\nItem {\n    property string c: \"y\"\n    property string a: t`a` + (t`b` + c)\n}\n",
+    );
+    let concat: Vec<_> = found
+        .iter()
+        .filter(|(code, ..)| *code == Code::I18nConcat)
+        .collect();
+    assert_eq!(concat.len(), 1, "{found:?}");
+    assert_eq!(
+        concat[0].2,
+        "a translated text joined to another value is two messages: write one, t`b${c}`"
+    );
+}
+
+#[test]
 fn a_local_named_plural_is_the_script_s() {
     let found = found(
         "import Ljos.Ui\nimport Ljos.Core\nItem {\n    function f(plural: (n: number) => string): string { return plural(1) + \"x\" }\n}\n",
