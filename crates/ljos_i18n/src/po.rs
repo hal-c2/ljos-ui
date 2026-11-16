@@ -82,7 +82,9 @@ enum Field {
     Other,
 }
 
-fn unquote(text: &str, line: u32) -> Result<String, PoError> {
+/// The bytes of a quoted string. A field's strings are joined before they
+/// are read as UTF-8, since an escaped character may be split across them.
+fn unquote(text: &str, line: u32) -> Result<Vec<u8>, PoError> {
     let fail = |reason: &str| PoError {
         line,
         reason: reason.to_owned(),
@@ -127,26 +129,50 @@ fn unquote(text: &str, line: u32) -> Result<String, PoError> {
                 u8::try_from(value)
                     .map_err(|_| fail(&format!("`\\{value:o}` is more than a byte")))?
             }
+            // As in C, every hex digit that follows: `\x0041` is `A`.
             Some('x') => {
-                let mut value = None;
-                for _ in 0..2 {
-                    match chars.peek().and_then(|c| c.to_digit(16)) {
-                        Some(digit) => {
-                            value = Some(value.unwrap_or(0) * 16 + digit);
-                            chars.next();
-                        }
-                        None => break,
-                    }
+                let mut value: Option<u32> = None;
+                while let Some(digit) = chars.peek().and_then(|c| c.to_digit(16)) {
+                    value = Some(value.unwrap_or(0).saturating_mul(16).saturating_add(digit));
+                    chars.next();
                 }
                 let value = value.ok_or_else(|| fail("`\\x` has no hex digits"))?;
-                u8::try_from(value).unwrap_or(u8::MAX)
+                u8::try_from(value)
+                    .map_err(|_| fail(&format!("`\\x{value:x}` is more than a byte")))?
             }
             Some(other) => return Err(fail(&format!("`\\{other}` is not an escape"))),
             None => return Err(fail("the string ends in `\\`")),
         };
         out.push(byte);
     }
-    String::from_utf8(out).map_err(|_| fail("the escaped bytes are not UTF-8"))
+    Ok(out)
+}
+
+/// Puts the bytes of `field`, which started at `line`, in the entry.
+fn settle(
+    field: Option<Field>,
+    bytes: &mut Vec<u8>,
+    line: u32,
+    entry: &mut PoEntry,
+) -> Result<(), PoError> {
+    let bytes = std::mem::take(bytes);
+    let Some(field) = field else {
+        return Ok(());
+    };
+    if matches!(field, Field::Plural | Field::Other) {
+        return Ok(());
+    }
+    let text = String::from_utf8(bytes).map_err(|_| PoError {
+        line,
+        reason: "the escaped bytes are not UTF-8".to_owned(),
+    })?;
+    match field {
+        Field::Context => entry.context = Some(text),
+        Field::Id => entry.id = text,
+        Field::Str => entry.translation = text,
+        Field::Plural | Field::Other => {}
+    }
+    Ok(())
 }
 
 impl PoFile {
@@ -159,6 +185,9 @@ impl PoFile {
         let mut file = Self::default();
         let mut entry = PoEntry::default();
         let mut field: Option<Field> = None;
+        // What the field has so far, and the line it started on.
+        let mut bytes: Vec<u8> = Vec::new();
+        let mut field_line = 0;
         let mut started = false;
         let finish = |entry: &mut PoEntry, started: &mut bool, file: &mut Self| {
             if *started {
@@ -181,6 +210,7 @@ impl PoFile {
             };
             if body.is_empty() {
                 if !obsolete {
+                    settle(field, &mut bytes, field_line, &mut entry)?;
                     finish(&mut entry, &mut started, &mut file);
                     field = None;
                 }
@@ -189,6 +219,7 @@ impl PoFile {
             if let Some(comment) = body.strip_prefix('#') {
                 // A comment after the keywords starts the next entry.
                 if field.is_some() {
+                    settle(field, &mut bytes, field_line, &mut entry)?;
                     finish(&mut entry, &mut started, &mut file);
                     field = None;
                 }
@@ -227,21 +258,13 @@ impl PoFile {
                 continue;
             }
             if body.starts_with('"') {
-                let more = unquote(body, line)?;
-                match field {
-                    Some(Field::Context) => {
-                        entry.context.get_or_insert_default().push_str(&more);
-                    }
-                    Some(Field::Id) => entry.id.push_str(&more),
-                    Some(Field::Str) => entry.translation.push_str(&more),
-                    Some(Field::Plural | Field::Other) => {}
-                    None => {
-                        return Err(PoError {
-                            line,
-                            reason: "a string that continues no keyword".to_owned(),
-                        });
-                    }
+                if field.is_none() {
+                    return Err(PoError {
+                        line,
+                        reason: "a string that continues no keyword".to_owned(),
+                    });
                 }
+                bytes.extend(unquote(body, line)?);
                 continue;
             }
             let (keyword, value) = body.split_once(char::is_whitespace).ok_or(PoError {
@@ -261,6 +284,7 @@ impl PoFile {
                     });
                 }
             };
+            settle(field, &mut bytes, field_line, &mut entry)?;
             // `msgctxt` or `msgid` after the translation starts the next entry.
             if matches!(next, Field::Context | Field::Id)
                 && matches!(field, Some(Field::Str | Field::Other | Field::Plural))
@@ -269,18 +293,14 @@ impl PoFile {
             }
             started = true;
             entry.obsolete |= obsolete;
-            let value = unquote(value, line)?;
-            match next {
-                Field::Context => entry.context = Some(value),
-                Field::Id => {
-                    entry.id = value;
-                    entry.line = line;
-                }
-                Field::Str => entry.translation = value,
-                Field::Plural | Field::Other => {}
+            bytes = unquote(value, line)?;
+            field_line = line;
+            if next == Field::Id {
+                entry.line = line;
             }
             field = Some(next);
         }
+        settle(field, &mut bytes, field_line, &mut entry)?;
         finish(&mut entry, &mut started, &mut file);
         Ok(file)
     }
@@ -731,6 +751,16 @@ msgstr "Tvær\nlínur"
             .unwrap();
         assert_eq!(file.entries[0].translation, "Opna é A\u{7}'?");
         let error = PoFile::parse("msgid \"a\"\nmsgstr \"\\377\"\n").unwrap_err();
+        assert_eq!(error.line, 2);
+        // A hex escape takes every hex digit after it.
+        let file = PoFile::parse("msgid \"a\"\nmsgstr \"\\x0041\"\n").unwrap();
+        assert_eq!(file.entries[0].translation, "A");
+        let error = PoFile::parse("msgid \"a\"\nmsgstr \"\\x141\"\n").unwrap_err();
+        assert_eq!(error.line, 2);
+        // A character's bytes may be split across a field's strings.
+        let file = PoFile::parse("msgid \"a\"\nmsgstr \"\\303\"\n\"\\251\"\n").unwrap();
+        assert_eq!(file.entries[0].translation, "é");
+        let error = PoFile::parse("msgid \"a\"\nmsgstr \"\\303\"\n\n").unwrap_err();
         assert_eq!(error.line, 2);
     }
 
