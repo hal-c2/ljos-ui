@@ -79,10 +79,15 @@ Item {
         id: box
         x: 50; y: 50
         width: 100; height: 100
-        fill: palette.button
+        property string tapped: "none"
+        fill: match (tapped) {
+            when "double": palette.linkVisited;
+            when "single": palette.highlight;
+            default: palette.button;
+        }
         Tap {
-            onTapped: box.fill = palette.highlight
-            onDoubleTapped: box.fill = palette.linkVisited
+            onTapped: box.tapped = "single"
+            onDoubleTapped: box.tapped = "double"
         }
         Drag {
             target: box
@@ -92,7 +97,7 @@ Item {
 }
 ```
 
-A tap fills `box` with the highlight colour, a double tap with `palette.linkVisited`, and dragging moves `box` down up to `yAxis.maximum: 150`.
+A tap sets `box.tapped`, and its `fill` follows: the highlight colour after a tap, `palette.linkVisited` after a double tap, both from the palette of the reader's colour scheme, and dragging moves `box` down up to `yAxis.maximum: 150`.
 
 Note the subtle difference in drag threshold timing: `Drag` starts dragging on the first move that reaches the system drag distance, whereas `PointerArea` starts dragging on the move after passing the threshold.
 

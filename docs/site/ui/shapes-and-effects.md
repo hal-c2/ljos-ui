@@ -44,7 +44,7 @@ Item {
 }
 ```
 
-This draws a pale-orange triangle with a 4-unit dark outline and rounded corners.
+This draws a triangle filled with the palette's `highlight` colour, with a 4-unit outline in its `windowText` colour and rounded corners, both from the reader's colour scheme.
 
 ## Gradients, RectangularShadow and MultiEffect
 

@@ -32,7 +32,7 @@ Rectangle {
 
         Text {
             id: label
-            color: palette.windowText
+            color: palette.text
             text: "Count: " + root.count
             font.size: 20
             align: Text.AlignHCenter
@@ -102,7 +102,7 @@ Rectangle {
     id: root
     width: 300
     height: 200
-    fill: palette.window
+    fill: palette.button
 
     property int count: 0
 
@@ -112,7 +112,7 @@ Rectangle {
 
         Text {
             id: label
-            color: palette.windowText
+            color: palette.buttonText
             text: "Total clicks: " + root.count
             font.size: 20
             font.weight: Font.Bold
@@ -136,7 +136,7 @@ Rectangle {
 
 As soon as you save `Main.qml`:
 
-- The window stays open and changes its background from `palette.base` to `palette.window`.
+- The window stays open and changes its background from `palette.base` to `palette.button`.
 - `root.count` keeps its value (`3`), because it was assigned by a script handler (`onClicked: root.count += 1`) and `root` is matched across the reload by its `id`.
 - `label.text` re-evaluates its new binding and shows `"Total clicks: 3"` in bold.
 - The new **Reset** button appears below **Increment**.

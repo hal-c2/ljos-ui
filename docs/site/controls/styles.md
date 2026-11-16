@@ -67,7 +67,7 @@ Pane {
 }
 ```
 
-Both the `Button` and the `Switch` inherit the dark theme and teal accent attached to the enclosing `Pane`, which paints the dark theme's background behind them. You can also set `Material.primary` and `Material.foreground` on a container; a `Pane` paints the light theme's background the foreground is read on:
+Both the `Button` and the `Switch` inherit the dark theme and teal accent attached to the enclosing `Pane`, which paints the dark theme's background behind them. You can also set `Material.primary` and `Material.foreground` on a container; a `Pane` with `Material.theme: Material.Light` paints the light background the dark foreground is read on, whatever the reader's scheme:
 
 ```qml
 import QtQuick
@@ -76,6 +76,7 @@ import QtQuick.Controls.Material
 Pane {
     width: 300
     height: 120
+    Material.theme: Material.Light
     Material.primary: "#123456"
     Material.foreground: "#234567"
 

@@ -162,6 +162,7 @@ Links written in `StyledText`, `RichText` or `MarkdownText` are drawn in blue un
 
 ```qml
 import Ljos.Ui
+import Ljos.Design
 
 Text {
     id: links
@@ -169,7 +170,9 @@ Text {
     width: 240
     format: Text.StyledText
     text: "Read the <a href=\"docs\">guide</a> or the <a href=\"api\">reference</a>."
-    linkColor: palette.link
+    // The palette's link blue is too pale on a light window; Ljos.Design's
+    // link follows the scheme and is moved until it reads at 4.5:1.
+    linkColor: Colors.link
     wrap: Text.WordWrap
 
     onLinkActivated: link => console.log("pressed: " + link)
