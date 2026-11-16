@@ -89,3 +89,24 @@ Item {
         "{places:?}"
     );
 }
+
+#[test]
+fn a_choice_the_document_binds_itself_is_a_value_the_message_shows() {
+    let (file, diagnostics) = compile(
+        r##"import QtQuick
+import Ljos.Core
+Item {
+    function select(role, forms) { return forms.other + " (" + role + ")" }
+    property string label: t`${select("admin", { other: "Member" })}`
+}
+"##,
+    );
+    assert_eq!(diagnostics, []);
+    let message = file
+        .translations
+        .iter()
+        .find(|t| t.kind == TranslationKind::Message)
+        .expect("a message");
+    assert_eq!(message.source, "{0}");
+    assert!(file.js.source.contains("select("), "{}", file.js.source);
+}

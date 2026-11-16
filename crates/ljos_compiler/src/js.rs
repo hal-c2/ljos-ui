@@ -293,6 +293,18 @@ pub(crate) const TRANSLATIONS: &[&str] = &[
 /// Reads one script. `args` are the parameters its function will have (a
 /// signal's), which it may use as locals. Errors are the parser's.
 pub(crate) fn analyze(text: &str, form: Form, args: &[String]) -> Result<Analysis, String> {
+    analyze_with(text, form, args, &[])
+}
+
+/// [`analyze`], where `shadowed` are the names of `Ljos.Core`'s macros the
+/// document binds itself where the script is: a call of one is the
+/// document's, and a message holding it shows its value.
+pub(crate) fn analyze_with(
+    text: &str,
+    form: Form,
+    args: &[String],
+    shadowed: &[&str],
+) -> Result<Analysis, String> {
     let (prefix, suffix) = match form {
         Form::Expression => (
             format!("function $h({}) {{ return (", args.join(", ")),
@@ -319,6 +331,7 @@ pub(crate) fn analyze(text: &str, form: Form, args: &[String]) -> Result<Analysi
         offset: prefix.len() as u32,
         wrapper,
         args,
+        shadowed,
         chains: HashMap::new(),
         not_values: Vec::new(),
         chain_of: HashMap::new(),
@@ -588,6 +601,8 @@ struct Reader<'s, 'r> {
     offset: u32,
     wrapper: Option<ScopeId>,
     args: &'r [String],
+    /// Macro names the document binds itself here.
+    shadowed: &'r [&'r str],
     /// The members read off a free name and where each ends, by where the
     /// name starts.
     chains: HashMap<u32, (Vec<String>, Vec<u32>)>,
@@ -1238,8 +1253,10 @@ impl<'a> Visit<'a> for Reader<'_, '_> {
     }
 
     fn visit_tagged_template_expression(&mut self, it: &TaggedTemplateExpression<'a>) {
-        let scoping = self.scoping;
-        let is_macro = |id: &IdentifierReference<'_>| free_in(scoping, id);
+        let (scoping, shadowed) = (self.scoping, self.shadowed);
+        let is_macro = |id: &IdentifierReference<'_>| {
+            free_in(scoping, id) && !shadowed.contains(&id.name.as_str())
+        };
         if let Some(message) = message::tagged_message_in(it, &is_macro) {
             self.message_site(&it.tag, it.span, message);
         }
@@ -1277,8 +1294,10 @@ impl<'a> Visit<'a> for Reader<'_, '_> {
     }
 
     fn visit_call_expression(&mut self, it: &CallExpression<'a>) {
-        let scoping = self.scoping;
-        let is_macro = |id: &IdentifierReference<'_>| free_in(scoping, id);
+        let (scoping, shadowed) = (self.scoping, self.shadowed);
+        let is_macro = |id: &IdentifierReference<'_>| {
+            free_in(scoping, id) && !shadowed.contains(&id.name.as_str())
+        };
         if let Some(message) = message::call_message_in(it, &is_macro) {
             self.message_site(&it.callee, it.span, message);
         }

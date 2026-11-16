@@ -51,9 +51,10 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
         );
         // A handler that is a function declares its own parameters: a name
         // of the signal's it does not declare is the document's, as Qt has it.
-        let analysis = js::analyze(text, form, &known).and_then(|analysis| {
+        let shadowed = self.shadowed_choices(text, span.start, scope_index);
+        let analysis = js::analyze_with(text, form, &known, &shadowed).and_then(|analysis| {
             if kind == BindingKind::Handler && analysis.is_function_value && !known.is_empty() {
-                js::analyze(text, form, &[])
+                js::analyze_with(text, form, &[], &shadowed)
             } else {
                 Ok(analysis)
             }
@@ -121,6 +122,26 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
         };
         self.diagnostics
             .push(Diagnostic::error(Code::QtGlobal, message, span));
+    }
+
+    /// The choices a message may hold (`select`, `plural`,
+    /// `selectOrdinal`) that the script names where the document binds
+    /// them itself: a call of one is the document's, not a form of the
+    /// message around it. The outer callee is checked as it resolves.
+    fn shadowed_choices(&mut self, text: &str, at: u32, scope: usize) -> Vec<&'static str> {
+        if !self.types.imports(qml_front::names::CORE) {
+            return Vec::new();
+        }
+        ["select", "plural", "selectOrdinal"]
+            .into_iter()
+            .filter(|name| text.contains(name))
+            .filter(|name| {
+                !matches!(
+                    self.resolve(name, at, &[], scope).resolved,
+                    Resolved::Global { .. }
+                )
+            })
+            .collect()
     }
 
     /// Resolves the script's free names and writes its function.
