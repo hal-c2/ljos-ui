@@ -289,15 +289,29 @@ pub(crate) const CATALOGUES: &str = "i18n";
 /// file's name), a `.ts` file of Qt Linguist, a compiled `.ljl`. The UI
 /// language picks among them as among any installed catalogues. One that
 /// cannot be read is said on `say` and left out; the others still load.
-/// A directory that is not there is no catalogue, and nothing is said.
+/// A directory that is not there is no catalogue, and nothing is said;
+/// one that cannot be read is said.
 pub(crate) fn load_catalogues(engine: &Engine, dir: &Path, say: &mut dyn FnMut(&str)) {
-    let Ok(entries) = std::fs::read_dir(dir.join(CATALOGUES)) else {
-        return;
+    let entries = match std::fs::read_dir(dir.join(CATALOGUES)) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+        Err(error) => {
+            say(&format!(
+                "ljos: {CATALOGUES}: {error}; no catalogue is loaded"
+            ));
+            return;
+        }
     };
-    let mut files: Vec<PathBuf> = entries
-        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
-        .filter(|path| path.is_file())
-        .collect();
+    let mut files: Vec<PathBuf> = Vec::new();
+    for entry in entries {
+        match entry {
+            Ok(entry) if entry.path().is_file() => files.push(entry.path()),
+            Ok(_) => {}
+            Err(error) => say(&format!(
+                "ljos: {CATALOGUES}: {error}; a file of it is not loaded"
+            )),
+        }
+    }
     // In name order, so two catalogues of one language are installed in
     // the same order on every machine.
     files.sort();
