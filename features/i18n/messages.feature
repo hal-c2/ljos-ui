@@ -469,3 +469,63 @@ Feature: Messages: translated text written as a tagged template
       Then the property "files" of "root" is "2 files"
       When the UI language is set to "is"
       Then the property "files" of "root" is "2 skrár"
+
+  Rule: In a delegate, a name of a macro is the model's role when the model has one, and a message written out is always a message
+
+    Scenario: A message written in a delegate is a message, though the model has a role named t
+      Given the QML:
+        """qml
+        import Ljos.Ui
+        import Ljos.Core
+        Item {
+          Repeater {
+            model: ListModel { ListElement { t: "a role" } }
+            delegate: Item {
+              objectName: "row"
+              property string open: t`Open`
+            }
+          }
+        }
+        """
+      Then the property "open" of "row" is "Open"
+      When the UI language is set to "is"
+      Then the property "open" of "row" is "Opna"
+
+    Scenario: A delegate that reads a name of a macro reads the model's role of that name
+      Given the QML:
+        """qml
+        import Ljos.Ui
+        import Ljos.Core
+        Item {
+          Repeater {
+            model: ListModel { ListElement { select: "chosen" } }
+            delegate: Item {
+              objectName: "row"
+              property string picked: select
+            }
+          }
+        }
+        """
+      Then the property "picked" of "row" is "chosen"
+
+    Scenario: A delegate whose model has no role of the name reads Ljos.Core's macro
+      Given the QML:
+        """qml
+        import Ljos.Ui
+        import Ljos.Core
+        Item {
+          Repeater {
+            model: 1
+            delegate: Item {
+              objectName: "row"
+              property string kind: typeof t
+              property unknown message: msg`Open`
+              property string shown: t(message)
+            }
+          }
+        }
+        """
+      Then the property "kind" of "row" is "function"
+      And the property "shown" of "row" is "Open"
+      When the UI language is set to "is"
+      Then the property "shown" of "row" is "Opna"

@@ -180,8 +180,82 @@ ListView {
 }
 "##,
     );
-    // A role of the model comes before what `Ljos.Core` gives; only a
-    // call of a macro is the macro whatever the model has.
+    // A role of the model comes before what `Ljos.Core` gives, and the
+    // macro is what is there when the model has no role of the name.
+    let params = &file.exprs[0].params;
+    assert!(
+        matches!(
+            &params[..],
+            [Param { name, arg: Arg::Context { fallback: Some(fallback), .. } }]
+                if name == "t" && matches!(&**fallback, Arg::Core(core) if core == "t")
+        ),
+        "{params:?}"
+    );
+}
+
+#[test]
+fn a_message_given_to_t_in_a_delegate_is_the_role_or_the_macro() {
+    let (file, diagnostics) = compile(
+        r##"import QtQuick
+import Ljos.Core
+ListView {
+    model: 3
+    delegate: Text {
+        property var message: msg`Open`
+        text: t(message)
+    }
+}
+"##,
+    );
+    assert_eq!(diagnostics, []);
+    let given = file
+        .exprs
+        .iter()
+        .flat_map(|e| &e.params)
+        .find(|p| p.name == "t")
+        .unwrap_or_else(|| panic!("{:?}", file.exprs));
+    assert!(
+        matches!(
+            &given.arg,
+            Arg::Context { fallback: Some(fallback), .. }
+                if matches!(&**fallback, Arg::Core(core) if core == "t")
+        ),
+        "{given:?}"
+    );
+    // The message written out is lowered whatever the model has.
+    assert!(
+        file.translations.iter().any(|t| t.source == "Open"),
+        "{:?}",
+        file.translations
+    );
+}
+
+#[test]
+fn a_message_written_out_in_a_delegate_is_the_macro_though_the_model_has_the_role() {
+    let (file, diagnostics) = compile(
+        r##"import QtQuick
+import Ljos.Core
+ListView {
+    // A model whose roles only the running program knows: `t` may be one.
+    model: 3
+    delegate: Text {
+        text: t`Open` + t
+    }
+}
+"##,
+    );
+    assert_eq!(diagnostics, []);
+    assert!(
+        file.translations.iter().any(|t| t.source == "Open"),
+        "{:?}",
+        file.translations
+    );
+    assert!(
+        file.js.source.contains("__ljos_message("),
+        "{}",
+        file.js.source
+    );
+    // The `t` read as a value is still the role.
     let params = &file.exprs[0].params;
     assert!(
         matches!(&params[..], [Param { name, arg: Arg::Context { .. } }] if name == "t"),

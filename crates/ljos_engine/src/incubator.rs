@@ -2808,6 +2808,7 @@ impl Engine {
                     None => global(s, name),
                 },
             },
+            Arg::Core(name) => core(s, name),
             Arg::Dynamic(name) => match self.context_name(inst.context, name) {
                 Some(v) => self.to_js(&v),
                 None => match self.singleton_named(name, inst.context) {
@@ -2910,6 +2911,17 @@ fn global(s: &Scope<'_>, name: &str) -> JsValue {
     s.globals()
         .get::<_, ljos_js::rquickjs::Value>(name)
         .ok()
+        .and_then(|v| s.from_value(&v).ok())
+        .unwrap_or(JsValue::Undefined)
+}
+
+/// What `Ljos.Core` has under `name`, as the module of a file that imports
+/// it reads it.
+fn core(s: &Scope<'_>, name: &str) -> JsValue {
+    s.globals()
+        .get::<_, ljos_js::rquickjs::Object>("__ljos_core")
+        .ok()
+        .and_then(|core| core.get::<_, ljos_js::rquickjs::Value>(name).ok())
         .and_then(|v| s.from_value(&v).ok())
         .unwrap_or(JsValue::Undefined)
 }

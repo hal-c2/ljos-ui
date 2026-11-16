@@ -792,6 +792,7 @@ impl<'p> Gen<'p> {
                     Err(no("context property", name))
                 }
                 Arg::Dynamic(_) => Err(no("a name found at run time", name)),
+                Arg::Core(_) => Err(no("Ljos.Core", name)),
             };
         }
         match name {

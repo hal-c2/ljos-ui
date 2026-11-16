@@ -2034,38 +2034,65 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
     /// for translation has to be the same text to the tool that lists them
     /// and to the running program, and `qsTr` has to be the file's own (it
     /// carries the context), not the global one a look-up at run time finds.
-    /// So are the message macros of `Ljos.Core` where they are called, whose
-    /// messages are lowered as the file is compiled; a role of the name read
-    /// as a value (`text: t`) is still the role.
+    /// So is a message of `Ljos.Core`'s macros written out (t`…`,
+    /// `t({ … })`, a choice), which is lowered as the file is compiled. Any
+    /// other read of a macro's name there (`text: t`, `t(m)`) is the model's
+    /// role when the model has one, and `Ljos.Core`'s macro otherwise.
     fn lookup(&self, name: &str, offset: u32) -> Option<Resolution<O::Type>> {
         let mut resolution = self.names.lookup(name, offset)?;
-        let global = if crate::js::TRANSLATIONS.contains(&name) {
-            names::global(name)
-        } else if crate::i18n::message::MACROS.contains(&name)
-            && self.types.imports(names::CORE)
-            && self.is_called(name, offset)
-        {
-            Some(names::Global::Core)
-        } else {
-            None
+        if resolution.aimed.is_some() {
+            return Some(resolution);
+        }
+        let Some(Target::Context { context, .. }) = resolution.target else {
+            return Some(resolution);
         };
-        if resolution.aimed.is_none()
-            && matches!(resolution.target, Some(Target::Context { .. }))
-            && let Some(global) = global
-        {
-            resolution.roles.clear();
-            resolution.target = Some(Target::Global(global));
+        if crate::js::TRANSLATIONS.contains(&name) {
+            if let Some(global) = names::global(name) {
+                resolution.roles.clear();
+                resolution.target = Some(Target::Global(global));
+            }
+        } else if crate::i18n::message::MACROS.contains(&name) && self.types.imports(names::CORE) {
+            if self.is_written(name, offset) {
+                resolution.roles.clear();
+            } else {
+                // The outermost model is still asked first: the macro is
+                // what is there when no model has the role.
+                resolution.roles.push(context);
+            }
+            resolution.target = Some(Target::Global(names::Global::Core));
         }
         Some(resolution)
     }
 
-    /// Whether the name written at `offset` is called there, or tags a
-    /// template.
-    fn is_called(&self, name: &str, offset: u32) -> bool {
-        self.source
+    /// Whether the macro's name written at `offset` writes a message out
+    /// there: it tags a template, is called with the message's object
+    /// (`t({ … })`), or is a choice called. `t(m)` is given a message
+    /// someone else wrote.
+    fn is_written(&self, name: &str, offset: u32) -> bool {
+        let Some(rest) = self
+            .source
             .get(offset as usize..)
             .and_then(|rest| rest.strip_prefix(name))
-            .is_some_and(|rest| past_comments(rest).starts_with(['(', '`']))
+            .map(past_comments)
+        else {
+            return false;
+        };
+        if rest.starts_with('`') {
+            return true;
+        }
+        let Some(mut argument) = rest.strip_prefix('(') else {
+            return false;
+        };
+        if !matches!(name, "t" | "msg") {
+            return true;
+        }
+        loop {
+            argument = past_comments(argument);
+            match argument.strip_prefix('(') {
+                Some(inner) => argument = inner,
+                None => return argument.starts_with('{'),
+            }
+        }
     }
 
     /// `Text.AlignLeft`, `Image.Fill.Stretch`, `C.Text.AlignLeft`,
