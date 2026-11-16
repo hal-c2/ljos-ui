@@ -3,10 +3,7 @@
 //! translated text joined to another value with `+` is two messages
 //! (`i18n-concat`).
 
-use qml_front::{
-    TypeOracle,
-    names::{CORE_GLOBALS, Target},
-};
+use qml_front::{TypeOracle, names::Target};
 use qml_syntax::{
     GetSpan, Span,
     js::{BinaryExpression, BinaryOperator, Expression},
@@ -39,13 +36,6 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
             return false;
         };
         if self.listed > 0 {
-            return false;
-        }
-        // An error that names what to write instead is only fair when that
-        // is in sight: until `Ljos.Core` gives `t` (and `msg`) a type, the
-        // file keeps Qt's, as `ljos migrate` keeps it.
-        let replacement = instead.split(|c: char| !c.is_ascii_alphabetic()).next();
-        if !replacement.is_some_and(|r| CORE_GLOBALS.contains(&r)) {
             return false;
         }
         // A marked text has no rewrite: Qt's value is the string and

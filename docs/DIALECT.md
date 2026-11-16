@@ -1587,9 +1587,6 @@ it too, since `plural` reads them. A count beside a context is
 
 DECISION: `qt-tr` holds in a file whose scripts are typed; under
 `pragma Scripts: JavaScript` the file is still Qt's JavaScript (§5).
-It is said only once `Ljos.Core` gives the name it says to write (`t`,
-`msg`): an error whose fix does not check yet would turn every typed
-file with a `qsTr` into one that neither checks nor runs.
 
 - `font.pixelSize` → `font.size`.
 - `font.pointSize: n` → `font.size: Screen.points(n)`. Points to pixels is

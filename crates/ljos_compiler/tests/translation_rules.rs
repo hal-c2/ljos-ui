@@ -21,7 +21,6 @@ fn found(source: &str) -> Vec<(Code, Severity, String)> {
 }
 
 #[test]
-#[ignore = "`qt-tr` names `t` and `msg`, which it says only once Ljos.Core gives them (i18n/runtime)"]
 fn qt_s_translation_functions_are_qt_s() {
     for (call, instead) in [
         ("qsTr(\"Open\")", "`qsTr` is Qt's: use t`…` (Ljos.Core)"),
@@ -100,8 +99,8 @@ fn a_translated_text_joined_to_a_value_is_two_messages() {
 
 #[test]
 fn a_sum_that_starts_with_a_translated_text_is_two_messages_too() {
-    // The sum starts where `t` does, which has a finding of its own until
-    // Ljos.Core gives it a type; both are said.
+    // The sum starts where its first value does, which may have a
+    // finding of its own; both are said.
     for (value, one) in [
         ("t`x` + \"y\"", "t`xy`"),
         (

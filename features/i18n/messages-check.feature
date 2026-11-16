@@ -10,7 +10,6 @@ Feature: Checking translated text
   a message is written out where it is, so a translator gets all of it,
   and `qsTr` is Qt's, for Qt's QML only.
 
-  @backlog
   Scenario: qsTr in a file of Ljós's API names the tagged template
     Given the file "Title.qml" without its indentation:
       """qml
@@ -23,12 +22,11 @@ Feature: Checking translated text
     When the files are checked
     Then the check reports:
       """
-      Title.qml:4:32: error: `qsTr` is Qt's: use t`…` (Ljos.Core) [qt-tr]
+      Title.qml:4:26: error: `qsTr` is Qt's: use t`…` (Ljos.Core) [qt-tr]
       1 files, 1 errors, 0 warnings
       ljos: 1 errors
       """
 
-  @backlog
   Scenario: A text marked for later is written with msg by hand
     Given the file "Later.qml" without its indentation:
       """qml
@@ -41,7 +39,7 @@ Feature: Checking translated text
     When the files are checked
     Then the check reports:
       """
-      Later.qml:4:32: error: `QT_TR_NOOP` is Qt's: write msg`…` (Ljos.Core) and translate it with t(…) where it is shown [qt-tr]
+      Later.qml:4:26: error: `QT_TR_NOOP` is Qt's: write msg`…` (Ljos.Core) and translate it with t(…) where it is shown [qt-tr]
       1 files, 1 errors, 0 warnings
       ljos: 1 errors
       """
@@ -65,7 +63,6 @@ Feature: Checking translated text
       ljos: 1 errors
       """
 
-  @backlog
   Scenario: A count and the words around it are one message
     Given the file "Ago.qml" without its indentation:
       """qml
@@ -81,7 +78,6 @@ Feature: Checking translated text
       """
       Ago.qml:5:24: warning: a translated text joined to another value is two messages: write one, t`${minutes} minutes ago` [i18n-concat]
       1 files, 0 errors, 1 warnings
-      ljos: 0 errors
       """
 
   Scenario: Forms without other are an error
