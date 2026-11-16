@@ -85,7 +85,7 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
         }
         let mut parts = Vec::new();
         self.sum(&binary.left, &mut parts);
-        self.sum(&binary.right, &mut parts);
+        parts.push(&binary.right);
         if !parts.iter().any(|p| self.translated(p)) {
             return;
         }
@@ -94,9 +94,8 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
         let first = parts.iter().position(|p| self.text_like(p)).unwrap_or(0);
         let mut one = String::new();
         if first > 1 {
-            let span = Span::new(parts[0].span().start, parts[first - 1].span().end);
             one.push_str("${");
-            one.push_str(self.text(span));
+            one.push_str(self.text(prefix(binary, parts[first - 1].span().end)));
             one.push('}');
         }
         let rest = if first > 1 {
@@ -137,15 +136,38 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
     }
 
     /// The values `e` adds, left to right; the sums inside it are this
-    /// one's, and say nothing of their own.
+    /// one's, and say nothing of their own. Only the left side is stepped
+    /// into: `(a + b) + c` adds as `a + b + c` does, but in `a + (b + c)`
+    /// the group is added first, so it is one value (`n + (1 + 2)` is
+    /// never "n12"), and a text inside it is that group's own sum.
     fn sum<'e>(&mut self, e: &'e Expression<'a>, parts: &mut Vec<&'e Expression<'a>>) {
         match e.without_parentheses() {
             Expression::BinaryExpression(inner) if inner.operator == BinaryOperator::Addition => {
                 self.summed.push(inner.span);
                 self.sum(&inner.left, parts);
-                self.sum(&inner.right, parts);
+                parts.push(&inner.right);
             }
             _ => parts.push(e),
+        }
+    }
+}
+
+/// The left operand of `binary`'s sum that ends at `end`, with its
+/// parentheses, so that its text is a whole expression: the parts of a sum
+/// come from its left side, and `((n + 1) + 2)` cut from `n` to `2` would
+/// leave a parenthesis open.
+fn prefix(binary: &BinaryExpression<'_>, end: u32) -> Span {
+    let mut left = &binary.left;
+    loop {
+        if left.without_parentheses().span().end == end {
+            return left.span();
+        }
+        match left.without_parentheses() {
+            Expression::BinaryExpression(inner) if inner.operator == BinaryOperator::Addition => {
+                left = &inner.left;
+            }
+            // `sum` takes its parts from this spine, so the prefix is on it.
+            _ => return left.span(),
         }
     }
 }
