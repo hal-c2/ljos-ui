@@ -34,7 +34,7 @@ fn qt_s_translation_functions_are_qt_s() {
         ),
         (
             "QT_TR_NOOP(\"Open\")",
-            "`QT_TR_NOOP` is Qt's: use msg`…` (Ljos.Core)",
+            "`QT_TR_NOOP` is Qt's: write msg`…` (Ljos.Core) and translate it with t(…) where it is shown",
         ),
     ] {
         let source = format!("import Ljos.Ui\nItem {{\n    property string a: {call}\n}}\n");
@@ -63,6 +63,17 @@ fn a_local_named_qs_tr_is_the_script_s() {
 #[test]
 fn qt_s_qml_keeps_qs_tr() {
     let found = found("import QtQuick\nItem {\n    property string a: qsTr(\"Open\")\n}\n");
+    assert!(
+        !found.iter().any(|(code, ..)| *code == Code::QtTr),
+        "{found:?}"
+    );
+}
+
+#[test]
+fn a_list_element_s_qs_tr_stays_qt_s() {
+    let found = found(
+        "import Ljos.Ui\nimport Ljos.Models\nItem {\n    Repeater { model: ListModel { ListElement { city: qsTr(\"Reykjav\u{ed}k\") } } }\n}\n",
+    );
     assert!(
         !found.iter().any(|(code, ..)| *code == Code::QtTr),
         "{found:?}"

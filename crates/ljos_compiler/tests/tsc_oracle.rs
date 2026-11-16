@@ -25,7 +25,24 @@ use ljos_compiler::{Severity, compile_project, ts};
 /// docs/DIALECT.md §5.1 is not built yet or does not reach that far. The
 /// test fails when one of them starts agreeing, so the list shrinks as the
 /// checker grows.
-const KNOWN_GAPS: &[(&str, &str)] = &[];
+const KNOWN_GAPS: &[(&str, &str)] = &[
+    (
+        "C06Completed",
+        "`qsTr` in a file of Ljós's API is `qt-tr`; written as t`…` once Ljos.Core's `t` has a type TypeScript sees (i18n/runtime)",
+    ),
+    (
+        "C11Format",
+        "`qsTr` in a file of Ljós's API is `qt-tr`; written as t`…` once Ljos.Core's `t` has a type TypeScript sees (i18n/runtime)",
+    ),
+    (
+        "N03Status",
+        "`qsTr` in a file of Ljós's API is `qt-tr`; written as t`…` once Ljos.Core's `t` has a type TypeScript sees (i18n/runtime)",
+    ),
+    (
+        "N04Plural",
+        "`qsTr` in a file of Ljós's API is `qt-tr`; written as t`…` once Ljos.Core's `t` has a type TypeScript sees (i18n/runtime)",
+    ),
+];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Expect {

@@ -337,6 +337,9 @@ pub(super) struct Checker<'c, 't, 'a, 'p, O: TypeOracle> {
     tasks_typed: HashMap<usize, task::TaskSig>,
     /// The sums `+` reads as part of a sum around them.
     summed: Vec<Span>,
+    /// Above 0, the walk is in a `ListElement`, whose `qsTr` stays Qt's
+    /// with its `ListModel` (docs/DIALECT.md §4.13).
+    listed: u32,
 }
 
 impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
@@ -371,6 +374,7 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
             fresh: Vec::new(),
             tasks_typed: HashMap::new(),
             summed: Vec::new(),
+            listed: 0,
         }
     }
 
@@ -1010,7 +1014,10 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
         let Some(index) = self.c.tree.index_of(object) else {
             return;
         };
+        let listed = object.type_name.as_simple() == Some("ListElement");
+        self.listed += u32::from(listed);
         self.members(index, object, &[]);
+        self.listed -= u32::from(listed);
     }
 
     /// Walks the functions of the file's objects before their bindings, so
