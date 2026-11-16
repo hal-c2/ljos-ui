@@ -274,6 +274,14 @@ impl<'w> SurfaceView<'w> {
         self.presented = None;
     }
 
+    /// Has the next [`draw`](Self::draw) draw whatever the revision. A host
+    /// whose surface gives each picture away once presented, as a page's
+    /// canvas does, and that is first asked for the picture after it drew,
+    /// draws it again to keep it.
+    pub fn draw_again(&mut self) {
+        self.presented = None;
+    }
+
     /// Draws and presents `scene` if it changed since the last present or
     /// the size did, and returns whether it presented. An unchanged scene
     /// costs a comparison and no GPU work. Revisions are unique across
