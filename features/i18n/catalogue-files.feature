@@ -20,7 +20,10 @@ Feature: An application finds the catalogues beside it
       import Ljos.Core
       Item {
         width: 120; height: 40
-        Text { text: t`Open` }
+        Text {
+          text: t`Open`
+          Component.onCompleted: console.warn("shown: " + text)
+        }
       }
       """
     And the file "i18n/is.po":
@@ -34,30 +37,12 @@ Feature: An application finds the catalogues beside it
       """
 
   Scenario: The UI language's catalogue translates the application
-    Given the file "Opna.qml":
-      """qml
-      import Ljos.Ui
-      Item {
-        width: 120; height: 40
-        Text { text: "Opna" }
-      }
-      """
     When the author runs "ljos render . --out translated.png --settle 0 --language is"
-    And the author runs "ljos render . --entry Opna.qml --out expected.png --settle 0"
-    Then the pictures "translated.png" and "expected.png" have the same pixels
+    Then the command's output mentions "shown: Opna"
 
   Scenario: A language without a catalogue keeps the source text
-    Given the file "Open.qml":
-      """qml
-      import Ljos.Ui
-      Item {
-        width: 120; height: 40
-        Text { text: "Open" }
-      }
-      """
     When the author runs "ljos render . --out untranslated.png --settle 0 --language de"
-    And the author runs "ljos render . --entry Open.qml --out expected.png --settle 0"
-    Then the pictures "untranslated.png" and "expected.png" have the same pixels
+    Then the command's output mentions "shown: Open"
 
   Scenario: A catalogue without a language is named by its file
     Given the file "i18n/fr.po":
@@ -65,17 +50,8 @@ Feature: An application finds the catalogues beside it
       msgid "Open"
       msgstr "Ouvrir"
       """
-    And the file "Ouvrir.qml":
-      """qml
-      import Ljos.Ui
-      Item {
-        width: 120; height: 40
-        Text { text: "Ouvrir" }
-      }
-      """
     When the author runs "ljos render . --out translated.png --settle 0 --language fr"
-    And the author runs "ljos render . --entry Ouvrir.qml --out expected.png --settle 0"
-    Then the pictures "translated.png" and "expected.png" have the same pixels
+    Then the command's output mentions "shown: Ouvrir"
 
   Scenario: A catalogue that does not read is said, and the others still load
     Given the file "i18n/de.po":
@@ -84,6 +60,22 @@ Feature: An application finds the catalogues beside it
       """
     When the author runs "ljos render . --out translated.png --settle 0 --language is"
     Then the command's output mentions "i18n/de.po"
+    And the command's output mentions "shown: Opna"
+
+  Scenario: An i18n that is not a directory is said, and the application still runs
+    Given the file "app/Main.qml":
+      """qml
+      import Ljos.Ui
+      import Ljos.Core
+      Item { Component.onCompleted: console.warn("shown: " + t`Open`) }
+      """
+    And the file "app/i18n":
+      """
+      not a directory
+      """
+    When the author runs "ljos render app --out app.png --settle 0 --language is"
+    Then the command's output mentions "no catalogue is loaded"
+    And the command's output mentions "shown: Open"
 
   Scenario: A TypeScript module kept in i18n is not a catalogue
     Given the file "i18n/messages.ts":
@@ -92,15 +84,6 @@ Feature: An application finds the catalogues beside it
 
       export const open = msg`Open`;
       """
-    And the file "Opna.qml":
-      """qml
-      import Ljos.Ui
-      Item {
-        width: 120; height: 40
-        Text { text: "Opna" }
-      }
-      """
     When the author runs "ljos render . --out translated.png --settle 0 --language is"
     Then the command's output does not mention "messages.ts"
-    When the author runs "ljos render . --entry Opna.qml --out expected.png --settle 0"
-    Then the pictures "translated.png" and "expected.png" have the same pixels
+    And the command's output mentions "shown: Opna"
