@@ -1522,8 +1522,9 @@ key is its context and its text, or its id.
   DECISION: a value that itself holds a `%N` is shown as it is. Qt's
   chained `.arg` fills it again (`.arg("%2").arg("x")` gives "x of x"),
   which Qt's own documentation warns against; the template does not, and
-  migrate does not keep a file for it, since no value can be proven free
-  of `%` before it runs.
+  migrate does not keep a file for it: only a literal can be seen to hold
+  a `%` before it runs, and a name or member cannot, so all are treated
+  alike.
 - `qsTr("%n file(s)", "", n)` → `` plural(n, { other: `${n} file(s)` }) ``,
   and `%Ln` → `#`. Qt's `%n` is the count without grouping and `%Ln` the
   count as the locale writes it; in a form, `{n}` is `String(n)` and `#`
