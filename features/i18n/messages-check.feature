@@ -23,7 +23,7 @@ Feature: Checking translated text
     When the files are checked
     Then the check reports:
       """
-      Title.qml:4:26: error: `qsTr` is Qt's: use t`…` (Ljos.Core) [qt-tr]
+      Title.qml:4:32: error: `qsTr` is Qt's: use t`…` (Ljos.Core) [qt-tr]
       1 files, 1 errors, 0 warnings
       ljos: 1 errors
       """
@@ -41,7 +41,7 @@ Feature: Checking translated text
     When the files are checked
     Then the check reports:
       """
-      Later.qml:4:26: error: `QT_TR_NOOP` is Qt's: write msg`…` (Ljos.Core) and translate it with t(…) where it is shown [qt-tr]
+      Later.qml:4:32: error: `QT_TR_NOOP` is Qt's: write msg`…` (Ljos.Core) and translate it with t(…) where it is shown [qt-tr]
       1 files, 1 errors, 0 warnings
       ljos: 1 errors
       """
