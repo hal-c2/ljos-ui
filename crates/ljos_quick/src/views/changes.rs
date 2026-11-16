@@ -629,10 +629,12 @@ fn finish(
         };
         leaving.swap_remove(i);
     }
-    done_leaving(e, object);
+    // It stays leaving to the end of its transition: until `discard` it is
+    // neither destroyed nor held for the end of the turn.
     let transition = e.untrack(|| e.get(view, ItemView::REMOVE)).ok().flatten();
     let animated = animate_at(e, view, transition, object, index, targets, move |e| {
         discard(e, view, object, to_owner);
+        done_leaving(e, object);
         // At the next polish, not now: a transition that ends at once
         // ends while the model is still telling the view of its rows,
         // and the rows that go together are one change to the pass.
@@ -642,6 +644,7 @@ fn finish(
     });
     if !animated {
         discard(e, view, object, to_owner);
+        done_leaving(e, object);
     }
 }
 
