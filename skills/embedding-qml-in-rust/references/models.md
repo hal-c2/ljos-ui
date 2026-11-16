@@ -76,6 +76,7 @@ Item {
 
         delegate: Text {
             required property string title
+            color: palette.windowText
             width: ListView.view.width
             height: 32
             text: title
