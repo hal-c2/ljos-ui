@@ -1,16 +1,16 @@
 use ljos_engine::aot as rt;
 
 pub static FILE: rt::File = rt::File {
-    name: "Combo",
+    name: "Scenario",
     content: [
-        251, 60, 236, 236, 84, 61, 91, 202, 151, 213, 29, 96, 207, 153, 51, 168, 129, 1, 80, 50,
-        236, 232, 76, 88, 50, 255, 79, 126, 98, 246, 20, 134,
+        255, 179, 54, 244, 8, 250, 248, 143, 219, 57, 149, 66, 238, 113, 187, 129, 79, 96, 193,
+        126, 8, 20, 2, 186, 178, 113, 74, 230, 31, 114, 215, 212,
     ],
     context: "",
     texts: &[],
     props: &[rt::PropSite {
-        name: "width",
-        kind: rt::Kind::Number,
+        name: "shown",
+        kind: rt::Kind::Bool,
         write: false,
     }],
     signals: &[],
@@ -18,9 +18,9 @@ pub static FILE: rt::File = rt::File {
     exprs: &[Some(e0)],
 };
 
-// Combo:6:54
+// Scenario:8:21
 fn e0(f: &rt::Frame<'_>) -> Result<rt::Value, rt::Stop> {
     let o0 = f.object(0, 0)?;
     let p0 = f.prop(o0, 0)?;
-    return Ok(rt::Value::Real(rt::js::max(f.num(o0, p0)?, 160.0_f64)));
+    return Ok(rt::Value::Bool(f.bool(o0, p0)?));
 }
