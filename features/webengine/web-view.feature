@@ -51,6 +51,31 @@ Feature: A web page in a WebEngineView
     And the property "loading" of "view" is false
     And the property "loadProgress" of "view" is 100
 
+  # WebEngineLoadingInfo is a value: a function that keeps it reads it
+  # after its handler has returned, as a callback that runs later does.
+  @api-QtWebEngine.WebEngineView.loadingChanged @api-QtWebEngine.WebEngineLoadingInfo.url
+  Scenario: A loading info kept by a function still says how its load went after the handler
+    Given the QML:
+      """qml
+      import QtQuick
+      import QtWebEngine
+      WebEngineView {
+        id: view; objectName: "view"
+        width: 200; height: 100
+        property var later: null
+        property string seen: ""
+        url: Qt.resolvedUrl("page.html")
+        onLoadingChanged: info => {
+          if (info.status === WebEngineView.LoadSucceededStatus)
+            later = () => String(info.url).endsWith("/page.html") + ":" + info.status + ":" + info.httpStatusCode
+        }
+        function tell() { seen = later() }
+      }
+      """
+    When 2 seconds pass
+    And the method "tell" of "view" is called
+    Then the property "seen" of "view" is "true:2:200"
+
   @api-QtWebEngine.WebEngineProfile.storageName @api-QtWebEngine.WebEngineProfile.offTheRecord
   Scenario: The first page of a new profile kept on disk loads
     Given the QML:
