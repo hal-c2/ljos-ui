@@ -92,24 +92,61 @@ fn unquote(text: &str, line: u32) -> Result<String, PoError> {
         .strip_prefix('"')
         .and_then(|t| t.strip_suffix('"'))
         .ok_or_else(|| fail("expected a string in double quotes"))?;
-    let mut out = String::with_capacity(inner.len());
-    let mut chars = inner.chars();
+    // C's escapes, as gettext writes and reads them; an octal or a hex
+    // escape is a byte, so the bytes of one character may be spelt out.
+    let mut out: Vec<u8> = Vec::with_capacity(inner.len());
+    let mut chars = inner.chars().peekable();
     while let Some(c) = chars.next() {
         if c != '\\' {
-            out.push(c);
+            out.extend_from_slice(c.encode_utf8(&mut [0; 4]).as_bytes());
             continue;
         }
-        match chars.next() {
-            Some('n') => out.push('\n'),
-            Some('t') => out.push('\t'),
-            Some('r') => out.push('\r'),
-            Some('"') => out.push('"'),
-            Some('\\') => out.push('\\'),
+        let byte = match chars.next() {
+            Some('n') => b'\n',
+            Some('t') => b'\t',
+            Some('r') => b'\r',
+            Some('a') => 0x07,
+            Some('b') => 0x08,
+            Some('f') => 0x0c,
+            Some('v') => 0x0b,
+            Some('"') => b'"',
+            Some('\'') => b'\'',
+            Some('?') => b'?',
+            Some('\\') => b'\\',
+            Some(first @ '0'..='7') => {
+                let mut value = first.to_digit(8).unwrap_or(0);
+                for _ in 0..2 {
+                    match chars.peek().and_then(|c| c.to_digit(8)) {
+                        Some(digit) => {
+                            value = value * 8 + digit;
+                            chars.next();
+                        }
+                        None => break,
+                    }
+                }
+                u8::try_from(value)
+                    .map_err(|_| fail(&format!("`\\{value:o}` is more than a byte")))?
+            }
+            Some('x') => {
+                let mut value = None;
+                for _ in 0..2 {
+                    match chars.peek().and_then(|c| c.to_digit(16)) {
+                        Some(digit) => {
+                            value = Some(value.unwrap_or(0) * 16 + digit);
+                            chars.next();
+                        }
+                        None => break,
+                    }
+                }
+                let value = value.ok_or_else(|| fail("`\\x` has no hex digits"))?;
+                u8::try_from(value).unwrap_or(u8::MAX)
+            }
             Some(other) => return Err(fail(&format!("`\\{other}` is not an escape"))),
             None => return Err(fail("the string ends in `\\`")),
-        }
+        };
+        out.push(byte);
     }
-    Ok(out)
+    String::from_utf8(out).map_err(|_| fail("the escaped bytes are not UTF-8"))
 }
 
 impl PoFile {
@@ -686,6 +723,15 @@ msgstr "Tvær\nlínur"
         let menu = written.find("\"menu\"").unwrap();
         assert!(file < menu);
         assert!(written.find("\n\nmsgid \"Open\"").unwrap() < file);
+    }
+
+    #[test]
+    fn c_escapes_are_read_as_gettext_writes_them() {
+        let file = PoFile::parse("msgid \"Open\"\nmsgstr \"\\117pna \\303\\251 \\x41\\a\\'\\?\"\n")
+            .unwrap();
+        assert_eq!(file.entries[0].translation, "Opna é A\u{7}'?");
+        let error = PoFile::parse("msgid \"a\"\nmsgstr \"\\377\"\n").unwrap_err();
+        assert_eq!(error.line, 2);
     }
 
     #[test]
