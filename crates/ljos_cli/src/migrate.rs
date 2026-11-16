@@ -327,19 +327,14 @@ impl Migrate {
         // file the catalogue cannot be written for is not written either.
         if let Some(catalogue) = &catalogue {
             let path = catalogue.po_path();
-            match catalogue.po(&lowering, &shown) {
-                Ok(text) if self.write => match std::fs::write(&path, text) {
-                    Ok(()) => outln!("wrote {}", path.display()),
-                    Err(e) => {
-                        eprintln!("{}: {e}", path.display());
-                        return 2;
-                    }
-                },
-                Ok(_) => outln!("would write {}", path.display()),
-                Err(e) => {
-                    eprintln!("{}: {e}", path.display());
-                    return 2;
-                }
+            let text = catalogue.po(&lowering, &shown);
+            if !self.write {
+                outln!("would write {}", path.display());
+            } else if let Err(e) = std::fs::write(&path, text) {
+                eprintln!("{}: {e}", path.display());
+                return 2;
+            } else {
+                outln!("wrote {}", path.display());
             }
         }
         for (key, file) in shown {

@@ -16,6 +16,11 @@
 //! - Calls that would be one message (`qsTr("Open", "menu")` and
 //!   `qsTranslate("menu", "Open")`) translated two ways keep their files as
 //!   Qt's, and so does a file with a translation the rewrite cannot write.
+//!
+//! A project migrated a few files at a time writes one `xx.po` over several
+//! runs, so a run asks the whole catalogue whether a text is translated two
+//! ways, not only the files it migrates, and an entry `xx.po` holds already
+//! is a translation as much as one of this run's.
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -33,10 +38,15 @@ pub(super) struct Catalogue {
     path: PathBuf,
     ts: TsFile,
     language: String,
+    /// What `xx.po` holds already.
+    po: PoFile,
 }
 
 /// A translation as a `.ts` file has it: its forms, or none.
 type Forms = Option<Vec<String>>;
+
+/// A `.po` entry's context and id: what makes it one message.
+type Key = (Option<String>, String);
 
 /// A call of a file written as Ljós's, with what the catalogue holds for it.
 struct Call<'l> {
@@ -55,15 +65,19 @@ impl Catalogue {
             .language
             .clone()
             .filter(|l| !l.is_empty())
-            .or_else(|| {
-                let stem = path.file_stem()?.to_str()?;
-                Some(stem.rsplit_once('_')?.1.to_owned())
-            })
+            .or_else(|| language_of(path.file_stem()?.to_str()?))
             .ok_or("says no language, and its name (`app_xx.ts`) does not either")?;
+        let po_path = path.with_file_name(format!("{language}.po"));
+        let po = match std::fs::read_to_string(&po_path) {
+            Ok(text) => PoFile::parse(&text).map_err(|e| format!("{}: {e}", po_path.display()))?,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => PoFile::default(),
+            Err(e) => return Err(format!("{}: {e}", po_path.display())),
+        };
         Ok(Self {
             path: path.to_owned(),
             ts,
             language,
+            po,
         })
     }
 
@@ -159,7 +173,9 @@ impl Catalogue {
     }
 
     /// The texts of `qsTr` without a disambiguation that two contexts
-    /// translate differently (one not at all is different too).
+    /// translate differently (one not at all is different too): the
+    /// contexts of the calls, and every context of the catalogue's that
+    /// holds the text, for a file migrated in another run says it too.
     fn named(&self, calls: &[Call<'_>]) -> BTreeSet<String> {
         let mut seen: BTreeMap<&str, BTreeMap<Option<&str>, Forms>> = BTreeMap::new();
         for call in calls {
@@ -170,6 +186,20 @@ impl Catalogue {
                     .insert(m.qt_context.as_deref(), self.forms(call.entry));
             }
         }
+        for (text, by) in &mut seen {
+            for context in &self.ts.contexts {
+                let held = context.messages.iter().find(|m| {
+                    m.id.is_none()
+                        && m.source == *text
+                        && m.comment.as_deref().unwrap_or_default().is_empty()
+                        && m.state.is_current()
+                });
+                if let Some(m) = held {
+                    by.entry(Some(context.name.as_str()))
+                        .or_insert_with(|| self.forms(Some(m)));
+                }
+            }
+        }
         seen.into_iter()
             .filter(|(_, by)| by.values().collect::<BTreeSet<_>>().len() > 1)
             .map(|(text, _)| text.to_owned())
@@ -177,8 +207,9 @@ impl Catalogue {
     }
 
     /// The files written as Ljós's whose translations would be lost: where
-    /// calls that are one message are translated two ways, and where a
-    /// translation is not one the rewrite writes. Each with where and why.
+    /// calls that are one message are translated two ways, or one way and
+    /// `xx.po` another, and where a translation is not one the rewrite
+    /// writes. Each with where and why.
     fn kept(
         &self,
         lowering: &Lowering,
@@ -195,29 +226,48 @@ impl Catalogue {
             kept.entry(call.key.to_owned())
                 .or_insert((call.message.at, why));
         };
-        let mut by_key: BTreeMap<(Option<String>, String), Vec<&Call<'_>>> = BTreeMap::new();
+        let mut by_key: BTreeMap<Key, Vec<(&Call<'_>, String)>> = BTreeMap::new();
         for call in &calls {
             match self.entry_of(call) {
                 Ok(entry) => by_key
                     .entry((entry.context, entry.id))
                     .or_default()
-                    .push(call),
+                    .push((call, entry.translation)),
                 Err(why) => keep(call, why),
             }
         }
         for ((context, id), calls) in by_key {
-            let forms: BTreeSet<Forms> = calls.iter().map(|c| self.forms(c.entry)).collect();
-            if forms.len() < 2 {
+            let ways: BTreeSet<&str> = calls.iter().map(|(_, t)| t.as_str()).collect();
+            // An empty translation in `xx.po` is one not made yet, as
+            // `ljos i18n extract` writes it, so this run's may fill it.
+            let held = self
+                .po
+                .entries
+                .iter()
+                .find(|e| e.context == context && e.id == id && !e.translation.is_empty());
+            let places: Vec<String> = calls.iter().map(|(c, _)| place(c)).collect();
+            let message = match &context {
+                Some(c) => format!("`{id}` in the context `{c}` is one message to `t`"),
+                None => format!("`{id}` is one message to `t`"),
+            };
+            let why = if ways.len() > 1 {
+                format!(
+                    "{message}, which {} translates two ways, at {}",
+                    self.path.display(),
+                    places.join(" and "),
+                )
+            } else if let Some(held) = held.filter(|e| !ways.contains(e.translation.as_str())) {
+                format!(
+                    "{message}, which {} translates already as \"{}\", and {} otherwise at {}",
+                    self.po_path().display(),
+                    held.translation,
+                    self.path.display(),
+                    places.join(" and "),
+                )
+            } else {
                 continue;
-            }
-            let places: Vec<String> = calls.iter().map(|c| place(c)).collect();
-            let context = context.map_or(String::new(), |c| format!(" in the context `{c}`"));
-            let why = format!(
-                "`{id}`{context} is one message to `t`, which {} translates two ways, at {}",
-                self.path.display(),
-                places.join(" and "),
-            );
-            for call in calls {
+            };
+            for (call, _) in calls {
                 keep(call, why.clone());
             }
         }
@@ -227,6 +277,19 @@ impl Catalogue {
     /// The `.po` entry of `call`, or why its translation cannot be one.
     fn entry_of(&self, call: &Call<'_>) -> Result<PoEntry, String> {
         let m = call.message;
+        // A `.ts` not updated since the call gained or lost its count.
+        if let Some(entry) = call.entry.filter(|e| e.numerus != m.counted) {
+            let (has, call_is) = if entry.numerus {
+                ("numerus forms", "not counted")
+            } else {
+                ("one form", "counted")
+            };
+            return Err(format!(
+                "{} translates `{}` with {has}, and the call is {call_is}",
+                self.path.display(),
+                entry.source,
+            ));
+        }
         let read = |text: &str| -> Result<ljos_compiler::i18n::message::MessageCall, String> {
             match ljos_compiler::i18n::message::message_in(text) {
                 Some(Ok(message)) => Ok(message),
@@ -243,16 +306,18 @@ impl Catalogue {
             Some(forms) if m.function == "qsTrId" => ljos_i18n::message::escape(&forms[0], false),
             Some(forms) => {
                 let written: Vec<(&str, &str)> = if m.counted {
+                    let not = || {
+                        format!(
+                            "the numerus forms Qt gives `{}` are not the plural categories `t` has",
+                            self.language
+                        )
+                    };
                     ljos_i18n::plural::categories(&self.language)
-                        .ok_or_else(|| {
-                            format!(
-                                "the numerus forms Qt gives `{}` are not the plural categories `t` has",
-                                self.language
-                            )
-                        })?
+                        .ok_or_else(not)?
                         .into_iter()
-                        .map(|(category, form)| (category, forms[form].as_str()))
-                        .collect()
+                        .map(|(category, form)| Some((category, forms.get(form)?.as_str())))
+                        .collect::<Option<_>>()
+                        .ok_or_else(not)?
                 } else {
                     vec![("other", forms[0].as_str())]
                 };
@@ -297,18 +362,11 @@ impl Catalogue {
 
     /// The `.po` file of the calls of the files written as Ljós's, put over
     /// what `xx.po` holds already: an entry of the same context and id is
-    /// replaced, the others stay.
-    pub(super) fn po(
-        &self,
-        lowering: &Lowering,
-        shown: &BTreeMap<String, &PathBuf>,
-    ) -> Result<String, String> {
-        let mut po = match std::fs::read_to_string(self.po_path()) {
-            Ok(text) => PoFile::parse(&text).map_err(|e| e.to_string())?,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => PoFile::default(),
-            Err(e) => return Err(e.to_string()),
-        };
-        let mut written: BTreeMap<(Option<String>, String), PoEntry> = BTreeMap::new();
+    /// replaced (`kept` kept the files that would change its translation),
+    /// the others stay.
+    pub(super) fn po(&self, lowering: &Lowering, shown: &BTreeMap<String, &PathBuf>) -> String {
+        let mut po = self.po.clone();
+        let mut written: BTreeMap<Key, PoEntry> = BTreeMap::new();
         for call in self.calls(lowering, shown) {
             // A file kept was settled out of `calls`; what is left converts.
             if let Ok(entry) = self.entry_of(&call) {
@@ -320,7 +378,36 @@ impl Catalogue {
         po.entries
             .retain(|e| !written.contains_key(&(e.context.clone(), e.id.clone())));
         po.entries.extend(written.into_values());
-        Ok(po.write(&self.language))
+        po.write(&self.language)
+    }
+}
+
+/// The locale a catalogue's name ends with: `app_is` is `is`, `app_pt_BR`
+/// `pt_BR` and `app_zh_Hant_TW` `zh_Hant_TW`, as Qt names catalogues
+/// `<app>_<language>[_<script>][_<REGION>].ts`.
+fn language_of(stem: &str) -> Option<String> {
+    let parts: Vec<&str> = stem.split('_').collect();
+    let region = |p: &str| {
+        (p.len() == 2 && p.bytes().all(|b| b.is_ascii_uppercase()))
+            || (p.len() == 3 && p.bytes().all(|b| b.is_ascii_digit()))
+    };
+    let script = |p: &str| {
+        p.len() == 4
+            && p.as_bytes()[0].is_ascii_uppercase()
+            && p.bytes().skip(1).all(|b| b.is_ascii_lowercase())
+    };
+    let language =
+        |p: &str| (2..=3).contains(&p.len()) && p.bytes().all(|b| b.is_ascii_lowercase());
+    let after = parts
+        .iter()
+        .rev()
+        .take_while(|p| region(p) || script(p))
+        .count();
+    let at = parts.len().checked_sub(after + 1).filter(|&at| at >= 1);
+    match at {
+        Some(at) if language(parts[at]) => Some(parts[at..].join("_")),
+        _ if parts.len() > 1 => parts.last().map(|p| (*p).to_owned()),
+        _ => None,
     }
 }
 
@@ -332,4 +419,19 @@ pub(super) fn is_linguist(path: &Path) -> bool {
             .trim_start()
             .starts_with('<')
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::language_of;
+
+    #[test]
+    fn a_catalogue_is_named_for_its_whole_locale() {
+        assert_eq!(language_of("app_is").as_deref(), Some("is"));
+        assert_eq!(language_of("my_app_is").as_deref(), Some("is"));
+        assert_eq!(language_of("app_pt_BR").as_deref(), Some("pt_BR"));
+        assert_eq!(language_of("app_zh_Hant_TW").as_deref(), Some("zh_Hant_TW"));
+        assert_eq!(language_of("app_es_419").as_deref(), Some("es_419"));
+        assert_eq!(language_of("app"), None);
+    }
 }
