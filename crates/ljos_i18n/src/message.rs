@@ -489,6 +489,10 @@ impl Parser {
 /// apostrophe outside it doubled.
 #[must_use]
 pub fn escape(text: &str, in_plural: bool) -> String {
+    // The compiler's rule (`ljos_compiler::i18n::message::escape`), so a
+    // tool that keys text with this gets the keys the compiler emits: an
+    // apostrophe outside the quote is doubled only where it would start
+    // one, so `Don't` stays `Don't`.
     let chars: Vec<char> = text.chars().collect();
     let syntax = |c: &char| matches!(c, '{' | '}') || (in_plural && *c == '#');
     let quoted = chars
@@ -497,10 +501,13 @@ pub fn escape(text: &str, in_plural: bool) -> String {
         .zip(chars.iter().rposition(syntax));
     let mut out = String::with_capacity(text.len() + 2);
     for (i, c) in chars.iter().enumerate() {
+        let inside = quoted.is_some_and(|(first, last)| (first..=last).contains(&i));
         if quoted.is_some_and(|(first, _)| i == first) {
             out.push('\'');
         }
-        if *c == '\'' {
+        if *c == '\''
+            && (inside || matches!(chars.get(i + 1), Some('\'' | '{' | '}' | '#' | '|') | None))
+        {
             out.push('\'');
         }
         out.push(*c);
@@ -612,8 +619,25 @@ mod tests {
     }
 
     #[test]
+    fn escape_doubles_an_apostrophe_only_where_it_would_quote() {
+        assert_eq!(escape("Don't", false), "Don't");
+        assert_eq!(escape("it'", false), "it''");
+        assert_eq!(escape("Use {braces}", false), "Use '{braces}'");
+        assert_eq!(escape("{'}", false), "'{''}'");
+    }
+
+    #[test]
     fn escape_round_trips() {
-        for text in ["it's", "{a}", "'{'", "# and '#'", "}}{{", "''"] {
+        for text in [
+            "it's",
+            "{a}",
+            "'{'",
+            "# and '#'",
+            "}}{{",
+            "''",
+            "it'",
+            "a'#",
+        ] {
             let m = Message::parse(&escape(text, false)).unwrap();
             assert_eq!(m.parts, vec![Part::Text(text.to_owned())], "{text}");
             let inner = format!("{{n, plural, other {{{}}}}}", escape(text, true));
