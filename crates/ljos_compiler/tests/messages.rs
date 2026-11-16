@@ -121,6 +121,9 @@ ListView {
     delegate: Text {
         property int n: 2
         text: t`${plural(n, { one: "# file", other: "# files" })}`
+        property string note: t /* a comment */ `Note`
+        property string more: t // and one
+            ({ message: "More" })
     }
 }
 "##,
@@ -132,6 +135,17 @@ ListView {
         .find(|t| t.kind == TranslationKind::Message)
         .unwrap_or_else(|| panic!("{:?}\n{}", file.translations, file.js.source));
     assert_eq!(message.source, "{n, plural, one {# file} other {# files}}");
+    let mut sources: Vec<&str> = file
+        .translations
+        .iter()
+        .filter(|t| t.kind == TranslationKind::Message)
+        .map(|t| t.source.as_str())
+        .collect();
+    sources.sort_unstable();
+    assert_eq!(
+        sources,
+        ["More", "Note", "{n, plural, one {# file} other {# files}}"]
+    );
 }
 
 #[test]

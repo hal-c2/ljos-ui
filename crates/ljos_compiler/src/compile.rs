@@ -2065,7 +2065,7 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
         self.source
             .get(offset as usize..)
             .and_then(|rest| rest.strip_prefix(name))
-            .is_some_and(|rest| rest.trim_start().starts_with(['(', '`']))
+            .is_some_and(|rest| past_comments(rest).starts_with(['(', '`']))
     }
 
     /// `Text.AlignLeft`, `Image.Fill.Stretch`, `C.Text.AlignLeft`,
@@ -2861,4 +2861,18 @@ fn unnamed_placed(names: Vec<String>) -> Vec<String> {
             }
         })
         .collect()
+}
+
+/// `text` from its first character that is neither space nor in a comment.
+fn past_comments(mut text: &str) -> &str {
+    loop {
+        text = text.trim_start();
+        if let Some(rest) = text.strip_prefix("/*") {
+            text = rest.split_once("*/").map_or("", |(_, after)| after);
+        } else if let Some(rest) = text.strip_prefix("//") {
+            text = rest.split_once('\n').map_or("", |(_, after)| after);
+        } else {
+            return text;
+        }
+    }
 }
