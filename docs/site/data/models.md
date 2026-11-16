@@ -41,6 +41,7 @@ Item {
             Text {
                 required property string name
                 required property real cost
+                color: palette.windowText
                 text: name + " " + cost
             }
         }
@@ -79,19 +80,19 @@ import Ljos.Layout
 Column {
     Repeater {
         model: 2
-        Text { text: "number " + modelData }
+        Text { text: "number " + modelData; color: palette.windowText }
     }
     Repeater {
         model: ["x", "y"]
-        Text { text: "array " + modelData }
+        Text { text: "array " + modelData; color: palette.windowText }
     }
     Repeater {
         model: "abc"
-        Text { text: "letter " + modelData }
+        Text { text: "letter " + modelData; color: palette.windowText }
     }
     Repeater {
         model: [{ n: "u" }, { n: "v" }]
-        Text { text: "object " + modelData.n }
+        Text { text: "object " + modelData.n; color: palette.windowText }
     }
 }
 ```
@@ -109,6 +110,7 @@ Column {
         Text {
             required property int day
             required property bool on
+            color: palette.windowText
             text: "day " + day + (on ? " on" : " off")
         }
     }
@@ -139,9 +141,9 @@ Item {
 
     ObjectModel {
         id: rows
-        Rectangle { width: 200; height: 20; fill: "red" }
-        Rectangle { width: 200; height: 40; fill: "green" }
-        Rectangle { width: 200; height: 60; fill: "blue" }
+        Rectangle { width: 200; height: 20; fill: palette.accent }
+        Rectangle { width: 200; height: 40; fill: palette.linkVisited }
+        Rectangle { width: 200; height: 60; fill: palette.windowText }
     }
 
     ListView {
@@ -180,6 +182,7 @@ Item {
         groups: [ DelegateModelGroup { id: picked; name: "picked" } ]
         delegate: Text {
             required property string name
+            color: palette.windowText
             text: name
         }
     }
@@ -230,6 +233,7 @@ Column {
         Text {
             required property string title
             required property string itemId
+            color: palette.windowText
             text: itemId + " " + title
         }
     }
@@ -268,6 +272,7 @@ ListView {
     model: JsonListModel { source: "rows.json" }
     delegate: Text {
         required property string name
+        color: palette.windowText
         text: name
     }
 }
@@ -309,6 +314,7 @@ Column {
         model: files
         Text {
             required property string fileName
+            color: palette.windowText
             text: fileName
         }
     }

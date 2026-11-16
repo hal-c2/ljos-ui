@@ -28,14 +28,14 @@ Item {
         anchors.fill: parent
         anchors.margins: 10
         anchors.leftMargin: 3
-        fill: "#eeeeee"
+        fill: palette.alternateBase; border.color: palette.mid
     }
 
     Rectangle {
         width: 51; height: 31
         anchors.centerIn: parent
         anchors.alignWhenCentered: false
-        fill: "#c03030"
+        fill: palette.linkVisited
     }
 
     Rectangle {
@@ -43,12 +43,12 @@ Item {
         anchors.right: parent.right
         anchors.bottom: parent.bottom
         anchors.margins: 4
-        fill: "#308030"
+        fill: palette.windowText
     }
 }
 ```
 
-This draws a pale panel inset by 10 pixels on every side except 3 on the left, a red box centred at a fractional x position (`74.5`), and a green square inset 4 pixels from the bottom-right corner.
+This draws a panel inset by 10 pixels on every side except 3 on the left, a magenta (`palette.linkVisited`) box centred at a fractional x position (`74.5`), and a square in the text colour inset 4 pixels from the bottom-right corner.
 
 Avoid these anchor pitfalls:
 - You can only anchor to an item's parent or a sibling. Anchoring to any other item logs a warning and does nothing.
@@ -69,22 +69,22 @@ Item {
 
     Row {
         spacing: 5; padding: 2
-        Rectangle { width: 30; height: 20; fill: "#2060a0" }
-        Rectangle { width: 20; height: 30; fill: "#c03030" }
-        Rectangle { width: 40; height: 10; fill: "#308030"; visible: false }
-        Rectangle { width: 10; height: 10; fill: "#c0a030" }
+        Rectangle { width: 30; height: 20; fill: palette.accent }
+        Rectangle { width: 20; height: 30; fill: palette.linkVisited }
+        Rectangle { width: 40; height: 10; fill: palette.windowText; visible: false }
+        Rectangle { width: 10; height: 10; fill: palette.mid }
     }
 
     Column {
         y: 50
         spacing: 3; topPadding: 1
-        Rectangle { width: 40; height: 10; fill: "#2060a0" }
-        Rectangle { width: 60; height: 20; fill: "#c03030" }
+        Rectangle { width: 40; height: 10; fill: palette.accent }
+        Rectangle { width: 60; height: 20; fill: palette.linkVisited }
     }
 }
 ```
 
-The row places its three visible squares from left to right with 5 pixels between them and 2 pixels of padding around them, skipping the hidden green rectangle. The column starts 1 pixel below its top and leaves 3 pixels between its two boxes.
+The row places its three visible squares from left to right with 5 pixels between them and 2 pixels of padding around them, skipping the hidden rectangle. The column starts 1 pixel below its top and leaves 3 pixels between its two boxes.
 
 Watch how the cross-axis coordinate and attached properties work:
 - A `Row` leaves each child's `y` to the child, and a `Column` leaves each child's `x` to the child. The positioner offsets that cross-axis coordinate only by its padding on that side, and adjusts it by the difference when that padding changes.
@@ -101,10 +101,10 @@ import Ljos.Layout
 
 Flow {
     width: 100; spacing: 5
-    Rectangle { width: 40; height: 10; fill: "#2060a0" }
-    Rectangle { width: 40; height: 20; fill: "#2060a0" }
-    Rectangle { width: 40; height: 15; fill: "#2060a0" }
-    Rectangle { width: 55; height: 5; fill: "#2060a0" }
+    Rectangle { width: 40; height: 10; fill: palette.accent }
+    Rectangle { width: 40; height: 20; fill: palette.accent }
+    Rectangle { width: 40; height: 15; fill: palette.accent }
+    Rectangle { width: 55; height: 5; fill: palette.accent }
 }
 ```
 
@@ -127,10 +127,10 @@ Grid {
     columns: 2; spacing: 3; rowSpacing: 7
     horizontalItemAlignment: Grid.AlignHCenter
     verticalItemAlignment: Grid.AlignBottom
-    Rectangle { width: 40; height: 10; color: "#2060a0" }
-    Rectangle { width: 30; height: 20; color: "#2060a0" }
-    Rectangle { width: 45; height: 25; color: "#2060a0" }
-    Rectangle { width: 55; height: 31; color: "#2060a0" }
+    Rectangle { width: 40; height: 10; color: palette.accent }
+    Rectangle { width: 30; height: 20; color: palette.accent }
+    Rectangle { width: 45; height: 25; color: palette.accent }
+    Rectangle { width: 55; height: 31; color: palette.accent }
 }
 ```
 

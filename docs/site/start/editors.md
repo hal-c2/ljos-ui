@@ -96,6 +96,7 @@ import Ljos.Ui
 import "line.ts" as Line
 
 Text {
+    color: palette.windowText
     property int total: Line.total()
     text: `A thin and a thick line are ${total} wide`
 }

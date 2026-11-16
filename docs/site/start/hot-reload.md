@@ -79,6 +79,7 @@ Item {
 
     Text {
         id: label
+        color: palette.windowText
         text: "initial"
         font.size: 14
     }

@@ -32,6 +32,7 @@ Window {
         oldPrice - newPrice |> Math.max(%, 0) / oldPrice * 100 |> Math.round(%)
 
     Text {
+        color: palette.windowText
         text: qsTr("%1% off").arg(discountPercent)
     }
 }
@@ -58,6 +59,7 @@ Window {
     readonly property int left: count |> % + 1 |> % % 3
 
     Text {
+        color: palette.windowText
         text: `${listed} ${shouted} ${left}`
     }
 }
@@ -101,6 +103,7 @@ Window {
     readonly property string kept: [1, 2, 3].map(n => n |> (() => % * 10)) |> %.map(f => f()).join(",")
 
     Text {
+        color: palette.windowText
         text: `${nested} ${kept}`
     }
 }
@@ -135,6 +138,7 @@ Window {
     }
 
     Text {
+        color: palette.windowText
         text: timeSinceEvent(published, now)
     }
 }
@@ -160,10 +164,11 @@ Rectangle {
     width: 200
     height: 60
 
-    fill: "#e8eef8"
+    fill: palette.base
     property string shown: ""
 
     Text {
+        color: palette.windowText
         anchors.centerIn: parent
         text: shown === "" ? "Tap me" : shown
     }

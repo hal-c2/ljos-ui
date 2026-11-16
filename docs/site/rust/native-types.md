@@ -66,6 +66,7 @@ Item {
     }
 
     Text {
+        color: palette.windowText
         anchors.centerIn: parent
         text: "Count: " + counter.count
     }

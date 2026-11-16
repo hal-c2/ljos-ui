@@ -41,7 +41,7 @@ Rectangle {
     id: page
     width: 480
     height: 240
-    fill: size.compact ? "#f0e6d8" : "#d8e6f0"
+    fill: size.compact ? palette.button : palette.base
 
     Breakpoint {
         id: size
@@ -51,6 +51,7 @@ Rectangle {
         onTapped: page.width = page.width === 480 ? 320 : 480
     }
     Text {
+        color: palette.windowText
         anchors.centerIn: parent
         text: `${page.width} wide, ${size.compact ? "compact" : "not compact"}: tap to resize`
     }
@@ -90,13 +91,13 @@ import Ljos.Ui
 Rectangle {
     width: 320
     height: 240
-    fill: "#202830"
+    fill: palette.window
 
     Orbit {
         id: orbit
     }
     Text {
-        color: "white"
+        color: palette.windowText
         text: "at " + orbit.distance.toFixed(1) + ", clip " + orbit.clipNear + " to " + orbit.clipFar
     }
 }
@@ -131,7 +132,7 @@ Rectangle {
     objectName: "page"
     width: 480
     height: 240
-    fill: breakpoint.compact ? "#f0e6d8" : "#d8e6f0"
+    fill: breakpoint.compact ? palette.button : palette.base
 
     Size.Breakpoint {
         id: breakpoint
@@ -141,6 +142,7 @@ Rectangle {
         onTapped: page.width = page.width === 480 ? 320 : 480
     }
     Text {
+        color: palette.windowText
         anchors.centerIn: parent
         text: `${page.width} wide, ${breakpoint.compact ? "compact" : "not compact"}: tap to resize`
     }
@@ -175,6 +177,7 @@ Rectangle {
         onTapped: root.taps = root.taps + 1
     }
     Text {
+        color: palette.windowText
         text: root.taps + " taps, changed in " + root.turns + " turns"
     }
 }

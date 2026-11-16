@@ -70,7 +70,7 @@ import QtMultimedia
 Rectangle {
     width: 160
     height: 48
-    color: chime.playing ? "#ffd27a" : "#dde3f0"
+    color: chime.playing ? palette.highlight : palette.button
     property int played: 0
 
     // <!-- check: verify SoundEffect properties beyond source and status against sound-effect.feature -->
@@ -80,6 +80,7 @@ Rectangle {
     }
 
     Text {
+        color: palette.windowText
         anchors.centerIn: parent
         text: parent.played === 0 ? "Play chime" : "Played " + parent.played
     }

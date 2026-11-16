@@ -27,7 +27,7 @@ Item {
         id: button
         width: 80
         height: 32
-        fill: "#336699"
+        fill: palette.accent
     }
 }
 ```
@@ -38,7 +38,7 @@ import Ljos.Ui
 
 PanelForm {
     level: 2
-    actionButton.color: "#4c99e5"
+    actionButton.fill: palette.link
 }
 ```
 
@@ -58,13 +58,13 @@ Item {
     component Tile: Rectangle {
         width: 40
         height: 40
-        fill: "#336699"
+        fill: palette.accent
     }
 
     Row {
         spacing: 8
         Tile {}
-        Tile { fill: "#4c99e5" }
+        Tile { fill: palette.link }
     }
 }
 ```
@@ -85,6 +85,7 @@ Rectangle {
     height: 40
 
     Text {
+        color: palette.windowText
         anchors.centerIn: parent
         text: parent.title + " (" + parent.count + ")"
     }
@@ -112,7 +113,7 @@ Item {
         Rectangle {
             width: 60
             height: 24
-            fill: "#336699"
+            fill: palette.accent
             Component.onCompleted: root.events += "made "
             Component.onDestruction: root.events += "gone "
         }
@@ -159,6 +160,7 @@ Item {
     Component {
         id: labelComp
         Text {
+            color: palette.windowText
             text: "Dynamic"
             font.italic: true
         }

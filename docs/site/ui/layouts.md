@@ -29,13 +29,13 @@ Row {
     Rectangle {
         Layout.alignment: Align.VCenter
         implicitWidth: 100; implicitHeight: 20
-        fill: "#2060a0"
+        fill: palette.accent
         Layout.fillWidth: true
     }
     Rectangle {
         Layout.alignment: Align.VCenter
         implicitWidth: 50; implicitHeight: 20
-        fill: "#c03030"
+        fill: palette.linkVisited
         Layout.fillWidth: true
         Layout.maximumWidth: 120
     }
@@ -43,12 +43,12 @@ Row {
         Layout.alignment: Align.VCenter
         Layout.preferredWidth: 30; Layout.minimumWidth: 20
         height: 20
-        fill: "#308030"
+        fill: palette.windowText
     }
 }
 ```
 
-The blue and red boxes share the width left by the 30-pixel green box, with 4 pixels between cells. Because the red box is capped at `Layout.maximumWidth: 120`, it stops at 120 and the blue box takes the remaining width.
+The accent and magenta (`palette.linkVisited`) boxes share the width left by the 30-pixel box in the text colour, with 4 pixels between cells. Because the magenta box is capped at `Layout.maximumWidth: 120`, it stops at 120 and the accent box takes the remaining width.
 
 ## Alignment, margins and layout direction
 
@@ -64,24 +64,24 @@ Column {
     spacing: 5
     width: 100; height: 300
 
-    Rectangle { width: 50; height: 20; fill: "#2060a0" }
+    Rectangle { width: 50; height: 20; fill: palette.accent }
     Rectangle {
-        width: 30; height: 40; fill: "#c03030"
+        width: 30; height: 40; fill: palette.linkVisited
         Layout.fillHeight: true
     }
     Rectangle {
-        width: 30; height: 20; fill: "#308030"
+        width: 30; height: 20; fill: palette.windowText
         Layout.fillHeight: true
         Layout.fillWidth: true
     }
     Rectangle {
-        width: 30; height: 20; fill: "#c0a030"
+        width: 30; height: 20; fill: palette.mid
         Layout.alignment: Align.Right
     }
 }
 ```
 
-Here the red and green boxes share the remaining height of the 300-pixel column, the green box also fills the 100-pixel width, and the yellow box is aligned to the right edge of the column.
+Here the magenta box and the box in the text colour share the remaining height of the 300-pixel column, the one in the text colour also fills the 100-pixel width, and the grey (`palette.mid`) box is aligned to the right edge of the column.
 
 Margins (`Layout.margins`, `Layout.leftMargin`, `Layout.topMargin`, `Layout.rightMargin`, `Layout.bottomMargin`) sit inside the child's cell between the child and the cell's edge. Watch out when using `layoutDirection: Direction.RightToLeft`: the cells and `Layout.alignment` are mirrored, but `Layout.leftMargin` and `Layout.rightMargin` are not mirrored.
 
@@ -104,16 +104,16 @@ GridLayout {
     columns: 3
     rowSpacing: 2; columnSpacing: 5
 
-    Rectangle { width: 40; height: 10; color: "#2060a0"; Layout.row: 1; Layout.column: 1 }
-    Rectangle { width: 20; height: 20; color: "#c03030" }
-    Rectangle { width: 30; height: 12; color: "#308030" }
-    Rectangle { width: 10; height: 8; color: "#c0a030"; Layout.column: 2 }
-    Rectangle { width: 20; height: 30; color: "#7040a0"; Layout.rowSpan: 2 }
-    Rectangle { width: 30; height: 6; color: "#208080" }
+    Rectangle { width: 40; height: 10; color: palette.accent; Layout.row: 1; Layout.column: 1 }
+    Rectangle { width: 20; height: 20; color: palette.linkVisited }
+    Rectangle { width: 30; height: 12; color: palette.windowText }
+    Rectangle { width: 10; height: 8; color: palette.mid; Layout.column: 2 }
+    Rectangle { width: 20; height: 30; color: palette.link; Layout.rowSpan: 2 }
+    Rectangle { width: 30; height: 6; color: palette.dark }
 }
 ```
 
-The blue box is placed at row 1, column 1; subsequent boxes fill the remaining cells in order, with the violet box spanning two rows.
+The accent box is placed at row 1, column 1; subsequent boxes fill the remaining cells in order, with the link-coloured box spanning two rows.
 
 ## Pages and nested boxes
 
@@ -132,8 +132,8 @@ Item {
         anchors.fill: parent
         currentIndex: tabs.currentIndex
 
-        Rectangle { implicitWidth: 40; implicitHeight: 10; fill: "#2060a0" }
-        Rectangle { implicitWidth: 60; implicitHeight: 30; fill: "#c03030" }
+        Rectangle { implicitWidth: 40; implicitHeight: 10; fill: palette.accent }
+        Rectangle { implicitWidth: 60; implicitHeight: 30; fill: palette.linkVisited }
     }
 
     Row {
@@ -141,7 +141,7 @@ Item {
         property int currentIndex: 0
         spacing: 4
         Rectangle {
-            width: 40; height: 16; fill: "#444444"
+            width: 40; height: 16; fill: palette.button; border.color: palette.mid
             PointerArea {
                 anchors.fill: parent
                 Accessible.role: Accessible.Button
@@ -150,7 +150,7 @@ Item {
             }
         }
         Rectangle {
-            width: 40; height: 16; fill: "#444444"
+            width: 40; height: 16; fill: palette.button; border.color: palette.mid
             PointerArea {
                 anchors.fill: parent
                 Accessible.role: Accessible.Button
@@ -162,7 +162,7 @@ Item {
 }
 ```
 
-At startup the blue panel fills the pages; clicking the second tab switches `currentIndex` to `1`, showing the red panel at the full size of the `Pages` and hiding the blue one.
+At startup the accent panel fills the pages; clicking the second tab switches `currentIndex` to `1`, showing the magenta panel at the full size of the `Pages` and hiding the accent one.
 
 You can also nest one `Row` or `Column` inside another, or place a `Loader` inside one (a `Loader` reports its loaded item's size as its implicit size). A nested box is a child like any other: it keeps the size its children give it, and takes the room the outer box leaves for it once it says `Layout.fillWidth: true` (or `Layout.fillHeight: true`).
 

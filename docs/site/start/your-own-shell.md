@@ -61,6 +61,7 @@ Item {
     Contribution {
         slot: "status"
         Text {
+            color: palette.windowText
             text: `Saved ${app.saved} times`
         }
     }
@@ -163,6 +164,7 @@ Item {
         Slot {
             name: "tools"
             Text {
+                color: palette.windowText
                 text: "Search"
             }
         }
@@ -172,6 +174,7 @@ Item {
         slot: "tools"
         order: 2
         Text {
+            color: palette.windowText
             text: "Share"
         }
     }
@@ -180,6 +183,7 @@ Item {
         slot: "tools"
         order: 1
         Text {
+            color: palette.windowText
             text: "Edit"
         }
     }
@@ -188,6 +192,7 @@ Item {
         slot: "tools"
         mode: Contribution.Prepend
         Text {
+            color: palette.windowText
             text: "Back"
         }
     }

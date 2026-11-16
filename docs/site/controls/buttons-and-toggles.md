@@ -75,6 +75,7 @@ Column {
 
     Text {
         id: status
+        color: palette.windowText
         text: ""
     }
 }
@@ -123,6 +124,7 @@ Column {
     }
 
     Text {
+        color: palette.windowText
         text: "Chosen: " + (size.checkedButton ? size.checkedButton.text : "none")
     }
 }
@@ -154,6 +156,7 @@ Column {
 
     Text {
         id: status
+        color: palette.windowText
         text: "Hold the button for a second"
     }
 }

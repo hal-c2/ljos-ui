@@ -23,7 +23,7 @@ Rectangle {
     id: root
     width: 240
     height: 120
-    fill: "#336699"
+    fill: palette.button
     property int count: 0
 
     Column {
@@ -32,7 +32,7 @@ Rectangle {
 
         Text {
             text: `Pressed ${root.count} times`
-            color: "white"
+            color: palette.buttonText
         }
     }
 
@@ -63,11 +63,12 @@ Item {
         id: box
         width: 50
         height: 50
-        fill: "#336699"
+        fill: palette.accent
     }
 
     Text {
         id: label
+        color: palette.windowText
         x: box.width + 10
         text: "Ready"
         font.weight: Font.Bold
@@ -139,6 +140,7 @@ Item {
     }
 
     Text {
+        color: palette.windowText
         text: `ticks ${root.ticks}, twice the step ${timer.twice}`
     }
 }

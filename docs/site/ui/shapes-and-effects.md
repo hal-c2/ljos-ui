@@ -32,8 +32,8 @@ Item {
         width: 200; height: 120
         ShapePath {
             strokeWidth: 4
-            strokeColor: "#202020"
-            fillColor: "#ffd080"
+            strokeColor: palette.windowText
+            fillColor: palette.highlight
             joinStyle: ShapePath.RoundJoin
             startX: 20; startY: 100
             PathLine { x: 100; y: 20 }

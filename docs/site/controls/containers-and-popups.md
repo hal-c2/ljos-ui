@@ -94,6 +94,7 @@ Item {
 
     Text {
         id: result
+        color: palette.windowText
         y: 60
     }
 }
@@ -201,6 +202,7 @@ Item {
 
     Text {
         id: status
+        color: palette.windowText
         y: 60
     }
 }

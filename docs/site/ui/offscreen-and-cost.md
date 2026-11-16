@@ -37,9 +37,10 @@ ListView {
         required property int index
         width: ListView.view.width
         height: 30
-        fill: index % 2 ? "#eeeeee" : "#ffffff"
+        fill: index % 2 ? palette.alternateBase : palette.base
 
         Text {
+            color: palette.windowText
             anchors.centerIn: parent
             text: "Row " + index
         }
@@ -62,7 +63,7 @@ import Ljos.Core
 Rectangle {
     id: page
     width: 200; height: 100
-    fill: "#ffffff"
+    fill: palette.base
     property int ticks: 0
 
     Timer {
@@ -73,6 +74,7 @@ Rectangle {
     }
 
     Text {
+        color: palette.windowText
         anchors.centerIn: parent
         text: "Ticks: " + page.ticks
     }
@@ -87,7 +89,7 @@ import Ljos.Ui
 Rectangle {
     id: spinner
     width: 20; height: 20; radius: 10
-    fill: "#2060a0"
+    fill: palette.accent
     property bool busy: false
 
     NumberAnimation on opacity {

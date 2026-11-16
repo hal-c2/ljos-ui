@@ -33,13 +33,14 @@ Window {
     height: 200
     visible: true
     title: "Notes"
-    color: "#fafafa"
+    color: palette.window
     minimumWidth: 200
     minimumHeight: 120
 
     Text {
         anchors.centerIn: parent
         text: "Hello from a window"
+        color: palette.windowText
     }
 }
 ```
@@ -97,6 +98,7 @@ Window {
     }
 
     Text {
+        color: palette.windowText
         anchors.centerIn: parent
         text: "Closing is refused"
     }

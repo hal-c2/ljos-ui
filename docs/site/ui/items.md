@@ -29,7 +29,7 @@ Item {
         x: 10; y: 10
         width: parent.width / 2
         height: 60
-        fill: "#2060a0"
+        fill: palette.accent
         radius: 4
         z: 1
     }
@@ -43,7 +43,7 @@ Item {
         Rectangle {
             x: 60; y: 60
             width: 80; height: 80
-            fill: "#c03030"
+            fill: palette.linkVisited
         }
     }
 
@@ -51,7 +51,7 @@ Item {
         x: 150; y: 10
         width: 60; height: 40
         visible: false
-        fill: "#00ff00"
+        fill: palette.highlight
     }
 }
 ```
@@ -77,14 +77,14 @@ Item {
         return c === null ? "none" : c.objectName
     }
 
-    Rectangle { objectName: "raised"; width: 100; height: 100; fill: "#333333"; z: 1 }
-    Rectangle { objectName: "under"; width: 100; height: 100; fill: "#666666" }
+    Rectangle { objectName: "raised"; width: 100; height: 100; fill: palette.windowText; z: 1 }
+    Rectangle { objectName: "under"; width: 100; height: 100; fill: palette.mid }
 
     Component.onCompleted: console.log("hit: " + nameAt(10, 10))
 }
 ```
 
-Here the first grey box is painted on top because of `z: 1`, but `childAt(10, 10)` returns the box declared last (`hit: under`).
+Here the first box is painted on top because of `z: 1`, but `childAt(10, 10)` returns the box declared last (`hit: under`).
 
 ## Rectangle, corners and antialiasing
 
@@ -117,7 +117,7 @@ Item {
         y: 20
         width: 60
         height: 30
-        fill: "#2060a0"
+        fill: palette.accent
         transform: [
             Translate {
                 x: 10
@@ -168,6 +168,7 @@ Item {
     }
 
     Text {
+        color: palette.windowText
         anchors.centerIn: parent
         visible: photo.status === Image.Loading
         text: "Loading"
