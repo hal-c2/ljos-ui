@@ -412,6 +412,9 @@ struct Pending {
     host_types: bool,
     /// It shows what the checks find, so `ljos check` must fail on it.
     shows_findings: bool,
+    /// It translates with Qt's `qsTr`, which the docs/site i18n work
+    /// writes as `t`: `ljos check` must fail on it, and only with `qt-tr`.
+    qt_tr: bool,
 }
 
 fn pending() -> BTreeMap<String, Pending> {
@@ -433,6 +436,7 @@ fn pending() -> BTreeMap<String, Pending> {
             match reason {
                 "host-types" => entry.host_types = true,
                 "shows-findings" => entry.shows_findings = true,
+                "qt-tr" => entry.qt_tr = true,
                 gap if gap.starts_with("gap:") => entry.gap = Some(gap[4..].to_owned()),
                 other => panic!("tests/docs_site.txt:{}: no reason `{other}`", n + 1),
             }
@@ -445,6 +449,12 @@ fn pending() -> BTreeMap<String, Pending> {
 /// Why a `host-types` entry no longer applies, from how `ljos check` ended:
 /// it should fail, and only because it cannot find the program's types.
 fn stale_host_types(passed: bool, out: &str) -> Option<String> {
+    fails_only_with(passed, out, "unknown-type", "the program's types")
+}
+
+/// Why an entry no longer applies, when `ljos check` should fail only with
+/// `code` errors, which are `what`.
+fn fails_only_with(passed: bool, out: &str, code: &str, what: &str) -> Option<String> {
     if passed {
         return Some("`ljos check` passes it".to_owned());
     }
@@ -457,12 +467,12 @@ fn stale_host_types(passed: bool, out: &str) -> Option<String> {
     }
     let other: Vec<_> = errors
         .into_iter()
-        .filter(|d| d.code != Some("unknown-type"))
+        .filter(|d| d.code != Some(code))
         .map(|d| d.text)
         .collect();
     (!other.is_empty()).then(|| {
         format!(
-            "`ljos check` fails on more than the program's types:\n{}",
+            "`ljos check` fails on more than {what}:\n{}",
             other.join("\n")
         )
     })
@@ -623,6 +633,7 @@ fn verify(
     }
     let host_types = pending.is_some_and(|p| p.host_types);
     let shows_findings = pending.is_some_and(|p| p.shows_findings);
+    let qt_tr = pending.is_some_and(|p| p.qt_tr);
     let checked = ljos(&dir, &["check", "."]);
     let accepted = matches!(&checked, Some((true, out)) if !out.contains(": error: "));
     // ljos.dev runs each example in the reader's colour scheme: a surface
@@ -639,7 +650,13 @@ fn verify(
             project.at, project.key
         ));
     }
-    if accepted && !host_types && !shows_findings && desugared(&project.files) && has_typescript() {
+    if accepted
+        && !host_types
+        && !shows_findings
+        && !qt_tr
+        && desugared(&project.files)
+        && has_typescript()
+    {
         match ljos(&dir, &["check", "--tsc", "."]) {
             Some((true, out)) if !out.contains("[TS") => {}
             Some((_, out)) => problems.push(format!(
@@ -665,6 +682,14 @@ fn verify(
             if let Some(why) = stale_host_types(passed, &out) {
                 problems.push(format!(
                     "{} ({}): listed as using a Rust program's types, but {why}; take `host-types` off tests/docs_site.txt or fix the block",
+                    project.at, project.key
+                ));
+            }
+        }
+        Some((passed, out)) if qt_tr => {
+            if let Some(why) = fails_only_with(passed, &out, "qt-tr", "Qt's `qsTr`") {
+                problems.push(format!(
+                    "{} ({}): listed as translating with `qsTr`, but {why}; take `qt-tr` off tests/docs_site.txt or fix the block",
                     project.at, project.key
                 ));
             }
