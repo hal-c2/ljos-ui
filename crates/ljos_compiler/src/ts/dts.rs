@@ -916,7 +916,7 @@ interface MessageDescriptor {
 type PluralForms = { readonly other: string; readonly [form: string]: string };
 /** The text of a message in the UI language: ``t`Hello ${name}` ``. */
 declare function t(strings: TemplateStringsArray, ...values: readonly unknown[]): string;
-declare function t(message: MessageDescriptor | { readonly id: string; readonly message?: string; readonly context?: string; readonly comment?: string }): string;
+declare function t(message: MessageDescriptor | { readonly id: string; readonly message?: string; readonly context?: string; readonly comment?: string } | { readonly id?: string; readonly message: string; readonly context?: string; readonly comment?: string }): string;
 /** A message to translate where it is shown, with `t(message)`. */
 declare function msg(strings: TemplateStringsArray, ...values: readonly unknown[]): MessageDescriptor;
 declare function msg(descriptor: { readonly id?: string; readonly message?: string; readonly context?: string; readonly comment?: string }): MessageDescriptor;
