@@ -32,7 +32,10 @@ mod rules;
 mod scope;
 mod tables;
 
-use std::{collections::HashSet, ops::Range};
+use std::{
+    collections::{BTreeSet, HashSet},
+    ops::Range,
+};
 
 use bindings::{Bindings, Node};
 use modules::{Ljos, Modules, Qt};
@@ -61,6 +64,7 @@ pub use group::{Alone, References, group, references};
 pub use lowering::{Changed, Held, Lowering, Project, ProjectScript, ScriptEdit, rows_path};
 pub use migrated::migrated;
 pub use qt_members::{Where, where_is};
+pub use rules::messages::{Translated, Translations, rewrite_message};
 pub use rules::{FONT_RENAMES, LAYOUT_RENAMES, member_renames, type_renames};
 
 /// The module a lowered file imports.
@@ -126,6 +130,10 @@ pub struct Lowered {
     /// with its name beside the file (`Main.rows.ts`) and its text: the row
     /// types of its constant `ListModel`s (docs/DIALECT.md §4.8).
     pub modules: Vec<(String, String)>,
+    /// The calls of Qt's translation functions the pass wrote as Ljós's,
+    /// in the order they stand: what `ljos migrate --catalogue` writes a
+    /// catalogue of Qt's for.
+    pub messages: Vec<Translated>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -350,16 +358,19 @@ pub fn lower_as(source: &str, stem: &str, locals: &dyn Locals) -> Outcome {
 fn lower_file(source: &str, stem: Option<&str>, locals: &dyn Locals) -> Outcome {
     let allocator = Allocator::default();
     let parsed = qml_syntax::parse(&allocator, source);
-    lower_parsed(source, &parsed, stem, locals)
+    lower_parsed(source, &parsed, stem, locals, &BTreeSet::new())
 }
 
 /// [`lower_file`] of a file parsed already, so that what else is read of
 /// it ([`root_in`], [`group::references_in`]) is read from the same parse.
+/// `named` are the texts whose `qsTr` without a disambiguation takes the
+/// file's context ([`Translations::named`]).
 fn lower_parsed(
     source: &str,
     parsed: &qml_syntax::Parsed<'_>,
     stem: Option<&str>,
     locals: &dyn Locals,
+    named: &BTreeSet<String>,
 ) -> Outcome {
     if !parsed.is_ok() {
         // The compiler says what is wrong with the file as written.
@@ -396,7 +407,11 @@ fn lower_parsed(
         animating: Animating::None,
         changed: Vec::new(),
         requests: Vec::new(),
-        messages: messages::Messages::default(),
+        messages: messages::Messages::new(
+            translator(&parsed.document).or(stem).map(str::to_owned),
+            named.clone(),
+        ),
+        translated: Vec::new(),
         filled: messages::Filled::default(),
         quoted: parsed
             .comments
@@ -434,6 +449,7 @@ fn lower_parsed(
                 text,
                 changes,
                 modules,
+                messages: pass.translated,
             })
         }
         Err(kept) => Outcome::Kept(kept),
@@ -460,6 +476,22 @@ fn into_requests(changes: &[Change], requests: &[Range<usize>]) -> Option<usize>
                 .any(|request| reaches(&change.range, request))
         })
         .map(|change| change.range.start)
+}
+
+/// `pragma Translator: Name`: the context Qt looks the file's `qsTr` up
+/// in, instead of its name. Written as a name or as a string.
+fn translator<'a>(document: &QmlDocument<'a>) -> Option<&'a str> {
+    let value = document
+        .pragmas
+        .iter()
+        .find(|pragma| pragma.name == "Translator")?
+        .value?
+        .trim();
+    let unquoted = value
+        .strip_prefix('"')
+        .and_then(|v| v.strip_suffix('"'))
+        .unwrap_or(value);
+    (!unquoted.is_empty()).then_some(unquoted)
 }
 
 /// The module of the row types of the file `stem.qml`.
@@ -603,6 +635,8 @@ struct Pass<'s> {
     requests: Vec<Range<usize>>,
     /// The file's translated texts, written as Ljós's.
     messages: messages::Messages,
+    /// The calls the file's messages were written from.
+    translated: Vec<Translated>,
     /// The values the file's messages say in another place.
     filled: messages::Filled,
     /// Where the file's strings and comments are: a word there is no name.
@@ -645,6 +679,7 @@ impl<'s> Pass<'s> {
         }
         self.changes.extend(messages.changes);
         self.filled = messages.filled;
+        self.translated = messages.translated;
         Ok(())
     }
 

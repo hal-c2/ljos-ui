@@ -17,6 +17,7 @@
 //! file ([`Members::free`](crate::qt_members::Members::free)); otherwise
 //! the file is kept.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
 
 use oxc_ast::ast::{Argument, CallExpression, Expression};
@@ -24,6 +25,45 @@ use oxc_span::GetSpan;
 use qml_edit::Change;
 
 use crate::{Kept, cause::Message};
+
+/// What `ljos migrate --catalogue` decided of a project's translations,
+/// which the rewrite follows (docs/DIALECT.md §4.13 Lowering).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Translations {
+    /// The texts of `qsTr` without a disambiguation that files translate
+    /// differently: each such call takes the context Qt looks it up in, its
+    /// file's name, so no translation is lost.
+    pub named: BTreeSet<String>,
+    /// The files whose translations would be lost written as Ljós's, each
+    /// with where and why: they stay Qt's.
+    pub kept: BTreeMap<String, (usize, String)>,
+}
+
+/// A call of one of Qt's functions the pass wrote as Ljós's: what a
+/// catalogue of Qt's has it under, and what its rewrite is made from.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Translated {
+    /// Where the call starts, as a byte offset into the file.
+    pub at: usize,
+    /// The call as written, with its `.arg`s: what [`rewrite_message`]
+    /// writes again with a translation's text.
+    pub call: String,
+    /// `qsTr`, `qsTranslate` or `qsTrId`.
+    pub function: &'static str,
+    /// The context Qt looks the text up in: `qsTranslate`'s, or for `qsTr`
+    /// the file's (its name, or what `pragma Translator` says). `None` for
+    /// `qsTrId`, which is looked up by its id alone.
+    pub qt_context: Option<String>,
+    /// The text as written, or `qsTrId`'s id.
+    pub source: String,
+    /// `qsTr`'s disambiguation, `""` for none.
+    pub disambiguation: String,
+    /// The call has a count, so its translation has numerus forms.
+    pub counted: bool,
+    /// The context the rewrite gave a `qsTr` without a disambiguation, as
+    /// [`Translations::named`] says: its file's.
+    pub context: Option<String>,
+}
 
 /// Qt's translation functions of QML's global object.
 const NAMES: &[&str] = &[
@@ -59,6 +99,11 @@ pub(crate) struct Messages {
     /// What the values written in another place are, and the changes they
     /// are written in.
     pub(crate) filled: Filled,
+    /// The calls written, in the order they are read.
+    pub(crate) translated: Vec<Translated>,
+    /// The context Qt gives a `qsTr` of the file, where it is known.
+    pub(crate) file_context: Option<String>,
+    pub(crate) named: BTreeSet<String>,
 }
 
 /// The values a file's messages say in another place than where they
@@ -118,6 +163,16 @@ pub(crate) fn fill(source: &str, changes: &mut Vec<Change>, filled: &Filled) {
 }
 
 impl Messages {
+    /// The messages of a file whose `qsTr` Qt looks up in `file_context`,
+    /// where `named` texts take it as theirs ([`Translations::named`]).
+    pub(crate) fn new(file_context: Option<String>, named: BTreeSet<String>) -> Self {
+        Self {
+            file_context,
+            named,
+            ..Self::default()
+        }
+    }
+
     fn keep(&mut self, cause: Message, at: u32) {
         self.kept.get_or_insert(Kept {
             cause: cause.into(),
@@ -162,8 +217,27 @@ impl Messages {
             return;
         }
         self.handled.push(at);
-        match chain.write(source, self.filled.copies.len(), &whole, &object) {
+        let named = |text: &str| {
+            self.file_context
+                .clone()
+                .filter(|_| self.named.contains(text))
+        };
+        let rewrite = Rewrite {
+            forms: None,
+            context: &named,
+        };
+        match chain.write(source, self.filled.copies.len(), &whole, &object, &rewrite) {
             Ok(written) => {
+                let outer = range(chain.outer.span);
+                self.translated.push(Translated {
+                    at: at as usize,
+                    call: source[outer].to_owned(),
+                    qt_context: match written.message.function {
+                        "qsTr" => self.file_context.clone(),
+                        _ => written.message.qt_context.clone(),
+                    },
+                    ..written.message
+                });
                 for name in written.names {
                     if !self.names.iter().any(|(n, _)| *n == name) {
                         self.names.push((name, at as usize));
@@ -178,6 +252,66 @@ impl Messages {
             Err(cause) => self.keep(cause, at),
         }
     }
+}
+
+/// What a call is written with besides what it says.
+pub(crate) struct Rewrite<'r> {
+    /// The forms to write in place of the call's text (a translation's),
+    /// each with the CLDR category `plural` gives it; one, `other`, where
+    /// the call has no count.
+    pub(crate) forms: Option<&'r [(&'r str, &'r str)]>,
+    /// The context of a `qsTr` with no disambiguation, by its text.
+    pub(crate) context: &'r dyn Fn(&str) -> Option<String>,
+}
+
+/// `call`, a call of `qsTr`, `qsTranslate` or `qsTrId` with its `.arg`s as
+/// written, written as Ljós's as the pass writes it: alone, with each value
+/// as written. `forms` (a translation's, by CLDR category) stand for the
+/// call's text where there are any, and `context` is the context of a
+/// `qsTr` with no disambiguation. So a translation in a catalogue of Qt's is
+/// written by the rewrite its call is, and says each value by the name the
+/// call's message does.
+pub fn rewrite_message(
+    call: &str,
+    forms: &[(&str, &str)],
+    context: Option<&str>,
+) -> Result<String, Message> {
+    let allocator = oxc_allocator::Allocator::default();
+    let not = || Message::NotWrittenOut {
+        name: "qsTr".to_owned(),
+    };
+    let expression = oxc_parser::Parser::new(&allocator, call, oxc_span::SourceType::cjs())
+        .parse_expression()
+        .map_err(|_| not())?;
+    let Expression::CallExpression(outer) = expression.without_parentheses() else {
+        return Err(not());
+    };
+    let chain = Chain::of(outer).ok_or_else(not)?;
+    let named = |_: &str| context.map(str::to_owned);
+    let rewrite = Rewrite {
+        forms: (!forms.is_empty()).then_some(forms),
+        context: &named,
+    };
+    // The call is the whole source, from 0. Its migration already decided
+    // which values are counts and which may be copied.
+    let any = |_: &Expression<'_>| true;
+    let written = chain.write(call, 0, &any, &any, &rewrite)?;
+    let mut changes = written.changes;
+    let filled = Filled {
+        written: changes.iter().map(|c| c.range.clone()).collect(),
+        copies: written.copies,
+    };
+    fill(call, &mut changes, &filled);
+    let start = range(outer.span).start;
+    let end = range(outer.span).end;
+    let changes: Vec<Change> = changes
+        .into_iter()
+        .map(|c| Change {
+            range: c.range.start - start..c.range.end - start,
+            replacement: c.replacement,
+        })
+        .collect();
+    Ok(qml_edit::splice(&call[start..end], &changes))
 }
 
 /// A call of one of Qt's functions and the `.arg`s of what it gives.
@@ -245,6 +379,7 @@ impl<'c, 'a> Chain<'c, 'a> {
         copied: usize,
         whole: &dyn Fn(&Expression<'_>) -> bool,
         object: &dyn Fn(&Expression<'_>) -> bool,
+        rewrite: &Rewrite<'_>,
     ) -> Result<Written, Message> {
         let arguments = &self.call.arguments;
         if self.name.contains("NoOp") || self.name.contains("NOOP") {
@@ -290,6 +425,16 @@ impl<'c, 'a> Chain<'c, 'a> {
             copied,
             ..Built::default()
         };
+        let mut said = Translated {
+            at: 0,
+            call: String::new(),
+            function: self.name,
+            qt_context: None,
+            source: String::new(),
+            disambiguation: String::new(),
+            counted: false,
+            context: None,
+        };
         match form {
             Form::Id => {
                 let id = self.text(0)?.unwrap_or_default();
@@ -299,13 +444,24 @@ impl<'c, 'a> Chain<'c, 'a> {
                     });
                 }
                 message.text(&format!("({{ id: {} }})", quoted(&id)));
-                Ok(message.done(self.outer, source))
+                said.source = id;
+                Ok(message.done(self.outer, source, said))
             }
             Form::Tr => {
                 let text = self.text(0)?.unwrap_or_default();
-                let context = self.text(1)?.filter(|c| !c.is_empty());
+                let disambiguation = self.text(1)?.unwrap_or_default();
+                let named = (rewrite.context)(&text).filter(|_| disambiguation.is_empty());
+                let context = Some(disambiguation.clone())
+                    .filter(|c| !c.is_empty())
+                    .or_else(|| named.clone());
                 let count = count(2)?;
-                self.message(source, message, &text, context, count, &values)
+                said.counted = count.is_some();
+                said.disambiguation = disambiguation;
+                said.context = named;
+                said.source.clone_from(&text);
+                self.message(
+                    source, message, &text, rewrite, context, count, &values, said,
+                )
             }
             Form::Translate => {
                 let context = self.text(0)?.unwrap_or_default();
@@ -316,41 +472,56 @@ impl<'c, 'a> Chain<'c, 'a> {
                     });
                 }
                 let count = count(3)?;
+                said.counted = count.is_some();
+                said.qt_context = Some(context.clone());
+                said.source.clone_from(&text);
                 let context = Some(context).filter(|c| !c.is_empty());
-                self.message(source, message, &text, context, count, &values)
+                self.message(
+                    source, message, &text, rewrite, context, count, &values, said,
+                )
             }
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn message(
         &self,
         source: &str,
         mut message: Built,
         text: &str,
+        rewrite: &Rewrite<'_>,
         context: Option<String>,
         count: Option<Value>,
         values: &[Value],
+        said: Translated,
     ) -> Result<Written, Message> {
-        let parts =
-            parts(text, count.is_some(), values.len()).ok_or_else(|| Message::Placeholders {
-                name: self.name.to_owned(),
-            })?;
-        if count.is_some()
-            && parts
-                .iter()
-                .any(|p| matches!(p, Part::Text(t) if t.contains(['#', '{', '}'])))
-        {
-            return Err(Message::CountedBraces {
+        let own = [("other", text)];
+        let forms = rewrite.forms.unwrap_or(&own);
+        // A text without a count has one form.
+        if count.is_none() && forms.len() != 1 {
+            return Err(Message::Placeholders {
                 name: self.name.to_owned(),
             });
         }
+        let mut written = Vec::with_capacity(forms.len());
+        for (category, text) in forms {
+            let parts = parts(text, count.is_some(), values.len()).ok_or_else(|| {
+                Message::Placeholders {
+                    name: self.name.to_owned(),
+                }
+            })?;
+            if count.is_some()
+                && parts
+                    .iter()
+                    .any(|p| matches!(p, Part::Text(t) if t.contains(['#', '{', '}'])))
+            {
+                return Err(Message::CountedBraces {
+                    name: self.name.to_owned(),
+                });
+            }
+            written.push((*category, parts));
+        }
         let described = context.is_some();
-        // `` t`…` `` alone is a template; a descriptor or a `plural` holds a
-        // string, or a template where values fill it.
-        let filled = parts
-            .iter()
-            .any(|p| matches!(p, Part::Value(_) | Part::Count));
-        let templated = filled || !(described || count.is_some());
         if described {
             message.text("({ message: ");
         }
@@ -358,24 +529,39 @@ impl<'c, 'a> Chain<'c, 'a> {
             message.uses.push("plural");
             message.text("plural(");
             message.value(count.at.clone());
-            message.text(", { other: ");
+            message.text(", { ");
         }
-        message.text(if templated { "`" } else { "\"" });
-        for part in &parts {
-            match part {
-                Part::Text(t) if templated => message.text(&in_template(t)),
-                Part::Text(t) => message.text(&in_string(t)),
-                Part::Grouped => message.text("#"),
-                Part::Count | Part::Value(_) => {
-                    let value = match part {
-                        Part::Value(index) => &values[*index],
-                        _ => count.as_ref().expect("a count part has a count"),
-                    };
-                    message.text("${");
-                    message.value(value.at.clone());
-                    message.text("}");
+        for (index, (category, parts)) in written.iter().enumerate() {
+            // `` t`…` `` alone is a template; a descriptor or a `plural`
+            // holds a string, or a template where values fill it.
+            let filled = parts
+                .iter()
+                .any(|p| matches!(p, Part::Value(_) | Part::Count));
+            let templated = filled || !(described || count.is_some());
+            if count.is_some() {
+                if index > 0 {
+                    message.text(", ");
+                }
+                message.text(&format!("{category}: "));
+            }
+            message.text(if templated { "`" } else { "\"" });
+            for part in parts {
+                match part {
+                    Part::Text(t) if templated => message.text(&in_template(t)),
+                    Part::Text(t) => message.text(&in_string(t)),
+                    Part::Grouped => message.text("#"),
+                    Part::Count | Part::Value(_) => {
+                        let value = match part {
+                            Part::Value(index) => &values[*index],
+                            _ => count.as_ref().expect("a count part has a count"),
+                        };
+                        message.text("${");
+                        message.value(value.at.clone());
+                        message.text("}");
+                    }
                 }
             }
+            message.text(if templated { "`" } else { "\"" });
         }
         // A copy is a value read in another order than it was, so it
         // reads the same only where it is plain and no value of the call
@@ -397,7 +583,6 @@ impl<'c, 'a> Chain<'c, 'a> {
                 name: self.name.to_owned(),
             });
         }
-        message.text(if templated { "`" } else { "\"" });
         if count.is_some() {
             message.text(" })");
         }
@@ -406,7 +591,7 @@ impl<'c, 'a> Chain<'c, 'a> {
         }
         // A count alone is `plural(…)`, untagged.
         message.untagged = !described && count.is_some();
-        Ok(message.done(self.outer, source))
+        Ok(message.done(self.outer, source, said))
     }
 }
 
@@ -595,6 +780,8 @@ struct Written {
     changes: Vec<Change>,
     names: Vec<&'static str>,
     copies: Vec<Range<usize>>,
+    /// What the call says, for a catalogue.
+    message: Translated,
 }
 
 impl Built {
@@ -627,7 +814,7 @@ impl Built {
     /// replaces what lies between two values; the lines it replaced go
     /// where a script may have them: after the text before a value (an
     /// open `${` or `(`), else before the text after one.
-    fn done(mut self, call: &CallExpression<'_>, source: &str) -> Written {
+    fn done(mut self, call: &CallExpression<'_>, source: &str, message: Translated) -> Written {
         let mut names = self.uses.clone();
         if !self.untagged {
             names.insert(0, self.tag);
@@ -676,6 +863,7 @@ impl Built {
             changes,
             names,
             copies: self.copies,
+            message,
         }
     }
 }
@@ -772,6 +960,30 @@ mod tests {
             Some(vec![Grouped, Text(" of ".into()), Count])
         );
         assert_eq!(parts("%n", false, 0), Some(vec![Text("%n".into())]));
+    }
+
+    #[test]
+    fn a_translation_is_written_by_the_rewrite_its_call_is() {
+        let call = r#"qsTr("%1 of %2").arg(name).arg(total)"#;
+        assert_eq!(
+            rewrite_message(call, &[], None).unwrap(),
+            "t`${name} of ${total}`"
+        );
+        // Each mark is the value its number names in the call.
+        assert_eq!(
+            rewrite_message(call, &[("other", "%2 alls, þar af %1")], None).unwrap(),
+            "t`${total} alls, þar af ${name}`"
+        );
+        let counted = r#"qsTr("%n page(s)", "", count)"#;
+        assert_eq!(
+            rewrite_message(counted, &[("one", "%n síða"), ("other", "%n síður")], None).unwrap(),
+            "plural(count, { one: `${count} síða`, other: `${count} síður` })"
+        );
+        assert_eq!(
+            rewrite_message(r#"qsTr("Open")"#, &[("other", "Opna")], Some("Door")).unwrap(),
+            r#"t({ message: "Opna", context: "Door" })"#
+        );
+        assert!(rewrite_message("open()", &[], None).is_err());
     }
 
     #[test]
