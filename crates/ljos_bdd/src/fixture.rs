@@ -116,6 +116,45 @@ pub fn quadrants_png(width: u32, height: u32, colours: &[String]) -> Result<Vec<
     rgba_png(width, height, &data)
 }
 
+/// A PNG of rows of tiles, each of one colour: every row has as many as
+/// the first, and all are the same size, which the picture's size divides
+/// into whole pixels. Four in two rows are quadrants; two rows of four make
+/// a picture of everything round a scene whose every way says where it
+/// looked.
+///
+/// # Errors
+/// The rows are uneven or empty, a colour is not one, or the tiles do not
+/// divide the size.
+pub fn tiles_png(width: u32, height: u32, rows: &[Vec<String>]) -> Result<Vec<u8>, String> {
+    let across = rows.first().map_or(0, Vec::len);
+    if across == 0 || rows.iter().any(|row| row.len() != across) {
+        return Err("tiles take rows of as many colours each, at least one".to_owned());
+    }
+    let (across, down) = (across as u32, rows.len() as u32);
+    if width == 0 || height == 0 || !width.is_multiple_of(across) || !height.is_multiple_of(down) {
+        return Err(format!(
+            "{across} by {down} tiles do not divide a {width} by {height} picture"
+        ));
+    }
+    let tiles = rows
+        .iter()
+        .map(|row| {
+            row.iter()
+                .map(|c| parse_colour(c))
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut data = Vec::with_capacity(width as usize * height as usize * 4);
+    for y in 0..height {
+        for x in 0..width {
+            let [a, r, g, b] =
+                tiles[(y / (height / down)) as usize][(x / (width / across)) as usize];
+            data.extend([r, g, b, a]);
+        }
+    }
+    rgba_png(width, height, &data)
+}
+
 /// A PNG of single-pixel squares of two colours, the first at the top left:
 /// as fine as a picture gets, so that how it reads drawn smaller shows
 /// whether its pixels were averaged.
