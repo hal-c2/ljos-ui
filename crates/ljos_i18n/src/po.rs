@@ -280,18 +280,23 @@ impl PoFile {
 
     /// Writes the file: the fixed header, then the entries sorted by
     /// `msgid` and `msgctxt`, obsolete ones last. Writing what was read
-    /// gives the same file back, up to that order and header.
+    /// gives the same file back, up to that order and header. A template
+    /// (`.pot`) has no language, and its header says none.
     #[must_use]
-    pub fn write(&self, language: &str) -> String {
+    pub fn write(&self, language: Option<&str>) -> String {
         let mut out = String::new();
         out.push_str("msgid \"\"\nmsgstr \"\"\n");
+        let language = language.map(|language| format!("Language: {language}"));
         for line in [
-            "MIME-Version: 1.0".to_owned(),
-            "Content-Type: text/plain; charset=UTF-8".to_owned(),
-            "Content-Transfer-Encoding: 8bit".to_owned(),
-            format!("Language: {language}"),
-            "X-Generator: ljos i18n extract".to_owned(),
-        ] {
+            Some("MIME-Version: 1.0".to_owned()),
+            Some("Content-Type: text/plain; charset=UTF-8".to_owned()),
+            Some("Content-Transfer-Encoding: 8bit".to_owned()),
+            language,
+            Some("X-Generator: ljos i18n extract".to_owned()),
+        ]
+        .into_iter()
+        .flatten()
+        {
             let _ = writeln!(out, "\"{}\\n\"", escape(&line));
         }
         let mut entries: Vec<&PoEntry> = self.entries.iter().collect();
@@ -312,6 +317,134 @@ impl PoFile {
             write_entry(&mut out, entry);
         }
         out
+    }
+}
+
+/// What [`PoFile::merge`] did.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct PoMerge {
+    /// The messages the sources have, each once.
+    pub messages: usize,
+    /// Of those, the ones the file did not have.
+    pub new: usize,
+    /// Of those, the ones with a translation.
+    pub translated: usize,
+    /// The entries kept for translators though the sources lost them,
+    /// before and now.
+    pub obsolete: usize,
+    /// The messages the file had that the sources lost, translated or not.
+    pub gone: usize,
+}
+
+impl PoFile {
+    /// Brings the file up to date with the messages of the sources, given
+    /// in the order found; one message found in several places is one
+    /// entry with every place. A message keeps its translation, its
+    /// translators' comments and its flags; what the sources say of it
+    /// (the comment, the places, the default of an id) is the sources'.
+    /// A translated message the sources lost is kept as obsolete (`#~`),
+    /// and comes back with its translation when the sources have it again;
+    /// an untranslated one goes.
+    pub fn merge(&mut self, found: impl IntoIterator<Item = PoEntry>) -> PoMerge {
+        let key = |entry: &PoEntry| (entry.context.clone(), entry.id.clone());
+        let mut sources: Vec<PoEntry> = Vec::new();
+        let mut at = std::collections::HashMap::new();
+        for entry in found {
+            match at.get(&key(&entry)) {
+                Some(&index) => {
+                    let into: &mut PoEntry = &mut sources[index];
+                    for origin in entry.origins {
+                        if !into.origins.contains(&origin) {
+                            into.origins.push(origin);
+                        }
+                    }
+                    for comment in entry.comments {
+                        if !into.comments.contains(&comment) {
+                            into.comments.push(comment);
+                        }
+                    }
+                    into.explicit_id |= entry.explicit_id;
+                    if into.default.is_none() {
+                        into.default = entry.default;
+                    }
+                }
+                None => {
+                    at.insert(key(&entry), sources.len());
+                    sources.push(entry);
+                }
+            }
+        }
+
+        let mut before: std::collections::HashMap<_, PoEntry> = std::collections::HashMap::new();
+        let mut was_live = std::collections::HashSet::new();
+        for entry in std::mem::take(&mut self.entries) {
+            let k = key(&entry);
+            if !entry.obsolete {
+                was_live.insert(k.clone());
+            }
+            // A live entry wins over an obsolete one of the same key.
+            match before.get(&k) {
+                Some(kept) if !kept.obsolete => {}
+                _ => {
+                    before.insert(k, entry);
+                }
+            }
+        }
+
+        let mut report = PoMerge {
+            messages: sources.len(),
+            ..PoMerge::default()
+        };
+        for mut entry in sources {
+            let k = key(&entry);
+            match before.remove(&k) {
+                Some(old) => {
+                    entry.translation = old.translation;
+                    entry.translator_comments = old.translator_comments;
+                    entry.flags = old.flags;
+                    if !was_live.contains(&k) {
+                        report.new += 1;
+                    }
+                }
+                None => report.new += 1,
+            }
+            entry.obsolete = false;
+            entry.line = 0;
+            if !entry.translation.is_empty() {
+                report.translated += 1;
+            }
+            self.entries.push(entry);
+        }
+        let mut gone: Vec<PoEntry> = before.into_values().collect();
+        gone.sort_by_key(key);
+        for mut entry in gone {
+            if !entry.obsolete {
+                report.gone += 1;
+            }
+            if entry.translation.is_empty() {
+                continue;
+            }
+            // Where it was, and what its author said of it, left with it.
+            entry.obsolete = true;
+            entry.origins.clear();
+            entry.comments.clear();
+            entry.line = 0;
+            report.obsolete += 1;
+            self.entries.push(entry);
+        }
+        report
+    }
+
+    /// The file without where its messages are used: a line that moved is
+    /// not a reason for a translator to look again.
+    #[must_use]
+    pub fn without_origins(&self) -> Self {
+        let mut file = self.clone();
+        for entry in &mut file.entries {
+            entry.origins.clear();
+            entry.line = 0;
+        }
+        file
     }
 }
 
@@ -474,7 +607,7 @@ msgstr "Tvær\nlínur"
     #[test]
     fn the_writer_is_deterministic_and_reads_back() {
         let po = PoFile::parse(IS).unwrap();
-        let written = po.write("is");
+        let written = po.write(Some("is"));
         assert!(written.starts_with(
             "msgid \"\"\nmsgstr \"\"\n\"MIME-Version: 1.0\\n\"\n\
              \"Content-Type: text/plain; charset=UTF-8\\n\"\n\
@@ -483,9 +616,9 @@ msgstr "Tvær\nlínur"
         ));
         let mut shuffled = po.clone();
         shuffled.entries.reverse();
-        assert_eq!(shuffled.write("is"), written);
+        assert_eq!(shuffled.write(Some("is")), written);
         let again = PoFile::parse(&written).unwrap();
-        assert_eq!(again.write("is"), written);
+        assert_eq!(again.write(Some("is")), written);
         let ids: Vec<_> = again.entries.iter().map(|e| e.id.as_str()).collect();
         assert_eq!(
             ids,
@@ -548,7 +681,7 @@ msgstr "Tvær\nlínur"
             language: None,
             entries: vec![entry(Some("menu")), entry(None), entry(Some("file"))],
         };
-        let written = po.write("en");
+        let written = po.write(Some("en"));
         let file = written.find("\"file\"").unwrap();
         let menu = written.find("\"menu\"").unwrap();
         assert!(file < menu);
@@ -561,5 +694,77 @@ msgstr "Tvær\nlínur"
         assert_eq!(error.line, 2);
         let error = PoFile::parse("\"stray\"\n").unwrap_err();
         assert_eq!(error.line, 1);
+    }
+
+    fn found(id: &str, context: Option<&str>, origin: &str) -> PoEntry {
+        PoEntry {
+            id: id.to_owned(),
+            context: context.map(str::to_owned),
+            origins: vec![origin.to_owned()],
+            ..PoEntry::default()
+        }
+    }
+
+    #[test]
+    fn merging_keeps_translations_and_translated_gone_ones() {
+        let mut po = PoFile::parse(IS).unwrap();
+        let report = po.merge([
+            found("Hello {name}", None, "Main.qml:5"),
+            found("Open", Some("menu"), "Main.qml:6"),
+            found("Hello {name}", None, "Card.qml:2"),
+            found("Gone", None, "Main.qml:9"),
+            found("New", None, "Main.qml:7"),
+        ]);
+        assert_eq!(
+            report,
+            PoMerge {
+                messages: 4,
+                // `New`, and `Gone`, which was obsolete: it comes back to
+                // the live catalogue with its translation, and counts as
+                // new there.
+                new: 2,
+                translated: 3,
+                // `nav.home`, `Close` and the two lines; `Save` had no
+                // translation and goes.
+                obsolete: 3,
+                gone: 4,
+            }
+        );
+        let hello = po.entries.iter().find(|e| e.id == "Hello {name}").unwrap();
+        assert_eq!(hello.translation, "Halló {name}");
+        assert_eq!(hello.translator_comments, ["Checked by Jón"]);
+        assert_eq!(hello.origins, ["Main.qml:5", "Card.qml:2"]);
+        assert!(hello.comments.is_empty());
+        let gone = po.entries.iter().find(|e| e.id == "Gone").unwrap();
+        assert!(!gone.obsolete);
+        assert_eq!(gone.translation, "Farið");
+        let close = po.entries.iter().find(|e| e.id == "Close").unwrap();
+        assert!(close.obsolete && close.is_fuzzy());
+        assert!(po.entries.iter().all(|e| e.id != "Save"));
+    }
+
+    #[test]
+    fn merging_twice_changes_nothing() {
+        let sources = || {
+            [
+                found("A", None, "Main.qml:1"),
+                found("B", Some("x"), "Main.qml:2"),
+            ]
+        };
+        let mut po = PoFile::default();
+        po.merge(sources());
+        let once = po.write(Some("is"));
+        let mut again = PoFile::parse(&once).unwrap();
+        let report = again.merge(sources());
+        assert_eq!(report.new, 0);
+        assert_eq!(report.gone, 0);
+        assert_eq!(again.write(Some("is")), once);
+    }
+
+    #[test]
+    fn a_template_has_no_language() {
+        let written = PoFile::default().write(None);
+        assert!(!written.contains("Language"));
+        assert!(written.contains("X-Generator: ljos i18n extract"));
     }
 }
