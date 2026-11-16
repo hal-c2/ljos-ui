@@ -137,10 +137,12 @@ impl MessageCall {
         let mut out = Vec::with_capacity(placeholders.len() + 1);
         let mut at = self.span.start;
         let mut text = head;
+        // Each value in parentheses: `${a, b}` is one value, `b`, and not
+        // two arguments.
         for span in placeholders {
-            out.push((Span::new(at, span.start), format!("{text}, ")));
+            out.push((Span::new(at, span.start), format!("{text}, (")));
             at = span.end;
-            text = String::new();
+            text = ")".to_owned();
         }
         out.push((Span::new(at, self.span.end), format!("{text})")));
         Some(out)
@@ -716,6 +718,13 @@ fn escape_into(out: &mut String, text: &str, in_plural: bool) {
                     i += 3;
                     continue;
                 }
+                if in_plural && chars[i] == '#' {
+                    // The count stays out of the quote: `{#}` is the count
+                    // in braces.
+                    out.push_str("'#'");
+                    i += 1;
+                    continue;
+                }
                 if chars[i] == '\'' {
                     out.push('\'');
                 }
@@ -812,7 +821,16 @@ mod tests {
         }
         assert_eq!(
             out,
-            r#"__ljos_message("{name} has {n, plural, one {# file} other {# files}}", "", "{name} has {n, plural, one {# file} other {# files}}", "name,n", name, n)"#
+            r#"__ljos_message("{name} has {n, plural, one {# file} other {# files}}", "", "{name} has {n, plural, one {# file} other {# files}}", "name,n", (name), (n))"#
+        );
+        let source = "t`${1, 2} and ${x}`";
+        let mut out = source.to_owned();
+        for (span, text) in read(source).unwrap().lowering().unwrap().into_iter().rev() {
+            out.replace_range(span.start as usize..span.end as usize, &text);
+        }
+        assert_eq!(
+            out,
+            r#"__ljos_message("{0} and {x}", "", "{0} and {x}", "0,x", (1, 2), (x))"#
         );
         let call = read(r#"msg({ id: "nav.home", message: "Home" })"#).unwrap();
         let lowered = call.lowering().unwrap();
@@ -834,6 +852,11 @@ mod tests {
             message(r#"plural(n, { other: "'#' is #, {'#'}" })"#),
             "{n, plural, other {'#' is #, '{#}'}}"
         );
+        assert_eq!(
+            message(r#"plural(n, { other: "{#} files" })"#),
+            "{n, plural, other {'{'#'}' files}}"
+        );
+        assert_eq!(escape("{#}"), "'{#}'");
         assert_eq!(escape("{'}"), "'{''}'");
         assert_eq!(escape("{'x"), "'{'''x");
         assert_eq!(escape("a}''b"), "a'}'''''b");
