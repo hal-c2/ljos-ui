@@ -17,10 +17,10 @@ path = "src/main.rs"
 # the client of one that `ljos observe` and `ljos attach` are.
 ljos_mcp_core = { path = "../ljos_mcp_core", features = ["http", "remote"] }
 ljos_mcp_author = { path = "../ljos_mcp_author" }
-# `ljos i18n extract`: the compiler finds the texts, ljos_i18n writes `.ts`.
+# `ljos i18n extract`: the compiler finds the texts, ljos_i18n writes `.ts` and `.po`.
 ljos_aot = { path = "../ljos_aot" }
 ljos_compiler = { path = "../ljos_compiler" }
-ljos_i18n = { path = "../ljos_i18n" }
+ljos_i18n = { path = "../ljos_i18n", features = ["po"] }
 # `ljos design export` writes the files of Ljos.Design.
 ljos_design = { path = "../ljos_design" }
 ljos_design_qml = { path = "../ljos_design_qml" }
