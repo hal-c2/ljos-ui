@@ -299,6 +299,7 @@ fn lowered(modules: &[(&str, &str)]) -> Outcome {
             .iter()
             .map(|(name, text)| (name.to_string(), text.to_string()))
             .collect(),
+        messages: Vec::new(),
     })
 }
 

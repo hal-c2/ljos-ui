@@ -110,6 +110,8 @@ pub struct Lowering {
     generated: BTreeMap<String, Vec<String>>,
     /// The files to lower again.
     stale: BTreeSet<String>,
+    /// What a catalogue of Qt's says of the project's translated texts.
+    translations: crate::Translations,
 }
 
 impl Lowering {
@@ -139,6 +141,15 @@ impl Lowering {
         self.stale.insert(key.to_string());
         if named {
             self.stale.extend(self.naming(key));
+        }
+    }
+
+    /// Lowers each file again as `translations` say, from what a catalogue
+    /// of Qt's holds (`ljos migrate --catalogue`).
+    pub fn translate(&mut self, translations: crate::Translations) {
+        if translations != self.translations {
+            self.translations = translations;
+            self.stale.extend(self.files.keys().cloned());
         }
     }
 
@@ -246,7 +257,13 @@ impl Lowering {
         // The file's name names the module of its constant tables' rows.
         let stem = key.rsplit_once('/').map_or(key, |(_, stem)| stem);
         let locals = project.locals(key, self);
-        let mut outcome = crate::lower_parsed(&file.text, &parsed, Some(stem), &*locals);
+        let mut outcome = crate::lower_parsed(
+            &file.text,
+            &parsed,
+            Some(stem),
+            &*locals,
+            &self.translations.named,
+        );
         drop(locals);
         // A script at the rows module's path that the pass did not write,
         // and that is not the module it would write, is the project's, and
@@ -259,6 +276,14 @@ impl Lowering {
             outcome = Outcome::Kept(Kept {
                 cause: Cause::RowsScript { path: there },
                 at: 0,
+            });
+        }
+        if let Outcome::Lowered(_) = &outcome
+            && let Some((at, why)) = self.translations.kept.get(key)
+        {
+            outcome = Outcome::Kept(Kept {
+                cause: Cause::Catalogue { why: why.clone() },
+                at: *at,
             });
         }
         if !file.named && matches!(outcome, Outcome::Lowered(_)) {

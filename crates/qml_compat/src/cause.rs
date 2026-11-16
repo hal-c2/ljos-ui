@@ -180,6 +180,13 @@ pub enum Cause {
     /// A file found only through another, which `ljos migrate` was not
     /// named.
     NotNamed,
+    /// What the catalogue `ljos migrate --catalogue` reads says of the
+    /// file's translated texts, as `why` says: two calls that would be one
+    /// message are translated differently, or a translation is not one the
+    /// rewrite writes.
+    Catalogue {
+        why: String,
+    },
     /// An `XMLHttpRequest` that is not of the shape written as `fetch`.
     Xhr(Xhr),
     /// A member of `Qt` with no home in Ljós's API yet (docs/DIALECT.md
@@ -655,6 +662,7 @@ impl fmt::Display for Cause {
                 "`{path}` is a script of the project's, not the module of this file's rows"
             ),
             Cause::NotNamed => f.write_str("it is not named: name it too"),
+            Cause::Catalogue { why } => f.write_str(why),
             Cause::Xhr(xhr) => xhr.fmt(f),
             Cause::QtNoHome { member } => {
                 write!(f, "`Qt.{member}` has no home in Ljós's API yet")
