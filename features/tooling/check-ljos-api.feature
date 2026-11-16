@@ -511,6 +511,7 @@ Feature: Checking the scripts of a file written in Ljós's API
         """qml
         import Ljos.Ui
         Rectangle {
+          // ljos-allow(color-scheme-ignored): the scenario is about the type of `?:`
           fill: area.hovered ? "#eeeeee" : "#ffffff"
           PointerArea { id: area; hoverEnabled: true }
         }
@@ -518,9 +519,8 @@ Feature: Checking the scripts of a file written in Ljós's API
       When the files are checked
       Then the check reports:
         """
-        Gauge.qml:3:22: error: `hovered` has no type: a PointerArea has no member of that name [ts-no-any]
-        Gauge.qml:3:11: warning: this surface is filled with `#eeeeee` or `#ffffff` whatever the colour scheme, so the text the scheme colours on it is unreadable in one of them; bind it to `palette.*` (or a theme's colour that follows `Application.styleHints.colorScheme`) (docs/design/color.md#color-scheme-ignored) [color-scheme-ignored]
-        1 files, 1 errors, 1 warnings
+        Gauge.qml:4:22: error: `hovered` has no type: a PointerArea has no member of that name [ts-no-any]
+        1 files, 1 errors, 0 warnings
         ljos: 1 errors
         """
 
@@ -965,6 +965,7 @@ Feature: Checking the scripts of a file written in Ljós's API
         Rectangle {
           property real level: 0
           property bool empty: level == 0
+          // ljos-allow(color-scheme-ignored): the scenario is about migration
           color: level == 0 ? "red" : "green"
           function clear() { var was = level; if (level) { level = null } }
         }
@@ -975,6 +976,5 @@ Feature: Checking the scripts of a file written in Ljós's API
         lowered Gauge.qml (2 edits)
         scripts of Gauge.qml stay JavaScript: typed, ljos check finds 5
         1 files, 1 lowered, 0 kept
-        Gauge.qml:6:11: warning: this surface is filled with `red` or `green` whatever the colour scheme, so the text the scheme colours on it is unreadable in one of them; bind it to `palette.*` (or a theme's colour that follows `Application.styleHints.colorScheme`) (docs/design/color.md#color-scheme-ignored) [color-scheme-ignored]
-        1 files, 0 errors, 1 warnings
+        1 files, 0 errors, 0 warnings
         """
