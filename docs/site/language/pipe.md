@@ -21,6 +21,7 @@ A discount, kept at zero or more, as a share of the old price, rounded:
 import Ljos.Ui
 
 Window {
+    color: palette.window
     width: 200
     height: 60
     visible: true
@@ -48,6 +49,7 @@ A step is any expression that uses `%`: a call, a method, an operator, a templat
 import Ljos.Ui
 
 Window {
+    color: palette.window
     width: 200
     height: 60
     visible: true
@@ -73,6 +75,7 @@ A step that is an arrow function, a conditional, an assignment or a `yield` is w
 import Ljos.Ui
 
 Rectangle {
+    fill: palette.window
     width: 200
     height: 60
 
@@ -95,6 +98,7 @@ A pipe inside a step has its own `%` for its own steps; its head reads the outer
 import Ljos.Ui
 
 Window {
+    color: palette.window
     width: 200
     height: 60
     visible: true
@@ -120,6 +124,7 @@ import Ljos.Ui
 import Ljos.Core
 
 Window {
+    color: palette.window
     width: 200
     height: 60
     visible: true

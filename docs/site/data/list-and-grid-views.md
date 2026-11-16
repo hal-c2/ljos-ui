@@ -115,6 +115,7 @@ Item {
         anchors.fill: parent
         model: 100000
         delegate: Rectangle {
+            fill: palette.base
             width: 200
             height: 30
             Component.onCompleted: root.created++

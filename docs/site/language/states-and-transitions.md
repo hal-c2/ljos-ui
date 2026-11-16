@@ -74,6 +74,7 @@ Item {
     property string log: ""
 
     Rectangle {
+        fill: palette.button
         id: box
         width: 20
         height: 20
@@ -147,6 +148,7 @@ Item {
     }
 
     Rectangle {
+        color: palette.button
         id: badge
         width: 20
         height: 20
@@ -199,6 +201,7 @@ Item {
     property int customWidth: 120
 
     Rectangle {
+        fill: palette.button
         id: panel
         width: 60
         height: 40

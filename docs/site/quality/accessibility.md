@@ -149,9 +149,11 @@ ApplicationWindow {
             Label {
                 text: qsTr("Email address")
             }
+            // The label names the field: a placeholder would be drawn
+            // too faint to read, and gone once the reader types.
             TextField {
                 Layout.fillWidth: true
-                placeholderText: qsTr("name@example.org")
+                Accessible.name: qsTr("Email address")
             }
         }
 
@@ -305,7 +307,6 @@ ApplicationWindow {
             Button {
                 id: saveButton
                 text: qsTr("Save note")
-                highlighted: true
                 background: Rectangle {
                     color: palette.button
                     border.width: saveButton.visualFocus ? 2 : 0

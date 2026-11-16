@@ -164,6 +164,7 @@ import Ljos.Core
 import Ljos.Ui
 
 Rectangle {
+    fill: palette.window
     id: root
     width: 320
     height: 240

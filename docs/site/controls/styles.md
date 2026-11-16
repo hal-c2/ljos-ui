@@ -48,30 +48,32 @@ Write this as `Main.qml` and run `ljos check` on its directory:
 import QtQuick
 import QtQuick.Controls.Material
 
-Column {
-    padding: 12
-    spacing: 12
+Pane {
     Material.theme: Material.Dark
     Material.accent: Material.Teal
 
-    Button {
-        text: "Accent button"
-        highlighted: true
-    }
+    Column {
+        spacing: 12
 
-    Switch {
-        text: "Notifications"
+        Button {
+            text: "Accent button"
+            highlighted: true
+        }
+
+        Switch {
+            text: "Notifications"
+        }
     }
 }
 ```
 
-Both the `Button` and the `Switch` inherit the dark theme and teal accent attached to the enclosing `Column`. You can also set `Material.primary` and `Material.foreground` on a plain `Item` container:
+Both the `Button` and the `Switch` inherit the dark theme and teal accent attached to the enclosing `Pane`, which paints the dark theme's background behind them. You can also set `Material.primary` and `Material.foreground` on a container; a `Pane` paints the light theme's background the foreground is read on:
 
 ```qml
 import QtQuick
 import QtQuick.Controls.Material
 
-Item {
+Pane {
     width: 300
     height: 120
     Material.primary: "#123456"
