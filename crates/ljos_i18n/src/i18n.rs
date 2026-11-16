@@ -35,6 +35,12 @@ const SOURCE_LANGUAGE: &str = "en";
 /// application's compiled messages.
 const SOURCES_CACHED: usize = 4096;
 
+/// How many source texts one translation is kept checked against. A
+/// compiled program asks for an id with one source, or a few; a source
+/// made at run time could be any, so the oldest is dropped rather than
+/// the list grow without end.
+const CHECKED_PER_TRANSLATION: usize = 8;
+
 /// A message parsed once: `None` when it does not parse or names a value
 /// its source does not have, so it is warned about once and not used.
 type Parsed = Option<Rc<Message>>;
@@ -361,11 +367,12 @@ impl I18n {
                 None
             }
         };
-        self.parsed
-            .borrow_mut()
-            .entry((i, entry.first))
-            .or_default()
-            .push((source_text.into(), parsed.clone()));
+        let mut cached = self.parsed.borrow_mut();
+        let checked = cached.entry((i, entry.first)).or_default();
+        if checked.len() >= CHECKED_PER_TRANSLATION {
+            checked.remove(0);
+        }
+        checked.push((source_text.into(), parsed.clone()));
         parsed
     }
 
@@ -640,6 +647,24 @@ mod tests {
             assert_eq!(i.message("", &text, &text, &values(&[])), text);
         }
         assert!(i.sources.borrow().len() <= SOURCES_CACHED);
+    }
+
+    #[test]
+    fn sources_one_translation_is_kept_checked_against_are_bounded() {
+        let mut i = I18n::new();
+        i.install(messages());
+        i.set_ui_language("is");
+        for n in 0..CHECKED_PER_TRANSLATION + 10 {
+            let source = format!("Home {n}");
+            assert_eq!(i.message("", "nav.home", &source, &values(&[])), "Heim");
+        }
+        let parsed = i.parsed.borrow();
+        assert_eq!(parsed.len(), 1);
+        assert!(
+            parsed
+                .values()
+                .all(|checked| checked.len() <= CHECKED_PER_TRANSLATION)
+        );
     }
 
     #[test]
