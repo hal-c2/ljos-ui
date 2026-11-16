@@ -2034,13 +2034,17 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
     /// for translation has to be the same text to the tool that lists them
     /// and to the running program, and `qsTr` has to be the file's own (it
     /// carries the context), not the global one a look-up at run time finds.
-    /// So are the message macros of `Ljos.Core`, whose messages are lowered
-    /// as the file is compiled.
+    /// So are the message macros of `Ljos.Core` where they are called, whose
+    /// messages are lowered as the file is compiled; a role of the name read
+    /// as a value (`text: t`) is still the role.
     fn lookup(&self, name: &str, offset: u32) -> Option<Resolution<O::Type>> {
         let mut resolution = self.names.lookup(name, offset)?;
         let global = if crate::js::TRANSLATIONS.contains(&name) {
             names::global(name)
-        } else if crate::i18n::message::MACROS.contains(&name) && self.types.imports(names::CORE) {
+        } else if crate::i18n::message::MACROS.contains(&name)
+            && self.types.imports(names::CORE)
+            && self.is_called(name, offset)
+        {
             Some(names::Global::Core)
         } else {
             None
@@ -2053,6 +2057,15 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
             resolution.target = Some(Target::Global(global));
         }
         Some(resolution)
+    }
+
+    /// Whether the name written at `offset` is called there, or tags a
+    /// template.
+    fn is_called(&self, name: &str, offset: u32) -> bool {
+        self.source
+            .get(offset as usize..)
+            .and_then(|rest| rest.strip_prefix(name))
+            .is_some_and(|rest| rest.trim_start().starts_with(['(', '`']))
     }
 
     /// `Text.AlignLeft`, `Image.Fill.Stretch`, `C.Text.AlignLeft`,
