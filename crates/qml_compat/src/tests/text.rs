@@ -274,6 +274,10 @@ fn a_message_that_cannot_be_written_out_keeps_the_file() {
             "not known to be an `int`",
         ),
         (
+            "property real n: 2.5; property string shown: qsTr(\"%n\", \"\", n); Item { property int n: 1 }",
+            "not known to be an `int`",
+        ),
+        (
             "property string later: QT_TR_NOOP(\"Later\")",
             "a string to Qt",
         ),
