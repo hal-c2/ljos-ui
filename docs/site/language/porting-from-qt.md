@@ -53,12 +53,12 @@ Rectangle {
     id: root
     width: 200
     height: 100
-    color: "#336699"
+    color: palette.button
     property int clicks: 0
 
     Text {
         anchors.centerIn: parent
-        color: "white"
+        color: palette.buttonText
         text: "Clicked " + root.clicks + " times"
     }
 
@@ -80,12 +80,12 @@ Rectangle {
     id: root
     width: 200
     height: 100
-    fill: "#336699"
+    fill: palette.button
     property int clicks: 0
 
     Text {
         anchors.centerIn: parent
-        color: "white"
+        color: palette.buttonText
         text: "Clicked " + root.clicks + " times"
     }
 

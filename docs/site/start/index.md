@@ -44,6 +44,7 @@ Item {
     Contribution {
         slot: "status"
         Text {
+            color: palette.windowText
             text: shell.error === "" ? "Showing the user's shell" : `Showing the app's shell: ${shell.error}`
         }
     }
@@ -71,7 +72,7 @@ import Ljos.Layout
 import Ljos.Blocks
 
 Rectangle {
-    fill: "#e8eef8"
+    fill: palette.window
 
     Column {
         anchors.centerIn: parent
@@ -103,6 +104,7 @@ import Ljos.Ui
 import "filter.ts" as Logic
 
 Text {
+    color: palette.windowText
     property int shown: Logic.only("b")
     text: `Logic.only("b") is ${shown}`
 }
@@ -142,6 +144,7 @@ Rectangle {
     border.width: 2
 
     Text {
+        color: palette.windowText
         anchors.centerIn: parent
         text: "Halló"
         font.weight: Font.Bold

@@ -93,6 +93,7 @@ Item {
 
     Text {
         id: label
+        color: palette.windowText
         text: "Hello"
     }
 

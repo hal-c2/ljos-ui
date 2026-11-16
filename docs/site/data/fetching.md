@@ -25,6 +25,7 @@ import Ljos.Core
 
 Text {
     id: root
+    color: palette.windowText
     width: 280
     wrap: Text.WordWrap
     text: "Loading"
@@ -70,6 +71,7 @@ import Ljos.Core
 
 Text {
     id: root
+    color: palette.windowText
     width: 280
     text: ""
 
@@ -101,6 +103,7 @@ import Ljos.Core
 
 Text {
     id: root
+    color: palette.windowText
     width: 200
     text: "idle"
 

@@ -36,6 +36,7 @@ Window {
     property int unread: 3
 
     Text {
+        color: palette.windowText
         text: match (unread) {
             when 0: qsTr("No messages");
             when 1: qsTr("One message");
@@ -72,7 +73,7 @@ Window {
         x: Size.margin("large")
         width: 40
         height: 40
-        fill: "steelblue"
+        fill: palette.accent
     }
 }
 ```
@@ -120,6 +121,7 @@ Window {
     visible: true
 
     Text {
+        color: palette.windowText
         text: Feed.summary(Feed.latest)
     }
 }
@@ -146,9 +148,9 @@ Window {
         width: 40
         height: 40
         fill: match (folder) {
-            when selected: "steelblue";
-            when let name and if (name.startsWith("drafts/")): "gray";
-            default: "black";
+            when selected: palette.accent;
+            when let name and if (name.startsWith("drafts/")): palette.mid;
+            default: palette.windowText;
         }
     }
 }
@@ -192,10 +194,10 @@ Window {
         width: 120
         height: 40
         fill: match (look) {
-            when "pressed": "#1d4ed8";
-            when "hovered": "#3b82f6";
-            when "disabled": "#9ca3af";
-            default: "#2563eb";
+            when "pressed": palette.dark;
+            when "hovered": palette.midlight;
+            when "disabled": palette.mid;
+            default: palette.button;
         }
 
         readonly property string look: match ({ enabled: enabled, down: tap.pressed, hovered: hover.hovered }) {
@@ -240,10 +242,11 @@ Rectangle {
     width: 200
     height: 60
 
-    fill: "#e8eef8"
+    fill: palette.base
     property string action: ""
 
     Text {
+        color: palette.windowText
         anchors.centerIn: parent
         text: action === "" ? "Tap me" : `Next: ${action}`
     }
@@ -279,6 +282,7 @@ Window {
     visible: true
 
     Text {
+        color: palette.windowText
         text: Reply.text({ status: 200, body: "ok" })
     }
 }

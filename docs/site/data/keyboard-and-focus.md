@@ -53,7 +53,9 @@ Row {
         id: a
         width: 50
         height: 50
-        fill: "#fc9"
+        fill: palette.button
+        border.width: 2
+        border.color: activeFocus ? palette.highlight : palette.mid
         focus: true
         KeyNavigation.right: b
         KeyNavigation.tab: c
@@ -62,7 +64,9 @@ Row {
         id: b
         width: 50
         height: 50
-        fill: "#cde"
+        fill: palette.button
+        border.width: 2
+        border.color: activeFocus ? palette.highlight : palette.mid
         KeyNavigation.right: c
         KeyNavigation.backtab: a
     }
@@ -70,7 +74,9 @@ Row {
         id: c
         width: 50
         height: 50
-        fill: "#dfd"
+        fill: palette.button
+        border.width: 2
+        border.color: activeFocus ? palette.highlight : palette.mid
     }
 }
 ```

@@ -184,6 +184,7 @@ Pane {
         }
 
         Text {
+            color: palette.windowText
             text: "A plain Text keeps its own font"
         }
     }

@@ -31,12 +31,14 @@ Column {
     spacing: 8
 
     Text {
+        color: palette.windowText
         width: 120
         text: "Hello world, this is a long line of text"
         wrap: Text.WordWrap
     }
 
     Text {
+        color: palette.windowText
         width: 120
         height: 30
         text: "Hello world, this is a long line of text that wraps"
@@ -46,6 +48,7 @@ Column {
     }
 
     Text {
+        color: palette.windowText
         width: 120
         text: "A single long word that does not break here"
         elide: Text.ElideMiddle
@@ -66,6 +69,7 @@ Item {
     width: 200; height: 80
 
     Text {
+        color: palette.windowText
         width: 200; height: 40
         text: "Shrinks to fit the width"
         font.size: 40
@@ -74,6 +78,7 @@ Item {
     }
 
     Text {
+        color: palette.windowText
         width: 200; height: 40
         y: 40
         text: "<b>Rich</b> text keeps its size"
@@ -103,30 +108,36 @@ Column {
     spacing: 6
 
     Text {
+        color: palette.windowText
         text: "Plain text"
         font.size: 16
     }
     Text {
+        color: palette.windowText
         text: "Bold text"
         font.size: 16
         font.weight: Font.Bold
     }
     Text {
+        color: palette.windowText
         text: "Heavy text"
         font.size: 16
         font.weight: Font.Black
     }
     Text {
+        color: palette.windowText
         text: "Spaced out"
         font.size: 16
         font.letterSpacing: 2
     }
     Text {
+        color: palette.windowText
         text: "Word spacing"
         font.size: 16
         font.wordSpacing: 5
     }
     Text {
+        color: palette.windowText
         text: "Points"
         font.size: Screen.points(12)
     }
@@ -154,10 +165,11 @@ import Ljos.Ui
 
 Text {
     id: links
+    color: palette.windowText
     width: 240
     format: Text.StyledText
     text: "Read the <a href=\"docs\">guide</a> or the <a href=\"api\">reference</a>."
-    linkColor: "#2060a0"
+    linkColor: palette.link
     wrap: Text.WordWrap
 
     onLinkActivated: link => console.log("pressed: " + link)

@@ -51,6 +51,7 @@ Column {
     }
 
     Text {
+        color: palette.windowText
         text: "Volume " + Math.round(volume.value * 100) + " %"
     }
 }
@@ -82,6 +83,7 @@ Column {
     }
 
     Text {
+        color: palette.windowText
         text: "Current: " + colours.currentText
     }
 }

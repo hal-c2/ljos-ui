@@ -25,11 +25,11 @@ When you declare an animation directly on a property using `on <property>` (a va
 import Ljos.Ui
 
 Rectangle {
-    width: 200; height: 60; fill: "#eeeeee"
+    width: 200; height: 60; fill: palette.alternateBase
 
     Rectangle {
         id: knob
-        width: 40; height: 40; y: 10; fill: "#2060a0"
+        width: 40; height: 40; y: 10; fill: palette.accent
     }
 
     NumberAnimation on x {
@@ -41,7 +41,7 @@ Rectangle {
 }
 ```
 
-The blue square starts moving from `0` to `160` as soon as the window exists, taking 500 milliseconds and easing at both ends.
+The accent square starts moving from `0` to `160` as soon as the window exists, taking 500 milliseconds and easing at both ends.
 
 ## Behavior and Transition
 
@@ -54,12 +54,12 @@ Attach a `Behavior on <property>` to animate every subsequent change to that pro
 import Ljos.Ui
 
 Rectangle {
-    width: 200; height: 100; fill: "#eeeeee"
+    width: 200; height: 100; fill: palette.alternateBase
 
     Rectangle {
         id: knob
         x: 10; y: 30
-        width: 40; height: 40; fill: "#2060a0"
+        width: 40; height: 40; fill: palette.accent
         Behavior on x {
             NumberAnimation { duration: 300; easing.type: Easing.OutCubic }
         }
@@ -90,11 +90,11 @@ For physics-driven or velocity-capped movement:
 import Ljos.Ui
 
 Rectangle {
-    width: 200; height: 60; fill: "#eeeeee"
+    width: 200; height: 60; fill: palette.alternateBase
 
     Rectangle {
         id: ball
-        y: 20; width: 20; height: 20; radius: 10; fill: "#308030"
+        y: 20; width: 20; height: 20; radius: 10; fill: palette.accent
         Behavior on x {
             SpringAnimation { spring: 3; damping: 0.2 }
         }
@@ -119,7 +119,7 @@ To combine animations or drive them manually:
 import Ljos.Ui
 
 Rectangle {
-    width: 20; height: 20; radius: 10; fill: "#c03030"
+    width: 20; height: 20; radius: 10; fill: palette.linkVisited
 
     SequentialAnimation on opacity {
         loops: Animation.Infinite

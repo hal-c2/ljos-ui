@@ -148,9 +148,11 @@ Item {
         fallback: Column {
             spacing: 8
             Text {
+                color: palette.windowText
                 text: boundary.fault.kind + ": " + boundary.fault.message
             }
             Text {
+                color: palette.windowText
                 text: "Line " + boundary.fault.line
             }
             PointerArea {
@@ -164,7 +166,7 @@ Item {
 
         Rectangle {
             anchors.fill: parent
-            fill: "steelblue"
+            fill: palette.accent
         }
     }
 }

@@ -54,10 +54,11 @@ Rectangle {
     width: label.width + 16
     height: label.height + 8
     radius: 4
-    color: "#e8eef8"
+    color: palette.alternateBase
 
     Text {
         id: label
+        color: palette.windowText
         anchors.centerIn: parent
     }
 }

@@ -28,7 +28,7 @@ Item {
         id: box
         width: 40
         height: 40
-        fill: "#ff0000"
+        fill: palette.accent
     }
 
     states: [
@@ -37,7 +37,7 @@ Item {
             when: root.expanded
             PropertyChanges {
                 box.width: 160
-                box.fill: "#0000ff"
+                box.fill: palette.linkVisited
             }
         },
         State {
@@ -82,6 +82,7 @@ Item {
 
     Text {
         id: label
+        color: palette.windowText
         text: "Caption"
         font.size: 12
         font.italic: true
@@ -228,7 +229,7 @@ Item {
         id: box
         width: 20
         height: 20
-        fill: "#336699"
+        fill: palette.accent
     }
 
     states: [

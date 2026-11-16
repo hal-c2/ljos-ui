@@ -29,7 +29,8 @@ Item {
         onClicked: root.under++
         Rectangle {
             anchors.fill: parent
-            fill: "#b8c8e8"
+            fill: palette.button
+            border.color: palette.mid
         }
     }
     PointerArea {
@@ -40,17 +41,18 @@ Item {
         onClicked: root.over++
         Rectangle {
             anchors.fill: parent
-            fill: "#28407a"
+            fill: palette.highlight
         }
     }
     Text {
+        color: palette.windowText
         y: 110
         text: `under ${root.under}, over ${root.over}`
     }
 }
 ```
 
-The second `PointerArea`, the dark square, sits on top of the first, so clicking inside `(0..50, 0..50)` increments `over`, while clicking elsewhere in the 100×100 square increments `under`; the line below counts both.
+The second `PointerArea`, the highlighted square, sits on top of the first, so clicking inside `(0..50, 0..50)` increments `over`, while clicking elsewhere in the 100×100 square increments `under`; the line below counts both.
 
 `PointerArea` also provides `onPressed`, `onReleased`, `pressedButtons`, `acceptedButtons`, `containsMouse`, and `hoverEnabled`:
 
@@ -77,10 +79,10 @@ Item {
         id: box
         x: 50; y: 50
         width: 100; height: 100
-        fill: "#cde"
+        fill: palette.button
         Tap {
-            onTapped: box.fill = "#fc9"
-            onDoubleTapped: box.fill = "#9cf"
+            onTapped: box.fill = palette.highlight
+            onDoubleTapped: box.fill = palette.linkVisited
         }
         Drag {
             target: box
@@ -90,7 +92,7 @@ Item {
 }
 ```
 
-A tap turns `box` orange, a double tap turns it blue, and dragging moves `box` down up to `yAxis.maximum: 150`.
+A tap fills `box` with the highlight colour, a double tap with `palette.linkVisited`, and dragging moves `box` down up to `yAxis.maximum: 150`.
 
 Note the subtle difference in drag threshold timing: `Drag` starts dragging on the first move that reaches the system drag distance, whereas `PointerArea` starts dragging on the move after passing the threshold.
 
@@ -110,7 +112,7 @@ Item {
         id: panel
         x: 20; y: 20
         width: 120; height: 120
-        fill: "#eee"
+        fill: palette.alternateBase
         Hover {
             id: hover
         }
@@ -119,6 +121,7 @@ Item {
             target: panel
         }
         Text {
+            color: palette.windowText
             text: (hover.hovered ? "over" : "away") + " " + wheel.rotation
         }
     }
@@ -146,7 +149,7 @@ Item {
     Rectangle {
         id: box
         width: 40; height: 40
-        fill: "#fc9"
+        fill: palette.highlight
         DragSource.active: false
         DragSource.hotSpot.x: 20
         DragSource.hotSpot.y: 20
@@ -160,6 +163,7 @@ Item {
     }
     Text {
         id: status
+        color: palette.windowText
         y: 10
     }
 }
@@ -183,7 +187,7 @@ Item {
         id: box
         x: 100; y: 100
         width: 100; height: 100
-        color: "#cde"
+        color: palette.accent
     }
     PinchArea {
         anchors.fill: parent

@@ -28,6 +28,7 @@ Item {
     width: 200; height: 80
 
     TextEdit {
+        color: palette.windowText
         width: 180
         wrapMode: TextEdit.WordWrap
         text: "one two three four five six seven"
@@ -46,6 +47,7 @@ Item {
 
     TextInput {
         id: field
+        color: palette.windowText
         width: 180
         readOnly: true
         focus: true
@@ -55,7 +57,7 @@ Item {
 
     Text {
         y: 30
-        color: "#606060"
+        color: palette.windowText
         text: field.selectedText === "" ? "Nothing selected" : `Selected: ${field.selectedText}`
     }
 }
@@ -95,12 +97,14 @@ Item {
 
     TextInput {
         id: field
+        color: palette.windowText
         width: 180
         focus: true
         font.size: 14
         validator: IntValidator { bottom: 10; top: 99 }
     }
 
+    // ljos-allow(color-scheme-ignored): this green and red stand 3:1 apart from light and dark alike
     Rectangle {
         y: 30; width: 180; height: 4
         fill: field.acceptableInput ? "#308030" : "#c03030"
@@ -129,6 +133,7 @@ Item {
     width: 200; height: 40
 
     TextInput {
+        color: palette.windowText
         width: 180
         focus: true
         echoMode: TextInput.PasswordEchoOnEdit

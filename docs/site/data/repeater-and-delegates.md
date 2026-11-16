@@ -79,10 +79,10 @@ Column {
         role: "kind"
         DelegateChoice {
             roleValue: "a"
-            Text { text: "A row " + index }
+            Text { text: "A row " + index; color: palette.windowText }
         }
         DelegateChoice {
-            Text { text: "other " + kind }
+            Text { text: "other " + kind; color: palette.windowText }
         }
     }
     Repeater {
@@ -123,6 +123,7 @@ Item {
         }
     }
     Text {
+        color: palette.windowText
         text: "count " + inst.count + " first " + (inst.object ? inst.object.shown : "none")
     }
 }

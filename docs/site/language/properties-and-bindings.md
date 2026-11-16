@@ -59,6 +59,7 @@ Item {
 
     Text {
         id: heading
+        color: palette.windowText
         text: "Title"
         font {
             weight: Font.Bold
@@ -147,6 +148,7 @@ Item {
 
     Text {
         id: label
+        color: palette.windowText
         text: "Sample"
         font.size: 12
         font.italic: true

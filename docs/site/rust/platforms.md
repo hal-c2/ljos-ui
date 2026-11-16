@@ -62,6 +62,7 @@ Item {
     }
 
     Text {
+        color: palette.windowText
         anchors.centerIn: parent
         text: root.online ? "Online" : "Offline or local"
     }

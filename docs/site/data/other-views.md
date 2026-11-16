@@ -25,7 +25,7 @@ PathView {
     delegate: Rectangle {
         width: 20
         height: 10
-        fill: PathView.isCurrentItem ? "#ffcc00" : "#dddddd"
+        fill: PathView.isCurrentItem ? palette.highlight : palette.button
     }
     path: Path {
         startX: 0
@@ -61,6 +61,7 @@ TableView {
         rows: [ { name: "a.txt", size: 1 }, { name: "b.txt", size: 2 } ]
     }
     delegate: Text {
+        color: palette.windowText
         text: display
         implicitWidth: 100
         implicitHeight: 20
@@ -101,7 +102,7 @@ TreeView {
         required property bool expanded
         required property int depth
         required property string display
-        Text { x: depth * 10; text: display }
+        Text { x: depth * 10; text: display; color: palette.windowText }
     }
 }
 ```
@@ -121,7 +122,7 @@ Flickable {
     height: 200
     contentWidth: 200
     contentHeight: 600
-    Rectangle { width: 200; height: 600; fill: "#cde" }
+    Rectangle { width: 200; height: 600; fill: palette.alternateBase }
 }
 ```
 

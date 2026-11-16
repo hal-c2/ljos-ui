@@ -28,17 +28,19 @@ ListView {
         ListElement { name: "banana"; kind: "fruit" }
         ListElement { name: "carrot"; kind: "root" }
     }
-    header: Text { text: "Food"; height: 20 }
-    footer: Text { text: "end"; height: 20 }
+    header: Text { text: "Food"; height: 20; color: palette.windowText }
+    footer: Text { text: "end"; height: 20; color: palette.windowText }
     section.property: "kind"
     section.delegate: Text {
         required property string section
+        color: palette.windowText
         text: section
         height: 15
     }
-    highlight: Rectangle { fill: "#ffcc00" }
+    highlight: Rectangle { fill: palette.highlight }
     delegate: Text {
         required property string name
+        color: palette.windowText
         text: name
         height: 20
     }
@@ -62,13 +64,14 @@ GridView {
     focus: true
     model: 100
     highlight: Rectangle {
-        fill: "#ffcc00"
+        fill: palette.highlight
     }
     delegate: Rectangle {
         width: 70
         height: 50
-        fill: GridView.isCurrentItem ? "#ffcc00" : "#dddddd"
+        fill: GridView.isCurrentItem ? palette.highlight : palette.button
         Text {
+            color: palette.windowText
             text: index
         }
     }
@@ -116,7 +119,7 @@ Item {
             height: 30
             Component.onCompleted: root.created++
             Component.onDestruction: root.destroyed++
-            Text { text: "row " + index }
+            Text { text: "row " + index; color: palette.windowText }
         }
     }
 }
