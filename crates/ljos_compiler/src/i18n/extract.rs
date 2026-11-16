@@ -16,9 +16,12 @@
 //! component around it binds the name. A QML file's scripts are read by the
 //! compiler's own reading of a script ([`crate::js::analyze_with`]), so a
 //! `t` a script declares, or a parameter of that name, is the script's here
-//! as it is there. What a type gives its objects is not known without
-//! types: a choice named as a member of the object's type (`TextInput`'s
-//! `select`) is read as a form here and as a value by the compiler.
+//! as it is there. So is a parameter of a signal the object declares, in
+//! its handler. What a type gives its objects is not known without types:
+//! a choice named as a member of the object's type (`TextInput`'s
+//! `select`), or a parameter of a signal of the type's (a handler in
+//! `Connections`, or of a type's own signal), is read as a macro here and
+//! as the type's by the compiler.
 
 use oxc_allocator::Allocator;
 use std::collections::HashSet;
@@ -205,6 +208,22 @@ impl Scripts<'_> {
     /// the object is in, the outermost first.
     fn object(&mut self, object: &QmlObject<'_>, roots: &[Vec<String>]) {
         let own = declared(object);
+        // What a handler of a signal the object declares is given.
+        let signals: Vec<(&str, Vec<String>)> = object
+            .members
+            .iter()
+            .filter_map(|member| match member {
+                QmlMember::Signal(signal) => Some((
+                    signal.name.name.as_str(),
+                    signal
+                        .params
+                        .iter()
+                        .map(|param| param.name.name.to_string())
+                        .collect(),
+                )),
+                _ => None,
+            })
+            .collect();
         // A `Component` starts a component, whose root is its object.
         let component = object.type_name.parts.last() == Some(&"Component");
         for member in &object.members {
@@ -222,7 +241,15 @@ impl Scripts<'_> {
                         .name
                         .as_simple()
                         .is_some_and(|name| qml_front::scope::takes_component(&[name]));
-                    self.value(&binding.value, &own, roots, starts);
+                    let args = binding
+                        .name
+                        .as_simple()
+                        .and_then(qml_front::scope::handled)
+                        .and_then(|handled| {
+                            signals.iter().find(|(name, _)| *name == handled.as_str())
+                        })
+                        .map_or(&[][..], |(_, params)| &params[..]);
+                    self.value(&binding.value, &own, roots, starts, args);
                 }
                 QmlMember::Property(property) => {
                     if let Some(value) = &property.value {
@@ -230,11 +257,11 @@ impl Scripts<'_> {
                         let starts = property.type_name.as_ref().is_some_and(|type_name| {
                             type_name.name.as_simple() == Some("Component") && !type_name.is_list
                         });
-                        self.value(value, &own, roots, starts);
+                        self.value(value, &own, roots, starts, &[]);
                     }
                 }
                 QmlMember::Function(function) => {
-                    self.script(function.span, Form::Function, &own, roots);
+                    self.script(function.span, Form::Function, &own, roots, &[]);
                 }
                 QmlMember::InlineComponent(component) => {
                     let mut inner = roots.to_vec();
@@ -246,13 +273,15 @@ impl Scripts<'_> {
         }
     }
 
-    /// `starts` when an object given here is the root of a component.
+    /// `starts` when an object given here is the root of a component;
+    /// `args` what a handler's signal gives it.
     fn value(
         &mut self,
         value: &QmlBindingValue<'_>,
         own: &[String],
         roots: &[Vec<String>],
         starts: bool,
+        args: &[String],
     ) {
         let root = |object: &QmlObject<'_>| {
             let mut inner = roots.to_vec();
@@ -263,10 +292,10 @@ impl Scripts<'_> {
         };
         match value {
             QmlBindingValue::Expression(expression) => {
-                self.script(expression.span(), Form::Expression, own, roots);
+                self.script(expression.span(), Form::Expression, own, roots, args);
             }
             QmlBindingValue::Statement(statement) => {
-                self.script(statement.span(), Form::Statement, own, roots);
+                self.script(statement.span(), Form::Statement, own, roots, args);
             }
             QmlBindingValue::Object(object) => self.object(object, &root(object)),
             QmlBindingValue::Objects(objects) => {
@@ -281,7 +310,14 @@ impl Scripts<'_> {
     /// as the compiler reads it: a macro the document binds where the
     /// script is (an id, a member of the object or of a component's root)
     /// is the document's, and one the script declares is the script's.
-    fn script(&mut self, span: Span, form: Form, own: &[String], roots: &[Vec<String>]) {
+    fn script(
+        &mut self,
+        span: Span,
+        form: Form,
+        own: &[String],
+        roots: &[Vec<String>],
+        args: &[String],
+    ) {
         let Some(text) = self.source.get(span.start as usize..span.end as usize) else {
             return;
         };
@@ -300,7 +336,16 @@ impl Scripts<'_> {
             })
             .collect();
         // A script that does not parse is the compiler's to report.
-        let Ok(analysis) = js::analyze_with(text, form, &[], &bound) else {
+        // A handler that is a function declares its own parameters, and a
+        // name of the signal's it does not declare is the document's.
+        let analysis = js::analyze_with(text, form, args, &bound).and_then(|analysis| {
+            if analysis.is_function_value && !args.is_empty() {
+                js::analyze_with(text, form, &[], &bound)
+            } else {
+                Ok(analysis)
+            }
+        });
+        let Ok(analysis) = analysis else {
             return;
         };
         let shift = |local: Span| Span::new(span.start + local.start, span.start + local.end);
@@ -570,6 +615,21 @@ mod tests {
         let source = "import Ljos.Core\nItem {\n  Item {\n    function t(parts) { return parts[0] }\n    property string a: t`Not a message`\n  }\n  Item { id: msg }\n  property string b: msg`Nor this`\n  property string c: t`Hello`\n}\n";
         let found = messages_qml(source);
         assert_eq!(keys(&found), vec![("Hello".to_owned(), None, 9)]);
+    }
+
+    #[test]
+    fn a_parameter_of_a_signal_the_object_declares_is_its_handlers() {
+        let source = "import Ljos.Core\nItem {\n  signal picked(string t)\n  signal chosen(string t)\n  property string shown\n  onPicked: shown = t`Not a message`\n  onChosen: function (u) { shown = t`Chosen` }\n  onShownChanged: console.log(t`Shown`)\n}\n";
+        let found = messages_qml(source);
+        // A handler that is a function declares its own parameters: the
+        // signal's `t` is not one of them, so `t` there is the macro.
+        assert_eq!(
+            keys(&found),
+            vec![
+                ("Chosen".to_owned(), None, 7),
+                ("Shown".to_owned(), None, 8)
+            ]
+        );
     }
 
     #[test]
