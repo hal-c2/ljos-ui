@@ -1,6 +1,6 @@
 // expect: accept
 // Note 11 §3.4: a formatting helper with a plural.
-import Ljos.Ui
+import Ljos.Ui; import Ljos.Core
 Item {
     property string status: "proposed"
     property int kept: 0
@@ -9,7 +9,7 @@ Item {
         if (status !== "proposed")
             return status
         if (kept === 0 && health)
-            return qsTr("Status update")
-        return kept === 1 ? qsTr("1 change") : qsTr("%1 changes").arg(kept)
+            return t`Status update`
+        return plural(kept, { one: "1 change", other: "# changes" })
     }
 }

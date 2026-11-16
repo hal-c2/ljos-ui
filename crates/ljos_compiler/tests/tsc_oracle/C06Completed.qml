@@ -6,7 +6,7 @@ Item {
     property string title: ""
     property int shown: 0
     Component.onCompleted: {
-        title = qsTr("Maps")
+        title = t`Maps`
         shown = 1
     }
 }
