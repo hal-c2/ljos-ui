@@ -449,12 +449,47 @@ fn pending() -> BTreeMap<String, Pending> {
 /// Why a `host-types` entry no longer applies, from how `ljos check` ended:
 /// it should fail, and only because it cannot find the program's types.
 fn stale_host_types(passed: bool, out: &str) -> Option<String> {
-    fails_only_with(passed, out, "unknown-type", "the program's types")
+    fails_only_with(passed, out, &["unknown-type"], "the program's types")
+}
+
+/// The pending reasons that expect `ljos check` to fail, each with the
+/// code of the errors it expects and what those are.
+const FAILING_REASONS: [(&str, &str, &str); 2] = [
+    ("host-types", "unknown-type", "the program's types"),
+    ("qt-tr", "qt-tr", "Qt's `qsTr`"),
+];
+
+/// Why the reasons an example is listed with, of `FAILING_REASONS`, no
+/// longer apply: `ljos check` fails on something none of them expects,
+/// or one of them finds nothing. An example may be listed with several,
+/// so the errors they expect are allowed together.
+fn stale_failing_reasons(reasons: &[&str], passed: bool, out: &str) -> Vec<String> {
+    let listed: Vec<_> = FAILING_REASONS
+        .iter()
+        .filter(|(name, ..)| reasons.contains(name))
+        .collect();
+    let codes: Vec<&str> = listed.iter().map(|(_, code, _)| *code).collect();
+    let what: Vec<&str> = listed.iter().map(|(.., what)| *what).collect();
+    if let Some(why) = fails_only_with(passed, out, &codes, &what.join(" and ")) {
+        return vec![why];
+    }
+    let found: Vec<_> = diagnostics(out)
+        .into_iter()
+        .filter(|d| d.severity == "error")
+        .filter_map(|d| d.code)
+        .collect();
+    listed
+        .iter()
+        .filter(|(_, code, _)| !found.contains(code))
+        .map(|(name, code, _)| {
+            format!("`ljos check` finds no `[{code}]` error, which `{name}` says it fails with")
+        })
+        .collect()
 }
 
 /// Why an entry no longer applies, when `ljos check` should fail only with
-/// `code` errors, which are `what`.
-fn fails_only_with(passed: bool, out: &str, code: &str, what: &str) -> Option<String> {
+/// errors whose code is one of `codes`, which are `what`.
+fn fails_only_with(passed: bool, out: &str, codes: &[&str], what: &str) -> Option<String> {
     if passed {
         return Some("`ljos check` passes it".to_owned());
     }
@@ -467,7 +502,7 @@ fn fails_only_with(passed: bool, out: &str, code: &str, what: &str) -> Option<St
     }
     let other: Vec<_> = errors
         .into_iter()
-        .filter(|d| d.code != Some(code))
+        .filter(|d| !d.code.is_some_and(|code| codes.contains(&code)))
         .map(|d| d.text)
         .collect();
     (!other.is_empty()).then(|| {
@@ -678,18 +713,26 @@ fn verify(
             project.key,
             DEADLINE.as_secs()
         )),
-        Some((passed, out)) if host_types => {
-            if let Some(why) = stale_host_types(passed, &out) {
+        Some((passed, out)) if host_types || qt_tr => {
+            let reasons: Vec<&str> = [(host_types, "host-types"), (qt_tr, "qt-tr")]
+                .into_iter()
+                .filter_map(|(on, name)| on.then_some(name))
+                .collect();
+            for why in stale_failing_reasons(&reasons, passed, &out) {
                 problems.push(format!(
-                    "{} ({}): listed as using a Rust program's types, but {why}; take `host-types` off tests/docs_site.txt or fix the block",
-                    project.at, project.key
+                    "{} ({}): listed as `{}`, but {why}; take it off tests/docs_site.txt or fix the block",
+                    project.at,
+                    project.key,
+                    reasons.join(" "),
                 ));
             }
-        }
-        Some((passed, out)) if qt_tr => {
-            if let Some(why) = fails_only_with(passed, &out, "qt-tr", "Qt's `qsTr`") {
+            // A warning only, so the reasons let it through; the runtime
+            // refuses the member all the same (see below). A program's
+            // types are unknown to the checker, so their members are not
+            // checked.
+            if !host_types && unknown_member(&out) {
                 problems.push(format!(
-                    "{} ({}): listed as translating with `qsTr`, but {why}; take `qt-tr` off tests/docs_site.txt or fix the block",
+                    "{} ({}): `ljos check` finds a member the type does not have:\n{out}",
                     project.at, project.key
                 ));
             }
@@ -958,6 +1001,21 @@ fn a_before_whose_after_is_no_examples_root_is_a_problem() {
 
     let compared = "```qml before\nItem {}\n```\n\n```qml\nItem {}\n```\n";
     assert_eq!(page_problems(PORTING, compared), Vec::<String>::new());
+}
+
+#[test]
+fn an_example_listed_with_two_reasons_may_fail_with_both() {
+    let both = "Main.qml:3:5: error: `Counter` is not a type [unknown-type]\n\
+        Main.qml:4:11: error: Qt's `qsTr` is written `t` [qt-tr]\n";
+    assert!(stale_failing_reasons(&["host-types", "qt-tr"], false, both).is_empty());
+    let one = "Main.qml:3:5: error: `Counter` is not a type [unknown-type]\n";
+    let why = stale_failing_reasons(&["host-types", "qt-tr"], false, one);
+    assert!(
+        why.len() == 1 && why[0].contains("[qt-tr]"),
+        "a reason that finds nothing is stale: {why:?}"
+    );
+    let stale = stale_failing_reasons(&["qt-tr"], false, both);
+    assert!(stale.len() == 1 && stale[0].contains("[unknown-type]"));
 }
 
 #[test]
