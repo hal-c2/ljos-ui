@@ -709,29 +709,38 @@ fn escape_into(out: &mut String, text: &str, in_plural: bool) {
         if let Some((first, last)) = quoted
             && i == first
         {
-            out.push('\'');
+            // In a form the count stays out of the quote (`{#}` is the
+            // count in braces): the quote closes before it and opens again
+            // at the next brace or hash. Reopened anywhere else, its
+            // apostrophe would be an apostrophe.
+            let mut open = false;
             while i <= last {
-                if in_plural && chars[i..].starts_with(&['\'', '#', '\'']) {
-                    // A hash written as ICU writes one is a hash in the
-                    // quote too.
+                // A hash written as ICU writes one is a hash.
+                let hash = in_plural && chars[i..].starts_with(&['\'', '#', '\'']);
+                let c = chars[i];
+                if in_plural && c == '#' {
+                    if open {
+                        out.push('\'');
+                        open = false;
+                    }
                     out.push('#');
-                    i += 3;
-                    continue;
+                } else if c == '\'' && !hash {
+                    // Doubled, an apostrophe in a quote or out of one.
+                    out.push_str("''");
+                } else if hash || brace(&c) {
+                    if !open {
+                        out.push('\'');
+                        open = true;
+                    }
+                    out.push(if hash { '#' } else { c });
+                } else {
+                    out.push(c);
                 }
-                if in_plural && chars[i] == '#' {
-                    // The count stays out of the quote: `{#}` is the count
-                    // in braces.
-                    out.push_str("'#'");
-                    i += 1;
-                    continue;
-                }
-                if chars[i] == '\'' {
-                    out.push('\'');
-                }
-                out.push(chars[i]);
-                i += 1;
+                i += if hash { 3 } else { 1 };
             }
-            out.push('\'');
+            if open {
+                out.push('\'');
+            }
             continue;
         }
         let c = chars[i];
@@ -855,6 +864,14 @@ mod tests {
         assert_eq!(
             message(r#"plural(n, { other: "{#} files" })"#),
             "{n, plural, other {'{'#'}' files}}"
+        );
+        assert_eq!(
+            message(r#"plural(n, { other: "{# files}" })"#),
+            "{n, plural, other {'{'# files'}'}}"
+        );
+        assert_eq!(
+            message(r#"plural(n, { other: "{##}" })"#),
+            "{n, plural, other {'{'##'}'}}"
         );
         assert_eq!(escape("{#}"), "'{#}'");
         assert_eq!(escape("{'}"), "'{''}'");
@@ -1000,6 +1017,34 @@ mod tests {
             read(r#"t({ message: "x", context: c })"#).unwrap_err().kind,
             MessageErrorKind::Literal
         );
+    }
+
+    /// A form's text reads back as written, its `#` the count wherever it
+    /// stands among braces and apostrophes.
+    #[test]
+    fn a_form_reads_back_as_written() {
+        let rules = ljos_i18n::Plurals::for_language("en");
+        let locale = ljos_i18n::LocaleInfo::new("en");
+        let two = ljos_i18n::Value::number(2.0);
+        for (form, shown) in [
+            ("{#} files", "{2} files"),
+            ("{# files}", "{2 files}"),
+            ("{#x}", "{2x}"),
+            ("{a#b}", "{a2b}"),
+            ("{##}", "{22}"),
+            ("{#'}", "{2'}"),
+            ("{'#'}", "{#}"),
+            ("{#x'#'}", "{2x#}"),
+            ("'{# it's}'", "'{2 it's}'"),
+            ("# of {them}", "2 of {them}"),
+        ] {
+            let source = format!("plural(n, {{ other: {form:?} }})");
+            let written = message(&source);
+            let read = ljos_i18n::Message::parse(&written)
+                .unwrap_or_else(|e| panic!("{form}: {written}: {e}"));
+            let said = read.format(|name| (name == "n").then_some(&two), &rules, &locale);
+            assert_eq!(said, shown, "{form}: {written}");
+        }
     }
 
     /// The runtime reads the keys the compiler writes: `ljos_i18n`'s
