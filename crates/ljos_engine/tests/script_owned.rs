@@ -194,3 +194,72 @@ Item {
     // Nothing was made since: resting again does nothing.
     assert!(!h.engine.collect_if_idle());
 }
+
+const HANDED: &str = r#"import QtQuick
+Item {
+    id: root
+    property var later: null
+    property string seen: ""
+    signal handed(var thing)
+    signal shown(var thing)
+    onHanded: thing => later = () => thing.radius
+    onShown: thing => seen = "" + thing.radius
+    function tell() { return "" + later() }
+    function drop() { later = null }
+}
+"#;
+
+/// Hands a new object, given to the scripts, to `signal` of `root` in
+/// one turn, as a signal's value argument is (`Engine::leave_to_scripts`).
+fn hand(h: &Harness, root: ObjectId, signal: &str) -> ObjectId {
+    let _turn = h.engine.begin_turn(ljos_engine::TurnCause::Host, None);
+    let thing = h
+        .engine
+        .create_native(
+            Rectangle {
+                radius: 7.0,
+                ..Default::default()
+            },
+            None,
+        )
+        .unwrap();
+    h.engine.give_to_script(thing);
+    h.engine
+        .emit_by_name(root, signal, &[Value::Object(thing)])
+        .unwrap();
+    h.engine.leave_to_scripts(thing);
+    thing
+}
+
+#[test]
+fn a_value_a_function_kept_outlives_its_turn_and_goes_with_the_function() {
+    let h = engine();
+    let root = h.load(HANDED);
+    let thing = hand(&h, root, "handed");
+    h.engine.process_deferred_deletes();
+    collect(&h);
+    assert!(h.engine.is_alive(thing));
+    assert_eq!(text(&h, root, "tell"), "7");
+    h.engine.invoke_by_name(root, "drop", &[]).unwrap();
+    collect(&h);
+    assert!(!h.engine.is_alive(thing));
+}
+
+#[test]
+fn a_value_a_handler_only_read_goes_at_the_next_collection() {
+    let h = engine();
+    let root = h.load(HANDED);
+    let thing = hand(&h, root, "shown");
+    assert_eq!(h.get(root, "seen").to_js_string().to_string(), "7");
+    collect(&h);
+    assert!(!h.engine.is_alive(thing));
+}
+
+#[test]
+fn a_value_no_script_was_handed_goes_at_the_end_of_its_turn() {
+    let h = engine();
+    let root = h.load("import QtQuick\nItem { signal handed(var thing) }\n");
+    let thing = hand(&h, root, "handed");
+    h.engine.process_deferred_deletes();
+    assert!(!h.engine.is_alive(thing));
+}

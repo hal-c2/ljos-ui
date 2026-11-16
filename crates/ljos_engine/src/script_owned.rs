@@ -55,6 +55,20 @@ impl Engine {
         true
     }
 
+    /// `obj`, given to the scripts by [`Engine::give_to_script`], was
+    /// handed to them (a signal's argument): it lives on while a script
+    /// keeps it, as a value a handler is given does, and goes at the end
+    /// of the turn when none took it up, since then none ever will.
+    pub fn leave_to_scripts(&self, obj: ObjectId) {
+        let held = self.is_script_owned(obj)
+            && self
+                .js()
+                .is_ok_and(|js| js.host.script_holds(obj_to_u64(obj)));
+        if !held {
+            self.destroy_at_turn_end(obj);
+        }
+    }
+
     fn is_script_owned(&self, obj: ObjectId) -> bool {
         self.flags(obj).is_some_and(|f| {
             f.contains(ObjectFlags::JS_OWNED) && !f.contains(ObjectFlags::PENDING_DELETE)
