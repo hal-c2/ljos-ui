@@ -235,6 +235,18 @@ pub fn message_of_in(
     }
 }
 
+/// [`message_of`] the expression `text`, written alone: what
+/// `ljos migrate --catalogue` reads a message of from the call it wrote.
+/// `None` where `text` is not one expression, or not a message.
+#[must_use]
+pub fn message_in(text: &str) -> Option<Result<MessageCall, MessageError>> {
+    let allocator = oxc_allocator::Allocator::default();
+    let expression = oxc_parser::Parser::new(&allocator, text, oxc_span::SourceType::mjs())
+        .parse_expression()
+        .ok()?;
+    message_of(&expression)
+}
+
 /// [`message_of`] a tagged template.
 pub fn tagged_message(
     tagged: &TaggedTemplateExpression<'_>,
