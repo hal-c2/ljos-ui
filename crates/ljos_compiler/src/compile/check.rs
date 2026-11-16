@@ -1017,7 +1017,9 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
         let Some(index) = self.c.tree.index_of(object) else {
             return;
         };
-        let listed = object.type_name.as_simple() == Some("ListElement");
+        // A ListModel reads its elements by name, whatever namespace the
+        // file imports them under: `Models.ListElement` is one too.
+        let listed = object.type_name.last() == "ListElement";
         self.listed += u32::from(listed);
         self.members(index, object, &[]);
         self.listed -= u32::from(listed);

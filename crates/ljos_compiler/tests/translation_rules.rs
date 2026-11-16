@@ -71,13 +71,17 @@ fn qt_s_qml_keeps_qs_tr() {
 
 #[test]
 fn a_list_element_s_qs_tr_stays_qt_s() {
-    let found = found(
+    for source in [
         "import Ljos.Ui\nimport Ljos.Models\nItem {\n    Repeater { model: ListModel { ListElement { city: qsTr(\"Reykjav\u{ed}k\") } } }\n}\n",
-    );
-    assert!(
-        !found.iter().any(|(code, ..)| *code == Code::QtTr),
-        "{found:?}"
-    );
+        // The type, by whatever name the file gives it.
+        "import Ljos.Ui\nimport Ljos.Models as Models\nItem {\n    Repeater { model: Models.ListModel { Models.ListElement { city: qsTr(\"Reykjav\u{ed}k\") } } }\n}\n",
+    ] {
+        let found = found(source);
+        assert!(
+            !found.iter().any(|(code, ..)| *code == Code::QtTr),
+            "{source}: {found:?}"
+        );
+    }
 }
 
 #[test]
