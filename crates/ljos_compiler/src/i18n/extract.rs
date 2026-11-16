@@ -23,7 +23,7 @@ use std::collections::HashSet;
 
 use oxc_ast::ast::{
     BindingIdentifier, CallExpression, Expression, IdentifierReference, ImportDeclarationSpecifier,
-    ModuleDeclaration, TaggedTemplateExpression,
+    ImportOrExportKind, ModuleDeclaration, TaggedTemplateExpression,
 };
 use oxc_ast_visit::{Visit, walk};
 use oxc_parser::Parser;
@@ -110,11 +110,15 @@ fn module_text(source: &str, text: &str, map: impl Fn(Span) -> Span) -> Messages
         else {
             continue;
         };
-        if import.source.value != crate::script::module::CORE_MODULE {
+        // A type-only import brings no value, so no macro.
+        if import.import_kind == ImportOrExportKind::Type
+            || import.source.value != crate::script::module::CORE_MODULE
+        {
             continue;
         }
         for specifier in import.specifiers.iter().flatten() {
             if let ImportDeclarationSpecifier::ImportSpecifier(it) = specifier
+                && it.import_kind != ImportOrExportKind::Type
                 && it.imported.name() == it.local.name
                 && MACROS.contains(&it.local.name.as_str())
             {
@@ -507,6 +511,16 @@ mod tests {
         let source = "import { t, msg as m } from \"@ljos/core\";\n\nexport const a: string = t`Save`;\nexport const b = m`Not read`;\nexport const c = msg`Nor this`;\n";
         let found = messages_module("app.ts", source);
         assert_eq!(keys(&found), vec![("Save".to_owned(), None, 3)]);
+    }
+
+    #[test]
+    fn a_choice_imported_only_as_a_type_is_a_value() {
+        let source = "import { type plural, t } from \"@ljos/core\";\nimport type { select } from \"@ljos/core\";\nexport const a = t`${plural(n, { other: \"#\" })}`;\nexport const b = t`${select(r, { other: \"x\" })}`;\n";
+        let found = messages_module("app.ts", source);
+        assert_eq!(
+            keys(&found),
+            vec![("{0}".to_owned(), None, 3), ("{0}".to_owned(), None, 4)]
+        );
     }
 
     #[test]
