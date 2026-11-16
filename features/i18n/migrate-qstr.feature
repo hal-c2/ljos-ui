@@ -294,6 +294,98 @@ Feature: ljos migrate writes qsTr as a tagged template
     When the author runs "ljos migrate --catalogue app_is.ts Main.qml"
     Then the command's output mentions "kept Main.qml:2:30: `Save` is one message to `t`, which is.po translates already as"
 
+  Scenario: A translation the catalogue written keeps only for its translators does not keep a file
+    A fuzzy translation is not one yet, and an obsolete one is kept only for
+    the translator to see, so the translation in the `.ts` takes their place.
+    Given the file "Main.qml":
+      """qml
+      import QtQuick
+      Item {
+        property string save: qsTr("Save")
+        property string open: qsTr("Open")
+      }
+      """
+    And the file "app_is.ts":
+      """xml
+      <TS version="2.1" language="is">
+      <context><name>Main</name>
+        <message><source>Save</source><translation>Geyma</translation></message>
+        <message><source>Open</source><translation>Opna</translation></message></context>
+      </TS>
+      """
+    And the file "is.po":
+      """po
+      #, fuzzy
+      msgid "Save"
+      msgstr "Vista"
+
+      #~ msgid "Open"
+      #~ msgstr "Opnaðu"
+      """
+    When the author runs "ljos migrate --write --catalogue app_is.ts Main.qml"
+    Then the file "is.po" is:
+      """po
+      msgid ""
+      msgstr ""
+      "MIME-Version: 1.0\n"
+      "Content-Type: text/plain; charset=UTF-8\n"
+      "Content-Transfer-Encoding: 8bit\n"
+      "Language: is\n"
+      "X-Generator: ljos i18n extract\n"
+
+      msgid "Open"
+      msgstr "Opna"
+
+      msgid "Save"
+      msgstr "Geyma"
+      """
+
+  Scenario: A translation that shows the values in another order shows each where the translator put it
+    `t` numbers a value that is not a name in the order the text shows it,
+    so the translation's numbers are the source's.
+    Given the file "Main.qml":
+      """qml
+      import QtQuick
+      Item { property string of: qsTr("%1 of %2").arg(10).arg(20) }
+      """
+    And the file "app_is.ts":
+      """xml
+      <TS version="2.1" language="is">
+      <context><name>Main</name>
+        <message><source>%1 of %2</source><translation>%2 alls, þar af %1</translation></message></context>
+      </TS>
+      """
+    When the author runs "ljos migrate --write --catalogue app_is.ts Main.qml"
+    Then the file "is.po" is:
+      """po
+      msgid ""
+      msgstr ""
+      "MIME-Version: 1.0\n"
+      "Content-Type: text/plain; charset=UTF-8\n"
+      "Content-Transfer-Encoding: 8bit\n"
+      "Language: is\n"
+      "X-Generator: ljos i18n extract\n"
+
+      msgid "{0} of {1}"
+      msgstr "{1} alls, þar af {0}"
+      """
+
+  Scenario: A catalogue whose language is not a language is not read
+    The language names the `.po` written beside the catalogue.
+    Given the file "Main.qml":
+      """qml
+      import QtQuick
+      Item { property string open: qsTr("Open") }
+      """
+    And the file "app_is.ts":
+      """xml
+      <TS version="2.1" language="../is">
+      </TS>
+      """
+    When the author runs "ljos migrate --write --catalogue app_is.ts Main.qml"
+    Then the command exits with status 2
+    And the command's output mentions "app_is.ts: `../is` is not a language"
+
   Scenario: A catalogue not updated since the call gained its count keeps the file
     Given the file "Main.qml":
       """qml

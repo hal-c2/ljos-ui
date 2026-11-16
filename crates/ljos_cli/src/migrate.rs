@@ -330,7 +330,7 @@ impl Migrate {
             let text = catalogue.po(&lowering, &shown);
             if !self.write {
                 outln!("would write {}", path.display());
-            } else if let Err(e) = std::fs::write(&path, text) {
+            } else if let Err(e) = replace(&path, &text) {
                 eprintln!("{}: {e}", path.display());
                 return 2;
             } else {
@@ -620,6 +620,18 @@ impl Migrate {
 }
 
 /// The 1-based line and column (in characters) of byte `at` of `text`.
+/// Writes `text` to `path` whole or not at all: a catalogue holds what
+/// translators wrote, so a write that fails halfway must not empty it.
+fn replace(path: &Path, text: &str) -> std::io::Result<()> {
+    let name = path.file_name().unwrap_or_default().to_string_lossy();
+    let part = path.with_file_name(format!(".{name}.part"));
+    std::fs::write(&part, text)
+        .and_then(|()| std::fs::rename(&part, path))
+        .inspect_err(|_| {
+            let _ = std::fs::remove_file(&part);
+        })
+}
+
 fn line_column(text: &str, at: usize) -> (usize, usize) {
     let before = &text[..at.min(text.len())];
     let line = before.matches('\n').count() + 1;

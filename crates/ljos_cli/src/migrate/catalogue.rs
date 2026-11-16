@@ -27,6 +27,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use ljos_compiler::i18n::message::MessageCall;
 use ljos_i18n::{
     po::{PoEntry, PoFile},
     ts::{TsFile, TsMessage},
@@ -67,6 +68,14 @@ impl Catalogue {
             .filter(|l| !l.is_empty())
             .or_else(|| language_of(path.file_stem()?.to_str()?))
             .ok_or("says no language, and its name (`app_xx.ts`) does not either")?;
+        // The language names the `.po` beside the catalogue, so it may not
+        // name a path: `language="../is"` would write outside it.
+        if !language
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+        {
+            return Err(format!("`{language}` is not a language"));
+        }
         let po_path = path.with_file_name(format!("{language}.po"));
         let po = match std::fs::read_to_string(&po_path) {
             Ok(text) => PoFile::parse(&text).map_err(|e| format!("{}: {e}", po_path.display()))?,
@@ -239,12 +248,16 @@ impl Catalogue {
         for ((context, id), calls) in by_key {
             let ways: BTreeSet<&str> = calls.iter().map(|(_, t)| t.as_str()).collect();
             // An empty translation in `xx.po` is one not made yet, as
-            // `ljos i18n extract` writes it, so this run's may fill it.
-            let held = self
-                .po
-                .entries
-                .iter()
-                .find(|e| e.context == context && e.id == id && !e.translation.is_empty());
+            // `ljos i18n extract` writes it, so this run's may fill it. A
+            // fuzzy one is not settled and an obsolete one is only kept for
+            // translators to see: neither is a translation this run undoes.
+            let held = self.po.entries.iter().find(|e| {
+                e.context == context
+                    && e.id == id
+                    && !e.translation.is_empty()
+                    && !e.obsolete
+                    && !e.is_fuzzy()
+            });
             let places: Vec<String> = calls.iter().map(|(c, _)| place(c)).collect();
             let message = match &context {
                 Some(c) => format!("`{id}` in the context `{c}` is one message to `t`"),
@@ -298,9 +311,9 @@ impl Catalogue {
             }
         };
         let context = m.context.as_deref();
-        let source = qml_compat::rewrite_message(&m.call, &[], context)
-            .map_err(|e| e.to_string())
-            .and_then(|text| read(&text))?;
+        let source_text =
+            qml_compat::rewrite_message(&m.call, &[], context).map_err(|e| e.to_string())?;
+        let source = read(&source_text)?;
         let translation = match self.forms(call.entry) {
             None => String::new(),
             Some(forms) if m.function == "qsTrId" => ljos_i18n::message::escape(&forms[0], false),
@@ -328,7 +341,22 @@ impl Catalogue {
                             self.path.display()
                         )
                     })?;
-                read(&text)?.message.unwrap_or_default()
+                if forms.iter().any(|f| f.contains(STAND_IN)) {
+                    return Err(format!(
+                        "its translation in {} holds `{STAND_IN}`",
+                        self.path.display()
+                    ));
+                }
+                let numbered = renumbered(&source_text, &source, &text).ok_or_else(|| {
+                    format!(
+                        "its translation in {} shows a value the call does not",
+                        self.path.display()
+                    )
+                })?;
+                read(&numbered)?
+                    .message
+                    .unwrap_or_default()
+                    .replace(&format!("{{{STAND_IN}"), "{")
             }
         };
         let entry = call.entry;
@@ -380,6 +408,47 @@ impl Catalogue {
         po.entries.extend(written.into_values());
         po.write(&self.language)
     }
+}
+
+/// What a value the translation shows is named while it is numbered again.
+const STAND_IN: &str = "__ljos_value_";
+
+/// `translation`, a call `t` is written as, with each value `t` numbers
+/// (one that is not a name: `${10}`, `${row.count}`) named for the number
+/// the source gives the same value. `t` numbers values in the order a text
+/// shows them, so a translation that shows them in another order would
+/// otherwise number them otherwise: `%2 of %1` of `.arg(10).arg(20)` would
+/// show 10 where the translator wrote 20. A value is matched by how it is
+/// written, which is its value: `ljos migrate` reorders only plain values.
+/// `None` where the translation shows a value the source does not.
+fn renumbered(source_text: &str, source: &MessageCall, translation: &str) -> Option<String> {
+    let numbers: Vec<(&str, &str)> = source
+        .placeholders
+        .iter()
+        .filter(|p| p.name.parse::<u32>().is_ok())
+        .map(|p| {
+            (
+                &source_text[p.span.start as usize..p.span.end as usize],
+                p.name.as_str(),
+            )
+        })
+        .collect();
+    let read = ljos_compiler::i18n::message::message_in(translation)?.ok()?;
+    let mut numbered = read
+        .placeholders
+        .iter()
+        .filter(|p| p.name.parse::<u32>().is_ok())
+        .collect::<Vec<_>>();
+    numbered.sort_by_key(|p| std::cmp::Reverse(p.span.start));
+    let mut out = translation.to_owned();
+    for placeholder in numbered {
+        let span = placeholder.span.start as usize..placeholder.span.end as usize;
+        let (_, number) = numbers
+            .iter()
+            .find(|(written, _)| **written == translation[span.clone()])?;
+        out.replace_range(span, &format!("{STAND_IN}{number}"));
+    }
+    Some(out)
 }
 
 /// The locale a catalogue's name ends with: `app_is` is `is`, `app_pt_BR`
