@@ -373,10 +373,13 @@ impl<'c, 'a> Chain<'c, 'a> {
                 }
             }
         }
-        // A copy is a second reading of a value, so it reads the same only
-        // where the value is plain.
+        // A copy is a value read in another order than it was, so it
+        // reads the same only where it is plain and no value of the call
+        // changes anything: `.arg(n).arg(n++)` read the other way round
+        // gives another text.
         let plain = |at: &Range<usize>| count.iter().chain(values).any(|v| v.at == *at && v.plain);
-        if !message.copies.iter().all(plain) {
+        let all_plain = count.iter().chain(values).all(|v| v.plain);
+        if !message.copies.iter().all(plain) || (!message.copies.is_empty() && !all_plain) {
             return Err(Message::Moved {
                 name: self.name.to_owned(),
             });
