@@ -91,6 +91,25 @@ fn a_quadrants_image_file(
     w.each(|b| b.files()?.resource(&name, &bytes))
 }
 
+// An image of rows of tiles, each of one colour ("#ff0000, #00ff00 /
+// #0000ff, #ffffff": rows parted by `/`, the top one first, each left to
+// right), so that which way a light probe was read can be told by colour.
+#[given(regex = r#"^an? (\d+) by (\d+) image file "([^"]+\.png)" of tiles "([^"]+)"$"#)]
+fn a_tiles_image_file(
+    w: &mut LjosWorld,
+    width: u32,
+    height: u32,
+    name: String,
+    rows: String,
+) -> StepResult {
+    let rows: Vec<Vec<String>> = rows
+        .split('/')
+        .map(|row| row.split(',').map(|c| c.trim().to_owned()).collect())
+        .collect();
+    let bytes = fixture::tiles_png(width, height, &rows)?;
+    w.each(|b| b.files()?.resource(&name, &bytes))
+}
+
 // A picture of single-pixel squares of two colours ("#000000, #ffffff",
 // the first at the top left), so that a pixel of it drawn smaller tells
 // whether the squares beneath it were averaged.
