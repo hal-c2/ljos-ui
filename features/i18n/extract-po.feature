@@ -212,3 +212,46 @@ Feature: ljos i18n extract writes the messages to a PO catalogue
       msgid "Open"
       msgstr ""
       """
+
+  Scenario: A choice the file does not take from Ljós is a value of the message, as the program reads it
+    Given the file "count.ts":
+      """ts
+      import { t } from "@ljos/core";
+
+      function plural(n: number): string {
+        return String(n);
+      }
+
+      export function files(n: number): string {
+        return t`${plural(n)} files`;
+      }
+      """
+    When the author runs "ljos i18n extract . -o is.po --language is"
+    Then the command prints:
+      """
+      is.po: 3 messages, 3 new, 0 translated, 0 obsolete
+      """
+    And the file "is.po" is:
+      """po
+      msgid ""
+      msgstr ""
+      "MIME-Version: 1.0\n"
+      "Content-Type: text/plain; charset=UTF-8\n"
+      "Content-Transfer-Encoding: 8bit\n"
+      "Language: is\n"
+      "X-Generator: ljos i18n extract\n"
+
+      #: Main.qml:5
+      msgid "Hello {name}"
+      msgstr ""
+
+      #. The File menu
+      #: Main.qml:6
+      msgctxt "menu"
+      msgid "Open"
+      msgstr ""
+
+      #: count.ts:8
+      msgid "{0} files"
+      msgstr ""
+      """
