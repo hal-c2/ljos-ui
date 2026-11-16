@@ -141,6 +141,49 @@ fn numbers_added_before_the_text_stay_one_value() {
 }
 
 #[test]
+fn a_group_in_a_sum_is_one_value_and_keeps_its_parentheses() {
+    // `+` adds a parenthesised group first: `n + (1 + 2) + t`x`` is "5x"
+    // for n = 2, `t`x` + (1 + 2)` is "x3", and a group on the left adds as
+    // its parts do but its text keeps the parentheses it opens.
+    for (value, one) in [
+        ("n + (1 + 2) + t`x`", "t`${n + (1 + 2)}x`"),
+        ("((n + 1) + 2) + t`x`", "t`${((n + 1) + 2)}x`"),
+        ("t`x` + (1 + 2)", "t`x${1 + 2}`"),
+    ] {
+        let found = found(&format!(
+            "import Ljos.Ui\nimport Ljos.Core\nItem {{\n    property int n: 2\n    property string a: {value}\n}}\n"
+        ));
+        let concat: Vec<_> = found
+            .iter()
+            .filter(|(code, ..)| *code == Code::I18nConcat)
+            .collect();
+        assert_eq!(concat.len(), 1, "{value}: {found:?}");
+        assert!(
+            concat[0].2.ends_with(&format!("write one, {one}")),
+            "{value}: {found:?}"
+        );
+    }
+}
+
+#[test]
+fn a_text_inside_a_group_is_the_group_s_sum() {
+    // `n + (1 + t`x`)` is "21x" for n = 2: the group joins first, so the
+    // message is the group's, and `n` is joined to it after.
+    let found = found(
+        "import Ljos.Ui\nimport Ljos.Core\nItem {\n    property int n: 2\n    property string a: n + (1 + t`x`)\n}\n",
+    );
+    let concat: Vec<_> = found
+        .iter()
+        .filter(|(code, ..)| *code == Code::I18nConcat)
+        .collect();
+    assert_eq!(concat.len(), 1, "{found:?}");
+    assert_eq!(
+        concat[0].2,
+        "a translated text joined to another value is two messages: write one, t`${1}x`"
+    );
+}
+
+#[test]
 fn a_local_named_plural_is_the_script_s() {
     let found = found(
         "import Ljos.Ui\nimport Ljos.Core\nItem {\n    function f(plural: (n: number) => string): string { return plural(1) + \"x\" }\n}\n",
