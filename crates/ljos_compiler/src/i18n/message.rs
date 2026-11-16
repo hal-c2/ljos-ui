@@ -8,11 +8,13 @@
 //! program asks for.
 //!
 //! The reading is of the syntax alone. Whether `t` is `Ljos.Core`'s, and
-//! not a local of the same name, is the caller's to know.
+//! not a local of the same name, is the caller's to know; the `_in` forms
+//! ask the caller the same of each choice written inside a message, so a
+//! local `select` stays a value the message shows.
 
 use oxc_ast::ast::{
-    Argument, CallExpression, Expression, ObjectExpression, ObjectPropertyKind, PropertyKey,
-    TaggedTemplateExpression, TemplateLiteral,
+    Argument, CallExpression, Expression, IdentifierReference, ObjectExpression,
+    ObjectPropertyKind, PropertyKey, TaggedTemplateExpression, TemplateLiteral,
 };
 use oxc_span::{GetSpan, Span};
 
@@ -145,14 +147,15 @@ impl MessageCall {
     }
 
     /// Whether `span` is a part of the call that the lowering replaces,
-    /// and not inside one of its placeholders.
+    /// and not inside one of its placeholders, nor inside the message a
+    /// `t(m)` is given: that one is left as written, so a macro in it is
+    /// lowered on its own.
     pub fn covers(&self, span: Span) -> bool {
+        let inside = |p: Span| p.start <= span.start && span.end <= p.end;
         self.span.start <= span.start
             && span.end <= self.span.end
-            && !self
-                .placeholders
-                .iter()
-                .any(|p| p.span.start <= span.start && span.end <= p.span.end)
+            && !self.placeholders.iter().any(|p| inside(p.span))
+            && !self.given.is_some_and(inside)
     }
 }
 
@@ -211,9 +214,23 @@ impl MessageError {
 /// - Text is escaped for ICU: `'` where it would start a quote, `{` and
 ///   `}` quoted. `#` in a form of `plural` is the count, as Lingui has it.
 pub fn message_of(expression: &Expression<'_>) -> Option<Result<MessageCall, MessageError>> {
+    message_of_in(expression, &|_| true)
+}
+
+/// Whether a name a choice is called by inside a message is the macro of
+/// that name, and not a binding of the program's own.
+pub type IsMacro<'f> = &'f dyn Fn(&IdentifierReference<'_>) -> bool;
+
+/// [`message_of`], where a `plural`, `select` or `selectOrdinal` written
+/// inside the message is part of it only when `is_macro` says its name is
+/// the macro's; any other is a value the message shows.
+pub fn message_of_in(
+    expression: &Expression<'_>,
+    is_macro: IsMacro<'_>,
+) -> Option<Result<MessageCall, MessageError>> {
     match expression.without_parentheses() {
-        Expression::TaggedTemplateExpression(tagged) => tagged_message(tagged),
-        Expression::CallExpression(call) => call_message(call),
+        Expression::TaggedTemplateExpression(tagged) => tagged_message_in(tagged, is_macro),
+        Expression::CallExpression(call) => call_message_in(call, is_macro),
         _ => None,
     }
 }
@@ -222,6 +239,14 @@ pub fn message_of(expression: &Expression<'_>) -> Option<Result<MessageCall, Mes
 pub fn tagged_message(
     tagged: &TaggedTemplateExpression<'_>,
 ) -> Option<Result<MessageCall, MessageError>> {
+    tagged_message_in(tagged, &|_| true)
+}
+
+/// [`tagged_message`], with [`message_of_in`]'s `is_macro`.
+pub fn tagged_message_in(
+    tagged: &TaggedTemplateExpression<'_>,
+    is_macro: IsMacro<'_>,
+) -> Option<Result<MessageCall, MessageError>> {
     let Expression::Identifier(tag) = &tagged.tag else {
         return None;
     };
@@ -229,7 +254,7 @@ pub fn tagged_message(
     if !matches!(kind, MacroKind::T | MacroKind::Msg) {
         return None;
     }
-    let mut writer = Writer::default();
+    let mut writer = Writer::new(is_macro);
     Some(
         writer
             .template(&tagged.quasi)
@@ -254,14 +279,22 @@ pub fn callee<'a>(expression: &'a Expression<'_>) -> Option<(&'a str, Span)> {
 
 /// [`message_of`] a call.
 pub fn call_message(call: &CallExpression<'_>) -> Option<Result<MessageCall, MessageError>> {
+    call_message_in(call, &|_| true)
+}
+
+/// [`call_message`], with [`message_of_in`]'s `is_macro`.
+pub fn call_message_in(
+    call: &CallExpression<'_>,
+    is_macro: IsMacro<'_>,
+) -> Option<Result<MessageCall, MessageError>> {
     let Expression::Identifier(callee) = &call.callee else {
         return None;
     };
     let kind = MacroKind::named(&callee.name)?;
     Some(match kind {
-        MacroKind::T | MacroKind::Msg => descriptor(kind, call),
+        MacroKind::T | MacroKind::Msg => descriptor(kind, call, is_macro),
         _ => {
-            let mut writer = Writer::default();
+            let mut writer = Writer::new(is_macro);
             writer
                 .choice(kind, call)
                 .map(|()| writer.finish(kind, call.span))
@@ -270,7 +303,11 @@ pub fn call_message(call: &CallExpression<'_>) -> Option<Result<MessageCall, Mes
 }
 
 /// `t({ … })`, `t(m)`.
-fn descriptor(kind: MacroKind, call: &CallExpression<'_>) -> Result<MessageCall, MessageError> {
+fn descriptor(
+    kind: MacroKind,
+    call: &CallExpression<'_>,
+    is_macro: IsMacro<'_>,
+) -> Result<MessageCall, MessageError> {
     let name = kind.name();
     let [argument] = &call.arguments[..] else {
         return Err(MessageError::shape(
@@ -303,7 +340,7 @@ fn descriptor(kind: MacroKind, call: &CallExpression<'_>) -> Result<MessageCall,
             argument.span(),
         ));
     };
-    let mut writer = Writer::default();
+    let mut writer = Writer::new(is_macro);
     let mut message = None;
     let (mut id, mut context, mut comment) = (None, None, None);
     for property in &object.properties {
@@ -382,8 +419,8 @@ fn written(expression: &Expression<'_>) -> Option<String> {
 }
 
 /// Builds the message and its placeholders, in the order they are written.
-#[derive(Default)]
-struct Writer {
+struct Writer<'f> {
+    is_macro: IsMacro<'f>,
     out: String,
     placeholders: Vec<Placeholder>,
     numbered: usize,
@@ -392,7 +429,17 @@ struct Writer {
     plurals: usize,
 }
 
-impl Writer {
+impl<'f> Writer<'f> {
+    fn new(is_macro: IsMacro<'f>) -> Self {
+        Self {
+            is_macro,
+            out: String::new(),
+            placeholders: Vec::new(),
+            numbered: 0,
+            plurals: 0,
+        }
+    }
+
     fn finish(self, kind: MacroKind, span: Span) -> MessageCall {
         MessageCall {
             kind,
@@ -434,6 +481,7 @@ impl Writer {
             && let Expression::Identifier(callee) = &call.callee
             && let Some(kind @ (MacroKind::Plural | MacroKind::Select | MacroKind::SelectOrdinal)) =
                 MacroKind::named(&callee.name)
+            && (self.is_macro)(callee)
         {
             return self.choice(kind, call);
         }
@@ -635,10 +683,13 @@ fn escape_into(out: &mut String, text: &str, in_plural: bool) {
     // `Use {braces}` is `Use '{braces}'`, its apostrophes doubled.
     let chars: Vec<char> = text.chars().collect();
     let brace = |c: &char| matches!(c, '{' | '}');
+    // Apostrophes right after the last brace stay in the quote, doubled:
+    // outside it, the first would read as doubled and the quote go on.
     let quoted = chars
         .iter()
         .position(brace)
-        .zip(chars.iter().rposition(brace));
+        .zip(chars.iter().rposition(brace))
+        .map(|(first, last)| (first, last + apostrophes_after(&chars, last)));
     let mut i = 0;
     while i < chars.len() {
         if let Some((first, last)) = quoted
@@ -680,6 +731,10 @@ fn escape_into(out: &mut String, text: &str, in_plural: bool) {
         }
         i += 1;
     }
+}
+
+fn apostrophes_after(chars: &[char], at: usize) -> usize {
+    chars[at + 1..].iter().take_while(|c| **c == '\'').count()
 }
 
 #[cfg(test)]
@@ -768,6 +823,8 @@ mod tests {
             "{n, plural, other {'#' is #, '{#}'}}"
         );
         assert_eq!(escape("{'}"), "'{''}'");
+        assert_eq!(escape("{'x"), "'{'''x");
+        assert_eq!(escape("a}''b"), "a'}'''''b");
     }
 
     #[test]
@@ -807,6 +864,22 @@ mod tests {
     }
 
     #[test]
+    fn a_choice_the_program_binds_itself_is_a_value_shown() {
+        let source = r#"t`${select(role, { other: "Member" })}`"#;
+        let allocator = Allocator::default();
+        let parsed = Parser::new(&allocator, source, SourceType::ts()).parse();
+        let Some(Statement::ExpressionStatement(statement)) = parsed.program.body.first() else {
+            panic!("{source}");
+        };
+        let local = |_: &IdentifierReference<'_>| false;
+        let call = message_of_in(&statement.expression, &local)
+            .expect("a macro")
+            .unwrap();
+        assert_eq!(call.message.as_deref(), Some("{0}"));
+        assert_eq!(call.placeholders[0].span, Span::new(4, 37));
+    }
+
+    #[test]
     fn a_descriptor_says_context_comment_and_id() {
         let call = read(r#"t({ message: "Open", context: "menu", comment: "the verb" })"#).unwrap();
         assert_eq!(call.message.as_deref(), Some("Open"));
@@ -829,6 +902,9 @@ mod tests {
         let call = read("t(Menu.items[0])").unwrap();
         assert_eq!(call.message, None);
         assert_eq!(call.given, Some(Span::new(2, 15)));
+        // A macro in the message it is given is lowered on its own.
+        assert!(!call.covers(Span::new(2, 15)));
+        assert!(call.covers(Span::new(0, 1)));
         assert_eq!(read("msg(m)").unwrap_err().kind, MessageErrorKind::Literal);
     }
 
@@ -905,6 +981,8 @@ mod tests {
             "''",
             "x|y'|",
             "#'#",
+            "{'x",
+            "a}''b",
         ] {
             assert_eq!(
                 escape(text),

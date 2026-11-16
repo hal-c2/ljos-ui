@@ -787,7 +787,8 @@ pub(crate) const PRELUDE: &str = r##"
     const m = { id: key, message };
     if (context) m.context = context;
     if (names) {
-      const v = {};
+      // No prototype: a placeholder named `__proto__` is a value too.
+      const v = Object.create(null);
       names.split(",").forEach((name, i) => { v[name] = values[i]; });
       m.values = Object.freeze(v);
     }
@@ -810,7 +811,10 @@ pub(crate) const PRELUDE: &str = r##"
   const escape = (s) => {
     const first = s.search(/[{}]/);
     if (first < 0) return plain(s);
-    const last = Math.max(s.lastIndexOf("{"), s.lastIndexOf("}"));
+    let last = Math.max(s.lastIndexOf("{"), s.lastIndexOf("}"));
+    // Apostrophes right after the last brace stay in the quote, doubled:
+    // outside it, the first would read as doubled and the quote go on.
+    while (s[last + 1] === "'") last += 1;
     return plain(s.slice(0, first)) + "'" + s.slice(first, last + 1).replace(/'/g, "''") +
       "'" + plain(s.slice(last + 1));
   };

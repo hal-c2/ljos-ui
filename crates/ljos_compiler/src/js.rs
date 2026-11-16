@@ -612,6 +612,14 @@ struct Reader<'s, 'r> {
     analysis: Analysis,
 }
 
+/// Whether `id` names nothing the script declares: a macro of
+/// `Ljos.Core`'s, where it is one's name.
+fn free_in(scoping: &Scoping, id: &IdentifierReference<'_>) -> bool {
+    id.reference_id
+        .get()
+        .is_some_and(|id| scoping.get_reference(id).symbol_id().is_none())
+}
+
 impl Reader<'_, '_> {
     /// Keeps a macro's message, unless the name it is called by is
     /// declared in the script, or the call is part of a message already
@@ -625,11 +633,7 @@ impl Reader<'_, '_> {
         let Expression::Identifier(id) = callee else {
             return;
         };
-        let free = id
-            .reference_id
-            .get()
-            .is_some_and(|id| self.scoping.get_reference(id).symbol_id().is_none());
-        if !free || span.start < self.offset {
+        if !free_in(self.scoping, id) || span.start < self.offset {
             return;
         }
         let local = self.local(span);
@@ -1234,7 +1238,9 @@ impl<'a> Visit<'a> for Reader<'_, '_> {
     }
 
     fn visit_tagged_template_expression(&mut self, it: &TaggedTemplateExpression<'a>) {
-        if let Some(message) = message::tagged_message(it) {
+        let scoping = self.scoping;
+        let is_macro = |id: &IdentifierReference<'_>| free_in(scoping, id);
+        if let Some(message) = message::tagged_message_in(it, &is_macro) {
             self.message_site(&it.tag, it.span, message);
         }
         self.not_values.push(it.tag.span());
@@ -1271,7 +1277,9 @@ impl<'a> Visit<'a> for Reader<'_, '_> {
     }
 
     fn visit_call_expression(&mut self, it: &CallExpression<'a>) {
-        if let Some(message) = message::call_message(it) {
+        let scoping = self.scoping;
+        let is_macro = |id: &IdentifierReference<'_>| free_in(scoping, id);
+        if let Some(message) = message::call_message_in(it, &is_macro) {
             self.message_site(&it.callee, it.span, message);
         }
         self.not_values.push(it.callee.span());

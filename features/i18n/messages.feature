@@ -330,3 +330,108 @@ Feature: Messages: translated text written as a tagged template
       When the UI language is set to "is"
       Then the property "first" of "root" is "Opna"
       And the property "second" of "root" is "Heim"
+
+    Scenario: A module's import is bound wherever it is written
+      Given the file "greet.ts":
+        """ts
+        export function hello(name: string): string {
+          return t`Hello ${name}`
+        }
+        import { t } from "@ljos/core"
+        """
+      And the QML:
+        """qml
+        import Ljos.Ui
+        import "greet.ts" as Greet
+        Item {
+          objectName: "root"
+          property string hello: Greet.hello("Ada")
+        }
+        """
+      When the UI language is set to "is"
+      Then the property "hello" of "root" is "Halló Ada"
+
+    Scenario: A parameter named t is the module's own, not the macro
+      Given the file "shout.ts":
+        """ts
+        import { t } from "@ljos/core"
+        function render(t: (parts: TemplateStringsArray) => string): string {
+          return t`Open`
+        }
+        export function shout(): string {
+          return render((parts) => parts[0].toUpperCase())
+        }
+        export function open(): string {
+          return t`Open`
+        }
+        """
+      And the QML:
+        """qml
+        import Ljos.Ui
+        import "shout.ts" as Shout
+        Item {
+          objectName: "root"
+          property string shouted: Shout.shout()
+          property string open: Shout.open()
+        }
+        """
+      When the UI language is set to "is"
+      Then the property "shouted" of "root" is "OPEN"
+      And the property "open" of "root" is "Opna"
+
+    Scenario: A choice the module binds itself is a value the message shows
+      Given the file "role.ts":
+        """ts
+        import { t } from "@ljos/core"
+        function select(role: string, forms: { other: string }): string {
+          return `${forms.other} (${role})`
+        }
+        export function label(role: string): string {
+          return t`${select(role, { other: "Member" })}`
+        }
+        """
+      And the QML:
+        """qml
+        import Ljos.Ui
+        import "role.ts" as Role
+        Item {
+          objectName: "root"
+          property string label: Role.label("admin")
+        }
+        """
+      When the UI language is set to "is"
+      Then the property "label" of "root" is "Member (admin)"
+
+    Scenario: A value named __proto__ is shown like any other
+      Given the file "proto.ts":
+        """ts
+        import { msg, type MessageDescriptor } from "@ljos/core"
+        const __proto__ = "Ada"
+        export const greeting: MessageDescriptor = msg`Hello ${__proto__}`
+        """
+      And the QML:
+        """qml
+        import Ljos.Ui
+        import Ljos.Core
+        import "proto.ts" as Proto
+        Item {
+          objectName: "root"
+          property string greeting: t(Proto.greeting)
+        }
+        """
+      Then the property "greeting" of "root" is "Hello Ada"
+
+    Scenario: A message made where t is given it is lowered on its own
+      Given the QML:
+        """qml
+        import Ljos.Ui
+        import Ljos.Core
+        Item {
+          objectName: "root"
+          property int count: 2
+          property string files: t(msg`${plural(count, { one: "# file", other: "# files" })}`)
+        }
+        """
+      Then the property "files" of "root" is "2 files"
+      When the UI language is set to "is"
+      Then the property "files" of "root" is "2 skrár"
