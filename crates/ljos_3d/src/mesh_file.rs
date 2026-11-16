@@ -179,7 +179,43 @@ fn part_texels(part: &Part, morphs: &MorphTargets) -> MorphTexels {
             }
         }
     }
-    MorphTexels::new(count as u32, width as u32, height as u32, texels)
+    // How far each target takes a vertex, every target and not only those
+    // a program is handed: the shape the CPU makes goes towards them all.
+    let attribute = morphs.attributes.iter().position(|a| a == "attr_pos");
+    let moves = (0..morphs.count as usize)
+        .map(|t| {
+            let mut least = Vec3::new(f32::INFINITY, f32::INFINITY, f32::INFINITY);
+            let mut most = Vec3::new(f32::NEG_INFINITY, f32::NEG_INFINITY, f32::NEG_INFINITY);
+            for (vertex, source) in from.iter().enumerate() {
+                let own = mesh.positions.get(vertex).copied().unwrap_or_default();
+                let corner = part.corners.get(*source as usize);
+                let to = attribute.zip(corner).and_then(|(a, corner)| {
+                    let texel =
+                        ((a * morphs.count as usize + t) * file_layer + *corner as usize) * 4;
+                    morphs.texels.get(texel..texel + 3)
+                });
+                let moved = to.map_or(Vec3::ZERO, |v| {
+                    Vec3::new(v[0] - own[0], v[1] - own[1], v[2] - own[2])
+                });
+                least = Vec3::new(
+                    least.x.min(moved.x),
+                    least.y.min(moved.y),
+                    least.z.min(moved.z),
+                );
+                most = Vec3::new(
+                    most.x.max(moved.x),
+                    most.y.max(moved.y),
+                    most.z.max(moved.z),
+                );
+            }
+            if from.is_empty() {
+                (Vec3::ZERO, Vec3::ZERO)
+            } else {
+                (least, most)
+            }
+        })
+        .collect();
+    MorphTexels::new(count as u32, width as u32, height as u32, texels).moving(moves)
 }
 
 /// `part`'s geometry gone from its own values towards what each target has

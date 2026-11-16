@@ -8,13 +8,14 @@
 
 use std::sync::Arc;
 
-use ljos_3d::math::Vec3;
+use ljos_3d::math::{Quat, Vec3};
 use ljos_3d::offscreen::{Offscreen, Rgba};
 use ljos_3d::{
-    AmbientOcclusion, Background, Blend, Camera, Color, CustomMaterial, DefaultMaterial,
-    DepthOfField, Effect, EffectBuffer, Environment, Glow, GlowBlend, Light, Lighting, Material,
-    MeshSource, Model, Node, NodeKind, Pass, PostProcess, Primitive, Program, Scene, Transform,
-    UniformKind, UniformValue, Vignette, snippet,
+    AmbientOcclusion, Background, Blend, Camera, Color, ComponentType, CustomGeometry,
+    CustomMaterial, DefaultMaterial, DepthOfField, Effect, EffectBuffer, Environment, Glow,
+    GlowBlend, Light, Lighting, Material, MeshSource, Model, MorphTexels, Morphing, Morphs, Node,
+    NodeKind, Pass, PostProcess, Primitive, PrimitiveType, Program, Scene, Semantic, Shadow,
+    Transform, UniformKind, UniformValue, Vignette, snippet,
 };
 
 const SIDE: u32 = 200;
@@ -479,4 +480,137 @@ fn ambient_occlusion_darkens_a_wall_beside_a_box() {
         "the wall by the box is darker"
     );
     expect(&pic, 5, 5, [255; 3], 2);
+}
+
+/// A square 100 across about the origin facing +Z, `by` along x, as the six
+/// corners of two triangles: the mesh keeps their order, a texel a corner.
+fn corners(by: f32) -> Vec<[f32; 3]> {
+    [
+        (-50.0, -50.0),
+        (50.0, -50.0),
+        (50.0, 50.0),
+        (-50.0, -50.0),
+        (50.0, 50.0),
+        (-50.0, 50.0),
+    ]
+    .iter()
+    .map(|&(x, y)| [x + by, y, 0.0])
+    .collect()
+}
+
+fn square_geometry(by: f32) -> CustomGeometry {
+    let mut g = CustomGeometry::new();
+    g.set_vertex_data(
+        corners(by)
+            .iter()
+            .flatten()
+            .flat_map(|f| f.to_le_bytes())
+            .collect(),
+    );
+    g.set_stride(12);
+    g.add_attribute(Semantic::Position, 0, ComponentType::F32);
+    g.set_primitive_type(PrimitiveType::Triangles);
+    g.update();
+    g
+}
+
+/// The square at weight 1 of a target 100 along x, drawn red by a program
+/// that takes each corner to the target itself, 100 in front of a white
+/// wall; and the targets, to ask whether the shape was made on the CPU.
+fn moved_square(scene: &mut Scene) -> Morphs {
+    let mut texels: Vec<f32> = corners(100.0)
+        .iter()
+        .flat_map(|c| [c[0], c[1], c[2], 0.0])
+        .collect();
+    texels.extend((0..6).flat_map(|_| [0.0, 0.0, 1.0, 0.0]));
+    let move_by = Vec3::new(100.0, 0.0, 0.0);
+    let texels = Arc::new(MorphTexels::new(1, 6, 1, texels).moving(vec![(move_by, move_by)]));
+    let morphs = Morphs::new(texels, vec![1.0], || Arc::new(square_geometry(100.0)));
+    let mut m = material(
+        Some("void MAIN() { VERTEX = MORPH_POSITION(0); }"),
+        "void MAIN() { FRAGCOLOR = vec4(1.0, 0.0, 0.0, 1.0); }",
+        false,
+        &[],
+    );
+    assert_eq!(m.program.morphing(), Morphing::Itself);
+    m.morphs = Some(morphs.clone());
+    add(
+        scene,
+        Primitive::Rectangle,
+        Material::Default(DefaultMaterial::default()),
+        Transform {
+            scale: Vec3::new(4.0, 4.0, 1.0),
+            ..Transform::default()
+        },
+    );
+    scene.add(
+        None,
+        Node::new(NodeKind::Model(Model {
+            mesh: MeshSource::Custom(Arc::new(square_geometry(0.0))),
+            material: Material::Custom(m),
+        }))
+        .with_transform(at(0.0, 0.0, 100.0)),
+    );
+    morphs
+}
+
+fn culling_camera(scene: &mut Scene, x: f32) {
+    let camera = scene.add(
+        None,
+        Node::new(NodeKind::Camera(Camera::Orthographic {
+            clip_near: 1.0,
+            clip_far: 1000.0,
+            horizontal_magnification: 1.0,
+            vertical_magnification: 1.0,
+            frustum_culling: true,
+        }))
+        .with_transform(at(x, 0.0, 600.0)),
+    );
+    scene.set_camera(Some(camera));
+}
+
+#[test]
+fn a_shape_its_program_moves_into_view_is_drawn_and_not_made_on_the_cpu() {
+    let Some(mut gpu) = offscreen() else { return };
+    // The camera sees x 100 to 300: the square's mesh is out of it, where
+    // the program takes it, 50 to 150, is in it.
+    let mut scene = Scene::new();
+    scene.set_environment(background(Color::BLACK));
+    culling_camera(&mut scene, 200.0);
+    let morphs = moved_square(&mut scene);
+    let pic = draw(&mut gpu, &scene, "morph_culled");
+    expect(&pic, 25, 100, [255, 0, 0], 2);
+    // Nothing that does not run the program draws: no shadow, no depth
+    // read, so the shape gone towards the targets is never made.
+    assert!(!morphs.shaped(), "made with no pass to draw it");
+}
+
+#[test]
+fn a_shape_its_program_moves_casts_its_shadow_where_it_goes() {
+    let Some(mut gpu) = offscreen() else { return };
+    let mut scene = Scene::new();
+    scene.set_environment(background(Color::BLACK));
+    culling_camera(&mut scene, 0.0);
+    let morphs = moved_square(&mut scene);
+    let mut sun = Node::new(NodeKind::Light(Light::Directional {
+        color: Color::WHITE,
+        ambient_color: Color::BLACK,
+        brightness: 1.0,
+    }))
+    .with_transform(Transform {
+        rotation: Quat::from_euler_degrees(Vec3::new(0.0, 45.0, 0.0)),
+        ..Transform::default()
+    });
+    sun.shadow = Some(Shadow::default());
+    scene.add(None, sun);
+    let pic = draw(&mut gpu, &scene, "morph_shadow");
+    assert!(
+        morphs.shaped(),
+        "the shadow pass draws the shape made on the CPU"
+    );
+    // The sun throws the square's shadow 100 to its left: over x -50 to 50,
+    // not -150 to -50 where the mesh's own square would throw it.
+    expect(&pic, 175, 100, [255, 0, 0], 2);
+    expect(&pic, 100, 100, [117, 117, 117], 8);
+    expect(&pic, 25, 100, [219, 219, 219], 4);
 }

@@ -243,10 +243,13 @@ fn part<S: SceneSource>(s: &S, view: S::Object, obj: S::Object) -> Option<Part<S
             };
             let morphing = custom.program.morphing();
             if morphing == Morphing::Itself {
-                custom.morphs = file.texels(i).map(|texels| Morphs {
-                    texels,
-                    weights: weights.clone(),
-                    shape: file.morphed(i, &weights, Morphing::All),
+                // The shape the CPU makes is for the passes that do not run
+                // the program, and only they make it.
+                custom.morphs = file.texels(i).map(|texels| {
+                    let (file, by) = (file.clone(), weights.clone());
+                    Morphs::new(texels, weights.clone(), move || {
+                        file.morphed(i, &by, Morphing::All)
+                    })
                 });
             }
             file.morphed(i, &weights, morphing)

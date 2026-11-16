@@ -1109,7 +1109,11 @@ impl Ibl {
             },
         );
         // Qt's levels reach full roughness one short of the last.
-        let rough = if spec_levels > 2 { spec_levels - 2 } else { spec_levels - 1 };
+        let rough = if spec_levels > 2 {
+            spec_levels - 2
+        } else {
+            spec_levels - 1
+        };
         Some((
             group,
             ((spec_levels - 1) as f32, rough as f32),
