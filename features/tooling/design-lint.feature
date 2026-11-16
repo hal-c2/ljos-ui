@@ -358,3 +358,34 @@ Feature: The design rules a file's source can show
       Then the command exits with status 1
       And the command's output mentions "Main.qml:7:9: error:"
       And the command's output mentions "[a11y-unnamed-interactive]"
+
+  Rule: Ljós's own API is held to the rules Qt's spelling is
+
+    Scenario: A surface whose fill is written out ignores the colour scheme
+      Given the file "Main.qml":
+        """qml
+        import Ljos.Ui
+
+        Rectangle {
+            width: 200
+            height: 80
+            fill: "#ffffff"
+        }
+        """
+      When the author runs "ljos check ."
+      Then the command's output mentions "Main.qml:6:5: warning:"
+      And the command's output mentions "[color-scheme-ignored]"
+
+    Scenario: A surface whose fill follows the palette is not told it ignores the scheme
+      Given the file "Main.qml":
+        """qml
+        import Ljos.Ui
+
+        Rectangle {
+            width: 200
+            height: 80
+            fill: palette.base
+        }
+        """
+      When the author runs "ljos check ."
+      Then the command's output does not mention "color-scheme-ignored"
