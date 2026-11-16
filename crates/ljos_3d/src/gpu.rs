@@ -74,6 +74,8 @@ struct FrameUniform {
     /// w is 1 for an orthographic camera.
     camera: [f32; 4],
     camera_dir: [f32; 4],
+    /// Every light's ambient colour, summed, and the probe's first level
+    /// that is wholly rough.
     ambient: [f32; 4],
     counts: [u32; 4],
     /// The inverse of the camera's projection and turn: a pixel's ray.
@@ -1585,6 +1587,7 @@ fn environment_uniforms(
     // A sky blurred wholly is the first level that is wholly rough, and one
     // blurred by half is halfway to it.
     frame.tone[3] = probe.skybox_blur.clamp(0.0, 1.0) * rough_level;
+    frame.ambient[3] = rough_level;
     let turn = Mat4::from_trs(
         Vec3::ZERO,
         Quat::from_euler_degrees(probe.orientation),
@@ -2467,7 +2470,7 @@ impl Renderer {
             }
             count += 1;
         }
-        frame.ambient = [ambient[0], ambient[1], ambient[2], 0.0];
+        frame.ambient[..3].copy_from_slice(&ambient);
         frame.counts[0] = count as u32;
 
         // The lists are made in the room the last frame's left. A view

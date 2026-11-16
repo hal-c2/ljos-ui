@@ -335,7 +335,7 @@ impl Maps {
         key: TextureKey,
     ) -> Option<Uploaded> {
         let image = &texture.image;
-        let mut level = straight_rgba8(&**image)?;
+        let mut level = straight_rgba8(&**image, key.srgb)?;
         // Larger than the device takes (WebGL2 promises 2048): halved
         // until it fits, as a mipmap would be.
         while level.0.max(level.1) > self.max_side {
@@ -443,8 +443,9 @@ fn sampler(device: &wgpu::Device, s: Sampling) -> wgpu::Sampler {
     })
 }
 
-/// The pixels of `image` as straight RGBA8. `None` when it holds none.
-fn straight_rgba8(image: &dyn TexturePixels) -> Option<Level> {
+/// The pixels of `image` as straight RGBA8, sRGB ones where `srgb` says
+/// they are read as a colour. `None` when it holds none.
+fn straight_rgba8(image: &dyn TexturePixels, srgb: bool) -> Option<Level> {
     let [w, h] = image.size();
     let len = w as usize * h as usize * 4;
     let mut data = Vec::new();
@@ -470,12 +471,21 @@ fn straight_rgba8(image: &dyn TexturePixels) -> Option<Level> {
         }
         // Light beyond 1 is clamped: a material's map holds a colour. The
         // numbers go as they are; which materials read them as a screen
-        // shows them is `slots`' to say.
+        // shows them is `slots`' to say. One read so is brought to light by
+        // Qt's own fit, which takes its dark end darker than sRGB does: the
+        // byte is the one the texture's sRGB reading gives that light back
+        // for.
         PixelEncoding::Rgbe => {
+            let edges = &srgb_tables().edges;
             for p in data.as_chunks_mut::<4>().0 {
                 let rgb = rgbe_to_linear(*p);
                 for (c, v) in p[..3].iter_mut().zip(rgb) {
-                    *c = (v.clamp(0.0, 1.0) * 255.0).round() as u8;
+                    let v = v.clamp(0.0, 1.0);
+                    *c = if srgb {
+                        edges.partition_point(|&e| e <= qt_to_linear(v)) as u8
+                    } else {
+                        (v * 255.0).round() as u8
+                    };
                 }
                 p[3] = 255;
             }
@@ -495,6 +505,12 @@ pub(crate) fn rgbe_to_linear(p: [u8; 4]) -> [f32; 3] {
         f32::from(p[1]) * f,
         f32::from(p[2]) * f,
     ]
+}
+
+// Qt 6.11: the fit to sRGB its shaders read a colour by, where the texture
+// holds numbers and not sRGB bytes.
+fn qt_to_linear(c: f32) -> f32 {
+    c * (c * (c * 0.305_306_02 + 0.682_171_1) + 0.012_522_878)
 }
 
 pub(crate) fn srgb_to_linear(c: f32) -> f32 {

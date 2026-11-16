@@ -44,7 +44,8 @@ struct Frame {
     camera: vec4<f32>,
     // xyz the way the camera looks.
     camera_dir: vec4<f32>,
-    // rgb every light's ambient colour, summed; w unused.
+    // rgb every light's ambient colour, summed; w the probe's first level
+    // that is wholly rough, which a DefaultMaterial as rough as can be reads.
     ambient: vec4<f32>,
     // x how many of `lights` are used.
     counts: vec4<u32>,
@@ -866,12 +867,19 @@ fn fs_main(raw: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<
                 }
             } else {
                 let sigma = smoothstep(0.0, 1.0, clamp(plain_rough, 1e-4, 1.0));
-                let along = clamp(dot(r, n), 0.0, 0.999995);
+                // Qt 6.11: how far the way it gives back lies from the
+                // surface's is told by that way as the probe is turned, and
+                // the surface as it is: under a turned probe the shine is not
+                // the one it gives unturned.
+                let along = clamp(dot(select(probe_dir(r), r, own_probe), n), 0.0, 0.999995);
                 let k = sigma * 0.31830988618;
                 let seen = clamp((along / (along * (1.0 - k) + k) + (1.0 - k * k)) * 0.5, 0.0, 1.0);
                 diffuse += base.rgb * round * ao;
+                // Qt 6.11: as rough as can be, it reads the first level that
+                // is wholly rough, and not the last.
+                let rough_level = select(frame.ambient.w, last, own_probe);
                 glossy += amount * model.tint.rgb * seen
-                    * probe_read(r, sigma * last, own_probe, horizon, exposure) * ao;
+                    * probe_read(r, sigma * rough_level, own_probe, horizon, exposure) * ao;
             }
         }
         if principled {
