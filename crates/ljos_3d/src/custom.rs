@@ -10,6 +10,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use crate::geometry::CustomGeometry;
 use crate::scene::{Color, CullMode};
 use crate::texture::{Filter, Texture, Tiling};
 
@@ -182,11 +183,18 @@ impl MorphTexels {
 pub struct Morphs {
     pub texels: Arc<MorphTexels>,
     pub weights: Vec<f32>,
+    /// The shape gone towards the targets on the CPU, which only the passes
+    /// that do not run the program draw: culling, shadows and the depth the
+    /// post passes read see where the program puts the shape, not where
+    /// the mesh has it.
+    pub shape: Arc<CustomGeometry>,
 }
 
 impl PartialEq for Morphs {
     fn eq(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.texels, &other.texels) && self.weights == other.weights
+        Arc::ptr_eq(&self.texels, &other.texels)
+            && self.weights == other.weights
+            && Arc::ptr_eq(&self.shape, &other.shape)
     }
 }
 

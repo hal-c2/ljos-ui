@@ -144,48 +144,35 @@ impl MeshFile {
 const TEXEL_ROW: usize = 1024;
 
 fn part_texels(part: &Part, morphs: &MorphTargets) -> MorphTexels {
-    let source = &part.geometry;
-    let stride = source.stride().max(1);
-    let data = source.vertex_data();
+    // A program finds a vertex's texel by its index in the mesh uploaded,
+    // which unwelds a geometry with no normals a triangle at a time: the
+    // texels follow the mesh, each the targets' of the vertex it came from,
+    // and where a target has nothing it has the mesh's own.
+    let (mesh, from) = part.geometry.to_mesh_from().unwrap_or_default();
     let count = (morphs.count as usize).min(MORPH_MAX);
-    let vertices = part.corners.len();
+    let vertices = from.len();
     let width = vertices.clamp(1, TEXEL_ROW);
     let height = vertices.div_ceil(width).max(1);
     let per_layer = width * height * 4;
     let mut texels = vec![0.0; per_layer * (2 * count).max(1)];
     let file_layer = morphs.width as usize * morphs.width as usize;
-    let own = |semantic, vertex: usize| -> [f32; 3] {
-        let mut out = [0.0; 3];
-        let Some(at) = source.attributes().iter().find(|a| a.semantic == semantic) else {
-            return out;
-        };
-        for (n, out) in out.iter_mut().enumerate() {
-            let i = vertex * stride + at.offset + n * 4;
-            if let Some(b) = data.get(i..i + 4) {
-                *out = f32::from_le_bytes([b[0], b[1], b[2], b[3]]);
-            }
-        }
-        out
-    };
-    for (kind, (semantic, name)) in [
-        (Semantic::Position, "attr_pos"),
-        (Semantic::Normal, "attr_norm"),
-    ]
-    .into_iter()
-    .enumerate()
+    for (kind, (own, name)) in [(&mesh.positions, "attr_pos"), (&mesh.normals, "attr_norm")]
+        .into_iter()
+        .enumerate()
     {
         let attribute = morphs.attributes.iter().position(|a| a == name);
         for t in 0..count {
             let layer = (2 * t + kind) * per_layer;
-            for (vertex, corner) in part.corners.iter().enumerate() {
-                let from_file = attribute.and_then(|a| {
+            for (vertex, source) in from.iter().enumerate() {
+                let corner = part.corners.get(*source as usize);
+                let from_file = attribute.zip(corner).and_then(|(a, corner)| {
                     let texel =
                         ((a * morphs.count as usize + t) * file_layer + *corner as usize) * 4;
                     morphs.texels.get(texel..texel + 3)
                 });
                 let value = match from_file {
                     Some(v) => [v[0], v[1], v[2]],
-                    None => own(semantic, vertex),
+                    None => own.get(vertex).copied().unwrap_or_default(),
                 };
                 let at = layer + vertex * 4;
                 texels[at..at + 3].copy_from_slice(&value);
@@ -1257,6 +1244,52 @@ mod tests {
         assert_eq!(targets.attributes, ["attr_pos", "attr_norm"]);
         assert_eq!(targets.texels.len(), 32);
         assert_eq!(targets.texels[31], 31.0);
+    }
+
+    #[test]
+    fn a_program_reads_the_targets_of_a_mesh_with_no_normals_by_the_mesh_uploaded() {
+        // Two triangles sharing an edge, positions only: the mesh uploaded
+        // unwelds them into six vertices, and the sixth reads the target of
+        // the corner it came from, not the sixth texel of the file's.
+        let data: Vec<f32> = (0..4)
+            .flat_map(|c| [10.0 + c as f32, 0.0, 0.0, 0.0])
+            .collect();
+        let vertices = [
+            [0.0f32, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [1.0, 1.0, 0.0],
+        ];
+        let file = Build {
+            version: 7,
+            vertices: vertices
+                .iter()
+                .flatten()
+                .flat_map(|f| f.to_le_bytes())
+                .collect(),
+            indices: [0u16, 1, 2, 1, 3, 2]
+                .iter()
+                .flat_map(|i| i.to_le_bytes())
+                .collect(),
+            subsets: vec![(0, 6)],
+            targets: Some((vec!["attr_pos"], 1, data)),
+            ..Build::default()
+        }
+        .read()
+        .unwrap();
+        let texels = file.texels(0).unwrap();
+        assert_eq!(positions(&file.parts[0]).len(), 6);
+        let read: Vec<f32> = (0..6).map(|v| texels.texels[v * 4]).collect();
+        assert_eq!(read, [10.0, 11.0, 12.0, 11.0, 13.0, 12.0]);
+        // The normals' layer: the target has none, so each vertex keeps the
+        // face's own, +Z for both.
+        let layer = (texels.width * texels.height * 4) as usize;
+        for v in 0..6 {
+            assert_eq!(
+                texels.texels[layer + v * 4..layer + v * 4 + 3],
+                [0.0, 0.0, 1.0]
+            );
+        }
     }
 
     #[test]

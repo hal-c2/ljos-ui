@@ -246,6 +246,7 @@ fn part<S: SceneSource>(s: &S, view: S::Object, obj: S::Object) -> Option<Part<S
                 custom.morphs = file.texels(i).map(|texels| Morphs {
                     texels,
                     weights: weights.clone(),
+                    shape: file.morphed(i, &weights, Morphing::All),
                 });
             }
             file.morphed(i, &weights, morphing)

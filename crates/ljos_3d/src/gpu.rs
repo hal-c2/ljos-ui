@@ -1163,6 +1163,10 @@ enum MeshKey {
 #[derive(Clone, Copy)]
 struct Draw {
     mesh: MeshKey,
+    /// The mesh as the passes that do not run a custom material's program
+    /// draw it: `mesh`, but for a program that goes towards its targets
+    /// itself.
+    shape: MeshKey,
     /// A custom material's pipeline, which binds in place of the maps.
     custom: Option<Custom>,
     maps: GroupId,
@@ -2463,6 +2467,18 @@ impl Renderer {
                         MeshKey::Custom(g.id())
                     }
                 };
+                // What the passes that do not run the material's program
+                // draw: one that goes towards its targets itself has the
+                // shape it makes drawn by the CPU for them.
+                let morphed = match &model.material {
+                    Material::Custom(m) => m.morphs.as_ref().map(|m| &m.shape),
+                    _ => None,
+                };
+                let shape = match morphed {
+                    Some(g) if self.custom_mesh(device, g) => MeshKey::Custom(g.id()),
+                    _ => key,
+                };
+                let morphed = morphed.filter(|_| shape != key);
                 let (extra, has_joints) = match key {
                     MeshKey::Primitive(_) => (false, false),
                     MeshKey::Custom(_) => {
@@ -2482,7 +2498,8 @@ impl Renderer {
                 } else {
                     *world
                 };
-                let (local_centre, local_radius) = model.mesh.bounds();
+                let (local_centre, local_radius) =
+                    morphed.map_or_else(|| model.mesh.bounds(), |g| g.bounding_sphere());
                 let sphere = |m: &Mat4| {
                     (
                         transform_point(m, local_centre),
@@ -2514,7 +2531,11 @@ impl Renderer {
                     && crate::pick::determinant3(&placed) > 0.0;
                 let reach = match &palette {
                     Some(p) if !p.is_empty() => batch::Reach::round(spheres.iter().copied()),
-                    _ => batch::Reach::placed(&placed, model.mesh.bounding_box(), solid),
+                    _ => batch::Reach::placed(
+                        &placed,
+                        morphed.map_or_else(|| model.mesh.bounding_box(), |g| g.bounding_box()),
+                        solid,
+                    ),
                 };
                 let mut copies = Copies::ONE;
                 let mut places = (Mat4::IDENTITY, Mat4::IDENTITY);
@@ -2623,7 +2644,7 @@ impl Renderer {
                 let casts = node.casts_shadows && self.topology_of(key) == Topology::Triangles;
                 if shadows && casts {
                     casters.push(Caster {
-                        mesh: key,
+                        mesh: shape,
                         cull: model.material.cull_mode(),
                         copies,
                         places,
@@ -2685,6 +2706,7 @@ impl Renderer {
                 }
                 let draw = Draw {
                     mesh: key,
+                    shape,
                     custom,
                     maps: self.maps.prepare(device, queue, &model.material),
                     key: PipelineKey {
@@ -3250,7 +3272,7 @@ impl Renderer {
                 pass.set_pipeline(&self.shadow_pipelines[&pipeline]);
                 bound = Some(pipeline);
             }
-            let mesh = self.gpu_mesh(draw.mesh);
+            let mesh = self.gpu_mesh(draw.shape);
             let offset = (u64::from(draw.slot) * self.model_stride) as u32;
             let joints = (u64::from(draw.copies.joints) * JOINT_SLOT) as u32;
             pass.set_bind_group(1, &target.model_group, &[offset, joints]);
@@ -3323,7 +3345,7 @@ impl Renderer {
                 draw.maps
             };
             pass.set_bind_group(2, self.maps.group(maps), &[]);
-            let mesh = self.gpu_mesh(draw.mesh);
+            let mesh = self.gpu_mesh(draw.shape);
             let offset = (u64::from(draw.slot) * self.model_stride) as u32;
             let joints = (u64::from(draw.copies.joints) * JOINT_SLOT) as u32;
             pass.set_bind_group(1, &target.model_group, &[offset, joints]);
