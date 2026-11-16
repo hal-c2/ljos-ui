@@ -42,9 +42,9 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let far = frame.sky * vec4<f32>(in.ndc, 1.0, 1.0);
     let d = far.xyz / far.w - near.xyz / near.w;
     let p = (frame.probe_rot * vec4<f32>(d, 0.0)).xyz;
-    // The levels reach full roughness one short of the last, so a sky
-    // blurred wholly is that level and one blurred by half is halfway to it.
-    let lod = frame.tone.w * max(frame.env.z - 1.0, 0.0);
+    // The blur already scaled to the level where the probe is wholly rough,
+    // which the renderer knows for each kind of probe.
+    let lod = frame.tone.w;
     var light = textureSampleLevel(specular_cube, cube_sampler, p, lod).rgb;
     // Qt's exposure saturates the picture ahead of the tone map: its white
     // shows less bright than it is.

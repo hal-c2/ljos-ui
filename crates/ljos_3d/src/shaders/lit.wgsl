@@ -55,7 +55,8 @@ struct Frame {
     // x the probe's exposure, y its horizon, z the prefiltered map's last
     // level, w 1 where there is a probe.
     env: vec4<f32>,
-    // See tone.wgsl; w the sky box's blur.
+    // See tone.wgsl; w the sky box's blur, as the level of the prefiltered
+    // map it reads.
     tone: vec4<f32>,
     lights: array<Light, MAX_LIGHTS>,
     shadow_layers: array<ShadowLayer, MAX_SHADOW_LAYERS>,
