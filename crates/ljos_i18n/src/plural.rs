@@ -206,6 +206,67 @@ impl PluralForms {
     }
 }
 
+/// The CLDR categories of `language`, each with the numerus form of a
+/// `.ts` file the numbers in it select, in CLDR's order with `other` last:
+/// what a translation's forms are written under in an ICU `plural`. `other`
+/// is there even where no whole number selects it (Russian's is for
+/// fractions), with the last form, which [`PluralForms::index`] gives such
+/// a count. `None` where a category's numbers select two forms, as Qt's
+/// rule for the language cuts what CLDR's keeps whole: no ICU message
+/// says what the `.ts` file does.
+#[must_use]
+pub fn categories(language: &str) -> Option<Vec<(&'static str, usize)>> {
+    let forms = PluralForms::for_language(language);
+    let rules = match &forms.0 {
+        Rule::Cldr { forms, .. } => {
+            let mut categories: Vec<(&'static str, usize)> = forms
+                .iter()
+                .enumerate()
+                .map(|(index, category)| (name(*category), index))
+                .collect();
+            if !forms.contains(&PluralCategory::Other) {
+                categories.push(("other", forms.len() - 1));
+            }
+            return Some(categories);
+        }
+        Rule::Qt(QtRule::One) => return Some(vec![("other", 0)]),
+        Rule::Qt(_) => {
+            let locale = locale::parse(language)?;
+            let mut id = LanguageIdentifier::from(locale.id.language);
+            id.region = locale.id.region;
+            PluralRules::try_new_cardinal((&Locale::from(id)).into()).ok()?
+        }
+    };
+    let mut selects: [Option<usize>; 6] = [None; 6];
+    for n in 0..ORDINARY {
+        let form = forms.index(n);
+        let slot = &mut selects[slot(rules.category_for(n))];
+        match slot {
+            Some(was) if *was != form => return None,
+            _ => *slot = Some(form),
+        }
+    }
+    let last = forms.count() - 1;
+    selects[slot(PluralCategory::Other)].get_or_insert(last);
+    Some(
+        ORDER
+            .into_iter()
+            .filter_map(|c| Some((name(c), selects[slot(c)]?)))
+            .collect(),
+    )
+}
+
+fn name(category: PluralCategory) -> &'static str {
+    match category {
+        PluralCategory::Zero => "zero",
+        PluralCategory::One => "one",
+        PluralCategory::Two => "two",
+        PluralCategory::Few => "few",
+        PluralCategory::Many => "many",
+        PluralCategory::Other => "other",
+    }
+}
+
 const ORDER: [PluralCategory; 6] = [
     PluralCategory::Zero,
     PluralCategory::One,
@@ -233,6 +294,18 @@ mod tests {
     fn indices(language: &str, numbers: &[u32]) -> Vec<usize> {
         let forms = PluralForms::for_language(language);
         numbers.iter().map(|n| forms.index(*n)).collect()
+    }
+
+    #[test]
+    fn categories_name_the_form_each_selects() {
+        assert_eq!(categories("is"), Some(vec![("one", 0), ("other", 1)]));
+        assert_eq!(categories("ja"), Some(vec![("other", 0)]));
+        // Russian's `other` is for fractions: a whole count there takes the
+        // last form, as the runtime gives it.
+        assert_eq!(
+            categories("ru"),
+            Some(vec![("one", 0), ("few", 1), ("many", 2), ("other", 2)])
+        );
     }
 
     #[test]
