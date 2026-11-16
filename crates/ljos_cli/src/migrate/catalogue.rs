@@ -439,13 +439,23 @@ fn renumbered(source_text: &str, source: &MessageCall, translation: &str) -> Opt
         .iter()
         .filter(|p| p.name.parse::<u32>().is_ok())
         .collect::<Vec<_>>();
-    numbered.sort_by_key(|p| std::cmp::Reverse(p.span.start));
-    let mut out = translation.to_owned();
+    numbered.sort_by_key(|p| p.span.start);
+    // A value written twice the same way has two numbers in the source:
+    // the translation's first showing takes the first, and so on, so each
+    // number the source has is still there.
+    let mut taken = vec![false; numbers.len()];
+    let mut named = Vec::with_capacity(numbered.len());
     for placeholder in numbered {
         let span = placeholder.span.start as usize..placeholder.span.end as usize;
-        let (_, number) = numbers
-            .iter()
-            .find(|(written, _)| **written == translation[span.clone()])?;
+        let written = &translation[span.clone()];
+        let at = (0..numbers.len())
+            .find(|&i| !taken[i] && numbers[i].0 == written)
+            .or_else(|| numbers.iter().position(|(w, _)| *w == written))?;
+        taken[at] = true;
+        named.push((span, numbers[at].1));
+    }
+    let mut out = translation.to_owned();
+    for (span, number) in named.into_iter().rev() {
         out.replace_range(span, &format!("{STAND_IN}{number}"));
     }
     Some(out)
