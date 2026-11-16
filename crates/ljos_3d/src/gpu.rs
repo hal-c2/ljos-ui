@@ -1549,7 +1549,7 @@ fn environment_uniforms(
     environment: &Environment,
     probe: Option<&LightProbe>,
     bound: Bound,
-    last_level: f32,
+    (last_level, rough_level): (f32, f32),
 ) {
     let mode = match environment.tonemap {
         Tonemap::None => 0.0,
@@ -1581,7 +1581,9 @@ fn environment_uniforms(
         last_level,
         f32::from(u8::from(bound != Bound::None)),
     ];
-    frame.tone[3] = probe.skybox_blur.clamp(0.0, 1.0);
+    // A sky blurred wholly is the first level that is wholly rough, and one
+    // blurred by half is halfway to it.
+    frame.tone[3] = probe.skybox_blur.clamp(0.0, 1.0) * rough_level;
     let turn = Mat4::from_trs(
         Vec3::ZERO,
         Quat::from_euler_degrees(probe.orientation),
@@ -2372,8 +2374,8 @@ impl Renderer {
         let mut frame = FrameUniform::zeroed();
         frame.view_proj = view_proj.0;
         frame.sky = sky.0;
-        let last_level = self.ibl.last_level(bound);
-        environment_uniforms(&mut frame, environment, probe, bound, last_level);
+        let levels = (self.ibl.last_level(bound), self.ibl.rough_level(bound));
+        environment_uniforms(&mut frame, environment, probe, bound, levels);
         let clip_far = camera.map_or(1.0, |(c, _)| clip_planes(&c).1);
         fog_uniforms(&mut frame, environment, clip_far);
         if processed && (!captured || environment.behind) {

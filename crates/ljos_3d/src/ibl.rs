@@ -51,6 +51,9 @@ struct Probe {
     image: Weak<dyn TexturePixels>,
     group: wgpu::BindGroup,
     last_level: f32,
+    /// The first level that is wholly rough, which a sky blurred wholly
+    /// shows.
+    rough_level: f32,
     bytes: u64,
 }
 
@@ -398,6 +401,16 @@ impl Ibl {
         }
     }
 
+    /// The first level of the probe's prefiltered map that is wholly
+    /// rough: a light probe's last level repeats it, a baked cube's last
+    /// level is what is all round and is not counted.
+    pub(crate) fn rough_level(&self, bound: Bound) -> f32 {
+        match bound {
+            Bound::Probe(id) => self.probes.get(&id).map_or(0.0, |p| p.rough_level),
+            Bound::Mirror(_) | Bound::None => self.last_level(bound),
+        }
+    }
+
     /// Makes the maps of `probe` if they are not made yet, recording the
     /// passes into `encoder`, ahead of the scene's that read them.
     /// [`Bound::None`] for an image that holds no pixels.
@@ -424,7 +437,9 @@ impl Ibl {
         if self.probes.contains_key(&id) {
             return Bound::Probe(id);
         }
-        let Some((group, last_level, bytes)) = self.make(device, queue, encoder, &**image) else {
+        let Some((group, (last_level, rough_level), bytes)) =
+            self.make(device, queue, encoder, &**image)
+        else {
             return Bound::None;
         };
         self.probes.insert(
@@ -433,6 +448,7 @@ impl Ibl {
                 image: Arc::downgrade(&image.0),
                 group,
                 last_level,
+                rough_level,
                 bytes,
             },
         );
@@ -730,7 +746,7 @@ impl Ibl {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         cube: &BakedCube,
-    ) -> Option<(wgpu::BindGroup, f32, u64)> {
+    ) -> Option<(wgpu::BindGroup, (f32, f32), u64)> {
         let levels = cube.levels.len() as u32;
         if levels == 0 || cube.across == 0 {
             return None;
@@ -815,9 +831,10 @@ impl Ibl {
                 ],
             },
         );
+        let last = levels.saturating_sub(2) as f32;
         Some((
             group,
-            levels.saturating_sub(2) as f32,
+            (last, last),
             cube_bytes(cube.across, levels) + cube_bytes(round_side, 1),
         ))
     }
@@ -828,7 +845,7 @@ impl Ibl {
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
         image: &dyn TexturePixels,
-    ) -> Option<(wgpu::BindGroup, f32, u64)> {
+    ) -> Option<(wgpu::BindGroup, (f32, f32), u64)> {
         if let Some(cube) = image.baked() {
             return self.make_baked(device, queue, cube);
         }
@@ -1091,9 +1108,11 @@ impl Ibl {
                 ],
             },
         );
+        // Qt's levels reach full roughness one short of the last.
+        let rough = if spec_levels > 2 { spec_levels - 2 } else { spec_levels - 1 };
         Some((
             group,
-            (spec_levels - 1) as f32,
+            ((spec_levels - 1) as f32, rough as f32),
             cube_bytes(side, spec_levels) + cube_bytes(irradiance_side(side), 1),
         ))
     }
