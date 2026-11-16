@@ -1792,6 +1792,12 @@ impl Renderer {
         self.probes
     }
 
+    /// Whether a light probe lights the scene and post-processing runs on
+    /// this device: what [`Renderer::use_adapter_formats`] found.
+    pub fn draws_probes(&self) -> bool {
+        self.probes
+    }
+
     /// Whether models that differ only in where they are and their colour
     /// are drawn as one, the copies of one instanced draw: on unless turned
     /// off, which draws each on its own, as to compare the two.
@@ -2094,6 +2100,14 @@ impl Topology {
 
 /// Whether a draw is in the depth the post-processing passes read: the
 /// depth pass draws triangles, and segments and points have no surface.
+/// Whether a model drawn has a custom material, whose program reads the
+/// picture by where on the screen it is.
+fn walked_custom(walked: &[(NodeId, &Node, Mat4)]) -> bool {
+    walked.iter().any(|(_, node, _)| {
+        matches!(&node.kind, NodeKind::Model(model) if matches!(model.material, Material::Custom(_)))
+    })
+}
+
 fn material_screen(material: &Material) -> Screen {
     match material {
         Material::Custom(m) => m.program.screen(),
@@ -2443,15 +2457,15 @@ impl Renderer {
         }
 
         // Only a picture nothing reads by where on the screen it is: post-
-        // processing, a material's screen or depth and a program's
-        // FRAGCOORD all count rows from the top.
-        let upside_down = target.bottom_up
-            && !processed
-            && screen == Screen::None
-            && target.capture.is_none()
-            && !walked.iter().any(|(_, node, _)| {
-                matches!(&node.kind, NodeKind::Model(model) if matches!(model.material, Material::Custom(_)))
-            });
+        // processing and the programs of custom materials count rows from
+        // the top, a program's FRAGCOORD and its SCREEN_TEXTURE and
+        // DEPTH_TEXTURE reads alike (only a custom material reads the
+        // screen). A captured target is one of the renderer's own, a
+        // probe's side or the picture behind, none of which is drawn
+        // bottom up.
+        debug_assert!(screen == Screen::None || walked_custom(&walked));
+        debug_assert!(!(target.bottom_up && target.capture.is_some()));
+        let upside_down = target.bottom_up && !processed && !walked_custom(&walked);
         target.upside_down = upside_down;
         let camera = scene.active_camera();
         let (view, proj, view_proj, sky) = match camera {

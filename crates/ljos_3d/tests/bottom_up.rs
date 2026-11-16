@@ -1,7 +1,9 @@
 //! A picture drawn bottom row first, as GL keeps one, shows the right way
 //! up once the blit turns it, its faces wound the other way still facing
 //! the camera; and one something reads by where on the screen it is stays
-//! top row first.
+//! top row first: post-processing, and a custom material's program, which
+//! reads FRAGCOORD, SCREEN_TEXTURE and DEPTH_TEXTURE with rows counted
+//! from the top.
 
 #[allow(dead_code)]
 mod spike_scene;
@@ -24,16 +26,24 @@ const BALL: (u32, u32) = (WIDTH / 2, HEIGHT / 2 - 83);
 /// multisampling, and a red ball above it: a picture that is not the same
 /// upside down.
 fn scene(environment: Environment) -> ljos_3d::Scene {
+    with_ball(
+        environment,
+        Material::Default(DefaultMaterial {
+            diffuse_color: Color::rgb(1.0, 0.0, 0.0),
+            ..DefaultMaterial::default()
+        }),
+    )
+}
+
+/// The cube and the ball above it, the ball of `ball`.
+fn with_ball(environment: Environment, ball: Material) -> ljos_3d::Scene {
     let mut scene = lit_cube(environment.background);
     scene.set_environment(environment);
     scene.add(
         None,
         Node::new(NodeKind::Model(Model {
             mesh: MeshSource::Primitive(Primitive::Sphere),
-            material: Material::Default(DefaultMaterial {
-                diffuse_color: Color::rgb(1.0, 0.0, 0.0),
-                ..DefaultMaterial::default()
-            }),
+            material: ball,
         }))
         .with_transform(Transform {
             position: Vec3::new(0.0, 120.0, 0.0),
@@ -147,6 +157,12 @@ fn a_picture_drawn_bottom_up_shows_the_right_way_up() {
 #[test]
 fn a_picture_post_processing_reads_stays_top_down() {
     let Some(gpu) = gpu() else { return };
+    if !gpu.renderer().draws_probes() {
+        // Without the half floats nothing is post-processed, and the
+        // picture is drawn bottom up as one nothing reads.
+        eprintln!("SKIPPED: this adapter does not post-process");
+        return;
+    }
     let scene = scene(Environment {
         background: grey(),
         post: PostProcess {
@@ -159,4 +175,56 @@ fn a_picture_post_processing_reads_stays_top_down() {
     assert!(!turned, "post-processing counts rows from the top");
     let [r, g, b, _] = pixel(&pixels, BALL.0, BALL.1);
     assert!(r > 120 && g < 60 && b < 60, "the ball: {r} {g} {b}");
+}
+
+/// A material of the authors', unshaded, of the program `fragment`.
+#[cfg(feature = "snippets")]
+fn custom(fragment: &str) -> Material {
+    use ljos_3d::{CustomMaterial, snippet};
+    let program =
+        snippet::material(None, Some(fragment), false, &[], &[]).unwrap_or_else(|e| panic!("{e}"));
+    Material::Custom(CustomMaterial::new(std::sync::Arc::new(program)))
+}
+
+#[cfg(feature = "snippets")]
+#[test]
+fn a_picture_a_program_reads_fragcoord_in_stays_top_down() {
+    let Some(gpu) = gpu() else { return };
+    // Red where FRAGCOORD, growing upwards, is in the top half of the
+    // view, blue below: the ball is up there, so red, unless the rows were
+    // counted from the other end.
+    let scene = with_ball(
+        Environment {
+            background: grey(),
+            ..Environment::default()
+        },
+        custom(&format!(
+            "void MAIN() {{ if (FRAGCOORD.y > {}.0) {{ FRAGCOLOR = vec4(1.0, 0.0, 0.0, 1.0); }} else {{ FRAGCOLOR = vec4(0.0, 0.0, 1.0, 1.0); }} }}",
+            HEIGHT / 2
+        )),
+    );
+    let (pixels, turned) = shown(&gpu, &scene, true);
+    assert!(!turned, "a program's FRAGCOORD counts rows from the top");
+    let [r, g, b, _] = pixel(&pixels, BALL.0, BALL.1);
+    assert!(r > 200 && g < 30 && b < 30, "the ball: {r} {g} {b}");
+}
+
+#[cfg(feature = "snippets")]
+#[test]
+fn a_picture_a_program_reads_the_screen_of_stays_top_down() {
+    let Some(gpu) = gpu() else { return };
+    let scene = with_ball(
+        Environment {
+            background: grey(),
+            ..Environment::default()
+        },
+        custom(
+            "void MAIN() { vec2 uv = FRAGCOORD.xy / vec2(textureSize(SCREEN_TEXTURE, 0)); FRAGCOLOR = vec4(texture(SCREEN_TEXTURE, uv).rgb, 1.0); }",
+        ),
+    );
+    let (_, turned) = shown(&gpu, &scene, true);
+    assert!(
+        !turned,
+        "a program's SCREEN_TEXTURE counts rows from the top"
+    );
 }
