@@ -137,9 +137,10 @@ impl PoFile {
         for (number, raw) in text.lines().enumerate() {
             let line = u32::try_from(number + 1).unwrap_or(u32::MAX);
             let raw = raw.trim_end_matches('\r');
+            let raw = raw.trim_start();
             let (body, obsolete) = match raw.strip_prefix("#~") {
                 Some(rest) => (rest.trim_start(), true),
-                None => (raw.trim_start(), false),
+                None => (raw, false),
             };
             if body.is_empty() {
                 if !obsolete {
@@ -161,9 +162,14 @@ impl PoFile {
                 match kind {
                     "." if rest == EXPLICIT_ID => entry.explicit_id = true,
                     "." => match rest.strip_prefix(DEFAULT) {
-                        Some(default) if entry.explicit_id => {
-                            entry.default = Some(default.to_owned());
-                        }
+                        // A default of many lines is a comment for each.
+                        Some(default) if entry.explicit_id => match &mut entry.default {
+                            Some(before) => {
+                                before.push('\n');
+                                before.push_str(default);
+                            }
+                            None => entry.default = Some(default.to_owned()),
+                        },
                         _ => entry.comments.push(rest.to_owned()),
                     },
                     ":" => entry
@@ -358,7 +364,9 @@ fn write_entry(out: &mut String, entry: &PoEntry) {
     if entry.explicit_id {
         let _ = writeln!(out, "#. {EXPLICIT_ID}");
         if let Some(default) = &entry.default {
-            for line in lines(default) {
+            // Every line, an empty last one too, so reading it back gives
+            // the whole message.
+            for line in default.split('\n') {
                 let _ = writeln!(out, "#. {DEFAULT}{line}");
             }
         }
@@ -496,6 +504,37 @@ msgstr "Tvær\nlínur"
         );
         assert!(written.contains("#~ msgid \"Gone\"\n#~ msgstr \"Farið\"\n"));
         assert!(written.contains("msgid \"\"\n\"Two\\n\"\n\"lines\"\n"));
+    }
+
+    #[test]
+    fn an_indented_obsolete_entry_is_obsolete_and_keeps_the_header() {
+        let text = "msgid \"\"\nmsgstr \"\"\n\"Language: is\\n\"\n\n  #~ msgid \"Gone\"\n  #~ msgstr \"Farið\"\n";
+        let po = PoFile::parse(text).unwrap();
+        assert_eq!(po.language.as_deref(), Some("is"));
+        assert_eq!(po.catalog("translations.po").language(), "is");
+        let [gone] = po.entries.as_slice() else {
+            panic!("{:?}", po.entries);
+        };
+        assert!(gone.obsolete);
+        assert_eq!(gone.id, "Gone");
+        assert_eq!(gone.translation, "Farið");
+    }
+
+    #[test]
+    fn a_default_of_many_lines_reads_back_whole() {
+        for default in ["First\nSecond", "First\n\nThird", "Last line\n"] {
+            let po = PoFile {
+                language: None,
+                entries: vec![PoEntry {
+                    id: "greeting".into(),
+                    explicit_id: true,
+                    default: Some(default.into()),
+                    ..PoEntry::default()
+                }],
+            };
+            let read = PoFile::parse(&po.write("is")).unwrap();
+            assert_eq!(read.entries[0].default.as_deref(), Some(default));
+        }
     }
 
     #[test]
