@@ -905,8 +905,8 @@ interface String {
 /// The message macros of `Ljos.Core` (docs/I18N.md), as a QML file sees
 /// them and as `@ljos/core` exports them.
 const MESSAGES: &str = "
-/** A message `msg` made, for `t` to translate where it is shown. */
-interface Message {
+/** A message `msg` made, for `t` to translate where it is shown (Lingui's name). */
+interface MessageDescriptor {
     readonly id: string;
     readonly message: string;
     readonly context?: string;
@@ -916,10 +916,10 @@ interface Message {
 type PluralForms = { readonly other: string; readonly [form: string]: string };
 /** The text of a message in the UI language: ``t`Hello ${name}` ``. */
 declare function t(strings: TemplateStringsArray, ...values: readonly unknown[]): string;
-declare function t(message: Message | { readonly id: string; readonly message?: string; readonly context?: string; readonly comment?: string }): string;
+declare function t(message: MessageDescriptor | { readonly id: string; readonly message?: string; readonly context?: string; readonly comment?: string }): string;
 /** A message to translate where it is shown, with `t(message)`. */
-declare function msg(strings: TemplateStringsArray, ...values: readonly unknown[]): Message;
-declare function msg(descriptor: { readonly id?: string; readonly message?: string; readonly context?: string; readonly comment?: string }): Message;
+declare function msg(strings: TemplateStringsArray, ...values: readonly unknown[]): MessageDescriptor;
+declare function msg(descriptor: { readonly id?: string; readonly message?: string; readonly context?: string; readonly comment?: string }): MessageDescriptor;
 declare function plural(count: number, forms: PluralForms): string;
 declare function selectOrdinal(count: number, forms: PluralForms): string;
 declare function select(value: string, forms: { readonly other: string; readonly [choice: string]: string }): string;
@@ -1152,6 +1152,17 @@ fn wrapped(ty: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A module types what `msg` makes by Lingui's name for it.
+    #[test]
+    fn core_module_exports_the_message_descriptor() {
+        let module = core_module();
+        assert!(
+            module.contains("export interface MessageDescriptor {"),
+            "{module}"
+        );
+        assert!(module.contains("): MessageDescriptor;"), "{module}");
+    }
 
     #[test]
     fn rectangle_is_declared_with_fill_and_without_color() {
