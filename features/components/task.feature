@@ -456,9 +456,9 @@ Feature: Task: async work run from its arguments, and where it got to
             const state = weather.state
             switch (state.status) {
               case "initial": return ""
-              case "pending": return state.value ?? qsTr("Loading…")
+              case "pending": return state.value ?? t`Loading…`
               case "done": return state.value
-              case "failed": return qsTr("No forecast")
+              case "failed": return t`No forecast`
             }
           }
           property bool loading: weather.status === "pending"
@@ -596,9 +596,9 @@ Feature: Task: async work run from its arguments, and where it got to
             const state = weather.state
             switch (state.status) {
               case "initial": return ""
-              case "pending": return state.value ?? qsTr("Loading…")
+              case "pending": return state.value ?? t`Loading…`
               case "done": return state.value
-              case "failed": return qsTr("No forecast")
+              case "failed": return t`No forecast`
             }
           }
           property string last: weather.value
