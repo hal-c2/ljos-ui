@@ -621,9 +621,13 @@ pub fn escape(text: &str) -> String {
     out
 }
 
-/// A number after `=` as the runtime reads one: digits, with a fraction.
+/// A number after `=` as ICU writes one and the runtime reads it: digits,
+/// with a sign and a fraction, and no `inf` or `NaN`.
 fn is_exact(n: &str) -> bool {
-    !n.is_empty() && n.chars().all(|c| c.is_ascii_digit() || c == '.') && n.parse::<f64>().is_ok()
+    let digits = n.strip_prefix(['-', '+']).unwrap_or(n);
+    !digits.is_empty()
+        && digits.chars().all(|c| c.is_ascii_digit() || c == '.')
+        && n.parse::<f64>().is_ok()
 }
 
 fn escape_into(out: &mut String, text: &str, in_plural: bool) {
@@ -840,6 +844,14 @@ mod tests {
         assert_eq!(
             &source[error.span.start as usize..error.span.end as usize],
             "many"
+        );
+    }
+
+    #[test]
+    fn an_exact_form_may_have_a_sign() {
+        assert_eq!(
+            message(r#"plural(n, { "=-1": "x", "=2.5": "y", other: "z" })"#),
+            "{n, plural, =-1 {x} =2.5 {y} other {z}}"
         );
     }
 
