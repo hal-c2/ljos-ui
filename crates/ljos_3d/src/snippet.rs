@@ -532,6 +532,9 @@ fn preprocessed(src: &str) -> Option<String> {
     let mut open: Vec<Branch> = Vec::new();
     let mut macros: Vec<Macro> = Vec::new();
     let mut unsure: Vec<Unsure> = Vec::new();
+    // Braces opened less closed on lines left out under a condition that
+    // cannot be told.
+    let mut unsure_depth = 0i64;
     let mut out = String::with_capacity(src.len());
     // A directive continued onto the next line: the preprocessor joins
     // backslash-newline pairs first, so it is one directive.
@@ -674,10 +677,34 @@ fn preprocessed(src: &str) -> Option<String> {
             match macros.iter().position(|m| m.name == w) {
                 Some(i) if from.contains(&i) => words.push(w),
                 Some(i) if macros[i].takes_arguments => {
-                    // Its arguments are not taken apart here, so its use is
-                    // left as written, which is only safe when its body
-                    // could not decide.
+                    // It is not expanded here, so its use is left as
+                    // written: that is only safe when neither its body nor
+                    // its arguments, which the body may drop, could decide.
                     if may_decide(&macros[i].body, &macros, &unsure, &mut Vec::new()) {
+                        return None;
+                    }
+                    // `pending` is a stack, so what follows the name is at
+                    // its end. Arguments that go on past the line are not
+                    // read here.
+                    let mut rest = pending.iter().rev().map(|(t, _)| *t);
+                    if rest.next() != Some("(") {
+                        return None;
+                    }
+                    let mut depth = 1usize;
+                    for t in rest {
+                        match t {
+                            "(" => depth += 1,
+                            ")" => depth -= 1,
+                            _ => {}
+                        }
+                        if depth == 0 {
+                            break;
+                        }
+                        if may_decide(t, &macros, &unsure, &mut Vec::new()) {
+                            return None;
+                        }
+                    }
+                    if depth != 0 {
                         return None;
                     }
                     words.push(w);
@@ -698,18 +725,29 @@ fn preprocessed(src: &str) -> Option<String> {
                 None => words.push(w),
             }
         }
+        let reads = words
+            .iter()
+            .any(|t| *t == "precision" || PER_LIGHT.contains(t));
         match kept {
+            // Braces left out under a condition that cannot be told may
+            // open or close the scope this line is in, so whether its
+            // precision or light function is at the top cannot be told.
+            Some(true) if reads && unsure_depth != 0 => return None,
             Some(true) if expanded => {
                 out.push_str(&words.join(" "));
                 out.push_str(newline);
             }
             Some(true) => out.push_str(line),
             _ => {
-                if words
-                    .iter()
-                    .any(|t| *t == "precision" || PER_LIGHT.contains(t))
-                {
+                if reads {
                     return None;
+                }
+                for t in &words {
+                    match *t {
+                        "{" => unsure_depth += 1,
+                        "}" => unsure_depth -= 1,
+                        _ => {}
+                    }
                 }
                 out.push_str(newline);
             }
@@ -2118,6 +2156,28 @@ mod tests {
             ),
             (
                 "precision lowp float;\n#define ONE 1.0\n#define SCALE(v) (v * ONE)\nfloat y = SCALE(2.0);",
+                Some(5),
+            ),
+            // A function-like macro may drop its arguments, so arguments
+            // that could decide are not told.
+            ("#define IGNORE(x)\nIGNORE(precision lowp float;)", None),
+            (
+                "#define LOW precision lowp float;\n#define IGNORE(x)\nIGNORE(LOW)",
+                None,
+            ),
+            ("#define IGNORE(x)\nIGNORE(\nprecision lowp float;)", None),
+            (
+                "precision lowp float;\n#define IGNORE(x)\nfloat y = IGNORE((1.0, 2.0));",
+                Some(4),
+            ),
+            // Braces under a condition that cannot be told may scope a
+            // precision statement.
+            (
+                "precision highp float;\n#if 1 + 0\nvoid helper() {\n#endif\nprecision lowp float;\n#if 1 + 0\n}\n#endif",
+                None,
+            ),
+            (
+                "#if 1 + 0\nvoid helper() { }\n#endif\nprecision lowp float;",
                 Some(5),
             ),
             // A name Qt may define around the snippet cannot be told.
