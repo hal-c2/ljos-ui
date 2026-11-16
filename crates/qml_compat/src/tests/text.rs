@@ -257,15 +257,19 @@ fn a_message_that_cannot_be_written_out_keeps_the_file() {
         ),
         (
             "property string shown: qsTr(\"%2 %1\").arg(1 + 1).arg(2)",
-            "not a name, a member of one or a literal",
+            "not a name, a property of a QML object or value, or a literal",
         ),
         (
             "property int n: 1; property string shown: qsTr(\"%2 %1\").arg(n).arg(n++)",
-            "not a name, a member of one or a literal",
+            "not a name, a property of a QML object or value, or a literal",
+        ),
+        (
+            "property var o: ({ x: 1 }); property string shown: qsTr(\"%1 %1\").arg(o.x)",
+            "not a name, a property of a QML object or value, or a literal",
         ),
         (
             "property string shown: qsTr(\"%1 %1\").arg(Date.now())",
-            "not a name, a member of one or a literal",
+            "not a name, a property of a QML object or value, or a literal",
         ),
         (
             "property string shown: qsTr(\"%n\", \"\", 2.5)",

@@ -1575,8 +1575,9 @@ and a `%N` written twice is its value twice. An `.arg` with no `%N` left
 keeps the file, as does `%0`, which Qt's documentation does not number.
 A value the message says in another place than where it is written (the
 count of `%n`, or a value `.arg` moves) is written there with what the pass
-changes in it, where it is a name, a member of one or a literal, since it is
-then read twice; one that spans lines keeps the file, since the move would
+changes in it, where it is a name, a property of a QML object or value, or a literal,
+since it is then read twice (a JavaScript object's member may be a getter
+that reads differently each time); one that spans lines keeps the file, since the move would
 move the lines after it. A count is known to be an `int` when it is a whole
 number written out, a property Qt's types or the file declare `int` (read
 unqualified, or on an id), or a `length`; what a parameter or a local holds
