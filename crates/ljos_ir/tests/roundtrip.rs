@@ -223,6 +223,7 @@ fn sample() -> CompiledFile {
                     component: Some(CompIdx(1)),
                     name: "count".into(),
                     fallback: Some(scope),
+                    core: false,
                 },
             },
             Param {

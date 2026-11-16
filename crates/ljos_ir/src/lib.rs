@@ -797,11 +797,13 @@ pub enum Arg {
     /// `fallback`. The script reads and writes the name as a member of
     /// what it is given, so an assignment reaches the object. When nothing
     /// has the name the engine gives an object with only that member, set
-    /// to what [`Arg::Context`] would have been.
+    /// to what [`Arg::Context`] would have been: with `core`, what
+    /// `Ljos.Core` gives the file under the name, as [`Arg::Core`].
     Holder {
         component: Option<CompIdx>,
         name: String,
         fallback: Option<ObjRef>,
+        core: bool,
     },
     /// The value of a property of an object: only ever a fallback of
     /// [`Arg::Context`], since a property the body uses directly is read

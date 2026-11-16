@@ -332,12 +332,14 @@ fn arg(arg: &Arg) -> String {
             component,
             name,
             fallback,
+            core,
         } => {
             let component = component.map(|c| format!("c{}", c.0)).unwrap_or("?".into());
             let fallback = fallback
                 .map(|f| format!(" else {}", obj(f)))
                 .unwrap_or_default();
-            format!("holder of {component}.{name}{fallback}")
+            let core = if *core { " else core" } else { "" };
+            format!("holder of {component}.{name}{fallback}{core}")
         }
         Arg::Property { object, name } => format!("{}.{name}", obj(*object)),
         Arg::Dynamic(name) => format!("dynamic {name}"),
