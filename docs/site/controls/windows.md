@@ -89,6 +89,7 @@ Calling `close()` or clicking the window's close button emits `closing(close)` w
 import Ljos.Ui
 
 Window {
+    color: palette.window
     width: 320
     height: 200
     visible: true

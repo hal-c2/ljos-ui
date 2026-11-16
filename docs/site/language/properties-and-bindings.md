@@ -68,6 +68,7 @@ Item {
     }
 
     Rectangle {
+        fill: palette.button
         width: 80
         height: 40
         border.width: 3
@@ -134,6 +135,7 @@ Item {
     default property alias content: body.data
 
     Rectangle {
+        fill: palette.button
         id: box
         width: 100
         height: 60
@@ -169,6 +171,7 @@ pragma Scripts: JavaScript
 import Ljos.Ui
 
 Rectangle {
+    fill: palette.window
     implicitWidth: 40
     implicitHeight: 30
     width: 80

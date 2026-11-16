@@ -139,6 +139,7 @@ An app you already have in QML is a place to start: it runs on Ljós as it is wr
 import Ljos.Ui
 
 Rectangle {
+    fill: palette.window
     width: 200
     height: 100
     border.width: 2

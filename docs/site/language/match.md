@@ -29,6 +29,7 @@ The arms are tried in order, and the first whose pattern matches gives the value
 import Ljos.Ui
 
 Window {
+    color: palette.window
     width: 200
     height: 60
     visible: true
@@ -65,6 +66,7 @@ import Ljos.Ui
 import "size.lts" as Size
 
 Window {
+    color: palette.window
     width: 200
     height: 60
     visible: true
@@ -116,6 +118,7 @@ import Ljos.Ui
 import "feed.lts" as Feed
 
 Window {
+    color: palette.window
     width: 200
     height: 60
     visible: true
@@ -137,6 +140,7 @@ A bare name in a pattern compares with the value it holds; it never binds. To bi
 import Ljos.Ui
 
 Window {
+    color: palette.window
     width: 200
     height: 60
     visible: true
@@ -164,6 +168,7 @@ A chain of conditions with nothing to take apart is a `match` whose arms are gua
 import Ljos.Ui
 
 Window {
+    color: palette.window
     width: 200
     height: 60
     visible: true
@@ -186,6 +191,7 @@ A button picks one look from whether it is enabled, pressed and hovered. The `ma
 import Ljos.Ui
 
 Window {
+    color: palette.window
     width: 200
     height: 60
     visible: true
@@ -277,6 +283,7 @@ import Ljos.Ui
 import "reply.lts" as Reply
 
 Window {
+    color: palette.window
     width: 200
     height: 60
     visible: true

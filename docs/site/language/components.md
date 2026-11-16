@@ -78,6 +78,7 @@ pragma Scripts: JavaScript
 import Ljos.Ui
 
 Rectangle {
+    fill: palette.window
     required property string title
     required property int count
 
