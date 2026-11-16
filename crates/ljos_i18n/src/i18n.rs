@@ -31,6 +31,10 @@ struct Installed {
 /// English, and so are the plural forms a source message chooses among.
 const SOURCE_LANGUAGE: &str = "en";
 
+/// How many source messages are kept parsed: far more than an
+/// application's compiled messages.
+const SOURCES_CACHED: usize = 4096;
+
 /// A message parsed once: `None` when it does not parse or names a value
 /// its source does not have, so it is warned about once and not used.
 type Parsed = Option<Rc<Message>>;
@@ -279,10 +283,23 @@ impl I18n {
         if let Some(found) = self.sources.borrow().get(source) {
             return found.clone();
         }
-        let parsed = Message::parse(source).ok().map(Rc::new);
-        self.sources
-            .borrow_mut()
-            .insert(source.into(), parsed.clone());
+        let parsed = match Message::parse(source) {
+            Ok(message) => Some(Rc::new(message)),
+            Err(error) => {
+                self.warnings.borrow_mut().push(format!(
+                    "{source:?}: the message does not parse, so it is shown as written: {error}"
+                ));
+                None
+            }
+        };
+        let mut sources = self.sources.borrow_mut();
+        // Compiled call sites give a fixed set of messages; descriptors
+        // made at run time could give any number, so the cache starts
+        // again rather than grow without end.
+        if sources.len() >= SOURCES_CACHED {
+            sources.clear();
+        }
+        sources.insert(source.into(), parsed.clone());
         parsed
     }
 
@@ -333,8 +350,9 @@ impl I18n {
         parsed
     }
 
-    /// What was said about translations that are not used since the last
-    /// call: one line per translation, each said once.
+    /// What was said about translations that are not used, and source
+    /// messages shown as written, since the last call: one line each, said
+    /// once.
     pub fn take_warnings(&self) -> Vec<String> {
         std::mem::take(&mut *self.warnings.borrow_mut())
     }
@@ -557,6 +575,32 @@ mod tests {
             ]
         );
         assert!(i.take_warnings().is_empty());
+    }
+
+    #[test]
+    fn a_source_that_does_not_parse_is_shown_as_written_and_said_once() {
+        let i = I18n::new();
+        let broken = "{n, plural, =abc {x} other {y}}";
+        for _ in 0..2 {
+            assert_eq!(i.message("", broken, broken, &values(&[])), broken);
+        }
+        let warnings = i.take_warnings();
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert!(
+            warnings[0]
+                .starts_with("\"{n, plural, =abc {x} other {y}}\": the message does not parse"),
+            "{warnings:?}"
+        );
+    }
+
+    #[test]
+    fn source_messages_kept_parsed_are_bounded() {
+        let i = I18n::new();
+        for n in 0..SOURCES_CACHED + 10 {
+            let text = format!("Message {n}");
+            assert_eq!(i.message("", &text, &text, &values(&[])), text);
+        }
+        assert!(i.sources.borrow().len() <= SOURCES_CACHED);
     }
 
     #[test]

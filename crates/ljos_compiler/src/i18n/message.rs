@@ -539,6 +539,15 @@ impl Writer {
                     ));
                 }
             };
+            if let Some(n) = key.strip_prefix('=')
+                && kind != MacroKind::Select
+                && !is_exact(n)
+            {
+                return Err(MessageError::shape(
+                    format!("`{key}` is no form of `{name}`: `=` is followed by a number"),
+                    property.key.span(),
+                ));
+            }
             if kind != MacroKind::Select && !key.starts_with('=') && !is_category(&key) {
                 return Err(MessageError::shape(
                     format!(
@@ -610,6 +619,11 @@ pub fn escape(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     escape_into(&mut out, text, false);
     out
+}
+
+/// A number after `=` as the runtime reads one: digits, with a fraction.
+fn is_exact(n: &str) -> bool {
+    !n.is_empty() && n.chars().all(|c| c.is_ascii_digit() || c == '.') && n.parse::<f64>().is_ok()
 }
 
 fn escape_into(out: &mut String, text: &str, in_plural: bool) {
@@ -846,6 +860,8 @@ mod tests {
         for source in [
             r#"plural(n, { lots: "x", other: "y" })"#,
             r#"plural(n, { one: "x", one: "y", other: "z" })"#,
+            r#"plural(n, { "=abc": "x", other: "y" })"#,
+            r#"plural(n, { "=": "x", other: "y" })"#,
             r#"plural(n)"#,
             r#"t({ text: "x" })"#,
             r#"t({ context: "x" })"#,
@@ -861,6 +877,29 @@ mod tests {
             read(r#"t({ message: "x", context: c })"#).unwrap_err().kind,
             MessageErrorKind::Literal
         );
+    }
+
+    /// The runtime reads the keys the compiler writes: `ljos_i18n`'s
+    /// escaping of plain text is this one.
+    #[test]
+    fn the_runtime_escapes_text_the_same_way() {
+        for text in [
+            "Don't",
+            "it'",
+            "Use {braces}",
+            "{'}",
+            "}} {{x",
+            "a '{b}' c",
+            "''",
+            "x|y'|",
+            "#'#",
+        ] {
+            assert_eq!(
+                escape(text),
+                ljos_i18n::message::escape(text, false),
+                "{text}"
+            );
+        }
     }
 
     #[test]
