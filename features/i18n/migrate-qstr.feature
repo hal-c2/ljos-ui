@@ -370,6 +370,34 @@ Feature: ljos migrate writes qsTr as a tagged template
       msgstr "{1} alls, þar af {0}"
       """
 
+  Scenario: A value written twice the same way keeps both its numbers
+    Given the file "Main.qml":
+      """qml
+      import QtQuick
+      Item { property string of: qsTr("%1 of %2").arg(5).arg(5) }
+      """
+    And the file "app_is.ts":
+      """xml
+      <TS version="2.1" language="is">
+      <context><name>Main</name>
+        <message><source>%1 of %2</source><translation>%2 alls, þar af %1</translation></message></context>
+      </TS>
+      """
+    When the author runs "ljos migrate --write --catalogue app_is.ts Main.qml"
+    Then the file "is.po" is:
+      """po
+      msgid ""
+      msgstr ""
+      "MIME-Version: 1.0\n"
+      "Content-Type: text/plain; charset=UTF-8\n"
+      "Content-Transfer-Encoding: 8bit\n"
+      "Language: is\n"
+      "X-Generator: ljos i18n extract\n"
+
+      msgid "{0} of {1}"
+      msgstr "{0} alls, þar af {1}"
+      """
+
   Scenario: A catalogue whose language is not a language is not read
     The language names the `.po` written beside the catalogue.
     Given the file "Main.qml":
