@@ -519,7 +519,8 @@ Feature: Checking the scripts of a file written in Ljós's API
       Then the check reports:
         """
         Gauge.qml:3:22: error: `hovered` has no type: a PointerArea has no member of that name [ts-no-any]
-        1 files, 1 errors, 0 warnings
+        Gauge.qml:3:11: warning: this surface is filled with `#eeeeee` or `#ffffff` whatever the colour scheme, so the text the scheme colours on it is unreadable in one of them; bind it to `palette.*` (or a theme's colour that follows `Application.styleHints.colorScheme`) (docs/design/color.md#color-scheme-ignored) [color-scheme-ignored]
+        1 files, 1 errors, 1 warnings
         ljos: 1 errors
         """
 
@@ -974,5 +975,6 @@ Feature: Checking the scripts of a file written in Ljós's API
         lowered Gauge.qml (2 edits)
         scripts of Gauge.qml stay JavaScript: typed, ljos check finds 5
         1 files, 1 lowered, 0 kept
-        1 files, 0 errors, 0 warnings
+        Gauge.qml:6:11: warning: this surface is filled with `red` or `green` whatever the colour scheme, so the text the scheme colours on it is unreadable in one of them; bind it to `palette.*` (or a theme's colour that follows `Application.styleHints.colorScheme`) (docs/design/color.md#color-scheme-ignored) [color-scheme-ignored]
+        1 files, 0 errors, 1 warnings
         """
