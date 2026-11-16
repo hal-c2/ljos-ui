@@ -9,14 +9,24 @@ struct VsOut {
     @location(0) uv: vec2<f32>,
 };
 
-// One triangle that covers the viewport.
-@vertex
-fn vs_main(@builtin(vertex_index) i: u32) -> VsOut {
+// One triangle that covers the viewport, read from the picture's top row
+// down, or from its last row up where it was drawn upside down.
+fn cover(i: u32, turned: bool) -> VsOut {
     let uv = vec2<f32>(f32((i << 1u) & 2u), f32(i & 2u));
     var out: VsOut;
     out.clip = vec4<f32>(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, 0.0, 1.0);
-    out.uv = uv;
+    out.uv = vec2<f32>(uv.x, select(uv.y, 1.0 - uv.y, turned));
     return out;
+}
+
+@vertex
+fn vs_main(@builtin(vertex_index) i: u32) -> VsOut {
+    return cover(i, false);
+}
+
+@vertex
+fn vs_turned(@builtin(vertex_index) i: u32) -> VsOut {
+    return cover(i, true);
 }
 
 @fragment

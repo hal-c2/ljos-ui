@@ -234,7 +234,9 @@ impl<'w> SurfaceView<'w> {
         let target = {
             let mut renderer = gpu.renderer();
             renderer.prepare_blit(&gpu.device, view_format);
-            Target::new(&gpu.device, &renderer, [config.width, config.height])
+            let mut target = Target::new(&gpu.device, &renderer, [config.width, config.height]);
+            target.draw_bottom_up(true);
+            target
         };
         Ok(SurfaceView {
             surface,
@@ -271,6 +273,7 @@ impl<'w> SurfaceView<'w> {
         self.config.height = height;
         configure(&self.surface, &self.gpu.device, &self.config);
         self.target = Target::new(&self.gpu.device, &self.gpu.renderer(), [width, height]);
+        self.target.draw_bottom_up(true);
         self.presented = None;
     }
 
