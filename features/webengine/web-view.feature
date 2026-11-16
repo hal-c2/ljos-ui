@@ -67,7 +67,7 @@ Feature: A web page in a WebEngineView
         url: Qt.resolvedUrl("page.html")
         onLoadingChanged: info => {
           if (info.status === WebEngineView.LoadSucceededStatus)
-            later = () => String(info.url).endsWith("/page.html") + ":" + info.status + ":" + info.httpStatusCode
+            later = () => String(info.url).endsWith("/page.html") + ":" + info.status + ":" + info.errorCode
         }
         function tell() { seen = later() }
       }
