@@ -431,6 +431,26 @@ Feature: The design rules a file's source can show
       When the author runs "ljos check ."
       Then the command's output mentions "[color-text-contrast]"
 
+    Scenario: Large Ljós text, sized by font.size, needs only the contrast large text does
+      Given the file "Main.qml":
+        """qml
+        import Ljos.Ui
+
+        Rectangle {
+            width: 200
+            height: 80
+            // ljos-allow(color-scheme-ignored): the scenario is about contrast
+            fill: "#ffffff"
+            Text {
+                text: "Large"
+                font.size: 24
+                color: "#949494"
+            }
+        }
+        """
+      When the author runs "ljos check ."
+      Then the command's output does not mention "color-text-contrast"
+
     Scenario: A Ljós rectangle rounder than the Ljós rectangle it sits in
       Given the file "Main.qml":
         """qml
