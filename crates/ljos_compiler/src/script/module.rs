@@ -15,14 +15,16 @@ use ljos_ir::ScriptImport;
 use oxc_allocator::Allocator;
 use oxc_ast::ast::{
     CallExpression, Class, ClassElement, Declaration, Expression, FormalParameter,
-    ImportDeclaration, ImportDeclarationSpecifier, ImportOrExportKind, MethodDefinitionType,
-    PropertyDefinitionType, PropertyKey, Statement, TSAsExpression, TSNonNullExpression,
-    TSSatisfiesExpression, TSThisParameter, TSTypeAnnotation, TSTypeAssertion,
+    IdentifierReference, ImportDeclaration, ImportDeclarationSpecifier, ImportOrExportKind,
+    MethodDefinitionType, PropertyDefinitionType, PropertyKey, Statement, TSAsExpression,
+    TSNonNullExpression, TSSatisfiesExpression, TSThisParameter, TSTypeAnnotation, TSTypeAssertion,
     TSTypeParameterDeclaration, TSTypeParameterInstantiation, TaggedTemplateExpression,
 };
 use oxc_ast_visit::{Visit, walk};
 use oxc_parser::Parser;
+use oxc_semantic::{Scoping, SemanticBuilder};
 use oxc_span::{GetSpan, SourceType, Span};
+use oxc_syntax::symbol::SymbolId;
 
 use crate::i18n::message::{self, MacroKind, MessageCall, MessageError};
 
@@ -134,15 +136,24 @@ pub(crate) fn erase_text(key: &str, source: &str) -> Erased {
             ..Erased::default()
         };
     }
+    let semantic = SemanticBuilder::new().build(&parsed.program).semantic;
     let mut eraser = Eraser {
         source,
         directory: qml_front::project::directory(key),
         edits: Vec::new(),
         out: Erased::default(),
         types: HashSet::new(),
+        scoping: semantic.scoping(),
         macros: HashSet::new(),
         lowered: Vec::new(),
     };
+    // An import is bound before any statement runs, wherever it is
+    // written, so a macro is one in a function written above its import.
+    for statement in &parsed.program.body {
+        if let Statement::ImportDeclaration(import) = statement {
+            eraser.core_macros(import);
+        }
+    }
     // Names that are only types are not read at run time: an export of one
     // is the checker's, and gives an importer nothing.
     for statement in &parsed.program.body {
@@ -183,9 +194,11 @@ struct Eraser<'s> {
     edits: Vec<Edit>,
     out: Erased,
     types: HashSet<String>,
-    /// The message macros the module imports from `@ljos/core` under their
-    /// own names.
-    macros: HashSet<String>,
+    scoping: &'s Scoping,
+    /// The bindings of the message macros the module imports from
+    /// `@ljos/core` under their own names. A name is a macro where it reads
+    /// one of these, not a parameter or local that shares its spelling.
+    macros: HashSet<SymbolId>,
     /// The macro calls written as the runtime's calls, outermost first.
     lowered: Vec<MessageCall>,
 }
@@ -424,9 +437,6 @@ impl<'s> Eraser<'s> {
                 continue;
             }
             if imported.as_str() == local {
-                if MacroKind::named(local).is_some() {
-                    self.macros.insert(local.to_string());
-                }
                 names.push(local.to_string());
             } else {
                 names.push(format!("{}: {local}", quoted_key(imported.as_str())));
@@ -440,19 +450,41 @@ impl<'s> Eraser<'s> {
         self.replace_keeping_lines(import.span, text);
     }
 
+    /// The message macros `import` binds, when it is `@ljos/core`'s.
+    fn core_macros(&mut self, import: &ImportDeclaration<'_>) {
+        if import.import_kind == ImportOrExportKind::Type || import.source.value != CORE_MODULE {
+            return;
+        }
+        let specifiers: &[ImportDeclarationSpecifier<'_>] =
+            import.specifiers.as_ref().map_or(&[], |s| s.as_slice());
+        for specifier in specifiers {
+            if let ImportDeclarationSpecifier::ImportSpecifier(it) = specifier
+                && it.import_kind != ImportOrExportKind::Type
+                && it.imported.name() == it.local.name
+                && qml_front::names::CORE_GLOBALS.contains(&it.local.name.as_str())
+                && MacroKind::named(&it.local.name).is_some()
+            {
+                self.macros.insert(it.local.symbol_id());
+            }
+        }
+    }
+
+    /// Whether `id` reads a macro `@ljos/core` gives.
+    fn is_macro(&self, id: &IdentifierReference<'_>) -> bool {
+        id.reference_id
+            .get()
+            .and_then(|reference| self.scoping.get_reference(reference).symbol_id())
+            .is_some_and(|symbol| self.macros.contains(&symbol))
+    }
+
     /// A macro call of a message, written where it is as the runtime's
     /// call that gives the text. One inside another's message is part of
     /// that one.
-    fn message(&mut self, callee: &Expression<'_>, span: Span) -> bool {
+    fn message(&self, callee: &Expression<'_>, span: Span) -> bool {
         let Expression::Identifier(id) = callee else {
             return false;
         };
-        if !self.macros.contains(id.name.as_str())
-            || self.lowered.iter().any(|outer| outer.covers(span))
-        {
-            return false;
-        }
-        true
+        self.is_macro(id) && !self.lowered.iter().any(|outer| outer.covers(span))
     }
 
     fn lower(&mut self, message: Result<MessageCall, MessageError>) {
@@ -531,7 +563,7 @@ impl<'s> Eraser<'s> {
 impl<'a> Visit<'a> for Eraser<'_> {
     fn visit_call_expression(&mut self, it: &CallExpression<'a>) {
         if self.message(&it.callee, it.span)
-            && let Some(message) = message::call_message(it)
+            && let Some(message) = message::call_message_in(it, &|id| self.is_macro(id))
         {
             self.lower(message);
         }
@@ -540,7 +572,7 @@ impl<'a> Visit<'a> for Eraser<'_> {
 
     fn visit_tagged_template_expression(&mut self, it: &TaggedTemplateExpression<'a>) {
         if self.message(&it.tag, it.span)
-            && let Some(message) = message::tagged_message(it)
+            && let Some(message) = message::tagged_message_in(it, &|id| self.is_macro(id))
         {
             self.lower(message);
         }

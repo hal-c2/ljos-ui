@@ -392,6 +392,11 @@ impl Parser {
             "plural" | "selectordinal" => {
                 self.expect(',')?;
                 let forms = self.forms(true, |p, key| {
+                    // Only a plural has an offset; `offset` is a key like
+                    // any other in a `select`.
+                    if key.starts_with("offset") {
+                        return p.error("an `offset` is not supported");
+                    }
                     if let Some(n) = key.strip_prefix('=') {
                         return n
                             .parse::<f64>()
@@ -467,9 +472,6 @@ impl Parser {
                 }
                 return self.error("expected a form's key");
             }
-            if written == "offset:" || written.starts_with("offset") {
-                return self.error("an `offset` is not supported");
-            }
             let k = key(self, &written)?;
             if forms.iter().any(|(f, _)| *f == k) {
                 return self.error(format!("the form `{written}` is there twice"));
@@ -495,10 +497,17 @@ pub fn escape(text: &str, in_plural: bool) -> String {
     // one, so `Don't` stays `Don't`.
     let chars: Vec<char> = text.chars().collect();
     let syntax = |c: &char| matches!(c, '{' | '}') || (in_plural && *c == '#');
+    // Apostrophes right after the last syntax character stay in the
+    // quote, doubled: outside it, the first would read as doubled and the
+    // quote go on.
     let quoted = chars
         .iter()
         .position(syntax)
-        .zip(chars.iter().rposition(syntax));
+        .zip(chars.iter().rposition(syntax))
+        .map(|(first, last)| {
+            let run = chars[last + 1..].iter().take_while(|c| **c == '\'').count();
+            (first, last + run)
+        });
     let mut out = String::with_capacity(text.len() + 2);
     for (i, c) in chars.iter().enumerate() {
         let inside = quoted.is_some_and(|(first, last)| (first..=last).contains(&i));
@@ -624,6 +633,8 @@ mod tests {
         assert_eq!(escape("it'", false), "it''");
         assert_eq!(escape("Use {braces}", false), "Use '{braces}'");
         assert_eq!(escape("{'}", false), "'{''}'");
+        assert_eq!(escape("{'x", false), "'{'''x");
+        assert_eq!(escape("a}''b", false), "a'}'''''b");
     }
 
     #[test]
@@ -637,6 +648,9 @@ mod tests {
             "''",
             "it'",
             "a'#",
+            "{'x",
+            "a}''b",
+            "#'x",
         ] {
             let m = Message::parse(&escape(text, false)).unwrap();
             assert_eq!(m.parts, vec![Part::Text(text.to_owned())], "{text}");
@@ -701,6 +715,18 @@ mod tests {
     }
 
     #[test]
+    fn a_select_may_have_a_form_named_offset() {
+        let modes = "{mode, select, offset {Offset} offsetEnabled {On} other {Other}}";
+        for (mode, shown) in [
+            ("offset", "Offset"),
+            ("offsetEnabled", "On"),
+            ("x", "Other"),
+        ] {
+            assert_eq!(say(modes, "en", &[("mode", Value::text(mode))]), shown);
+        }
+    }
+
+    #[test]
     fn broken_messages_are_refused() {
         for (text, reason) in [
             ("Hello {name", "expected `}`"),
@@ -713,6 +739,10 @@ mod tests {
             ),
             (
                 "{n, plural, offset:1 other {y}}",
+                "an `offset` is not supported",
+            ),
+            (
+                "{n, selectordinal, offset:1 other {y}}",
                 "an `offset` is not supported",
             ),
             ("{d, date}", "`date` arguments are not supported"),

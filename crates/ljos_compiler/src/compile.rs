@@ -2002,14 +2002,17 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
     /// every time, in one language. One with values, or one that is not
     /// right, is the function's to run or to refuse.
     fn message_literal(&mut self, expression: &Expression<'a>) -> Option<Literal> {
+        let core = |name: &str, at: u32| {
+            self.lookup(name, at).is_some_and(|r| {
+                r.roles.is_empty() && matches!(r.target, Some(Target::Global(names::Global::Core)))
+            })
+        };
         let (name, span) = crate::i18n::message::callee(expression)?;
-        let core = self.lookup(name, span.start).is_some_and(|r| {
-            r.roles.is_empty() && matches!(r.target, Some(Target::Global(names::Global::Core)))
-        });
-        if !core {
+        if !core(name, span.start) {
             return None;
         }
-        let call = crate::i18n::message::message_of(expression)?.ok()?;
+        let is_macro = |id: &oxc_ast::ast::IdentifierReference<'_>| core(&id.name, id.span.start);
+        let call = crate::i18n::message::message_of_in(expression, &is_macro)?.ok()?;
         if call.kind != crate::i18n::message::MacroKind::T
             || !call.placeholders.is_empty()
             || call.given.is_some()
