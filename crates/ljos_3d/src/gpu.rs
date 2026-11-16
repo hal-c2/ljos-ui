@@ -32,7 +32,8 @@ use crate::post::{self, Buffers, Chain, Pipes};
 use crate::programs::{self, Header, MaterialKey, Programs, Slot};
 use crate::scene::{
     AlphaMode, Background, BlendMode, Camera, CullMode, Environment, Light, LightProbe, Lighting,
-    Material, MeshSource, Node, NodeId, NodeKind, Primitive, ReflectionProbe, Scene, Tonemap,
+    Material, MeshSource, Model, Node, NodeId, NodeKind, Primitive, ReflectionProbe, Scene,
+    Tonemap,
 };
 use crate::screen::ScreenTexture;
 use crate::shadow::{self, Layer as ShadowLayer, Plan};
@@ -1999,6 +2000,30 @@ impl Renderer {
         drawable
     }
 
+    /// The mesh the passes that do not run `model`'s program draw: `key`,
+    /// or where the program goes towards its targets itself, the shape
+    /// they take it to, made on the CPU.
+    fn morphed_shape(&mut self, device: &wgpu::Device, model: &Model, key: MeshKey) -> MeshKey {
+        match morphs_of(model) {
+            Some(morphs) => self.shape_of(device, morphs, key),
+            None => key,
+        }
+    }
+
+    fn shape_of(
+        &mut self,
+        device: &wgpu::Device,
+        morphs: &crate::custom::Morphs,
+        key: MeshKey,
+    ) -> MeshKey {
+        let shape = morphs.shape();
+        if self.custom_mesh(device, shape) {
+            MeshKey::Custom(shape.id())
+        } else {
+            key
+        }
+    }
+
     /// How many custom geometries are held.
     pub fn custom_meshes(&self) -> usize {
         self.custom.len()
@@ -2043,6 +2068,29 @@ fn surface_key(draw: &Draw) -> (Option<wgpu::Face>, bool, bool) {
         CullMode::None => None,
     };
     (cull, draw.key.extra, draw.custom.is_some())
+}
+
+/// The targets of a model whose program goes towards them itself.
+fn morphs_of(model: &Model) -> Option<&crate::custom::Morphs> {
+    match &model.material {
+        Material::Custom(m) => m.morphs.as_ref(),
+        _ => None,
+    }
+}
+
+/// The sphere that holds a model's shape in model space, wherever a program
+/// that goes towards its targets itself takes it.
+fn shape_sphere(model: &Model) -> (Vec3, f32) {
+    morphs_of(model).map_or_else(
+        || model.mesh.bounds(),
+        |m| m.bounding_sphere(model.mesh.bounding_box()),
+    )
+}
+
+/// The box [`shape_sphere`] is round.
+fn shape_box(model: &Model) -> (Vec3, Vec3) {
+    let own = model.mesh.bounding_box();
+    morphs_of(model).map_or(own, |m| m.bounding_box(own))
 }
 
 fn writes_camera_depth(draw: &Draw) -> bool {
@@ -2170,7 +2218,7 @@ impl Renderer {
             if !node.receives_reflections {
                 continue;
             }
-            let (centre, radius) = model.mesh.bounds();
+            let (centre, radius) = shape_sphere(model);
             let centre = transform_point(world, centre);
             let radius = radius * largest_scale(world);
             let reach = Vec3::new(radius, radius, radius);
@@ -2469,18 +2517,6 @@ impl Renderer {
                         MeshKey::Custom(g.id())
                     }
                 };
-                // What the passes that do not run the material's program
-                // draw: one that goes towards its targets itself has the
-                // shape it makes drawn by the CPU for them.
-                let morphed = match &model.material {
-                    Material::Custom(m) => m.morphs.as_ref().map(|m| &m.shape),
-                    _ => None,
-                };
-                let shape = match morphed {
-                    Some(g) if self.custom_mesh(device, g) => MeshKey::Custom(g.id()),
-                    _ => key,
-                };
-                let morphed = morphed.filter(|_| shape != key);
                 let (extra, has_joints) = match key {
                     MeshKey::Primitive(_) => (false, false),
                     MeshKey::Custom(_) => {
@@ -2500,8 +2536,10 @@ impl Renderer {
                 } else {
                     *world
                 };
-                let (local_centre, local_radius) =
-                    morphed.map_or_else(|| model.mesh.bounds(), |g| g.bounding_sphere());
+                // A program that goes towards its targets itself takes the
+                // shape out of the mesh's bounds, by no more than the
+                // weighed targets reach.
+                let (local_centre, local_radius) = shape_sphere(model);
                 let sphere = |m: &Mat4| {
                     (
                         transform_point(m, local_centre),
@@ -2533,11 +2571,7 @@ impl Renderer {
                     && crate::pick::determinant3(&placed) > 0.0;
                 let reach = match &palette {
                     Some(p) if !p.is_empty() => batch::Reach::round(spheres.iter().copied()),
-                    _ => batch::Reach::placed(
-                        &placed,
-                        morphed.map_or_else(|| model.mesh.bounding_box(), |g| g.bounding_box()),
-                        solid,
-                    ),
+                    _ => batch::Reach::placed(&placed, shape_box(model), solid),
                 };
                 let mut copies = Copies::ONE;
                 let mut places = (Mat4::IDENTITY, Mat4::IDENTITY);
@@ -2644,7 +2678,12 @@ impl Renderer {
                 uniforms.push((slot, uniform));
                 // A segment or a point has no volume to shadow with.
                 let casts = node.casts_shadows && self.topology_of(key) == Topology::Triangles;
+                // What the passes that do not run the material's program
+                // draw: one that goes towards its targets itself has the
+                // shape made on the CPU for them, only where one draws it.
+                let mut shape = key;
                 if shadows && casts {
+                    shape = self.morphed_shape(device, model, key);
                     casters.push(Caster {
                         mesh: shape,
                         cull: model.material.cull_mode(),
@@ -2924,6 +2963,16 @@ impl Renderer {
         let surface_pass =
             processed && post::needs_surfaces(environment) && self.surfaces.available(device);
         let depth_pass = processed && !surface_pass && post::needs_depth(environment);
+        if material_depth.is_some() || depth_pass || surface_pass {
+            for draw in draws.iter_mut().filter(|d| writes_camera_depth(d)) {
+                let Some(c) = draw.custom else {
+                    continue;
+                };
+                if let Some(morphs) = &customs[c.material as usize].morphs {
+                    draw.shape = self.shape_of(device, morphs, draw.mesh);
+                }
+            }
+        }
         if depth_pass {
             for draw in draws.iter().filter(|d| writes_camera_depth(d)) {
                 self.shadow_pipeline(device, draw.key.cull, draw.key.extra);

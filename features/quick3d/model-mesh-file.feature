@@ -402,6 +402,83 @@ Feature: A Model draws the mesh file at its source
         | reads   | halfway     | 190 | 60    |
         | missing | where it is | 60  | 190   |
 
+  # morph.mesh with its target at weight 1, drawn red by a CustomMaterial
+  # whose vertex code takes each vertex to the target: the square covers x 50
+  # to 150, where the mesh has it -50 to 50. The wall and the sun are those of
+  # shadows.feature: the sun slants its light towards -x, so the square, 100
+  # in front of the wall, throws its shadow 100 to its left, over x -50 to 50.
+  # The mesh's own square would throw it over -150 to -50.
+  Rule: A shape its vertex code moves is culled and shadowed where it goes
+
+    Background:
+      Given the model file "morph.mesh"
+      And the text file "red.frag":
+        """
+        void MAIN() { FRAGCOLOR = vec4(1.0, 0.0, 0.0, 1.0); }
+        """
+      And the text file "reads.vert":
+        """
+        void MAIN() { VERTEX = MORPH_POSITION(0); }
+        """
+
+    Scenario: The shape's shadow falls where the code takes it
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick3D
+        Rectangle {
+          width: 200; height: 200; color: "black"
+          View3D {
+            anchors.fill: parent
+            environment: SceneEnvironment { clearColor: "#202020"; backgroundMode: SceneEnvironment.Color }
+            OrthographicCamera { z: 600 }
+            DirectionalLight { eulerRotation.y: 45; castsShadow: true }
+            Model {
+              source: "#Rectangle"; scale: Qt.vector3d(4, 4, 1)
+              materials: DefaultMaterial { diffuseColor: "white" }
+            }
+            Model {
+              source: "morph.mesh"; z: 100
+              morphTargets: [ MorphTarget { weight: 1; attributes: MorphTarget.Position } ]
+              materials: CustomMaterial {
+                shadingMode: CustomMaterial.Unshaded
+                vertexShader: "reads.vert"; fragmentShader: "red.frag"
+              }
+            }
+          }
+        }
+        """
+      When 100 milliseconds pass
+      Then the pixel at 175, 100 of the window is within 2 of "#ff0000"
+      And the pixel at 100, 100 of the window is within 4 of "#757575"
+      And the pixel at 25, 100 of the window is within 4 of "#dbdbdb"
+
+    Scenario: A shape the code takes into view is drawn though its mesh is out of it
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick3D
+        Rectangle {
+          width: 200; height: 200; color: "black"
+          View3D {
+            anchors.fill: parent
+            environment: SceneEnvironment { clearColor: "#202020"; backgroundMode: SceneEnvironment.Color }
+            OrthographicCamera { x: 200; z: 300 }
+            Model {
+              source: "morph.mesh"
+              morphTargets: [ MorphTarget { weight: 1; attributes: MorphTarget.Position } ]
+              materials: CustomMaterial {
+                shadingMode: CustomMaterial.Unshaded
+                vertexShader: "reads.vert"; fragmentShader: "red.frag"
+              }
+            }
+          }
+        }
+        """
+      When 100 milliseconds pass
+      Then the pixel at 25, 100 of the window is within 2 of "#ff0000"
+      And the pixel at 100, 100 of the window is "#1e1e1e"
+
   # colored.mesh, made by the same: a square 100 units across, all its corners
   # red.
   Rule: A material can use the colours of a file's vertices

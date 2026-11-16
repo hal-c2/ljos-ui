@@ -7,10 +7,11 @@
 //! and clones cheaply, and the renderer needs no shader compiler of its
 //! own.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, OnceLock};
 
 use crate::geometry::CustomGeometry;
+use crate::math::Vec3;
 use crate::scene::{Color, CullMode};
 use crate::texture::{Filter, Texture, Tiling};
 
@@ -158,6 +159,10 @@ pub struct MorphTexels {
     pub width: u32,
     pub height: u32,
     pub texels: Vec<f32>,
+    /// How far each target takes a vertex from where the mesh has it, least
+    /// and most along each axis, over all of them: what bounds the shape
+    /// gone towards the targets without going there.
+    pub moves: Vec<(Vec3, Vec3)>,
 }
 
 impl MorphTexels {
@@ -168,7 +173,14 @@ impl MorphTexels {
             width,
             height,
             texels,
+            moves: Vec::new(),
         }
+    }
+
+    /// With how far each target moves the vertices.
+    pub fn moving(mut self, moves: Vec<(Vec3, Vec3)>) -> Self {
+        self.moves = moves;
+        self
     }
 
     /// Two are the same only when they are one.
@@ -179,22 +191,88 @@ impl MorphTexels {
 
 /// A shape's targets and how much each weighs, handed to a program that
 /// goes towards them itself.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Morphs {
     pub texels: Arc<MorphTexels>,
     pub weights: Vec<f32>,
-    /// The shape gone towards the targets on the CPU, which only the passes
-    /// that do not run the program draw: culling, shadows and the depth the
-    /// post passes read see where the program puts the shape, not where
-    /// the mesh has it.
-    pub shape: Arc<CustomGeometry>,
+    shape: Arc<MorphShape>,
 }
 
+/// The shape gone towards the targets on the CPU, made the first time a
+/// pass that does not run the program draws it.
+struct MorphShape {
+    make: Box<dyn Fn() -> Arc<CustomGeometry> + Send + Sync>,
+    made: OnceLock<Arc<CustomGeometry>>,
+}
+
+impl Morphs {
+    /// `make` goes towards the targets on the CPU, as the passes that do
+    /// not run the program need; it is not run until one of them draws.
+    pub fn new(
+        texels: Arc<MorphTexels>,
+        weights: Vec<f32>,
+        make: impl Fn() -> Arc<CustomGeometry> + Send + Sync + 'static,
+    ) -> Self {
+        Morphs {
+            texels,
+            weights,
+            shape: Arc::new(MorphShape {
+                make: Box::new(make),
+                made: OnceLock::new(),
+            }),
+        }
+    }
+
+    /// The shape where the targets take it, which only the passes that do
+    /// not run the program draw: shadows and the depth the post passes and
+    /// a material's `DEPTH_TEXTURE` read see where the program puts the
+    /// shape, not where the mesh has it. Made once, on the first ask: a
+    /// weight that animates costs nothing on the CPU while nothing asks.
+    pub fn shape(&self) -> &Arc<CustomGeometry> {
+        self.shape.made.get_or_init(|| (self.shape.make)())
+    }
+
+    /// Whether the shape was made yet.
+    pub fn shaped(&self) -> bool {
+        self.shape.made.get().is_some()
+    }
+
+    /// The box `own`, the mesh's, grown by how far the weighed targets can
+    /// take a vertex: it holds the shape wherever they take it, without the
+    /// shape being made, so culling needs nothing per vertex.
+    pub fn bounding_box(&self, (least, most): (Vec3, Vec3)) -> (Vec3, Vec3) {
+        let (mut least, mut most) = (least, most);
+        for ((low, high), w) in self.texels.moves.iter().zip(&self.weights) {
+            let (a, b) = (*low * *w, *high * *w);
+            least = least + Vec3::new(a.x.min(b.x), a.y.min(b.y), a.z.min(b.z));
+            most = most + Vec3::new(a.x.max(b.x), a.y.max(b.y), a.z.max(b.z));
+        }
+        (least, most)
+    }
+
+    /// The sphere round [`Self::bounding_box`].
+    pub fn bounding_sphere(&self, own: (Vec3, Vec3)) -> (Vec3, f32) {
+        let (least, most) = self.bounding_box(own);
+        let centre = (least + most) * 0.5;
+        (centre, (most - centre).length())
+    }
+}
+
+impl std::fmt::Debug for Morphs {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Morphs")
+            .field("texels", &self.texels.id())
+            .field("weights", &self.weights)
+            .field("shaped", &self.shaped())
+            .finish()
+    }
+}
+
+/// The shape follows from the texels and the weights, so they are all two
+/// need to be the same.
 impl PartialEq for Morphs {
     fn eq(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.texels, &other.texels)
-            && self.weights == other.weights
-            && Arc::ptr_eq(&self.shape, &other.shape)
+        Arc::ptr_eq(&self.texels, &other.texels) && self.weights == other.weights
     }
 }
 

@@ -528,12 +528,13 @@ f 1/1/1 2/2/1 3/3/1 4/4/1
     write(HERE / "quadrants.png", png(side, side, [top] * (side // 2) + [bottom] * (side // 2)))
 
 
-def mesh_file(path, rows, indices, subsets, attributes, stride, version=5, joints=0, targets=None):
+def mesh_file(path, rows, indices, subsets, attributes, stride, version=5, joints=0, targets=None, box=None):
     """A `.mesh` file: `rows` as one vertex buffer, `attributes` as (name,
     number kind, count, offset). Each subset is (first index, index count).
     The format goes on to the next multiple of four after each part, by four
     when it is at one already. `targets` is (layer names, target count, the
-    layers' numbers), which only version 7 keeps where this writes them."""
+    layers' numbers), which only version 7 keeps where this writes them.
+    `box` is the subsets' (least, most) corners."""
     body = bytearray()
 
     def align():
@@ -569,9 +570,12 @@ def mesh_file(path, rows, indices, subsets, attributes, stride, version=5, joint
     align()
     body += index_bytes
     align()
+    # Without one the box is left wide open: these are few corners. A file
+    # whose shadow a scenario reads gives its own, as the box a directional
+    # light fits its shadow map to would leave a square a texel of it.
+    least, most = box or ((-1e4, -1e4, -1e4), (1e4, 1e4, 1e4))
     for first, count in subsets:
-        # The box of the subset is left wide open: these are few corners.
-        body += struct.pack("<2I6f2I", count, first, -1e4, -1e4, -1e4, 1e4, 1e4, 1e4, 0, 0)
+        body += struct.pack("<2I6f2I", count, first, *least, *most, 0, 0)
         body += struct.pack("<2I", 0, 0)  # the size of its light map
         if version >= 6:
             body += struct.pack("<I", 0)  # its levels of detail
@@ -611,6 +615,7 @@ def morph_mesh():
         32,
         version=7,
         targets=(["attr_pos"], 1, numbers),
+        box=((-50, -50, 0), (50, 50, 0)),
     )
 
 
