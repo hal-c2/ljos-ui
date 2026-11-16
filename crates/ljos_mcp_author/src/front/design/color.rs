@@ -110,8 +110,15 @@ fn text_contrast<'a>(
 }
 
 fn literals<'a>(found: &mut Found<'_, '_, '_, 'a>, object: &QmlObject<'a>) {
+    let frame = Frame {
+        object,
+        index: found.cx.tree.index_of(object),
+        via: None,
+    };
+    // A rectangle's `fill` is its colour in Ljós's own API.
+    let rectangle = found.is(&frame, class::RECTANGLE);
     for (name, b) in bindings(object) {
-        if !is_color(&name) {
+        if !is_color(&name) && !(rectangle && name == "fill") {
             continue;
         }
         let Some(c) = literal(&b) else { continue };

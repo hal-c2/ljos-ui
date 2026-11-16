@@ -389,3 +389,105 @@ Feature: The design rules a file's source can show
         """
       When the author runs "ljos check ."
       Then the command's output does not mention "color-scheme-ignored"
+
+    Scenario: A fill written out is a colour literal like Qt's color, a hint for the author
+      Given the file "Main.qml":
+        """qml
+        import Ljos.Ui
+
+        Item {
+            width: 200
+            height: 80
+            Rectangle {
+                width: 20
+                height: 20
+                fill: "#3366cc"
+            }
+        }
+        """
+      When the agent calls the tool "qml_lint" with:
+        """json
+        {"paths": ["Main.qml"]}
+        """
+      Then the answer's text contains "color-literal"
+      And the answer's text contains "#3366cc"
+
+    Scenario: Ljós's own text on Ljós's own rectangle is held to the contrast rule
+      Given the file "Main.qml":
+        """qml
+        import Ljos.Ui
+
+        Rectangle {
+            width: 200
+            height: 80
+            // ljos-allow(color-scheme-ignored): the scenario is about contrast
+            fill: "#ffffff"
+            Text {
+                text: "Faint"
+                color: "#eeeeee"
+            }
+        }
+        """
+      When the author runs "ljos check ."
+      Then the command's output mentions "[color-text-contrast]"
+
+    Scenario: A Ljós rectangle rounder than the Ljós rectangle it sits in
+      Given the file "Main.qml":
+        """qml
+        import Ljos.Ui
+
+        Rectangle {
+            width: 200
+            height: 100
+            radius: 6
+            fill: palette.window
+            Rectangle {
+                anchors.fill: parent
+                radius: 12
+                fill: palette.base
+            }
+        }
+        """
+      When the agent calls the tool "qml_lint" with:
+        """json
+        {"paths": ["Main.qml"]}
+        """
+      Then the answer's "/diagnostics/0/code" is "layout-nested-radius"
+      And the answer's "/diagnostics/0/line" is 10
+
+    Scenario: Ljós's own text that shows a binding in a bounded box and neither wraps nor elides
+      Given the file "Main.qml":
+        """qml
+        import Ljos.Ui
+
+        Item {
+            id: root
+            width: 200
+            property string name: "x"
+            Text {
+                width: root.width
+                text: root.name
+            }
+        }
+        """
+      When the author runs "ljos check ."
+      Then the command's output mentions "[text-unbounded-dynamic]"
+
+    Scenario: Ljós's own text that wraps is not told it runs out of its box
+      Given the file "Main.qml":
+        """qml
+        import Ljos.Ui
+
+        Item {
+            id: root
+            width: 200
+            property string name: "x"
+            Text {
+                width: root.width
+                text: root.name
+                wrap: Text.WordWrap
+            }
+        }
+        """
+      When the author runs "ljos check ."
+      Then the command's output does not mention "text-unbounded-dynamic"
