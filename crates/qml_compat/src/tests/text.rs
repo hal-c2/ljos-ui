@@ -209,6 +209,17 @@ fn a_value_written_in_another_place_keeps_its_own_lowering() {
 }
 
 #[test]
+fn a_value_that_holds_a_placeholder_is_shown_as_it_is() {
+    // Qt's next `.arg` would fill the `%2` inside the first value; no
+    // value can be proven free of `%` before it runs, so the file is
+    // rewritten and the template shows the value unfilled.
+    let text = lowered(
+        "import QtQuick\nItem {\n    property string s: qsTr(\"%1 of %2\").arg(\"%2\").arg(\"x\")\n}\n",
+    );
+    assert!(text.contains("s: t`${\"%2\"} of ${\"x\"}`"), "{text}");
+}
+
+#[test]
 fn a_count_qt_s_types_say_is_an_int_is_rewritten() {
     let text = lowered(
         "import QtQuick\nText {\n    id: label\n    property string a: qsTr(\"%n line(s)\", \"\", lineCount)\n    property string b: qsTr(\"%n\", \"\", label.lineCount)\n    property string c: qsTr(\"%n\", \"\", a.length)\n}\n",
