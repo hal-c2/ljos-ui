@@ -322,14 +322,15 @@ Feature: Ljós's controls as Basic draws them: the module Ljos.Controls.Basic
       When the author runs "ljos migrate --style Basic --write ."
       Then the command prints:
         """
-        lowered ./Main.qml (1 edits)
+        lowered ./Main.qml (2 edits)
         1 files, 1 lowered, 0 kept
         """
       And the file "Main.qml" is:
         """qml
+        import Ljos.Core
         import Ljos.Controls.Basic
         import Ljos
-        Menu { title: qsTr("Window"); SystemMenu.role: SystemMenu.WindowRole }
+        Menu { title: t`Window`; SystemMenu.role: SystemMenu.WindowRole }
         """
       When the author runs "ljos check ."
       Then the command exits with status 0
