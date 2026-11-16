@@ -28,8 +28,9 @@ Feature: Checking translated text
       ljos: 1 errors
       """
 
+  @backlog
   Scenario: A text marked for later is written with msg by hand
-    Given the file "Later.qml":
+    Given the file "Later.qml" without its indentation:
       """qml
       import Ljos.Ui
       import Ljos.Core
