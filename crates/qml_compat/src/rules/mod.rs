@@ -32,8 +32,8 @@ mod window;
 pub(crate) use gestures::gesture;
 pub use layout::LAYOUT_RENAMES;
 pub(crate) use layout::arrange;
-pub(crate) use text::{font, messages};
 pub use text::font::FONT_RENAMES;
+pub(crate) use text::{font, messages};
 
 use std::ops::Range;
 use std::sync::OnceLock;

@@ -510,7 +510,11 @@ impl Members {
             .filter_map(|u| u.lowered.as_ref().ok())
             .flat_map(|l| l.changes.iter().map(|(range, _)| range.clone()))
             .collect();
-        let hider = |name: &str| self.hider(source, name, &beside, |at| changed.iter().any(|c| c.contains(at)));
+        let hider = |name: &str| {
+            self.hider(source, name, &beside, |at| {
+                changed.iter().any(|c| c.contains(at))
+            })
+        };
         let mut changes = Vec::new();
         let mut core = false;
         for u in &self.uses {

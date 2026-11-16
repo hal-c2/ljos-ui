@@ -37,8 +37,8 @@ use std::{collections::HashSet, ops::Range};
 use bindings::{Bindings, Node};
 use modules::{Ljos, Modules, Qt};
 use oxc_ast::ast::{
-    Argument, BindingIdentifier, CallExpression, ComputedMemberExpression, Expression, IdentifierReference,
-    StaticMemberExpression,
+    Argument, BindingIdentifier, CallExpression, ComputedMemberExpression, Expression,
+    IdentifierReference, StaticMemberExpression,
 };
 use oxc_ast_visit::{Visit, walk};
 use oxc_span::{GetSpan, Span};
@@ -56,9 +56,7 @@ use rules::states::animation::Animating;
 use rules::{arrange, font, gesture, messages};
 
 pub use cause::Xhr;
-pub use cause::{
-    Animated, Cause, Differs, Font, Hider, Layout, Loader, Message, Owner, Row,
-};
+pub use cause::{Animated, Cause, Differs, Font, Hider, Layout, Loader, Message, Owner, Row};
 pub use group::{Alone, References, group, references};
 pub use lowering::{Changed, Held, Lowering, Project, ProjectScript, ScriptEdit, rows_path};
 pub use migrated::migrated;
@@ -2364,10 +2362,12 @@ impl Script<'_, '_> {
                     .map(|e| e.span().start),
             );
             match call.callee.without_parentheses() {
-                Expression::StaticMemberExpression(member) => match member.object.without_parentheses() {
-                    Expression::CallExpression(inner) => call = inner,
-                    _ => return wholes,
-                },
+                Expression::StaticMemberExpression(member) => {
+                    match member.object.without_parentheses() {
+                        Expression::CallExpression(inner) => call = inner,
+                        _ => return wholes,
+                    }
+                }
                 _ => return wholes,
             }
         }
@@ -2378,9 +2378,9 @@ impl Script<'_, '_> {
     /// a `length`. What a parameter or a local holds is not followed.
     fn whole(&self, expression: &Expression<'_>) -> bool {
         let int = |ty: Ty, name: &str| match ty {
-            Ty::Exact(ty) | Ty::Derived(ty) => {
-                ty.property(name).is_some_and(|p| matches!(p.type_name, "int" | "QtQml.int"))
-            }
+            Ty::Exact(ty) | Ty::Derived(ty) => ty
+                .property(name)
+                .is_some_and(|p| matches!(p.type_name, "int" | "QtQml.int")),
             _ => false,
         };
         match expression {

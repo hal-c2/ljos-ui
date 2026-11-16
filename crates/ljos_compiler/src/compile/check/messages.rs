@@ -86,8 +86,7 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
             match part.without_parentheses() {
                 Expression::StringLiteral(s) => one.push_str(&in_template(&s.value)),
                 Expression::TemplateLiteral(t) => one.push_str(inside(self.text(t.span))),
-                Expression::TaggedTemplateExpression(t)
-                    if matches!(&t.tag, Expression::Identifier(id) if id.name == "t") =>
+                Expression::TaggedTemplateExpression(t) if matches!(&t.tag, Expression::Identifier(id) if id.name == "t") =>
                 {
                     one.push_str(inside(self.text(t.quasi.span)));
                 }

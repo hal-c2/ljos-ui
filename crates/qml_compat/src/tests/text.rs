@@ -225,25 +225,70 @@ fn a_count_qt_s_types_say_is_an_int_is_rewritten() {
 #[test]
 fn a_message_that_cannot_be_written_out_keeps_the_file() {
     for (source, why) in [
-        ("property string key: \"Open\"; property string shown: qsTr(key)", "`qsTr` of a value that is not written out"),
-        ("property string shown: qsTr(\"%1 %2\").arg(1, 2)", "not of one value"),
-        ("property string shown: qsTr(\"%1\").arg(1).arg(2)", "no `%N` left"),
+        (
+            "property string key: \"Open\"; property string shown: qsTr(key)",
+            "`qsTr` of a value that is not written out",
+        ),
+        (
+            "property string shown: qsTr(\"%1 %2\").arg(1, 2)",
+            "not of one value",
+        ),
+        (
+            "property string shown: qsTr(\"%1\").arg(1).arg(2)",
+            "no `%N` left",
+        ),
         ("property string shown: qsTr(\"%L1\").arg(1)", "a `%LN`"),
-        ("property string shown: qsTr(\"%2 %1\").arg(parent\n        .width).arg(2)", "spans lines"),
-        ("property string shown: qsTr(\"%2 %1\").arg(1 + 1).arg(2)", "not a name, a member of one or a literal"),
-        ("property string shown: qsTr(\"%1 %1\").arg(Date.now())", "not a name, a member of one or a literal"),
-        ("property string shown: qsTr(\"%n\", \"\", 2.5)", "not known to be an `int`"),
-        ("property string shown: qsTr(\"%n\", \"\", width)", "not known to be an `int`"),
-        ("property real n: 2; property string shown: qsTr(\"%Ln\", \"\", n)", "not known to be an `int`"),
-        ("property string later: QT_TR_NOOP(\"Later\")", "a string to Qt"),
-        ("property var later: QT_TRANSLATE_NOOP(\"C\", \"x\")", "a string to Qt"),
+        (
+            "property string shown: qsTr(\"%2 %1\").arg(parent\n        .width).arg(2)",
+            "spans lines",
+        ),
+        (
+            "property string shown: qsTr(\"%2 %1\").arg(1 + 1).arg(2)",
+            "not a name, a member of one or a literal",
+        ),
+        (
+            "property string shown: qsTr(\"%1 %1\").arg(Date.now())",
+            "not a name, a member of one or a literal",
+        ),
+        (
+            "property string shown: qsTr(\"%n\", \"\", 2.5)",
+            "not known to be an `int`",
+        ),
+        (
+            "property string shown: qsTr(\"%n\", \"\", width)",
+            "not known to be an `int`",
+        ),
+        (
+            "property real n: 2; property string shown: qsTr(\"%Ln\", \"\", n)",
+            "not known to be an `int`",
+        ),
+        (
+            "property string later: QT_TR_NOOP(\"Later\")",
+            "a string to Qt",
+        ),
+        (
+            "property var later: QT_TRANSLATE_NOOP(\"C\", \"x\")",
+            "a string to Qt",
+        ),
         ("property var later: QT_TRID_NOOP(\"id\")", "a string to Qt"),
         ("property string shown: qsTrId(\"a\").arg(1)", "`t({ id })`"),
-        ("property string shown: qsTranslate(\"C\", \"x\", \"d\")", "one context"),
+        (
+            "property string shown: qsTranslate(\"C\", \"x\", \"d\")",
+            "one context",
+        ),
         ("property var f: qsTr", "read as a value"),
-        ("property string shown: qsTr(\"#%n\", \"\", 2)", "`plural` reads"),
-        ("property string t: \"x\"; property string shown: qsTr(\"x\")", "`t` is another name"),
-        ("function plural(n) { return n } property string shown: qsTr(\"%n\", \"\", 1)", "`plural` is another name"),
+        (
+            "property string shown: qsTr(\"#%n\", \"\", 2)",
+            "`plural` reads",
+        ),
+        (
+            "property string t: \"x\"; property string shown: qsTr(\"x\")",
+            "`t` is another name",
+        ),
+        (
+            "function plural(n) { return n } property string shown: qsTr(\"%n\", \"\", 1)",
+            "`plural` is another name",
+        ),
     ] {
         let why_kept = kept_for(&format!("import QtQuick\nItem {{\n    {source}\n}}\n"));
         assert!(why_kept.contains(why), "{source}: {why_kept}");
@@ -280,8 +325,6 @@ fn a_list_element_s_message_stays_qt_s() {
 
 #[test]
 fn a_local_named_qs_tr_is_the_script_s() {
-    let text = lowered(
-        "import QtQuick\nItem {\n    function f(qsTr) { return qsTr(\"x\") }\n}\n",
-    );
+    let text = lowered("import QtQuick\nItem {\n    function f(qsTr) { return qsTr(\"x\") }\n}\n");
     assert!(text.contains("return qsTr(\"x\")"), "{text}");
 }

@@ -28,8 +28,14 @@ fn qt_s_translation_functions_are_qt_s() {
             "qsTranslate(\"C\", \"Open\")",
             "`qsTranslate` is Qt's: use t({ message, context }) (Ljos.Core)",
         ),
-        ("qsTrId(\"open\")", "`qsTrId` is Qt's: use t({ id }) (Ljos.Core)"),
-        ("QT_TR_NOOP(\"Open\")", "`QT_TR_NOOP` is Qt's: use msg`…` (Ljos.Core)"),
+        (
+            "qsTrId(\"open\")",
+            "`qsTrId` is Qt's: use t({ id }) (Ljos.Core)",
+        ),
+        (
+            "QT_TR_NOOP(\"Open\")",
+            "`QT_TR_NOOP` is Qt's: use msg`…` (Ljos.Core)",
+        ),
     ] {
         let source = format!("import Ljos.Ui\nItem {{\n    property string a: {call}\n}}\n");
         let found = found(&source);
@@ -46,16 +52,21 @@ fn qt_s_translation_functions_are_qt_s() {
 
 #[test]
 fn a_local_named_qs_tr_is_the_script_s() {
-    let found = found(
-        "import Ljos.Ui\nItem {\n    function f(qsTr: string): string { return qsTr }\n}\n",
+    let found =
+        found("import Ljos.Ui\nItem {\n    function f(qsTr: string): string { return qsTr }\n}\n");
+    assert!(
+        !found.iter().any(|(code, ..)| *code == Code::QtTr),
+        "{found:?}"
     );
-    assert!(!found.iter().any(|(code, ..)| *code == Code::QtTr), "{found:?}");
 }
 
 #[test]
 fn qt_s_qml_keeps_qs_tr() {
     let found = found("import QtQuick\nItem {\n    property string a: qsTr(\"Open\")\n}\n");
-    assert!(!found.iter().any(|(code, ..)| *code == Code::QtTr), "{found:?}");
+    assert!(
+        !found.iter().any(|(code, ..)| *code == Code::QtTr),
+        "{found:?}"
+    );
 }
 
 #[test]
