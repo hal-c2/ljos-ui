@@ -210,9 +210,11 @@ fn a_value_written_in_another_place_keeps_its_own_lowering() {
 
 #[test]
 fn a_value_that_holds_a_placeholder_is_shown_as_it_is() {
-    // Qt's next `.arg` would fill the `%2` inside the first value; no
-    // value can be proven free of `%` before it runs, so the file is
-    // rewritten and the template shows the value unfilled.
+    // Qt's next `.arg` would fill the `%2` inside the first value. Only a
+    // literal like this one can be seen to hold a `%` before it runs, and
+    // the rest cannot, so all are treated alike (docs/DIALECT.md §4.13's
+    // DECISION): the file is rewritten and the template shows the value
+    // unfilled.
     let text = lowered(
         "import QtQuick\nItem {\n    property string s: qsTr(\"%1 of %2\").arg(\"%2\").arg(\"x\")\n}\n",
     );
