@@ -5,7 +5,7 @@
 mod oracle;
 
 use ljos_compiler::{Diagnostic, Project, compile_file};
-use ljos_ir::{CompiledFile, TranslationKind};
+use ljos_ir::{Arg, CompiledFile, Param, TranslationKind};
 use oracle::Runtime;
 
 fn compile(source: &str) -> (CompiledFile, Vec<Diagnostic>) {
@@ -153,4 +153,24 @@ Item {
         .map(|t| t.source.as_str())
         .collect();
     assert_eq!(sources, ["Hi"]);
+}
+
+#[test]
+fn a_role_named_as_a_macro_read_as_a_value_is_the_role() {
+    let (file, _) = compile(
+        r##"import QtQuick
+import Ljos.Core
+ListView {
+    model: ListModel { ListElement { t: 1.5 } }
+    delegate: Text { text: t }
+}
+"##,
+    );
+    // A role of the model comes before what `Ljos.Core` gives; only a
+    // call of a macro is the macro whatever the model has.
+    let params = &file.exprs[0].params;
+    assert!(
+        matches!(&params[..], [Param { name, arg: Arg::Context { .. } }] if name == "t"),
+        "{params:?}"
+    );
 }
