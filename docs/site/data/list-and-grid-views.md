@@ -40,7 +40,7 @@ ListView {
     highlight: Rectangle { fill: palette.highlight }
     delegate: Text {
         required property string name
-        color: palette.windowText
+        color: ListView.isCurrentItem ? palette.highlightedText : palette.windowText
         text: name
         height: 20
     }
@@ -71,7 +71,7 @@ GridView {
         height: 50
         fill: GridView.isCurrentItem ? palette.highlight : palette.button
         Text {
-            color: palette.windowText
+            color: GridView.isCurrentItem ? palette.highlightedText : palette.buttonText
             text: index
         }
     }

@@ -201,7 +201,7 @@ Window {
         height: 40
         fill: match (look) {
             when "pressed": palette.dark;
-            when "hovered": palette.midlight;
+            when "hovered": palette.highlight;
             when "disabled": palette.mid;
             default: palette.button;
         }

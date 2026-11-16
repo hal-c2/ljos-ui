@@ -80,7 +80,7 @@ Rectangle {
     }
 
     Text {
-        color: palette.windowText
+        color: chime.playing ? palette.highlightedText : palette.buttonText
         anchors.centerIn: parent
         text: parent.played === 0 ? "Play chime" : "Played " + parent.played
     }

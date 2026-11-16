@@ -56,7 +56,7 @@ Item {
 }
 ```
 
-This draws a blue rounded bar across the top left, clips a red square at the right and bottom edges of a half-opaque box, and leaves the hidden green box unpainted.
+This draws a rounded bar in the accent colour across the top left, clips a square in the `linkVisited` colour at the right and bottom edges of a half-opaque box, and leaves the hidden `highlight` box unpainted.
 
 Watch out for a few pitfalls with visibility and stacking:
 - Hiding an item (`visible: false`) stops it from being painted, but its bindings keep re-evaluating and its timers keep running.
