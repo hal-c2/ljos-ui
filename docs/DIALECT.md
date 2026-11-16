@@ -1562,6 +1562,22 @@ key is its context and its text, or its id.
   files as Qt's and names every call. Without
   `--catalogue` there is no translation to lose, and the rewrite is the
   plain one.
+  DECISION: the `.po` file is named for the `.ts` file's `language`
+  (`is_IS.po`), or, where it has none, for what follows the last `_` of
+  its name (`app_is.ts` is `is.po`). An `xx.po` there already keeps its
+  other entries; one of the same context and message is replaced. A
+  translation is written by the rewrite its call is, with each value
+  as written in the call, so `%1` is the name the call's message gives
+  it. A message Qt shows untranslated (none, empty, obsolete, or short of
+  a numerus form) is written with an empty `msgstr`, and a context that
+  has no translation of a text translates it differently from one that
+  does. Numerus forms become the CLDR categories the numbers that select
+  them are in, `other` last (Russian's `other` is the last form); a
+  language whose Qt forms cut a CLDR category in two cannot be said in
+  ICU, and a translation the rewrite cannot write (a `%N` it has no
+  value for), keeps its file. The `.ts` message's comment for
+  translators becomes `#.`, its translator's comment `# `. The `.ts`
+  file is left as it is, for the files kept.
 
 DECISION: `t` and `plural` are written under the rule `Qt`'s
 members are (§4.3): where one is another word of the file (outside

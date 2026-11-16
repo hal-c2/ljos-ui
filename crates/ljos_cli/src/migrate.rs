@@ -10,8 +10,8 @@
 //!
 //! | To | What |
 //! |---|---|
-//! | stdout | `renamed <module> to <name>.lts, and the imports that name it in <files>; files outside <directory> were not looked in` (or `would rename`) first, for each `.ts` module that uses Ljós's `match` or `is` (`ts-lts-syntax`), or `kept <module>: it would be renamed to <name>.lts, but <name>.lts is in the way`; then, for a project with an `.lts` module, `wrote tsconfig.json`, `extended tsconfig.json with ./.ljos/tsconfig.base.json` or `added "." and ".ljos/types" to the rootDirs of tsconfig.json` (or `would write`, `would extend`, `would add`) where its `tsconfig.json` does not let stock TypeScript read them (`tsconfig-lts`); then `lowered <file> (N edits)` (or `would lower`) for each file the pass lowers, then `wrote <module>` (or `would write`) for each module beside it the lowered file imports, and `scripts of <file> stay JavaScript: typed, ljos check finds N` where its scripts break the checker's rules, `kept <file>:<line>:<column>: <why>` for each it cannot lower whole, then `N files, M lowered, K kept` |
-//! | stderr | `<file>: <error>` for a file that could not be read or written, or a module that would overwrite another file, or a description of the program's types that could not be read (one found beside the files is named with its directory) |
+//! | stdout | `renamed <module> to <name>.lts, and the imports that name it in <files>; files outside <directory> were not looked in` (or `would rename`) first, for each `.ts` module that uses Ljós's `match` or `is` (`ts-lts-syntax`), or `kept <module>: it would be renamed to <name>.lts, but <name>.lts is in the way`; then, for a project with an `.lts` module, `wrote tsconfig.json`, `extended tsconfig.json with ./.ljos/tsconfig.base.json` or `added "." and ".ljos/types" to the rootDirs of tsconfig.json` (or `would write`, `would extend`, `would add`) where its `tsconfig.json` does not let stock TypeScript read them (`tsconfig-lts`); then, with `--catalogue`, `wrote <xx.po>` (or `would write`); then `lowered <file> (N edits)` (or `would lower`) for each file the pass lowers, then `wrote <module>` (or `would write`) for each module beside it the lowered file imports, and `scripts of <file> stay JavaScript: typed, ljos check finds N` where its scripts break the checker's rules, `kept <file>:<line>:<column>: <why>` for each it cannot lower whole, then `N files, M lowered, K kept` |
+//! | stderr | `<file>: <error>` for a file that could not be read or written, or a catalogue that could not be read (nothing is done then), or a module that would overwrite another file, or a description of the program's types that could not be read (one found beside the files is named with its directory) |
 //!
 //! A file's constant `ListModel`s are written as typed lists, with their
 //! row types in `<File>.rows.ts` beside it (docs/DIALECT.md §4.8). A file
@@ -50,6 +50,8 @@ use crate::render::oracle_for_modules;
 use crate::stdout::outln;
 use crate::walk::{files_below, is_qml};
 
+mod catalogue;
+
 #[derive(Args)]
 pub struct Migrate {
     /// The files to migrate, or directories for every `.qml` file below
@@ -73,12 +75,28 @@ pub struct Migrate {
     /// directory), if it has one; the other paths are not looked in.
     #[arg(long, value_name = "FILE")]
     types: Option<PathBuf>,
+    /// A catalogue of Qt's (`app_xx.ts`) whose translations are written as
+    /// the `.po` catalogue `xx.po` beside it, each as the rewrite writes its
+    /// call. A text files translate differently gets its file's name as its
+    /// context; calls that would be one message with two translations keep
+    /// their files.
+    #[arg(long, value_name = "FILE")]
+    catalogue: Option<PathBuf>,
 }
 
 impl Migrate {
     /// The exit status.
     pub fn run(self) -> u8 {
         let (mut lowered, mut kept, mut failed) = (0, 0, false);
+        let catalogue = match self.catalogue.as_deref().map(catalogue::Catalogue::read) {
+            None => None,
+            Some(Ok(catalogue)) => Some(catalogue),
+            Some(Err(e)) => {
+                let path = self.catalogue.as_deref().unwrap_or(Path::new(""));
+                eprintln!("{}: {e}", path.display());
+                return 2;
+            }
+        };
         // Each file with the project it is of: the directory named, or the
         // directory of a file named, or the directory its module is
         // imported from (`root_of`), read as a lowered run reads it, so the
@@ -301,7 +319,29 @@ impl Migrate {
         // The modules the lowered files import are written below, to the
         // disk, by rules of the command's own.
         let _ = lowering.settle(&around);
+        if let Some(catalogue) = &catalogue {
+            catalogue.translate(&mut lowering, &around, &shown);
+        }
         let typed = findings_typed(&lowering, &mut around, shown.keys());
+        // Written before the files, from the files as they are lowered: a
+        // file the catalogue cannot be written for is not written either.
+        if let Some(catalogue) = &catalogue {
+            let path = catalogue.po_path();
+            match catalogue.po(&lowering, &shown) {
+                Ok(text) if self.write => match std::fs::write(&path, text) {
+                    Ok(()) => outln!("wrote {}", path.display()),
+                    Err(e) => {
+                        eprintln!("{}: {e}", path.display());
+                        return 2;
+                    }
+                },
+                Ok(_) => outln!("would write {}", path.display()),
+                Err(e) => {
+                    eprintln!("{}: {e}", path.display());
+                    return 2;
+                }
+            }
+        }
         for (key, file) in shown {
             let (Some(outcome), Some(text)) = (lowering.lowering(&key), lowering.written(&key))
             else {
@@ -595,7 +635,7 @@ fn line_column(text: &str, at: usize) -> (usize, usize) {
 /// A `.ts` module, not a declaration.
 fn is_ts_module(path: &Path) -> bool {
     let name = path.to_string_lossy();
-    name.ends_with(".ts") && !name.ends_with(".d.ts")
+    name.ends_with(".ts") && !name.ends_with(".d.ts") && !catalogue::is_linguist(path)
 }
 
 /// Renames `module`, a `.ts` module of the project at `root`, to `.lts`

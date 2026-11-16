@@ -172,8 +172,6 @@ Feature: ljos migrate writes qsTr as a tagged template
       1 files, 0 lowered, 1 kept
       """
 
-  # Needs the extract lane: ljos migrate --catalogue
-  @backlog
   Scenario: A text two files translate differently keeps each file's translation
     Given the file "FileMenu.qml":
       """qml
@@ -207,9 +205,25 @@ Feature: ljos migrate writes qsTr as a tagged template
       import Ljos.Core
       Item { property string open: t({ message: "Open", context: "Door" }) }
       """
+    And the file "is.po" is:
+      """po
+      msgid ""
+      msgstr ""
+      "MIME-Version: 1.0\n"
+      "Content-Type: text/plain; charset=UTF-8\n"
+      "Content-Transfer-Encoding: 8bit\n"
+      "Language: is\n"
+      "X-Generator: ljos i18n extract\n"
 
-  # Needs the extract lane: ljos migrate --catalogue
-  @backlog
+      msgctxt "Door"
+      msgid "Open"
+      msgstr "Opnaðu"
+
+      msgctxt "FileMenu"
+      msgid "Open"
+      msgstr "Opna"
+      """
+
   Scenario: Two calls that would be one message with two translations keep their files
     Qt's disambiguation and a qsTranslate context both become the context of `t`.
     Given the file "Main.qml":
@@ -232,11 +246,9 @@ Feature: ljos migrate writes qsTr as a tagged template
       </TS>
       """
     When the author runs "ljos migrate --catalogue app_is.ts ."
-    Then the command's output mentions "kept Main.qml"
-    And the command's output mentions "kept Other.qml"
+    Then the command's output mentions "kept ./Main.qml:2:30: `Open` in the context `menu` is one message to `t`"
+    And the command's output mentions "kept ./Other.qml:2:30: `Open` in the context `menu` is one message to `t`"
 
-  # Needs the extract lane: ljos migrate --catalogue
-  @backlog
   Scenario: One disambiguation two files translate differently keeps both files
     Given the file "FileMenu.qml":
       """qml
@@ -258,5 +270,151 @@ Feature: ljos migrate writes qsTr as a tagged template
       </TS>
       """
     When the author runs "ljos migrate --catalogue app_is.ts ."
-    Then the command's output mentions "kept FileMenu.qml"
-    And the command's output mentions "kept Door.qml"
+    Then the command's output mentions "kept ./Door.qml:2:30:"
+    And the command's output mentions "kept ./FileMenu.qml:2:30:"
+
+  Scenario: The catalogue says each value by the name the message gives it
+    A translation is written by the rewrite its call is: `%1` is the value
+    `.arg` fills it with, and the numerus forms are the forms of `plural`.
+    Given the file "Main.qml":
+      """qml
+      import QtQuick
+      Item {
+        property int count: 3
+        property string name: "Ada"
+        property string of: qsTr("%1 of %2").arg(name).arg(count)
+        property string files: qsTr("%n file(s)", "", count)
+        property string grouped: qsTr("%Ln file(s)", "", count)
+        property string home: qsTrId("nav.home")
+      }
+      """
+    And the file "app_is.ts":
+      """xml
+      <TS version="2.1" language="is">
+      <context><name>Main</name>
+        <message><source>%1 of %2</source><extracomment>Pages</extracomment>
+          <translatorcomment>Read as a page count</translatorcomment>
+          <translation>%2 alls, þar af %1</translation></message>
+        <message numerus="yes"><source>%n file(s)</source><translation>
+          <numerusform>%n skrá</numerusform><numerusform>%n skrár</numerusform></translation></message>
+        <message numerus="yes"><source>%Ln file(s)</source><translation>
+          <numerusform>%Ln skrá</numerusform><numerusform>%Ln skrár</numerusform></translation></message>
+      </context>
+      <context><name></name>
+        <message id="nav.home"><source>Home</source><translation>Heim</translation></message>
+      </context>
+      </TS>
+      """
+    When the author runs "ljos migrate --write --catalogue app_is.ts ."
+    Then the file "is.po" is:
+      """po
+      msgid ""
+      msgstr ""
+      "MIME-Version: 1.0\n"
+      "Content-Type: text/plain; charset=UTF-8\n"
+      "Content-Transfer-Encoding: 8bit\n"
+      "Language: is\n"
+      "X-Generator: ljos i18n extract\n"
+
+      #. js-lingui-explicit-id
+      #. Default: Home
+      msgid "nav.home"
+      msgstr "Heim"
+
+      msgid "{count, plural, other {# file(s)}}"
+      msgstr "{count, plural, one {# skrá} other {# skrár}}"
+
+      msgid "{count, plural, other {{count} file(s)}}"
+      msgstr "{count, plural, one {{count} skrá} other {{count} skrár}}"
+
+      # Read as a page count
+      #. Pages
+      msgid "{name} of {count}"
+      msgstr "{count} alls, þar af {name}"
+      """
+
+  Scenario: A text the catalogue has not translated yet waits for its translation
+    Qt shows the text as written where its translation is unfinished, and so
+    does `t` where the translation is empty.
+    Given the file "Main.qml":
+      """qml
+      import QtQuick
+      Item { property string later: qsTr("Later") }
+      """
+    And the file "app_is.ts":
+      """xml
+      <TS version="2.1" language="is">
+      <context><name>Main</name>
+        <message><source>Later</source><translation type="unfinished"></translation></message>
+      </context>
+      </TS>
+      """
+    When the author runs "ljos migrate --write --catalogue app_is.ts ."
+    Then the file "is.po" is:
+      """po
+      msgid ""
+      msgstr ""
+      "MIME-Version: 1.0\n"
+      "Content-Type: text/plain; charset=UTF-8\n"
+      "Content-Transfer-Encoding: 8bit\n"
+      "Language: is\n"
+      "X-Generator: ljos i18n extract\n"
+
+      msgid "Later"
+      msgstr ""
+      """
+
+  # Needs PR #506: `ljos render --language` and the catalogues in `i18n/`.
+  @backlog
+  Scenario: The catalogue written shows what Qt's showed
+    The application as written, with Qt's catalogue, and the application
+    migrated, with the catalogue written for it, show the same text. The
+    `.ts` file stays beside the `.po`; the migrated file asks for none of
+    its messages.
+    Given the file "qt/Main.qml":
+      """qml
+      import QtQuick
+      Rectangle {
+        width: 320; height: 40; color: "white"
+        property int count: 3
+        property string name: "Ada"
+        Text { text: qsTr("%1 has %n file(s)", "", count).arg(name) }
+        Text { y: 20; text: qsTr("Open", "menu") }
+      }
+      """
+    And the file "qt/i18n/app_is.ts":
+      """xml
+      <TS version="2.1" language="is">
+      <context><name>Main</name>
+        <message numerus="yes"><source>%1 has %n file(s)</source><translation>
+          <numerusform>%1 á %n skrá</numerusform><numerusform>%1 á %n skrár</numerusform></translation></message>
+        <message><source>Open</source><comment>menu</comment><translation>Opna</translation></message>
+      </context>
+      </TS>
+      """
+    And the file "app/Main.qml":
+      """qml
+      import QtQuick
+      Rectangle {
+        width: 320; height: 40; color: "white"
+        property int count: 3
+        property string name: "Ada"
+        Text { text: qsTr("%1 has %n file(s)", "", count).arg(name) }
+        Text { y: 20; text: qsTr("Open", "menu") }
+      }
+      """
+    And the file "app/i18n/app_is.ts":
+      """xml
+      <TS version="2.1" language="is">
+      <context><name>Main</name>
+        <message numerus="yes"><source>%1 has %n file(s)</source><translation>
+          <numerusform>%1 á %n skrá</numerusform><numerusform>%1 á %n skrár</numerusform></translation></message>
+        <message><source>Open</source><comment>menu</comment><translation>Opna</translation></message>
+      </context>
+      </TS>
+      """
+    When the author runs "ljos migrate --write --catalogue app/i18n/app_is.ts app/Main.qml"
+    Then the command's output mentions "wrote app/i18n/is.po"
+    When the author runs "ljos render qt --out kept.png --settle 0 --compat keep --language is"
+    And the author runs "ljos render app --out lowered.png --settle 0 --language is"
+    Then the pictures "kept.png" and "lowered.png" have the same pixels
