@@ -263,10 +263,22 @@ impl Finder<'_> {
                     self.object(child, &inner);
                 }
                 QmlMember::Object(child) => self.object(child, roots),
-                QmlMember::Binding(binding) => self.value(&binding.value, &own, roots),
+                QmlMember::Binding(binding) => {
+                    // `delegate: Item { … }`: the object is a component's
+                    // root, as the compiler's scope reads it without types.
+                    let starts = binding
+                        .name
+                        .as_simple()
+                        .is_some_and(|name| qml_front::scope::takes_component(&[name]));
+                    self.value(&binding.value, &own, roots, starts);
+                }
                 QmlMember::Property(property) => {
                     if let Some(value) = &property.value {
-                        self.value(value, &own, roots);
+                        // `property Component row: Item { … }`.
+                        let starts = property.type_name.as_ref().is_some_and(|type_name| {
+                            type_name.name.as_simple() == Some("Component") && !type_name.is_list
+                        });
+                        self.value(value, &own, roots, starts);
                     }
                 }
                 QmlMember::Function(function) => {
@@ -287,7 +299,21 @@ impl Finder<'_> {
         }
     }
 
-    fn value(&mut self, value: &QmlBindingValue<'_>, own: &[String], roots: &[Vec<String>]) {
+    /// `starts` when an object given here is the root of a component.
+    fn value(
+        &mut self,
+        value: &QmlBindingValue<'_>,
+        own: &[String],
+        roots: &[Vec<String>],
+        starts: bool,
+    ) {
+        let root = |object: &QmlObject<'_>| {
+            let mut inner = roots.to_vec();
+            if starts {
+                inner.push(declared(object));
+            }
+            inner
+        };
         match value {
             QmlBindingValue::Expression(expression) => self.script(own, roots, |finder| {
                 let mut bindings = Bindings::default();
@@ -301,10 +327,10 @@ impl Finder<'_> {
                 finder.bind(bindings);
                 finder.visit_statement(statement);
             }),
-            QmlBindingValue::Object(object) => self.object(object, roots),
+            QmlBindingValue::Object(object) => self.object(object, &root(object)),
             QmlBindingValue::Objects(objects) => {
                 for object in objects {
-                    self.object(object, roots);
+                    self.object(object, &root(object));
                 }
             }
         }
@@ -524,6 +550,22 @@ mod tests {
         assert_eq!(
             keys(&found),
             vec![("{r, select, other {Member}}".to_owned(), None, 10)]
+        );
+    }
+
+    /// A delegate, or a `property Component`'s object, is a component's
+    /// root too, as `qml_front::scope` reads one without types.
+    #[test]
+    fn a_choice_a_delegate_binds_is_a_value_inside_it() {
+        let source = "import QtQuick\nimport Ljos.Core\nItem {\n  ListView {\n    delegate: Item {\n      property string select\n      Text { text: t`${select(r, { other: \"Member\" })}` }\n    }\n  }\n  property Component row: Item {\n    function plural(n, forms) { return forms.other }\n    Text { text: t`${plural(n, { other: \"# rows\" })}` }\n  }\n  property string outside: t`${select(r, { other: \"Guest\" })}`\n}\n";
+        let found = messages_qml(source);
+        assert_eq!(
+            keys(&found),
+            vec![
+                ("{0}".to_owned(), None, 7),
+                ("{0}".to_owned(), None, 12),
+                ("{r, select, other {Guest}}".to_owned(), None, 14),
+            ]
         );
     }
 

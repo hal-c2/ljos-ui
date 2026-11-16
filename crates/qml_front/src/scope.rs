@@ -741,7 +741,7 @@ impl<'a, O: TypeOracle> Analysis<'a, '_, '_, O> {
 /// Whether `path` names a property that takes a Component in Qt, for a
 /// type whose properties are not known: Qt names those `delegate`, or ends
 /// them in `Delegate` or `Component`.
-fn takes_component(path: &[&str]) -> bool {
+pub fn takes_component(path: &[&str]) -> bool {
     let [name] = path else { return false };
     *name == "delegate" || name.ends_with("Delegate") || name.ends_with("Component")
 }
