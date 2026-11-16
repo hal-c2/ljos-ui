@@ -9,29 +9,32 @@
 //! module's those it imports from `@ljos/core` under their own names. It
 //! needs no types, so a file the compiler cannot compile yet is still read.
 //!
-//! A choice (`plural`, `select`, `selectOrdinal`) inside a message is a
-//! form of it only where the name is the macro, as the compiler reads it:
-//! in a module, where the name is the import; in a QML file, where neither
-//! the script, an id, the object the script is on nor the root of a
-//! component around it binds the name. What a type gives its objects is
-//! not known without types: a choice named as a member of the object's type
-//! (`TextInput`'s `select`) is read as a form here and as a value by the
-//! compiler.
+//! A macro, or a choice (`plural`, `select`, `selectOrdinal`) inside a
+//! message, is one only where the name is the macro, as the compiler reads
+//! it: in a module, where the name is the import; in a QML file, where
+//! neither the script, an id, the object the script is on nor the root of a
+//! component around it binds the name. A QML file's scripts are read by the
+//! compiler's own reading of a script ([`crate::js::analyze_with`]), so a
+//! `t` a script declares, or a parameter of that name, is the script's here
+//! as it is there. What a type gives its objects is not known without
+//! types: a choice named as a member of the object's type (`TextInput`'s
+//! `select`) is read as a form here and as a value by the compiler.
 
 use oxc_allocator::Allocator;
 use std::collections::HashSet;
 
 use oxc_ast::ast::{
-    BindingIdentifier, CallExpression, Expression, IdentifierReference, ImportDeclarationSpecifier,
+    CallExpression, Expression, IdentifierReference, ImportDeclarationSpecifier,
     ImportOrExportKind, ModuleDeclaration, TaggedTemplateExpression,
 };
 use oxc_ast_visit::{Visit, walk};
 use oxc_parser::Parser;
 use oxc_semantic::{Scoping, SemanticBuilder};
-use oxc_span::Span;
-use oxc_syntax::scope::ScopeFlags;
+use oxc_span::{GetSpan, Span};
 use oxc_syntax::symbol::SymbolId;
 use qml_syntax::ast::{QmlBindingValue, QmlImportSource, QmlMember, QmlObject};
+
+use crate::js::{self, Form};
 
 use super::message::{MessageCall, MessageError, call_message_in, tagged_message_in};
 use super::{Lines, Note};
@@ -61,25 +64,27 @@ pub struct Messages {
 /// itself, without `as`, has the macros (docs/DIALECT.md §4.3).
 pub fn messages_qml(source: &str) -> Messages {
     let allocator = Allocator::default();
-    let parsed = qml_syntax::parse(&allocator, source);
+    // `match` and `is` are read as the scripts they stand for, as the
+    // compiler reads them, and each message put back where the file has it.
+    let qml_syntax::Lowered {
+        text, parsed, map, ..
+    } = qml_syntax::parse_lowered(&allocator, source);
     let core = parsed.document.imports.iter().any(|import| {
         import.alias.is_none()
             && matches!(&import.source,
                 QmlImportSource::Module(name) if name.to_string() == qml_front::names::CORE)
     });
-    let mut finder = Finder::new(Macros::Qml {
-        names: if core { MACROS.to_vec() } else { Vec::new() },
+    let mut scripts = Scripts {
+        source: text,
         ids: HashSet::new(),
-        bound: HashSet::new(),
-    });
+        found: Vec::new(),
+    };
     if core && !parsed.panicked {
-        if let Macros::Qml { ids, .. } = &mut finder.macros {
-            ids_of(&parsed.document.root, ids);
-        }
+        ids_of(&parsed.document.root, &mut scripts.ids);
         let root = declared(&parsed.document.root);
-        finder.object(&parsed.document.root, &[root]);
+        scripts.object(&parsed.document.root, &[root]);
     }
-    let mut messages = finder.finish(source, |span| span);
+    let mut messages = finish(scripts.found, source, |span| map.span(span));
     messages.syntax_errors = parsed.diagnostics.len();
     messages
 }
@@ -127,59 +132,20 @@ fn module_text(source: &str, text: &str, map: impl Fn(Span) -> Span) -> Messages
         }
     }
     let any = !symbols.is_empty();
-    let mut finder = Finder::new(Macros::Module {
+    let mut finder = Finder {
         scoping: semantic.scoping(),
         symbols,
-    });
+        found: Vec::new(),
+    };
     if any {
         finder.visit_program(&parsed.program);
     }
-    let mut messages = finder.finish(source, map);
+    let mut messages = finish(finder.found, source, map);
     messages.syntax_errors = parsed.diagnostics.len();
     messages
 }
 
 const MACROS: &[&str] = super::message::MACROS;
-
-/// The choices a message may hold, which a QML document may bind itself.
-const CHOICES: &[&str] = &["plural", "select", "selectOrdinal"];
-
-/// Which names a file's scripts call the macros by.
-enum Macros<'s> {
-    /// A QML file's: by name, but for a choice bound in sight.
-    Qml {
-        names: Vec<&'static str>,
-        /// Every id of the file. A component's ids are in sight of the
-        /// components inside it, so this is more than the compiler sees
-        /// only where an inner component's id names a choice.
-        ids: HashSet<String>,
-        /// The choices the script being read sees bound: by the object it
-        /// is on, a component root around it, or the script itself.
-        bound: HashSet<String>,
-    },
-    /// A module's: the symbols of its imports from `@ljos/core`.
-    Module {
-        scoping: &'s Scoping,
-        symbols: HashSet<SymbolId>,
-    },
-}
-
-impl Macros<'_> {
-    fn is_macro(&self, id: &IdentifierReference<'_>) -> bool {
-        match self {
-            Macros::Qml { names, ids, bound } => {
-                let name = id.name.as_str();
-                names.contains(&name)
-                    && !(CHOICES.contains(&name) && (ids.contains(name) || bound.contains(name)))
-            }
-            Macros::Module { scoping, symbols } => id
-                .reference_id
-                .get()
-                .and_then(|reference| scoping.get_reference(reference).symbol_id())
-                .is_some_and(|symbol| symbols.contains(&symbol)),
-        }
-    }
-}
 
 /// The names an object declares as its members.
 fn declared(object: &QmlObject<'_>) -> Vec<String> {
@@ -224,35 +190,17 @@ fn values_of(value: &QmlBindingValue<'_>, ids: &mut HashSet<String>) {
     }
 }
 
-/// The names a script declares anywhere in it. One declared in a function
-/// the message is not inside is counted too: a script that binds a choice's
-/// name for something else is rare enough not to need its scopes.
-#[derive(Default)]
-struct Bindings(HashSet<String>);
-
-impl<'a> Visit<'a> for Bindings {
-    fn visit_binding_identifier(&mut self, it: &BindingIdentifier<'a>) {
-        if CHOICES.contains(&it.name.as_str()) {
-            self.0.insert(it.name.to_string());
-        }
-    }
-}
-
-/// Walks a file's scripts and lists the macros in it, outermost first: a
-/// macro inside another's message is part of that message.
-struct Finder<'s> {
-    macros: Macros<'s>,
+/// Walks a QML file's objects and reads each script as the compiler does.
+struct Scripts<'s> {
+    source: &'s str,
+    /// Every id of the file. A component's ids are in sight of the
+    /// components inside it, so this is more than the compiler sees only
+    /// where an inner component's id names a macro.
+    ids: HashSet<String>,
     found: Vec<Result<MessageCall, MessageError>>,
 }
 
-impl Finder<'_> {
-    fn new(macros: Macros<'_>) -> Finder<'_> {
-        Finder {
-            macros,
-            found: Vec::new(),
-        }
-    }
-
+impl Scripts<'_> {
     /// `roots` are the declared names of the roots of the components
     /// the object is in, the outermost first.
     fn object(&mut self, object: &QmlObject<'_>, roots: &[Vec<String>]) {
@@ -286,12 +234,7 @@ impl Finder<'_> {
                     }
                 }
                 QmlMember::Function(function) => {
-                    self.script(&own, roots, |finder| {
-                        let mut bindings = Bindings::default();
-                        bindings.visit_function(function, ScopeFlags::Function);
-                        finder.bind(bindings);
-                        finder.visit_function(function, ScopeFlags::Function);
-                    });
+                    self.script(function.span, Form::Function, &own, roots);
                 }
                 QmlMember::InlineComponent(component) => {
                     let mut inner = roots.to_vec();
@@ -319,18 +262,12 @@ impl Finder<'_> {
             inner
         };
         match value {
-            QmlBindingValue::Expression(expression) => self.script(own, roots, |finder| {
-                let mut bindings = Bindings::default();
-                bindings.visit_expression(expression);
-                finder.bind(bindings);
-                finder.visit_expression(expression);
-            }),
-            QmlBindingValue::Statement(statement) => self.script(own, roots, |finder| {
-                let mut bindings = Bindings::default();
-                bindings.visit_statement(statement);
-                finder.bind(bindings);
-                finder.visit_statement(statement);
-            }),
+            QmlBindingValue::Expression(expression) => {
+                self.script(expression.span(), Form::Expression, own, roots);
+            }
+            QmlBindingValue::Statement(statement) => {
+                self.script(statement.span(), Form::Statement, own, roots);
+            }
             QmlBindingValue::Object(object) => self.object(object, &root(object)),
             QmlBindingValue::Objects(objects) => {
                 for object in objects {
@@ -340,24 +277,56 @@ impl Finder<'_> {
         }
     }
 
-    /// Reads one script of the object whose members are `own`.
-    fn script(&mut self, own: &[String], roots: &[Vec<String>], read: impl FnOnce(&mut Self)) {
-        if let Macros::Qml { bound, .. } = &mut self.macros {
-            bound.clear();
-            bound.extend(
-                own.iter()
-                    .chain(roots.iter().flatten())
-                    .filter(|name| CHOICES.contains(&name.as_str()))
-                    .cloned(),
-            );
+    /// Reads the script at `span` of the object whose members are `own`,
+    /// as the compiler reads it: a macro the document binds where the
+    /// script is (an id, a member of the object or of a component's root)
+    /// is the document's, and one the script declares is the script's.
+    fn script(&mut self, span: Span, form: Form, own: &[String], roots: &[Vec<String>]) {
+        let Some(text) = self.source.get(span.start as usize..span.end as usize) else {
+            return;
+        };
+        if !MACROS.iter().any(|name| text.contains(name)) {
+            return;
         }
-        read(self);
+        let bound: Vec<&str> = MACROS
+            .iter()
+            .copied()
+            .filter(|name| {
+                self.ids.contains(*name)
+                    || own
+                        .iter()
+                        .chain(roots.iter().flatten())
+                        .any(|declared| declared == name)
+            })
+            .collect();
+        // A script that does not parse is the compiler's to report.
+        let Ok(analysis) = js::analyze_with(text, form, &[], &bound) else {
+            return;
+        };
+        let shift = |local: Span| Span::new(span.start + local.start, span.start + local.end);
+        self.found.extend(analysis.messages.into_iter().map(|site| {
+            site.message
+                .map(|call| call.map_spans(shift))
+                .map_err(|error| error.map_spans(shift))
+        }));
     }
+}
 
-    fn bind(&mut self, bindings: Bindings) {
-        if let Macros::Qml { bound, .. } = &mut self.macros {
-            bound.extend(bindings.0);
-        }
+/// Walks a module and lists the macros in it, outermost first: a macro
+/// inside another's message is part of that message.
+struct Finder<'s> {
+    scoping: &'s Scoping,
+    /// The symbols of its imports from `@ljos/core`.
+    symbols: HashSet<SymbolId>,
+    found: Vec<Result<MessageCall, MessageError>>,
+}
+
+impl Finder<'_> {
+    fn is_macro(&self, id: &IdentifierReference<'_>) -> bool {
+        id.reference_id
+            .get()
+            .and_then(|reference| self.scoping.get_reference(reference).symbol_id())
+            .is_some_and(|symbol| self.symbols.contains(&symbol))
     }
 
     /// Whether the macro `callee` names, at `span`, is one to read: the
@@ -366,53 +335,57 @@ impl Finder<'_> {
         let Expression::Identifier(id) = callee else {
             return false;
         };
-        self.macros.is_macro(id)
+        self.is_macro(id)
             && !self.found.iter().any(|outer| match outer {
                 Ok(outer) => outer.covers(span),
                 Err(outer) => outer.span.start <= span.start && span.end <= outer.span.end,
             })
     }
+}
 
-    fn finish(self, source: &str, map: impl Fn(Span) -> Span) -> Messages {
-        let lines = Lines::new(source);
-        let mut messages = Messages::default();
-        for found in self.found {
-            match found {
-                Ok(call) => {
-                    let call = call.map_spans(&map);
-                    let Some(key) = call.key() else {
-                        continue;
-                    };
-                    // A catalogue's entry of `msgid ""` is its header: an
-                    // empty message would be read back as a second one.
-                    if key.is_empty() {
-                        messages.notes.push(Note {
-                            line: lines.line(call.span.start),
-                            message: "an empty message has nothing to translate".to_owned(),
-                        });
-                        continue;
-                    }
-                    let line = lines.line(call.span.start);
-                    messages.messages.push(FoundMessage { call, line });
-                }
-                Err(error) => {
-                    let error = error.map_spans(&map);
+fn finish(
+    found: Vec<Result<MessageCall, MessageError>>,
+    source: &str,
+    map: impl Fn(Span) -> Span,
+) -> Messages {
+    let lines = Lines::new(source);
+    let mut messages = Messages::default();
+    for found in found {
+        match found {
+            Ok(call) => {
+                let call = call.map_spans(&map);
+                let Some(key) = call.key() else {
+                    continue;
+                };
+                // A catalogue's entry of `msgid ""` is its header: an
+                // empty message would be read back as a second one.
+                if key.is_empty() {
                     messages.notes.push(Note {
-                        line: lines.line(error.span.start),
-                        message: error.message,
+                        line: lines.line(call.span.start),
+                        message: "an empty message has nothing to translate".to_owned(),
                     });
+                    continue;
                 }
+                let line = lines.line(call.span.start);
+                messages.messages.push(FoundMessage { call, line });
+            }
+            Err(error) => {
+                let error = error.map_spans(&map);
+                messages.notes.push(Note {
+                    line: lines.line(error.span.start),
+                    message: error.message,
+                });
             }
         }
-        messages.messages.sort_by_key(|found| found.call.span.start);
-        messages
     }
+    messages.messages.sort_by_key(|found| found.call.span.start);
+    messages
 }
 
 impl<'a> Visit<'a> for Finder<'_> {
     fn visit_call_expression(&mut self, it: &CallExpression<'a>) {
         if self.wanted(&it.callee, it.span)
-            && let Some(found) = call_message_in(it, &|id| self.macros.is_macro(id))
+            && let Some(found) = call_message_in(it, &|id| self.is_macro(id))
         {
             self.found.push(found);
         }
@@ -421,7 +394,7 @@ impl<'a> Visit<'a> for Finder<'_> {
 
     fn visit_tagged_template_expression(&mut self, it: &TaggedTemplateExpression<'a>) {
         if self.wanted(&it.tag, it.span)
-            && let Some(found) = tagged_message_in(it, &|id| self.macros.is_macro(id))
+            && let Some(found) = tagged_message_in(it, &|id| self.is_macro(id))
         {
             self.found.push(found);
         }
@@ -579,6 +552,36 @@ mod tests {
                 ("{0}".to_owned(), None, 7),
                 ("{0}".to_owned(), None, 12),
                 ("{r, select, other {Guest}}".to_owned(), None, 14),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_macro_a_script_declares_is_its_own() {
+        let source = "import Ljos.Core\nItem {\n  function f() { const t = (s) => s; return t`Not a message` }\n  function g(msg) { return msg`Nor this` }\n  property string a: t`Hello`\n  property string b: { let t = String.raw; return t`Not this either` }\n}\n";
+        let found = messages_qml(source);
+        assert_eq!(keys(&found), vec![("Hello".to_owned(), None, 5)]);
+    }
+
+    /// A member or an id of the name is the document's, which the compiler
+    /// does not lower either.
+    #[test]
+    fn a_macro_the_document_binds_is_its_own() {
+        let source = "import Ljos.Core\nItem {\n  Item {\n    function t(parts) { return parts[0] }\n    property string a: t`Not a message`\n  }\n  Item { id: msg }\n  property string b: msg`Nor this`\n  property string c: t`Hello`\n}\n";
+        let found = messages_qml(source);
+        assert_eq!(keys(&found), vec![("Hello".to_owned(), None, 9)]);
+    }
+
+    #[test]
+    fn a_message_beside_match_keeps_its_line() {
+        let source = "import Ljos.Core\nItem {\n  property int n: 1\n  property string a: match (n) { when 1: t`One`; default: t`Many`; }\n  property string b: t`After`\n}\n";
+        let found = messages_qml(source);
+        assert_eq!(
+            keys(&found),
+            vec![
+                ("One".to_owned(), None, 4),
+                ("Many".to_owned(), None, 4),
+                ("After".to_owned(), None, 5),
             ]
         );
     }
