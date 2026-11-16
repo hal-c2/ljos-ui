@@ -2098,8 +2098,6 @@ impl Topology {
     }
 }
 
-/// Whether a draw is in the depth the post-processing passes read: the
-/// depth pass draws triangles, and segments and points have no surface.
 /// Whether a model drawn has a custom material, whose program reads the
 /// picture by where on the screen it is.
 fn walked_custom(walked: &[(NodeId, &Node, Mat4)]) -> bool {
@@ -2108,6 +2106,8 @@ fn walked_custom(walked: &[(NodeId, &Node, Mat4)]) -> bool {
     })
 }
 
+/// Whether a material's program reads the picture behind it, and with its
+/// mipmaps or not: only a custom material's does.
 fn material_screen(material: &Material) -> Screen {
     match material {
         Material::Custom(m) => m.program.screen(),
@@ -2147,6 +2147,8 @@ fn shape_box(model: &Model) -> (Vec3, Vec3) {
     morphs_of(model).map_or(own, |m| m.bounding_box(own))
 }
 
+/// Whether a draw is in the depth the post-processing passes read: the
+/// depth pass draws triangles, and segments and points have no surface.
 fn writes_camera_depth(draw: &Draw) -> bool {
     draw.key.depth_write && draw.key.topology == Topology::Triangles
 }
