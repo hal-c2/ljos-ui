@@ -46,10 +46,10 @@ Feature: Handing a value from step to step with the pipe
           readonly property string said: timeSinceEvent("2026-01-01T12:00", Date.parse("2026-01-01T12:00") + age * 60000)
           function timeSinceEvent(published: string, now: number): string {
             return (now - Date.parse(published)) / 60000 |> Math.floor(%) |> match (%) {
-              when if (% < 2): qsTr("Just now");
-              when if (% < 60): qsTr("%1 minutes ago").arg(%);
-              when if (% < 120): qsTr("1 hour ago");
-              when if (% < 1440): Math.floor(% / 60) |> qsTr("%1 hours ago").arg(%);
+              when if (% < 2): t`Just now`;
+              when if (% < 60): t`${%} minutes ago`;
+              when if (% < 120): t`1 hour ago`;
+              when if (% < 1440): Math.floor(% / 60) |> t`${%} hours ago`;
               default: Locale.current.formatDate(published, "yyyy-MM-dd");
             }
           }
@@ -247,10 +247,10 @@ Feature: Handing a value from step to step with the pipe
           readonly property string nested: oldPrice |> (% + 1 |> `${%}`) + "!"
           function timeSinceEvent(published: string, now: number): string {
             return (now - Date.parse(published)) / 60000 |> Math.floor(%) |> match (%) {
-              when if (% < 2): qsTr("Just now");
-              when if (% < 60): qsTr("%1 minutes ago").arg(%);
-              when if (% < 120): qsTr("1 hour ago");
-              when if (% < 1440): Math.floor(% / 60) |> qsTr("%1 hours ago").arg(%);
+              when if (% < 2): t`Just now`;
+              when if (% < 60): t`${%} minutes ago`;
+              when if (% < 120): t`1 hour ago`;
+              when if (% < 1440): Math.floor(% / 60) |> t`${%} hours ago`;
               default: Locale.current.formatDate(published, "yyyy-MM-dd");
             }
           }
