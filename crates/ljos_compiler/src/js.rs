@@ -648,7 +648,12 @@ impl Reader<'_, '_> {
         let Expression::Identifier(id) = callee else {
             return;
         };
-        if !free_in(self.scoping, id) || span.start < self.offset {
+        // A choice the document binds is the document's call, outer or
+        // nested.
+        if !free_in(self.scoping, id)
+            || self.shadowed.contains(&id.name.as_str())
+            || span.start < self.offset
+        {
             return;
         }
         let local = self.local(span);

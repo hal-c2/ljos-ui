@@ -6,7 +6,7 @@ use std::collections::{HashMap, HashSet};
 use ljos_ir::*;
 use qml_front::{
     TypeOracle,
-    names::{Global, Target},
+    names::{Global, Resolution, Target},
     types::Found,
 };
 use qml_syntax::Span;
@@ -51,7 +51,7 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
         );
         // A handler that is a function declares its own parameters: a name
         // of the signal's it does not declare is the document's, as Qt has it.
-        let shadowed = self.shadowed_choices(text, span.start, scope_index);
+        let shadowed = self.shadowed_choices(text, span.start);
         let analysis = js::analyze_with(text, form, &known, &shadowed).and_then(|analysis| {
             if kind == BindingKind::Handler && analysis.is_function_value && !known.is_empty() {
                 js::analyze_with(text, form, &[], &shadowed)
@@ -126,19 +126,24 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
 
     /// The choices a message may hold (`select`, `plural`,
     /// `selectOrdinal`) that the script names where the document binds
-    /// them itself: a call of one is the document's, not a form of the
-    /// message around it. The outer callee is checked as it resolves.
-    fn shadowed_choices(&mut self, text: &str, at: u32, scope: usize) -> Vec<&'static str> {
+    /// them itself: a call of one, outer or nested, is the document's, not
+    /// a message or a form of the message around it.
+    fn shadowed_choices(&self, text: &str, at: u32) -> Vec<&'static str> {
         if !self.types.imports(qml_front::names::CORE) {
             return Vec::new();
         }
         ["select", "plural", "selectOrdinal"]
             .into_iter()
             .filter(|name| text.contains(name))
+            // Only an id or a property binds the name: a delegate's model
+            // role is any name the file has not, so the macro too.
             .filter(|name| {
-                !matches!(
-                    self.resolve(name, at, &[], scope).resolved,
-                    Resolved::Global { .. }
+                matches!(
+                    self.lookup(name, at),
+                    Some(Resolution {
+                        target: Some(Target::Id(_) | Target::Property { .. }),
+                        ..
+                    })
                 )
             })
             .collect()
