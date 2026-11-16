@@ -428,7 +428,7 @@ Feature: Messages: translated text written as a tagged template
         import Ljos.Core
         Item {
           objectName: "root"
-          function select(role, forms) { return forms.other + " (" + role + ")" }
+          function select(role: string, forms: { other: string }): string { return forms.other + " (" + role + ")" }
           property string label: t`${select("admin", { other: "Member" })}`
         }
         """
