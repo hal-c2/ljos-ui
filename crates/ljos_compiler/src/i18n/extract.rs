@@ -79,13 +79,11 @@ pub fn messages_qml(source: &str) -> Messages {
     });
     let mut scripts = Scripts {
         source: text,
-        ids: HashSet::new(),
         found: Vec::new(),
     };
     if core && !parsed.panicked {
-        ids_of(&parsed.document.root, &mut scripts.ids);
-        let root = declared(&parsed.document.root);
-        scripts.object(&parsed.document.root, &[root]);
+        let root = &parsed.document.root;
+        scripts.object(root, &[Component::of(root)]);
     }
     let mut messages = finish(scripts.found, source, |span| map.span(span));
     messages.syntax_errors = parsed.diagnostics.len();
@@ -164,49 +162,90 @@ fn declared(object: &QmlObject<'_>) -> Vec<String> {
         .collect()
 }
 
-fn ids_of(object: &QmlObject<'_>, ids: &mut HashSet<String>) {
-    ids.extend(qml_front::scope::object_id(object).map(str::to_owned));
-    for member in &object.members {
-        match member {
-            QmlMember::Object(child) => ids_of(child, ids),
-            QmlMember::InlineComponent(component) => ids_of(&component.object, ids),
-            QmlMember::Binding(binding) => values_of(&binding.value, ids),
-            QmlMember::Property(property) => {
-                if let Some(value) = &property.value {
-                    values_of(value, ids);
-                }
-            }
-            QmlMember::Function(_) | QmlMember::Signal(_) | QmlMember::Enum(_) => {}
+/// A component around a script, as the compiler's scope has it: the
+/// names its root declares, and its ids.
+#[derive(Clone)]
+struct Component {
+    declared: Vec<String>,
+    ids: HashSet<String>,
+}
+
+impl Component {
+    fn of(root: &QmlObject<'_>) -> Self {
+        let mut ids = HashSet::new();
+        ids_of(root, &mut ids);
+        Component {
+            declared: declared(root),
+            ids,
         }
     }
 }
 
-fn values_of(value: &QmlBindingValue<'_>, ids: &mut HashSet<String>) {
-    match value {
-        QmlBindingValue::Object(object) => ids_of(object, ids),
-        QmlBindingValue::Objects(objects) => {
-            for object in objects {
-                ids_of(object, ids);
+fn is_component(object: &QmlObject<'_>) -> bool {
+    object.type_name.parts.last() == Some(&"Component")
+}
+
+/// The ids of the component `object` is in, from `object` down: an
+/// object that starts a component inside it has ids of its own.
+fn ids_of(object: &QmlObject<'_>, ids: &mut HashSet<String>) {
+    ids.extend(qml_front::scope::object_id(object).map(str::to_owned));
+    let component = is_component(object);
+    for member in &object.members {
+        match member {
+            QmlMember::Object(child) if !component => ids_of(child, ids),
+            QmlMember::Binding(binding) => {
+                let starts = binding
+                    .name
+                    .as_simple()
+                    .is_some_and(|name| qml_front::scope::takes_component(&[name]));
+                values_of(&binding.value, starts, ids);
             }
+            QmlMember::Property(property) => {
+                if let Some(value) = &property.value {
+                    values_of(value, starts_component(property), ids);
+                }
+            }
+            QmlMember::Object(_)
+            | QmlMember::InlineComponent(_)
+            | QmlMember::Function(_)
+            | QmlMember::Signal(_)
+            | QmlMember::Enum(_) => {}
         }
-        QmlBindingValue::Expression(_) | QmlBindingValue::Statement(_) => {}
     }
+}
+
+/// `starts` when an object given here is a component's root, whose ids are
+/// its own; a `Component` given there is not one, but what is in it is.
+fn values_of(value: &QmlBindingValue<'_>, starts: bool, ids: &mut HashSet<String>) {
+    let objects = match value {
+        QmlBindingValue::Object(object) => std::slice::from_ref(object),
+        QmlBindingValue::Objects(objects) => &objects[..],
+        QmlBindingValue::Expression(_) | QmlBindingValue::Statement(_) => &[],
+    };
+    for object in objects {
+        if !starts || is_component(object) {
+            ids_of(object, ids);
+        }
+    }
+}
+
+/// `property Component row: Item { … }`.
+fn starts_component(property: &qml_syntax::ast::QmlPropertyDeclaration<'_>) -> bool {
+    property.type_name.as_ref().is_some_and(|type_name| {
+        type_name.name.as_simple() == Some("Component") && !type_name.is_list
+    })
 }
 
 /// Walks a QML file's objects and reads each script as the compiler does.
 struct Scripts<'s> {
     source: &'s str,
-    /// Every id of the file. A component's ids are in sight of the
-    /// components inside it, so this is more than the compiler sees only
-    /// where an inner component's id names a macro.
-    ids: HashSet<String>,
     found: Vec<Result<MessageCall, MessageError>>,
 }
 
 impl Scripts<'_> {
-    /// `roots` are the declared names of the roots of the components
-    /// the object is in, the outermost first.
-    fn object(&mut self, object: &QmlObject<'_>, roots: &[Vec<String>]) {
+    /// `roots` are the components the object is in, the outermost first.
+    /// A component's ids are in sight of the components inside it.
+    fn object(&mut self, object: &QmlObject<'_>, roots: &[Component]) {
         let own = declared(object);
         // What a handler of a signal the object declares is given.
         let signals: Vec<(&str, Vec<String>)> = object
@@ -225,12 +264,12 @@ impl Scripts<'_> {
             })
             .collect();
         // A `Component` starts a component, whose root is its object.
-        let component = object.type_name.parts.last() == Some(&"Component");
+        let component = is_component(object);
         for member in &object.members {
             match member {
                 QmlMember::Object(child) if component => {
                     let mut inner = roots.to_vec();
-                    inner.push(declared(child));
+                    inner.push(Component::of(child));
                     self.object(child, &inner);
                 }
                 QmlMember::Object(child) => self.object(child, roots),
@@ -254,19 +293,15 @@ impl Scripts<'_> {
                 QmlMember::Property(property) => {
                     if let Some(value) = &property.value {
                         // `property Component row: Item { … }`.
-                        let starts = property.type_name.as_ref().is_some_and(|type_name| {
-                            type_name.name.as_simple() == Some("Component") && !type_name.is_list
-                        });
-                        self.value(value, &own, roots, starts, &[]);
+                        self.value(value, &own, roots, starts_component(property), &[]);
                     }
                 }
                 QmlMember::Function(function) => {
                     self.script(function.span, Form::Function, &own, roots, &[]);
                 }
+                // An inline component sees nothing around it.
                 QmlMember::InlineComponent(component) => {
-                    let mut inner = roots.to_vec();
-                    inner.push(declared(&component.object));
-                    self.object(&component.object, &inner);
+                    self.object(&component.object, &[Component::of(&component.object)]);
                 }
                 QmlMember::Signal(_) | QmlMember::Enum(_) => {}
             }
@@ -279,14 +314,14 @@ impl Scripts<'_> {
         &mut self,
         value: &QmlBindingValue<'_>,
         own: &[String],
-        roots: &[Vec<String>],
+        roots: &[Component],
         starts: bool,
         args: &[String],
     ) {
         let root = |object: &QmlObject<'_>| {
             let mut inner = roots.to_vec();
             if starts {
-                inner.push(declared(object));
+                inner.push(Component::of(object));
             }
             inner
         };
@@ -315,7 +350,7 @@ impl Scripts<'_> {
         span: Span,
         form: Form,
         own: &[String],
-        roots: &[Vec<String>],
+        roots: &[Component],
         args: &[String],
     ) {
         let Some(text) = self.source.get(span.start as usize..span.end as usize) else {
@@ -328,11 +363,10 @@ impl Scripts<'_> {
             .iter()
             .copied()
             .filter(|name| {
-                self.ids.contains(*name)
-                    || own
-                        .iter()
-                        .chain(roots.iter().flatten())
-                        .any(|declared| declared == name)
+                roots
+                    .iter()
+                    .any(|root| root.ids.contains(*name) || root.declared.iter().any(|d| d == name))
+                    || own.iter().any(|declared| declared == name)
             })
             .collect();
         // A script that does not parse is the compiler's to report.
@@ -615,6 +649,18 @@ mod tests {
         let source = "import Ljos.Core\nItem {\n  Item {\n    function t(parts) { return parts[0] }\n    property string a: t`Not a message`\n  }\n  Item { id: msg }\n  property string b: msg`Nor this`\n  property string c: t`Hello`\n}\n";
         let found = messages_qml(source);
         assert_eq!(keys(&found), vec![("Hello".to_owned(), None, 9)]);
+    }
+
+    #[test]
+    fn an_id_is_in_sight_of_its_component_and_those_inside_it() {
+        let source = "import Ljos.Core\nItem {\n  Component { Item { id: t } }\n  ListView { delegate: Item { property string a: msg`Not a message` } }\n  Item { id: msg }\n  property string b: t`Outer`\n  component Row: Item { property string c: msg`Row` }\n}\n";
+        let found = messages_qml(source);
+        // The inner component's `t` is not the outer one's; the outer `msg`
+        // is the delegate's too; an inline component sees nothing around it.
+        assert_eq!(
+            keys(&found),
+            vec![("Outer".to_owned(), None, 6), ("Row".to_owned(), None, 7)]
+        );
     }
 
     #[test]
