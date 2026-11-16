@@ -167,7 +167,9 @@ pub(super) mod class {
         "QtQuick.TextInput",
         "QtQuick.TextEdit",
     ];
-    pub const RECTANGLE: &[&str] = &["QQuickRectangle", "QtQuick.Rectangle"];
+    /// Ljós's own `Rectangle` (`import Ljos.Ui`) is a type of its own, built
+    /// on `Item`, not Qt's under another name.
+    pub const RECTANGLE: &[&str] = &["QQuickRectangle", "QtQuick.Rectangle", "Ljos.Ui.Rectangle"];
     pub const ITEM: &[&str] = &["QQuickItem", "QtQuick.Item"];
     pub const ABSTRACT_BUTTON: &[&str] =
         &["QQuickAbstractButton", "QtQuick.Templates.AbstractButton"];
