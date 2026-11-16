@@ -406,7 +406,7 @@ impl Catalogue {
         po.entries
             .retain(|e| !written.contains_key(&(e.context.clone(), e.id.clone())));
         po.entries.extend(written.into_values());
-        po.write(&self.language)
+        po.write(Some(&self.language))
     }
 }
 
