@@ -625,6 +625,20 @@ fn verify(
     let shows_findings = pending.is_some_and(|p| p.shows_findings);
     let checked = ljos(&dir, &["check", "."]);
     let accepted = matches!(&checked, Some((true, out)) if !out.contains(": error: "));
+    // ljos.dev runs each example in the reader's colour scheme: a surface
+    // filled the same in both leaves the text the scheme colours unreadable
+    // in one. An example whose colour is its lesson says so with an
+    // `ljos-allow`, which the reader sees beside it.
+    if let Some((_, out)) = &checked
+        && !project.before
+        && !shows_findings
+        && out.contains("[color-scheme-ignored]")
+    {
+        problems.push(format!(
+            "{} ({}): a surface ignores the colour scheme; fill it from `palette` or branch on `Application.styleHints.colorScheme`:\n{out}",
+            project.at, project.key
+        ));
+    }
     if accepted && !host_types && !shows_findings && desugared(&project.files) && has_typescript() {
         match ljos(&dir, &["check", "--tsc", "."]) {
             Some((true, out)) if !out.contains("[TS") => {}

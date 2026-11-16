@@ -15,6 +15,12 @@ fn is_color(name: &str) -> bool {
     last == "color" || last.ends_with("Color")
 }
 
+/// What fills a rectangle: `color` in Qt's spelling, `fill` in Ljós's own
+/// API (`import Ljos.Ui`), which names the same property.
+fn surface_fill<'o, 'a>(object: &'o QmlObject<'a>) -> Option<Bound<'o, 'a>> {
+    bound(object, &["color"]).or_else(|| bound(object, &["fill"]))
+}
+
 /// A colour written out as a string.
 fn literal(b: &Bound<'_, '_>) -> Option<Srgba> {
     Srgba::parse(b.string()?).ok()
@@ -57,7 +63,7 @@ fn text_contrast<'a>(
     };
     let (Some(fg), Some(bg)) = (
         opaque(&written),
-        bound(surface.object, &["color"]).and_then(|b| opaque(&b)),
+        surface_fill(surface.object).and_then(|b| opaque(&b)),
     ) else {
         return;
     };
@@ -182,7 +188,7 @@ fn scheme_ignored<'a>(found: &mut Found<'_, '_, '_, 'a>, object: &QmlObject<'a>)
         via: None,
     };
     if found.is(&frame, class::RECTANGLE)
-        && let Some(b) = bound(object, &["color"])
+        && let Some(b) = surface_fill(object)
         && let (Some(e), Some(span)) = (b.expression(), b.span())
     {
         let mut fills = Vec::new();
