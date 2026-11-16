@@ -318,9 +318,11 @@ impl Scripts<'_> {
         starts: bool,
         args: &[String],
     ) {
+        // A `Component` written out is no root: its object is, as
+        // [`Self::object`] reads it.
         let root = |object: &QmlObject<'_>| {
             let mut inner = roots.to_vec();
-            if starts {
+            if starts && !is_component(object) {
                 inner.push(Component::of(object));
             }
             inner
@@ -661,6 +663,15 @@ mod tests {
             keys(&found),
             vec![("Outer".to_owned(), None, 6), ("Row".to_owned(), None, 7)]
         );
+    }
+
+    #[test]
+    fn a_component_written_out_for_a_delegate_is_not_its_root() {
+        let source = "import Ljos.Core\nListView {\n  delegate: Component {\n    property string t\n    Item { property string a: t`Kept` }\n  }\n}\n";
+        let found = messages_qml(source);
+        // The delegate's root is the Item: the Component's `t` is no
+        // member of it, so `t` there is the macro.
+        assert_eq!(keys(&found), vec![("Kept".to_owned(), None, 5)]);
     }
 
     #[test]
