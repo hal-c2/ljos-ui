@@ -137,3 +137,7 @@ required-features = ["gpu"]
 [[test]]
 name = "decoded_once"
 required-features = ["gpu"]
+
+[[test]]
+name = "bottom_up"
+required-features = ["gpu"]
