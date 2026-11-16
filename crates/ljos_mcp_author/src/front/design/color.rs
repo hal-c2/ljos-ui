@@ -73,7 +73,9 @@ fn text_contrast<'a>(
     {
         return;
     }
+    // Ljós's own API calls the pixel size `size` and has no `pointSize`.
     let px = bound(text.object, &["font", "pixelSize"])
+        .or_else(|| bound(text.object, &["font", "size"]))
         .and_then(|b| b.number())
         .or_else(|| {
             // A point is 4/3 of a pixel at the 96 dpi CSS and Qt take.
