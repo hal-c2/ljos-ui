@@ -1,6 +1,8 @@
-//! `ljos i18n extract`: lists the translatable strings of a QML tree in a Qt
-//! Linguist `.ts` file, keeping what translators already did
-//! (ARCHITECTURE.md §15).
+//! `ljos i18n extract`: lists the translatable strings of a tree in a
+//! catalogue, keeping what translators already did (ARCHITECTURE.md §15).
+//! Ljós's own messages (`` t`…` `` and its family) go to a PO file, Qt's
+//! `qsTr` to a Qt Linguist `.ts` file; the catalogue's extension says
+//! which.
 
 use std::{
     collections::BTreeSet,
@@ -11,24 +13,29 @@ use std::{
 
 use anyhow::{Context, bail};
 use clap::{Args, Subcommand};
+use ljos_compiler::i18n::extract::{Messages, messages_module, messages_qml};
 use ljos_compiler::i18n::{Extraction, extract_js, extract_qml};
+use ljos_i18n::po::{PoEntry, PoFile};
 use ljos_i18n::ts::{Extracted, TsFile, TsLocation};
 
 #[derive(Subcommand)]
 pub enum I18nCommand {
-    /// Find every translatable string in a QML tree and merge them into a
-    /// `.ts` file.
+    /// Find every translatable message in a tree and merge them into a
+    /// catalogue: a `.po` (or `.pot`) file gets Ljós's `t` messages, a
+    /// `.ts` file Qt's `qsTr` texts.
     Extract(Extract),
 }
 
 #[derive(Args)]
 pub struct Extract {
-    /// The directory to search: every `.qml` file below it, and the `.js`
-    /// files those import.
+    /// The directory to search: every `.qml` file below it, with the `.js`
+    /// files those import for a `.ts` catalogue, and the `.ts` and `.lts`
+    /// modules below it for a `.po` one.
     dir: PathBuf,
-    /// The `.ts` file to create or bring up to date. Translations in it are
-    /// kept; texts that left the sources are kept as vanished if they were
-    /// translated.
+    /// The catalogue to create or bring up to date: `is.po`, `app.pot` or
+    /// `app_is.ts`. Translations in it are kept; texts that left the
+    /// sources are kept as obsolete if they were translated. A `.pot`
+    /// template has no translations.
     #[arg(short, long)]
     output: PathBuf,
     /// Write nothing; fail if the file's messages differ from the sources
@@ -36,9 +43,11 @@ pub struct Extract {
     #[arg(long)]
     check: bool,
     /// The language of the translations (`is_IS`, `de`), for a new file or
-    /// one that does not say. It decides how many plural forms a text gets.
-    #[arg(long)]
-    target_language: Option<String>,
+    /// one that does not say. A `.po` file without one takes its name
+    /// (`is.po`); in a `.ts` file it decides how many plural forms a text
+    /// gets.
+    #[arg(long, alias = "target-language")]
+    language: Option<String>,
 }
 
 pub fn run(command: I18nCommand) -> anyhow::Result<()> {
@@ -47,8 +56,37 @@ pub fn run(command: I18nCommand) -> anyhow::Result<()> {
     }
 }
 
+/// Which catalogue a file is, by its extension.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Kind {
+    Po,
+    Pot,
+    Ts,
+}
+
+impl Kind {
+    fn of(path: &Path) -> anyhow::Result<Self> {
+        match path.extension().and_then(|e| e.to_str()) {
+            Some("po") => Ok(Self::Po),
+            Some("pot") => Ok(Self::Pot),
+            Some("ts") => Ok(Self::Ts),
+            _ => bail!(
+                "{}: a catalogue is a `.po` or `.pot` file (Ljós's `t` messages) or a `.ts` file (Qt's `qsTr`)",
+                path.display()
+            ),
+        }
+    }
+}
+
 impl Extract {
     fn run(self) -> anyhow::Result<()> {
+        match Kind::of(&self.output)? {
+            Kind::Ts => self.run_ts(),
+            kind => self.run_po(kind == Kind::Pot),
+        }
+    }
+
+    fn run_ts(self) -> anyhow::Result<()> {
         let sources = Sources::read(&self.dir)?;
         // Qt Linguist finds the sources by paths relative to the `.ts` file.
         let base = absolute(self.output.parent().unwrap_or(Path::new("")))?;
@@ -63,13 +101,20 @@ impl Extract {
             Err(e) => return Err(e).with_context(|| format!("reading {}", self.output.display())),
         };
         let mut after = before.clone().unwrap_or_default();
-        if let Some(language) = &self.target_language {
+        if let Some(language) = &self.language {
             after.language = Some(language.clone());
         }
         let report = after.merge(&extracted);
 
         for note in &sources.notes {
             eprintln!("{note}");
+        }
+        let others = MessageSources::read(&self.dir, &base)?.found();
+        if others > 0 {
+            eprintln!(
+                "{others} t message(s) go to a .po catalogue: ljos i18n extract {} -o <language>.po",
+                self.dir.display()
+            );
         }
         let mut lines = vec![
             format!(
@@ -114,6 +159,169 @@ impl Extract {
         say(&lines);
         Ok(())
     }
+}
+
+impl Extract {
+    fn run_po(self, template: bool) -> anyhow::Result<()> {
+        // As in a `.ts` file, a place is a path from the catalogue.
+        let base = absolute(self.output.parent().unwrap_or(Path::new("")))?;
+        let sources = MessageSources::read(&self.dir, &base)?;
+        let name = self.output.display();
+
+        let before = match fs::read_to_string(&self.output) {
+            Ok(text) => Some(PoFile::parse(&text).with_context(|| format!("reading {name}"))?),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+            Err(e) => return Err(e).with_context(|| format!("reading {name}")),
+        };
+        let mut after = before.clone().unwrap_or_default();
+        let report = after.merge(sources.entries());
+        let language = if template {
+            // A template is what every language starts from: it has no
+            // translations, and so nothing obsolete.
+            after.entries.retain(|entry| !entry.obsolete);
+            for entry in &mut after.entries {
+                entry.translation.clear();
+            }
+            None
+        } else {
+            Some(
+                self.language
+                    .clone()
+                    .or_else(|| after.language.clone())
+                    .unwrap_or_else(|| stem(&self.output)),
+            )
+        };
+        after.language.clone_from(&language);
+
+        for note in &sources.notes {
+            eprintln!("{note}");
+        }
+        let qt = Sources::read(&self.dir)?;
+        let calls: usize = qt.files.iter().map(|(_, e)| e.messages.len()).sum();
+        if calls > 0 {
+            eprintln!(
+                "{calls} qsTr call(s) go to a .ts catalogue: ljos migrate rewrites them as t messages"
+            );
+        }
+
+        let written = after.write(language.as_deref());
+        if self.check {
+            let current = before.is_some_and(|before| {
+                before.without_origins().write(language.as_deref())
+                    == after.without_origins().write(language.as_deref())
+            });
+            if !current {
+                bail!(
+                    "{name} is behind the sources: {} new, {} gone; run without --check to update it",
+                    report.new,
+                    report.gone
+                );
+            }
+            return Ok(());
+        }
+        fs::write(&self.output, written).with_context(|| format!("writing {name}"))?;
+        say(&[format!(
+            "{name}: {} messages, {} new, {} translated, {} obsolete",
+            report.messages,
+            report.new,
+            if template { 0 } else { report.translated },
+            if template { 0 } else { report.obsolete },
+        )]);
+        Ok(())
+    }
+}
+
+/// Ljós's messages in the files of a tree.
+struct MessageSources {
+    /// Each file, as a path from the catalogue, with what was found in it,
+    /// in the order searched.
+    files: Vec<(String, Messages)>,
+    /// `file:line: message` for every macro that says no message.
+    notes: Vec<String>,
+}
+
+impl MessageSources {
+    fn read(dir: &Path, base: &Path) -> anyhow::Result<Self> {
+        let mut paths = Vec::new();
+        crate::walk::files_below(dir, is_source, &mut paths)
+            .with_context(|| format!("searching {}", dir.display()))?;
+        paths.sort_by_cached_key(|path| (path.to_string_lossy().to_lowercase(), path.clone()));
+        let mut sources = Self {
+            files: Vec::new(),
+            notes: Vec::new(),
+        };
+        for path in paths {
+            let text = read(&path)?;
+            let messages = if crate::walk::is_qml(&path) {
+                messages_qml(&text)
+            } else if is_catalogue(&text) {
+                // A `.ts` that is Qt Linguist's catalogue, not a module.
+                continue;
+            } else {
+                messages_module(&path.to_string_lossy(), &text)
+            };
+            if messages.syntax_errors > 0 {
+                sources.notes.push(format!(
+                    "{}: {} syntax error(s); messages in the parts that did not parse are missing",
+                    path.display(),
+                    messages.syntax_errors
+                ));
+            }
+            for note in &messages.notes {
+                sources.notes.push(format!(
+                    "{}:{}: {}",
+                    path.display(),
+                    note.line,
+                    note.message
+                ));
+            }
+            let place = absolute(&path)
+                .map(|path| relative(&path, base))
+                .unwrap_or(path);
+            // Catalogues are read on every platform.
+            let place = place.to_string_lossy().replace('\\', "/");
+            sources.files.push((place, messages));
+        }
+        Ok(sources)
+    }
+
+    fn found(&self) -> usize {
+        self.files.iter().map(|(_, m)| m.messages.len()).sum()
+    }
+
+    /// One entry for each message where it is found, in the order found.
+    fn entries(&self) -> impl Iterator<Item = PoEntry> + '_ {
+        self.files.iter().flat_map(|(place, messages)| {
+            messages.messages.iter().map(move |found| {
+                let call = &found.call;
+                let explicit = call.id.is_some();
+                PoEntry {
+                    context: call.context.clone(),
+                    id: call.key().unwrap_or_default().to_owned(),
+                    comments: call.comment.iter().cloned().collect(),
+                    explicit_id: explicit,
+                    default: if explicit { call.message.clone() } else { None },
+                    origins: vec![format!("{place}:{}", found.line)],
+                    ..PoEntry::default()
+                }
+            })
+        })
+    }
+}
+
+/// A file that may hold Ljós's messages: QML, or a `.ts` or `.lts` module
+/// (not a declaration file, which runs nothing).
+fn is_source(path: &Path) -> bool {
+    let name = path.to_string_lossy();
+    crate::walk::is_qml(path)
+        || name.ends_with(".lts")
+        || (name.ends_with(".ts") && !name.ends_with(".d.ts"))
+}
+
+/// Whether a `.ts` file's text is a Qt Linguist catalogue, which is XML.
+fn is_catalogue(text: &str) -> bool {
+    let start = text.trim_start_matches('\u{feff}').trim_start();
+    start.starts_with("<?xml") || start.starts_with("<!DOCTYPE TS") || start.starts_with("<TS")
 }
 
 /// Prints the summary. A reader that stopped reading (`| head`) is not an

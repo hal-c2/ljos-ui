@@ -1371,6 +1371,14 @@ Ljós file says what it means.
   (`.pot`: a template, with no translations), keeping translations and keeping a translated message
   that left the sources as obsolete; `-o app_is.ts` writes `qsTr` and its family to `.ts` as
   before, honouring the `//:` `//~` `//=` comments. `--check` mode runs in CI.
+  - For PO it reads every QML file below `<dir>` that imports `Ljos.Core` and every `.ts`/`.lts`
+    module that imports the macros from `@ljos/core` (a `.ts` that is a Qt Linguist catalogue is
+    skipped). The reading is syntactic, through `message_of`, so a file that does not compile yet
+    still gives its messages. A form inside a message is part of it, not an entry of its own.
+  - Places (`#:`) are paths from the catalogue's directory, as in a `.ts` file. A message found in
+    several places is one entry with every place.
+  - The summary is one line: `is.po: N messages, N new, N translated, N obsolete`. A tree with
+    messages of the other kind says so on one more line, naming the other command.
 - **Migration.** `ljos migrate` rewrites `qsTr` and its family to `t` and `plural` (DIALECT.md
   §4.13), and with `--catalogue app_is.ts` writes the catalogue's translations to `is.po` with the
   same rewrite, so a migrated application keeps them. A `.ts` key carries the file's name as its
