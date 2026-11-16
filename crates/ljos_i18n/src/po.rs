@@ -665,7 +665,7 @@ msgstr "Tvær\nlínur"
                     ..PoEntry::default()
                 }],
             };
-            let read = PoFile::parse(&po.write("is")).unwrap();
+            let read = PoFile::parse(&po.write(Some("is"))).unwrap();
             assert_eq!(read.entries[0].default.as_deref(), Some(default));
         }
     }
