@@ -1343,11 +1343,15 @@ fn emit_loading(
         error_code: code,
         http_status_code: if domain == 7 { code } else { 0 },
     };
-    let Ok(info) = e.create_native(info, Some(me)) else {
+    // WebEngineLoadingInfo is a value in Qt: a function that keeps it
+    // (a runJavaScript callback) reads it after the handler, so the
+    // scripts holding it decide how long it lives, not the turn.
+    let Ok(info) = e.create_native(info, None) else {
         return;
     };
+    e.give_to_script(info);
     let _ = e.emit_by_name(me, "loadingChanged", &[Value::Object(info)]);
-    e.destroy_at_turn_end(info);
+    e.leave_to_scripts(info);
 }
 
 fn new_window(
