@@ -3,7 +3,10 @@
 //! translated text joined to another value with `+` is two messages
 //! (`i18n-concat`).
 
-use qml_front::{TypeOracle, names::Target};
+use qml_front::{
+    TypeOracle,
+    names::{CORE_GLOBALS, Target},
+};
 use qml_syntax::{
     GetSpan, Span,
     js::{BinaryExpression, BinaryOperator, Expression},
@@ -36,6 +39,13 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
             return false;
         };
         if self.listed > 0 {
+            return false;
+        }
+        // An error that names what to write instead is only fair when that
+        // is in sight: until `Ljos.Core` gives `t` (and `msg`) a type, the
+        // file keeps Qt's, as `ljos migrate` keeps it.
+        let replacement = instead.split(|c: char| !c.is_ascii_alphabetic()).next();
+        if !replacement.is_some_and(|r| CORE_GLOBALS.contains(&r)) {
             return false;
         }
         // A marked text has no rewrite: Qt's value is the string and
@@ -89,8 +99,22 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
         if !parts.iter().any(|p| self.translated(p)) {
             return;
         }
+        // `+` adds left to right, so what comes before the first text is a
+        // sum of its own (`n + 1 + t`x`` is "3x"), and stays one value.
+        let first = parts.iter().position(|p| self.text_like(p)).unwrap_or(0);
         let mut one = String::new();
-        for part in &parts {
+        if first > 1 {
+            let span = Span::new(parts[0].span().start, parts[first - 1].span().end);
+            one.push_str("${");
+            one.push_str(self.text(span));
+            one.push('}');
+        }
+        let rest = if first > 1 {
+            &parts[first..]
+        } else {
+            &parts[..]
+        };
+        for part in rest {
             match part.without_parentheses() {
                 Expression::StringLiteral(s) => one.push_str(&in_template(&s.value)),
                 Expression::TemplateLiteral(t) => one.push_str(inside(self.text(t.span))),
@@ -112,6 +136,14 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
             ),
             binary.span,
         );
+    }
+
+    /// Whether `e` is a text, which turns the rest of a sum into joining.
+    fn text_like(&self, e: &Expression<'a>) -> bool {
+        matches!(
+            e.without_parentheses(),
+            Expression::StringLiteral(_) | Expression::TemplateLiteral(_)
+        ) || self.translated(e)
     }
 
     /// The values `e` adds, left to right; the sums inside it are this
