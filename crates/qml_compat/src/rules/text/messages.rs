@@ -295,7 +295,7 @@ impl<'c, 'a> Chain<'c, 'a> {
                     });
                 }
                 message.text(&format!("({{ id: {} }})", quoted(&id)));
-                return Ok(message.done(self.outer, source));
+                Ok(message.done(self.outer, source))
             }
             Form::Tr => {
                 let text = self.text(0)?.unwrap_or_default();
@@ -327,11 +327,10 @@ impl<'c, 'a> Chain<'c, 'a> {
         count: Option<Value>,
         values: &[Value],
     ) -> Result<Written, Message> {
-        let parts = parts(text, count.is_some(), values.len()).ok_or_else(|| {
-            Message::Placeholders {
+        let parts =
+            parts(text, count.is_some(), values.len()).ok_or_else(|| Message::Placeholders {
                 name: self.name.to_owned(),
-            }
-        })?;
+            })?;
         if count.is_some()
             && parts
                 .iter()
@@ -376,9 +375,7 @@ impl<'c, 'a> Chain<'c, 'a> {
         }
         // A copy is a second reading of a value, so it reads the same only
         // where the value is plain.
-        let plain = |at: &Range<usize>| {
-            count.iter().chain(values).any(|v| v.at == *at && v.plain)
-        };
+        let plain = |at: &Range<usize>| count.iter().chain(values).any(|v| v.at == *at && v.plain);
         if !message.copies.iter().all(plain) {
             return Err(Message::Moved {
                 name: self.name.to_owned(),
@@ -432,9 +429,7 @@ fn plain(expression: &Expression<'_>) -> bool {
         | Expression::BooleanLiteral(_)
         | Expression::NullLiteral(_) => true,
         Expression::TemplateLiteral(t) => t.expressions.is_empty(),
-        Expression::StaticMemberExpression(member) => {
-            plain(member.object.without_parentheses())
-        }
+        Expression::StaticMemberExpression(member) => plain(member.object.without_parentheses()),
         _ => false,
     }
 }
@@ -461,7 +456,9 @@ enum Part {
 enum Mark<'t> {
     Text(&'t str),
     /// `%n` or `%Ln`.
-    Count { local: bool },
+    Count {
+        local: bool,
+    },
     /// `%N` or `%LN`, `N` of one or two digits, and the text it is.
     Number {
         local: bool,
@@ -764,7 +761,10 @@ mod tests {
 
     #[test]
     fn a_template_escapes_only_its_own() {
-        assert_eq!(in_template("a`b${c}$d\\e\"f'g\nh"), "a\\`b\\${c}$d\\\\e\"f'g\\nh");
+        assert_eq!(
+            in_template("a`b${c}$d\\e\"f'g\nh"),
+            "a\\`b\\${c}$d\\\\e\"f'g\\nh"
+        );
         assert_eq!(in_string("say \"hi\"\n"), "say \\\"hi\\\"\\n");
     }
 }
