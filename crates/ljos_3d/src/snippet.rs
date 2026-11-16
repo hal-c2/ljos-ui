@@ -517,24 +517,51 @@ fn may_decide(body: &str, macros: &[Macro], unsure: &[Unsure], seen: &mut Vec<St
 
 /// `src` with the lines the preprocessor leaves out, and its directives,
 /// blanked, and the object-like macros it keeps expanded, so lines keep
-/// their numbers; `None` when a condition that cannot be told here guards a
-/// precision statement or a light function, or a function-like macro that
-/// could make one is used. A condition is told when it is a number, or asks
+/// their numbers; the braces left out under a condition that cannot be
+/// told are put back where every branch leaves the same scopes. `None` when
+/// a condition that cannot be told here guards a precision statement or a
+/// light function, or decides the scope one is in, or a function-like macro
+/// that could make one is used. A condition is told when it is a number, or asks
 /// whether a name is defined that the snippet defines or that is GL_ES; the
 /// names Qt defines around the snippet are not known here.
 fn preprocessed(src: &str) -> Option<String> {
     // Each open conditional: whether its current branch is kept, and
-    // whether an earlier branch was, `None` where that cannot be told.
+    // whether an earlier branch was, `None` where that cannot be told;
+    // the braces opened less closed on the lines of its current branch
+    // that are left out under a condition that cannot be told, and that
+    // for each earlier branch that may be the one kept.
     struct Branch {
         kept: Option<bool>,
         taken: Option<bool>,
+        braces: i64,
+        may_be: Vec<i64>,
+        has_else: bool,
+    }
+    impl Branch {
+        fn new(kept: Option<bool>) -> Branch {
+            Branch {
+                kept,
+                taken: kept,
+                braces: 0,
+                may_be: Vec::new(),
+                has_else: false,
+            }
+        }
+        // The current branch ends.
+        fn close(&mut self) {
+            if self.kept != Some(false) {
+                self.may_be.push(self.braces);
+            }
+            self.braces = 0;
+        }
     }
     let mut open: Vec<Branch> = Vec::new();
     let mut macros: Vec<Macro> = Vec::new();
     let mut unsure: Vec<Unsure> = Vec::new();
-    // Braces opened less closed on lines left out under a condition that
-    // cannot be told.
-    let mut unsure_depth = 0i64;
+    // Whether the braces left out under a condition that cannot be told
+    // leave the scopes differently depending on which branch is kept, so
+    // that what is at the top level from there on cannot be told.
+    let mut scope_unknown = false;
     let mut out = String::with_capacity(src.len());
     // A directive continued onto the next line: the preprocessor joins
     // backslash-newline pairs first, so it is one directive.
@@ -593,10 +620,12 @@ fn preprocessed(src: &str) -> Option<String> {
                         "ifdef" => known(target),
                         _ => known(target).map(|d| !d),
                     };
-                    open.push(Branch { kept: k, taken: k });
+                    open.push(Branch::new(k));
                 }
                 "elif" | "else" => {
                     if let Some(b) = open.last_mut() {
+                        b.close();
+                        b.has_else |= name == "else";
                         let k = match b.taken {
                             Some(true) => Some(false),
                             Some(false) if name == "else" => Some(true),
@@ -611,7 +640,28 @@ fn preprocessed(src: &str) -> Option<String> {
                     }
                 }
                 "endif" => {
-                    open.pop();
+                    if let Some(mut b) = open.pop() {
+                        b.close();
+                        // Without an `#else` no branch may be kept, which
+                        // leaves out nothing.
+                        if !b.has_else && b.taken != Some(true) {
+                            b.may_be.push(0);
+                        }
+                        // Branches that leave the scopes differently make
+                        // the depth after them depend on which is kept.
+                        let first = b.may_be[0];
+                        let braces = b.may_be.iter().all(|d| *d == first).then_some(first);
+                        match (open.last_mut(), braces) {
+                            (Some(outer), Some(d)) => outer.braces += d,
+                            // Whichever branch is kept opens or closes
+                            // these, so the scan is given them.
+                            (None, Some(d)) => {
+                                let brace = if d > 0 { "{" } else { "}" };
+                                out.push_str(&brace.repeat(d.unsigned_abs() as usize));
+                            }
+                            (_, None) => scope_unknown = true,
+                        }
+                    }
                 }
                 "define" | "undef" if target.is_empty() => {}
                 "define" | "undef" if kept.is_none() => {
@@ -732,7 +782,7 @@ fn preprocessed(src: &str) -> Option<String> {
             // Braces left out under a condition that cannot be told may
             // open or close the scope this line is in, so whether its
             // precision or light function is at the top cannot be told.
-            Some(true) if reads && unsure_depth != 0 => return None,
+            Some(true) if reads && scope_unknown => return None,
             Some(true) if expanded => {
                 out.push_str(&words.join(" "));
                 out.push_str(newline);
@@ -742,11 +792,13 @@ fn preprocessed(src: &str) -> Option<String> {
                 if reads {
                     return None;
                 }
-                for t in &words {
-                    match *t {
-                        "{" => unsure_depth += 1,
-                        "}" => unsure_depth -= 1,
-                        _ => {}
+                if let Some(b) = open.last_mut() {
+                    for t in &words {
+                        match *t {
+                            "{" => b.braces += 1,
+                            "}" => b.braces -= 1,
+                            _ => {}
+                        }
                     }
                 }
                 out.push_str(newline);
@@ -2172,6 +2224,22 @@ mod tests {
             ),
             // Braces under a condition that cannot be told may scope a
             // precision statement.
+            (
+                "#if 1 + 0\nvoid helper() {\n#else\n}\n#endif\nprecision lowp float;\n}",
+                None,
+            ),
+            (
+                "#if 1 + 0\nvoid f() {\n#else\nvoid g() {\n#endif\nprecision lowp float;\n}",
+                None,
+            ),
+            (
+                "#ifdef FOO\nvoid f() {\n}\n#endif\nprecision lowp float;",
+                Some(6),
+            ),
+            (
+                "#if 1 + 0\nvoid f() {\n#else\nvoid g() {\n#endif\n}\nprecision lowp float;",
+                Some(8),
+            ),
             (
                 "precision highp float;\n#if 1 + 0\nvoid helper() {\n#endif\nprecision lowp float;\n#if 1 + 0\n}\n#endif",
                 None,
