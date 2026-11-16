@@ -485,6 +485,13 @@ impl CustomGeometry {
     /// its own vertices and the normal of its face, counter-clockwise
     /// being the front, so the geometry is lit flat.
     pub fn to_mesh(&self) -> Result<Mesh, GeometryError> {
+        self.to_mesh_from().map(|(mesh, _)| mesh)
+    }
+
+    /// The mesh [`Self::to_mesh`] makes, and the geometry's vertex each of
+    /// its vertices came from: a program reading a vertex's data by its
+    /// index reads it by the mesh's.
+    pub(crate) fn to_mesh_from(&self) -> Result<(Mesh, Vec<u32>), GeometryError> {
         let positions = self.read_vec::<3>(Semantic::Position)?;
         let (topology, triangles) = self.shapes(positions.len())?;
         let normals = self
@@ -562,7 +569,7 @@ impl CustomGeometry {
             mesh.joints = from.iter().map(|v| joints[*v as usize]).collect();
             mesh.weights = from.iter().map(|v| weights[*v as usize]).collect();
         }
-        Ok(mesh)
+        Ok((mesh, from))
     }
 }
 

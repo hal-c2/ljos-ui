@@ -191,7 +191,6 @@ impl Programs {
                 .get_or_insert_with(|| upload_texels(device, queue, 1, 1, 1, &[0.0; 4]))
                 .clone();
         };
-        self.morphs.retain(|_, (held, _)| held.strong_count() > 0);
         self.morphs
             .entry(texels.id())
             .or_insert_with(|| {
@@ -232,6 +231,9 @@ impl Programs {
     /// Lets go of the programs no scene holds any more, and their
     /// pipelines.
     pub(crate) fn sweep(&mut self) {
+        // Every render, and not only when a shape still reads its targets:
+        // the last one to go leaves no draw that would clear the rest.
+        self.morphs.retain(|_, (held, _)| held.strong_count() > 0);
         let before = self.compiled.len();
         self.compiled.retain(|_, c| c.program.strong_count() > 0);
         if self.compiled.len() != before {
