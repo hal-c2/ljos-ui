@@ -81,16 +81,18 @@ struct Model {
     // w roughness.
     params: vec4<f32>,
     // x the mask's cutoff, below 0 where nothing is masked; y the plain
-    // material's specular amount, z its specular roughness; w 1 where
-    // shadows fall on it.
+    // material's specular amount, z its specular roughness or a solid
+    // principled one's opacity; w 1 where shadows fall on it.
     params2: vec4<f32>,
     // Per map (base, metalness, roughness, normal, emissive, occlusion,
     // opacity, transmission, height, clearcoat, its roughness, its normals), two rows taking the mesh's UV to the
     // image's.
     uv: array<vec4<f32>, 24>,
     // x a bit per map that is there; y the channels of metalness (bits
-    // 0-1), roughness (2-3), occlusion (4-5) and opacity (6-7); z a bit per
-    // map read through the second UV set; w 1 where the joints of
+    // 0-1), roughness (2-3), occlusion (4-5) and opacity (6-7), bit 8 to
+    // invert opacity, bit 9 where the colour's alpha only cuts out, bit 10
+    // where the highlight is the light's colour alone; z a bit per map read
+    // through the second UV set; w 1 where the joints of
     // `skin_joints` bend the mesh.
     maps: vec4<u32>,
     // x the normal map's strength, y how much the occlusion map shades, z the
@@ -220,14 +222,19 @@ fn shade_vertex(
     tangent: vec4<f32>,
     copy: Instance,
     skin: mat4x4<f32>,
+    skin_normal: mat3x3<f32>,
 ) -> VsOut {
     var out: VsOut;
     let place = copy_place(copy);
     let m = place * model.world * skin;
     let world = m * vec4<f32>(position, 1.0);
     out.clip = frame.view_proj * world;
-    let n = (model.normal * vec4<f32>(cofactor(skin) * normal, 0.0)).xyz;
-    out.normal = cofactor(place) * n;
+    let n = (model.normal * vec4<f32>(skin_normal * normal, 0.0)).xyz;
+    // Made one long before it is spread over the triangle, as Qt makes it:
+    // a corner a joint or a scale stretches does not outweigh its neighbours.
+    let facing = cofactor(place) * n;
+    let length2 = dot(facing, facing);
+    out.normal = select(facing, facing * inverseSqrt(length2), length2 > 0.0);
     out.world = world.xyz;
     out.uv = uv;
     out.uv1 = uv1;
@@ -251,7 +258,38 @@ fn vs_main(
     @location(3) tangent: vec4<f32>,
     copy: Instance,
 ) -> VsOut {
-    return shade_vertex(position, normal, uv, uv, tangent, copy, IDENTITY);
+    return shade_vertex(position, normal, uv, uv, tangent, copy, IDENTITY, IDENTITY3);
+}
+
+const IDENTITY3: mat3x3<f32> = mat3x3<f32>(
+    vec3<f32>(1.0, 0.0, 0.0),
+    vec3<f32>(0.0, 1.0, 0.0),
+    vec3<f32>(0.0, 0.0, 1.0),
+);
+
+// What turns the way a joint's corner faces: the inverse transpose of its
+// matrix, or the matrix itself where it flattens everything.
+fn joint_normal(m: mat4x4<f32>) -> mat3x3<f32> {
+    let a = m[0].xyz;
+    let b = m[1].xyz;
+    let c = m[2].xyz;
+    let whole = dot(a, cross(b, c));
+    if whole == 0.0 {
+        return mat3x3<f32>(a, b, c);
+    }
+    return mat3x3<f32>(cross(b, c), cross(c, a), cross(a, b)) * (1.0 / whole);
+}
+
+// Qt weighs each joint's own normal matrix, not the normal matrix of the
+// weighed joints: the two part where a joint scales one way more than
+// another.
+fn skin_normal_matrix(joints: vec4<u32>, weights: vec4<f32>) -> mat3x3<f32> {
+    if model.maps.w == 0u {
+        return IDENTITY3;
+    }
+    let j = min(joints, vec4<u32>(255u));
+    return joint_normal(skin_joints[j.x]) * weights.x + joint_normal(skin_joints[j.y]) * weights.y
+        + joint_normal(skin_joints[j.z]) * weights.z + joint_normal(skin_joints[j.w]) * weights.w;
 }
 
 fn skin_matrix(joints: vec4<u32>, weights: vec4<f32>) -> mat4x4<f32> {
@@ -278,7 +316,7 @@ fn vs_extra(
     @location(12) color: vec4<f32>,
 ) -> VsOut {
     let skin = skin_matrix(joints, weights);
-    var out = shade_vertex(position, normal, uv, uv1, tangent, copy, skin);
+    var out = shade_vertex(position, normal, uv, uv1, tangent, copy, skin, skin_normal_matrix(joints, weights));
     if model.flags.y != 0u {
         out.color = out.color * color;
     }
@@ -315,6 +353,12 @@ fn channel(t: vec4<f32>, shift: u32) -> f32 {
 fn opacity_of(t: vec4<f32>) -> f32 {
     let value = channel(t, 6u);
     return select(value, 1.0 - value, (model.maps.y & 256u) != 0u);
+}
+
+// A masked surface is cut where its colour's alpha, with its base map's,
+// falls below the cutoff; the opacity map does not take part.
+fn solid_cut(alpha: f32) -> bool {
+    return model.params2.x >= 0.0 && alpha < model.params2.x;
 }
 
 fn channel_of(t: vec4<f32>, c: u32) -> f32 {
@@ -639,12 +683,13 @@ fn fs_main(raw: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<
 
     let base = model.base * base_t * in.color;
     var a = base.a * opacity_of(opacity_t);
-    let cutoff = model.params2.x;
-    if cutoff >= 0.0 {
-        if a < cutoff {
-            discard;
-        }
-        a = 1.0;
+    if solid_cut(base.a) {
+        discard;
+    }
+    if (model.maps.y & 512u) != 0u {
+        // Opaque or masked: the colour's alpha has done its work, the
+        // material's opacity and its map still lay it over what is behind.
+        a = model.params2.z * opacity_of(opacity_t);
     }
     // After the mask: a node's fade is not a material's cut-out.
     a *= model.map_params.z;
@@ -703,7 +748,8 @@ fn fs_main(raw: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<
         // its f0. Of the amount the lights heed only whether there is any.
         let tint = mix(vec3<f32>(1.0), mix(vec3<f32>(1.0), base.rgb, shine.y), 1.0 - metal);
         let shiny = shine.x > 0.01 || metal > 0.01;
-        var amount = base.rgb * model.params2.y * metal_t.rgb * turning;
+        let own = select(base.rgb, vec3<f32>(1.0), (model.maps.y & 1024u) != 0u);
+        var amount = own * model.params2.y * metal_t.rgb * turning;
         if principled {
             amount = vec3<f32>(metal + shine.x * (1.0 - metal))
                 * clamp(vec3<f32>(model.edge.y) + model.edge.x * turning, vec3<f32>(0.0), vec3<f32>(1.0));
@@ -871,7 +917,7 @@ fn fs_surface(in: VsOut, @builtin(front_facing) front: bool) -> SurfaceOut {
     let normal_t = textureSample(normal_map, normal_sampler, map_uv(3u, in));
     let opacity_t = textureSample(opacity_map, opacity_sampler, map_uv(6u, in));
     let base = model.base * base_t * in.color;
-    if model.params2.x >= 0.0 && base.a * opacity_of(opacity_t) < model.params2.x {
+    if solid_cut(base.a) {
         discard;
     }
     var n = normalize(in.normal);

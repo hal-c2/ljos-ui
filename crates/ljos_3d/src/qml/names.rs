@@ -283,6 +283,9 @@ props! {
     /// A number on `PrincipledMaterial`, a colour on `DefaultMaterial`.
     SpecularTint = "specularTint",
     SpecularMap = "specularMap",
+    /// Not Qt's: a `DefaultMaterial` whose highlight is the light's colour
+    /// alone, as Qt's 3D graphs draw theirs.
+    SpecularInLightColor = "specularInLightColor",
     IndexOfRefraction = "indexOfRefraction",
     FresnelPower = "fresnelPower",
     FresnelScaleBiasEnabled = "fresnelScaleBiasEnabled",

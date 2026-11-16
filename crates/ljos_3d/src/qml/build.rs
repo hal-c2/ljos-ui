@@ -455,6 +455,7 @@ fn built_in<S: SceneSource>(s: &S, view: S::Object, obj: S::Object) -> Option<Ma
             depth_draw: depth_draw(),
             blend_mode: blend_mode(dm::BLEND_MODE),
             vertex_colors: on(s, obj, P::VertexColorsEnabled, dm::VERTEX_COLORS_ENABLED),
+            specular_in_light_color: on(s, obj, P::SpecularInLightColor, false),
         }));
     }
     if s.is(obj, T::PrincipledMaterial) {

@@ -133,6 +133,66 @@ pub enum Screen {
     Mipmapped,
 }
 
+/// How a shape with morph targets goes towards them before a program's
+/// corners are drawn, as Qt 6.11 has it: with no code for the corners all
+/// the way; with code that names nothing of the targets only the way it
+/// faces; with a `MAIN` that names what a target has (`MORPH_POSITION`,
+/// `MORPH_WEIGHTS` ...) not at all, the code doing it itself.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum Morphing {
+    #[default]
+    All,
+    Facing,
+    Itself,
+}
+
+/// What a shape's targets have of each of its vertices, for a program
+/// that goes towards them itself: a layer per target of where the vertex
+/// is, then one of how it faces, each `width` texels of four floats wide
+/// with a vertex per texel, row by row.
+#[derive(Debug, PartialEq)]
+pub struct MorphTexels {
+    id: u64,
+    pub count: u32,
+    pub width: u32,
+    pub height: u32,
+    pub texels: Vec<f32>,
+}
+
+impl MorphTexels {
+    pub fn new(count: u32, width: u32, height: u32, texels: Vec<f32>) -> Self {
+        MorphTexels {
+            id: PROGRAMS.fetch_add(1, Ordering::Relaxed),
+            count,
+            width,
+            height,
+            texels,
+        }
+    }
+
+    /// Two are the same only when they are one.
+    pub fn id(&self) -> u64 {
+        self.id
+    }
+}
+
+/// A shape's targets and how much each weighs, handed to a program that
+/// goes towards them itself.
+#[derive(Clone, Debug)]
+pub struct Morphs {
+    pub texels: Arc<MorphTexels>,
+    pub weights: Vec<f32>,
+}
+
+impl PartialEq for Morphs {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.texels, &other.texels) && self.weights == other.weights
+    }
+}
+
+/// The most targets a program is handed, as many as Qt hands a shader.
+pub const MORPH_MAX: usize = 8;
+
 /// Snippets translated for the renderer. Made by
 /// `snippet::material` and `snippet::effect`; two programs are the same
 /// only when they are one.
@@ -148,6 +208,7 @@ pub struct Program {
     /// Why it does not compile where a light reaches the model, if it
     /// does not: the model is then drawn only into shadow maps.
     lit_failure: Option<String>,
+    morphing: Morphing,
     /// Where each uniform is in the block, after the header.
     offsets: Vec<usize>,
     /// The bytes the uniforms take, a whole number of rows and at least
@@ -183,6 +244,7 @@ impl Program {
             reads_depth,
             screen: Screen::None,
             lit_failure: None,
+            morphing: Morphing::All,
             offsets,
             size: end.max(1).next_multiple_of(16),
         }
@@ -219,6 +281,17 @@ impl Program {
     /// Whether, and how, it samples the scene drawn behind it.
     pub fn screen(&self) -> Screen {
         self.screen
+    }
+
+    /// How a shape it draws goes towards its targets.
+    pub fn morphing(&self) -> Morphing {
+        self.morphing
+    }
+
+    #[cfg_attr(not(feature = "snippets"), allow(dead_code))]
+    pub(crate) fn morphing_as(mut self, morphing: Morphing) -> Self {
+        self.morphing = morphing;
+        self
     }
 
     #[cfg_attr(not(feature = "snippets"), allow(dead_code))]
@@ -264,9 +337,10 @@ impl Program {
 
 /// Rows of every program's uniform block before its own values: the
 /// model's, the view's and the projection's matrices, then the camera, the
-/// clip planes and frame, and the input's and output's sizes. `snippet`
-/// declares the block and the renderer fills it.
-pub const HEADER_ROWS: usize = 28;
+/// clip planes and frame, the input's and output's sizes, and a shape's
+/// targets' weights and how many there are. `snippet` declares the block
+/// and the renderer fills it.
+pub const HEADER_ROWS: usize = 31;
 
 /// The entry points a program has, by kind.
 pub const MATERIAL_VERTEX: &str = "cm_vs";
@@ -385,6 +459,8 @@ pub struct CustomMaterial {
     pub destination_alpha_blend: Blend,
     pub depth_draw: DepthDraw,
     pub cull_mode: CullMode,
+    /// The shape's targets, where its program goes towards them itself.
+    pub morphs: Option<Morphs>,
 }
 
 impl CustomMaterial {
@@ -406,6 +482,7 @@ impl CustomMaterial {
             destination_alpha_blend: Blend::NoBlend,
             depth_draw: DepthDraw::OpaqueOnly,
             cull_mode: CullMode::Back,
+            morphs: None,
         }
     }
 

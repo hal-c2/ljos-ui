@@ -1236,6 +1236,8 @@ impl<'a> Chain<'a> {
                     out_size[0] as f32,
                     out_size[1] as f32,
                 ],
+                morph_by: [[0.0; 4]; 2],
+                morphs: [0.0; 4],
             };
             let bytes = programs::block(program, &header, &pass.values);
             // Made first, as the group is made from the program's layout.
@@ -1248,7 +1250,11 @@ impl<'a> Chain<'a> {
             binds.extend(depth.map(|d| Bind::View(d.clone())));
             let programs = &*self.programs;
             let group = self.buffers.group(device, queue, &binds, &bytes, |buffer| {
-                programs.group(device, program, buffer, &textures, depth, None)
+                let reads = crate::programs::Reads {
+                    depth,
+                    ..Default::default()
+                };
+                programs.group(device, program, buffer, &textures, reads)
             });
             // The final pass comes after every effect, so none ends the time.
             let timestamp_writes = self.stamp(false);

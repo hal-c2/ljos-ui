@@ -10,8 +10,8 @@ Feature: PrincipledMaterial and what every material has
   A PrincipledMaterial is lit physically: a base colour that a metalness
   between 0 (a dielectric) and 1 (a metal) interprets, a roughness that
   spreads its highlights, an emissive colour of its own, an opacity, and an
-  alphaMode that says whether that opacity blends, cuts out below alphaCutoff
-  or is ignored. Every material culls the faces its cullMode names.
+  alphaMode that says whether its colour's alpha blends, cuts out below
+  alphaCutoff or is ignored. Every material culls the faces its cullMode names.
 
   # A red square, 100 units across, faces the camera in front of a blue
   # backdrop. The camera is orthographic, so one scene unit is one pixel and
@@ -64,31 +64,45 @@ Feature: PrincipledMaterial and what every material has
 
   # Whether the colours blend in linear light or in sRGB is not documented:
   # half red over blue is #bc00bc one way and #800080 the other. The
-  # tolerance takes either and neither colour alone.
-  Rule: The alpha mode says what opacity does
+  # tolerance takes either and neither colour alone. An opaque or masked
+  # material leaves the alpha of its colour behind once it is drawn, and its
+  # opacity still blends, as Qt 6.11 draws them. The numbers are Ljós's:
+  # 2 is Opaque and 3 is Mask.
+  Rule: The alpha mode says what the colour's alpha and the opacity do
 
     Scenario: By default a material less than opaque blends
       When the property "opacity" of "pbr" is set to 0.5
       Then the pixel at 100, 100 of the window is within 40 of "#9e009e"
 
-    Scenario: An opaque material ignores its opacity
+    Scenario: An opaque material ignores its colour's alpha
       When the property "alphaMode" of "pbr" is set to 2
-      And the property "opacity" of "pbr" is set to 0.5
+      And the property "baseColor" of "pbr" is set to "#80ff0000"
       Then the pixel at 100, 100 of the window is within 2 of "#ff0000"
 
-    Scenario: A masked material below the cutoff is not drawn
+    Scenario: An opaque material less than opaque still blends
+      When the property "alphaMode" of "pbr" is set to 2
+      And the property "opacity" of "pbr" is set to 0.5
+      Then the pixel at 100, 100 of the window is within 40 of "#9e009e"
+
+    Scenario: A masked material whose colour's alpha is below the cutoff is not drawn
       When the property "alphaMode" of "pbr" is set to 3
-      And the property "opacity" of "pbr" is set to 0.4
+      And the property "baseColor" of "pbr" is set to "#66ff0000"
       Then the pixel at 100, 100 of the window is within 2 of "#0000ff"
 
     Scenario: A masked material at or above the cutoff is drawn opaque
       When the property "alphaMode" of "pbr" is set to 3
-      And the property "opacity" of "pbr" is set to 0.6
+      And the property "baseColor" of "pbr" is set to "#99ff0000"
       Then the pixel at 100, 100 of the window is within 2 of "#ff0000"
+
+    Scenario: A masked material's opacity below the cutoff is not what it cuts by, and blends
+      When the property "alphaMode" of "pbr" is set to 3
+      And the property "alphaCutoff" of "pbr" is set to 0.6
+      And the property "opacity" of "pbr" is set to 0.5
+      Then the pixel at 100, 100 of the window is within 40 of "#9e009e"
 
     Scenario: The cutoff is the material's own
       When the property "alphaMode" of "pbr" is set to 3
-      And the property "opacity" of "pbr" is set to 0.6
+      And the property "baseColor" of "pbr" is set to "#99ff0000"
       And the property "alphaCutoff" of "pbr" is set to 0.7
       Then the pixel at 100, 100 of the window is within 2 of "#0000ff"
 

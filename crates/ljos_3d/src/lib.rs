@@ -66,8 +66,9 @@ mod uploads;
 
 pub use custom::{
     Adjustments, AmbientOcclusion, Blend, BufferFormat, CustomMaterial, DepthDraw, DepthOfField,
-    Effect, EffectBuffer, Glow, GlowBlend, Illumination, LensFlare, Lut, Pass, PassTexture,
-    PostProcess, Program, ProgramKind, Reflections, Screen, UniformKind, UniformValue, Vignette,
+    Effect, EffectBuffer, Glow, GlowBlend, Illumination, LensFlare, Lut, MorphTexels, Morphing,
+    Morphs, Pass, PassTexture, PostProcess, Program, ProgramKind, Reflections, Screen, UniformKind,
+    UniformValue, Vignette,
 };
 pub use fetch::Fetch;
 pub use geometry::{

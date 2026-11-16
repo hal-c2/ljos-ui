@@ -336,6 +336,72 @@ Feature: A Model draws the mesh file at its source
       Then the pixel at 190, 100 of the window is within 2 of "#ff0000"
       And the pixel at 60, 100 of the window is "#1e1e1e"
 
+  # morph.mesh again, its target at weight 0.5, drawn with a CustomMaterial
+  # whose fragment code paints it red. Moved halfway, the square covers
+  # x 0 to 100, so the pixel at 190 is red; where the mesh has it, -50 to
+  # 50, so the pixel at 60 is.
+  Rule: A CustomMaterial's vertex code says what of the targets it uses
+
+    Background:
+      Given the model file "morph.mesh"
+      And the text file "red.frag":
+        """
+        void MAIN() { FRAGCOLOR = vec4(1.0, 0.0, 0.0, 1.0); }
+        """
+      And the text file "empty.vert":
+        """
+        """
+      And the text file "still.vert":
+        """
+        void MAIN() { }
+        """
+      And the text file "reads.vert":
+        """
+        void MAIN() { VERTEX = mix(VERTEX, MORPH_POSITION(0), MORPH_WEIGHTS[0]); }
+        """
+      And the text file "missing.vert":
+        """
+        void MAIN() { if (QT_MORPH_MAX_COUNT < 2) VERTEX += MORPH_POSITION(1); }
+        """
+
+    Scenario Outline: <code> vertex code is drawn with the square <where>
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick3D
+        Rectangle {
+          width: 200; height: 200; color: "black"
+          View3D {
+            anchors.fill: parent
+            environment: SceneEnvironment { clearColor: "#202020"; backgroundMode: SceneEnvironment.Color }
+            OrthographicCamera { z: 300 }
+            Model {
+              source: "morph.mesh"
+              morphTargets: [ MorphTarget { weight: 0.5; attributes: MorphTarget.Position } ]
+              materials: CustomMaterial {
+                shadingMode: CustomMaterial.Unshaded
+                vertexShader: "<code>.vert"
+                fragmentShader: "red.frag"
+              }
+            }
+          }
+        }
+        """
+      When 100 milliseconds pass
+      Then the pixel at <red>, 100 of the window is within 2 of "#ff0000"
+      And the pixel at <clear>, 100 of the window is "#1e1e1e"
+
+      # Empty code leaves every target to the mesh; code that names none
+      # keeps the vertices where the mesh has them; code that reads them
+      # moves the vertices itself, and a target the mesh lacks reads as
+      # nothing.
+      Examples:
+        | code    | where       | red | clear |
+        | empty   | halfway     | 190 | 60    |
+        | still   | where it is | 60  | 190   |
+        | reads   | halfway     | 190 | 60    |
+        | missing | where it is | 60  | 190   |
+
   # colored.mesh, made by the same: a square 100 units across, all its corners
   # red.
   Rule: A material can use the colours of a file's vertices

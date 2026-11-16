@@ -20,7 +20,7 @@ use naga::{Module, ShaderStage};
 
 use crate::custom::{
     EFFECT_FRAGMENT, EFFECT_VERTEX, HEADER_ROWS, MATERIAL_FRAGMENT, MATERIAL_VERTEX,
-    MATERIAL_VERTEX_EXTRA, Program, ProgramKind, Screen, UniformKind,
+    MATERIAL_VERTEX_EXTRA, Morphing, Program, ProgramKind, Screen, UniformKind,
 };
 
 /// At most this many locations of VARYINGs, packed four numbers to each:
@@ -108,6 +108,14 @@ pub fn material(
     };
 
     let reads_depth = names("DEPTH_TEXTURE");
+    // As Qt 6.11 decides it: see [`Morphing`].
+    let morphing = if vertex_src.trim().is_empty() {
+        Morphing::All
+    } else if defines(&vertex_src, "MAIN") && MORPHING.iter().any(|w| mentions(&vertex_src, w)) {
+        Morphing::Itself
+    } else {
+        Morphing::Facing
+    };
 
     let set = 2;
     let mut header = header(set, uniforms, textures, &[], reads_depth);
@@ -126,7 +134,13 @@ pub fn material(
     let vs = stage_module(
         "vertex",
         ShaderStage::Vertex,
-        material_vertex(&header, vertex.unwrap_or(""), &vertex_src, &out),
+        material_vertex(
+            &header,
+            vertex.unwrap_or(""),
+            &vertex_src,
+            &out,
+            morphing == Morphing::Itself,
+        ),
         "cmv_",
     )?;
     let fs = stage_module(
@@ -161,8 +175,19 @@ pub fn material(
         reads_depth,
     )
     .reading_screen(screen)
-    .failing_where_lit(lit_failure.map(|e| e.to_string())))
+    .failing_where_lit(lit_failure.map(|e| e.to_string()))
+    .morphing_as(morphing))
 }
+
+/// What a program for the corners names of a shape's targets.
+const MORPHING: [&str; 6] = [
+    "MORPH_POSITION",
+    "MORPH_NORMAL",
+    "MORPH_TANGENT",
+    "MORPH_BINORMAL",
+    "MORPH_WEIGHTS",
+    "QT_MORPH_MAX_COUNT",
+];
 
 /// A pass of an Effect: its fragment snippet runs over the whole output,
 /// reading the picture so far as INPUT; a vertex snippet may move the
@@ -949,7 +974,7 @@ fn header(
     fixed: &[&str],
     depth: bool,
 ) -> String {
-    debug_assert_eq!(HEADER_ROWS, 28);
+    debug_assert_eq!(HEADER_ROWS, 31);
     // The author's properties are members of the block, which has no
     // instance name, so that a snippet reads them by their own names.
     // Bools are ints in the block and read through a test.
@@ -978,6 +1003,7 @@ fn header(
          mat4 ljosmodel; mat4 ljosnormal; mat4 ljosview; mat4 ljosprojection;\n\
          mat4 ljosinverse; mat4 ljosviewprojection;\n\
          vec4 ljoscamera; vec4 ljosdirection; vec4 ljosclip; vec4 ljossizes;\n\
+         vec4 ljosmorphby[2]; vec4 ljosmorphs;\n\
          {members}\n\
          }};\n\
          {flags}\
@@ -1251,6 +1277,39 @@ fn lines(s: &str) -> u32 {
     s.matches('\n').count() as u32
 }
 
+/// A shape whose targets are weighed in before the program runs: it is
+/// handed a mesh with none.
+const MORPHED: &str = "\
+int ljosvertexat; float ljosmorphweights[8];\n\
+const int QT_MORPH_MAX_COUNT = 0;\n\
+#define MORPH_WEIGHTS ljosmorphweights\n\
+vec3 MORPH_POSITION(int ljosi) { return VERTEX; }\n\
+vec3 MORPH_NORMAL(int ljosi) { return NORMAL; }\n\
+vec3 MORPH_TANGENT(int ljosi) { return TANGENT; }\n\
+vec3 MORPH_BINORMAL(int ljosi) { return BINORMAL; }\n";
+
+/// A program that goes towards a shape's targets itself reads what each
+/// has of the vertex from the texels the renderer binds beside its block,
+/// a layer per target of where it is and one of how it faces. A target the
+/// shape has not has nothing. The tangents are not kept, so they are the
+/// vertex's own.
+const MORPHS_ITSELF: &str = "\
+layout(set = 2, binding = 26) uniform texture2DArray ljosmorphtexels;\n\
+layout(set = 2, binding = 27) uniform sampler ljosmorphsampler;\n\
+int ljosvertexat; float ljosmorphweights[8];\n\
+#define QT_MORPH_MAX_COUNT int(ljosmorphs.x)\n\
+#define MORPH_WEIGHTS ljosmorphweights\n\
+vec3 ljosmorphof(int ljosi, int ljoskind) {\n\
+\x20   if (ljosi < 0 || ljosi >= int(ljosmorphs.x)) { return vec3(0.0); }\n\
+\x20   int ljosw = max(int(ljosmorphs.y), 1);\n\
+\x20   ivec3 ljosat = ivec3(ljosvertexat % ljosw, ljosvertexat / ljosw, 2 * ljosi + ljoskind);\n\
+\x20   return texelFetch(sampler2DArray(ljosmorphtexels, ljosmorphsampler), ljosat, 0).xyz;\n\
+}\n\
+vec3 MORPH_POSITION(int ljosi) { return ljosmorphof(ljosi, 0); }\n\
+vec3 MORPH_NORMAL(int ljosi) { return ljosmorphof(ljosi, 1); }\n\
+vec3 MORPH_TANGENT(int ljosi) { return TANGENT; }\n\
+vec3 MORPH_BINORMAL(int ljosi) { return BINORMAL; }\n";
+
 /// The skin's joints, the model's group's second binding: the renderer
 /// fills it as lit.wgsl reads it, each joint's place times its inverse
 /// bind pose.
@@ -1258,7 +1317,13 @@ const BONES: &str = "\
 layout(std140, set = 1, binding = 1) uniform LjosBones { mat4 ljosbones[256]; };\n\
 #define BONE_TRANSFORMS ljosbones\n";
 
-fn material_vertex(header: &str, user: &str, src: &str, out: &[Varying]) -> (String, u32) {
+fn material_vertex(
+    header: &str,
+    user: &str,
+    src: &str,
+    out: &[Varying],
+    morphs_itself: bool,
+) -> (String, u32) {
     let mut s = String::from(header);
     s.push_str(BONES);
     s.push_str(MATERIAL_READS);
@@ -1268,13 +1333,6 @@ fn material_vertex(header: &str, user: &str, src: &str, out: &[Varying]) -> (Str
          vec4 INSTANCE_COLOR; vec4 INSTANCE_DATA; int INSTANCE_INDEX; mat4 ljosinstance;\n\
          // There are no derivatives here to choose a level of detail by.
          #define texture(ljoss, ljosuv) textureLod(ljoss, ljosuv, 0.0)\n\
-         // Targets are weighed in before the shader runs, so it is handed a mesh with none.
-         const int QT_MORPH_MAX_COUNT = 0;\n\
-         const float MORPH_WEIGHTS[1] = float[1](0.0);\n\
-         vec3 MORPH_POSITION(int ljosi) { return VERTEX; }\n\
-         vec3 MORPH_NORMAL(int ljosi) { return NORMAL; }\n\
-         vec3 MORPH_TANGENT(int ljosi) { return TANGENT; }\n\
-         vec3 MORPH_BINORMAL(int ljosi) { return BINORMAL; }\n\
          #define INSTANCE_MODEL_MATRIX (ljosinstance * ljosmodel)\n\
          #define INSTANCE_MODELVIEWPROJECTION_MATRIX (ljosviewprojection * ljosinstance * ljosmodel)\n\
          mat3 ljoscofactor(mat4 ljosm) {\n\
@@ -1287,6 +1345,13 @@ fn material_vertex(header: &str, user: &str, src: &str, out: &[Varying]) -> (Str
          \x20   return ljoscofactor(ljosm) / (abs(ljosdet) > 1e-12 ? ljosdet : 1.0);\n\
          }\n",
     );
+    // After the vertex's own members, which a target the shape has not
+    // reads as.
+    s.push_str(if morphs_itself {
+        MORPHS_ITSELF
+    } else {
+        MORPHED
+    });
     let before = lines(&s);
     push_user(&mut s, &bone_normals(user));
     s.push_str("\nstruct LjosVertex {\n    vec4 ljosclip; vec3 ljosworld; vec3 ljosnormal; vec4 ljosuvs;\n    vec3 ljostangent; vec3 ljosbinormal; vec4 ljoscolor;\n");
@@ -1300,8 +1365,10 @@ fn material_vertex(header: &str, user: &str, src: &str, out: &[Varying]) -> (Str
         "};\n\
          LjosVertex ljosvertex(vec3 ljosposition, vec3 ljosnormalin, vec2 ljosuv, vec2 ljosuv1,\n\
          \x20   vec4 ljostangentin, mat4 ljoscopy, vec4 ljoscopycolor, vec4 ljoscopydata, int ljoscopyindex,\n\
-         \x20   ivec4 ljosjoints, vec4 ljosweights, vec4 ljoscolorin, bool ljosskinned) {\n\
+         \x20   ivec4 ljosjoints, vec4 ljosweights, vec4 ljoscolorin, bool ljosskinned, int ljosvertexindex) {\n\
          \x20   VERTEX = ljosposition; NORMAL = ljosnormalin;\n\
+         \x20   ljosvertexat = ljosvertexindex;\n\
+         \x20   for (int ljosk = 0; ljosk < 8; ljosk++) { ljosmorphweights[ljosk] = ljosmorphby[ljosk / 4][ljosk % 4]; }\n\
          \x20   UV0 = vec2(ljosuv.x, 1.0 - ljosuv.y); UV1 = vec2(ljosuv1.x, 1.0 - ljosuv1.y);\n\
          \x20   TANGENT = ljostangentin.xyz;\n\
          \x20   BINORMAL = cross(ljosnormalin, ljostangentin.xyz) * ljostangentin.w;\n\
@@ -1786,9 +1853,10 @@ fn material_glue(out: &[Varying], ins: &[Varying], shaded: bool, f: &Functions) 
          \x20   copy: Instance,\n\
          \x20   @location(11) data: vec4<f32>,\n\
          \x20   @builtin(instance_index) index: u32,\n\
+         \x20   @builtin(vertex_index) vertex: u32,\n\
          ) -> CmVsOut {{\n\
          \x20   return cm_vertex(position, normal, uv, uv, tangent, copy, data, index,\n\
-         \x20       vec4<u32>(0u), vec4<f32>(0.0), vec4<f32>(1.0));\n\
+         \x20       vec4<u32>(0u), vec4<f32>(0.0), vec4<f32>(1.0), vertex);\n\
          }}\n\
          @vertex\n\
          fn {MATERIAL_VERTEX_EXTRA}(\n\
@@ -1799,18 +1867,20 @@ fn material_glue(out: &[Varying], ins: &[Varying], shaded: bool, f: &Functions) 
          \x20   copy: Instance,\n\
          \x20   @location(11) data: vec4<f32>,\n\
          \x20   @builtin(instance_index) index: u32,\n\
+         \x20   @builtin(vertex_index) vertex: u32,\n\
          \x20   @location(8) uv1: vec2<f32>,\n\
          \x20   @location(9) joints: vec4<u32>,\n\
          \x20   @location(10) weights: vec4<f32>,\n\
          \x20   @location(12) color: vec4<f32>,\n\
          ) -> CmVsOut {{\n\
-         \x20   return cm_vertex(position, normal, uv, uv1, tangent, copy, data, index, joints, weights, color);\n\
+         \x20   return cm_vertex(position, normal, uv, uv1, tangent, copy, data, index, joints, weights, color, vertex);\n\
          }}\n\
          fn cm_vertex(position: vec3<f32>, normal: vec3<f32>, uv: vec2<f32>, uv1: vec2<f32>,\n\
          \x20   tangent: vec4<f32>, copy: Instance, data: vec4<f32>, index: u32, joints: vec4<u32>,\n\
-         \x20   weights: vec4<f32>, color: vec4<f32>) -> CmVsOut {{\n\
+         \x20   weights: vec4<f32>, color: vec4<f32>, vertex: u32) -> CmVsOut {{\n\
          \x20   let v = cmv_ljosvertex(position, normal, uv, uv1, tangent, copy_place(copy),\n\
-         \x20       copy.color, data, i32(index), vec4<i32>(joints), weights, color, model.maps.w != 0u);\n\
+         \x20       copy.color, data, i32(index), vec4<i32>(joints), weights, color, model.maps.w != 0u,\n\
+         \x20       i32(vertex));\n\
          \x20   var out: CmVsOut;\n\
          \x20   out.clip = v.ljosclip;\n\
          \x20   out.normal = vec4<f32>(v.ljosnormal, v.ljosbinormal.x);\n\
@@ -2560,8 +2630,8 @@ mod tests {
         let naga::TypeInner::Struct { members, span } = &block.inner else {
             panic!("not a struct");
         };
-        // After the header's six matrices and four rows.
-        let offsets: Vec<usize> = members[10..]
+        // After the header's six matrices, four rows and the targets'.
+        let offsets: Vec<usize> = members[12..]
             .iter()
             .map(|m| m.offset as usize - HEADER_ROWS * 16)
             .collect();

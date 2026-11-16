@@ -15,7 +15,7 @@ use bytemuck::{Pod, Zeroable};
 
 use crate::custom::{
     Blend, CustomMaterial, EFFECT_FRAGMENT, EFFECT_VERTEX, HEADER_ROWS, MATERIAL_FRAGMENT,
-    MATERIAL_VERTEX, MATERIAL_VERTEX_EXTRA, Program, ProgramKind, Screen,
+    MATERIAL_VERTEX, MATERIAL_VERTEX_EXTRA, MorphTexels, Morphing, Program, ProgramKind, Screen,
 };
 use crate::maps::{self, Maps};
 use crate::mesh::Topology;
@@ -28,6 +28,9 @@ const BLOCK: u32 = 32;
 const DEPTH: u32 = 30;
 /// SCREEN_TEXTURE and its sampler.
 const SCREEN: u32 = 28;
+/// What a shape's targets have of each vertex, and its sampler, for a
+/// program that goes towards them itself.
+const MORPHS: u32 = 26;
 
 /// What the renderer tells every program, in the block's first rows.
 #[repr(C)]
@@ -46,6 +49,25 @@ pub(crate) struct Header {
     pub clip: [f32; 4],
     /// The input's size and the output's, in pixels.
     pub sizes: [f32; 4],
+    /// How much each of a shape's targets weighs, for a program that goes
+    /// towards them itself.
+    pub morph_by: [[f32; 4]; 2],
+    /// How many targets there are and how many vertices a row of their
+    /// texels holds.
+    pub morphs: [f32; 4],
+}
+
+impl Header {
+    /// What `morphs` puts in the header's last rows.
+    pub(crate) fn morphing(mut self, morphs: Option<&crate::custom::Morphs>) -> Self {
+        if let Some(m) = morphs {
+            for (i, w) in m.weights.iter().take(crate::custom::MORPH_MAX).enumerate() {
+                self.morph_by[i / 4][i % 4] = *w;
+            }
+            self.morphs = [m.texels.count as f32, m.texels.width as f32, 0.0, 0.0];
+        }
+        self
+    }
 }
 
 const _: () = assert!(std::mem::size_of::<Header>() == HEADER_ROWS * 16);
@@ -102,6 +124,8 @@ pub(crate) struct Slot {
     /// The generation of the screen texture it binds.
     screen: Option<u64>,
     depth: Option<u64>,
+    /// The targets' texels it binds.
+    morphs: Option<u64>,
     buffer: wgpu::Buffer,
     pub(crate) group: wgpu::BindGroup,
     written: Vec<u8>,
@@ -117,6 +141,11 @@ pub(crate) struct Programs {
     depth_sampler: wgpu::Sampler,
     /// Linear between mip levels, for SCREEN_MIP_TEXTURE's.
     screen_sampler: wgpu::Sampler,
+    /// Shapes' targets' texels, uploaded once while a scene holds them.
+    morphs: HashMap<u64, (Weak<MorphTexels>, wgpu::TextureView)>,
+    /// What a program that goes towards targets itself reads of a shape
+    /// with none.
+    no_morphs: Option<wgpu::TextureView>,
 }
 
 impl Programs {
@@ -143,7 +172,42 @@ impl Programs {
                 mipmap_filter: wgpu::MipmapFilterMode::Linear,
                 ..Default::default()
             }),
+            morphs: HashMap::new(),
+            no_morphs: None,
         }
+    }
+
+    /// The view of `texels`, uploaded the first time, or of an empty layer
+    /// for a shape with no targets.
+    fn morph_view(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        texels: Option<&Arc<MorphTexels>>,
+    ) -> wgpu::TextureView {
+        let Some(texels) = texels else {
+            return self
+                .no_morphs
+                .get_or_insert_with(|| upload_texels(device, queue, 1, 1, 1, &[0.0; 4]))
+                .clone();
+        };
+        self.morphs.retain(|_, (held, _)| held.strong_count() > 0);
+        self.morphs
+            .entry(texels.id())
+            .or_insert_with(|| {
+                let layers = (2 * texels.count).max(1);
+                let view = upload_texels(
+                    device,
+                    queue,
+                    texels.width,
+                    texels.height,
+                    layers,
+                    &texels.texels,
+                );
+                (Arc::downgrade(texels), view)
+            })
+            .1
+            .clone()
     }
 
     /// The linear, clamping sampler an effect reads its input and buffers
@@ -228,6 +292,25 @@ impl Programs {
                 entries.push(wgpu::BindGroupLayoutEntry {
                     binding: DEPTH + 1,
                     visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
+                    count: None,
+                });
+            }
+            if program.morphing() == Morphing::Itself {
+                // Read whole, a texel a vertex.
+                entries.push(wgpu::BindGroupLayoutEntry {
+                    binding: MORPHS,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        view_dimension: wgpu::TextureViewDimension::D2Array,
+                        multisampled: false,
+                    },
+                    count: None,
+                });
+                entries.push(wgpu::BindGroupLayoutEntry {
+                    binding: MORPHS + 1,
+                    visibility: wgpu::ShaderStages::VERTEX,
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
                     count: None,
                 });
@@ -449,21 +532,35 @@ impl Programs {
     }
 
     /// A group of `program` binding `buffer` as its block, `textures` in
-    /// their order, `depth` where it reads the depth and `screen` where it
-    /// reads the scene behind it.
+    /// their order, and each of `reads` the program reads.
     pub(crate) fn group(
         &self,
         device: &wgpu::Device,
         program: &Program,
         buffer: &wgpu::Buffer,
         textures: &[(wgpu::TextureView, wgpu::Sampler)],
-        depth: Option<&wgpu::TextureView>,
-        screen: Option<&wgpu::TextureView>,
+        reads: Reads<'_>,
     ) -> wgpu::BindGroup {
+        let Reads {
+            depth,
+            screen,
+            morphs,
+        } = reads;
         let mut entries = vec![wgpu::BindGroupEntry {
             binding: BLOCK,
             resource: buffer.as_entire_binding(),
         }];
+        if program.morphing() == Morphing::Itself {
+            let view = morphs.expect("a program that goes towards targets itself is given them");
+            entries.push(wgpu::BindGroupEntry {
+                binding: MORPHS,
+                resource: wgpu::BindingResource::TextureView(view),
+            });
+            entries.push(wgpu::BindGroupEntry {
+                binding: MORPHS + 1,
+                resource: wgpu::BindingResource::Sampler(&self.depth_sampler),
+            });
+        }
         for (i, (view, sampler)) in textures.iter().enumerate() {
             let i = i as u32;
             entries.push(wgpu::BindGroupEntry {
@@ -543,11 +640,15 @@ impl Programs {
             }
         }
         let bytes = block(program, header, &material.values);
+        let itself = program.morphing() == Morphing::Itself;
+        let texels = material.morphs.as_ref().map(|m| &m.texels);
+        let morph_key = itself.then(|| texels.map_or(0, |t| t.id()));
         let fresh = slots.get(i).is_none_or(|s| {
             s.program != program.id()
                 || s.textures != keys
                 || s.screen != screen.map(|s| s.1)
                 || s.depth != depth.map(|d| d.1)
+                || s.morphs != morph_key
         });
         if fresh {
             let buffer = crate::counted::create_buffer(
@@ -559,19 +660,24 @@ impl Programs {
                     mapped_at_creation: false,
                 },
             );
+            let morphs = itself.then(|| self.morph_view(device, queue, texels));
             let group = self.group(
                 device,
                 program,
                 &buffer,
                 &textures,
-                depth.map(|d| d.0),
-                screen.map(|s| s.0),
+                Reads {
+                    depth: depth.map(|d| d.0),
+                    screen: screen.map(|s| s.0),
+                    morphs: morphs.as_ref(),
+                },
             );
             let slot = Slot {
                 program: program.id(),
                 textures: keys,
                 screen: screen.map(|s| s.1),
                 depth: depth.map(|d| d.1),
+                morphs: morph_key,
                 buffer,
                 group,
                 written: Vec::new(),
@@ -588,6 +694,67 @@ impl Programs {
             slot.written = bytes;
         }
     }
+}
+
+/// What a program's group binds beside its block and textures, each where
+/// the program reads it.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct Reads<'a> {
+    /// The scene's depth.
+    pub(crate) depth: Option<&'a wgpu::TextureView>,
+    /// The scene behind it.
+    pub(crate) screen: Option<&'a wgpu::TextureView>,
+    /// The shape's targets.
+    pub(crate) morphs: Option<&'a wgpu::TextureView>,
+}
+
+/// Four floats a texel, `layers` layers of `width` by `height`.
+fn upload_texels(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    width: u32,
+    height: u32,
+    layers: u32,
+    texels: &[f32],
+) -> wgpu::TextureView {
+    let size = wgpu::Extent3d {
+        width,
+        height,
+        depth_or_array_layers: layers,
+    };
+    let texture = crate::counted::create_texture(
+        device,
+        &wgpu::TextureDescriptor {
+            label: Some("ljos_3d morph targets"),
+            size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba32Float,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        },
+    );
+    crate::counted::write_texture(
+        queue,
+        wgpu::TexelCopyTextureInfo {
+            texture: &texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        bytemuck::cast_slice(texels),
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(16 * width),
+            rows_per_image: Some(height),
+        },
+        size,
+    );
+    texture.create_view(&wgpu::TextureViewDescriptor {
+        dimension: Some(wgpu::TextureViewDimension::D2Array),
+        ..Default::default()
+    })
 }
 
 /// An effect binds its INPUT before the author's textures.

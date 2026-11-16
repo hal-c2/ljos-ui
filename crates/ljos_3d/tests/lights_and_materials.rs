@@ -370,7 +370,7 @@ fn red_over_blue(gpu: &mut Offscreen, front: PrincipledMaterial) -> [u8; 4] {
 }
 
 #[test]
-fn alpha_modes_blend_ignore_or_cut_the_opacity() {
+fn alpha_modes_blend_ignore_or_cut_the_colours_alpha() {
     let Some(mut gpu) = offscreen() else { return };
     let half = PrincipledMaterial {
         opacity: 0.5,
@@ -378,19 +378,27 @@ fn alpha_modes_blend_ignore_or_cut_the_opacity() {
     };
     let blended = red_over_blue(&mut gpu, half.clone());
     assert!(blended[0] > 100 && blended[2] > 100, "{blended:?}");
-    let opaque = PrincipledMaterial {
+    // Opaque leaves the colour's alpha behind, but not the opacity.
+    let opaque = |opacity| PrincipledMaterial {
         alpha_mode: AlphaMode::Opaque,
-        ..half
+        opacity,
+        ..PrincipledMaterial::default()
     };
-    assert_eq!(red_over_blue(&mut gpu, opaque), [255, 0, 0, 255]);
+    assert_eq!(red_over_blue(&mut gpu, opaque(1.0)), [255, 0, 0, 255]);
+    let seen = red_over_blue(&mut gpu, opaque(0.5));
+    assert!(seen[0] > 100 && seen[2] > 100, "{seen:?}");
+    // Mask cuts by the colour's alpha alone, and is then opaque but for
+    // its opacity.
     let mask = |opacity, alpha_cutoff| PrincipledMaterial {
         opacity,
         alpha_cutoff,
         alpha_mode: AlphaMode::Mask,
         ..PrincipledMaterial::default()
     };
-    assert_eq!(red_over_blue(&mut gpu, mask(0.6, 0.5)), [255, 0, 0, 255]);
-    assert_eq!(red_over_blue(&mut gpu, mask(0.4, 0.5)), [0, 0, 255, 255]);
+    assert_eq!(red_over_blue(&mut gpu, mask(1.0, 0.5)), [255, 0, 0, 255]);
+    assert_eq!(red_over_blue(&mut gpu, mask(1.0, 1.5)), [0, 0, 255, 255]);
+    let seen = red_over_blue(&mut gpu, mask(0.4, 0.5));
+    assert!(seen[0] > 50 && seen[2] > 100, "{seen:?}");
     // Blend blends even what is wholly opaque, which then hides all.
     let blend = PrincipledMaterial {
         alpha_mode: AlphaMode::Blend,
@@ -593,4 +601,39 @@ fn a_moved_model_moves_in_a_kept_target() {
     assert_eq!(after.pixel(100, 40), [255, 0, 0, 255]);
     assert_eq!(after.pixel(75, 180), [0, 0, 0, 255], "it left its place");
     assert_eq!(after.pixel(5, 180), [255, 0, 0, 255], "the first stays");
+}
+
+/// A dark blue plain surface head on to a white sun down the camera's
+/// axis, with a tight highlight.
+fn glinting(gpu: &mut Offscreen, in_light_color: bool) -> [u8; 4] {
+    let mut s = scene();
+    model(
+        &mut s,
+        Primitive::Rectangle,
+        Material::Default(DefaultMaterial {
+            diffuse_color: Color::rgb(0.0, 0.0, 0.2),
+            specular_amount: 1.0,
+            specular_roughness: 0.1,
+            specular_in_light_color: in_light_color,
+            ..DefaultMaterial::default()
+        }),
+        Transform {
+            scale: Vec3::new(4.0, 4.0, 1.0),
+            ..Transform::default()
+        },
+    );
+    light(&mut s, Light::DIRECTIONAL, Transform::default());
+    draw(gpu, &s).pixel(100, 100)
+}
+
+#[test]
+fn a_highlight_in_the_lights_colour_is_not_the_surfaces() {
+    let Some(mut gpu) = offscreen() else { return };
+    // In the surface's own colour the highlight is blue alone; in the
+    // light's it whitens the surface.
+    let own = glinting(&mut gpu, false);
+    let light = glinting(&mut gpu, true);
+    assert!(own[0] < 8 && own[1] < 8, "{own:?}");
+    assert!(light[0] > 60 && light[1] > 60, "{light:?}");
+    assert!(light[2] >= own[2], "{light:?} {own:?}");
 }

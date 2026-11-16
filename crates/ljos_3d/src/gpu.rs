@@ -950,7 +950,9 @@ fn model_uniform(material: &Material, world: &Mat4) -> ModelUniform {
             u.params[0] = lit(m.lighting);
             u.params2[1] = m.specular_amount.clamp(0.0, 1.0);
             u.params2[2] = m.specular_roughness.clamp(0.0, 1.0);
-            u.maps[1] = m.opacity_channel.index() << 6 | u32::from(m.invert_opacity_map_value) << 8;
+            u.maps[1] = m.opacity_channel.index() << 6
+                | u32::from(m.invert_opacity_map_value) << 8
+                | u32::from(m.specular_in_light_color) << 10;
             u.map_params[0] = m.bump_amount;
             u.emissive = [m.emissive[0], m.emissive[1], m.emissive[2], 0.0];
             let tint = m.specular_tint.to_linear();
@@ -962,8 +964,12 @@ fn model_uniform(material: &Material, world: &Mat4) -> ModelUniform {
         }
         Material::Principled(m) => {
             let c = m.base_color.to_linear();
+            // A solid surface's colour alpha only cuts it out; its opacity
+            // still lays it over what is behind, as Qt draws it.
+            let solid = matches!(m.alpha_mode, AlphaMode::Opaque | AlphaMode::Mask);
             let alpha = match m.alpha_mode {
                 AlphaMode::Opaque => 1.0,
+                AlphaMode::Mask => m.base_color.a.clamp(0.0, 1.0),
                 _ => material.alpha().clamp(0.0, 1.0),
             };
             u.base = [c[0], c[1], c[2], alpha];
@@ -982,7 +988,11 @@ fn model_uniform(material: &Material, world: &Mat4) -> ModelUniform {
                 | maps.roughness_channel.index() << 2
                 | maps.occlusion_channel.index() << 4
                 | maps.opacity_channel.index() << 6
-                | u32::from(maps.invert_opacity_map_value) << 8;
+                | u32::from(maps.invert_opacity_map_value) << 8
+                | u32::from(solid) << 9;
+            if solid {
+                u.params2[2] = m.opacity.clamp(0.0, 1.0);
+            }
             u.map_params = [
                 maps.normal_strength,
                 // With no picture nothing is taken away, whatever the amount.
@@ -2857,7 +2867,10 @@ impl Renderer {
                         direction: frame.camera_dir,
                         clip: [near, far, target.frames as f32, 0.0],
                         sizes: [w as f32, h as f32, w as f32, h as f32],
-                    };
+                        morph_by: [[0.0; 4]; 2],
+                        morphs: [0.0; 4],
+                    }
+                    .morphing(material.morphs.as_ref());
                     self.programs.bind_material(
                         device,
                         queue,
