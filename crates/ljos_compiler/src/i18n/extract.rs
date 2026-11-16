@@ -263,10 +263,26 @@ impl Scripts<'_> {
                 _ => None,
             })
             .collect();
+        self.members(object, &own, &signals, roots);
+    }
+
+    /// The members of `object`, whose owner declares `own` and `signals`:
+    /// the object itself, or, for a group (`font { … }`), the object the
+    /// group is of, as the compiler reads a group's bindings as its owner's.
+    fn members(
+        &mut self,
+        object: &QmlObject<'_>,
+        own: &[String],
+        signals: &[(&str, Vec<String>)],
+        roots: &[Component],
+    ) {
         // A `Component` starts a component, whose root is its object.
         let component = is_component(object);
         for member in &object.members {
             match member {
+                QmlMember::Object(child) if qml_front::scope::is_group(child) => {
+                    self.members(child, own, signals, roots);
+                }
                 QmlMember::Object(child) if component => {
                     let mut inner = roots.to_vec();
                     inner.push(Component::of(child));
@@ -288,16 +304,16 @@ impl Scripts<'_> {
                             signals.iter().find(|(name, _)| *name == handled.as_str())
                         })
                         .map_or(&[][..], |(_, params)| &params[..]);
-                    self.value(&binding.value, &own, roots, starts, args);
+                    self.value(&binding.value, own, roots, starts, args);
                 }
                 QmlMember::Property(property) => {
                     if let Some(value) = &property.value {
                         // `property Component row: Item { … }`.
-                        self.value(value, &own, roots, starts_component(property), &[]);
+                        self.value(value, own, roots, starts_component(property), &[]);
                     }
                 }
                 QmlMember::Function(function) => {
-                    self.script(function.span, Form::Function, &own, roots, &[]);
+                    self.script(function.span, Form::Function, own, roots, &[]);
                 }
                 // An inline component sees nothing around it.
                 QmlMember::InlineComponent(component) => {
@@ -663,6 +679,22 @@ mod tests {
             keys(&found),
             vec![("Outer".to_owned(), None, 6), ("Row".to_owned(), None, 7)]
         );
+    }
+
+    #[test]
+    fn a_group_is_read_with_the_names_its_object_declares() {
+        let grouped = "import Ljos.Core\nItem {\n  Text {\n    function select(r, forms) { return r }\n    property string role\n    font { family: t`${select(role, { other: \"Member\" })}` }\n  }\n}\n";
+        let dotted = grouped
+            .replace("font { family:", "font.family:")
+            .replace("` }", "`");
+        // `select` is the Text's own function, so the choice is a value.
+        for source in [grouped, dotted.as_str()] {
+            assert_eq!(
+                keys(&messages_qml(source)),
+                vec![("{0}".to_owned(), None, 6)],
+                "{source}"
+            );
+        }
     }
 
     #[test]
