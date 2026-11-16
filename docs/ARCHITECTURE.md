@@ -1331,6 +1331,10 @@ Ljós file says what it means.
   - A catalogue is `<language>.po`, its language the header's `Language:`. In development it is read
     directly and watched, so translations hot-reload; a shipped app reads `.ljl`, its own binary
     format, which can be memory-mapped and needs no parser for either PO or `.ts`.
+  - An application's catalogues are in `i18n/` beside its main file, one file per language
+    (`i18n/is.po`; a `.ts` or a compiled `.ljl` is read there too). `ljos run` and `ljos render`
+    install every one at start, and the UI language picks among them: the system's under `ljos run`,
+    `ljos render --language is` for a picture. A file that does not read is said and left out.
   - **Compat.** `qsTr`, `qsTranslate`, `qsTrId` and `QT_*_NOOP` keep Qt's catalogue: `.ts`, keyed by
     `(context = file stem or pragma Translator, source, disambiguation)`, read and written with
     quick-xml 0.42, round-tripping comments and locations. Ljós never reads `.qm`. A `t` message

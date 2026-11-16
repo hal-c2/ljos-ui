@@ -704,6 +704,11 @@ impl Run {
                 // As the program is built with them; a save of one is
                 // shown again like a save of any picture.
                 crate::render::stage_resources(setup.engine(), &resources);
+                crate::render::load_catalogues(
+                    setup.engine(),
+                    main.parent().unwrap_or(&resources),
+                    &mut |line| crate::stderr::line(line),
+                );
                 setup.on_reload(|report| {
                     crate::stderr::line(&format!("ljos: {}", describe(report)))
                 });
@@ -790,6 +795,12 @@ impl Run {
                 ljos_controls::set_application_arguments(engine, arguments);
                 crate::render::stage(engine, &source.resources());
                 crate::render::mount(engine, &source.resource_dirs());
+                let main = dir.join(format!("{key}.qml"));
+                crate::render::load_catalogues(
+                    engine,
+                    main.parent().unwrap_or(&dir),
+                    &mut |line| crate::stderr::line(line),
+                );
                 engine.set_component_source(source);
                 // Read when the first text is made; most programs make none.
                 ljos::dev::install_text_compiler(engine, &[dir.as_path()]);
