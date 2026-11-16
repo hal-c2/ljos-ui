@@ -175,6 +175,7 @@ ApplicationWindow {
             width: 10
             height: 10
             radius: 5
+            // ljos-allow(color-scheme-ignored): a dot with nothing written on it, and its label says the state
             fill: online ? "seagreen" : "transparent"
             border.color: palette.windowText
             border.width: 2
