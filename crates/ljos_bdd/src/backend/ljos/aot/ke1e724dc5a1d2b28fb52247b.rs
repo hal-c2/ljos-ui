@@ -2,15 +2,14 @@ use ljos_engine::aot as rt;
 
 pub static FILE: rt::File = rt::File {
     name: "Scenario",
-    content: [
-        127, 166, 105, 159, 232, 50, 128, 203, 88, 15, 77, 245, 80, 74, 18, 213, 73, 143, 75, 190,
-        176, 129, 215, 163, 89, 8, 192, 237, 201, 126, 64, 72,
-    ],
+    content: [225, 231, 36, 220, 90, 29, 43, 40, 251, 82, 36, 123, 52, 161, 94, 176, 18, 103, 191, 93, 152, 98, 207, 116, 82, 170, 116, 223, 14, 16, 247, 73],
     context: "",
     texts: &[],
-    props: &[],
+    props: &[
+    ],
     signals: &[],
-    methods: &[],
+    methods: &[
+    ],
     exprs: &[
         None, // type: QtObject property first
         None, // object literal
