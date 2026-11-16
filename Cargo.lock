@@ -4138,6 +4138,7 @@ dependencies = [
  "blake3",
  "insta",
  "ljos_aot",
+ "ljos_i18n",
  "ljos_ir",
  "ljos_oxc_parser",
  "oxc_allocator",
