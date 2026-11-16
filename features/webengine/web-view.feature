@@ -548,6 +548,94 @@ Feature: A web page in a WebEngineView
     And 2 seconds pass
     Then the property "seen" of "root" is "||true"
 
+  # A view that is a row of a ListView or a Repeater goes with its row,
+  # and the row can go in the handler. A Repeater destroys the row there
+  # and then. A ListView keeps it until its next layout, or to the end of
+  # a remove transition. Either way the page's own view is going as it
+  # asks, so it gets no window.
+  @api-QtWebEngine.WebEngineView.newWindowRequested @api-QtWebEngine.WebEngineNewWindowRequest.openIn
+  Scenario: A page whose ListView row goes as it opens a window gets none
+    Given the text file "opener.html":
+      """
+      <!doctype html><html><head><title>waiting</title></head>
+      <body style="margin:0"><div onclick="var w = window.open('popup.html'); if (w) w.name = 'named'" style="height:100px; background:#ff0000"></div></body></html>
+      """
+    And the text file "popup.html":
+      """
+      <!doctype html><html><head><title>popup</title></head><body><script>
+      document.title = (window.opener ? "opener" : "no opener") + ", " + (window.name || "not named")
+      </script></body></html>
+      """
+    And the QML:
+      """qml
+      import QtQuick
+      import QtWebEngine
+      Item {
+        id: root; objectName: "root"
+        width: 200; height: 200
+        ListModel { id: tabs; ListElement { page: "opener.html" } }
+        ListView {
+          width: 200; height: 100; model: tabs
+          delegate: WebEngineView {
+            required property string page
+            required property int index
+            width: 200; height: 100
+            url: Qt.resolvedUrl(page)
+            onNewWindowRequested: request => { request.openIn(popup); tabs.remove(index) }
+          }
+        }
+        WebEngineView { id: popup; y: 100; width: 200; height: 100 }
+        property string seen: tabs.count + " " + popup.title
+      }
+      """
+    When 2 seconds pass
+    And the user presses the pointer at 100, 50
+    And the user releases the pointer at 100, 50
+    And 2 seconds pass
+    Then the property "seen" of "root" is "0 no opener, not named"
+
+
+  @api-QtWebEngine.WebEngineView.newWindowRequested @api-QtWebEngine.WebEngineNewWindowRequest.openIn
+  Scenario: A page whose Repeater row goes as it opens a window gets none
+    Given the text file "opener.html":
+      """
+      <!doctype html><html><head><title>waiting</title></head>
+      <body style="margin:0"><div onclick="var w = window.open('popup.html'); if (w) w.name = 'named'" style="height:100px; background:#ff0000"></div></body></html>
+      """
+    And the text file "popup.html":
+      """
+      <!doctype html><html><head><title>popup</title></head><body><script>
+      document.title = (window.opener ? "opener" : "no opener") + ", " + (window.name || "not named")
+      </script></body></html>
+      """
+    And the QML:
+      """qml
+      import QtQuick
+      import QtWebEngine
+      Item {
+        id: root; objectName: "root"
+        width: 200; height: 200
+        ListModel { id: tabs; ListElement { page: "opener.html" } }
+        Repeater {
+          width: 200; height: 100; model: tabs
+          delegate: WebEngineView {
+            required property string page
+            required property int index
+            width: 200; height: 100
+            url: Qt.resolvedUrl(page)
+            onNewWindowRequested: request => { request.openIn(popup); tabs.remove(index) }
+          }
+        }
+        WebEngineView { id: popup; y: 100; width: 200; height: 100 }
+        property string seen: tabs.count + " " + popup.title
+      }
+      """
+    When 2 seconds pass
+    And the user presses the pointer at 100, 50
+    And the user releases the pointer at 100, 50
+    And 2 seconds pass
+    Then the property "seen" of "root" is "0 no opener, not named"
+
   # Going as it asks changes nothing of that: the view of another profile
   # is not given the page's address either.
   @api-QtWebEngine.WebEngineNewWindowRequest.openIn @api-QtWebEngine.WebEngineView.profile

@@ -796,6 +796,25 @@ impl Engine {
         true
     }
 
+    /// Whether `obj` is on its way out: it is gone, or it or what owns it
+    /// waits for [`Engine::destroy`]'s pass or for the end of the turn
+    /// ([`Engine::destroy_at_turn_end`]).
+    pub fn is_going(&self, obj: ObjectId) -> bool {
+        let at_end = self.inner.turns.at_end.borrow();
+        let store = self.inner.store.borrow();
+        let mut at = Some(obj);
+        while let Some(o) = at {
+            let Some(h) = store.objects.get(o) else {
+                return true;
+            };
+            if h.flags.contains(ObjectFlags::PENDING_DELETE) || at_end.contains(&o) {
+                return true;
+            }
+            at = h.owner;
+        }
+        false
+    }
+
     /// Whether objects wait for [`Engine::process_deferred_deletes`].
     pub fn has_deferred_deletes(&self) -> bool {
         !self.inner.store.borrow().deferred.is_empty()

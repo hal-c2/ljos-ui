@@ -641,6 +641,35 @@ fn destroy_listeners_hear_before_what_the_destruction_sets_off_makes_objects() {
 }
 
 #[test]
+fn an_object_is_going_once_it_or_its_owner_is_destroyed_now_or_at_turn_end() {
+    let e = engine();
+    let root = rect(&e);
+    let child = e.create_by_name("Test", "Item", Some(root)).unwrap();
+    let other = rect(&e);
+    let inner = e.create_by_name("Test", "Item", Some(other)).unwrap();
+    assert!(!e.is_going(root) && !e.is_going(child) && !e.is_going(inner));
+
+    e.destroy(root);
+    assert!(
+        e.is_going(root) && e.is_going(child),
+        "destroyed, before its pass"
+    );
+    assert!(!e.is_going(inner));
+
+    // Within a turn, as an item view gives a removed delegate back.
+    e.turn(None, || {
+        e.destroy_at_turn_end(other);
+        assert!(
+            e.is_going(other) && e.is_going(inner),
+            "destroyed at turn end"
+        );
+    });
+    e.process_deferred_deletes();
+    e.process_deferred_deletes();
+    assert!(e.is_going(child) && e.is_going(inner), "gone");
+}
+
+#[test]
 fn ownership_tree_and_deferred_delete() {
     let e = engine();
     let root = rect(&e);

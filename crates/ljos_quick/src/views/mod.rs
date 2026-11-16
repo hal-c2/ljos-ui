@@ -41,6 +41,7 @@ use crate::enums::{EnumTable, keys, layout_direction};
 use crate::flickable::{self, Flickable};
 use crate::item::{is_a, write_computed};
 
+pub use changes::view_delegate_leaving;
 pub(crate) use changes::{incubation_begins, incubation_ends, polish_ends};
 pub use models::{
     DelegateModel, DelegateModelAttached, DelegateModelGroup, ObjectModel, drive_delegate_model,

@@ -35,6 +35,23 @@ struct Incubating {
     due: RefCell<Vec<ObjectId>>,
 }
 
+/// The delegates of every view whose rows left the model and that wait
+/// to go: a remove transition, `delayRemove` or the next layout. A row
+/// that left is never pooled, so each of them goes.
+#[derive(Default)]
+struct Leaving(RefCell<rustc_hash::FxHashSet<ObjectId>>);
+
+/// Whether `object` is the delegate of a row that left its view's model
+/// and waits to go. Code that would tie something to it now, past its
+/// going, can ask.
+pub fn view_delegate_leaving(e: &Engine, object: ObjectId) -> bool {
+    e.extension::<Leaving>().0.borrow().contains(&object)
+}
+
+fn done_leaving(e: &Engine, object: ObjectId) {
+    e.extension::<Leaving>().0.borrow_mut().remove(&object);
+}
+
 /// The scene starts running creation jobs.
 pub(crate) fn incubation_begins(e: &Engine) {
     e.extension::<Incubating>().open.set(true);
@@ -167,6 +184,7 @@ impl ViewHost for Host {
         if e.is_alive(object) && is_item(e, object) {
             let _ = tree::set_parent_item(e, object, None);
         }
+        done_leaving(e, object);
         let Some(st) = state_of(e, view) else {
             return;
         };
@@ -525,6 +543,7 @@ fn leave(e: &Engine, view: ObjectId, st: &ViewState, object: ObjectId, index: i3
         return;
     }
     st.leaving.borrow_mut().push(object);
+    e.extension::<Leaving>().0.borrow_mut().insert(object);
     let held = att
         .filter(|a| e.is_alive(*a))
         .filter(|a| e.untrack(|| e.read(*a, ViewAttached::DELAY_REMOVE.index).to_boolean()));
@@ -610,6 +629,7 @@ fn finish(
         };
         leaving.swap_remove(i);
     }
+    done_leaving(e, object);
     let transition = e.untrack(|| e.get(view, ItemView::REMOVE)).ok().flatten();
     let animated = animate_at(e, view, transition, object, index, targets, move |e| {
         discard(e, view, object, to_owner);
