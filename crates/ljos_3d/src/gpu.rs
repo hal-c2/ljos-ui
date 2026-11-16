@@ -217,6 +217,9 @@ struct PipelineKey {
     blend: BlendMode,
     /// Off, a surface is drawn over all that was drawn before it.
     depth_test: bool,
+    /// Drawn upside down, where a face turned to the camera winds the
+    /// other way: see [`Target::draw_bottom_up`].
+    upside_down: bool,
 }
 
 /// The pipelines and meshes of one device. One per device, shared by every
@@ -235,7 +238,8 @@ pub struct Renderer {
     custom_uploads: u64,
     blit_layout: wgpu::BindGroupLayout,
     blit_sampler: wgpu::Sampler,
-    blits: HashMap<wgpu::TextureFormat, wgpu::RenderPipeline>,
+    /// By the picture's format and whether it is upside down.
+    blits: HashMap<(wgpu::TextureFormat, bool), wgpu::RenderPipeline>,
     maps: Maps,
     ibl: Ibl,
     sky_shader: wgpu::ShaderModule,
@@ -357,6 +361,11 @@ pub struct Target {
     behind: Option<Box<Target>>,
     /// How many times the picture was drawn: the programs' FRAME.
     frames: u64,
+    /// The picture is drawn in GL's order of rows where it can be: see
+    /// [`Target::draw_bottom_up`].
+    bottom_up: bool,
+    /// The picture as last drawn is upside down, and the blit turns it.
+    upside_down: bool,
 }
 
 /// A target's shadow maps and what they were last drawn from.
@@ -554,7 +563,31 @@ impl Target {
             screen: None,
             behind: None,
             frames: 0,
+            bottom_up: false,
+            upside_down: false,
         }
+    }
+
+    /// Has the picture drawn bottom row first, as GL keeps a picture,
+    /// wherever nothing reads it by where on the screen it is, and the
+    /// blit turn it back. A GPU lays its multisampling pattern over the
+    /// rows as they lie in memory, and wgpu lays a picture's top row
+    /// first on every backend: drawn so, every edge and line meets the
+    /// pattern turned over and is covered otherwise than GL's own drawing
+    /// covers it, Qt's on GL and a browser's WebGL. For a picture that is
+    /// presented; one read back keeps wgpu's order.
+    pub fn draw_bottom_up(&mut self, yes: bool) {
+        if self.bottom_up != yes {
+            self.bottom_up = yes;
+            self.drawn = None;
+        }
+    }
+
+    /// Whether the picture as last drawn lies bottom row first: what a
+    /// host that reads the picture itself, rather than through the blit,
+    /// has to turn.
+    pub fn drawn_bottom_up(&self) -> bool {
+        self.upside_down
     }
 
     /// How long the GPU took to draw the picture (its shadow maps and its
@@ -1803,7 +1836,11 @@ impl Renderer {
                     },
                     primitive: wgpu::PrimitiveState {
                         topology: key.topology.wgpu(),
-                        front_face: wgpu::FrontFace::Ccw,
+                        front_face: if key.upside_down {
+                            wgpu::FrontFace::Cw
+                        } else {
+                            wgpu::FrontFace::Ccw
+                        },
                         cull_mode: match key.cull {
                             CullMode::Back => Some(wgpu::Face::Back),
                             CullMode::Front => Some(wgpu::Face::Front),
@@ -2405,11 +2442,27 @@ impl Renderer {
             target.behind = None;
         }
 
+        // Only a picture nothing reads by where on the screen it is: post-
+        // processing, a material's screen or depth and a program's
+        // FRAGCOORD all count rows from the top.
+        let upside_down = target.bottom_up
+            && !processed
+            && screen == Screen::None
+            && target.capture.is_none()
+            && !walked.iter().any(|(_, node, _)| {
+                matches!(&node.kind, NodeKind::Model(model) if matches!(model.material, Material::Custom(_)))
+            });
+        target.upside_down = upside_down;
         let camera = scene.active_camera();
         let (view, proj, view_proj, sky) = match camera {
             Some((camera, world)) => {
                 let view = world.inverse().unwrap_or(Mat4::IDENTITY);
-                let proj = camera.projection(w as f32, h as f32);
+                let mut proj = camera.projection(w as f32, h as f32);
+                if upside_down {
+                    for column in &mut proj.0 {
+                        column[1] = -column[1];
+                    }
+                }
                 let mut turn = view;
                 turn.0[3] = [0.0, 0.0, 0.0, 1.0];
                 let sky = (proj * turn).inverse().unwrap_or(Mat4::IDENTITY);
@@ -2765,6 +2818,7 @@ impl Renderer {
                         topology: self.topology_of(key),
                         blend: model.material.blend_mode(),
                         depth_test: environment.depth_test,
+                        upside_down,
                     },
                     uniform: at,
                     slot,
@@ -3521,48 +3575,51 @@ impl Renderer {
     /// needed once per format before [`Renderer::blit`].
     pub fn prepare_blit(&mut self, device: &wgpu::Device, format: wgpu::TextureFormat) {
         let layout = &self.blit_layout;
-        self.blits.entry(format).or_insert_with(|| {
-            let shader = crate::counted::create_shader_module(
-                device,
-                wgpu::ShaderModuleDescriptor {
-                    label: Some("ljos_3d blit"),
-                    source: wgpu::ShaderSource::Wgsl(include_str!("shaders/blit.wgsl").into()),
-                },
-            );
-            let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("ljos_3d blit"),
-                bind_group_layouts: &[Some(layout)],
-                immediate_size: 0,
-            });
-            crate::counted::create_render_pipeline(
-                device,
-                &wgpu::RenderPipelineDescriptor {
-                    label: Some("ljos_3d blit"),
-                    layout: Some(&pipeline_layout),
-                    vertex: wgpu::VertexState {
-                        module: &shader,
-                        entry_point: Some("vs_main"),
-                        compilation_options: Default::default(),
-                        buffers: &[],
+        for upside_down in [false, true] {
+            self.blits.entry((format, upside_down)).or_insert_with(|| {
+                let shader = crate::counted::create_shader_module(
+                    device,
+                    wgpu::ShaderModuleDescriptor {
+                        label: Some("ljos_3d blit"),
+                        source: wgpu::ShaderSource::Wgsl(include_str!("shaders/blit.wgsl").into()),
                     },
-                    primitive: Default::default(),
-                    depth_stencil: None,
-                    multisample: Default::default(),
-                    fragment: Some(wgpu::FragmentState {
-                        module: &shader,
-                        entry_point: Some("fs_main"),
-                        compilation_options: Default::default(),
-                        targets: &[Some(wgpu::ColorTargetState {
-                            format,
-                            blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
-                            write_mask: wgpu::ColorWrites::ALL,
-                        })],
-                    }),
-                    multiview_mask: None,
-                    cache: None,
-                },
-            )
-        });
+                );
+                let pipeline_layout =
+                    device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                        label: Some("ljos_3d blit"),
+                        bind_group_layouts: &[Some(layout)],
+                        immediate_size: 0,
+                    });
+                crate::counted::create_render_pipeline(
+                    device,
+                    &wgpu::RenderPipelineDescriptor {
+                        label: Some("ljos_3d blit"),
+                        layout: Some(&pipeline_layout),
+                        vertex: wgpu::VertexState {
+                            module: &shader,
+                            entry_point: Some(if upside_down { "vs_turned" } else { "vs_main" }),
+                            compilation_options: Default::default(),
+                            buffers: &[],
+                        },
+                        primitive: Default::default(),
+                        depth_stencil: None,
+                        multisample: Default::default(),
+                        fragment: Some(wgpu::FragmentState {
+                            module: &shader,
+                            entry_point: Some("fs_main"),
+                            compilation_options: Default::default(),
+                            targets: &[Some(wgpu::ColorTargetState {
+                                format,
+                                blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+                                write_mask: wgpu::ColorWrites::ALL,
+                            })],
+                        }),
+                        multiview_mask: None,
+                        cache: None,
+                    },
+                )
+            });
+        }
     }
 
     /// Draws `target`'s picture over the pass's viewport, which the host
@@ -3574,7 +3631,7 @@ impl Renderer {
         format: wgpu::TextureFormat,
         target: &Target,
     ) {
-        let Some(pipeline) = self.blits.get(&format) else {
+        let Some(pipeline) = self.blits.get(&(format, target.upside_down)) else {
             return;
         };
         // The pass is the host's, so what is set and drawn on it is
