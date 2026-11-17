@@ -299,23 +299,39 @@ Be aware of how `JsonListModel` handles bad data and reading again:
 
 You can configure filtering and sorting with `folder`, `rootFolder`, `parentFolder`, `nameFilters`, `showDirs`, `showDirsFirst`, `showDotAndDotDot`, `showFiles`, `showHidden`, `showOnlyReadable`, `caseSensitive`, `sortCaseSensitive`, `sortField` (`FolderListModel.Unsorted`, `Name`, `Time`, `Size`, or `Type`), and `sortReversed`. To inspect rows from script, use `count`, `status`, `get(row, role)`, `indexOf(url)`, and `isFolder(row)`.
 
-```qml
+The example below lists the pictures beside its own file. `Qt.resolvedUrl(".")` is the folder that file is in, so the model shows a row for `logo.svg` and one for `photo.jpg` wherever the example runs, and leaves out `Main.qml` because it matches no filter:
+
+```qml files=logo.svg,photo.jpg
 import QtQuick
 import Qt.labs.folderlistmodel
 
 Column {
+    spacing: 4
     FolderListModel {
         id: files
-        folder: Qt.resolvedUrl("pictures")
-        nameFilters: ["*.png"]
+        folder: Qt.resolvedUrl(".")
+        nameFilters: ["*.jpg", "*.svg"]
         showDirs: false
     }
     Repeater {
         model: files
-        Text {
+        Row {
             required property string fileName
-            color: palette.windowText
-            text: fileName
+            required property url fileUrl
+            spacing: 8
+            // The name beside it says what the picture is.
+            Image {
+                width: 32
+                height: 32
+                fillMode: Image.PreserveAspectFit
+                source: fileUrl
+                Accessible.ignored: true
+            }
+            Text {
+                anchors.verticalCenter: parent.verticalCenter
+                color: palette.windowText
+                text: fileName
+            }
         }
     }
 }

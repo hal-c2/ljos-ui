@@ -109,17 +109,26 @@ Multimedia components obey the same 0 % idle CPU guarantee as the rest of Ljós:
 
 The `QtSensors` module provides `Sensor`, `Accelerometer`, `Gyroscope`, `Magnetometer`, `Compass`, `PressureSensor`, `AmbientLightSensor`, `OrientationSensor` and their reading types:
 
+The example below starts an accelerometer and shows what it reads. Where nothing measures motion, `start()` returns `false` and the text says there is no reading. A reading counts once its `timestamp` is set, because a sensor that has started but not yet measured anything holds a reading of all zeros:
+
 ```qml
 import QtQuick
 import QtSensors
+import Ljos.Core
 
-Item {
+Text {
+    id: root
+    property bool started: false
+    property bool hasReading: acc.reading !== null && acc.reading.timestamp > 0
+    color: palette.windowText
+    text: hasReading
+        ? t`x ${acc.reading.x.toFixed(1)}, y ${acc.reading.y.toFixed(1)}, z ${acc.reading.z.toFixed(1)} m/s²`
+        : started ? t`Waiting for the first reading` : t`No accelerometer, so no reading`
+
     Accelerometer {
         id: acc
         objectName: "acc"
-        property bool started: true
-        property bool hasReading: reading !== null
-        Component.onCompleted: started = start()
+        Component.onCompleted: root.started = start()
     }
 }
 ```
