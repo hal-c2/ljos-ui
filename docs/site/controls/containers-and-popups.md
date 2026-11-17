@@ -106,6 +106,8 @@ Item {
 
 `TabBar` divides its width evenly among its `TabButton` children (which are checkable and auto-exclusive), starts with the first button current (`currentIndex: 0`), and updates `currentIndex` whenever a tab button is clicked or checked.
 
+In `Ljos.Controls` each tab is as wide as its text instead, from the start of the strip, so a strip of tabs reads as a row of words; give a `TabButton` a `width` and it keeps it.
+
 `SwipeView` lays out its pages side by side (horizontal and `interactive: true` by default, with configurable `orientation`), sizing each page to the view. Setting `currentIndex` or swiping past the threshold moves to the target page, whereas a short swipe springs back. Binding `currentIndex` between a `TabBar` and a `SwipeView` keeps them in step:
 
 ```qml
