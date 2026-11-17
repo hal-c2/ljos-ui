@@ -481,6 +481,7 @@ their sources; the user's directory is a directory on the real disk. The steps c
 | `When the application runs "Main.qml" built ahead, with the user's directory over it` | the scenario's files built ahead (`build::Options::with_sources`), run with the user's directory over them; the root is made of the entry in a window of its own |
 | `When the application runs "Main.qml" built ahead from an older "X.qml", with the user's directory over it:` + doc string | the same, with `X.qml` compiled from the doc string while the pack carries the scenario's text of it, as a build that was not redone after a change |
 | `When the user saves the file "X" as:` + doc string / `When the user removes the file "X"` | while the application runs; the step waits for what the save brings |
+| `When the user saves the file "X" as a link to a file outside the user's directory` | while the application runs, the file becomes a link that leads out of the directory; the step waits for what the save brings |
 | `When the user's directory is removed and made again` | the directory is removed and made again at its path before the application hears of either; the step waits for the wake |
 | `Then the user's files are compiled` / `are not compiled` | whether the compiler ran: it does once the user has a file |
 | `Then the user's directory is watched` | the application keeps a watch, on the directory or on the nearest one above it |
