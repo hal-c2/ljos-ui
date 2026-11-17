@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
-#MISE description="Compare pictures (qml-compare diff A B) or run a corpus through a renderer (qml-compare run ...)"
-#USAGE arg "[args]..." var=#true help="qml-compare subcommand and its arguments (diff A B, run …, list …; qml-compare --help)"
+#MISE description="Compare pictures (qml-compare diff A B) or run a corpus through a renderer (qml-compare run ...), as the gallery does; mise run compare -- --help lists its commands"
+#MISE dir="{{config_root}}"
+#USAGE arg "[args]..." var=#true help="qml-compare subcommand and its arguments (diff A B, run …, list …; qml-compare --help). Paths are from the repository's root"
 set -euo pipefail
+# shellcheck source-path=SCRIPTDIR source=_lib/env.sh
+. "$(dirname "$0")/_lib/env.sh"
+cd "$ljos_root"
 exec cargo run --quiet -p qml_compare --bin qml-compare -- "$@"

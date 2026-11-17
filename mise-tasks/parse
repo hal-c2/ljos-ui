@@ -1,9 +1,25 @@
 #!/usr/bin/env bash
-#MISE description="Parse every .qml file of corpus/qtdoc (or the paths given) and report passed/total"
-#USAGE arg "[paths]..." var=#true help=".qml files or directories to parse (default corpus/qtdoc)"
+#MISE description="Parse every .qml file of corpus/qtdoc (or the paths given) and report passed/total. Fetches the corpus submodule when it parses the corpus and it is not here"
+#MISE dir="{{config_root}}"
+#USAGE arg "[paths]..." var=#true help=".qml files or directories to parse, from where mise was started (default corpus/qtdoc/examples)"
 set -euo pipefail
+# shellcheck source-path=SCRIPTDIR source=_lib/env.sh
+. "$(dirname "$0")/_lib/env.sh"
+cd "$ljos_root"
 if [ "$#" -eq 0 ]; then
-  git submodule update --init --depth 1 corpus/qtdoc
-  set -- corpus/qtdoc/examples
+  if [ ! -e corpus/qtdoc/examples ]; then
+    echo "parse: git submodule update --init --depth 1 corpus/qtdoc" >&2
+    git submodule update --init --depth 1 corpus/qtdoc
+  fi
+  set -- "$ljos_root/corpus/qtdoc/examples"
+else
+  paths=()
+  for p in "$@"; do
+    case "$p" in
+      -*) paths+=("$p") ;;
+      *) paths+=("$(from_asked "$p")") ;;
+    esac
+  done
+  set -- "${paths[@]}"
 fi
 exec cargo run --quiet --release -p qml_syntax --bin qml-parse -- "$@"

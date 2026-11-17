@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
-#MISE description="Build ljos with QtWebEngine (CEF) and its helper beside it (on macOS, in ljos.app); CEF is fetched once into $CEF_PATH (default <target>/cef)"
+#MISE description="Build ljos with QtWebEngine (CEF) and its helper beside it (on macOS, in ljos.app); CEF is fetched once into $CEF_PATH (default <target>/cef), about 1.5 GB"
+#MISE dir="{{config_root}}"
 set -euo pipefail
-cd "$(dirname "$0")/../.."
-target="${CARGO_TARGET_DIR:-$PWD/target}"
+# shellcheck source-path=SCRIPTDIR source=../_lib/env.sh
+. "$(dirname "$0")/../_lib/env.sh"
+cd "$ljos_root"
+target="$(target_dir)"
 # The cef crate downloads CEF's minimal distribution (about 1.5 GB unpacked)
 # into CEF_PATH when it isn't there yet, and copies the runtime beside the
 # binaries. Left unset it would land in OUT_DIR and be fetched again after
@@ -27,10 +30,10 @@ if [ "$(uname -s)" = Darwin ]; then
   # older one stays under CEF_PATH after a bump.
   cef_version=$(awk '$0 == "name = \"cef\"" { getline; print }' Cargo.lock | sed -E 's/.*\+([^"]+)".*/\1/')
   arch=$(uname -m)
-  [ "$arch" = arm64 ] && arch=aarch64
+  [ "$arch" != arm64 ] || arch=aarch64
   framework="$CEF_PATH/$cef_version/cef_macos_$arch/Chromium Embedded Framework.framework"
   pick=()
-  [ -d "$framework" ] && pick=(--framework "$framework")
+  [ ! -d "$framework" ] || pick=(--framework "$framework")
   app=$("$target/debug/ljos-webengine-bundle" "$target/debug/ljos" --link-framework ${pick[@]+"${pick[@]}"})
   echo "built $app/Contents/MacOS/ljos with QtWebEngine (CEF from $CEF_PATH)"
 else

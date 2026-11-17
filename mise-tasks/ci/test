@@ -1,5 +1,11 @@
 #!/usr/bin/env bash
-#MISE description="Test the scripts CI runs: the change selection and the doc link check"
+#MISE description="Test the scripts CI runs: the change selection, the doc link check and what the tasks share (tasks:test). CI's docs job runs this"
+#MISE dir="{{config_root}}"
 set -euo pipefail
+# shellcheck source-path=SCRIPTDIR source=../_lib/env.sh
+. "$(dirname "$0")/../_lib/env.sh"
+cd "$ljos_root"
+need_python3
 python3 scripts/ci_changes_test.py
 python3 scripts/doc_links.py
+"$ljos_root/mise-tasks/tasks/test"

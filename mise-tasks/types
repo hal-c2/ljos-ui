@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 #MISE description="Generate crates/qt_types/src/types.txt from the local Qt's qmldir and .qmltypes files (git-ignored; --qt DIR, --module URI, --out FILE)"
+#MISE dir="{{config_root}}"
 #USAGE flag "--qt <dir>" var=#true help="Qt QML import directory (default: QML_IMPORT_PATH, then /usr/lib/qt6/qml); may repeat"
 #USAGE flag "--module <uri>" var=#true help="Also generate this module, besides the default list; may repeat"
 #USAGE flag "--out <file>" help="Where to write (default crates/qt_types/src/types.txt)"

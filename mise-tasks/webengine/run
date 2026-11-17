@@ -1,12 +1,20 @@
 #!/usr/bin/env bash
 #MISE description="Run a QML file with QtWebEngine: webengine:run <file.qml> [ljos run args…] (try examples/webbrowser/Main.qml)"
+#MISE dir="{{config_root}}"
 #USAGE arg "<file>" help="QML file to run (try examples/webbrowser/Main.qml)"
 #USAGE arg "[args]..." var=#true help="Arguments for ljos run after the file"
 set -euo pipefail
-cd "$(dirname "$0")/../.."
-(($#)) || { echo "usage: mise run webengine:run <file.qml> [ljos run args…]" >&2; exit 2; }
+# shellcheck source-path=SCRIPTDIR source=../_lib/env.sh
+. "$(dirname "$0")/../_lib/env.sh"
+cd "$ljos_root"
+[ $# -gt 0 ] || die "usage: mise run webengine:run <file.qml> [ljos run args…]"
+# The file is meant from where it was typed; the task runs from the root.
+file="$(from_asked "$1")"
+shift
+[ -f "$file" ] || die "webengine:run: no such file: $file"
+set -- "$file" "$@"
 mise-tasks/webengine/build >&2
-target="${CARGO_TARGET_DIR:-$PWD/target}"
+target="$(target_dir)"
 if [ "$(uname -s)" = Darwin ]; then
   # The bundle webengine:build made (see there).
   exec "$target/debug/ljos.app/Contents/MacOS/ljos" run "$@"

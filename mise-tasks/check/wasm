@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 #MISE description="ljos_mcp_core's protocol half, and the desugar, build for the web"
+#MISE dir="{{config_root}}"
 set -euo pipefail
+# shellcheck source-path=SCRIPTDIR source=../_lib/env.sh
+. "$(dirname "$0")/../_lib/env.sh"
+cd "$ljos_root"
 # The protocol half of ljos_mcp_core stays free of rmcp and tokio, and so builds
 # for the web without tokio's unstable cfg. Neither builds there otherwise.
 if cargo tree -p ljos_mcp_core --no-default-features --features inspect -e normal \
