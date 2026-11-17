@@ -110,11 +110,17 @@ impl UserDir {
     }
 
     /// The text of the file at `path`. A path outside the directory, or
-    /// whose links lead out of it, is refused; what is read is the file
-    /// the check found, so a link changed between the two reads nothing
-    /// outside.
+    /// whose links lead out of it, is refused. The file is opened before
+    /// it is checked and read through that handle: on unix the handle
+    /// must be the file the check found (device and inode), so a link
+    /// changed between the two reads nothing outside. Anything but a
+    /// regular file (a pipe, a device) is not read, and opening one does
+    /// not wait for a writer.
     pub fn read(&self, path: &Path) -> Result<String, ReadError> {
+        use std::io::Read as _;
         let relative = self.relative(path).map_err(ReadError::Refused)?;
+        let mut file = open_without_waiting(path)?;
+        let opened = file.metadata()?;
         let real = path.canonicalize()?;
         let root = self.real_root().ok_or_else(|| {
             std::io::Error::new(std::io::ErrorKind::NotFound, "the directory is gone")
@@ -122,7 +128,23 @@ impl UserDir {
         if !real.starts_with(&root) {
             return Err(ReadError::Refused(Refusal::LinkOut(relative)));
         }
-        Ok(std::fs::read_to_string(real)?)
+        if !opened.is_file() {
+            return Err(ReadError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "not a file",
+            )));
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt as _;
+            let checked = std::fs::metadata(&real)?;
+            if (checked.dev(), checked.ino()) != (opened.dev(), opened.ino()) {
+                return Err(ReadError::Refused(Refusal::LinkOut(relative)));
+            }
+        }
+        let mut text = String::new();
+        file.read_to_string(&mut text)?;
+        Ok(text)
     }
 
     /// Whether the directory `dir` (a path from the root, `""` for the
@@ -204,6 +226,19 @@ impl UserDir {
         }
         (files, refused)
     }
+}
+
+/// Opens `path` for reading without blocking on a pipe that has no
+/// writer, and without making a terminal the process's.
+fn open_without_waiting(path: &Path) -> std::io::Result<std::fs::File> {
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.custom_flags(libc::O_NONBLOCK | libc::O_NOCTTY);
+    }
+    options.open(path)
 }
 
 /// Whether an address the engine is asked to load may be: a `file:` URL
@@ -306,5 +341,21 @@ mod tests {
         ));
         assert!(dir.has_dir("parts"));
         assert!(!dir.has_dir("../"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_pipe_is_not_read_and_is_not_waited_for() {
+        let root = tempfile::tempdir().unwrap();
+        let fifo = root.path().join("Pipe.qml");
+        let name = std::ffi::CString::new(fifo.as_os_str().as_encoded_bytes()).unwrap();
+        // SAFETY: a NUL-terminated path that lives through the call.
+        assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
+        std::fs::write(root.path().join("Shell.qml"), "Item {}").unwrap();
+        let dir = UserDir::new(root.path());
+        assert!(matches!(dir.read(&fifo), Err(ReadError::Io(_))));
+        let (files, refused) = dir.list(|name| name.ends_with(".qml"));
+        assert_eq!(files.keys().collect::<Vec<_>>(), ["Shell.qml"]);
+        assert!(refused.is_empty());
     }
 }

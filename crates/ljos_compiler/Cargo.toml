@@ -32,6 +32,10 @@ thiserror.workspace = true
 anyhow.workspace = true
 tempfile.workspace = true
 
+# A user's file is opened without waiting on a pipe (`confine.rs`).
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
 [dev-dependencies]
 # Only to hold the compiler's ICU escaping to the runtime's.
 ljos_i18n = { path = "../ljos_i18n" }

@@ -4137,6 +4137,7 @@ dependencies = [
  "anyhow",
  "blake3",
  "insta",
+ "libc",
  "ljos_aot",
  "ljos_i18n",
  "ljos_ir",
