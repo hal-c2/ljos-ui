@@ -24,8 +24,10 @@ use ljos_child::Reaped;
 use serde_json::{Value, json};
 
 mod desktop;
+mod packed;
 mod rate;
 pub use desktop::Setting;
+pub use packed::{Errors, Log};
 
 use crate::backend::{
     inspector::{self, Answer, Ask, Refusal, Seen},
@@ -100,6 +102,18 @@ impl Ran {
             )),
             (true, false) => Err(format!(
                 "{text:?} is in what the command printed:\n{}",
+                self.output
+            )),
+        }
+    }
+
+    /// # Errors
+    /// `text` is not in the output exactly once.
+    pub fn mentions_once(&self, text: &str) -> Result<(), String> {
+        match self.output.matches(text).count() {
+            1 => Ok(()),
+            n => Err(format!(
+                "{text:?} is in what the command printed {n} times, not once:\n{}",
                 self.output
             )),
         }
@@ -398,6 +412,8 @@ struct Rig {
     app: Option<App>,
     /// A program of the scenario's and the application it started.
     family: Option<Family>,
+    /// The packed application that ran last.
+    packed: Option<packed::Packed>,
 }
 
 /// A real parent, a shell, with `ljos` as its child: killing the shell
@@ -464,6 +480,7 @@ impl Rig {
             settings: desktop::Settings::new(),
             app: None,
             family: None,
+            packed: None,
         })
     }
 
@@ -1232,6 +1249,106 @@ impl Slot {
     /// No application was started, or the file has another mode.
     pub fn token_file_has_mode(&mut self, mode: &str) -> Result<(), String> {
         has_mode(&self.app()?.token_file, mode)
+    }
+
+    /// Runs the project as a packed application (`packed_log`), its log
+    /// going where `log` says and its errors becoming what `errors` says.
+    ///
+    /// # Errors
+    /// The project does not compile, the program cannot be built, or it
+    /// fails or does not end.
+    pub fn run_packed(&mut self, files: &Files, log: Log, errors: Errors) -> Result<(), String> {
+        self.rig(files)?.run_packed(log, errors)
+    }
+
+    /// Starts the project as a packed application and leaves it running.
+    ///
+    /// # Errors
+    /// The project does not compile, or the program cannot be built or
+    /// started.
+    pub fn start_packed(&mut self, files: &Files) -> Result<(), String> {
+        self.rig(files)?.start_packed()
+    }
+
+    /// Whether the packed application's stderr, or its stdout, mentions
+    /// `text` as `mentions` says.
+    ///
+    /// # Errors
+    /// No packed application ran, or it does not.
+    pub fn packed_says(&mut self, stdout: bool, text: &str, mentions: bool) -> Result<(), String> {
+        let packed = self
+            .0
+            .as_ref()
+            .ok_or("the packed application has not run")?
+            .packed()?;
+        let (said, what) = if stdout {
+            (packed.output(), "output")
+        } else {
+            (packed.errors(), "errors")
+        };
+        if said.contains(text) == mentions {
+            return Ok(());
+        }
+        let shown: String = said.chars().take(2000).collect();
+        Err(format!(
+            "the {what} {} {text:?}; they are:\n{shown}",
+            if mentions {
+                "do not mention"
+            } else {
+                "mention"
+            }
+        ))
+    }
+
+    /// The packed application took at most `most`.
+    ///
+    /// # Errors
+    /// No packed application ran, or it took longer.
+    pub fn packed_took_at_most(&mut self, most: Duration) -> Result<(), String> {
+        let took = self
+            .0
+            .as_ref()
+            .ok_or("the packed application has not run")?
+            .packed()?
+            .took();
+        if took <= most {
+            Ok(())
+        } else {
+            Err(format!(
+                "the packed application took {} ms, more than {} ms",
+                took.as_millis(),
+                most.as_millis()
+            ))
+        }
+    }
+
+    /// Whether the started application has a thread that writes its
+    /// errors, as `has` says.
+    ///
+    /// # Errors
+    /// No application was started, its threads cannot be read, or it
+    /// does not.
+    pub fn has_error_writer(&mut self, has: bool) -> Result<(), String> {
+        if packed::has_writer(self.app()?)? == has {
+            Ok(())
+        } else if has {
+            Err("the application has no thread that writes its errors".to_owned())
+        } else {
+            Err("the application started a thread that writes its errors".to_owned())
+        }
+    }
+
+    /// The started application has written nothing to its errors.
+    ///
+    /// # Errors
+    /// No application was started, or it wrote something.
+    pub fn errors_empty(&mut self) -> Result<(), String> {
+        let errors = self.app()?.errors();
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(format!("the application wrote to its errors:\n{errors}"))
+        }
     }
 
     /// Notes how often each of the application's threads has woken.
