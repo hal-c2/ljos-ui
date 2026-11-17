@@ -154,6 +154,22 @@ impl<T> Shared<T> {
     }
 }
 
+/// A stream as the inbox it wakes through sees it: whether it holds
+/// anything, so installing a wake hook late wakes a stream that was sent
+/// to before there was one ([`UiInbox::set_wake`](crate::UiInbox::set_wake)).
+pub(crate) trait Queued: Send + Sync {
+    /// Read under the stream's lock, which a sender holds while it moves
+    /// the stream from empty to non-empty: a send either sees the hook or
+    /// is seen here.
+    fn holds_items(&self) -> bool;
+}
+
+impl<T: Send> Queued for Shared<T> {
+    fn holds_items(&self) -> bool {
+        !self.lock().items.is_empty()
+    }
+}
+
 /// What a send did, decided under the lock and finished outside it.
 enum Sent<T> {
     Queued {
@@ -176,7 +192,7 @@ pub(crate) fn channel<T: Send + 'static>(
     capacity: usize,
     policy: BatchPolicy<T>,
     wake: WakeHook,
-) -> (UiBatch<T>, BatchSender<T>) {
+) -> (UiBatch<T>, BatchSender<T>, Weak<dyn Queued>) {
     let capacity = capacity.max(1);
     let keyed = match policy {
         BatchPolicy::Coalesce(_) => HashMap::with_capacity(capacity),
@@ -198,13 +214,14 @@ pub(crate) fn channel<T: Send + 'static>(
         counts: Counts::default(),
     });
     let weak: Weak<Shared<T>> = Arc::downgrade(&shared);
-    observe::register(weak);
+    observe::register(weak.clone());
     (
         UiBatch {
             shared: Arc::clone(&shared),
             spare: VecDeque::with_capacity(capacity),
         },
         BatchSender { shared },
+        weak,
     )
 }
 
@@ -719,7 +736,7 @@ mod tests {
     #[test]
     fn a_run_whose_handler_unwinds_is_never_handed_over_again() {
         let (_inbox, mut batch, tx, _) = stream("test.unwind", 8, BatchPolicy::DropNewest);
-        let mut panicking_drain = |batch: &mut UiBatch<u32>, budget| {
+        let panicking_drain = |batch: &mut UiBatch<u32>, budget| {
             let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 batch.drain(budget, &VirtualClock::new(), |mut d| {
                     d.next();
@@ -761,6 +778,26 @@ mod tests {
         tx.send(3).unwrap();
         assert_eq!(wakes.load(Ordering::SeqCst), 1);
         assert_eq!(all(&mut batch).0, vec![2, 3]);
+    }
+
+    #[test]
+    fn a_stream_sent_to_before_the_inbox_has_a_wake_is_woken_when_it_gets_one() {
+        let (inbox, handle) = UiInbox::<()>::channel(4);
+        let (mut batch, tx) = handle.batch("test.early", 4, BatchPolicy::DropNewest);
+        // No hook yet, and the inbox itself is empty: only the stream
+        // holds anything.
+        tx.send(1u8).unwrap();
+        let wakes = Arc::new(AtomicUsize::new(0));
+        let counted = Arc::clone(&wakes);
+        let set = inbox.set_wake(Arc::new(move || {
+            counted.fetch_add(1, Ordering::SeqCst);
+        }));
+        assert!(set.is_ok());
+        assert_eq!(wakes.load(Ordering::SeqCst), 1);
+        // Still non-empty: further sends wake nothing more.
+        tx.send(2).unwrap();
+        assert_eq!(wakes.load(Ordering::SeqCst), 1);
+        assert_eq!(all(&mut batch).0, vec![1, 2]);
     }
 
     #[test]
