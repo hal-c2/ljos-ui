@@ -573,11 +573,18 @@ impl<M> UiInbox<M> {
     }
 
     fn a_stream_holds_items(&self) -> bool {
-        self.shared
+        // The registry lock is released before any stream's ring is
+        // locked: a sender holds its ring while a `Coalesce` key function
+        // runs, and a `UiBatch` dropped from there takes the registry
+        // lock to leave it. Holding both here, in the other order, could
+        // deadlock. Upgraded streams are dropped outside the lock too.
+        let live: Vec<_> = self
+            .shared
             .streams()
             .iter()
             .filter_map(Weak::upgrade)
-            .any(|s| s.holds_items())
+            .collect();
+        live.iter().any(|s| s.holds_items())
     }
 
     /// Another sending handle.
