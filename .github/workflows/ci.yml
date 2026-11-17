@@ -75,7 +75,8 @@ jobs:
           fi
           python3 scripts/ci_changes.py "${mode[@]}" | tee -a "$GITHUB_OUTPUT"
 
-  # Links and the scripts CI runs: no build, so every run has them.
+  # Links and the scripts CI runs: no build, so every run has them. The task a person runs
+  # (mise run ci:test), with mise but none of its tools: nothing here compiles.
   docs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -83,8 +84,30 @@ jobs:
       - uses: actions/checkout@v5
         with:
           persist-credentials: false
-      - run: python3 scripts/doc_links.py
-      - run: python3 scripts/ci_changes_test.py
+      - uses: jdx/mise-action@v3
+        with:
+          install: false
+      - run: mise run --skip-tools ci:test
+
+  # Every mise task in a quick, non-interactive mode (mise-tasks/tasks/smoke), on a checkout
+  # set up as a fresh clone is: a task that no longer runs turns this red. It leaves the
+  # checkout as it found it.
+  tasks-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      # tasks:smoke lints every task with it.
+      - run: sudo apt-get install -y shellcheck
+      # No Qt and no corpus here: setup says so and goes on.
+      - run: mise run setup --no-corpus
+      - run: mise run tasks:smoke
+      - run: |
+          changed="$(git status --porcelain)"
+          [ -z "$changed" ] || { echo "a task left the checkout changed:"; echo "$changed"; exit 1; }
 
   clippy:
     needs: changes
@@ -258,7 +281,7 @@ jobs:
   # the jobs it did not need were left out.
   ci-ok:
     if: always()
-    needs: [changes, docs, clippy, test, features-build, lint, features, acceptance]
+    needs: [changes, docs, tasks-smoke, clippy, test, features-build, lint, features, acceptance]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
