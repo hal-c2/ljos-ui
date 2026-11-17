@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
-#MISE description="Run the Gherkin ledger (LJOS_BDD_BACKEND=ljos|qt|both; --backlog runs only backlog work)"
+#MISE description="Run the whole Gherkin ledger (LJOS_BDD_BACKEND=ljos|qt|both; --backlog runs only backlog work), through features:run, so @desktop scenarios get their sandbox and LJOS_BDD_CARGO_FEATURES=webengine its CEF"
+#MISE dir="{{config_root}}"
 #USAGE flag "--backlog" help="Run only backlog work"
-#USAGE arg "[args]..." var=#true help="Arguments for the cucumber runner (-t tagexpr, -n name-regex, …)"
+#USAGE arg "[args]..." var=#true help="features:run's arguments (-t tagexpr, -n name-regex, paths, …)"
 set -euo pipefail
 # The default backend is ljos (LJOS_BDD_BACKEND unset). Steps the backend does
 # not support yet report PENDING rather than passing; `features:parity` checks
 # the same scenarios against real Qt.
 # The runner continues past failures and prints an ok/FAILED summary.
-if cargo test --quiet -p ljos_bdd --test features -- "$@"; then
+if "$(dirname "$0")/run" "$@"; then
   echo "features: ok"
 else
-  echo "features: FAILED (see the scenarios marked ✘ above; junit at target/features/junit.xml)"
+  echo "features: FAILED (see the scenarios marked ✘ above; junit at ${CARGO_TARGET_DIR:-target}/features/junit.xml)"
   exit 1
 fi

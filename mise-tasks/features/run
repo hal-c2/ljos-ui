@@ -1,12 +1,18 @@
 #!/usr/bin/env bash
-#MISE description="Run part of the ledger: features:run [--backend ljos|qt|both] [globs…] [-t tagexpr] [-n name-regex]"
+#MISE description="Run part of the ledger: features:run [--backend ljos|qt|both] [globs…] [-t tagexpr] [-n name-regex]. @desktop scenarios get a desktop sandbox of their own (scripts/cua-sandbox.sh), and LJOS_BDD_CARGO_FEATURES=webengine runs @chromium ones on CEF"
 #MISE depends=[]
+#MISE dir="{{config_root}}"
 #USAGE flag "--backend <backend>" help="Engine the scenarios run on (default: LJOS_BDD_BACKEND, else ljos)" { choices "ljos" "qt" "both"; }
 #USAGE flag "-t --tags <tagexpr>" help="Only scenarios matching the tag expression"
 #USAGE flag "-n --name <regex>" help="Only scenarios whose name matches"
 #USAGE flag "--backlog" help="Run only backlog work"
 #USAGE arg "[globs]..." var=#true help="Paths under features/ (directories, files or *.feature patterns), with or without the features/ prefix"
 set -euo pipefail
+# shellcheck source-path=SCRIPTDIR source=../_lib/env.sh
+. "$(dirname "$0")/../_lib/env.sh"
+# CI runs this as a plain script; the paths are the repository's.
+cd "$ljos_root"
+target="$(target_dir)"
 # A glob is a path under features/, with or without that prefix (a directory, a file, or a *.feature pattern).
 # cucumber takes a single --input, so the paths become one {a,b} glob.
 # Everything else is passed through (-t, -n, --backlog).
@@ -14,12 +20,24 @@ args=()
 globs=()
 while [ $# -gt 0 ]; do
   case "$1" in
-    --backend) export LJOS_BDD_BACKEND="$2"; shift 2 ;;
-    -t|--tags|-n|--name|--input|-i) args+=("$1" "$2"); shift 2 ;;
-    -*) args+=("$1"); shift ;;
+    --backend)
+      [ $# -ge 2 ] || die "features:run: --backend needs ljos, qt or both"
+      export LJOS_BDD_BACKEND="$2"
+      shift 2
+      ;;
+    -t | --tags | -n | --name | --input | -i)
+      [ $# -ge 2 ] || die "features:run: $1 needs a value"
+      args+=("$1" "$2")
+      shift 2
+      ;;
+    -*)
+      args+=("$1")
+      shift
+      ;;
     *)
       # Shell completion gives features/bindings; accept that too.
-      g="${1#features/}"; shift
+      g="${1#features/}"
+      shift
       if [ -d "features/$g" ]; then
         g="${g%/}/**/*.feature"
       elif [ -f "features/$g" ]; then
@@ -34,8 +52,15 @@ while [ $# -gt 0 ]; do
 done
 # Always in braces: a path without a pattern in it is matched by nothing.
 if [ ${#globs[@]} -gt 0 ]; then
-  args+=(--input "$PWD/features/{$(IFS=,; echo "${globs[*]}")}")
+  args+=(--input "$PWD/features/{$(
+    IFS=,
+    echo "${globs[*]}"
+  )}")
 fi
+
+# Qt runs off-screen; a desktop platform theme (gtk3, qt6ct) would still
+# reach for a display.
+[ "${LJOS_BDD_BACKEND:-ljos}" = ljos ] || unset QT_QPA_PLATFORMTHEME
 
 # @desktop scenarios run Ljós on a real compositor: the desktop sandbox (scripts/cua-sandbox.sh),
 # headless and on its own bus, of its own here so that a sandbox someone drives is left alone.
@@ -51,12 +76,13 @@ if [ -n "${LJOS_BDD_CARGO_FEATURES:-}" ]; then
   case ",$LJOS_BDD_CARGO_FEATURES," in
     *,webengine,*)
       cef=1
-      export CEF_PATH="${CEF_PATH:-${CARGO_TARGET_DIR:-$PWD/target}/cef}"
+      export CEF_PATH="${CEF_PATH:-$target/cef}"
       # @chromium runs headless (features/README.md), as on a machine with
       # no display: on a desktop Chromium would take the desktop's display
       # and pass what such a machine fails.
       export LJOS_WEBENGINE_CHROMIUM_FLAGS="${LJOS_WEBENGINE_CHROMIUM_FLAGS---ozone-platform=headless}"
-      cargo build --quiet -p ljos_webengine --features cef --bin ljos-webengine-helper ;;
+      cargo build --quiet -p ljos_webengine --features cef --bin ljos-webengine-helper
+      ;;
   esac
 fi
 
@@ -64,39 +90,61 @@ fi
 # for all its shards; LJOS_BIN, LJOS_FUZZ_BIN and LJOS_PACKED_LOG_BIN then name the programs
 # its steps run. Without it the test is built here. It runs where cargo
 # would run it, in its package's directory.
+bin=
 if [ -n "${LJOS_BDD_FEATURES_BIN:-}" ]; then
-  runner=(env -C "$PWD/crates/ljos_bdd" "$(realpath "$LJOS_BDD_FEATURES_BIN")")
-else
-  runner=(cargo test --quiet -p ljos_bdd "${features[@]}" --test features --)
+  bin="$(from_asked "$LJOS_BDD_FEATURES_BIN")"
+  [ -x "$bin" ] || die "LJOS_BDD_FEATURES_BIN is $LJOS_BDD_FEATURES_BIN, which is not a program"
 fi
+run_ledger() {
+  if [ -n "$bin" ]; then
+    (cd "$ljos_root/crates/ljos_bdd" && exec "$bin" "$@")
+  else
+    cargo test --quiet -p ljos_bdd ${features[@]+"${features[@]}"} --test features -- "$@"
+  fi
+}
 if [ -n "$cef" ]; then
   # CEF's libraries come unstripped, libcef.so at 1.48 GB (see the script). Either build may
   # run the cef crate's build script, which copies them again, so the test is built before
   # they are stripped, not by the run that loads them.
-  [ -n "${LJOS_BDD_FEATURES_BIN:-}" ] || cargo test --quiet --no-run -p ljos_bdd "${features[@]}" --test features
-  scripts/strip-cef-runtime.sh "${CARGO_TARGET_DIR:-$PWD/target}/debug"
+  [ -n "$bin" ] || cargo test --quiet --no-run -p ljos_bdd ${features[@]+"${features[@]}"} --test features
+  scripts/strip-cef-runtime.sh "$target/debug"
 fi
 
+# The files the globs pick, as cucumber reads them: dir/**/name.feature is
+# name.feature in dir or any directory below it. Listed with find, not
+# globstar, which macOS's bash 3.2 lacks.
+selected() {
+  local g d
+  if [ ${#globs[@]} -eq 0 ]; then
+    find features -name '*.feature'
+    return 0
+  fi
+  for g in "${globs[@]}"; do
+    case "$g" in
+      *'/**/'*)
+        # The directory part may itself be a pattern (*/bindings).
+        # shellcheck disable=SC2086 # it is meant to expand
+        for d in features/${g%%/\*\**}; do
+          if [ -d "$d" ]; then find "$d" -name "${g##*/}"; fi
+        done
+        ;;
+      *) if [ -f "features/$g" ]; then printf '%s\n' "features/$g"; fi ;;
+    esac
+  done
+}
 desktop=
 if [ "${LJOS_BDD_BACKEND:-ljos}" != qt ]; then
-  shopt -s globstar nullglob
-  files=()
-  if [ ${#globs[@]} -eq 0 ]; then
-    files=(features/**/*.feature)
-  else
-    # shellcheck disable=SC2206 # the glob is meant to expand
-    for g in "${globs[@]}"; do files+=(features/$g); done
-  fi
-  shopt -u globstar nullglob
-  if [ ${#files[@]} -gt 0 ] && grep -qs '@desktop' "${files[@]}"; then
-    desktop=1
-  fi
+  while IFS= read -r f; do
+    if [ -n "$f" ] && grep -qs '@desktop' "$f"; then
+      desktop=1
+      break
+    fi
+  done < <(selected)
 fi
 if [ -n "$desktop" ]; then
-  target="${CARGO_TARGET_DIR:-$PWD/target}"
   export LJOS_CUA_HOME="$target/cua-features"
   mkdir -p "$target/features"
-  if why=$(scripts/cua-sandbox.sh env 2>&1 > "$target/features/desktop.env"); then
+  if why=$(scripts/cua-sandbox.sh env 2>&1 >"$target/features/desktop.env"); then
     # Set before the build, so a build that fails stops the sandbox env started too.
     trap 'scripts/cua-sandbox.sh stop' EXIT
     # Built once here, outside the test, which then runs this one: a build
@@ -113,8 +161,8 @@ if [ -n "$desktop" ]; then
     scripts/cua-sandbox.sh stop > /dev/null 2>&1 || true
     export LJOS_BDD_DESKTOP_SKIP="${why##*$'\n'}"
   fi
-  "${runner[@]}" "${args[@]}"
+  run_ledger ${args[@]+"${args[@]}"}
 else
   export LJOS_BDD_DESKTOP_SKIP=
-  exec "${runner[@]}" "${args[@]}"
+  run_ledger ${args[@]+"${args[@]}"}
 fi
