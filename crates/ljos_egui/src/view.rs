@@ -305,6 +305,10 @@ impl QmlView {
     /// A view of `root`, which must be an `Item`.
     pub fn new(engine: Rc<Engine>, root: ObjectId) -> Result<Self, ViewError> {
         let mut scene = QuickScene::new(kurbo::Size::ZERO);
+        // A window has no keyboard until the system gives it one, as Qt's
+        // reads `active` false until then. Starting active, its first pass
+        // without the keyboard would tell the app it lost it as it appeared.
+        scene.set_window_active(&engine, false);
         scene.set_root(&engine, root)?;
         let gate = Rc::new(WakeGate::default());
         let g = Rc::clone(&gate);
