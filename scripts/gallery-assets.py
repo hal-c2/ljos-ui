@@ -3,7 +3,8 @@
 that are in no repository.
 
 gallery-assets.py            which examples have such assets, and whether they are here
-gallery-assets.py <id>...    download and unpack those of each, and put them where its build does
+gallery-assets.py <id>...    download and unpack those of each, and put them where its build does;
+                             an example with none passes, an id that is no example fails
 gallery-assets.py --check <id>...
                              exit 1, naming what is missing, when an example's assets are not where
                              its build puts them; an example with none passes
@@ -134,8 +135,12 @@ def main():
                       f"run `mise run gallery:assets {eid}` first", file=sys.stderr)
         sys.exit(1 if bad else 0)
     for eid in sys.argv[1:]:
+        if eid not in examples:
+            sys.exit(f"{eid} is not an example of corpus/examples.json")
         if eid not in assets:
-            sys.exit(f"no assets to download for {eid}")
+            # As --check passes it: its build downloads nothing, so nothing is missing.
+            print(f"{eid}: its build downloads nothing")
+            continue
         directory = os.path.join(QTDOC, examples[eid]["dir"])
         kept = os.path.join(CACHE, eid)
         os.makedirs(kept, exist_ok=True)
