@@ -366,7 +366,7 @@
             },
             {
               "const": "mailbox",
-              "description": "The bounded inboxes threads reach the UI thread through. Read\nwithout the UI thread, so a stuck one still shows its inbox.",
+              "description": "The bounded inboxes and side streams threads reach the UI thread\nthrough. Read without the UI thread, so a stuck one still shows\nits inbox.",
               "type": "string"
             },
             {
@@ -402,7 +402,7 @@
         },
         "mailbox": {
           "default": null,
-          "description": "List only the mailboxes of this name (`application`, `platform`,\n`images`, `inspector`, `reload`).",
+          "description": "List only the mailboxes of this name (`application`, `platform`,\n`images`, `inspector`, `reload`, or a side stream's own name).",
           "type": [
             "string",
             "null"

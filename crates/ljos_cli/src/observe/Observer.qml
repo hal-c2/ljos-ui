@@ -1269,17 +1269,24 @@ ApplicationWindow {
                     // A box as the view's model holds it: what the card
                     // shows, worked out once.
                     function flat(b) {
+                        // A side stream (kind "batch") gives way by its
+                        // policy when full and carries one type: it says
+                        // what it evicted, and has no kinds to list.
+                        var batch = b.kind === "batch"
                         return {
                             name: b.name,
+                            batch: batch,
                             depth: b.depth,
                             capacity: b.capacity,
                             sent: String(b.sent),
                             drained: String(b.drained),
                             refused: b.refused,
                             replaced: String(b.replaced),
+                            evicted: b.evicted === undefined ? 0 : b.evicted,
                             senders: b.senders + (b.waiting_senders > 0 ? " (" + b.waiting_senders + " waiting)" : ""),
                             oldest: b.oldest_us === undefined || b.oldest_us === null ? "—" : window.ms(b.oldest_us),
-                            kinds: b.kinds.length === 0 ? "empty"
+                            kinds: batch ? "side stream · handled a run at a time"
+                                : b.kinds.length === 0 ? "empty"
                                 : b.kinds.map(function(k) { return k.kind + " ×" + k.count }).join(", ")
                         }
                     }
@@ -1303,17 +1310,19 @@ ApplicationWindow {
                         Layout.fillHeight: true
                         clip: true
                         cellWidth: Math.max(280, width / Math.max(1, Math.floor(width / 320)))
-                        cellHeight: 168
+                        cellHeight: 186
                         model: window.page === 2 ? boxRows : null
                         delegate: Item {
                             id: box
                             required property string name
+                            required property bool batch
                             required property int depth
                             required property int capacity
                             required property string sent
                             required property string drained
                             required property int refused
                             required property string replaced
+                            required property int evicted
                             required property string senders
                             required property string oldest
                             required property string kinds
@@ -1331,6 +1340,7 @@ ApplicationWindow {
                                     spacing: 7
                                     RowLayout {
                                         Text { text: box.name; color: theme.text; font.bold: true; font.pixelSize: 15 }
+                                        Text { visible: box.batch; text: "batch"; color: theme.subtle }
                                         Item { Layout.fillWidth: true }
                                         Text {
                                             text: box.depth + " / " + box.capacity
@@ -1372,6 +1382,13 @@ ApplicationWindow {
                                         Text { text: box.senders; color: theme.text; font.family: theme.mono }
                                         Text { text: "oldest"; color: theme.subtle }
                                         Text { text: box.oldest; color: theme.text; font.family: theme.mono }
+                                        Text { visible: box.batch; text: "evicted"; color: theme.subtle }
+                                        Text {
+                                            visible: box.batch
+                                            text: box.evicted
+                                            font.family: theme.mono
+                                            color: box.evicted > 0 ? theme.warn : theme.text
+                                        }
                                     }
                                     Text {
                                         Layout.fillWidth: true
