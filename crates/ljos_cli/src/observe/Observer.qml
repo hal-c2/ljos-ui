@@ -1282,7 +1282,7 @@ ApplicationWindow {
                             drained: String(b.drained),
                             refused: b.refused,
                             replaced: String(b.replaced),
-                            evicted: b.evicted === undefined ? 0 : b.evicted,
+                            evicted: b.evicted === undefined ? "0" : String(b.evicted),
                             senders: b.senders + (b.waiting_senders > 0 ? " (" + b.waiting_senders + " waiting)" : ""),
                             oldest: b.oldest_us === undefined || b.oldest_us === null ? "—" : window.ms(b.oldest_us),
                             kinds: batch ? "side stream · handled a run at a time"
@@ -1322,7 +1322,7 @@ ApplicationWindow {
                             required property string drained
                             required property int refused
                             required property string replaced
-                            required property int evicted
+                            required property string evicted
                             required property string senders
                             required property string oldest
                             required property string kinds
@@ -1387,7 +1387,7 @@ ApplicationWindow {
                                             visible: box.batch
                                             text: box.evicted
                                             font.family: theme.mono
-                                            color: box.evicted > 0 ? theme.warn : theme.text
+                                            color: box.evicted !== "0" ? theme.warn : theme.text
                                         }
                                     }
                                     Text {
