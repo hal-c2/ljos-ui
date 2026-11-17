@@ -1,0 +1,155 @@
+#!/usr/bin/env bash
+#MISE description="Test what the tasks share (mise-tasks/_lib/env.sh) against stand-in tools: the Qt CI pins read from ci.yml alone, another Qt minor version found by qmake6, qtpaths or qml6 is a mismatch setup --check fails on, and paths hold under a TMPDIR with a trailing slash or a link"
+set -euo pipefail
+# shellcheck source-path=SCRIPTDIR source=../_lib/env.sh
+. "$(dirname "$0")/../_lib/env.sh"
+cd "$ljos_root"
+
+# macOS's TMPDIR ends in "/" and lies under /var, a link to /private/var: the
+# scratch directory is asked for through both, and every path compared is the
+# physical one.
+base="$(physical "${TMPDIR:-/tmp}")"
+real="$(mktemp -d "$base/ljos-tasks-test.XXXXXX")"
+trap 'rm -rf "$real"' EXIT
+mkdir "$real/tmp"
+ln -s "$real/tmp" "$real/link"
+export TMPDIR="$real/link/"
+
+failed=0
+ok() { printf 'ok    %s\n' "$1"; }
+bad() {
+  printf 'FAIL  %s\n' "$1" >&2
+  shift
+  [ $# -eq 0 ] || printf '      %s\n' "$@" >&2
+  failed=1
+}
+
+# Stand-ins for every Qt tool _lib/env.sh asks, so this machine's own Qt is
+# never what answers. `stand <tool> <version>` makes one answer as Qt's does;
+# the rest fail, as a tool that is not there would be skipped.
+stands="$real/bin"
+mkdir "$stands"
+stand_reset() {
+  local tool
+  for tool in qmake6 qtpaths6 qtpaths qml6; do
+    printf '#!/bin/sh\nexit 1\n' >"$stands/$tool"
+    chmod +x "$stands/$tool"
+  done
+}
+stand() {
+  case "$1" in
+    qmake6) printf '#!/bin/sh\n[ "$1 $2" = "-query QT_VERSION" ] || exit 1\necho %s\n' "$2" ;;
+    qml6) printf '#!/bin/sh\n[ "$1" = --version ] || exit 1\necho "Qml Runtime %s"\n' "$2" ;;
+    *) printf '#!/bin/sh\n[ "$1" = --qt-version ] || exit 1\necho %s\n' "$2" ;;
+  esac >"$stands/$1"
+}
+with_stands() { PATH="$stands:$PATH" "$@"; }
+
+# A workflow with the install-qt-action steps ci.yml has, pinning $1 (and $2
+# in the second step, when given).
+workflow() {
+  cat <<EOF
+jobs:
+  types:
+    steps:
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: "$1"
+          modules: qtmultimedia
+      - run: mise run types
+  gallery:
+    steps:
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: "${2:-$1}"
+      - run: mise run gallery
+EOF
+}
+
+# --- The pin is ci.yml's ---------------------------------------------------------
+
+got="$(qt_pin)"
+want="$(sed -n 's/^ *version: *"\(6\.[0-9.]*\)".*/\1/p' .github/workflows/ci.yml | sort -u)"
+if [ -n "$got" ] && [ "$got" = "$want" ]; then ok "qt_pin reads ci.yml's install-qt-action pin ($got)"; else bad "qt_pin read '$got' from ci.yml, whose install-qt-action steps say '$want'"; fi
+
+workflow 6.11.2 6.12.0 >"$real/split.yml"
+if out="$(LJOS_CI_WORKFLOW="$real/split.yml" qt_pin 2>&1)"; then
+  bad "qt_pin took a workflow whose steps pin two Qts" "$out"
+else
+  case "$out" in
+    *"pin different Qt versions"*) ok "qt_pin refuses steps that pin two Qts" ;;
+    *) bad "qt_pin failed on two pins without saying so" "$out" ;;
+  esac
+fi
+
+# --- Another minor version is a mismatch -------------------------------------
+
+stand_reset
+stand qmake6 6.12.3
+out="$(with_stands qt_mismatch)"
+case "$out" in
+  *"Qt 6.12.3 (qmake6) is not CI's Qt ${got%.*} "*"aqt install-qt "*"$got"*) ok "qmake6 at 6.12.3 is a mismatch with the pin, with the fix" ;;
+  *) bad "qmake6 at 6.12.3 against $got gave no mismatch with a fix" "$out" ;;
+esac
+
+stand_reset
+stand qtpaths 6.12.1
+stand qml6 6.12.1
+out="$(with_stands qt_mismatch)"
+case "$out" in
+  *"Qt 6.12.1 (qtpaths, qml6) is not"*) ok "qtpaths and qml6 at 6.12.1 are one mismatch naming both" ;;
+  *) bad "qtpaths and qml6 at 6.12.1 were not one mismatch naming both" "$out" ;;
+esac
+
+stand_reset
+stand qmake6 "${got%.*}.0"
+stand qtpaths 5.15.19
+out="$(with_stands qt_mismatch)"
+if [ -z "$out" ]; then ok "Qt ${got%.*}.0 matches the pin, and Qt 5's qtpaths is not asked"; else bad "Qt ${got%.*}.0 with Qt 5's qtpaths was a mismatch" "$out"; fi
+
+stand_reset
+stand qmake6 6.12.3
+workflow 6.12.0 >"$real/pin612.yml"
+out="$(LJOS_CI_WORKFLOW="$real/pin612.yml" with_stands qt_mismatch)"
+if [ -z "$out" ]; then ok "the pin comes from the workflow alone: one pinning 6.12.0 takes Qt 6.12.3"; else bad "a workflow pinning 6.12.0 still called Qt 6.12.3 a mismatch" "$out"; fi
+
+stand_reset
+out="$(with_stands qt_mismatch)"
+if [ -z "$out" ]; then ok "no Qt found is no mismatch"; else bad "no Qt found was a mismatch" "$out"; fi
+
+# --- setup --check fails on the mismatch, and only on it -----------------------
+
+qt_line() { printf '%s\n' "$1" | grep -c "is not CI's Qt" || true; }
+
+stand_reset
+stand qmake6 6.12.3
+if out="$(with_stands bash mise-tasks/setup --check 2>&1)"; then
+  bad "setup --check passed with Qt 6.12.3 against the $got pin" "$out"
+else
+  case "$out" in
+    *"setup is missing:"*"Qt 6.12.3 (qmake6) is not CI's Qt"*) ok "setup --check fails on Qt 6.12.3, saying so under what is missing" ;;
+    *) bad "setup --check failed, but not on the Qt mismatch" "$out" ;;
+  esac
+fi
+
+stand_reset
+stand qmake6 "${got%.*}.0"
+out="$(with_stands bash mise-tasks/setup --check 2>&1 || true)"
+if [ "$(qt_line "$out")" = 0 ]; then ok "setup --check names no mismatch for Qt ${got%.*}.0"; else bad "setup --check called Qt ${got%.*}.0 a mismatch" "$out"; fi
+
+# --- Paths ---------------------------------------------------------------------
+
+if [ "$(physical "$TMPDIR")" = "$(physical "$real/tmp")" ]; then ok "physical resolves a TMPDIR with a trailing slash through a link"; else bad "physical gave $(physical "$TMPDIR") for $TMPDIR, not $(physical "$real/tmp")"; fi
+
+made="$(mktemp -d "${TMPDIR%/}/x.XXXXXX")"
+case "$made" in
+  *//*) bad "a scratch directory under TMPDIR=$TMPDIR has a doubled slash: $made" ;;
+  *) ok "scratch under a TMPDIR with a trailing slash has no doubled slash" ;;
+esac
+
+out="$(MISE_ORIGINAL_CWD="$real/link" from_asked app.qml)"
+if [ "$out" = "$real/link/app.qml" ]; then ok "from_asked reads a relative path from where it was typed"; else bad "from_asked gave $out"; fi
+out="$(CARGO_TARGET_DIR=build target_dir)"
+if [ "$out" = "$ljos_root/build" ]; then ok "a relative CARGO_TARGET_DIR is from the root"; else bad "target_dir gave $out for CARGO_TARGET_DIR=build"; fi
+
+exit "$failed"
