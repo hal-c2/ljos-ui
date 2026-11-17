@@ -21,7 +21,10 @@ use std::{
     collections::{BTreeSet, HashSet},
     path::{Path, PathBuf},
     rc::Rc,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
     time::Instant,
 };
 
@@ -402,25 +405,12 @@ struct Dormant {
     _fs: notify::RecommendedWatcher,
     /// The directory, or the nearest one above it that is there.
     target: PathBuf,
-    /// Which directory that was when it was watched: one removed and
-    /// made again at the same path is another, and the watch is not on it.
-    id: Option<DirId>,
-}
-
-/// A directory's identity where the system gives one (device, inode).
-type DirId = (u64, u64);
-
-fn dir_id(path: &Path) -> Option<DirId> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt as _;
-        std::fs::metadata(path).ok().map(|m| (m.dev(), m.ino()))
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = path;
-        None
-    }
+    /// Set by the watch when what it watches is removed or moved away
+    /// (or it fails): a directory made again at the same path is another,
+    /// which this watch does not see. Told by the watch itself, as a
+    /// device and inode are not: a directory made at once may be given
+    /// the inode the removed one had.
+    gone: Arc<AtomicBool>,
 }
 
 /// An application's users' files over its own, as it runs.
@@ -646,17 +636,33 @@ impl UserSession {
         let Some(target) = root.ancestors().find(|p| p.is_dir()).map(Path::to_owned) else {
             return;
         };
-        let id = dir_id(&target);
         if watch
             .as_ref()
-            .is_some_and(|w| w.target == target && w.id == id)
+            .is_some_and(|w| w.target == target && !w.gone.load(Ordering::Acquire))
         {
             return;
         }
         let on_dir = target == root;
         let handle = self.handle.clone();
         let below = root.clone();
+        let gone = Arc::new(AtomicBool::new(false));
+        let lost = Arc::clone(&gone);
+        let watched = target.clone();
         let made = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
+            let left = match &event {
+                Ok(event) => {
+                    matches!(
+                        event.kind,
+                        notify::EventKind::Remove(_)
+                            | notify::EventKind::Modify(notify::event::ModifyKind::Name(_))
+                    ) && event.paths.contains(&watched)
+                }
+                Err(_) => true,
+            };
+            if left {
+                // Before the wake, so that the wake finds it.
+                lost.store(true, Ordering::Release);
+            }
             // Above the directory, only what makes it (or a directory on
             // the way to it) counts.
             let counts = match &event {
@@ -685,7 +691,7 @@ impl UserSession {
                 *watch = Some(Dormant {
                     _fs: fs,
                     target,
-                    id,
+                    gone,
                 })
             }
             Err(e) => {

@@ -1655,6 +1655,10 @@ impl Application for LjosBackend {
         self.live()?.user_qml_link_out(name)
     }
 
+    fn user_qml_dir_made_again(&mut self) -> Result<()> {
+        self.live()?.user_qml_dir_made_again()
+    }
+
     fn run_with_user_qml(
         &mut self,
         entry: &str,

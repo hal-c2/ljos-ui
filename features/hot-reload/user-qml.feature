@@ -91,6 +91,18 @@ Feature: A shipped application its users change while it runs
       And the object "loader/user-shell" exists
       And the object "default-shell" does not exist
 
+    Scenario: A user's directory removed and made again is watched, and a first file in it brings it in
+      When the application runs "Main.qml" built ahead, with the user's directory over it
+      And the user's directory is removed and made again
+      Then the user's directory is watched
+      When the user saves the file "Shell.qml" as:
+        """qml
+        import QtQuick
+        Rectangle { objectName: "user-shell"; width: 50; height: 20 }
+        """
+      Then the user's files are compiled
+      And the object "loader/user-shell" exists
+
   Rule: A save is applied with the state of the application kept
 
     Scenario: A save keeps what the user typed

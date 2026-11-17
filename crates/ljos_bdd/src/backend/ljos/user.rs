@@ -191,6 +191,24 @@ impl Live {
         self.take_user_save(name)
     }
 
+    /// Removes the user's directory and makes it again at its path, both
+    /// before the application is woken: what it watched is gone, though
+    /// the path is there. While it runs, takes the wake.
+    pub(super) fn user_qml_dir_made_again(&mut self) -> Result<()> {
+        let user = self.user()?;
+        let dir = user.dir.path().to_owned();
+        std::fs::remove_dir_all(&dir).map_err(failed)?;
+        std::fs::create_dir(&dir).map_err(failed)?;
+        if !user.session.as_ref().is_some_and(UserSession::is_watching) {
+            return Ok(());
+        }
+        user.woke
+            .recv_timeout(PATIENCE)
+            .map_err(|_| failed("the application did not wake for its directory"))?;
+        self.pump_user()?;
+        self.settle()
+    }
+
     fn take_user_save(&mut self, name: &str) -> Result<()> {
         loop {
             let user = self.user.as_ref().expect("written above");

@@ -1013,6 +1013,12 @@ pub trait Application: Backend {
         Err(BackendError::NotImplemented("a user's directory"))
     }
 
+    /// The user's directory is removed and made again at the same path,
+    /// both before the application hears of either.
+    fn user_qml_dir_made_again(&mut self) -> Result<()> {
+        Err(BackendError::NotImplemented("a user's directory"))
+    }
+
     /// Runs `entry` of the given files built ahead into a pack that
     /// carries their sources (`sources`; else none), with the user's
     /// directory over them. `built_from`: files the build compiled from

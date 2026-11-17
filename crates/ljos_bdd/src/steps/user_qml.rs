@@ -28,6 +28,11 @@ fn user_saves(w: &mut LjosWorld, name: String, step: &Step) -> StepResult {
     w.each(|b| b.application()?.user_qml_file(&name, Some(&text)))
 }
 
+#[when("the user's directory is removed and made again")]
+fn user_dir_made_again(w: &mut LjosWorld) -> StepResult {
+    w.each(|b| b.application()?.user_qml_dir_made_again())
+}
+
 #[when(regex = r#"^the user removes the file "([^"]+)"$"#)]
 fn user_removes(w: &mut LjosWorld, name: String) -> StepResult {
     w.each(|b| b.application()?.user_qml_file(&name, None))
