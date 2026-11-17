@@ -252,4 +252,8 @@ impl<O: TypeOracle> ComponentSource for OnDemand<O> {
         });
         mounted.unwrap_or_else(|| self.done.borrow().key(url))
     }
+
+    fn refuse_step_up(&self, base: &str, rel: &str) -> Option<String> {
+        self.done.borrow().refuse_step_up(base, rel)
+    }
 }

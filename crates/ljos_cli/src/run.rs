@@ -1248,6 +1248,10 @@ mod tests {
         fn key(&self, url: &str) -> String {
             self.0.key(url)
         }
+
+        fn refuse_step_up(&self, base: &str, rel: &str) -> Option<String> {
+            self.0.refuse_step_up(base, rel)
+        }
     }
 
     #[test]

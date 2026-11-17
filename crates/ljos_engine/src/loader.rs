@@ -60,9 +60,45 @@ pub trait ComponentSource {
     /// `file:///A.qml`), so a source that confines what its documents
     /// reach looks at the address as written. Asked only of an address
     /// with no scheme.
-    fn refuse_step_up(&self, _base: &str, _rel: &str) -> Option<String> {
-        None
-    }
+    ///
+    /// Every source states its rule; there is no default. A source that
+    /// wraps another passes the question on, or the wrapped source's
+    /// confinement is lost without a word: the reload's patched source
+    /// and the shell's fallback once answered `None` this way, and a
+    /// `../` saved while an application ran loaded. A source whose files
+    /// may reach anywhere `..` resolves to answers `None` itself.
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use ljos_engine::ComponentSource;
+    ///
+    /// struct Wrapper(Box<dyn ComponentSource>);
+    ///
+    /// impl ComponentSource for Wrapper {
+    ///     fn load(&self, key: &str) -> Option<Arc<ljos_ir::CompiledFile>> {
+    ///         self.0.load(key)
+    ///     }
+    ///     fn refuse_step_up(&self, base: &str, rel: &str) -> Option<String> {
+    ///         self.0.refuse_step_up(base, rel)
+    ///     }
+    /// }
+    /// ```
+    ///
+    /// The same wrapper without it does not compile:
+    ///
+    /// ```compile_fail,E0046
+    /// use std::sync::Arc;
+    /// use ljos_engine::ComponentSource;
+    ///
+    /// struct Wrapper(Box<dyn ComponentSource>);
+    ///
+    /// impl ComponentSource for Wrapper {
+    ///     fn load(&self, key: &str) -> Option<Arc<ljos_ir::CompiledFile>> {
+    ///         self.0.load(key)
+    ///     }
+    /// }
+    /// ```
+    fn refuse_step_up(&self, base: &str, rel: &str) -> Option<String>;
 }
 
 /// Whether `rel`, an address with no scheme, takes a step up.
@@ -534,6 +570,11 @@ impl ComponentSource for MapSource {
 
     fn bytecode(&self, key: &str) -> Option<Bytecode> {
         self.bytecode.get(key).cloned()
+    }
+
+    /// A map's files reach wherever a step up resolves to.
+    fn refuse_step_up(&self, _base: &str, _rel: &str) -> Option<String> {
+        None
     }
 }
 
