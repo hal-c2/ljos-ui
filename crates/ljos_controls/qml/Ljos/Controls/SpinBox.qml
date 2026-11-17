@@ -87,7 +87,7 @@ T.SpinBox {
             implicitWidth: 120
             implicitHeight: Theme.controlHeight
             radius: Theme.radius
-            color: Theme.surfaceRaised
+            color: Theme.surface
             border.width: control.activeFocus ? 2 : 1
             border.color: control.activeFocus ? Theme.focus : Theme.input
         }

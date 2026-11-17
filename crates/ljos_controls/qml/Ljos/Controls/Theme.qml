@@ -54,6 +54,8 @@ QtObject {
     // Sizes: a compact desktop scale, every target at least 24 pixels.
     property real radius: 8
     readonly property real radiusSmall: Math.round(radius * 0.5)
+    // Between the two: a part inside a strip, such as a tab, or a note.
+    readonly property real radiusMedium: Math.round(radius * 0.75)
     readonly property real radiusLarge: Math.round(radius * 1.5)
     property int controlHeight: 28
     readonly property int spacingSmall: 4

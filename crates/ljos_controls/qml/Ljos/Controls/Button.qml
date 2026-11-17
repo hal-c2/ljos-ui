@@ -130,7 +130,7 @@ T.Button {
             radius: Theme.radius
             color: control.filled ? control.fill
                    : control.down || control.hovered || control.checked ? Theme.accentSurface
-                   : control.subtle ? "transparent" : Theme.surfaceRaised
+                   : control.subtle ? "transparent" : Theme.surface
             // A ring where the keyboard is, when a key brought it there.
             border.width: control.filled || control.subtle ? 0 : 1
             border.color: Theme.input

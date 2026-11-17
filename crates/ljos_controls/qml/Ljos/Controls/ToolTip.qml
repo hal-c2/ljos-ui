@@ -31,7 +31,7 @@ T.ToolTip {
 
     background: Component {
         Rectangle {
-            radius: Theme.radiusSmall
+            radius: Theme.radiusMedium
             color: Theme.surfaceOverlay
             border.width: 1
             border.color: Theme.border
