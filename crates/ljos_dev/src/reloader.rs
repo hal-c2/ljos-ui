@@ -9,6 +9,8 @@ use std::{
     sync::Arc,
 };
 
+use ljos_compiler::confine::{Refusal, UserDir};
+use ljos_compiler::sources::PackSources;
 use ljos_compiler::{AliasError, Aliases, CompileFault, FileSet, ReloadSession};
 use ljos_design::theme::Theme;
 use ljos_ir::{CompiledFile, ReloadPatch};
@@ -79,6 +81,10 @@ pub struct Reloader<O> {
     /// The faults of a [`Build::Unsettled`], told by the next build when
     /// the files still say the same.
     held: Option<Vec<CompileFault>>,
+    /// A save the user's directory refused (a link that leads out): a
+    /// fault the next build tells, as it tells a save that does not
+    /// compile, keeping what runs.
+    refused: bool,
     /// The theme file, when the application has one where it looks.
     theme: Option<ThemeFile>,
 }
@@ -163,6 +169,46 @@ impl<O: TypeOracle + Clone> Reloader<O> {
         )?))
     }
 
+    /// Over an application's own files, `base`, with the files of its
+    /// user's directory over them: [`ReloadSession::layered`]. Seed it
+    /// with the files the application was built with
+    /// ([`seed`](Self::seed)) and start it with
+    /// [`start_seeded`](Self::start_seeded).
+    pub fn layered(dir: UserDir, base: Arc<PackSources>, oracle: O) -> Self {
+        Self::over(ReloadSession::layered(dir, base, oracle))
+    }
+
+    /// As [`layered`](Self::layered) with none of the user's files read
+    /// yet: the first build reads them, and its patch is what they
+    /// change of what the application runs.
+    pub fn layered_base(dir: UserDir, base: Arc<PackSources>, oracle: O) -> Self {
+        Self::over(ReloadSession::layered_base(dir, base, oracle))
+    }
+
+    /// [`ReloadSession::seed`].
+    pub fn seed(&mut self, key: &str, source: &str, file: Arc<CompiledFile>) -> bool {
+        self.session.seed(key, source, file)
+    }
+
+    /// As [`start`](Self::start) for a seeded session:
+    /// [`ReloadSession::start_seeded`].
+    pub fn start_seeded(&mut self) -> Vec<CompileFault> {
+        self.take_saves(false);
+        let faults = self.session.start_seeded();
+        self.prints.replace(texts(&self.session));
+        faults
+    }
+
+    /// [`ReloadSession::take_refused`].
+    pub fn take_refused(&mut self) -> Vec<CompileFault> {
+        self.session.take_refused()
+    }
+
+    /// [`ReloadSession::refuse`].
+    pub fn refuse(&mut self, why: Refusal) {
+        self.session.refuse(why);
+    }
+
     fn over(session: ReloadSession<O>) -> Self {
         Self {
             session,
@@ -177,6 +223,7 @@ impl<O: TypeOracle + Clone> Reloader<O> {
             pictures: BTreeSet::new(),
             read: BTreeSet::new(),
             held: None,
+            refused: false,
             theme: None,
         }
     }
@@ -255,9 +302,17 @@ impl<O: TypeOracle + Clone> Reloader<O> {
         }
         let text = match (t.staged.take(), std::mem::take(&mut t.touched), &t.path) {
             (Some(text), ..) => text,
-            (None, true, Some(path)) => match std::fs::read_to_string(path) {
+            // A user's theme is read as their QML is, confined to their
+            // directory.
+            (None, true, Some(path)) => match self.session.read_file(path) {
                 Ok(text) => Some(text),
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+                // Refused: the theme that runs stays, and the build after
+                // this tells why.
+                Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+                    self.refused = true;
+                    return None;
+                }
                 // Not readable now (being written): the event that ends the
                 // write brings it back.
                 Err(_) => return None,
@@ -458,7 +513,7 @@ impl<O: TypeOracle + Clone> Reloader<O> {
             // With more than one root, the file that has the key may be
             // another root's.
             let read = self.session.path_of(&key).unwrap_or_else(|| path.clone());
-            match std::fs::read_to_string(&read) {
+            match self.session.read_file(&read) {
                 Ok(text) if self.half_saved(&key, &text) => {
                     self.parked.insert(path);
                     waiting = true;
@@ -468,6 +523,10 @@ impl<O: TypeOracle + Clone> Reloader<O> {
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                     self.staged.entry(key).or_insert(None);
+                }
+                // Refused: what the file was stays (`read_file`).
+                Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+                    self.refused |= self.session.is_layered();
                 }
                 // Not readable now (being written, not text): the event
                 // that follows the end of the write brings it back.
@@ -514,9 +573,23 @@ impl<O: TypeOracle + Clone> Reloader<O> {
             return Build::Waiting;
         }
         if !changed {
+            // Nothing else to build: told here, as a save that does not
+            // compile is, since nothing else wakes the application.
+            let mut faults = if std::mem::take(&mut self.refused) {
+                self.session.take_refused()
+            } else {
+                Vec::new()
+            };
             // Read again, the files say what they said: the error stands.
-            return self.held.take().map_or(Build::NoChange, Build::Failed);
+            faults.extend(self.held.take().into_iter().flatten());
+            return if faults.is_empty() {
+                Build::NoChange
+            } else {
+                Build::Failed(faults)
+            };
         }
+        // What was refused beside the change is told with it.
+        self.refused = false;
         let built = self.session.build();
         let held = self.held.take();
         match built {

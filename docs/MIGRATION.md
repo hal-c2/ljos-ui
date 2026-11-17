@@ -474,7 +474,8 @@ same checks. `crates/ljos_facade_app` is such a module.
 
 Compiling a directory at start-up exists for development behind the
 non-default `dev-qml` feature (`App::qml_dir`,
-`ljos::dev::compile_dir`) and is never in a shipped binary. As
+`ljos::dev::compile_dir`) and is never in a shipped binary; a shipped
+application whose users change it has `user-qml` (`App::user_qml`). As
 under Qt, a file with an error fails only where it is made: the
 directory compiles, the diagnostics are printed, and making the
 broken component reports the compiler's message

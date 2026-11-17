@@ -4,9 +4,9 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use ljos_engine::{
-    Engine, MetaObject, MetaRef, PropertyAccess, PropertyFlags, TypeDump, TypeEntry, TypeTag,
-};
+use ljos_engine::{Engine, MetaObject, MetaRef, PropertyAccess, PropertyFlags, TypeTag};
+#[cfg(any(feature = "dev-qml", feature = "build"))]
+use ljos_engine::{TypeDump, TypeEntry};
 use qml_front::{Property as FrontProperty, QtType, QtTypeOracle, Special, TypeOracle};
 
 /// One type as the compiler sees it in a render with backends: of the
@@ -116,6 +116,7 @@ impl NativeType {
 
     /// `entry` over its base `base`, as the Engine that wrote the dump
     /// would have flattened it.
+    #[cfg(any(feature = "dev-qml", feature = "build"))]
     fn from_entry(entry: &TypeEntry, module: String, base: Option<NativeType>) -> NativeType {
         let mut ty = base.unwrap_or_default();
         ty.checked = !module.is_empty();
@@ -199,6 +200,7 @@ fn built_in_table(qt: &QtTypeOracle, uri: &str, name: &str) -> bool {
 impl EngineOracle {
     /// The table of types alone: with no example a render compiles
     /// exactly as it did before `--example` existed.
+    #[cfg(any(feature = "dev-qml", feature = "build"))]
     pub fn table_only() -> Self {
         EngineOracle {
             natives: Arc::default(),
@@ -229,6 +231,7 @@ impl EngineOracle {
     /// by the program that registers them) that the table lacks. A base
     /// the dump does not have is one of the toolkit's, read from `engine`,
     /// an Engine with the standard modules. `Err` names a base neither has.
+    #[cfg(any(feature = "dev-qml", feature = "build"))]
     pub fn from_dump(dump: &TypeDump, engine: &Engine) -> Result<Self, NativeTypeError> {
         let qt = QtTypeOracle;
         let mut natives: Vec<NativeType> = Vec::new();
@@ -333,6 +336,7 @@ fn table_reached(engine: &Engine) -> HashSet<String> {
 }
 
 /// Why [`EngineOracle::from_dump`] cannot describe a type of the dump.
+#[cfg(any(feature = "dev-qml", feature = "build"))]
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum NativeTypeError {
@@ -347,10 +351,12 @@ pub enum NativeTypeError {
 
 /// How deep a dump's chain of bases is followed before it is taken to
 /// loop.
+#[cfg(any(feature = "dev-qml", feature = "build"))]
 const BASE_DEPTH: usize = 64;
 
 /// `entry` with its bases' members: a base the dump has, or one the
 /// toolkit registers on `engine`.
+#[cfg(any(feature = "dev-qml", feature = "build"))]
 fn flatten(
     dump: &TypeDump,
     engine: &Engine,

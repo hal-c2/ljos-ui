@@ -655,6 +655,67 @@ impl<O: TypeOracle> Project<O> {
         Ok(project)
     }
 
+    /// The files of `texts` (paths from the application's root,
+    /// `/`-separated, as [`crate::sources::PackSources`] carries them),
+    /// read as [`load_roots`](Self::load_roots) reads a directory, with
+    /// `style` behind `import QtQuick.Controls`. Nothing is read from
+    /// the disk: for a program whose user changes it, whose files are
+    /// the ones it was built from with its user's over them. Where a
+    /// file has no URL of its own it is `file:///{key}.qml`
+    /// ([`add_disk_root`](Self::add_disk_root)).
+    pub fn load_texts(
+        texts: &BTreeMap<String, String>,
+        style: Option<ControlsStyle>,
+        oracle: O,
+    ) -> Self {
+        let mut project = Self::new(oracle);
+        project.add_disk_root();
+        let mut by_dir: BTreeMap<&str, Vec<String>> = BTreeMap::new();
+        for path in texts.keys() {
+            let (dir, name) = path.rsplit_once('/').unwrap_or(("", path));
+            by_dir.entry(dir).or_default().push(name.to_owned());
+        }
+        for (path, text) in texts {
+            if let Some(key) = path.strip_suffix(".qml") {
+                project.add(key, text.as_str());
+            } else if is_script(path) {
+                project.add_script(path, text.as_str());
+            }
+        }
+        let mut found = Vec::new();
+        for (dir, names) in &by_dir {
+            let at = |name: &str| {
+                if dir.is_empty() {
+                    name.to_owned()
+                } else {
+                    format!("{dir}/{name}")
+                }
+            };
+            for name in declared_beside(names) {
+                if let Some(text) = texts.get(&at(name)) {
+                    project.add_declarations(&at(name), text.as_str());
+                }
+            }
+            let qmldir = texts.get(&at("qmldir")).map(String::as_str);
+            let cmake = texts.get(&at("CMakeLists.txt")).map(String::as_str);
+            if qmldir.is_some() {
+                project.module_dirs.insert((*dir).to_owned());
+            }
+            for module in described_by(Path::new(dir), qmldir, cmake).0 {
+                found.push(((*dir).to_owned(), PathBuf::from(dir), module));
+            }
+        }
+        for ((dir, _, module), counted) in found.iter().zip(counted(&found, &Aliases::new())) {
+            project.module_dirs.insert(dir.clone());
+            if counted {
+                project.add_module(dir, module);
+            }
+        }
+        project.front.set_controls_style(style);
+        project.settle_all();
+        project
+    }
+
     /// Chooses the style behind `import QtQuick.Controls` for the files
     /// compiled from now on.
     pub fn set_controls_style(&mut self, style: Option<ControlsStyle>) {
@@ -1105,18 +1166,36 @@ pub fn resource_dirs(root: &Path) -> std::io::Result<Vec<(String, PathBuf)>> {
 /// The modules the `qmldir` and `CMakeLists.txt` of `dir` describe, and
 /// the files its `CMakeLists.txt` keeps inside the program.
 fn described(dir: &Path, names: &[String]) -> (Vec<Module>, Vec<(String, PathBuf)>) {
+    let read = |name: &str| {
+        names
+            .iter()
+            .any(|n| n == name)
+            .then(|| std::fs::read_to_string(dir.join(name)).ok())
+            .flatten()
+    };
+    described_by(
+        dir,
+        read("qmldir").as_deref(),
+        read("CMakeLists.txt").as_deref(),
+    )
+}
+
+/// The modules a directory's `qmldir` and `CMakeLists.txt` texts
+/// describe, and the files the latter keeps inside the program (under
+/// `dir`).
+fn described_by(
+    dir: &Path,
+    qmldir: Option<&str>,
+    cmake: Option<&str>,
+) -> (Vec<Module>, Vec<(String, PathBuf)>) {
     let mut modules: Vec<Module> = Vec::new();
     let mut resources = Vec::new();
-    if names.iter().any(|name| name == "qmldir")
-        && let Ok(text) = std::fs::read_to_string(dir.join("qmldir"))
-    {
-        modules.extend(discover::qmldir(&text));
+    if let Some(text) = qmldir {
+        modules.extend(discover::qmldir(text));
     }
-    if names.iter().any(|name| name == "CMakeLists.txt")
-        && let Ok(text) = std::fs::read_to_string(dir.join("CMakeLists.txt"))
-    {
+    if let Some(text) = cmake {
         let at = |path: &str| dir.join(path.strip_prefix("./").unwrap_or(path));
-        let mut built = discover::cmake(&text);
+        let mut built = discover::cmake(text);
         // A program reads the qmldir, not the build: where both name a type
         // of the same module, the qmldir's file is the type.
         for module in &mut built {
@@ -1134,7 +1213,7 @@ fn described(dir: &Path, names: &[String]) -> (Vec<Module>, Vec<(String, PathBuf
                 resources.push((module.address(file), at(file)));
             }
         }
-        for kept in discover::kept(&text) {
+        for kept in discover::kept(text) {
             resources.push((kept.address, at(&kept.path)));
         }
         modules.extend(built);

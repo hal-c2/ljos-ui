@@ -199,7 +199,11 @@ pub mod locale;
 #[cfg(feature = "mcp")]
 #[cfg(not(target_arch = "wasm32"))]
 pub mod mcp;
-#[cfg(any(feature = "dev-qml", feature = "build"))]
+#[cfg(any(
+    feature = "dev-qml",
+    feature = "build",
+    all(feature = "user-qml", feature = "shell")
+))]
 #[cfg(not(target_arch = "wasm32"))]
 mod oracle;
 /// Hot reload in a development build (the `dev` feature): what
@@ -287,7 +291,7 @@ pub mod input {
 #[cfg(not(target_arch = "wasm32"))]
 macro_rules! include_qml {
     ($name:literal) => {
-        $crate::MapSource::from_pack(::core::include_bytes!(::core::concat!(
+        $crate::MapSource::from_static_pack(::core::include_bytes!(::core::concat!(
             ::core::env!("OUT_DIR"),
             "/",
             $name
@@ -491,6 +495,11 @@ pub use ljos_runtime::{CoalesceKey, DrainBudget, SendAsync, SendError, UiHandle}
 #[cfg(feature = "shell")]
 #[cfg(not(target_arch = "wasm32"))]
 pub use ljos_shell::{ColorSpace, PainterError, Setup, SetupError, ShellConfig, ShellError};
+/// The files a shipped application's users change it with
+/// ([`App::user_qml`]), and what a fault of theirs is.
+#[cfg(all(feature = "user-qml", feature = "shell"))]
+#[cfg(not(target_arch = "wasm32"))]
+pub use {ljos_engine::ReloadFault, ljos_shell::UserQml};
 
 // On a page `ljos` is `ljos_web`: the same names, with no engine behind them.
 #[cfg(all(target_arch = "wasm32", feature = "web"))]

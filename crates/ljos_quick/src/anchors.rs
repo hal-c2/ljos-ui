@@ -11,7 +11,9 @@
 //! through a hold: a layer above whatever the item was given, which a
 //! script's write does not move, as Qt's anchors put the item back. Removing
 //! an anchor leaves the item where it is (Qt keeps the geometry too) and the
-//! item's own binding is not destroyed.
+//! item's own binding is not destroyed. A reload that edits the anchors away
+//! is not that: the item goes back to what it gives itself, where a fresh
+//! load of the new text puts it ([`Engine::reload_renewing`]).
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -59,8 +61,9 @@ impl AnchorState {
             .set(if value { flags | flag } else { flags & !flag });
     }
 
-    /// Drops every override, keeping the current geometry.
-    pub(crate) fn release(&self, engine: &Engine, obj: ObjectId) {
+    /// Drops every override, keeping the current geometry, or with
+    /// `restore` going back to what the item gives itself.
+    pub(crate) fn release(&self, engine: &Engine, obj: ObjectId, restore: RestoreMode) {
         for (p, slot) in [
             (Item::X.index, &self.x),
             (Item::Y.index, &self.y),
@@ -68,7 +71,7 @@ impl AnchorState {
             (Item::HEIGHT.index, &self.h),
         ] {
             if let Some(id) = slot.take() {
-                let _ = engine.remove_override(obj, p, id, RestoreMode::None);
+                let _ = engine.remove_override(obj, p, id, restore);
             }
         }
     }
@@ -244,7 +247,7 @@ pub(crate) fn unfollow(engine: &Engine, obj: ObjectId) {
     };
     engine.stop_effect(f.effect);
     if engine.is_alive(obj) {
-        f.state.release(engine, obj);
+        f.state.release(engine, obj, RestoreMode::None);
     }
 }
 
@@ -456,18 +459,15 @@ pub(crate) fn run(engine: &Engine, obj: ObjectId, state: &AnchorState) {
             // it does on Qt; a line alone leaves the item where it is, as
             // geometry given NaN does.
             let lines_alone = !state.flag(FILL_FLAG) && !state.flag(CENTER_IN_FLAG);
+            let restore = restore_mode(engine, obj);
             let apply_all = || -> Result<(), EngineError> {
-                apply(engine, obj, Item::WIDTH.index, &state.w, h.len, lines_alone)?;
-                apply(engine, obj, Item::X.index, &state.x, h.pos, lines_alone)?;
-                apply(
-                    engine,
-                    obj,
-                    Item::HEIGHT.index,
-                    &state.h,
-                    v.len,
-                    lines_alone,
-                )?;
-                apply(engine, obj, Item::Y.index, &state.y, v.pos, lines_alone)
+                let at = |prop, slot: &Cell<Option<OverrideId>>, v| {
+                    apply(engine, obj, prop, slot, v, lines_alone, restore)
+                };
+                at(Item::WIDTH.index, &state.w, h.len)?;
+                at(Item::X.index, &state.x, h.pos)?;
+                at(Item::HEIGHT.index, &state.h, v.len)?;
+                at(Item::Y.index, &state.y, v.pos)
             };
             // Length before position is visible to geometry handlers; with
             // no observer, one notification round has the same result.
@@ -506,7 +506,8 @@ pub(crate) fn run(engine: &Engine, obj: ObjectId, state: &AnchorState) {
                 .iter()
                 .any(Option::is_some)
             {
-                engine.batch(|| state.release(engine, obj));
+                let restore = restore_mode(engine, obj);
+                engine.batch(|| state.release(engine, obj, restore));
             }
             *state.warned.borrow_mut() = Box::default();
         }
@@ -539,7 +540,8 @@ fn compute<'a>(
     }
     let keep = fill.is_none()
         && center_in.is_none()
-        && (state.flag(FILL_FLAG) || state.flag(CENTER_IN_FLAG));
+        && (state.flag(FILL_FLAG) || state.flag(CENTER_IN_FLAG))
+        && !engine.reload_renewing(obj);
     state.set_flag(FILL_FLAG, fill.is_some());
     state.set_flag(CENTER_IN_FLAG, center_in.is_some());
     let mut cx = Ctx {
@@ -789,6 +791,16 @@ fn span(
     }
 }
 
+/// What a line taken away leaves: the geometry where it stands at run
+/// time, what the item gives itself when a reload edited the line away.
+fn restore_mode(engine: &Engine, obj: ObjectId) -> RestoreMode {
+    if engine.reload_renewing(obj) {
+        RestoreMode::BindingOrValue
+    } else {
+        RestoreMode::None
+    }
+}
+
 fn apply(
     engine: &Engine,
     obj: ObjectId,
@@ -796,6 +808,7 @@ fn apply(
     slot: &Cell<Option<OverrideId>>,
     v: Option<f64>,
     ignore_nan: bool,
+    restore: RestoreMode,
 ) -> Result<(), EngineError> {
     if ignore_nan && v.is_some_and(f64::is_nan) {
         return Ok(());
@@ -804,7 +817,7 @@ fn apply(
         (None, None) => Ok(()),
         (None, Some(id)) => {
             slot.set(None);
-            engine.remove_override(obj, prop, id, RestoreMode::None)
+            engine.remove_override(obj, prop, id, restore)
         }
         (Some(v), None) => {
             slot.set(Some(engine.push_hold(

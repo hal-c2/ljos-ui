@@ -1,7 +1,7 @@
 //! CLAUDE.md rule 5: an application that does not let its users change it
 //! links no parser. The shell takes the watcher and the reload driver,
-//! and with them the compiler, only behind its `dev` feature; this asks
-//! cargo what a build without the feature links.
+//! and with them the compiler, only behind its `user-qml` feature (which
+//! `dev` builds on); this asks cargo what a build without them links.
 
 mod common;
 
@@ -39,6 +39,25 @@ fn the_dev_feature_is_what_brings_the_parser_in() {
         assert!(
             crates.iter().any(|c| c == name),
             "{name} is not linked with the `dev` feature either"
+        );
+    }
+}
+
+#[test]
+fn the_user_qml_feature_brings_the_compiler_and_no_inspector() {
+    // A shipped application its users change: the compiler and the
+    // watcher, and nothing a development build adds.
+    let crates = linked(&["user-qml"]);
+    for name in DEV_ONLY {
+        assert!(
+            crates.iter().any(|c| c == name),
+            "{name} is not linked with the `user-qml` feature"
+        );
+    }
+    for name in ["rmcp", "ljos_mcp_core", "hyper", "ljos_drive", "ljos_audit"] {
+        assert!(
+            !crates.iter().any(|c| c == name),
+            "the `user-qml` feature links {name}"
         );
     }
 }

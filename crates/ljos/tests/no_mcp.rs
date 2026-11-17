@@ -74,3 +74,22 @@ fn the_dev_feature_brings_hot_reload_without_the_inspector() {
         );
     }
 }
+
+#[test]
+fn the_user_qml_feature_brings_the_compiler_without_the_inspector() {
+    // A shipped application its users change compiles their files, and
+    // serves nobody.
+    let crates = linked(&["user-qml"]);
+    for name in ["ljos_dev", "ljos_compiler", "qml_front"] {
+        assert!(
+            crates.iter().any(|c| c == name),
+            "`user-qml` does not link {name}: {crates:?}"
+        );
+    }
+    for name in ["rmcp", "ljos_mcp_core", "hyper", "ljos_drive", "ljos_audit"] {
+        assert!(
+            !crates.iter().any(|c| c == name),
+            "the `user-qml` feature links {name}"
+        );
+    }
+}

@@ -36,6 +36,12 @@ fn the_dev_feature_alone_links_no_mcp() {
 }
 
 #[test]
+fn the_user_qml_feature_alone_links_no_mcp() {
+    // A shipped application its users change serves nobody.
+    links_none(&["user-qml"]);
+}
+
+#[test]
 fn the_mcp_feature_is_what_brings_it_in() {
     // So that the tests above cannot pass because the names went stale.
     let crates = linked(&["mcp"]);

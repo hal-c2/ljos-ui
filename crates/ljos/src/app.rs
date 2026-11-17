@@ -121,6 +121,8 @@ pub struct App<M = ()> {
     dev: DevQml,
     #[cfg(feature = "mcp")]
     inspector: Option<crate::mcp::CapSet>,
+    #[cfg(all(feature = "user-qml", feature = "shell"))]
+    user_qml: Option<crate::UserQml>,
     modules: Vec<Module>,
     source: Option<MapSource>,
     root: Option<String>,
@@ -152,6 +154,8 @@ impl<M> std::fmt::Debug for App<M> {
             );
         #[cfg(feature = "mcp")]
         d.field("inspector", &self.inspector.is_some());
+        #[cfg(all(feature = "user-qml", feature = "shell"))]
+        d.field("user_qml", &self.user_qml);
         d.finish_non_exhaustive()
     }
 }
@@ -171,6 +175,8 @@ impl App<()> {
             dev: DevQml::default(),
             #[cfg(feature = "mcp")]
             inspector: None,
+            #[cfg(all(feature = "user-qml", feature = "shell"))]
+            user_qml: None,
             modules: Vec::new(),
             source: None,
             root: None,
@@ -340,6 +346,39 @@ impl<M> App<M> {
     #[must_use]
     pub fn source(mut self, source: MapSource) -> Self {
         self.source = Some(source);
+        self
+    }
+
+    /// Lets the application's users change it while it runs (the
+    /// `user-qml` feature): the files of the directory `config` names are
+    /// laid over the [`source`](App::source) it was built with. A user's
+    /// file of a key replaces the application's, a new one adds a type a
+    /// `ShellLoader` or an import can name, and each save is applied with
+    /// the application's state kept. A file that does not compile leaves
+    /// the application as it was and is told
+    /// ([`UserQml::on_fault`](crate::UserQml::on_fault),
+    /// [`Engine::last_reload_error`]).
+    ///
+    /// Until the user has a file nothing is parsed or compiled. The
+    /// source must be a pack built with its sources
+    /// ([`build::Options::with_sources`](crate::build::Options::with_sources));
+    /// only the directory is read, and an address outside it (another
+    /// directory, the network) is refused and told.
+    ///
+    /// ```no_run
+    /// # fn run(pack: ljos::MapSource) -> Result<(), ljos::ShellError> {
+    /// // pack: ljos::include_qml!("qml.pack"), built with its sources
+    /// ljos::App::new("Shell")
+    ///     .source(pack)
+    ///     .user_qml(ljos::UserQml::dir("shell").on_fault(|f| eprintln!("{f}")))
+    ///     .root("Main")
+    ///     .run()
+    /// # }
+    /// ```
+    #[cfg(all(feature = "user-qml", feature = "shell"))]
+    #[must_use]
+    pub fn user_qml(mut self, config: crate::UserQml) -> Self {
+        self.user_qml = Some(config);
         self
     }
 
@@ -554,6 +593,8 @@ impl<M> App<M> {
             dev,
             #[cfg(feature = "mcp")]
             inspector,
+            #[cfg(all(feature = "user-qml", feature = "shell"))]
+            user_qml,
             modules,
             source,
             root,
@@ -571,6 +612,8 @@ impl<M> App<M> {
             dev,
             #[cfg(feature = "mcp")]
             inspector,
+            #[cfg(all(feature = "user-qml", feature = "shell"))]
+            user_qml,
             modules,
             source,
             root,
@@ -790,8 +833,16 @@ impl<M> App<M> {
             inspector,
             #[cfg(feature = "dev-qml")]
             dev,
+            #[cfg(feature = "user-qml")]
+            user_qml,
             ..
         } = self;
+        // The user's files go over the application's in place of them.
+        #[cfg(feature = "user-qml")]
+        let (source, user_qml) = match user_qml {
+            Some(config) => (None, Some((source.unwrap_or_default(), config))),
+            None => (source, None),
+        };
         #[cfg(feature = "mcp")]
         let inspector = inspector_to_serve(inspector)?;
         #[cfg(not(feature = "mcp"))]
@@ -811,14 +862,22 @@ impl<M> App<M> {
                 inspector.serve(s)?;
             }
             // The shell's Engine already holds the standard modules;
-            // `prepare` must not register them a second time, so it
-            // is the same function `build_engine` uses on its own.
+            // `install` must not register them a second time, so it
+            // is the first half of the `prepare` `build_engine` uses.
             #[cfg(feature = "dev-qml")]
             let source = Source {
                 source,
                 texts: dev.texts,
             };
-            prepare(s.engine(), modules, source, context, on_window);
+            install(s.engine(), modules, source);
+            // After the modules, whose types the user's files compile
+            // against; before the context, whose values may be objects
+            // of the user's types.
+            #[cfg(feature = "user-qml")]
+            if let Some((pack, config)) = user_qml {
+                s.user_qml(pack, config, crate::oracle::EngineOracle::from_engine);
+            }
+            put_context(s.engine(), context, on_window);
             #[cfg(all(feature = "dev", feature = "dev-qml"))]
             s.set_qml_dirs(dev.dirs);
             #[cfg(all(feature = "dev-qml", not(feature = "dev")))]
@@ -912,6 +971,12 @@ fn prepare(
     context: Vec<BuildStep>,
     on_window: Vec<BuildStep>,
 ) {
+    install(engine, modules, source);
+    put_context(engine, context, on_window);
+}
+
+/// The first half of [`prepare`]: the modules, then the components.
+fn install(engine: &Engine, modules: Vec<Module>, source: Source) {
     for module in modules {
         module(engine);
     }
@@ -931,6 +996,10 @@ fn prepare(
     if let Some(source) = source {
         engine.set_component_source(source);
     }
+}
+
+/// The second half of [`prepare`]: the context, then the window hooks.
+fn put_context(engine: &Engine, context: Vec<BuildStep>, on_window: Vec<BuildStep>) {
     for put in context {
         put(engine);
     }

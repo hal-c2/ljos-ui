@@ -20,15 +20,21 @@
 #[cfg(feature = "dev")]
 mod dev;
 #[cfg(feature = "dev")]
-pub use ljos_dev::{Overlay, ReloadStats, Report};
+pub use ljos_dev::Overlay;
+#[cfg(feature = "user-qml")]
+pub use ljos_dev::{ReloadStats, Report};
 #[cfg(feature = "dev")]
 mod tools;
+#[cfg(feature = "user-qml")]
+mod user;
 /// The global allocator that lets the inspector tell what Rust code
 /// holds from what C libraries do.
 #[cfg(feature = "mcp")]
 pub use ljos_dev::mcp::CountingAlloc;
 #[cfg(feature = "dev")]
 pub use ljos_dev::{TopRow, TopView};
+#[cfg(feature = "user-qml")]
+pub use ljos_dev::{UserQml, UserSession};
 #[cfg(feature = "mcp")]
 pub use tools::{InspectorAccess, InspectorAddress, InspectorOptions};
 
@@ -263,6 +269,8 @@ pub struct Setup<'a, M> {
     dev: dev::DevSetup,
     #[cfg(feature = "dev")]
     tools: tools::ToolSetup,
+    #[cfg(feature = "user-qml")]
+    user: user::UserSetup,
 }
 
 impl<M> Setup<'_, M> {
@@ -402,6 +410,9 @@ pub struct ShellApp<M> {
     /// The `top` overlay and the inspector of a development build.
     #[cfg(feature = "dev")]
     tools: tools::Tools,
+    /// The files of the application's user over its own.
+    #[cfg(feature = "user-qml")]
+    user: Option<user::User>,
 }
 
 impl<M> std::fmt::Debug for ShellApp<M> {
@@ -546,6 +557,8 @@ impl<M: Send + 'static> ShellApp<M> {
                 let [r, g, b, _] = config.background.to_rgba8();
                 tools::ToolSetup::new(Arc::clone(&wake), [r, g, b])
             },
+            #[cfg(feature = "user-qml")]
+            user: user::UserSetup::new(Arc::clone(&wake)),
         };
         let root = setup(&mut s).map_err(ShellError::Setup)?;
         let Setup {
@@ -557,6 +570,8 @@ impl<M: Send + 'static> ShellApp<M> {
             dev,
             #[cfg(feature = "dev")]
             tools,
+            #[cfg(feature = "user-qml")]
+            user,
             ..
         } = s;
         // The application's own messages: their kinds are its business,
@@ -588,6 +603,8 @@ impl<M: Send + 'static> ShellApp<M> {
             dev: dev.finish(),
             #[cfg(feature = "dev")]
             tools: tools.finish(),
+            #[cfg(feature = "user-qml")]
+            user: user.finish(root),
         })
     }
 
@@ -665,6 +682,8 @@ impl<M: Send + 'static> ShellApp<M> {
         #[cfg(feature = "dev")]
         self.begin_tools();
         self.drain_inbox();
+        #[cfg(feature = "user-qml")]
+        self.pump_user();
         #[cfg(feature = "dev")]
         self.pump_dev();
         #[cfg(feature = "dev")]

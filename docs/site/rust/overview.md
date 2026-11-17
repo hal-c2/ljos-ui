@@ -13,7 +13,7 @@ After reading this page, you will understand how a Ljós application is structur
 
 Ljós is a toolkit for malleable software: apps that people and their agents can reshape while they run. Your Rust code holds the application's logic, data and services, and the interface on top of it is declarative QML scripted in TypeScript. Four things follow for a Rust application:
 
-- **Malleable.** Your app can let its users replace its interface. A `ShellLoader` shows their own `shell.qml` in place of your shell, your Rust code says where that file lives, and your shell comes back, with what broke and where, when theirs does not work ([Let users replace the shell](../start/your-own-shell.md)). Compiling the user's file on the device takes the compiler, which today is the `dev-qml` feature; an app that does not let its users change it embeds components compiled ahead of time and links no parser.
+- **Malleable.** Your app can let its users replace its interface. A `ShellLoader` shows their own `shell.qml` in place of your shell, your Rust code says where that file lives, and your shell comes back, with what broke and where, when theirs does not work ([Let users replace the shell](../start/your-own-shell.md)). Compiling the user's file on the device takes the compiler, which the `user-qml` feature links (`App::user_qml`); an app that does not let its users change it embeds components compiled ahead of time and links no parser.
 - **TypeScript first.** Handlers and bindings are typed TypeScript, checked before anything runs, and your native types describe their properties, signals and methods to the compiler, so a misspelt member is a check error rather than a surprise at run time.
 - **Observable.** `App::inspector` (the `mcp` feature) serves the same MCP inspector as `ljos run --mcp`, so `ljos observe` or a coding agent can read and drive your running app.
 - **Stable.** Background threads talk to the UI thread only through bounded messages, a fault stays inside the nearest `ErrorBoundary`, and an app at rest uses 0 % CPU.
@@ -77,7 +77,7 @@ fn main() {
 }
 ```
 
-A shipped application compiles its QML ahead of time in `build.rs` into a binary pack in `OUT_DIR` and embeds it with `ljos::include_qml!`. Because the QML is already lowered to intermediate representation (`ljos_ir`), the shipped binary links no QML parser or compiler. During development, you can enable the non-default `dev-qml` feature and use `App::qml_dir` (or `App::qml_dirs` for multiple import trees) to compile QML from disk at start-up.
+A shipped application compiles its QML ahead of time in `build.rs` into a binary pack in `OUT_DIR` and embeds it with `ljos::include_qml!`. Because the QML is already lowered to intermediate representation (`ljos_ir`), the shipped binary links no QML parser or compiler. An application its users change enables `user-qml` and names their directory with `App::user_qml`: it links the compiler, keeps the sources in the pack, and compiles only once the user has a file. During development, you can enable the non-default `dev-qml` feature and use `App::qml_dir` (or `App::qml_dirs` for multiple import trees) to compile QML from disk at start-up.
 
 ### Where the log goes
 

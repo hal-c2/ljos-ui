@@ -2743,6 +2743,16 @@ impl<V: Clone + 'static> Graph<V> {
         }
     }
 
+    /// Whether an override other than a hold ([`Graph::push_hold`]) is
+    /// on a property: one that took it over, not one that only lays it
+    /// out.
+    pub fn has_override_but_holds(&self, n: NodeId) -> bool {
+        match self.inner.borrow().nodes.get(n).map(|n| &n.kind) {
+            Some(Kind::Property(p)) => p.overrides.iter().any(|layer| !layer.hold),
+            _ => false,
+        }
+    }
+
     // ------------------------------------------------------------ inspection
 
     /// Provenance of the current value: the top layer's, or

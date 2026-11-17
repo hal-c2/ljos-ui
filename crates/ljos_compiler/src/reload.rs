@@ -13,6 +13,8 @@ use qml_front::TypeOracle;
 use qml_front::project::is_script;
 
 use crate::alias::{self, AliasError, Aliases, Mount};
+use crate::confine::{ReadError, Refusal, UserDir};
+use crate::sources::PackSources;
 use crate::{Diagnostic, Error, Project, Severity, compile_file, reload_lint};
 
 /// The compiled files of a project, by key.
@@ -135,6 +137,25 @@ pub struct ReloadSession<O> {
     /// the program was found to reach, which a rescan reaches again. None:
     /// every file of the directory is the session's.
     reached: Option<BTreeSet<String>>,
+    /// The files compiled before the session started, by key, which
+    /// [`seed`](Self::seed) took for their text.
+    seeds: BTreeMap<String, Arc<CompiledFile>>,
+    /// The files whose saved text did not compile when the session
+    /// started and which run their seed instead, until they are saved.
+    reverted: BTreeSet<String>,
+    /// For a session over an application's files with its user's over
+    /// them ([`layered`](Self::layered)).
+    layer: Option<Layer>,
+}
+
+/// An application's own files with its user's directory over them.
+#[derive(Debug)]
+struct Layer {
+    dir: UserDir,
+    base: Arc<PackSources>,
+    /// What was refused since [`ReloadSession::take_refused`] was last
+    /// called.
+    refused: Vec<Refusal>,
 }
 
 impl<O: TypeOracle + Clone> ReloadSession<O> {
@@ -160,7 +181,387 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
             warnings: BTreeMap::new(),
             broken_scripts: BTreeMap::new(),
             reached: None,
+            seeds: BTreeMap::new(),
+            reverted: BTreeSet::new(),
+            layer: None,
         }
+    }
+
+    /// A session over an application's own files, `base` (what its pack
+    /// carries), with the files of its user's directory `dir` over them:
+    /// a file of the user's is the application's of the same key, or a
+    /// new one. Nothing is read from the disk but the user's directory,
+    /// and only through `dir` (`crate::confine`): what it refuses is told
+    /// by [`take_refused`](Self::take_refused).
+    ///
+    /// Every file starts dirty; [`seed`](Self::seed) the ones the
+    /// application was built with, and [`start_seeded`](Self::start_seeded)
+    /// compiles only what the user's files change.
+    pub fn layered(dir: UserDir, base: Arc<PackSources>, oracle: O) -> Self {
+        Self::layered_with(dir, base, oracle, true)
+    }
+
+    /// As [`layered`](Self::layered) with none of the user's files read
+    /// yet, for a program whose user's first file comes while it runs:
+    /// the next [`rescan`](Self::rescan) reads them, and the build after
+    /// it is what they change.
+    pub fn layered_base(dir: UserDir, base: Arc<PackSources>, oracle: O) -> Self {
+        Self::layered_with(dir, base, oracle, false)
+    }
+
+    fn layered_with(dir: UserDir, base: Arc<PackSources>, oracle: O, users: bool) -> Self {
+        let mut session = Self::in_memory(oracle);
+        session.roots = vec![dir.root().to_owned()];
+        session.layer = Some(Layer {
+            dir,
+            base,
+            refused: Vec::new(),
+        });
+        session.all_dirty = false;
+        session.rescan_layered(users);
+        session
+    }
+
+    /// Whether the session is over an application's files with its
+    /// user's over them.
+    pub fn is_layered(&self) -> bool {
+        self.layer.is_some()
+    }
+
+    /// The files a user's directory holds: QML and JavaScript. Its other
+    /// files (a theme) are not compiled.
+    fn users_file(name: &str) -> bool {
+        name.ends_with(".qml") || is_script(name)
+    }
+
+    /// Reads the user's directory again over the application's files.
+    /// Only what differs from what the session had is dirty, with the
+    /// files that named a file that is gone.
+    fn rescan_layered(&mut self, users: bool) {
+        let Some(layer) = &mut self.layer else {
+            return;
+        };
+        let mut texts = layer.base.files.clone();
+        if users {
+            let (user, refused) = layer.dir.list(Self::users_file);
+            texts.extend(user);
+            // A file of the running session that is refused now keeps the
+            // text it ran, as a save that does not compile does. At the
+            // start there is none, and the application's file is used.
+            for why in &refused {
+                let Refusal::LinkOut(name) = why else {
+                    continue;
+                };
+                let key = if is_script(name) {
+                    Some(name.as_str())
+                } else {
+                    name.strip_suffix(".qml")
+                };
+                if let Some(text) = key.and_then(|key| self.sources.get(key)) {
+                    texts.insert(name.clone(), text.clone());
+                }
+            }
+            layer.refused.extend(refused);
+        }
+        let style = layer.base.style.clone();
+        // The first scan compares with the application's scripts, which
+        // its pack was compiled with: only the user's change anything.
+        let old_scripts: BTreeMap<String, String> = if self.sources.is_empty() {
+            layer
+                .base
+                .files
+                .iter()
+                .filter(|(k, _)| is_script(k))
+                .map(|(k, t)| (k.clone(), t.clone()))
+                .collect()
+        } else {
+            self.project
+                .scripts()
+                .map(|(k, t)| (k.to_owned(), t.to_owned()))
+                .collect()
+        };
+        self.project = Project::load_texts(&texts, style, self.oracle.clone());
+        let sources: BTreeMap<String, String> = self
+            .project
+            .files()
+            .map(|key| {
+                let text = self.project.source(key).unwrap_or_default().to_owned();
+                (key.to_owned(), text)
+            })
+            .collect();
+        for (key, text) in &sources {
+            if self.sources.get(key) != Some(text) {
+                self.dirty.insert(key.clone());
+            }
+        }
+        let gone: Vec<String> = self
+            .sources
+            .keys()
+            .filter(|key| !sources.contains_key(*key))
+            .cloned()
+            .collect();
+        self.sources = sources;
+        for key in gone {
+            self.dirty_namers(&key);
+        }
+        let project = &self.project;
+        self.broken_scripts.retain(|key, _| {
+            project
+                .script(key)
+                .is_some_and(|text| crate::script::syntax_error(text, key).is_some())
+        });
+        let new_scripts: BTreeMap<String, String> = self
+            .project
+            .scripts()
+            .map(|(k, t)| (k.to_owned(), t.to_owned()))
+            .collect();
+        let changed: BTreeSet<&String> = old_scripts
+            .keys()
+            .chain(new_scripts.keys())
+            .filter(|k| old_scripts.get(*k) != new_scripts.get(*k))
+            .collect();
+        for key in changed {
+            if let Some(text) = new_scripts.get(key) {
+                self.check_script(key, text);
+            }
+            self.script_changed(key);
+        }
+    }
+
+    /// The names of the scripts the user's files change from the
+    /// application's, and of the scripts that import those, over and
+    /// over: a file whose text names one runs other code than its pack's.
+    fn changed_script_names(&self) -> BTreeSet<String> {
+        let Some(layer) = &self.layer else {
+            return BTreeSet::new();
+        };
+        let changed = self
+            .project
+            .scripts()
+            .filter(|(k, t)| layer.base.files.get(*k).map(String::as_str) != Some(*t))
+            .map(|(k, _)| script_name(k).to_owned())
+            .collect();
+        self.with_importing_scripts(changed)
+    }
+
+    /// `names`, scripts' names, with the names of the scripts that name
+    /// one of them in their text, over and over. More than import them:
+    /// what it finds is only compiled again, which a name too many costs
+    /// time and nothing else; what is given up for a script that does not
+    /// parse is found by [`importing_scripts`](Self::importing_scripts).
+    fn with_importing_scripts(&self, mut changed: BTreeSet<String>) -> BTreeSet<String> {
+        let name = |key: &str| script_name(key).to_owned();
+        loop {
+            let more: Vec<String> = self
+                .project
+                .scripts()
+                .map(|(k, t)| (name(k), t))
+                .filter(|(n, t)| {
+                    !changed.contains(n) && changed.iter().any(|c| t.contains(c.as_str()))
+                })
+                .map(|(n, _)| n)
+                .collect();
+            if more.is_empty() {
+                return changed;
+            }
+            changed.extend(more);
+        }
+    }
+
+    /// `keys`, scripts' keys, with the keys of the scripts that import
+    /// one of them, over and over: by the imports each script has, as
+    /// the runtime hands them. A script that does not parse imports
+    /// nothing.
+    fn importing_scripts(&self, mut keys: BTreeSet<String>) -> BTreeSet<String> {
+        let imports: Vec<(String, Vec<String>)> = self
+            .project
+            .scripts()
+            .filter(|(key, _)| !self.broken_scripts.contains_key(*key))
+            .map(|(key, text)| {
+                let imported = crate::script::lower("", key, text).imports;
+                (
+                    key.to_owned(),
+                    imported.into_iter().map(|i| i.key).collect(),
+                )
+            })
+            .collect();
+        loop {
+            let more: Vec<String> = imports
+                .iter()
+                .filter(|(key, imported)| {
+                    !keys.contains(key) && imported.iter().any(|i| keys.contains(i))
+                })
+                .map(|(key, _)| key.clone())
+                .collect();
+            if more.is_empty() {
+                return keys;
+            }
+            keys.extend(more);
+        }
+    }
+
+    /// The keys of the scripts the QML file `key` imports by path.
+    fn scripts_of(&self, key: &str) -> Vec<String> {
+        let front = self.project.front();
+        let Some(summary) = front.summary(key) else {
+            return Vec::new();
+        };
+        summary
+            .imports
+            .iter()
+            .filter_map(|import| match &import.source {
+                qml_front::project::Source::Path(path) if is_script(path) => {
+                    Some(front.import_dir(key, path))
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Refuses the script `key` while `source` does not parse, as a save
+    /// of it is refused.
+    fn check_script(&mut self, key: &str, source: &str) {
+        match crate::script::syntax_error(source, key) {
+            Some((line, column, message)) => {
+                let fault = CompileFault {
+                    file: key.to_owned(),
+                    line,
+                    column,
+                    message,
+                };
+                self.broken_scripts.insert(key.to_owned(), fault);
+            }
+            None => {
+                self.broken_scripts.remove(key);
+            }
+        }
+    }
+
+    /// Marks dirty every file whose text names the file `key`, which
+    /// changed or is gone.
+    fn dirty_namers(&mut self, key: &str) {
+        let name = key.rsplit('/').next().unwrap_or(key);
+        for (other, source) in &self.sources {
+            if source.contains(name) {
+                self.dirty.insert(other.clone());
+            }
+        }
+    }
+
+    /// The text of the file at `path`, a path of the session's: through
+    /// the user's directory's checks for a [`layered`](Self::layered)
+    /// session, where what is refused is told by
+    /// [`take_refused`](Self::take_refused) and reads as
+    /// [`PermissionDenied`](std::io::ErrorKind::PermissionDenied). A
+    /// refused save is a fault as a broken one is: what runs is kept, and
+    /// only a file that is gone ([`NotFound`](std::io::ErrorKind::NotFound))
+    /// gives way to the application's own.
+    pub fn read_file(&mut self, path: &Path) -> std::io::Result<String> {
+        let Some(layer) = &mut self.layer else {
+            return std::fs::read_to_string(path);
+        };
+        match layer.dir.read(path) {
+            Ok(text) => Ok(text),
+            Err(ReadError::Io(e)) => Err(e),
+            Err(ReadError::Refused(why)) => {
+                let message = why.to_string();
+                layer.refused.push(why);
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    message,
+                ))
+            }
+        }
+    }
+
+    /// What the user's directory refused since the last call, as faults
+    /// a host tells.
+    pub fn take_refused(&mut self) -> Vec<CompileFault> {
+        self.layer
+            .as_mut()
+            .map(|layer| layer.refused.drain(..).map(|r| r.fault()).collect())
+            .unwrap_or_default()
+    }
+
+    /// Records `why` as refused, for a host that refused an address
+    /// itself (the engine's source); told with the rest.
+    pub fn refuse(&mut self, why: Refusal) {
+        if let Some(layer) = &mut self.layer {
+            layer.refused.push(why);
+        }
+    }
+
+    /// Takes `file`, compiled before the session started (an
+    /// application's pack), as what `key` compiles to when its text is
+    /// `source`: true when `file` was compiled from that text (its
+    /// [`CompiledFile::source_hash`]). The session then compiles the key
+    /// only once something it depends on changes. A file compiled from
+    /// another text is not taken, and the key is compiled at the start.
+    pub fn seed(&mut self, key: &str, source: &str, file: Arc<CompiledFile>) -> bool {
+        if blake3::hash(source.as_bytes()).as_bytes() != &file.source_hash {
+            return false;
+        }
+        self.seeds.insert(key.to_owned(), file.clone());
+        // A file that imports a script the user changed is compiled
+        // again, though its own text is the one its pack was built from.
+        let stale = self
+            .changed_script_names()
+            .iter()
+            .any(|name| source.contains(name.as_str()));
+        if !stale && self.sources.get(key).map(String::as_str) == Some(source) {
+            self.compiled.insert(key.to_owned(), file);
+            self.dirty.remove(key);
+        }
+        true
+    }
+
+    /// Starts from the [`seed`](Self::seed)ed files, at generation 0:
+    /// only the files without a seed of their text, and those that depend
+    /// on them, are compiled. A seeded file whose text does not compile
+    /// runs its seed until it is saved again; one with no seed is left
+    /// out, as [`start`](Self::start) leaves it. Both are told in what
+    /// comes back.
+    pub fn start_seeded(&mut self) -> Vec<CompileFault> {
+        let dynamic = self.project.front().dynamic_names(self.project.oracle());
+        self.dynamic.get_or_insert(dynamic);
+        self.all_dirty = false;
+        if let Err(faults) = self.compile_dirty(true) {
+            unreachable!("a start lets every file fail: {faults:?}");
+        }
+        let mut faults = Vec::new();
+        for (key, errors) in &self.failed {
+            faults.extend(errors.iter().cloned());
+            if let Some(seed) = self.seeds.get(key) {
+                self.compiled.insert(key.clone(), seed.clone());
+                self.reverted.insert(key.clone());
+            }
+        }
+        // A user's script that does not parse: what imports it, itself or
+        // through another script, runs its seed, with the application's
+        // scripts, until it is saved again.
+        // Found by what each file imports, not by the names its text
+        // holds: a valid file of the user's is not given up for a comment.
+        faults.extend(self.broken_scripts.values().cloned());
+        if !self.broken_scripts.is_empty() {
+            let broken = self.importing_scripts(self.broken_scripts.keys().cloned().collect());
+            let importers: Vec<String> = self
+                .seeds
+                .keys()
+                .filter(|key| self.sources.contains_key(*key))
+                .filter(|key| self.scripts_of(key).iter().any(|s| broken.contains(s)))
+                .cloned()
+                .collect();
+            for key in importers {
+                self.compiled.insert(key.clone(), self.seeds[&key].clone());
+                self.reverted.insert(key);
+            }
+        }
+        let reverted = &self.reverted;
+        self.failed.retain(|key, _| !reverted.contains(key));
+        self.live = self.compiled.clone();
+        self.live_failed = self.failed.keys().cloned().collect();
+        self.pending = None;
+        faults
     }
 
     /// Chooses the style behind `import QtQuick.Controls`, as a program
@@ -288,6 +689,10 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
     /// Reads the directory again: for a file that was added or removed, and
     /// for a `qmldir` or a `CMakeLists.txt` that changed what a module has.
     pub fn rescan(&mut self) -> Result<(), Error> {
+        if self.layer.is_some() {
+            self.rescan_layered(true);
+            return Ok(());
+        }
         let Some(root) = self.roots.first().cloned() else {
             return Ok(());
         };
@@ -378,21 +783,7 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
         let source = source.into();
         if is_script(key) {
             if self.project.script(key) != Some(source.as_str()) {
-                match crate::script::syntax_error(&source, key) {
-                    Some((line, column, message)) => {
-                        let file = key.to_owned();
-                        let fault = CompileFault {
-                            file,
-                            line,
-                            column,
-                            message,
-                        };
-                        self.broken_scripts.insert(key.to_owned(), fault);
-                    }
-                    None => {
-                        self.broken_scripts.remove(key);
-                    }
-                }
+                self.check_script(key, &source);
                 self.project.add_script(key, source);
                 self.script_changed(key);
             }
@@ -420,8 +811,14 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
             return;
         }
         if !self.sources.contains_key(key) {
-            // Any file may have been waiting for a type of this name.
-            self.all_dirty = true;
+            if self.layer.is_some() {
+                // A user's new file: the files that name it are the ones
+                // waiting for it.
+                self.dirty_namers(key);
+            } else {
+                // Any file may have been waiting for a type of this name.
+                self.all_dirty = true;
+            }
         }
         self.project.add(key, source.as_str());
         self.sources.insert(key.to_owned(), source);
@@ -499,6 +896,18 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
 
     /// The file `key` is gone.
     pub fn remove_file(&mut self, key: &str) {
+        if let Some(layer) = &self.layer {
+            // The user's file is gone: the application's own is back.
+            let name = if is_script(key) {
+                key.to_owned()
+            } else {
+                format!("{key}.qml")
+            };
+            if let Some(text) = layer.base.files.get(&name).cloned() {
+                self.set_file(key, text);
+                return;
+            }
+        }
         if is_script(key) {
             self.broken_scripts.remove(key);
             if self.project.script(key).is_some() {
@@ -516,6 +925,11 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
             return;
         }
         if self.sources.remove(key).is_none() {
+            return;
+        }
+        if self.layer.is_some() {
+            self.project.remove(key);
+            self.dirty_namers(key);
             return;
         }
         if self.reached.is_some() || !self.roots.is_empty() {
@@ -712,6 +1126,10 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
                 }
                 Err(errors) => errors,
             };
+            if !tolerate && self.reverted.contains(key) && !self.dirty.contains(key) {
+                // It runs its seed, and was not saved since.
+                continue;
+            }
             if tolerate || (self.live_failed.contains(key) && !self.dirty.contains(key)) {
                 let_be.push((key.clone(), errors));
             } else {
@@ -724,6 +1142,7 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
         }
         for (key, file, warnings) in done {
             self.failed.remove(&key);
+            self.reverted.remove(&key);
             self.compiled.insert(key.clone(), file);
             self.warnings.insert(key, warnings);
         }
@@ -817,4 +1236,9 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
         }
         out
     }
+}
+
+/// The name a file imports the script `key` by: its last path part.
+fn script_name(key: &str) -> &str {
+    key.rsplit('/').next().unwrap_or(key)
 }

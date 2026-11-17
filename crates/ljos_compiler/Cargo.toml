@@ -26,9 +26,19 @@ oxc_isolated_declarations.workspace = true
 # scoping leaves unbound, and this is oxc's scope analysis of the same AST.
 oxc_semantic.workspace = true
 blake3.workspace = true
+# The sources a pack carries for its users (`sources.rs`), deflated.
+miniz_oxide.workspace = true
 thiserror.workspace = true
 anyhow.workspace = true
 tempfile.workspace = true
+
+# A user's file is opened without waiting on a pipe (`confine.rs`).
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
+# Where an open user's file is (`confine.rs`).
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
 
 [dev-dependencies]
 # Only to hold the compiler's ICU escaping to the runtime's.
