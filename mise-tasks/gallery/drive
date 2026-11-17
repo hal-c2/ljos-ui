@@ -1,16 +1,27 @@
 #!/usr/bin/env bash
 #MISE description="Use corpus examples as a person would, off-screen in the desktop:cua sandbox: click every enabled control (or a grid of points), type into and edit every text field with keys, and list what each click and key did and what the app logged: gallery:drive [id…] (default: every example the last gallery run rendered)"
+#MISE dir="{{config_root}}"
 #USAGE arg "[ids]..." var=#true help="Corpus example ids (default: every example the last gallery run rendered)"
 set -euo pipefail
-root="$(cd "$(dirname "$0")/../.." && pwd)"
-target="${CARGO_TARGET_DIR:-$root/target}"
+# shellcheck source-path=SCRIPTDIR source=../_lib/env.sh
+. "$(dirname "$0")/../_lib/env.sh"
+root="$ljos_root"
+need_python3
+need_corpus
+target="$(target_dir)"
+# A sandbox of its own (GALLERY_CUA_HOME), so stopping it at the end leaves
+# alone one someone drives with desktop:cua.
+export LJOS_CUA_HOME="${GALLERY_CUA_HOME:-$target/cua-gallery-drive}"
 out="${GALLERY_DIR:-$target/gallery}/drive"
 
 ids=("$@")
 if [ ${#ids[@]} -eq 0 ]; then
   report="${GALLERY_DIR:-$target/gallery}/report.json"
   [ -f "$report" ] || { echo "no $report: run \`mise run gallery\` first, or name the examples" >&2; exit 1; }
-  mapfile -t ids < <(python3 -c 'import json, sys; [print(e["id"]) for e in json.load(open(sys.argv[1])) if e.get("renders")]' "$report")
+  while IFS= read -r id; do
+    [ -n "$id" ] && ids+=("$id")
+  done < <(python3 -c 'import json, sys; [print(e["id"]) for e in json.load(open(sys.argv[1])) if e.get("renders")]' "$report")
+  [ ${#ids[@]} -gt 0 ] || die "$report lists no example that rendered: run mise run gallery, or name the examples"
 fi
 
 # The build gallery:run then runs (GALLERY_BUILT), in its profile.
