@@ -12,6 +12,9 @@ T.TabBar {
     implicitHeight: Math.max(implicitBackgroundHeight + topInset + bottomInset,
                              contentHeight + topPadding + bottomPadding)
 
+    // Tabs that do not fit end at the strip's edge rather than drawing over
+    // what is beside it; the padding inside keeps a tab's ring whole.
+    clip: true
     spacing: 2
     horizontalPadding: Theme.spacing
     verticalPadding: Theme.spacingSmall

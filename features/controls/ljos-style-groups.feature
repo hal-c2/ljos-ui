@@ -79,6 +79,24 @@ Feature: Ljós's own style: tabs, cards, popovers, split buttons and empty state
       And the property "visible" of "focusRing" is true
       And the property "border.color" of "focusRing" is "#0066cc"
 
+    Scenario: Tabs that do not fit end at the strip's edge
+      Given the QML:
+        """qml
+        import Ljos.Ui
+        import Ljos.Controls
+        Item {
+          width: 400; height: 120
+          TabBar {
+            objectName: "bar"; width: 120
+            TabButton { text: "Threads" }
+            TabButton { text: "Files" }
+            TabButton { text: "Settings" }
+          }
+        }
+        """
+      Then the property "clip" of "bar" is true
+      And the property "width" of "bar" is 120
+
   Rule: A card groups things on the surface
 
     Scenario: What is put in a card is inside its padding
@@ -174,6 +192,26 @@ Feature: Ljós's own style: tabs, cards, popovers, split buttons and empty state
       When the method "hide" of "root" is called
       Then the property "visible" of "pop" is false
 
+    Scenario: Escape closes a popover that holds only text
+      Given the QML:
+        """qml
+        import Ljos.Ui
+        import Ljos.Controls
+        Item {
+          width: 400; height: 300
+          Button {
+            x: 20; y: 20; text: "Filter"
+            onClicked: pop.open()
+            Popover { id: pop; objectName: "pop"; Label { text: "Only open" } }
+          }
+        }
+        """
+      When the user clicks the "button" "Filter"
+      And 200 milliseconds pass
+      Then the property "visible" of "pop" is true
+      When the user presses "Escape"
+      Then the property "visible" of "pop" is false
+
   Rule: A split button pairs an action with a menu of its other options
 
     Scenario: The action's half runs it and the chevron's opens the menu below
@@ -206,6 +244,31 @@ Feature: Ljós's own style: tabs, cards, popovers, split buttons and empty state
       Then the property "said" of "root" is "run menu "
       And the property "visible" of "options" is true
       And the property "y" of "options" is 32
+
+    Scenario: A split button made wider keeps its menu under the chevron and is all action up to the seam
+      Given the QML:
+        """qml
+        import Ljos.Ui
+        import Ljos.Controls
+        Item {
+          id: root; objectName: "root"
+          width: 400; height: 300
+          property real menuEnd: options.x + options.width
+          SplitButton {
+            objectName: "split"; x: 20; y: 20
+            text: "Run"
+            menu: Menu {
+              id: options; objectName: "options"
+              MenuItem { text: "Run all" }
+            }
+          }
+        }
+        """
+      When the user clicks the "button" "More Run options"
+      And 200 milliseconds pass
+      And the property "width" of "split" is set to 240
+      Then the property "menuEnd" of "root" is 240
+      And the property "width" of "action" is at least 200
 
     Scenario: A compact split button shows its icon alone and is still named
       Given the QML:
@@ -302,6 +365,38 @@ Feature: Ljós's own style: tabs, cards, popovers, split buttons and empty state
       Then the property "rotation" of "glyph" is 0
       And the property "opacity" of "glyph" is at most 0.9
 
+    Scenario: When loading ends the icon stands upright again
+      Given the QML:
+        """qml
+        import Ljos.Ui
+        import Ljos.Controls
+        Item {
+          width: 480; height: 320
+          EmptyState { objectName: "empty"; status: "loading"; title: "Loading threads" }
+        }
+        """
+      When 400 milliseconds pass
+      And the property "status" of "empty" is set to "error"
+      Then the property "name" of "glyph" is "circle-alert"
+      And the property "rotation" of "glyph" is 0
+      And the property "opacity" of "glyph" is 1
+
+    Scenario: With reduced motion, when loading ends the icon is whole again
+      Given the system setting "reduced motion" is true
+      And the QML:
+        """qml
+        import Ljos.Ui
+        import Ljos.Controls
+        Item {
+          width: 480; height: 320
+          EmptyState { objectName: "empty"; status: "loading"; title: "Loading threads" }
+        }
+        """
+      When 400 milliseconds pass
+      And the property "status" of "empty" is set to "error"
+      Then the property "rotation" of "glyph" is 0
+      And the property "opacity" of "glyph" is 1
+
   Rule: Every one of them passes the design audit
 
     Scenario Outline: Tabs, a card, a split button and an empty state in <scheme> have nothing to report
@@ -382,7 +477,7 @@ Feature: Ljós's own style: tabs, cards, popovers, split buttons and empty state
           width: 480; height: 400
           property string said: ""
           Column {
-            TabBar { objectName: "bar"; TabButton { text: "Threads" } TabButton { text: "Files" } }
+            TabBar { objectName: "bar"; TabButton { objectName: "threads"; text: "Threads"; iconName: "folder" } TabButton { text: "Files" } }
             Card { objectName: "card"; Label { text: "Two files changed" } }
             SplitButton {
               objectName: "split"; text: "Run"; iconName: "chevron-right"
@@ -400,7 +495,20 @@ Feature: Ljós's own style: tabs, cards, popovers, split buttons and empty state
       And the property "padding" of "card" is 12
       And the property "background.radius" of "pop" is 0
       And the property "edge" of "pop" is 4
+      And the property "iconName" of "threads" is "folder"
       When the user clicks the "button" "Run"
       And the user clicks the "button" "More Run options"
       And the user clicks the "button" "New thread"
       Then the property "said" of "root" is "run menu new "
+
+    Scenario: An error with no title says so in words, as Basic has no icons
+      Given the QML:
+        """qml
+        import Ljos.Ui
+        import Ljos.Controls.Basic
+        Item {
+          width: 480; height: 320
+          EmptyState { objectName: "empty"; status: "error" }
+        }
+        """
+      Then the property "text" of "title" is "Something went wrong"
