@@ -473,6 +473,32 @@ Feature: A shipped application its users change while it runs
       And the application was told of a fault matching "refused: \.\./Escape\.qml: names a place outside"
       And the reload error matches "refused"
 
+    Scenario: A step up saved while the application runs is refused
+      Given the file "Escape.qml":
+        """qml
+        import QtQuick
+        Rectangle { objectName: "escaped" }
+        """
+      And the user's file "Shell.qml":
+        """qml
+        import QtQuick
+        Item { objectName: "user-shell" }
+        """
+      When the application runs "Main.qml" built ahead, with the user's directory over it
+      And the user saves the file "Shell.qml" as:
+        """qml
+        import QtQuick
+        Item {
+          objectName: "user-shell"
+          Loader { source: "../Escape.qml" }
+          Loader { source: Qt.resolvedUrl("../Escape.qml") }
+          Component.onCompleted: Qt.createComponent("../Escape.qml")
+        }
+        """
+      Then the object "loader/user-shell" exists
+      And the object "escaped" does not exist
+      And the application was told of a fault matching "refused: \.\./Escape\.qml: names a place outside"
+
     Scenario: A step up that stays in the user's directory is loaded
       Given the user's file "Part.qml":
         """qml
