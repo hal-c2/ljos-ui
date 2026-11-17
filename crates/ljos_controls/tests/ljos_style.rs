@@ -275,7 +275,7 @@ fn every_control_draws_a_focus_ring_that_can_be_seen() {
                 ring, r.focus,
                 "{scheme:?} {name}: the ring is not the focus role"
             );
-            for (on, fill) in [("canvas", r.canvas), ("surfaceRaised", r.surface_raised)] {
+            for (on, fill) in [("canvas", r.canvas), ("surface", r.surface)] {
                 let c = ljos_design::color::wcag_contrast(ring, fill);
                 assert!(c >= 3.0, "{scheme:?} {name}: ring on {on} is {c:.2}:1");
             }

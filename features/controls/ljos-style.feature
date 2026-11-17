@@ -41,13 +41,29 @@ Feature: Ljós's own style: the controls of Ljos.Controls
         }
         """
       Then the property "implicitHeight" of "save" is 28
-      And the property "background.color" of "save" is "#ededed"
+      And the property "background.color" of "save" is "#f5f5f5"
       And the property "background.radius" of "save" is 8
       And the property "background.color" of "send" is "#0066cc"
       And the property "implicitHeight" of "field" is 28
-      And the property "background.color" of "field" is "#ededed"
+      And the property "background.color" of "field" is "#f5f5f5"
       And the property "background.border.color" of "field" is "#808080"
       And the property "placeholderTextColor" of "field" is "#6a6a6a"
+
+    Scenario: A check box and a switch are as tall as their text, so a list of options stays dense
+      Given the QML:
+        """qml
+        import Ljos.Ui
+        import Ljos.Controls
+        Item {
+          width: 320; height: 200
+          CheckBox { objectName: "hidden"; text: "Show hidden files" }
+          Switch { objectName: "wrap"; y: 40; text: "Wrap lines" }
+        }
+        """
+      Then the property "padding" of "hidden" is 4
+      And the property "implicitHeight" of "hidden" is at most 26
+      And the property "padding" of "wrap" is 4
+      And the property "implicitHeight" of "wrap" is at most 26
 
     Scenario: A file that wants Basic's look imports Ljos.Controls.Basic
       Given the QML:
@@ -899,7 +915,7 @@ Feature: Ljós's own style: the controls of Ljos.Controls
           Button { id: save; x: 10; y: 60; text: "Save"; ToolTip.text: "Writes the file"; ToolTip.visible: true }
         }
         """
-      Then the property "tip.background.radius" of "root" is 4
+      Then the property "tip.background.radius" of "root" is 6
       And the property "tip.font.pixelSize" of "root" is 12
 
     Scenario: A Basic button's tool tip stays Basic's

@@ -171,7 +171,7 @@ T.ComboBox {
             readonly property bool ring: control.visualFocus || control.editable && control.activeFocus
             readonly property bool framed: control.outline || control.editable
             color: control.down || control.hovered || control.popup.visible ? Theme.accentSurface
-                 : framed ? Theme.surfaceRaised : "transparent"
+                 : framed ? Theme.surface : "transparent"
             border.width: ring ? 2 : framed ? 1 : 0
             border.color: ring ? Theme.focus : Theme.input
         }

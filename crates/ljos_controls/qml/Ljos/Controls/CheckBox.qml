@@ -10,10 +10,11 @@ T.CheckBox {
                             implicitContentWidth + leftPadding + rightPadding)
     implicitHeight: Math.max(implicitBackgroundHeight + topInset + bottomInset,
                              implicitContentHeight + topPadding + bottomPadding,
-                             implicitIndicatorHeight + topPadding + bottomPadding,
-                             Theme.controlHeight)
+                             implicitIndicatorHeight + topPadding + bottomPadding)
 
-    padding: 0
+    // As tall as its text and a small inset, not a button's height: a list
+    // of options stays dense, and in a row the layout centres it.
+    padding: Theme.spacingSmall
     spacing: Theme.spacing
     hoverEnabled: true
     font.pixelSize: Theme.fontSize
@@ -29,7 +30,7 @@ T.CheckBox {
             y: control.topPadding + (control.availableHeight - height) / 2
             radius: Theme.radiusSmall
             readonly property bool marked: control.checkState !== Qt.Unchecked
-            color: marked ? Theme.accent : Theme.surfaceRaised
+            color: marked ? Theme.accent : Theme.surface
             border.width: 1
             // The accent has no ratio on the ground; the focus colour, the
             // accent made 3:1 on every fill, keeps the box's edge there.
