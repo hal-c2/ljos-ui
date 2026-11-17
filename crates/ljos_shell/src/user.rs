@@ -55,13 +55,18 @@ impl<M> Setup<'_, M> {
     /// Gives the engine the application's compiled files `pack` with the
     /// files of its user's directory over them: the root made after this
     /// is made of the user's file of its key when there is one. `oracle`
-    /// knows the types the program registers, so call it once they are.
+    /// gives what knows the types the program registers; it is called
+    /// when the user first has a file, so call this once they are.
     ///
     /// The pack must carry its sources (`build::Options::with_sources`)
     /// for a user's file to compile; one without runs as built, and says
     /// why through [`UserQml::on_fault`](ljos_dev::UserQml::on_fault).
-    pub fn user_qml<O>(&mut self, pack: MapSource, config: UserQml, oracle: O)
-    where
+    pub fn user_qml<O>(
+        &mut self,
+        pack: MapSource,
+        config: UserQml,
+        oracle: impl FnOnce(&Engine) -> O + 'static,
+    ) where
         O: TypeOracle + Clone + Send + 'static,
         Reloader<O>: Send,
     {

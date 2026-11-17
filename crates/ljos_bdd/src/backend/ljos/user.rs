@@ -108,7 +108,7 @@ impl Live {
             &self.engine,
             pack,
             config,
-            super::oracle(),
+            |_| super::oracle(),
             Arc::clone(&user.wake),
         );
         user.session = Some(session);

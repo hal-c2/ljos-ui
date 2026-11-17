@@ -366,12 +366,14 @@ impl<M> App<M> {
     /// directory, the network) is refused and told.
     ///
     /// ```no_run
+    /// # fn run(pack: ljos::MapSource) -> Result<(), ljos::ShellError> {
+    /// // pack: ljos::include_qml!("qml.pack"), built with its sources
     /// ljos::App::new("Shell")
-    ///     .source(ljos::include_qml!("qml.pack"))
+    ///     .source(pack)
     ///     .user_qml(ljos::UserQml::dir("shell").on_fault(|f| eprintln!("{f}")))
     ///     .root("Main")
-    ///     .run()?;
-    /// # Ok::<(), ljos::ShellError>(())
+    ///     .run()
+    /// # }
     /// ```
     #[cfg(all(feature = "user-qml", feature = "shell"))]
     #[must_use]
@@ -871,8 +873,7 @@ impl<M> App<M> {
             // After the modules: the user's files compile against them.
             #[cfg(feature = "user-qml")]
             if let Some((pack, config)) = user_qml {
-                let oracle = crate::oracle::EngineOracle::from_engine(s.engine());
-                s.user_qml(pack, config, oracle);
+                s.user_qml(pack, config, crate::oracle::EngineOracle::from_engine);
             }
             #[cfg(all(feature = "dev", feature = "dev-qml"))]
             s.set_qml_dirs(dev.dirs);

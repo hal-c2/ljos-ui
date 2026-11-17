@@ -184,6 +184,11 @@ struct Making {
 
 type Make = Box<dyn FnOnce(Making) -> Built + Send>;
 
+/// The compiler's maker, its oracle read from the engine only when the
+/// user has a file: reading the program's types is work at start-up an
+/// application whose user has none would do for nothing.
+type Later = Box<dyn FnOnce(&Engine) -> Make>;
+
 /// The compiler over an oracle, made only when the user has a file.
 fn maker<O>(oracle: O) -> Make
 where
@@ -376,7 +381,7 @@ const PICTURES_KEY: CoalesceKey = CoalesceKey(0x006c_6a6f_7375_7377);
 enum State {
     /// No file of the user's: the application runs what it was built
     /// with. The watch is on the directory, or the nearest one above it.
-    Dormant { make: Make, watch: Option<Dormant> },
+    Dormant { make: Later, watch: Option<Dormant> },
     /// The compiler is being made on a thread of its own.
     Making,
     /// The user's files run, and are watched unless asked not to be.
@@ -422,8 +427,10 @@ impl UserSession {
     /// Gives `engine` the application's files `pack` with the user's of
     /// `config` over them, and starts watching: before the root is made,
     /// so that the root is made of the user's files, and told of it
-    /// ([`set_root`](Self::set_root)). `oracle` knows the types the program registers;
-    /// `wake` asks the host for a frame, from any thread.
+    /// ([`set_root`](Self::set_root)). `oracle` gives what knows the
+    /// types the program registers, called on the UI thread when the user
+    /// first has a file, never before; `wake` asks the host for a frame,
+    /// from any thread.
     ///
     /// Nothing here fails the application: what goes wrong (a file that
     /// does not compile, a pack built without its sources, a directory
@@ -433,7 +440,7 @@ impl UserSession {
         engine: &Engine,
         pack: MapSource,
         config: UserQml,
-        oracle: O,
+        oracle: impl FnOnce(&Engine) -> O + 'static,
         wake: WakeHook,
     ) -> Self
     where
@@ -489,11 +496,11 @@ impl UserSession {
             user: dir.clone(),
             shared,
         });
-        let make = maker(oracle);
+        let make: Later = Box::new(move |engine| maker(oracle(engine)));
         if has_user_files(&dir) {
             match session.making(true) {
                 Ok(making) => {
-                    let built = make(making);
+                    let built = make(engine)(making);
                     session.activate(engine, built, false);
                 }
                 Err(fault) => session.tell(engine, &[fault]),
@@ -738,6 +745,7 @@ impl UserSession {
         let State::Dormant { make, .. } = std::mem::replace(&mut self.state, State::Making) else {
             return;
         };
+        let make = make(engine);
         // The application's files are read on a thread of their own, so
         // that its frames go on while they are.
         let handle = self.handle.clone();
