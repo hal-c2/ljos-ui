@@ -48,6 +48,7 @@ mod platform;
 mod reload;
 mod text;
 mod top;
+mod user;
 
 /// The driver's file key. Not a valid QML type name for a scenario author
 /// to collide with by accident.
@@ -116,6 +117,8 @@ struct Live {
     reloads: Option<reload::Rig>,
     /// The watch over files on disk of a scenario that has one.
     disk: Option<disk::Disk>,
+    /// The user's directory of an application its users change.
+    user: Option<user::User>,
     /// The `top` overlay; hidden unless a scenario shows it.
     top: ljos_dev::Top,
     /// The files given run code compiled ahead of time.
@@ -452,6 +455,7 @@ impl LjosBackend {
             drive: DriveState::default(),
             reloads: None,
             disk: None,
+            user: None,
             top: ljos_dev::Top::new(),
             ahead: false,
             lowered: false,
@@ -1641,6 +1645,22 @@ impl Application for LjosBackend {
 
     fn save_on_disk(&mut self, name: &str, text: Option<&str>) -> Result<()> {
         self.live()?.save_on_disk(name, text)
+    }
+
+    fn user_qml_file(&mut self, name: &str, text: Option<&str>) -> Result<()> {
+        self.live()?.user_qml_file(name, text)
+    }
+
+    fn user_qml_link_out(&mut self, name: &str) -> Result<()> {
+        self.live()?.user_qml_link_out(name)
+    }
+
+    fn run_with_user_qml(&mut self, entry: &str, built_from: &[(String, String)]) -> Result<()> {
+        self.live()?.run_with_user_qml(entry, built_from)
+    }
+
+    fn user_qml_seen(&mut self) -> Result<super::UserSeen> {
+        self.live()?.user_qml_seen()
     }
 
     fn open_window_given(&mut self, name: &str, title: &str) -> Result<()> {

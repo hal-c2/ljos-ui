@@ -29,10 +29,10 @@ pub(super) struct Disk {
 }
 
 /// The scenario's windows as a reload sees them.
-struct Windows<'a> {
-    windows: &'a mut Vec<ObjectId>,
-    roots: &'a mut Vec<ObjectId>,
-    shown: Option<ObjectId>,
+pub(super) struct Windows<'a> {
+    pub(super) windows: &'a mut Vec<ObjectId>,
+    pub(super) roots: &'a mut Vec<ObjectId>,
+    pub(super) shown: Option<ObjectId>,
 }
 
 impl Host for Windows<'_> {
@@ -60,7 +60,7 @@ impl Host for Windows<'_> {
     }
 }
 
-fn write(path: &Path, text: &str) -> Result<()> {
+pub(super) fn write(path: &Path, text: &str) -> Result<()> {
     let parent = path
         .parent()
         .ok_or_else(|| failed("a file needs a directory"))?;

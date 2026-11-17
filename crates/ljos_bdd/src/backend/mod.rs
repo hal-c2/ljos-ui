@@ -70,6 +70,20 @@ pub struct LogEntry {
 /// the Ljós backend reads it straight off the scene's tree.
 pub use ljos_a11y::AccessibleNode as A11yNode;
 
+/// What a scenario sees of the files of an application's user
+/// (`user-qml`).
+#[derive(Debug, Clone, Default)]
+pub struct UserSeen {
+    /// The user's files are compiled and run.
+    pub active: bool,
+    /// A watch is kept.
+    pub watching: bool,
+    /// Saves applied.
+    pub reloads: u64,
+    /// What the application's fault handler was told.
+    pub told: Vec<String>,
+}
+
 /// Why a changed file was not applied.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ReloadFailure {
@@ -985,6 +999,31 @@ pub trait Application: Backend {
     /// it is removed), and the application takes what the watcher brings.
     fn save_on_disk(&mut self, _name: &str, _text: Option<&str>) -> Result<()> {
         Err(BackendError::NotImplemented("a watch over files on disk"))
+    }
+
+    /// The file `name` of the user's directory of an application its
+    /// users change (`user-qml`) is written with `text` (None: removed);
+    /// while the application runs, it takes what the save brings.
+    fn user_qml_file(&mut self, _name: &str, _text: Option<&str>) -> Result<()> {
+        Err(BackendError::NotImplemented("a user's directory"))
+    }
+
+    /// The user's file `name` is a link to a file outside the directory.
+    fn user_qml_link_out(&mut self, _name: &str) -> Result<()> {
+        Err(BackendError::NotImplemented("a user's directory"))
+    }
+
+    /// Runs `entry` of the given files built ahead into a pack that
+    /// carries their sources, with the user's directory over them.
+    /// `built_from`: files the build compiled from other texts than the
+    /// sources it carries.
+    fn run_with_user_qml(&mut self, _entry: &str, _built_from: &[(String, String)]) -> Result<()> {
+        Err(BackendError::NotImplemented("a user's directory"))
+    }
+
+    /// What the application's user's files are doing.
+    fn user_qml_seen(&mut self) -> Result<UserSeen> {
+        Err(BackendError::NotImplemented("a user's directory"))
     }
 
     /// As [`Application::open_window`], for an application that made the

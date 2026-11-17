@@ -468,6 +468,24 @@ inspector above (`When the agent calls the tool …`, `When the agent reads the 
 | `Then the command exits with status N` | |
 | `Then the command's output mentions "text"` / `does not mention "text"` | in what it wrote to its output or as errors |
 
+### A user's directory (`hot-reload/user-qml.feature`; all `@ljos-only`)
+
+A shipped application built ahead that lets its users change it (`App::user_qml`, the `ljos`
+feature `user-qml`). The scenario's files are the application's, built into a pack that carries
+their sources; the user's directory is a directory on the real disk. The steps come after the QML.
+
+| Step | Meaning |
+|---|---|
+| `Given the user's file "X":` + doc string | the user's directory has the file, before the application runs |
+| `Given the user's file "X" links to a file outside the user's directory` | the file is a link that leads out of the directory |
+| `When the application runs "Main.qml" built ahead, with the user's directory over it` | the scenario's files built ahead (`build::Options::with_sources`), run with the user's directory over them; the root is made of the entry in a window of its own |
+| `When the application runs "Main.qml" built ahead from an older "X.qml", with the user's directory over it:` + doc string | the same, with `X.qml` compiled from the doc string while the pack carries the scenario's text of it, as a build that was not redone after a change |
+| `When the user saves the file "X" as:` + doc string / `When the user removes the file "X"` | while the application runs; the step waits for what the save brings |
+| `Then the user's files are compiled` / `are not compiled` | whether the compiler ran: it does once the user has a file |
+| `Then the user's directory is watched` | the application keeps a watch, on the directory or on the nearest one above it |
+| `Then N saves of the user's files have been applied` | the saves applied as reloads |
+| `Then the application was told of a fault matching "regex"` / `Then the application was told of no fault` | what the application's fault handler (`UserQml::on_fault`) heard |
+
 ### The `top` overlay (`tooling/top.feature`; all `@ljos-only`)
 
 A development build's overlay (ARCHITECTURE.md 19.10) of where the last frame's time went. The steps
