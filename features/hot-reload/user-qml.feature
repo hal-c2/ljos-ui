@@ -183,6 +183,7 @@ Feature: A shipped application its users change while it runs
       Given the user's file "Shell.qml":
         """qml
         import QtQuick
+        import QtQuick.Controls
         Item { objectName: "user-shell"; width: 200; height: 100 }
         """
       When the application runs "Main.qml" built ahead, with the user's directory over it
