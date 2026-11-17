@@ -4,9 +4,9 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
+use ljos_engine::{Engine, MetaObject, MetaRef, PropertyAccess, PropertyFlags, TypeTag};
 #[cfg(any(feature = "dev-qml", feature = "build"))]
 use ljos_engine::{TypeDump, TypeEntry};
-use ljos_engine::{Engine, MetaObject, MetaRef, PropertyAccess, PropertyFlags, TypeTag};
 use qml_front::{Property as FrontProperty, QtType, QtTypeOracle, Special, TypeOracle};
 
 /// One type as the compiler sees it in a render with backends: of the
