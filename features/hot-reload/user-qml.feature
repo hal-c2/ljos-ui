@@ -192,6 +192,86 @@ Feature: A shipped application its users change while it runs
       Then the property "by" of "card" is "the application"
       And the property "width" of "card" is 10
 
+    Scenario: A user's script runs in the application's files that import it
+      Given the file "calc.js":
+        """js
+        function by() { return "the application" }
+        """
+      And the file "Main.qml":
+        """qml
+        import QtQuick
+        import "calc.js" as Calc
+        Item { objectName: "main"; property string by: Calc.by() }
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        Item { objectName: "root" }
+        """
+      And the user's file "calc.js":
+        """js
+        function by() { return "the user" }
+        """
+      When the application runs "Main.qml" built ahead, with the user's directory over it
+      Then the property "by" of "main" is "the user"
+      And the application was told of no fault
+
+    Scenario: A user's script that does not parse is told, and what imports it runs as built
+      Given the file "calc.js":
+        """js
+        function by() { return "the application" }
+        """
+      And the file "Main.qml":
+        """qml
+        import QtQuick
+        import "calc.js" as Calc
+        Item { objectName: "main"; property string by: Calc.by() }
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        Item { objectName: "root" }
+        """
+      And the user's file "calc.js":
+        """js
+        function by( { return "the user" }
+        """
+      When the application runs "Main.qml" built ahead, with the user's directory over it
+      Then the property "by" of "main" is "the application"
+      And the application was told of a fault matching "calc\.js"
+
+  Rule: An application built without its sources runs as built, and says why once
+
+    Scenario: A user's file over an application built without its sources is told once and nothing is watched
+      Given the user's file "Card.qml":
+        """qml
+        import QtQuick
+        Rectangle { property string by: "the user"; width: 30; height: 10 }
+        """
+      When the application runs "Main.qml" built ahead without its sources, with the user's directory over it
+      Then the user's files are not compiled
+      And the user's directory is not watched
+      And the property "by" of "card" is "the application"
+      And the application was told of 1 fault matching "carries no sources"
+
+    Scenario: A user's first file over an application built without its sources is told once
+      When the application runs "Main.qml" built ahead without its sources, with the user's directory over it
+      Then the user's directory is watched
+      When the user saves the file "Card.qml" as:
+        """qml
+        import QtQuick
+        Rectangle { property string by: "the user"; width: 30; height: 10 }
+        """
+      And the user saves the file "Shell.qml" as:
+        """qml
+        import QtQuick
+        Rectangle { objectName: "user-shell" }
+        """
+      Then the user's files are not compiled
+      And the user's directory is not watched
+      And the property "by" of "card" is "the application"
+      And the application was told of 1 fault matching "carries no sources"
+
   Rule: Files load from the user's directory and the application only
 
     Scenario Outline: An address that leads elsewhere is refused and told
