@@ -328,8 +328,11 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
         self.with_importing_scripts(changed)
     }
 
-    /// `names`, scripts' names, with the names of the scripts that import
-    /// one of them, over and over.
+    /// `names`, scripts' names, with the names of the scripts that name
+    /// one of them in their text, over and over. More than import them:
+    /// what it finds is only compiled again, which a name too many costs
+    /// time and nothing else; what is given up for a script that does not
+    /// parse is found by [`importing_scripts`](Self::importing_scripts).
     fn with_importing_scripts(&self, mut changed: BTreeSet<String>) -> BTreeSet<String> {
         let name = |key: &str| script_name(key).to_owned();
         loop {
@@ -347,6 +350,56 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
             }
             changed.extend(more);
         }
+    }
+
+    /// `keys`, scripts' keys, with the keys of the scripts that import
+    /// one of them, over and over: by the imports each script has, as
+    /// the runtime hands them. A script that does not parse imports
+    /// nothing.
+    fn importing_scripts(&self, mut keys: BTreeSet<String>) -> BTreeSet<String> {
+        let imports: Vec<(String, Vec<String>)> = self
+            .project
+            .scripts()
+            .filter(|(key, _)| !self.broken_scripts.contains_key(*key))
+            .map(|(key, text)| {
+                let imported = crate::script::lower("", key, text).imports;
+                (
+                    key.to_owned(),
+                    imported.into_iter().map(|i| i.key).collect(),
+                )
+            })
+            .collect();
+        loop {
+            let more: Vec<String> = imports
+                .iter()
+                .filter(|(key, imported)| {
+                    !keys.contains(key) && imported.iter().any(|i| keys.contains(i))
+                })
+                .map(|(key, _)| key.clone())
+                .collect();
+            if more.is_empty() {
+                return keys;
+            }
+            keys.extend(more);
+        }
+    }
+
+    /// The keys of the scripts the QML file `key` imports by path.
+    fn scripts_of(&self, key: &str) -> Vec<String> {
+        let front = self.project.front();
+        let Some(summary) = front.summary(key) else {
+            return Vec::new();
+        };
+        summary
+            .imports
+            .iter()
+            .filter_map(|import| match &import.source {
+                qml_front::project::Source::Path(path) if is_script(path) => {
+                    Some(front.import_dir(key, path))
+                }
+                _ => None,
+            })
+            .collect()
     }
 
     /// Refuses the script `key` while `source` does not parse, as a save
@@ -464,19 +517,21 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
         // A user's script that does not parse: what imports it, itself or
         // through another script, runs its seed, with the application's
         // scripts, until it is saved again.
+        // Found by what each file imports, not by the names its text
+        // holds: a valid file of the user's is not given up for a comment.
         faults.extend(self.broken_scripts.values().cloned());
-        let broken = self.with_importing_scripts(
-            self.broken_scripts
+        if !self.broken_scripts.is_empty() {
+            let broken = self.importing_scripts(self.broken_scripts.keys().cloned().collect());
+            let importers: Vec<String> = self
+                .seeds
                 .keys()
-                .map(|k| script_name(k).to_owned())
-                .collect(),
-        );
-        for (key, source) in &self.sources {
-            if let Some(seed) = self.seeds.get(key)
-                && broken.iter().any(|name| source.contains(name.as_str()))
-            {
-                self.compiled.insert(key.clone(), seed.clone());
-                self.reverted.insert(key.clone());
+                .filter(|key| self.sources.contains_key(*key))
+                .filter(|key| self.scripts_of(key).iter().any(|s| broken.contains(s)))
+                .cloned()
+                .collect();
+            for key in importers {
+                self.compiled.insert(key.clone(), self.seeds[&key].clone());
+                self.reverted.insert(key);
             }
         }
         let reverted = &self.reverted;

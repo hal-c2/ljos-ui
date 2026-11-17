@@ -286,3 +286,25 @@ fn a_users_script_behind_another_script_compiles_again_what_imports_them() {
         built(&[("Main", THROUGH), ("a.js", A_JS), ("calc.js", theirs)])["Main"]
     );
 }
+
+#[test]
+fn a_users_script_that_does_not_parse_leaves_alone_a_users_file_whose_scripts_only_name_it() {
+    // `a.js` names `calc.js` in a comment and imports nothing.
+    let a = "// Not calc.js: a name of its own.\nfunction n() { return 1 }\n";
+    let users = "import QtQuick\nimport \"a.js\" as A\nItem { property int n: A.n() + 1 }\n";
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("calc.js"), "function n( {\n").unwrap();
+    std::fs::write(dir.path().join("Main.qml"), users).unwrap();
+    let (s, pack, faults) =
+        seeded_with_scripts(dir.path(), THROUGH, &[("a.js", a), ("calc.js", CALC)]);
+    assert_eq!(faults.len(), 1, "{faults:?}");
+    assert_eq!(faults[0].file, "calc.js");
+    assert!(
+        !Arc::ptr_eq(&s.live()["Main"], &pack["Main"]),
+        "the user's Main discarded"
+    );
+    assert_eq!(
+        s.live()["Main"],
+        built(&[("Main", users), ("a.js", a), ("calc.js", CALC)])["Main"]
+    );
+}

@@ -269,6 +269,41 @@ Feature: A shipped application its users change while it runs
       Then the property "by" of "main" is "the application"
       And the application was told of a fault matching "calc\.js"
 
+    Scenario: A user's script that does not parse leaves alone a user's file whose scripts only name it
+      Given the file "calc.js":
+        """js
+        function by() { return "the application" }
+        """
+      And the file "names.js":
+        """js
+        // Not calc.js: a name of its own.
+        function by() { return "names" }
+        """
+      And the file "Main.qml":
+        """qml
+        import QtQuick
+        import "names.js" as Names
+        Item { objectName: "main"; property string by: Names.by() }
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        Item { objectName: "root" }
+        """
+      And the user's file "calc.js":
+        """js
+        function by( { return "the user" }
+        """
+      And the user's file "Main.qml":
+        """qml
+        import QtQuick
+        import "names.js" as Names
+        Item { objectName: "main"; property string by: Names.by() + " and the user" }
+        """
+      When the application runs "Main.qml" built ahead, with the user's directory over it
+      Then the property "by" of "main" is "names and the user"
+      And the application was told of a fault matching "calc\.js"
+
   Rule: An application built without its sources runs as built, and says why once
 
     Scenario: A user's file over an application built without its sources is told once and nothing is watched
