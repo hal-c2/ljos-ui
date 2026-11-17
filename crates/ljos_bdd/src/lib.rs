@@ -11,6 +11,7 @@ pub mod filter;
 pub mod fixture;
 pub mod lint;
 pub mod runner;
+pub mod side_streams;
 pub mod steps;
 pub mod value;
 pub mod watchdog;
