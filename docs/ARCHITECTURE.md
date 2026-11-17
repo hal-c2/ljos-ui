@@ -1627,7 +1627,7 @@ ljos_dev         [feature "mcp"] the inspector: a tokio listener plus a UiMsg::D
 ljos_test, ljos_bdd  host the inspector in-process over transport-worker.
 ```
 
-**Repository config.** The repo ships `.mcp.json`, so an agent working on Ljós gets `ljos mcp` with no setup. When the target is the ljos-ui repository itself, the authoring server also registers `ledger_coverage` and `oxc_check` (feature `dev-repo`).
+**Repository config.** The repo ships `.mcp.json`, so an agent working on Ljós gets `ljos mcp` with no setup. It starts the server through `mise-tasks/mcp`, as `mise run mcp` does. That builds `ljos` into `CARGO_TARGET_DIR`, else into the main checkout's `target/`, so a linked worktree shares the main checkout's build instead of making its own; the build runs through the program `LJOS_BUILD_WRAPPER` names when one is set, and `LJOS_BIN` names a server built already. Only the server writes to its output. When the target is the ljos-ui repository itself, the authoring server also registers `ledger_coverage` and `oxc_check` (feature `dev-repo`).
 
 ### 19.3 Authoring tools (`ljos mcp`)
 
