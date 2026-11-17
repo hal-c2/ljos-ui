@@ -18,7 +18,6 @@
 //! by the fallback: a reload that does not compile keeps the generation
 //! that runs, and says why in the reload error, not in `error`.
 
-use std::ops::Range;
 use std::time::Duration;
 
 use ljos_engine::{
@@ -259,20 +258,21 @@ fn show_fallback(e: &Engine, me: ObjectId, why: String) {
 /// Makes the shell at `url`, or says why it could not: it did not
 /// compile, or something in it faulted while it was made.
 fn make(e: &Engine, me: ObjectId, url: &str) -> Result<ObjectId, String> {
-    let before = last_fault(e);
-    let made = e
-        .make(
+    let (made, filed) = e.noting_faults(|| {
+        e.make(
             Request::url(e.resolve_url(me, url))
                 .parent(Some(me))
                 .in_scope(me),
         )
-        .map(|(shell, _)| shell);
+        .map(|(shell, _)| shell)
+    });
     let after = last_fault(e);
     with_run(e, me, |r| r.handled = after);
     let obj = made.map_err(|err| err.to_string())?;
-    if let Some(report) = fault_in(e, obj, before + 1..u64::MAX) {
+    if let Some(report) = fault_in(e, obj, &filed) {
+        let why = describe(report);
         discard(e, obj);
-        return Err(describe(&report));
+        return Err(why);
     }
     // A binding that throws while the shell is made is a fault only if
     // it still throws once the creation around the loader is complete,
@@ -283,17 +283,17 @@ fn make(e: &Engine, me: ObjectId, url: &str) -> Result<ObjectId, String> {
     Ok(obj)
 }
 
-/// The first fault in `seqs` raised in `obj` or what it owns.
-fn fault_in(e: &Engine, obj: ObjectId, seqs: Range<u64>) -> Option<FaultReport> {
-    e.faults()
-        .into_iter()
-        .find(|r| seqs.contains(&r.seq) && r.origin.is_some_and(|o| within(e, o, obj)))
+/// The first of `faults` raised in `obj` or what it owns.
+fn fault_in<'a>(e: &Engine, obj: ObjectId, faults: &'a [FaultReport]) -> Option<&'a FaultReport> {
+    faults
+        .iter()
+        .find(|r| r.origin.is_some_and(|o| within(e, o, obj)))
 }
 
 /// What [`make`] would have said had the shell's faults in `told` been
 /// told while it made it: the source's shell gives way to the fallback,
 /// and a fallback leaves nothing shown.
-fn judge_again(e: &Engine, me: ObjectId, obj: ObjectId, told: Range<u64>) {
+fn judge_again(e: &Engine, me: ObjectId, obj: ObjectId, told: &[FaultReport]) {
     if !e.is_alive(me) {
         return;
     }
@@ -306,7 +306,7 @@ fn judge_again(e: &Engine, me: ObjectId, obj: ObjectId, told: Range<u64>) {
     let Some(report) = fault_in(e, obj, told) else {
         return;
     };
-    let why = describe(&report);
+    let why = describe(report);
     if with_run(e, me, |r| r.fallback_item) == Some(Some(obj)) {
         warn(e, format!("ShellLoader: fallback: {why}"));
         let first = text(&e.untrack(|| e.read(me, ShellLoader::ERROR.index)));

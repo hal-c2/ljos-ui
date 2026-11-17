@@ -23,7 +23,6 @@
 //! one tells nothing itself.
 
 use std::cell::{Cell, RefCell};
-use std::ops::Range;
 
 use crate::engine::Engine;
 use crate::fault::FaultReport;
@@ -47,7 +46,7 @@ pub(crate) struct DelayedErrors {
 }
 
 type AfterCreation = Box<dyn FnOnce(&Engine)>;
-type AfterTold = Box<dyn FnOnce(&Engine, Range<u64>)>;
+type AfterTold = Box<dyn FnOnce(&Engine, &[FaultReport])>;
 
 struct Held {
     creation: u64,
@@ -155,22 +154,19 @@ impl Engine {
     }
 
     /// Runs `f` once what the creations running now hold is logged or
-    /// filed as a fault, with the `seq`s of the faults that were held
-    /// ([`FaultReport::seq`]): at once, with none, when no creation is
-    /// running, else when the outermost one is complete. Unlike
+    /// filed as a fault, with the faults that were held, however many:
+    /// at once, with none, when no creation is running, else when the
+    /// outermost one is complete. Unlike
     /// [`Engine::after_creation`], the end of a slice is not enough, as a
     /// slice ends with its bindings' faults still held. For what judges a
     /// tree by its faults, as a loader that falls back does: a binding
     /// that throws while the tree is made may recover before the creation
     /// around it is complete. A fault filed at once, as a handler's
     /// exception is, is not in the range: it was told when it was raised.
-    pub fn after_creation_told(&self, f: impl FnOnce(&Engine, Range<u64>) + 'static) {
+    pub fn after_creation_told(&self, f: impl FnOnce(&Engine, &[FaultReport]) + 'static) {
         let outermost = self.inner.delayed.open.borrow().first().copied();
         match outermost {
-            None => {
-                let now = self.faults_filed() + 1;
-                f(self, now..now);
-            }
+            None => f(self, &[]),
             Some(c) => self.inner.delayed.told.borrow_mut().push((c, Box::new(f))),
         }
     }
@@ -200,17 +196,17 @@ impl Engine {
             *held = rest;
             mine.into_iter().flat_map(|h| h.said).collect()
         };
-        let from = self.faults_filed() + 1;
-        for said in said {
-            match said {
-                Said::Warning(msg) => self.warn(msg),
-                Said::Fault(msg, report) => {
-                    self.warn(msg);
-                    self.file_fault(*report);
+        let ((), told) = self.noting_faults(|| {
+            for said in said {
+                match said {
+                    Said::Warning(msg) => self.warn(msg),
+                    Said::Fault(msg, report) => {
+                        self.warn(msg);
+                        self.file_fault(*report);
+                    }
                 }
             }
-        }
-        let told = from..self.faults_filed() + 1;
+        });
         let due: Vec<AfterTold> = {
             let mut told = d.told.borrow_mut();
             let (due, rest) = std::mem::take(&mut *told)
@@ -220,7 +216,7 @@ impl Engine {
             due.into_iter().map(|(_, f)| f).collect()
         };
         for f in due {
-            f(self, told.clone());
+            f(self, &told);
         }
         self.run_after_creation();
     }

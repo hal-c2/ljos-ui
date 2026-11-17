@@ -156,6 +156,9 @@ pub(crate) struct FaultState {
     delivering: Cell<bool>,
     application: RefCell<Option<FaultReport>>,
     history: RefCell<VecDeque<FaultReport>>,
+    /// What each [`Engine::noting_faults`] running has noted so far, the
+    /// outermost first.
+    noting: RefCell<Vec<Vec<FaultReport>>>,
     /// Faults reported so far.
     filed: Cell<u64>,
     handler: RefCell<Option<FaultHandler>>,
@@ -387,11 +390,6 @@ impl Engine {
         }
     }
 
-    /// The `seq` of the last fault filed; 0 before the first.
-    pub(crate) fn faults_filed(&self) -> u64 {
-        self.inner.faults.filed.get()
-    }
-
     pub(crate) fn file_fault(&self, mut report: FaultReport) {
         let state = &self.inner.faults;
         state.filed.set(state.filed.get() + 1);
@@ -402,6 +400,9 @@ impl Engine {
         let logged = matches!(report.fault, Fault::JsException(_)) && report.boundaries.is_empty();
         if logged {
             report.taken_by = TakenBy::Log;
+        }
+        for noted in state.noting.borrow_mut().iter_mut() {
+            noted.push(report.clone());
         }
         {
             let mut history = state.history.borrow_mut();
@@ -553,6 +554,29 @@ impl Engine {
     /// One handler; a second call replaces it.
     pub fn set_fault_handler(&self, f: impl Fn(&Engine, &FaultReport) + 'static) {
         *self.inner.faults.handler.borrow_mut() = Some(Rc::new(f));
+    }
+
+    /// Runs `f` and gives every fault filed while it ran, the oldest
+    /// first, however many. What judges what `f` made by its faults asks
+    /// this, not [`Engine::faults`], which keeps only the latest.
+    pub fn noting_faults<R>(&self, f: impl FnOnce() -> R) -> (R, Vec<FaultReport>) {
+        struct Noting<'a>(&'a FaultState);
+        impl Drop for Noting<'_> {
+            fn drop(&mut self) {
+                self.0.noting.borrow_mut().pop();
+            }
+        }
+        let state = &self.inner.faults;
+        let depth = {
+            let mut noting = state.noting.borrow_mut();
+            noting.push(Vec::new());
+            noting.len()
+        };
+        let noting = Noting(state);
+        let r = f();
+        let noted = std::mem::take(&mut state.noting.borrow_mut()[depth - 1]);
+        drop(noting);
+        (r, noted)
     }
 
     /// The latest faults of every kind, the oldest first: at most 32,
