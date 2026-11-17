@@ -1,4 +1,16 @@
 # Tooling for Ljós. `mise install` installs it; tasks live in mise-tasks/.
+#
+# This file needs trust (it has [settings], [env] and tool options).
+# `mise run`, `mise install` and `mise exec` trust the config they run, so a
+# fresh clone's `mise run setup` just works; `mise tasks`, `mise env`, shims
+# and an activated shell ask for `mise trust` until then.
+
+[settings]
+# A shell that activated mise and then put a distro Rust (/usr/bin/cargo)
+# first keeps that order under `mise run`, and builds with that Rust. This
+# puts the pinned toolchain first in every task.
+activate_aggressive = true
+
 [tools]
 rust = { version = "1.98.1", components = "rustfmt,clippy", targets = "wasm32-unknown-unknown" }
 # Runs CI's Rust tests: each in a process of its own, so one that hangs is named (.config/nextest.toml).
