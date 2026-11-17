@@ -14,7 +14,7 @@
 //! it: in a module, where the name is the import; in a QML file, where
 //! neither the script, an id, the object the script is on nor the root of a
 //! component around it binds the name. A QML file's scripts are read by the
-//! compiler's own reading of a script ([`crate::js::analyze_with`]), so a
+//! compiler's own reading of a script (`crate::js::analyze_with`), so a
 //! `t` a script declares, or a parameter of that name, is the script's here
 //! as it is there. So is a parameter of a signal the object declares, in
 //! its handler. What a type gives its objects is not known without types:

@@ -3,7 +3,7 @@
 //!
 //! The runtime never parses JavaScript, and neither does the generator:
 //! this is where the module's text becomes a tree, through the same
-//! unwrapping of each function tier 1 does ([`shape`]). What the tree has
+//! unwrapping of each function tier 1 does (`tier1::shape`). What the tree has
 //! no node for (a loop, a closure, an array) is refused here, with the
 //! construct named; the generator refuses what it cannot type.
 
