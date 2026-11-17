@@ -482,6 +482,24 @@ come after the QML. Showing it runs no frame: it is given the frames the applica
 | `Then the top overlay has charged "owner"` / `Then the top overlay has charged nobody` | an owner charged for scheduled work in any frame since it was shown: `application`, `inspector`, or a boundary by type and name (`Loader \"loader\"`) |
 | `Then the top overlay keeps no frame coming` | with it shown, the scene asks for no frame and for no wake |
 
+### Side streams (`runtime/batch_streams.feature`; all `@ljos-only`)
+
+A thread's side stream (ARCHITECTURE.md 3.3) fed from the step and handled as the UI thread handles
+it, one turn a step. The streams of a scenario share one wake, which counts how often it fired.
+Items are text; an item `key=value` is coalesced by its key, any other by all of it.
+
+| Step | Meaning |
+|---|---|
+| `Given a stream "name" of N items that keeps the newest per key` / `refuses the newest when full` / `evicts the oldest when full` | a stream of that capacity and policy |
+| `When N items are sent to the stream "name"` | the items `1` to `N` |
+| `When the stream "name" is sent "a, b=1, c"` | those items, in order; one the stream refuses is counted by it |
+| `When the UI thread handles the stream "name"` | one turn with everything it holds |
+| `When the UI thread handles at most N items of the stream "name"` | one turn under a budget of N items |
+| `Then the UI thread was woken N time(s)` | by the scenario's streams, so far |
+| `Then the stream "name" was handled in N turn(s)` (also `… of N items`) | the turns its handler ran, and the items they took in all |
+| `Then the stream "name" handed over "a, b"` | every item its handler was given, in order |
+| `Then the stream "name" holds N items` | queued, not handled yet |
+
 ### Planned (backlog scenarios may use them; not built yet)
 
 `When the agent clicks the reference of the "role" named "name"` · `When the object "o" is destroyed` ·
