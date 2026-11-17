@@ -9,6 +9,8 @@ use std::{
     sync::Arc,
 };
 
+use ljos_compiler::confine::{Refusal, UserDir};
+use ljos_compiler::sources::PackSources;
 use ljos_compiler::{AliasError, Aliases, CompileFault, FileSet, ReloadSession};
 use ljos_design::theme::Theme;
 use ljos_ir::{CompiledFile, ReloadPatch};
@@ -163,6 +165,46 @@ impl<O: TypeOracle + Clone> Reloader<O> {
         )?))
     }
 
+    /// Over an application's own files, `base`, with the files of its
+    /// user's directory over them: [`ReloadSession::layered`]. Seed it
+    /// with the files the application was built with
+    /// ([`seed`](Self::seed)) and start it with
+    /// [`start_seeded`](Self::start_seeded).
+    pub fn layered(dir: UserDir, base: Arc<PackSources>, oracle: O) -> Self {
+        Self::over(ReloadSession::layered(dir, base, oracle))
+    }
+
+    /// As [`layered`](Self::layered) with none of the user's files read
+    /// yet: the first build reads them, and its patch is what they
+    /// change of what the application runs.
+    pub fn layered_base(dir: UserDir, base: Arc<PackSources>, oracle: O) -> Self {
+        Self::over(ReloadSession::layered_base(dir, base, oracle))
+    }
+
+    /// [`ReloadSession::seed`].
+    pub fn seed(&mut self, key: &str, source: &str, file: Arc<CompiledFile>) -> bool {
+        self.session.seed(key, source, file)
+    }
+
+    /// As [`start`](Self::start) for a seeded session:
+    /// [`ReloadSession::start_seeded`].
+    pub fn start_seeded(&mut self) -> Vec<CompileFault> {
+        self.take_saves(false);
+        let faults = self.session.start_seeded();
+        self.prints.replace(texts(&self.session));
+        faults
+    }
+
+    /// [`ReloadSession::take_refused`].
+    pub fn take_refused(&mut self) -> Vec<CompileFault> {
+        self.session.take_refused()
+    }
+
+    /// [`ReloadSession::refuse`].
+    pub fn refuse(&mut self, why: Refusal) {
+        self.session.refuse(why);
+    }
+
     fn over(session: ReloadSession<O>) -> Self {
         Self {
             session,
@@ -255,7 +297,9 @@ impl<O: TypeOracle + Clone> Reloader<O> {
         }
         let text = match (t.staged.take(), std::mem::take(&mut t.touched), &t.path) {
             (Some(text), ..) => text,
-            (None, true, Some(path)) => match std::fs::read_to_string(path) {
+            // A user's theme is read as their QML is, confined to their
+            // directory.
+            (None, true, Some(path)) => match self.session.read_file(path) {
                 Ok(text) => Some(text),
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
                 // Not readable now (being written): the event that ends the
@@ -458,7 +502,7 @@ impl<O: TypeOracle + Clone> Reloader<O> {
             // With more than one root, the file that has the key may be
             // another root's.
             let read = self.session.path_of(&key).unwrap_or_else(|| path.clone());
-            match std::fs::read_to_string(&read) {
+            match self.session.read_file(&read) {
                 Ok(text) if self.half_saved(&key, &text) => {
                     self.parked.insert(path);
                     waiting = true;
