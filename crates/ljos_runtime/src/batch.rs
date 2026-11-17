@@ -399,6 +399,10 @@ impl<T> UiBatch<T> {
         if !self.has_pending() {
             return DrainReport::default();
         }
+        // A handler that unwound out of the last drain left its items
+        // here: they were that run's, and must not be swapped back into
+        // the queue to be handed over again.
+        self.spare.clear();
         let take = budget.max_messages.max(1);
         let (drained, remaining) = {
             let mut guard = self.shared.lock();
@@ -709,6 +713,34 @@ mod tests {
             drop(d.next());
         });
         assert_eq!(dropped.load(Ordering::SeqCst), 3);
+        assert!(batch.is_empty());
+    }
+
+    #[test]
+    fn a_run_whose_handler_unwinds_is_never_handed_over_again() {
+        let (_inbox, mut batch, tx, _) = stream("test.unwind", 8, BatchPolicy::DropNewest);
+        let mut panicking_drain = |batch: &mut UiBatch<u32>, budget| {
+            let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                batch.drain(budget, &VirtualClock::new(), |mut d| {
+                    d.next();
+                    panic!("the handler fails");
+                })
+            }));
+            assert!(caught.is_err());
+        };
+        // The whole queue taken (its ring swapped), then part of it.
+        for i in 1..=3 {
+            tx.send(i).unwrap();
+        }
+        panicking_drain(&mut batch, DrainBudget::UNLIMITED);
+        tx.send(4).unwrap();
+        assert_eq!(all(&mut batch).0, vec![4]);
+        assert!(batch.is_empty());
+        for i in 5..=9 {
+            tx.send(i).unwrap();
+        }
+        panicking_drain(&mut batch, DrainBudget::count(2));
+        assert_eq!(all(&mut batch).0, vec![7, 8, 9]);
         assert!(batch.is_empty());
     }
 
