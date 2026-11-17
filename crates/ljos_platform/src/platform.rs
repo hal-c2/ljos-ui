@@ -1641,7 +1641,9 @@ mod tests {
         // Promised again once the bound has passed since it was asked for,
         // as a browser that keeps asking for work of its own is: not
         // waited on, though it is still promised.
-        let long_ago = Instant::now() - BUSY_WAIT;
+        let long_ago = Instant::now()
+            .checked_sub(BUSY_WAIT)
+            .expect("a clock that has run for BUSY_WAIT");
         let busy = platform.expect_busy_since("a browser's work", long_ago);
         assert_eq!(platform.pending(), 1);
         assert_eq!(platform.awaited(), 0);

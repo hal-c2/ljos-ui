@@ -215,19 +215,24 @@ const QUIET_TURNS: u32 = 30;
 
 static PUMP: OnceLock<Arc<Pump>> = OnceLock::new();
 
+/// On the Engine thread: its platform, and while the browser works, the
+/// answer it is promised. A harness waits for what is promised, as a user
+/// waits for a page, so a test's time passes once the browser has settled.
+/// A page whose scripts never stop never lets it settle, so the promise is
+/// busy work: waited on while a browser starts or loads, and after that
+/// for a while from when the view last told the browser something, and no
+/// longer. The third is that time (or when a page last loaded, or the
+/// engine came): work the browser asks for on its own account is waited
+/// on from then.
+type Awake = (
+    Option<std::rc::Rc<Platform>>,
+    Option<Reply>,
+    Option<Instant>,
+);
+
 thread_local! {
-    /// On the Engine thread: its platform, and while the browser works,
-    /// the answer it is promised. A harness waits for what is promised,
-    /// as a user waits for a page, so a test's time passes once the
-    /// browser has settled. A page whose scripts never stop never lets
-    /// it settle, so the promise is busy work: waited on while a browser
-    /// starts or loads, and after that for a while from when the view
-    /// last told the browser something, and no longer.
-    /// The third is when the view last told the browser something (or a
-    /// page last loaded), or when the engine came: work the browser asks
-    /// for on its own account is waited on from then.
-    static AWAKE: RefCell<(Option<std::rc::Rc<Platform>>, Option<Reply>, Option<Instant>)> =
-        const { RefCell::new((None, None, None)) };
+    /// See [`Awake`].
+    static AWAKE: RefCell<Awake> = const { RefCell::new((None, None, None)) };
 }
 
 /// The browser has work: promised to the Engine thread, when this is it.
@@ -4506,5 +4511,42 @@ mod tests {
         // The view telling it more is waited on afresh.
         page.send_dev(Vec::new());
         assert!(busy_since(&platform).is_some_and(|since| since >= later));
+    }
+
+    /// What `finish` waits for the browser's latest promised work from.
+    fn newest_busy_since(platform: &Platform) -> Option<Instant> {
+        platform
+            .promises()
+            .iter()
+            .rev()
+            .find(|p| p.busy)
+            .map(|p| p.since)
+    }
+
+    #[test]
+    fn the_browsers_own_work_after_it_settled_is_waited_on_from_when_it_was_told() {
+        let engine = Engine::new();
+        pump_into(&engine);
+        let platform = Platform::of(&engine);
+        let held = || AWAKE.with(|a| a.borrow().1.is_some());
+        // The view tells the browser something, and the browser settles.
+        told_work();
+        let told = newest_busy_since(&platform).expect("the view's word promises busy work");
+        release_awake();
+        assert!(!held());
+        std::thread::sleep(Duration::from_millis(20));
+        let later = told + Duration::from_millis(20);
+        // The browser asks for work of its own, as an idle DevTools front
+        // end does a few times a second: promised again, but waited on
+        // from when it was told, not afresh.
+        want_work(0, false);
+        assert!(held());
+        assert_eq!(newest_busy_since(&platform), Some(told));
+        release_awake();
+        want_work(0, false);
+        assert_eq!(newest_busy_since(&platform), Some(told));
+        // The view telling it more is waited on afresh.
+        told_work();
+        assert!(newest_busy_since(&platform).is_some_and(|since| since >= later));
     }
 }
