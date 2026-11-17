@@ -155,6 +155,10 @@ struct Shared<M> {
     /// Mirrors `Queue::closed` for lock-free `is_closed`.
     closed: AtomicBool,
     wake: OnceLock<WakeHook>,
+    /// The side streams made from a handle ([`UiHandle::batch`]), which
+    /// wake through `wake`: a hook installed late must wake those that
+    /// were sent to before it.
+    streams: Mutex<Vec<Weak<dyn batch::Queued>>>,
     /// Set by [`UiInbox::observe_as`].
     watch: OnceLock<Watch<M>>,
     counts: Counts,
@@ -397,7 +401,16 @@ impl<M: Send + 'static> UiHandle<M> {
                 shared.fire_wake();
             }
         });
-        batch::channel(name, capacity, policy, wake)
+        let (batch, sender, queued) = batch::channel(name, capacity, policy, wake);
+        let mut streams = self
+            .shared
+            .streams
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        streams.retain(|s| s.strong_count() > 0);
+        streams.push(queued);
+        drop(streams);
+        (batch, sender)
     }
 }
 
@@ -517,6 +530,7 @@ impl<M> UiInbox<M> {
             capacity: capacity.max(1),
             closed: AtomicBool::new(false),
             wake: OnceLock::new(),
+            streams: Mutex::new(Vec::new()),
             watch: OnceLock::new(),
             counts: Counts::default(),
         });
@@ -537,14 +551,27 @@ impl<M> UiInbox<M> {
 
     /// Installs the wake hook once, for shells that only get their repaint
     /// handle after the inbox exists. Returns the hook back if one is already
-    /// set. If messages are already queued the hook fires immediately, so a
-    /// message sent before installation is not stranded.
+    /// set. If messages are already queued, here or in a side stream made
+    /// from a handle ([`UiHandle::batch`]), the hook fires immediately (once),
+    /// so nothing sent before installation is stranded.
     pub fn set_wake(&self, wake: WakeHook) -> Result<(), WakeHook> {
         self.shared.wake.set(wake)?;
-        if !self.is_empty() {
+        if !self.is_empty() || self.a_stream_holds_items() {
             self.shared.fire_wake();
         }
         Ok(())
+    }
+
+    fn a_stream_holds_items(&self) -> bool {
+        let streams = self
+            .shared
+            .streams
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        streams
+            .iter()
+            .filter_map(Weak::upgrade)
+            .any(|s| s.holds_items())
     }
 
     /// Another sending handle.
