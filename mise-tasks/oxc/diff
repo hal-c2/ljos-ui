@@ -1,9 +1,14 @@
 #!/usr/bin/env bash
 #MISE description="Diff the vendored oxc_parser fork against the crates.io release it is based on"
+#MISE dir="{{config_root}}"
 #USAGE arg "[args]..." var=#true help="Options for diff (e.g. --brief, -u)"
 set -euo pipefail
+# shellcheck source-path=SCRIPTDIR source=../_lib/env.sh
+. "$(dirname "$0")/../_lib/env.sh"
+cd "$ljos_root"
+need_curl
 # What vendor/FORK.md says the patch is, checked against what it really is.
-version=$(sed -n 's/^version = "\(.*\)"$/\1/p' vendor/oxc_parser/Cargo.toml | head -n 1)
+version=$(crate_version vendor/oxc_parser/Cargo.toml)
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 curl -sSfL "https://static.crates.io/crates/oxc_parser/oxc_parser-$version.crate" | tar -xz -C "$work"

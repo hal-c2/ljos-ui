@@ -273,3 +273,14 @@ bench_has_qt() {
     *) return 1 ;;
   esac
 }
+
+# The package version a vendored crate's manifest declares: its first
+# `version = "…"` line, which is the package's (its dependencies' come later).
+# sed stops there itself; `| head -n 1` could end sed early under pipefail.
+crate_version() {
+  local v
+  v="$(sed -n '/^version = "/{s/^version = "\(.*\)"$/\1/p;q;}' "$1")"
+  [ -n "$v" ] || die "$1 declares no version"
+  printf '%s\n' "$v"
+}
+
