@@ -120,7 +120,7 @@ pub use error_boundary::{BoundaryFault, ErrorBoundary};
 pub use flickable::Flickable;
 pub use font_loader::{FontFamilies, FontLoader};
 pub use frame_times::{FrameTimes, Woke};
-pub use grab::{ItemGrabResult, grabbed_image};
+pub use grab::{GrabRefused, ItemGrabResult, grab, grabbed_image};
 pub use gradient::{Gradient, GradientPaint, GradientStop};
 pub use handlers::{
     DragAxis, DragHandler, HoverHandler, PinchGesture, PinchHandler, PinchPhase, PointHandler,

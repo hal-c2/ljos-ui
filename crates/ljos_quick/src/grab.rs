@@ -111,10 +111,22 @@ fn result_named(engine: &Engine, url: &str) -> Option<ObjectId> {
     urls.iter().find(|(_, u)| *u == url).map(|(obj, _)| *obj)
 }
 
+/// What Rust is called back with: the picture, or `None` when none came.
+type HostDone = Box<dyn FnOnce(&Engine, Option<ImageHandle>)>;
+
+/// Who a grab's picture goes to.
+enum Done {
+    /// A script's callback, with an `ItemGrabResult`.
+    Script(Value),
+    /// Rust's, with the picture itself: no result is made for scripts to
+    /// own, as nothing in them holds it.
+    Host(HostDone),
+}
+
 /// A grab asked for and not yet taken.
 pub(crate) struct Grab {
     pub(crate) item: ObjectId,
-    callback: Value,
+    done: Done,
     /// The item's size when it was asked, rounded, in logical pixels.
     pub(crate) size: (f64, f64),
     /// The picture's size in logical pixels: `size` unless the caller gave
@@ -154,8 +166,10 @@ pub(crate) fn grab_to_image(
     if !engine.is_callable(&callback) {
         return refuse("'callback' is not a function");
     }
+    // Before the target is read: Qt refuses an item in no window whatever
+    // size it is asked for.
     if let Err(why) = in_shown_window(engine, item) {
-        return refuse(why);
+        return refuse(&why.to_string());
     }
     let target = match &target_size {
         Value::Undefined | Value::Null => None,
@@ -167,6 +181,47 @@ pub(crate) fn grab_to_image(
             ));
         }
     };
+    match ask(engine, item, target, Done::Script(callback)) {
+        Ok(()) => Ok(true),
+        Err(why) => refuse(&why.to_string()),
+    }
+}
+
+/// Why an item cannot give a grab, as Qt's warning says it.
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
+pub enum GrabRefused {
+    #[error("item is not attached to a window")]
+    NotInWindow,
+    #[error("item's window is not visible")]
+    WindowHidden,
+    #[error("item's width and/or height are less than 1: QSize({0}, {1})")]
+    TooSmall(f64, f64),
+}
+
+/// Takes a picture of `item` for Rust, as `Item.grabToImage` takes one for
+/// a script: the scene that shows the item draws it at its next frame,
+/// and `done` is called after that frame, between turns, with its pixels,
+/// as many to a logical pixel as the scene has. `done` gets `None` when
+/// the item leaves every shown window first, or cannot be drawn; it is
+/// not called when the item is destroyed first. A host that checks or
+/// keeps what an item shows (a test, a thumbnail) needs no script to ask.
+pub fn grab(
+    engine: &Engine,
+    item: ObjectId,
+    done: impl FnOnce(&Engine, Option<ImageHandle>) + 'static,
+) -> Result<(), GrabRefused> {
+    ask(engine, item, None, Done::Host(Box::new(done)))
+}
+
+/// Queues a grab of `item` at `target` (its own size when `None`) for
+/// its scene's next frame, or says why the item cannot give one.
+fn ask(
+    engine: &Engine,
+    item: ObjectId,
+    target: Option<(f64, f64)>,
+    done: Done,
+) -> Result<(), GrabRefused> {
+    in_shown_window(engine, item)?;
     let size = engine.untrack(|| {
         (
             engine
@@ -185,10 +240,7 @@ pub(crate) fn grab_to_image(
         .filter(|(w, h)| *w > 0.0 && *h > 0.0)
         .unwrap_or(size);
     if !(target.0 >= 1.0 && target.1 >= 1.0) {
-        return refuse(&format!(
-            "item's width and/or height are less than 1: QSize({}, {})",
-            target.0, target.1
-        ));
+        return Err(GrabRefused::TooSmall(target.0, target.1));
     }
     let grabs = engine.extension::<Grabs>();
     if !grabs.listening.replace(true) {
@@ -196,29 +248,28 @@ pub(crate) fn grab_to_image(
     }
     grabs.pending.borrow_mut().push(Grab {
         item,
-        callback,
+        done,
         size,
         target,
     });
     crate::scene::grab_wanted(engine, item);
-    Ok(true)
+    Ok(())
 }
 
-/// Whether `item` is in a window that is shown, or why not, as Qt's
-/// warning says it.
-fn in_shown_window(engine: &Engine, item: ObjectId) -> Result<(), &'static str> {
+/// Whether `item` is in a window that is shown, or why not.
+fn in_shown_window(engine: &Engine, item: ObjectId) -> Result<(), GrabRefused> {
     // A window is there while a scene shows it: one a host dropped, its
     // root kept, is in no window, and no frame will draw what it held.
     let window = engine.untrack(|| crate::layer::window_item(engine, item));
     if !crate::scene::shows_window(engine, window) {
-        return Err("item is not attached to a window");
+        return Err(GrabRefused::NotInWindow);
     }
     // A Window that is not shown has `visibility` Hidden (0); a scene's
     // plain root item has none.
     if engine.find_property(window, "visibility").is_some()
         && engine.untrack(|| engine.read_by_name(window, "visibility").to_number()) == 0.0
     {
-        return Err("item's window is not visible");
+        return Err(GrabRefused::WindowHidden);
     }
     Ok(())
 }
@@ -325,6 +376,10 @@ pub(crate) fn failed(engine: &Engine, grab: Grab) {
 }
 
 fn deliver(engine: &Engine, grab: Grab, picture: Option<ImageHandle>) {
+    let callback = match grab.done {
+        Done::Script(callback) => callback,
+        Done::Host(done) => return done(engine, picture),
+    };
     let grabs = engine.extension::<Grabs>();
     // An empty result names no picture.
     let mut url = String::new();
@@ -340,7 +395,14 @@ fn deliver(engine: &Engine, grab: Grab, picture: Option<ImageHandle>) {
                     CATEGORY,
                     format!("grabToImage: cannot encode the picture: {err}"),
                 );
-                return deliver(engine, grab, None);
+                return deliver(
+                    engine,
+                    Grab {
+                        done: Done::Script(callback),
+                        ..grab
+                    },
+                    None,
+                );
             }
         }
     }
@@ -368,7 +430,7 @@ fn deliver(engine: &Engine, grab: Grab, picture: Option<ImageHandle>) {
     }
     let _ = engine.emit_by_name(result, "ready", &[]);
     if engine.is_alive(result) {
-        let _ = engine.call_js(&grab.callback, &[Value::Object(result)]);
+        let _ = engine.call_js(&callback, &[Value::Object(result)]);
     }
 }
 

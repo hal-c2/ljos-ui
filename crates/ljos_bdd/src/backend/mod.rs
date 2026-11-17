@@ -1190,6 +1190,23 @@ pub trait Reload: Backend {
     }
 }
 
+/// What a picture the host asked of an item, with no script, came to.
+#[derive(Debug, Clone)]
+pub enum HostGrab {
+    /// No frame has drawn it yet.
+    Waiting,
+    /// The item could not give one; why, as the runtime says it.
+    Refused(String),
+    /// The host was called back with no picture.
+    Empty,
+    /// The pixels, premultiplied, row by row.
+    Picture {
+        width: u32,
+        height: u32,
+        rgba: Vec<u8>,
+    },
+}
+
 /// What the runtime can say of itself that a QML program cannot see:
 /// what it has scheduled, what it keeps, how much work it does.
 pub trait Probes: Backend {
@@ -1220,6 +1237,24 @@ pub trait Probes: Backend {
         Err(BackendError::Unsupported {
             backend: self.name(),
             what: "showing a first frame that waits for its pictures",
+        })
+    }
+
+    /// Asks for a picture of `object` for the host, as a program's own
+    /// Rust asks with no script: [`Probes::host_grabbed`] says what came
+    /// of it. Qt's C++ grab is not the oracle's to give a scenario.
+    fn host_grab(&mut self, _object: &str) -> Result<()> {
+        Err(BackendError::Unsupported {
+            backend: self.name(),
+            what: "a picture of an item taken for the host",
+        })
+    }
+
+    /// What the last [`Probes::host_grab`] came to.
+    fn host_grabbed(&mut self) -> Result<HostGrab> {
+        Err(BackendError::Unsupported {
+            backend: self.name(),
+            what: "a picture of an item taken for the host",
         })
     }
 

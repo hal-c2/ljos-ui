@@ -33,7 +33,8 @@ use serde_json::{Map, Number, Value, json};
 use super::fake_platform::{self, FakePlatform};
 use super::{
     A11yNode, Application, ApplicationFault, Assistive, Backend, BackendError, Environment, Files,
-    Input, LogEntry, LogLevel, Platform, PointerStep, Probes, QmlFile, Reload, Result, Tooling,
+    HostGrab, Input, LogEntry, LogLevel, Platform, PointerStep, Probes, QmlFile, Reload, Result,
+    Tooling,
 };
 
 mod aot;
@@ -145,6 +146,9 @@ pub struct LjosBackend {
     /// The report of the last design audit a step ran at a point of
     /// its own, for the steps that read it.
     audited: Option<Value>,
+    /// What the host's last grab of an item came to, written by its
+    /// callback.
+    host_grab: Option<Rc<RefCell<HostGrab>>>,
     /// Catalogues given before anything was loaded; the engine gets them
     /// when it is made.
     catalogs: Vec<ljos_i18n::Catalog>,
@@ -1854,6 +1858,36 @@ impl Probes for LjosBackend {
         ljos_quick::ImageStore::of(&live.engine)
             .wait_for_frame(&live.engine, Duration::from_secs(30));
         live.settle()
+    }
+
+    fn host_grab(&mut self, object: &str) -> Result<()> {
+        let live = self.live()?;
+        let item = live.find(object)?;
+        let slot = Rc::new(RefCell::new(HostGrab::Waiting));
+        let kept = slot.clone();
+        let asked = ljos_quick::grab(&live.engine, item, move |_, picture| {
+            *kept.borrow_mut() = match picture {
+                Some(p) => HostGrab::Picture {
+                    width: p.width(),
+                    height: p.height(),
+                    rgba: p.data().to_vec(),
+                },
+                None => HostGrab::Empty,
+            };
+        });
+        if let Err(why) = asked {
+            *slot.borrow_mut() = HostGrab::Refused(why.to_string());
+        }
+        self.host_grab = Some(slot);
+        Ok(())
+    }
+
+    fn host_grabbed(&mut self) -> Result<HostGrab> {
+        self.live()?.settle()?;
+        match &self.host_grab {
+            Some(slot) => Ok(slot.borrow().clone()),
+            None => Err(failed("the host has not asked for a picture of an item")),
+        }
     }
 
     fn kept_picture(&mut self, object: &str) -> Result<Option<(u32, u32)>> {
