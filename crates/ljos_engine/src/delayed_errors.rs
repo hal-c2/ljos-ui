@@ -9,12 +9,20 @@
 //! run are logged. A creation made inside another one hands what it holds
 //! to the outer one; a creation in slices holds across its slices.
 //!
+//! An exception such a run throws is held with its warning, and is a
+//! fault (fault.rs) only if it is still held then: what a boundary is
+//! told of, and what the application hears, is what Qt would log. Qt
+//! 6.11 logs nothing for a binding that reads `parent` of an item a
+//! StackView takes as its `initialItem`, though its first run sees no
+//! parent.
+//!
 //! What would be done again for each object made, and only needs doing
 //! once they all are, waits the same way ([`Engine::after_creation`]).
 
 use std::cell::{Cell, RefCell};
 
 use crate::engine::Engine;
+use crate::fault::FaultReport;
 use crate::ids::{ObjectId, PropIndex};
 
 #[derive(Default)]
@@ -23,7 +31,7 @@ pub(crate) struct DelayedErrors {
     /// The creations running now, the innermost last.
     open: RefCell<Vec<u64>>,
     /// Where warnings go instead of the log while a held binding runs.
-    capture: RefCell<Option<Vec<String>>>,
+    capture: RefCell<Option<Vec<Said>>>,
     held: RefCell<Vec<Held>>,
     /// The last [`BindingLayer`] handed out.
     layers: Cell<u64>,
@@ -38,7 +46,14 @@ struct Held {
     obj: ObjectId,
     prop: PropIndex,
     layer: BindingLayer,
-    said: Vec<String>,
+    said: Vec<Said>,
+}
+
+/// What a held binding run said: a warning, or an exception it threw,
+/// with the warning that names it.
+enum Said {
+    Warning(String),
+    Fault(String, Box<FaultReport>),
 }
 
 /// Which binding of a property holds what it says: the property's own,
@@ -53,12 +68,12 @@ impl BindingLayer {
 
 /// Puts the outer capture back, also when the binding unwinds.
 struct Capture<'a> {
-    cell: &'a RefCell<Option<Vec<String>>>,
-    outer: Option<Option<Vec<String>>>,
+    cell: &'a RefCell<Option<Vec<Said>>>,
+    outer: Option<Option<Vec<Said>>>,
 }
 
 impl Capture<'_> {
-    fn end(mut self) -> Vec<String> {
+    fn end(mut self) -> Vec<Said> {
         let outer = self.outer.take().flatten();
         self.cell.replace(outer).unwrap_or_default()
     }
@@ -137,7 +152,7 @@ impl Engine {
         self.leave_creation(c);
         let d = &self.inner.delayed;
         let outer = d.open.borrow().last().copied();
-        let said: Vec<String> = {
+        let said: Vec<Said> = {
             let mut held = d.held.borrow_mut();
             if let Some(outer) = outer {
                 for h in held.iter_mut().filter(|h| h.creation == c.0) {
@@ -151,8 +166,14 @@ impl Engine {
             *held = rest;
             mine.into_iter().flat_map(|h| h.said).collect()
         };
-        for msg in said {
-            self.warn(msg);
+        for said in said {
+            match said {
+                Said::Warning(msg) => self.warn(msg),
+                Said::Fault(msg, report) => {
+                    self.warn(msg);
+                    self.file_fault(*report);
+                }
+            }
         }
         self.run_after_creation();
     }
@@ -252,7 +273,7 @@ impl Engine {
         let mut held = d.held.borrow_mut();
         let own = |h: &&mut Held| h.obj == obj && h.prop == prop && h.layer == BindingLayer::OWN;
         if let Some(h) = held.iter_mut().find(own) {
-            h.said.push(msg);
+            h.said.push(Said::Warning(msg));
             return;
         }
         if let Some(&creation) = d.open.borrow().last() {
@@ -261,7 +282,7 @@ impl Engine {
                 obj,
                 prop,
                 layer: BindingLayer::OWN,
-                said: vec![msg],
+                said: vec![Said::Warning(msg)],
             });
             return;
         }
@@ -273,10 +294,26 @@ impl Engine {
     pub(crate) fn hold_warning(&self, msg: &str) -> bool {
         match self.inner.delayed.capture.borrow_mut().as_mut() {
             Some(said) => {
-                said.push(msg.to_owned());
+                said.push(Said::Warning(msg.to_owned()));
                 true
             }
             None => false,
+        }
+    }
+
+    /// Takes an exception a held binding run throws, with the warning
+    /// that names it; gives them back otherwise.
+    pub(crate) fn hold_fault(
+        &self,
+        msg: String,
+        report: FaultReport,
+    ) -> Option<(String, FaultReport)> {
+        match self.inner.delayed.capture.borrow_mut().as_mut() {
+            Some(said) => {
+                said.push(Said::Fault(msg, Box::new(report)));
+                None
+            }
+            None => Some((msg, report)),
         }
     }
 }

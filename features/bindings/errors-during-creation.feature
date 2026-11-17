@@ -86,6 +86,27 @@ Feature: A binding that fails while its object is made is forgiven if it recover
       Then the property "b" of "root" is true
       And the log has a warning matching "Scenario.qml:6: TypeError: Cannot read property 'x' of undefined"
 
+    @api-QtQuick.Controls.StackView.initialItem
+    Scenario: A view's first page that reads its parent before the view takes it in is not logged
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls
+        Item {
+          width: 200; height: 100
+          StackView {
+            anchors.fill: parent
+            initialItem: Rectangle {
+              objectName: "page"
+              anchors.left: parent.left; anchors.right: parent.right
+              height: 60
+            }
+          }
+        }
+        """
+      Then the property "width" of "page" is 200
+      And the log has no warning matching "Cannot read property"
+
   # Found by ljos-fuzz (bindings), buckets warning:TypeError(ljos-only):startsWith+typeof,
   # warning:TypeError(ljos-only):Array.from+String+reduce and
   # warning:RangeError(ljos-only):function-call+loose-eq+rect.height.

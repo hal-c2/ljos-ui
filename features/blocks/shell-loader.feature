@@ -42,6 +42,34 @@ Feature: A ShellLoader shows a user's shell, or the application's own when the u
       And the property "status" of "loader" is 1
       And the property "width" of "loader" is 50
 
+    Scenario: A shell whose binding throws while it is made, and recovers before it is complete, is shown
+      Given the file "Shell.qml":
+        """qml
+        import QtQuick
+        Rectangle {
+          id: shell
+          objectName: "user-shell"
+          property var size
+          width: shell.size.width; height: 20
+          Component.onCompleted: size = { width: 50 }
+        }
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        import Ljos.Blocks
+        Item {
+          objectName: "root"
+          ShellLoader { objectName: "loader"; source: "Shell.qml"; fallback: "Default.qml" }
+        }
+        """
+      Then the object "loader/user-shell" exists
+      And the object "default-shell" does not exist
+      And the property "error" of "loader" is ""
+      And the property "status" of "loader" is 1
+      And the property "width" of "loader" is 50
+      And the log has no warning matching "TypeError"
+
   Rule: A shell that does not work gives way to the fallback
 
     Scenario: A shell that does not compile falls back and says where the mistake is

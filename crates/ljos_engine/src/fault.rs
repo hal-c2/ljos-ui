@@ -327,27 +327,29 @@ impl Engine {
                     text.push('\n');
                     text.push_str(trace);
                 }
-                self.warn(text);
                 let (declared, declared_line) = self.declared_place(origin);
-                self.file_fault(FaultReport {
-                    fault: Fault::JsException(JsErrorInfo {
-                        message: message.clone(),
-                        file: file.as_deref().map(Into::into),
-                        line: line.unwrap_or(0),
-                        column: 0,
-                        stack: trace,
-                    }),
-                    origin,
-                    file: file.clone().or(declared),
-                    line: line.unwrap_or(declared_line),
-                    stack: frames,
-                    at: self.now(),
-                    boundaries: self.boundaries_around(origin),
-                    target: None,
-                    seq: 0,
-                    origin_name: origin.and_then(|o| self.label_of(o)),
-                    taken_by: TakenBy::Waiting,
-                });
+                self.warn_and_file(
+                    text,
+                    FaultReport {
+                        fault: Fault::JsException(JsErrorInfo {
+                            message: message.clone(),
+                            file: file.as_deref().map(Into::into),
+                            line: line.unwrap_or(0),
+                            column: 0,
+                            stack: trace,
+                        }),
+                        origin,
+                        file: file.clone().or(declared),
+                        line: line.unwrap_or(declared_line),
+                        stack: frames,
+                        at: self.now(),
+                        boundaries: self.boundaries_around(origin),
+                        target: None,
+                        seq: 0,
+                        origin_name: origin.and_then(|o| self.label_of(o)),
+                        taken_by: TakenBy::Waiting,
+                    },
+                );
             }
             JsFault::Panic { message, .. } => {
                 self.report_fault(origin, Fault::Panic(message.clone().into()));
@@ -355,25 +357,37 @@ impl Engine {
             other => {
                 // The JS host's own words: they name what was running.
                 let (file, line) = self.declared_place(origin);
-                self.warn(other.to_string());
-                self.file_fault(FaultReport {
-                    fault: other.clone().into(),
-                    origin,
-                    file,
-                    line,
-                    stack: Vec::new(),
-                    at: self.now(),
-                    boundaries: self.boundaries_around(origin),
-                    target: None,
-                    seq: 0,
-                    origin_name: origin.and_then(|o| self.label_of(o)),
-                    taken_by: TakenBy::Waiting,
-                });
+                self.warn_and_file(
+                    other.to_string(),
+                    FaultReport {
+                        fault: other.clone().into(),
+                        origin,
+                        file,
+                        line,
+                        stack: Vec::new(),
+                        at: self.now(),
+                        boundaries: self.boundaries_around(origin),
+                        target: None,
+                        seq: 0,
+                        origin_name: origin.and_then(|o| self.label_of(o)),
+                        taken_by: TakenBy::Waiting,
+                    },
+                );
             }
         }
     }
 
-    fn file_fault(&self, mut report: FaultReport) {
+    /// Logs `msg` and files `report`, or holds both while a binding runs
+    /// during a creation (delayed_errors.rs): a run that is fixed by a
+    /// later one is neither logged nor anybody's fault.
+    fn warn_and_file(&self, msg: String, report: FaultReport) {
+        if let Some((msg, report)) = self.hold_fault(msg, report) {
+            self.warn(msg);
+            self.file_fault(report);
+        }
+    }
+
+    pub(crate) fn file_fault(&self, mut report: FaultReport) {
         let state = &self.inner.faults;
         state.filed.set(state.filed.get() + 1);
         report.seq = state.filed.get();
