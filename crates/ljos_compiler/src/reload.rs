@@ -248,11 +248,22 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
             texts.extend(user);
         }
         let style = layer.base.style.clone();
-        let old_scripts: BTreeMap<String, String> = self
-            .project
-            .scripts()
-            .map(|(k, t)| (k.to_owned(), t.to_owned()))
-            .collect();
+        // The first scan compares with the application's scripts, which
+        // its pack was compiled with: only the user's change anything.
+        let old_scripts: BTreeMap<String, String> = if self.sources.is_empty() {
+            layer
+                .base
+                .files
+                .iter()
+                .filter(|(k, _)| is_script(k))
+                .map(|(k, t)| (k.clone(), t.clone()))
+                .collect()
+        } else {
+            self.project
+                .scripts()
+                .map(|(k, t)| (k.to_owned(), t.to_owned()))
+                .collect()
+        };
         self.project = Project::load_texts(&texts, style, self.oracle.clone());
         let sources: BTreeMap<String, String> = self
             .project
@@ -294,7 +305,60 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
             .filter(|k| old_scripts.get(*k) != new_scripts.get(*k))
             .collect();
         for key in changed {
+            if let Some(text) = new_scripts.get(key) {
+                self.check_script(key, text);
+            }
             self.script_changed(key);
+        }
+    }
+
+    /// The names of the scripts the user's files change from the
+    /// application's, and of the scripts that import those, over and
+    /// over: a file whose text names one runs other code than its pack's.
+    fn changed_script_names(&self) -> BTreeSet<String> {
+        let Some(layer) = &self.layer else {
+            return BTreeSet::new();
+        };
+        let name = |key: &str| key.rsplit('/').next().unwrap_or(key).to_owned();
+        let mut changed: BTreeSet<String> = self
+            .project
+            .scripts()
+            .filter(|(k, t)| layer.base.files.get(*k).map(String::as_str) != Some(*t))
+            .map(|(k, _)| name(k))
+            .collect();
+        loop {
+            let more: Vec<String> = self
+                .project
+                .scripts()
+                .map(|(k, t)| (name(k), t))
+                .filter(|(n, t)| {
+                    !changed.contains(n) && changed.iter().any(|c| t.contains(c.as_str()))
+                })
+                .map(|(n, _)| n)
+                .collect();
+            if more.is_empty() {
+                return changed;
+            }
+            changed.extend(more);
+        }
+    }
+
+    /// Refuses the script `key` while `source` does not parse, as a save
+    /// of it is refused.
+    fn check_script(&mut self, key: &str, source: &str) {
+        match crate::script::syntax_error(source, key) {
+            Some((line, column, message)) => {
+                let fault = CompileFault {
+                    file: key.to_owned(),
+                    line,
+                    column,
+                    message,
+                };
+                self.broken_scripts.insert(key.to_owned(), fault);
+            }
+            None => {
+                self.broken_scripts.remove(key);
+            }
         }
     }
 
@@ -357,7 +421,13 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
             return false;
         }
         self.seeds.insert(key.to_owned(), file.clone());
-        if self.sources.get(key).map(String::as_str) == Some(source) {
+        // A file that imports a script the user changed is compiled
+        // again, though its own text is the one its pack was built from.
+        let stale = self
+            .changed_script_names()
+            .iter()
+            .any(|name| source.contains(name.as_str()));
+        if !stale && self.sources.get(key).map(String::as_str) == Some(source) {
             self.compiled.insert(key.to_owned(), file);
             self.dirty.remove(key);
         }
@@ -383,6 +453,20 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
             if let Some(seed) = self.seeds.get(key) {
                 self.compiled.insert(key.clone(), seed.clone());
                 self.reverted.insert(key.clone());
+            }
+        }
+        // A user's script that does not parse: what imports it runs its
+        // seed, with the application's script, until it is saved again.
+        for (script, fault) in &self.broken_scripts {
+            faults.push(fault.clone());
+            let name = script.rsplit('/').next().unwrap_or(script);
+            for (key, source) in &self.sources {
+                if let Some(seed) = self.seeds.get(key)
+                    && source.contains(name)
+                {
+                    self.compiled.insert(key.clone(), seed.clone());
+                    self.reverted.insert(key.clone());
+                }
             }
         }
         let reverted = &self.reverted;
@@ -612,21 +696,7 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
         let source = source.into();
         if is_script(key) {
             if self.project.script(key) != Some(source.as_str()) {
-                match crate::script::syntax_error(&source, key) {
-                    Some((line, column, message)) => {
-                        let file = key.to_owned();
-                        let fault = CompileFault {
-                            file,
-                            line,
-                            column,
-                            message,
-                        };
-                        self.broken_scripts.insert(key.to_owned(), fault);
-                    }
-                    None => {
-                        self.broken_scripts.remove(key);
-                    }
-                }
+                self.check_script(key, &source);
                 self.project.add_script(key, source);
                 self.script_changed(key);
             }

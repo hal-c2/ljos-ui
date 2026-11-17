@@ -171,3 +171,71 @@ fn a_path_outside_the_users_directory_is_refused_and_told() {
     );
     assert!(s.take_refused().is_empty(), "told once");
 }
+
+const USES: &str =
+    "import QtQuick\nimport \"calc.js\" as Calc\nItem { property int n: Calc.n() }\n";
+const CALC: &str = "function n() { return 1 }\n";
+
+/// A layered session over `Main` that imports `calc.js`, seeded with
+/// what a build compiled from both.
+fn seeded_with_script(
+    dir: &std::path::Path,
+) -> (
+    ReloadSession<QtTypeOracle>,
+    FileSet,
+    Vec<ljos_compiler::CompileFault>,
+) {
+    let pack = built(&[("Main", USES), ("calc.js", CALC)]);
+    let base = Arc::new(PackSources {
+        files: [("Main.qml", USES), ("calc.js", CALC)]
+            .into_iter()
+            .map(|(k, t)| (k.to_owned(), t.to_owned()))
+            .collect(),
+        style: None,
+    });
+    let mut s = ReloadSession::layered(UserDir::new(dir), base, QtTypeOracle);
+    assert!(s.seed("Main", USES, Arc::clone(&pack["Main"])));
+    let faults = s.start_seeded();
+    (s, pack, faults)
+}
+
+#[test]
+fn a_users_script_compiles_again_what_imports_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let theirs = "function n() { return 2 }\n";
+    std::fs::write(dir.path().join("calc.js"), theirs).unwrap();
+    let (s, pack, faults) = seeded_with_script(dir.path());
+    assert!(faults.is_empty(), "{faults:?}");
+    assert!(!Arc::ptr_eq(&s.live()["Main"], &pack["Main"]), "Main taken");
+    assert_eq!(
+        s.live()["Main"],
+        built(&[("Main", USES), ("calc.js", theirs)])["Main"]
+    );
+}
+
+#[test]
+fn the_applications_script_keeps_what_imports_it_taken() {
+    let dir = tempfile::tempdir().unwrap();
+    let (s, pack, faults) = seeded_with_script(dir.path());
+    assert!(faults.is_empty(), "{faults:?}");
+    assert!(Arc::ptr_eq(&s.live()["Main"], &pack["Main"]));
+}
+
+#[test]
+fn a_users_script_that_does_not_parse_is_told_and_what_imports_it_runs_as_built() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("calc.js"), "function n( {\n").unwrap();
+    let (mut s, pack, faults) = seeded_with_script(dir.path());
+    assert_eq!(faults.len(), 1, "{faults:?}");
+    assert_eq!(faults[0].file, "calc.js");
+    assert!(Arc::ptr_eq(&s.live()["Main"], &pack["Main"]));
+
+    // A save that still does not parse is refused; one that does is built.
+    std::fs::write(dir.path().join("calc.js"), "function n( {\n  return 3\n").unwrap();
+    s.rescan().unwrap();
+    assert!(s.build().is_err());
+    std::fs::write(dir.path().join("calc.js"), "function n() { return 3 }\n").unwrap();
+    s.rescan().unwrap();
+    let patch = s.build().expect("compiles").expect("Main again");
+    assert!(patch.files.iter().any(|f| f.file.file == "Main"));
+}
