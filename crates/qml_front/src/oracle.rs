@@ -336,6 +336,9 @@ impl fmt::Debug for QtType {
     }
 }
 
+/// The pseudo-module Qt's table has the types every file has in.
+const BUILTINS: &str = "QML";
+
 impl TypeOracle for QtTypeOracle {
     type Type = QtType;
 
@@ -489,7 +492,16 @@ impl TypeOracle for QtTypeOracle {
     }
 
     fn module(&self, ty: QtType) -> Option<String> {
-        (!ty.0.module.is_empty()).then(|| ty.0.module.to_string())
+        // Qt's table puts the types every file has (`Component`, `Qt`) in
+        // the pseudo-module `QML`; Ljós's own table has them in `QtQml`,
+        // which brings them. They are named `QtQml`'s either way, so that a
+        // file's IR, and the key its compiled code is matched by, is the
+        // same whichever table the build reads.
+        match ty.0.module {
+            "" => None,
+            BUILTINS => Some("QtQml".to_string()),
+            module => Some(module.to_string()),
+        }
     }
 
     fn members_known(&self, ty: QtType) -> bool {

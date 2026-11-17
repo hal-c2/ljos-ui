@@ -57,9 +57,19 @@ impl Live {
         if missing.is_empty() {
             return Ok(());
         }
+        // The key is the file's IR as the build's table of types reads it:
+        // naming the table tells code never written for a file apart from a
+        // file whose IR the table changes, which the other build finds code for.
+        let table = if qt_types::has_qt_table() {
+            "Qt's type table"
+        } else {
+            "no Qt type table (LJOS_QT_TYPES=none)"
+        };
         Err(failed(format!(
-            "no code was compiled ahead of time from {} as this scenario gives it: \
-             run the scenario with {WRITE_VAR}=write to write it, then again",
+            "no code was compiled ahead of time from {} as this scenario gives it, \
+             compiled against {table}: run the scenario with {WRITE_VAR}=write to \
+             write it, then again. If the other build finds code for it in these same \
+             fixtures, the file's IR depends on the table, which it must not",
             missing.join(", ")
         )))
     }
