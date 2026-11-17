@@ -163,10 +163,10 @@ pub mod prelude {
         Atom, Color, ConnectionId, ContextId, Copied, Cx, Engine, EngineError, FollowedFiles,
         Handler, ItemModel, ItemTree, JsError, LogEntry, LogLevel, MetaRef, ModelChange,
         ModelListener, ModelListeners, ModelSignals, ObjectId, Point, Prop, PropIndex, PropertyMap,
-        QmlList, QmlListModel, QmlObject, QmlType, QmlValue, QtObject, Quaternion, Rect, RowKey,
-        ScopedEvent, ScopedSingleton, SignalIndex, Size, Timer, TreeChange, TreeListener,
-        TreeListeners, Url, Value, Vector3d, Version, WindowScope, invalid_model_index, list_model,
-        model_index, qml_impl, qml_singleton, tree_model,
+        QmlList, QmlListModel, QmlObject, QmlSingleton, QmlType, QmlValue, QtObject, Quaternion,
+        Rect, RowKey, ScopedEvent, ScopedSingleton, SignalIndex, SingletonScope, Size, Timer,
+        TreeChange, TreeListener, TreeListeners, Url, Value, Vector3d, Version, WindowScope,
+        invalid_model_index, list_model, model_index, qml_impl, qml_singleton, tree_model,
     };
     pub use ljos_platform::{
         BadgeService, ClipboardError, ClipboardImage, ClipboardMode, ClipboardService,
@@ -464,6 +464,13 @@ pub fn run_headless<M: Send + 'static>(
     ljos_shell::run_headless(config, setup)
 }
 
+/// A side stream (ARCHITECTURE.md §3.3): for a thread that feeds the UI
+/// many small items, made by [`Setup::batch`] and handled by
+/// [`Setup::on_batch`] a run at a time. Its [`BatchSender`] never blocks:
+/// a full stream gives way by its [`BatchPolicy`].
+#[cfg(feature = "shell")]
+#[cfg(not(target_arch = "wasm32"))]
+pub use ljos_runtime::{BatchPolicy, BatchSender, Drain, UiBatch};
 /// The thread-safe handle a worker thread posts messages to the
 /// Engine through: what [`Setup::handle`] hands out. Its `send`
 /// fails fast on a full inbox with a [`SendError`]; `send_blocking`
@@ -472,7 +479,7 @@ pub fn run_headless<M: Send + 'static>(
 /// newest message under each [`CoalesceKey`].
 #[cfg(feature = "shell")]
 #[cfg(not(target_arch = "wasm32"))]
-pub use ljos_runtime::{CoalesceKey, SendAsync, SendError, UiHandle};
+pub use ljos_runtime::{CoalesceKey, DrainBudget, SendAsync, SendError, UiHandle};
 #[cfg(feature = "shell")]
 #[cfg(not(target_arch = "wasm32"))]
 pub use ljos_shell::{ColorSpace, PainterError, Setup, SetupError, ShellConfig, ShellError};
