@@ -384,6 +384,9 @@ pub(crate) struct ReloadState {
     /// What a native type binds a property to when it is not given one,
     /// which a member taken away by a reload is bound to again.
     defaults: RefCell<HashMap<(ObjectId, PropIndex), DefaultBinding>>,
+    /// Objects whose layout a reload in place is giving again, while it
+    /// does: see [`Engine::reload_renewing`].
+    pub(crate) renewing: RefCell<HashSet<ObjectId>>,
 }
 
 /// A native type's binding for a property it was not given.
@@ -586,6 +589,16 @@ impl Engine {
 
     pub fn reload_tracking(&self) -> bool {
         self.inner.reload.tracking.get()
+    }
+
+    /// Whether a reload in place is giving `obj` what the new text says
+    /// of its layout (its `anchors`) right now. What lays an item out
+    /// leaves it where a fresh load of the new text would, not where it
+    /// stands, as taking a line away at run time does: the text was
+    /// edited, the item was not moved.
+    pub fn reload_renewing(&self, obj: ObjectId) -> bool {
+        let renewing = self.inner.reload.renewing.borrow();
+        !renewing.is_empty() && renewing.contains(&obj)
     }
 
     /// The generation of the last patch applied; 0 before any.

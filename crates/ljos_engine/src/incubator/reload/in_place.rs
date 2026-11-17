@@ -604,6 +604,18 @@ impl Engine {
                 tracing::warn!("a renamed property's object keeps its old names");
             }
         }
+        // The effects that lay out an object whose anchors change run as
+        // the batch ends, and learn from this that the text was edited.
+        *self.inner.reload.renewing.borrow_mut() = targets
+            .iter()
+            .filter(|t| {
+                t.names
+                    .iter()
+                    .chain(&t.fresh)
+                    .any(|n| n.starts_with("anchors."))
+            })
+            .map(|t| renew(&t.inst, &files, &mut memo).objects[t.obj])
+            .collect();
         self.batch(|| {
             for t in &targets {
                 let inst = renew(&t.inst, &files, &mut memo);
@@ -670,6 +682,7 @@ impl Engine {
                 self.in_place_set(&inst, id, od, name);
             }
         });
+        self.inner.reload.renewing.borrow_mut().clear();
         // A model whose elements were edited is taken to its new rows.
         for c in changed.iter().filter(|c| !c.models.is_empty()) {
             for inst in instances.iter().filter(|i| Rc::ptr_eq(&i.file, &c.old)) {
@@ -1633,8 +1646,12 @@ impl Engine {
             let target = target.at();
             // A member the file did not give may be held by what took it
             // over (a view sizes a page that has no size of its own),
-            // which decides again when the object is made again.
-            if !sets(old, name) && self.has_override(target.obj, target.prop) {
+            // which decides again when the object is made again. The
+            // anchors the file gave decide again in place.
+            if !sets(old, name)
+                && !laid_by_anchors(old, name)
+                && self.has_override(target.obj, target.prop)
+            {
                 return Err("an edited member is held by what took it over");
             }
             if given.is_some_and(|g| {
@@ -1824,10 +1841,7 @@ impl Engine {
         od: &ObjectDef,
         gone: &dyn Fn(&str) -> bool,
     ) {
-        let given = |leaf: &str| {
-            held_in(od, &format!("anchors.{leaf}"))
-                .is_some_and(|(m, l)| m.bindings.iter().any(|b| b.name == l))
-        };
+        let given = |leaf: &str| anchor_given(od, leaf);
         let mut reset = Vec::new();
         for (sides, middle, pos, size) in [
             (["left", "right"], &["horizontalCenter"][..], "x", "width"),
@@ -2420,6 +2434,32 @@ fn names_an_object(file: &CompiledFile, name: &str) -> bool {
 
 /// The members of `od` the member `name` is written among, and its name
 /// there: `pixelSize` of the group `font`, `fillWidth` of `Layout`.
+/// Whether `od` gives the anchor line `anchors.<leaf>`.
+fn anchor_given(od: &ObjectDef, leaf: &str) -> bool {
+    held_in(od, &format!("anchors.{leaf}"))
+        .is_some_and(|(m, l)| m.bindings.iter().any(|b| b.name == l))
+}
+
+/// Whether the anchors `od` gives lay out its member `name`.
+fn laid_by_anchors(od: &ObjectDef, name: &str) -> bool {
+    let any = |leaves: &[&str]| leaves.iter().any(|l| anchor_given(od, l));
+    let all = |leaves: &[&str]| leaves.iter().all(|l| anchor_given(od, l));
+    match name {
+        "x" => any(&["left", "right", "horizontalCenter", "centerIn", "fill"]),
+        "y" => any(&[
+            "top",
+            "bottom",
+            "verticalCenter",
+            "baseline",
+            "centerIn",
+            "fill",
+        ]),
+        "width" => all(&["left", "right"]) || any(&["fill"]),
+        "height" => all(&["top", "bottom"]) || any(&["fill"]),
+        _ => false,
+    }
+}
+
 fn held_in<'d, 'n>(od: &'d ObjectDef, name: &'n str) -> Option<(&'d Members, &'n str)> {
     let Some((path, leaf)) = name.rsplit_once('.') else {
         return Some((&od.members, name));

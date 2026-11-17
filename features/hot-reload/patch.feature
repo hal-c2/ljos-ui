@@ -3104,6 +3104,161 @@ Feature: What a reload changes
       When the property "anchors.margins" of "a" is set to 5
       Then the property "anchors.bottomMargin" of "a" is 5
 
+  Rule: An anchor no longer given leaves the item where a fresh load puts it
+
+    At run time an anchor taken away leaves the item where it stands, as
+    Qt does. A reload is an edit of the text, so the item stands where
+    the new text puts it, while what the user did meanwhile stays.
+
+    Background:
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"; width: 200; height: 100
+          Rectangle { objectName: "tag"; width: 20; height: 10; anchors.centerIn: parent }
+          Rectangle {
+            objectName: "box"; width: 10; height: 10
+            NumberAnimation on x { id: slide; running: false; from: 0; to: 100; duration: 1000 }
+          }
+          function go() { slide.start() }
+        }
+        """
+      When the method "go" of "root" is called
+      And 500 milliseconds pass
+      Then the property "x" of "tag" is 90
+      And the property "y" of "tag" is 45
+
+    Scenario: An item no longer centred stands at the place it gives itself
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"; width: 200; height: 100
+          Rectangle { objectName: "tag"; width: 20; height: 10 }
+          Rectangle {
+            objectName: "box"; width: 10; height: 10
+            NumberAnimation on x { id: slide; running: false; from: 0; to: 100; duration: 1000 }
+          }
+          function go() { slide.start() }
+        }
+        """
+      And a reload happens
+      Then the property "x" of "tag" is 0
+      And the property "y" of "tag" is 0
+      And the property "x" of "box" is at least 40
+
+    Scenario: An item centred before and anchored to an edge now stands at that edge
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"; width: 200; height: 100
+          Rectangle {
+            objectName: "tag"; width: 20; height: 10
+            anchors.top: parent.top; anchors.horizontalCenter: parent.horizontalCenter; anchors.margins: 12
+          }
+          Rectangle {
+            objectName: "box"; width: 10; height: 10
+            NumberAnimation on x { id: slide; running: false; from: 0; to: 100; duration: 1000 }
+          }
+          function go() { slide.start() }
+        }
+        """
+      And a reload happens
+      Then the property "x" of "tag" is 90
+      And the property "y" of "tag" is 12
+      And the property "x" of "box" is at least 40
+
+    Scenario: An edge and its margin no longer given leave the place the item gives itself
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"; width: 200; height: 100
+          Rectangle { objectName: "tag"; width: 20; height: 10; anchors.top: parent.top; anchors.topMargin: 30 }
+          Rectangle {
+            objectName: "box"; width: 10; height: 10
+            NumberAnimation on x { id: slide; running: false; from: 0; to: 100; duration: 1000 }
+          }
+          function go() { slide.start() }
+        }
+        """
+      And a reload happens
+      Then the property "y" of "tag" is 30
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"; width: 200; height: 100
+          Rectangle { objectName: "tag"; y: 7; width: 20; height: 10 }
+          Rectangle {
+            objectName: "box"; width: 10; height: 10
+            NumberAnimation on x { id: slide; running: false; from: 0; to: 100; duration: 1000 }
+          }
+          function go() { slide.start() }
+        }
+        """
+      And a reload happens
+      Then the property "y" of "tag" is 7
+      And the property "x" of "tag" is 0
+      And the property "x" of "box" is at least 40
+
+    Scenario: A place given to an item that an anchor still lays out is the anchor's
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"; width: 200; height: 100
+          Rectangle { objectName: "tag"; y: 7; width: 20; height: 10; anchors.top: parent.top; anchors.topMargin: 30 }
+          Rectangle {
+            objectName: "box"; width: 10; height: 10
+            NumberAnimation on x { id: slide; running: false; from: 0; to: 100; duration: 1000 }
+          }
+          function go() { slide.start() }
+        }
+        """
+      And a reload happens
+      Then the property "y" of "tag" is 30
+      And the property "x" of "tag" is 0
+      And the property "x" of "box" is at least 40
+
+    Scenario: An item no longer filling its parent has the size it gives itself
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"; width: 200; height: 100
+          Rectangle { objectName: "tag"; width: 20; height: 10; anchors.fill: parent }
+          Rectangle {
+            objectName: "box"; width: 10; height: 10
+            NumberAnimation on x { id: slide; running: false; from: 0; to: 100; duration: 1000 }
+          }
+          function go() { slide.start() }
+        }
+        """
+      And a reload happens
+      Then the property "width" of "tag" is 200
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"; width: 200; height: 100
+          Rectangle { objectName: "tag"; width: 20; height: 10; anchors.left: parent.left; anchors.leftMargin: 5 }
+          Rectangle {
+            objectName: "box"; width: 10; height: 10
+            NumberAnimation on x { id: slide; running: false; from: 0; to: 100; duration: 1000 }
+          }
+          function go() { slide.start() }
+        }
+        """
+      And a reload happens
+      Then the property "x" of "tag" is 5
+      And the property "y" of "tag" is 0
+      And the property "width" of "tag" is 20
+      And the property "height" of "tag" is 10
+      And the property "x" of "box" is at least 40
+
   Rule: An element added to a model, removed from it or moved in it is the model's own insert, remove or move
 
     A view keeps the delegates of the rows that stay, as when a script

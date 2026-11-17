@@ -123,6 +123,34 @@ Feature: A shipped application its users change while it runs
       And 1 save of the user's files has been applied
       And there is no reload error
 
+    Scenario: What a save no longer gives goes back to where a fresh start has it, and what the user typed stays
+      Given the user's file "Shell.qml":
+        """qml
+        import QtQuick
+        Rectangle {
+          objectName: "user-shell"; width: 200; height: 100; color: "green"
+          Text { objectName: "title"; text: "Hi"; width: 40; height: 20; font.bold: true; anchors.centerIn: parent }
+        }
+        """
+      When the application runs "Main.qml" built ahead, with the user's directory over it
+      And the user types "hello"
+      Then the property "y" of "loader/user-shell/title" is 40
+      When the user saves the file "Shell.qml" as:
+        """qml
+        import QtQuick
+        Rectangle {
+          objectName: "user-shell"; width: 200; height: 100
+          Text { objectName: "title"; text: "Hi"; width: 40; height: 20 }
+        }
+        """
+      Then the property "x" of "loader/user-shell/title" is 0
+      And the property "y" of "loader/user-shell/title" is 0
+      And the property "font.bold" of "loader/user-shell/title" is false
+      And the property "color" of "loader/user-shell" is "#ffffff"
+      And the property "text" of "field" is "hello"
+      And 1 save of the user's files has been applied
+      And there is no reload error
+
     Scenario: A theme in the user's directory is followed
       Given the file "Main.qml":
         """qml
