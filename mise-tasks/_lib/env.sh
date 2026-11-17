@@ -284,3 +284,16 @@ crate_version() {
   printf '%s\n' "$v"
 }
 
+# The --check of a task that opens a window: the same `ljos run`, with no
+# window and no display, for LJOS_CHECK_SECONDS (2 by default), then ended by
+# closing its standard input. It fails when the app does not build or load.
+#   check_run <ljos> run [run options] <file> [args…]
+check_run() {
+  local ljos="$1"
+  shift
+  [ "${1:-}" = run ] || die "check_run: $* is not an ljos run"
+  shift
+  echo "${MISE_TASK_NAME:-this task} --check: ljos run --headless $*, ended after ${LJOS_CHECK_SECONDS:-2} s" >&2
+  sleep "${LJOS_CHECK_SECONDS:-2}" | "$ljos" run --headless --quit-with-stdin "$@"
+}
+

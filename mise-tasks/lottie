@@ -1,15 +1,26 @@
 #!/usr/bin/env bash
-#MISE description="Play a Lottie file in a window: lottie [file.json|file.qml] [--qt] [ljos run args…]; bench/lottie/mid.json by default, --qt plays it on qml6 instead, click to pause"
+#MISE description="Play a Lottie file in a window: lottie [file.json|file.qml] [--qt] [--check] [ljos run args…]; bench/lottie/mid.json by default, --qt plays it on qml6 instead, click to pause. --check builds it and plays it for 2 s with no window"
+#MISE dir="{{config_root}}"
 #USAGE arg "[file]" help="Lottie .json or a .qml that plays one (default bench/lottie/mid.json)"
 #USAGE flag "--qt" help="Play it on qml6 instead (comes right after the file)"
+#USAGE flag "--check" help="Build ljos (debug: no frame is timed) and play the file for 2 s with no window or display, then stop; with --qt, only see that qml6 is there. Fails when it does not build or load"
 #USAGE arg "[args]..." var=#true help="Arguments for ljos run"
 set -euo pipefail
-root="$(cd "$(dirname "$0")/.." && pwd)"
-target="${CARGO_TARGET_DIR:-$root/target}"
+# shellcheck source-path=SCRIPTDIR source=_lib/env.sh
+. "$(dirname "$0")/_lib/env.sh"
+cd "$ljos_root"
+root="$ljos_root"
+target="$(target_dir)"
 
+check=
+args=()
+for a in "$@"; do
+  if [ "$a" = --check ]; then check=1; else args+=("$a"); fi
+done
+set -- ${args[@]+"${args[@]}"}
 file="$root/bench/lottie/mid.json"
 if [ $# -gt 0 ] && [ "${1#-}" = "$1" ]; then
-  file="$(realpath "$1")"
+  file="$(from_asked "$1")"
   shift
 fi
 qt=
@@ -17,7 +28,7 @@ if [ $# -gt 0 ] && [ "$1" = --qt ]; then
   qt=1
   shift
 fi
-[ -f "$file" ] || { echo "no such file: $file" >&2; exit 1; }
+[ -f "$file" ] || die "lottie: no such file: $file"
 
 # A .qml is played as it is; a bare .json gets a small viewer, so any file
 # downloaded from the web can be tried without writing QML for it.
@@ -64,11 +75,23 @@ EOF
 esac
 
 if [ -n "$qt" ]; then
-  exec qml6 "$entry" "$@"
+  need_qml6
+  if [ -n "$check" ]; then
+    echo "lottie --check: would run ${QML6:-qml6} $entry $*" >&2
+    exit 0
+  fi
+  exec "${QML6:-qml6}" "$entry" "$@"
 fi
 
+if [ -n "$check" ]; then
+  cargo build --quiet -p ljos_cli --bin ljos
+  check_run "$target/debug/ljos" run "$entry" "$@"
+  exit
+fi
 # Release by default: a debug build's frame times say nothing about how
 # Lottie plays.
 profile="${LOTTIE_PROFILE:-release}"
-cargo build --quiet --manifest-path "$root/Cargo.toml" -p ljos_cli --bin ljos --profile "$profile"
-exec "$target/$profile/ljos" run "$entry" "$@"
+cargo build --quiet -p ljos_cli --bin ljos --profile "$profile"
+dir="$profile"
+[ "$profile" != dev ] || dir=debug
+exec "$target/$dir/ljos" run "$entry" "$@"
