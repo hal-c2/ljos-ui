@@ -275,11 +275,45 @@ pub struct MapSource {
     base: Option<String>,
     urls: HashMap<String, String>,
     keys_by_url: HashMap<String, String>,
+    trailer: Option<Trailer>,
+}
+
+/// The trailer of a pack: what follows its files, without the length
+/// that ends it. A length that does not match means a pack cut short.
+fn trailer_of(rest: &[u8]) -> Result<Option<&[u8]>, EngineError> {
+    if rest.is_empty() {
+        return Ok(None);
+    }
+    let cut = || EngineError::Load("the pack is cut short".to_owned());
+    let (body, len) = rest.split_last_chunk::<4>().ok_or_else(cut)?;
+    if usize::try_from(u32::from_le_bytes(*len)).ok() != Some(body.len()) {
+        return Err(cut());
+    }
+    Ok(Some(body))
+}
+
+/// What a pack holds after its files: bytes the engine does not read,
+/// for whoever wrote them (the sources of an application its users may
+/// change). Embedded, they are not copied.
+#[derive(Clone)]
+enum Trailer {
+    Embedded(&'static [u8]),
+    Read(Arc<[u8]>),
 }
 
 impl MapSource {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// The bytes after the files of the pack this was read from
+    /// ([`to_pack_with_trailer`](Self::to_pack_with_trailer)); None when
+    /// there were none.
+    pub fn trailer(&self) -> Option<&[u8]> {
+        match self.trailer.as_ref()? {
+            Trailer::Embedded(bytes) => Some(bytes),
+            Trailer::Read(bytes) => Some(bytes),
+        }
     }
 
     /// URLs become `{base}/{key}.qml`: for files that came from no
@@ -337,6 +371,14 @@ impl MapSource {
     /// each preceded by its length as a little-endian `u32`, in key
     /// order. Failures and bytecode are not packed.
     pub fn to_pack(&self) -> Result<Vec<u8>, EngineError> {
+        self.to_pack_with_trailer(&[])
+    }
+
+    /// [`to_pack`](Self::to_pack), with `trailer` and its length after
+    /// the files: an engine reads the files and keeps the trailer as it
+    /// is ([`trailer`](Self::trailer)), so a pack with one reads where a
+    /// pack without one does.
+    pub fn to_pack_with_trailer(&self, trailer: &[u8]) -> Result<Vec<u8>, EngineError> {
         let len = |n: usize| {
             u32::try_from(n)
                 .map(u32::to_le_bytes)
@@ -354,6 +396,12 @@ impl MapSource {
             out.extend_from_slice(&len(bytes.len())?);
             out.extend_from_slice(&bytes);
         }
+        // Its length after it, so a pack cut short in its trailer is
+        // told from one with a shorter trailer.
+        if !trailer.is_empty() {
+            out.extend_from_slice(trailer);
+            out.extend_from_slice(&len(trailer.len())?);
+        }
         Ok(out)
     }
 
@@ -362,6 +410,21 @@ impl MapSource {
     /// this engine reads, is an error: a shipped program embeds the
     /// pack its own build wrote, so either means a broken build.
     pub fn from_pack(pack: &[u8]) -> Result<Self, EngineError> {
+        let (mut source, rest) = Self::files_of_pack(pack)?;
+        source.trailer = trailer_of(rest)?.map(|t| Trailer::Read(t.into()));
+        Ok(source)
+    }
+
+    /// [`from_pack`](Self::from_pack) of a pack the program embeds: its
+    /// [`trailer`](Self::trailer) stays where it is, uncopied.
+    pub fn from_static_pack(pack: &'static [u8]) -> Result<Self, EngineError> {
+        let (mut source, rest) = Self::files_of_pack(pack)?;
+        source.trailer = trailer_of(rest)?.map(Trailer::Embedded);
+        Ok(source)
+    }
+
+    /// The files of `pack`, and what follows them.
+    fn files_of_pack(pack: &[u8]) -> Result<(Self, &[u8]), EngineError> {
         fn take<'a>(rest: &mut &'a [u8], n: usize) -> Result<&'a [u8], EngineError> {
             if rest.len() < n {
                 return Err(EngineError::Load("the pack is cut short".to_owned()));
@@ -385,7 +448,7 @@ impl MapSource {
                 .map_err(|e| EngineError::Load(format!("{key}: {e}")))?;
             source.insert(key, file);
         }
-        Ok(source)
+        Ok((source, rest))
     }
 }
 
@@ -1101,6 +1164,23 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn a_trailer_reads_back_and_a_pack_cut_in_it_is_refused() {
+        let source = MapSource::new();
+        let plain = source.to_pack().unwrap();
+        assert!(MapSource::from_pack(&plain).unwrap().trailer().is_none());
+        let pack = source.to_pack_with_trailer(b"sources").unwrap();
+        let read = MapSource::from_pack(&pack).unwrap();
+        assert_eq!(read.trailer(), Some(&b"sources"[..]));
+        // All of it cut is a pack without one.
+        for cut in 1..b"sources".len() + 4 {
+            assert!(
+                MapSource::from_pack(&pack[..pack.len() - cut]).is_err(),
+                "cut by {cut}"
+            );
+        }
+    }
 
     #[test]
     fn a_relative_url_is_taken_from_the_directory_of_the_base() {
