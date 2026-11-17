@@ -2374,6 +2374,51 @@ fn app_processes_lists_the_mailboxes_with_what_does_work() {
 }
 
 #[test]
+fn app_processes_lists_a_side_stream_as_a_batch_mailbox_with_its_evictions() {
+    let mut app = app();
+    let (inbox, handle) = ljos_runtime::UiInbox::<()>::channel(4);
+    let (_stream, tx) = handle.batch(
+        "inspector-test.tail",
+        2,
+        ljos_runtime::BatchPolicy::DropOldest,
+    );
+    for line in ["one", "two", "three"] {
+        tx.send(line).unwrap();
+    }
+    let reply = app.call(
+        "app_processes",
+        json!({ "kind": "mailbox", "mailbox": "inspector-test.tail" }),
+    );
+    let row = &reply.structured["mailboxes"][0];
+    assert_eq!(row["kind"], "batch", "{row}");
+    assert_eq!(
+        (row["capacity"].as_u64(), row["depth"].as_u64()),
+        (Some(2), Some(2))
+    );
+    assert_eq!(
+        (row["sent"].as_u64(), row["evicted"].as_u64()),
+        (Some(3), Some(1))
+    );
+    assert!(
+        reply
+            .text
+            .contains("mailbox inspector-test.tail (batch): 2/2 queued, sent 3, refused 0, replaced 0, evicted 1"),
+        "{}",
+        reply.text
+    );
+    let inspector = app.call(
+        "app_processes",
+        json!({ "kind": "mailbox", "mailbox": "inspector" }),
+    );
+    let row = &inspector.structured["mailboxes"][0];
+    assert_eq!(
+        (row["kind"].as_str(), row["evicted"].as_u64()),
+        (Some("inbox"), Some(0))
+    );
+    drop(inbox);
+}
+
+#[test]
 fn app_processes_shows_the_mailboxes_of_a_ui_thread_that_does_not_answer() {
     let mut app = app_with(
         MAIN,
