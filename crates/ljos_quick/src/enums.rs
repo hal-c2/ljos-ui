@@ -66,6 +66,7 @@ pub(crate) fn text_enums() -> EnumTable {
                 ("NoWrap", wrap_mode::NO_WRAP),
                 ("WordWrap", wrap_mode::WORD_WRAP),
                 ("WrapAnywhere", wrap_mode::WRAP_ANYWHERE),
+                ("WrapAtWordBoundaryOrAnywhere", wrap_mode::WRAP),
                 ("Wrap", wrap_mode::WRAP),
             ]),
         ),

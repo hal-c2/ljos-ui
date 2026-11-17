@@ -98,6 +98,44 @@ Feature: Text wrapping
       Then the property "lineCount" of "both" is at least 2
       And the property "wrapLikeAnywhere" of "root" is true
 
+  Rule: WrapAtWordBoundaryOrAnywhere is Wrap's longer name
+
+    Background:
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root
+          objectName: "root"
+          property string words: "Hello world, this is a long line of text"
+          property bool sameMode: named.wrapMode === Text.Wrap
+          property bool betweenWords: named.lineCount === word.lineCount
+          property bool longFits: long.contentWidth <= long.width
+          Text { id: word; width: 100; text: root.words; wrapMode: Text.WordWrap }
+          Text {
+            id: named; objectName: "named"
+            width: 100; text: root.words; wrapMode: Text.WrapAtWordBoundaryOrAnywhere
+          }
+          Text {
+            id: long; objectName: "long"
+            width: 50; text: "Incomprehensibilities"; wrapMode: Text.WrapAtWordBoundaryOrAnywhere
+          }
+        }
+        """
+      When 100 milliseconds pass
+
+    Scenario: The longer name is the same mode as Wrap
+      Then the property "wrapMode" of "named" is 4
+      And the property "sameMode" of "root" is true
+
+    Scenario: It breaks between words when it can
+      Then the property "lineCount" of "named" is at least 2
+      And the property "betweenWords" of "root" is true
+
+    Scenario: It breaks inside a word only when the word is wider than the line
+      Then the property "lineCount" of "long" is at least 2
+      And the property "longFits" of "root" is true
+
   Rule: Line breaks in the text
 
     Background:
