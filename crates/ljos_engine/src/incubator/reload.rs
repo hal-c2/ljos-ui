@@ -306,6 +306,11 @@ impl ComponentSource for PatchedSource {
             self.base.bytecode(key)
         }
     }
+
+    fn refuse_step_up(&self, base: &str, rel: &str) -> Option<String> {
+        // Where a file may reach is the application's rule, edited or not.
+        self.base.refuse_step_up(base, rel)
+    }
 }
 
 type MetaCache = rustc_hash::FxHashMap<(u32, u32), MetaRef>;
