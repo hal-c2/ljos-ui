@@ -47,7 +47,8 @@ use std::time::{Duration, Instant};
 
 use thiserror::Error;
 
-use crate::observe::{self, MailboxProbe, MailboxSample};
+use crate::batch::{self, BatchPolicy, BatchSender, UiBatch};
+use crate::observe::{self, MailboxKind, MailboxProbe, MailboxSample};
 use crate::time::Clock;
 
 /// Called from a sender's thread when the inbox goes from empty to non-empty.
@@ -371,6 +372,35 @@ impl<M> UiHandle<M> {
     }
 }
 
+impl<M: Send + 'static> UiHandle<M> {
+    /// Makes a side stream ([`crate::batch`]) that wakes the UI thread as
+    /// this handle's inbox does: through its [`WakeHook`], the one it has
+    /// or the one it is given later. `name` is what an observer lists the
+    /// stream by, as a mailbox of kind `batch`, and what a turn that runs
+    /// long is named after. `capacity` (at least 1) is fixed; the ring is
+    /// allocated here, once.
+    ///
+    /// The [`UiBatch`] belongs to the UI thread, which drains it (the shell
+    /// does, with `Setup::batch`); the [`BatchSender`] goes to the threads
+    /// that feed it.
+    pub fn batch<T: Send + 'static>(
+        &self,
+        name: &'static str,
+        capacity: usize,
+        policy: BatchPolicy<T>,
+    ) -> (UiBatch<T>, BatchSender<T>) {
+        // Weak: a stream outliving its inbox must not keep the inbox's
+        // queue alive, and with the inbox gone there is no one to wake.
+        let inbox: Weak<Shared<M>> = Arc::downgrade(&self.shared);
+        let wake: WakeHook = Arc::new(move || {
+            if let Some(shared) = inbox.upgrade() {
+                shared.fire_wake();
+            }
+        });
+        batch::channel(name, capacity, policy, wake)
+    }
+}
+
 /// The future of [`UiHandle::send_async`].
 #[must_use = "a future does nothing unless awaited"]
 pub struct SendAsync<'a, M> {
@@ -643,12 +673,15 @@ impl<M: Send> MailboxProbe for Shared<M> {
         let c = &self.counts;
         Some(MailboxSample {
             name: watch.name,
+            kind: MailboxKind::Inbox,
             capacity: self.capacity,
             depth,
             oldest,
             sent: c.sent.load(Ordering::Relaxed),
             refused: c.refused.load(Ordering::Relaxed),
             replaced: c.replaced.load(Ordering::Relaxed),
+            // An inbox refuses rather than evicts.
+            evicted: 0,
             drained: c.drained.load(Ordering::Relaxed),
             // Besides the handles, the inbox and this sample hold one.
             senders: Arc::strong_count(&self).saturating_sub(2),

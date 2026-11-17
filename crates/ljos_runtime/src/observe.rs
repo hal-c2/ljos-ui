@@ -1,7 +1,8 @@
 //! What an observer may see of the mailboxes of a process (ARCHITECTURE.md
 //! 3.4 and 19.4): every [`UiInbox`](crate::UiInbox) that was named with
-//! [`UiInbox::observe_as`](crate::UiInbox::observe_as), its depth, its oldest
-//! message's age and what went through it.
+//! [`UiInbox::observe_as`](crate::UiInbox::observe_as) and every side stream
+//! ([`UiBatch`](crate::UiBatch), named when it is made), its depth, its
+//! oldest message's age and what went through it.
 //!
 //! # Free when nobody looks
 //!
@@ -47,11 +48,36 @@ impl Drop for ObserveGuard {
     }
 }
 
+/// What kind of queue a mailbox is.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum MailboxKind {
+    /// A [`UiInbox`](crate::UiInbox): one message, one turn, and senders
+    /// that may wait for room.
+    #[default]
+    Inbox,
+    /// A side stream ([`UiBatch`](crate::UiBatch)): its items are handled
+    /// together, one turn a frame, and a full stream gives way by its
+    /// policy rather than make a sender wait.
+    Batch,
+}
+
+impl MailboxKind {
+    /// `"inbox"` or `"batch"`, as an observer lists it.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Inbox => "inbox",
+            Self::Batch => "batch",
+        }
+    }
+}
+
 /// One mailbox as an observer sees it at one moment.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct MailboxSample {
     /// The name its owner gave it.
     pub name: &'static str,
+    pub kind: MailboxKind,
     pub capacity: usize,
     /// Messages waiting now.
     pub depth: usize,
@@ -64,14 +90,21 @@ pub struct MailboxSample {
     pub refused: u64,
     /// Sends that replaced a queued message of the same key.
     pub replaced: u64,
+    /// Queued messages a full side stream dropped to make room for newer
+    /// ones ([`BatchPolicy::DropOldest`](crate::BatchPolicy::DropOldest));
+    /// always 0 for an inbox.
+    pub evicted: u64,
     pub drained: u64,
     /// Sending handles alive.
     pub senders: usize,
-    /// Senders waiting for room (`send_blocking`, `send_async`).
+    /// Senders waiting for room (`send_blocking`, `send_async`); always 0
+    /// for a side stream, whose senders never wait.
     pub waiting: usize,
-    /// The queued messages by kind, most first.
+    /// The queued messages by kind, most first. Empty for a side stream,
+    /// which carries one type.
     pub kinds: Vec<(&'static str, usize)>,
-    /// The kinds of the first queued messages, front first.
+    /// The kinds of the first queued messages, front first. Empty for a
+    /// side stream.
     pub peek: Vec<&'static str>,
 }
 
