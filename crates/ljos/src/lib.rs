@@ -323,6 +323,8 @@ pub use ljos_engine::aot;
 #[doc(hidden)]
 #[cfg(not(target_arch = "wasm32"))]
 pub use ljos_engine;
+#[cfg(not(target_arch = "wasm32"))]
+pub use ljos_engine::log_to_stderr;
 #[doc(hidden)]
 #[cfg(not(target_arch = "wasm32"))]
 pub use ljos_engine::module;
