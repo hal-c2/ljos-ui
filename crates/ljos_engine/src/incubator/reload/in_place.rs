@@ -1620,6 +1620,18 @@ impl Engine {
         for name in &t.fresh {
             self.untrack(|| self.in_place_unset(&t.inst, t.was, t.old, t.def, name, false))?;
         }
+        // What took an item in (a view its page, a view or a Loader what
+        // it makes, a control its part) sized and placed it as it was
+        // made, from the anchors it had then, and asks again when a fresh
+        // load makes it. A child its parent holds in the file is laid
+        // out by what it gives itself, in place.
+        if LAYING
+            .iter()
+            .any(|l| anchor_given(old, l) != anchor_given(t.def, l))
+            && !self.in_place_held_by_parent(&t.inst, c.old.ir.component(t.inst.comp), t.was)
+        {
+            return Err("an item something took in is anchored anew");
+        }
         let mut missing = Vec::new();
         for name in &t.names {
             if !gives(t.def, name) {
@@ -1647,11 +1659,9 @@ impl Engine {
             // A member the file did not give may be held by what took it
             // over (a view sizes a page that has no size of its own),
             // which decides again when the object is made again. The
-            // anchors the file gave decide again in place.
-            if !sets(old, name)
-                && !laid_by_anchors(old, name)
-                && self.has_override(target.obj, target.prop)
-            {
+            // anchors the file gave hold what they lay out, and decide
+            // again in place.
+            if !sets(old, name) && self.taken_over(target.obj, target.prop) {
                 return Err("an edited member is held by what took it over");
             }
             if given.is_some_and(|g| {
@@ -1712,6 +1722,24 @@ impl Engine {
             below = user.clone();
         }
         Ok(())
+    }
+
+    /// Whether object `j` of `inst` (`comp` as the old file writes it) is
+    /// a child its parent holds in the file, and stands in it as an item
+    /// there: not a page, a part, a delegate or a root, which what made
+    /// them took in.
+    fn in_place_held_by_parent(&self, inst: &Instance, comp: &ComponentDef, j: usize) -> bool {
+        let Some(p) = comp.objects[j].parent else {
+            return false;
+        };
+        let Ok(k) = u32::try_from(j) else {
+            return false;
+        };
+        let written = comp.objects[p.index()]
+            .children
+            .contains(&ObjectValue::Object(ObjIdx(k)));
+        let id = inst.objects[j];
+        written && self.untrack(|| self.visual_parent(id)) == Some(inst.objects[p.index()])
     }
 
     /// Where `od` writes the member `name` of `obj`: among its own, in a
@@ -2440,25 +2468,18 @@ fn anchor_given(od: &ObjectDef, leaf: &str) -> bool {
         .is_some_and(|(m, l)| m.bindings.iter().any(|b| b.name == l))
 }
 
-/// Whether the anchors `od` gives lay out its member `name`.
-fn laid_by_anchors(od: &ObjectDef, name: &str) -> bool {
-    let any = |leaves: &[&str]| leaves.iter().any(|l| anchor_given(od, l));
-    let all = |leaves: &[&str]| leaves.iter().all(|l| anchor_given(od, l));
-    match name {
-        "x" => any(&["left", "right", "horizontalCenter", "centerIn", "fill"]),
-        "y" => any(&[
-            "top",
-            "bottom",
-            "verticalCenter",
-            "baseline",
-            "centerIn",
-            "fill",
-        ]),
-        "width" => all(&["left", "right"]) || any(&["fill"]),
-        "height" => all(&["top", "bottom"]) || any(&["fill"]),
-        _ => false,
-    }
-}
+/// The anchor lines that lay an item out, as their margins do not.
+const LAYING: [&str; 9] = [
+    "left",
+    "right",
+    "top",
+    "bottom",
+    "horizontalCenter",
+    "verticalCenter",
+    "baseline",
+    "centerIn",
+    "fill",
+];
 
 fn held_in<'d, 'n>(od: &'d ObjectDef, name: &'n str) -> Option<(&'d Members, &'n str)> {
     let Some((path, leaf)) = name.rsplit_once('.') else {

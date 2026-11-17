@@ -3259,6 +3259,161 @@ Feature: What a reload changes
       And the property "height" of "tag" is 10
       And the property "x" of "box" is at least 40
 
+  Rule: An item a view or a layout took in stands where a fresh load puts it when its anchors change
+
+    A view sizes and places what it takes in (a page, a delegate) as it is
+    made, from what the item gives then: a StackView sizes a page only when
+    the page's anchors do not. An edit of the item's anchors is asked of
+    the view again, as a fresh load asks it. A layout lays its children
+    out whenever they change.
+
+    Scenario: A page a StackView did not size while it was anchored is sized by it once the anchors are gone
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls
+        StackView {
+          objectName: "root"; width: 200; height: 100
+          property string place
+          function measure() { var t = currentItem; place = t.x + "," + t.y + "," + t.width + "," + t.height }
+          initialItem: Rectangle { objectName: "page"; anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top; height: 30 }
+        }
+        """
+      When the method "measure" of "root" is called
+      Then the property "place" of "root" is "0,0,200,30"
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        import QtQuick.Controls
+        StackView {
+          objectName: "root"; width: 200; height: 100
+          property string place
+          function measure() { var t = currentItem; place = t.x + "," + t.y + "," + t.width + "," + t.height }
+          initialItem: Rectangle { objectName: "page"; height: 30 }
+        }
+        """
+      And a reload happens
+      And the method "measure" of "root" is called
+      Then the property "place" of "root" is "0,0,200,30"
+      And there is no reload error
+
+    Scenario: A SwipeView's page no longer anchored keeps the view's place and size
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls
+        SwipeView {
+          objectName: "root"; width: 200; height: 100
+          property string place
+          function measure() { var t = itemAt(1); place = t.x + "," + t.y + "," + t.width + "," + t.height }
+          Rectangle { objectName: "first" }
+          Rectangle { objectName: "page"; anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top; anchors.bottom: parent.bottom }
+        }
+        """
+      When the method "measure" of "root" is called
+      Then the property "place" of "root" is "200,0,200,100"
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        import QtQuick.Controls
+        SwipeView {
+          objectName: "root"; width: 200; height: 100
+          property string place
+          function measure() { var t = itemAt(1); place = t.x + "," + t.y + "," + t.width + "," + t.height }
+          Rectangle { objectName: "first" }
+          Rectangle { objectName: "page" }
+        }
+        """
+      And a reload happens
+      And the method "measure" of "root" is called
+      Then the property "place" of "root" is "200,0,200,100"
+      And there is no reload error
+
+    Scenario: A size given to an anchored page the view holds stays the view's
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls
+        SwipeView {
+          objectName: "root"; width: 200; height: 100
+          property string place
+          function measure() { var t = itemAt(1); place = t.x + "," + t.y + "," + t.width + "," + t.height }
+          Rectangle { objectName: "first" }
+          Rectangle { objectName: "page"; anchors.left: parent.left; anchors.right: parent.right }
+        }
+        """
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        import QtQuick.Controls
+        SwipeView {
+          objectName: "root"; width: 200; height: 100
+          property string place
+          function measure() { var t = itemAt(1); place = t.x + "," + t.y + "," + t.width + "," + t.height }
+          Rectangle { objectName: "first" }
+          Rectangle { objectName: "page"; anchors.left: parent.left; anchors.right: parent.right; width: 50 }
+        }
+        """
+      And a reload happens
+      And the method "measure" of "root" is called
+      Then the property "place" of "root" is "200,0,200,100"
+      And there is no reload error
+
+    Scenario: A delegate no longer centred stands where its view puts it
+      Given the QML:
+        """qml
+        import QtQuick
+        ListView {
+          objectName: "root"; width: 200; height: 100; model: 3
+          property string place
+          function measure() { var t = itemAtIndex(1); place = t.x + "," + t.y + "," + t.width + "," + t.height }
+          delegate: Rectangle { height: 20; width: 50; anchors.horizontalCenter: parent.horizontalCenter }
+        }
+        """
+      When the method "measure" of "root" is called
+      Then the property "place" of "root" is "75,20,50,20"
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        ListView {
+          objectName: "root"; width: 200; height: 100; model: 3
+          property string place
+          function measure() { var t = itemAtIndex(1); place = t.x + "," + t.y + "," + t.width + "," + t.height }
+          delegate: Rectangle { height: 20; width: 50 }
+        }
+        """
+      And a reload happens
+      And the method "measure" of "root" is called
+      Then the property "place" of "root" is "0,20,50,20"
+      And there is no reload error
+
+    Scenario: A child of a layout no longer anchored stands where the layout puts it
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Layouts
+        ColumnLayout {
+          objectName: "root"; width: 200; height: 100; spacing: 0
+          Rectangle { Layout.preferredWidth: 30; Layout.preferredHeight: 20 }
+          Rectangle { objectName: "tag"; Layout.preferredWidth: 20; Layout.preferredHeight: 10; anchors.horizontalCenter: parent.horizontalCenter }
+        }
+        """
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        import QtQuick.Layouts
+        ColumnLayout {
+          objectName: "root"; width: 200; height: 100; spacing: 0
+          Rectangle { Layout.preferredWidth: 30; Layout.preferredHeight: 20 }
+          Rectangle { objectName: "tag"; Layout.preferredWidth: 20; Layout.preferredHeight: 10 }
+        }
+        """
+      And a reload happens
+      Then the property "x" of "tag" is 0
+      And the property "y" of "tag" is 79
+      And the property "width" of "tag" is 20
+      And there is no reload error
+
   Rule: An element added to a model, removed from it or moved in it is the model's own insert, remove or move
 
     A view keeps the delegates of the rows that stay, as when a script
