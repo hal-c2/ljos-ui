@@ -29,14 +29,17 @@ T.Control {
 
     function openMenu() {
         if (menu) {
-            menu.parent = control
+            // The popup that opens here, so a menu given later does not move
+            // this one or leave it bound to nothing.
+            const popup = menu
+            popup.parent = control
             // Under the chevron's end, and kept there as the button's width
             // changes. A popover places itself by its edge.
-            if (menu.side === undefined) {
-                menu.x = Qt.binding(() => control.mirrored ? 0 : control.width - menu.width)
-                menu.y = Qt.binding(() => control.height)
+            if (popup.side === undefined) {
+                popup.x = Qt.binding(() => control.mirrored ? 0 : control.width - popup.width)
+                popup.y = Qt.binding(() => control.height)
             }
-            menu.open()
+            popup.open()
         }
         control.menuRequested()
     }

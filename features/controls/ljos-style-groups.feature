@@ -270,6 +270,31 @@ Feature: Ljós's own style: tabs, cards, popovers, split buttons and empty state
       Then the property "menuEnd" of "root" is 240
       And the property "width" of "action" is at least 200
 
+    Scenario: A menu taken away while open stays under the chevron
+      Given the QML:
+        """qml
+        import Ljos.Ui
+        import Ljos.Controls
+        Item {
+          id: root; objectName: "root"
+          width: 400; height: 300
+          property real menuEnd: options.x + options.width
+          SplitButton {
+            objectName: "split"; x: 20; y: 20
+            text: "Run"
+            menu: Menu {
+              id: options; objectName: "options"
+              MenuItem { text: "Run all" }
+            }
+          }
+        }
+        """
+      When the user clicks the "button" "More Run options"
+      And 200 milliseconds pass
+      And the property "menu" of "split" is set to null
+      And the property "width" of "split" is set to 240
+      Then the property "menuEnd" of "root" is 240
+
     Scenario: A compact split button shows its icon alone and is still named
       Given the QML:
         """qml
