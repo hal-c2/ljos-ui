@@ -240,7 +240,35 @@ fn main() {
 
 When the file is not there, the app's own shell shows and `error` says the file was not found, so the app can offer to write a copy of its own shell for the user to start from.
 
-To make a shell from a file it was not built with, the app compiles that file on the device, so it links the compiler. Today that is `ljos`'s `dev-qml` feature, meant for development builds; a feature for shipped apps that their users change is still to come. Without the compiler the loader cannot make the user's file, so it shows the app's own shell and `error` says why.
+To make a shell from a file it was not built with, the app compiles that file on the device, so it links the compiler. A shipped app does that with `ljos`'s `user-qml` feature: it names the user's directory, and the files there go over the ones it was built with. Without the compiler the loader cannot make the user's file, so it shows the app's own shell and `error` says why.
+
+## A shipped app its users change
+
+With `user-qml`, the build keeps the text of each file it compiles in the pack (`build::Options::with_sources`, on by default with the feature), so that a user's file compiles against the same files the app was built from. The app names one directory:
+
+```rust
+use ljos::prelude::{Location, PathEnv};
+
+fn main() {
+    let config = Location::AppConfig.writable(&PathEnv::for_process(), "Example", "Notes");
+    ljos::App::new("Notes")
+        .source(ljos::include_qml!("qml.pack"))
+        .user_qml(ljos::UserQml::dir(config).on_fault(|fault| eprintln!("{fault}")))
+        .root("Main")
+        .run()
+        .unwrap();
+}
+```
+
+- Until the directory holds a QML file, nothing is parsed or compiled: the app runs from its pack, and one watch on the directory is all it adds.
+- A user's file with the name of one of the app's replaces it; a new name is a new type, such as the `Shell.qml` a `ShellLoader` names. A `theme.json` there is followed as under `ljos run`.
+- Each save is applied between two frames with the app's state kept, as [hot reload](./hot-reload.md) applies one.
+- A file that does not compile leaves what runs as it was. Ljós draws nothing over the window: the fault goes to `on_fault`, for the app to tell its user in its own way.
+- Files load from that directory and the app's pack only. A network address, an absolute path, a `../` that leads out, and a link out of the directory are refused, and the refusal goes to `on_fault`.
+- `UserQml::watch(false)` reads the directory once, at start-up.
+- What it costs an app whose user has no file: the compiler makes the program about 8 MB larger, and it starts in the same time. It takes about 14 MB more memory, most of it what a reload needs to keep the app's state across a save; with `watch(false)` that is not kept, and it takes about 5 MB more.
+
+`user-qml` links no inspector and no reload overlay; those are the `dev` feature's, which builds on it. `examples/user-shell` is a small app that does this.
 
 ## Change the shell while the app runs
 
