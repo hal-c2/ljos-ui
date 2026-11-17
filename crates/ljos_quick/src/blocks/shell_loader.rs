@@ -269,15 +269,57 @@ fn make(e: &Engine, me: ObjectId, url: &str) -> Result<ObjectId, String> {
     let after = last_fault(e);
     with_run(e, me, |r| r.handled = after);
     let obj = made.map_err(|err| err.to_string())?;
-    let fault = e
-        .faults()
-        .into_iter()
-        .find(|r| r.seq > before && r.origin.is_some_and(|o| within(e, o, obj)));
-    if let Some(report) = fault {
+    if let Some(report) = fault_in(e, obj, before) {
         discard(e, obj);
         return Err(describe(&report));
     }
+    // A binding that throws while the shell is made is a fault only if
+    // it still throws once the creation around the loader is complete,
+    // as an application starts: the shell is judged again then.
+    e.after_creation_told(move |e| judge_again(e, me, obj, before));
     Ok(obj)
+}
+
+/// The first fault after `before` in `obj` or what it owns.
+fn fault_in(e: &Engine, obj: ObjectId, before: u64) -> Option<FaultReport> {
+    e.faults()
+        .into_iter()
+        .find(|r| r.seq > before && r.origin.is_some_and(|o| within(e, o, obj)))
+}
+
+/// What [`make`] would have said had the shell's faults been told while
+/// it made it: the source's shell gives way to the fallback, and a
+/// fallback leaves nothing shown.
+fn judge_again(e: &Engine, me: ObjectId, obj: ObjectId, before: u64) {
+    if !e.is_alive(me) {
+        return;
+    }
+    let shown = e
+        .untrack(|| e.read(me, ShellLoader::ITEM.index))
+        .as_object();
+    if shown != Some(obj) {
+        return;
+    }
+    let Some(report) = fault_in(e, obj, before) else {
+        return;
+    };
+    let why = describe(&report);
+    if with_run(e, me, |r| r.fallback_item) == Some(Some(obj)) {
+        warn(e, format!("ShellLoader: fallback: {why}"));
+        let first = text(&e.untrack(|| e.read(me, ShellLoader::ERROR.index)));
+        let both = if first.is_empty() {
+            format!("fallback: {why}")
+        } else {
+            format!("{first}\nfallback: {why}")
+        };
+        drop_item(e, me);
+        set(e, me, ShellLoader::ERROR.index, both.as_str().into());
+        set(e, me, ShellLoader::STATUS.index, shell_status::ERROR.into());
+        return;
+    }
+    drop_item(e, me);
+    warn(e, format!("ShellLoader: {why}"));
+    show_fallback(e, me, why);
 }
 
 fn last_fault(e: &Engine) -> u64 {

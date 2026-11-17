@@ -95,6 +95,32 @@ Feature: A ShellLoader shows a user's shell, or the application's own when the u
       And the property "status" of "loader" is 2
       And the log has a warning matching "Shell\.qml:3"
 
+    Scenario: A shell whose binding still throws once it is made falls back and says where it threw
+      Given the file "Shell.qml":
+        """qml
+        import QtQuick
+        Rectangle {
+          id: shell
+          objectName: "user-shell"
+          property var size
+          width: shell.size.width; height: 20
+        }
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        import Ljos.Blocks
+        Item {
+          objectName: "root"
+          ShellLoader { id: loader; objectName: "loader"; source: "Shell.qml"; fallback: "Default.qml" }
+          property bool named: /Shell\.qml:6: TypeError: Cannot read property 'width' of undefined/.test(loader.error)
+        }
+        """
+      Then the object "loader/default-shell" exists
+      And the object "user-shell" does not exist
+      And the property "status" of "loader" is 2
+      And the property "named" of "root" is true
+
     Scenario: A shell that throws while it is made falls back and says where it threw
       Given the file "Shell.qml":
         """qml

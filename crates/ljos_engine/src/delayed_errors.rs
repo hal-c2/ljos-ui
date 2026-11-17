@@ -18,6 +18,9 @@
 //!
 //! What would be done again for each object made, and only needs doing
 //! once they all are, waits the same way ([`Engine::after_creation`]).
+//! What judges a tree by its faults waits until they are told
+//! ([`Engine::after_creation_told`]), as a creation made inside another
+//! one tells nothing itself.
 
 use std::cell::{Cell, RefCell};
 
@@ -37,6 +40,9 @@ pub(crate) struct DelayedErrors {
     layers: Cell<u64>,
     /// What runs once no creation is running.
     after: RefCell<Vec<AfterCreation>>,
+    /// What runs once the creation it names is complete and what it held
+    /// is told ([`Engine::after_creation_told`]).
+    told: RefCell<Vec<(u64, AfterCreation)>>,
 }
 
 type AfterCreation = Box<dyn FnOnce(&Engine)>;
@@ -146,6 +152,21 @@ impl Engine {
         }
     }
 
+    /// Runs `f` once what the creations running now hold is logged or
+    /// filed as a fault: at once when none is running, else when the
+    /// outermost one is complete. Unlike [`Engine::after_creation`], the
+    /// end of a slice is not enough, as a slice ends with its bindings'
+    /// faults still held. For what judges a tree by its faults, as a
+    /// loader that falls back does: a binding that throws while the tree
+    /// is made may recover before the creation around it is complete.
+    pub fn after_creation_told(&self, f: impl FnOnce(&Engine) + 'static) {
+        let outermost = self.inner.delayed.open.borrow().first().copied();
+        match outermost {
+            None => f(self),
+            Some(c) => self.inner.delayed.told.borrow_mut().push((c, Box::new(f))),
+        }
+    }
+
     /// The creation is complete: what its bindings still say is logged,
     /// or held by the creation around it.
     pub(crate) fn close_creation(&self, c: CreationErrors) {
@@ -157,6 +178,11 @@ impl Engine {
             if let Some(outer) = outer {
                 for h in held.iter_mut().filter(|h| h.creation == c.0) {
                     h.creation = outer;
+                }
+                // A creation in slices resumed inside another one hands
+                // on what waits for it with what it holds.
+                for (w, _) in d.told.borrow_mut().iter_mut().filter(|(w, _)| *w == c.0) {
+                    *w = outer;
                 }
                 return;
             }
@@ -174,6 +200,17 @@ impl Engine {
                     self.file_fault(*report);
                 }
             }
+        }
+        let due: Vec<AfterCreation> = {
+            let mut told = d.told.borrow_mut();
+            let (due, rest) = std::mem::take(&mut *told)
+                .into_iter()
+                .partition::<Vec<_>, _>(|(w, _)| *w == c.0);
+            *told = rest;
+            due.into_iter().map(|(_, f)| f).collect()
+        };
+        for f in due {
+            f(self);
         }
         self.run_after_creation();
     }
