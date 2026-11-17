@@ -8,7 +8,10 @@
 //! The lines waiting are bounded by their bytes ([`QUEUE_BYTES`]): a
 //! program that logs faster than stderr takes it, for longer than the
 //! queue holds, loses the lines that do not fit, and stderr gets one line
-//! in their place saying how many were lost. The UI thread goes on.
+//! in their place saying how many were lost. The UI thread goes on. A
+//! line longer than the bound is still written whole when nothing waits
+//! before it: the bound is on what stderr has not taken yet, never on
+//! one line.
 //!
 //! The thread is started by the first line, so a program that writes
 //! nothing starts none, and it sleeps on the queue between lines: it costs
@@ -65,10 +68,11 @@ impl Writer {
         self.ready.notify_one();
     }
 
-    /// Queues `bytes`, or counts them lost when the queue is full.
+    /// Queues `bytes`, or counts them lost when the queue is full. An
+    /// empty queue takes any line, however long.
     fn line(&self, bytes: Vec<u8>) {
         let mut queue = self.lock();
-        if queue.bytes + bytes.len() > QUEUE_BYTES {
+        if queue.bytes > 0 && queue.bytes + bytes.len() > QUEUE_BYTES {
             match queue.msgs.back_mut() {
                 Some(Msg::Dropped(n)) => *n += 1,
                 _ => queue.msgs.push_back(Msg::Dropped(1)),
@@ -181,9 +185,10 @@ pub fn flush() {
     let _ = wait.recv_timeout(FLUSH_WAIT);
 }
 
-/// Whether the writer's thread was started: by the first line written.
+/// Whether the writer's thread was started: by the first line written,
+/// unless it could not be, and the lines are written from the caller.
 pub fn started() -> bool {
-    WRITER.get().is_some()
+    WRITER.get().is_some_and(Option::is_some)
 }
 
 /// A tracing writer that hands each event to the writer's thread whole.
@@ -260,6 +265,23 @@ mod tests {
         // Room again, once stderr took them.
         w.line(b"kept\n".to_vec());
         assert_eq!(written(&w), "kept\n");
+    }
+
+    #[test]
+    fn a_line_longer_than_the_queue_is_written_when_nothing_waits() {
+        let w = writer();
+        let mut long = vec![b'a'; QUEUE_BYTES + 1];
+        long.push(b'\n');
+        w.line(long.clone());
+        // Behind it, the queue is full.
+        w.line(b"lost\n".to_vec());
+        let text = written(&w);
+        assert!(text.starts_with(std::str::from_utf8(&long).expect("text")));
+        assert!(
+            text.ends_with("ljos: 1 line of the log dropped: stderr did not take them as fast as they were written\n"),
+            "{}",
+            &text[text.len() - 120..]
+        );
     }
 
     #[test]
