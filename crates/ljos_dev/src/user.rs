@@ -402,6 +402,25 @@ struct Dormant {
     _fs: notify::RecommendedWatcher,
     /// The directory, or the nearest one above it that is there.
     target: PathBuf,
+    /// Which directory that was when it was watched: one removed and
+    /// made again at the same path is another, and the watch is not on it.
+    id: Option<DirId>,
+}
+
+/// A directory's identity where the system gives one (device, inode).
+type DirId = (u64, u64);
+
+fn dir_id(path: &Path) -> Option<DirId> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt as _;
+        std::fs::metadata(path).ok().map(|m| (m.dev(), m.ino()))
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        None
+    }
 }
 
 /// An application's users' files over its own, as it runs.
@@ -627,7 +646,11 @@ impl UserSession {
         let Some(target) = root.ancestors().find(|p| p.is_dir()).map(Path::to_owned) else {
             return;
         };
-        if watch.as_ref().is_some_and(|w| w.target == target) {
+        let id = dir_id(&target);
+        if watch
+            .as_ref()
+            .is_some_and(|w| w.target == target && w.id == id)
+        {
             return;
         }
         let on_dir = target == root;
@@ -658,7 +681,13 @@ impl UserSession {
             Ok(fs)
         });
         match made {
-            Ok(fs) => *watch = Some(Dormant { _fs: fs, target }),
+            Ok(fs) => {
+                *watch = Some(Dormant {
+                    _fs: fs,
+                    target,
+                    id,
+                })
+            }
             Err(e) => {
                 let fault = self.fault(format!("cannot watch {}: {e}", target.display()));
                 self.tell(engine, &[fault]);
