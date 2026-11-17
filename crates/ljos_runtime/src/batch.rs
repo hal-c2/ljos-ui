@@ -158,9 +158,23 @@ impl<T> Shared<T> {
 /// anything, so installing a wake hook late wakes a stream that was sent
 /// to before there was one ([`UiInbox::set_wake`](crate::UiInbox::set_wake)).
 pub(crate) trait Queued: Send + Sync {
-    /// Read under the stream's lock, which a sender holds while it moves
-    /// the stream from empty to non-empty: a send either sees the hook or
-    /// is seen here.
+    /// Whether the ring holds items, read under the stream's lock.
+    ///
+    /// Why no send is stranded when the inbox's hook is installed late: a
+    /// sender pushes its item under the stream's lock and calls the wake
+    /// hook only after it has released that lock, and the hook looks the
+    /// inbox's hook up in its `OnceLock`. `set_wake` first sets that
+    /// `OnceLock`, then calls this, taking the same lock. The lock orders
+    /// the two:
+    ///
+    /// - If the sender released the lock first, its push happens-before
+    ///   this read, which sees the item, and `set_wake` fires the hook.
+    /// - If this read took the lock first, the `OnceLock` set before it
+    ///   happens-before the sender's push, and so before its wake call,
+    ///   whose `OnceLock::get` therefore finds the hook and fires it.
+    ///
+    /// Both can happen; a wake too many costs a frame, a wake too few
+    /// would strand the stream.
     fn holds_items(&self) -> bool;
 }
 
@@ -219,6 +233,7 @@ pub(crate) fn channel<T: Send + 'static>(
         UiBatch {
             shared: Arc::clone(&shared),
             spare: VecDeque::with_capacity(capacity),
+            forget: None,
         },
         BatchSender { shared },
         weak,
@@ -344,6 +359,9 @@ pub struct UiBatch<T> {
     /// The second ring a drain swaps in, so the handler runs outside the
     /// lock and nothing is allocated. Empty between drains.
     spare: VecDeque<Item<T>>,
+    /// Takes this stream out of its inbox's registry when it is dropped
+    /// ([`UiHandle::batch`](crate::UiHandle::batch) sets it).
+    forget: Option<Box<dyn FnOnce() + Send + Sync>>,
 }
 
 impl<T> fmt::Debug for UiBatch<T> {
@@ -358,6 +376,11 @@ impl<T> fmt::Debug for UiBatch<T> {
 }
 
 impl<T> UiBatch<T> {
+    /// What to run when this stream is dropped, after it is closed.
+    pub(crate) fn on_drop(&mut self, forget: Box<dyn FnOnce() + Send + Sync>) {
+        self.forget = Some(forget);
+    }
+
     /// The name it was made with, which an observer lists it by and a
     /// turn that runs long is named after.
     pub fn name(&self) -> &'static str {
@@ -484,6 +507,9 @@ impl<T> Drop for UiBatch<T> {
         // Dropped outside the lock: arbitrary `T::drop` code.
         drop(items);
         drop(keyed);
+        if let Some(forget) = self.forget.take() {
+            forget();
+        }
     }
 }
 
