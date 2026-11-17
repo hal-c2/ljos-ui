@@ -81,6 +81,10 @@ pub struct Reloader<O> {
     /// The faults of a [`Build::Unsettled`], told by the next build when
     /// the files still say the same.
     held: Option<Vec<CompileFault>>,
+    /// A save the user's directory refused (a link that leads out): a
+    /// fault the next build tells, as it tells a save that does not
+    /// compile, keeping what runs.
+    refused: bool,
     /// The theme file, when the application has one where it looks.
     theme: Option<ThemeFile>,
 }
@@ -219,6 +223,7 @@ impl<O: TypeOracle + Clone> Reloader<O> {
             pictures: BTreeSet::new(),
             read: BTreeSet::new(),
             held: None,
+            refused: false,
             theme: None,
         }
     }
@@ -302,6 +307,12 @@ impl<O: TypeOracle + Clone> Reloader<O> {
             (None, true, Some(path)) => match self.session.read_file(path) {
                 Ok(text) => Some(text),
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+                // Refused: the theme that runs stays, and the build after
+                // this tells why.
+                Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+                    self.refused = true;
+                    return None;
+                }
                 // Not readable now (being written): the event that ends the
                 // write brings it back.
                 Err(_) => return None,
@@ -513,6 +524,10 @@ impl<O: TypeOracle + Clone> Reloader<O> {
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                     self.staged.entry(key).or_insert(None);
                 }
+                // Refused: what the file was stays (`read_file`).
+                Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+                    self.refused |= self.session.is_layered();
+                }
                 // Not readable now (being written, not text): the event
                 // that follows the end of the write brings it back.
                 Err(_) => {}
@@ -558,9 +573,23 @@ impl<O: TypeOracle + Clone> Reloader<O> {
             return Build::Waiting;
         }
         if !changed {
+            // Nothing else to build: told here, as a save that does not
+            // compile is, since nothing else wakes the application.
+            let mut faults = if std::mem::take(&mut self.refused) {
+                self.session.take_refused()
+            } else {
+                Vec::new()
+            };
             // Read again, the files say what they said: the error stands.
-            return self.held.take().map_or(Build::NoChange, Build::Failed);
+            faults.extend(self.held.take().into_iter().flatten());
+            return if faults.is_empty() {
+                Build::NoChange
+            } else {
+                Build::Failed(faults)
+            };
         }
+        // What was refused beside the change is told with it.
+        self.refused = false;
         let built = self.session.build();
         let held = self.held.take();
         match built {

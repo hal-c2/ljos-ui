@@ -1008,7 +1008,8 @@ pub trait Application: Backend {
         Err(BackendError::NotImplemented("a user's directory"))
     }
 
-    /// The user's file `name` is a link to a file outside the directory.
+    /// The user's file `name` is a link to a file outside the directory,
+    /// in place of what it was.
     fn user_qml_link_out(&mut self, _name: &str) -> Result<()> {
         Err(BackendError::NotImplemented("a user's directory"))
     }

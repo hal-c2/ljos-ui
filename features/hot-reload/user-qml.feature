@@ -216,6 +216,58 @@ Feature: A shipped application its users change while it runs
       And the property "status" of "loader" is 2
       And the application was told of a fault matching "Shell\.qml:3"
 
+    Scenario: A save that links out of the directory keeps what runs and is told
+      Given the user's file "Shell.qml":
+        """qml
+        import QtQuick
+        Rectangle { objectName: "user-shell"; width: 50; height: 20 }
+        """
+      When the application runs "Main.qml" built ahead, with the user's directory over it
+      And the user types "kept"
+      And the user saves the file "Shell.qml" as a link to a file outside the user's directory
+      Then the object "loader/user-shell" exists
+      And the object "default-shell" does not exist
+      And the object "outside" does not exist
+      And the application was told of a fault matching "Shell\.qml: a link that leads out"
+      And the property "text" of "field" is "kept"
+
+    Scenario: A theme saved as a link out of the directory keeps the theme that runs and is told
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
+        import Ljos.Design
+        Item {
+          objectName: "main"
+          property color accent: Colors.accent
+        }
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        Item { objectName: "root" }
+        """
+      And the user's file "theme.json":
+        """json
+        { "Colors": { "accent": "#9c4dc4" } }
+        """
+      When the application runs "Main.qml" built ahead, with the user's directory over it
+      And the user saves the file "theme.json" as a link to a file outside the user's directory
+      Then the property "accent" of "main" is "#9c4dc4"
+      And the application was told of a fault matching "theme[.]json: a link that leads out"
+
+    Scenario: A user's file removed gives way to the application's
+      Given the user's file "Card.qml":
+        """qml
+        import QtQuick
+        Rectangle { property string by: "the user"; width: 30; height: 10 }
+        """
+      When the application runs "Main.qml" built ahead, with the user's directory over it
+      And the user removes the file "Card.qml"
+      Then the property "by" of "card" is "the application"
+      And the property "width" of "card" is 10
+      And there is no reload error
+      And the application was told of no fault
+
   Rule: What the application was built from is what a user's file compiles against
 
     Scenario: A file the build compiled from another text than the one it carries is compiled again

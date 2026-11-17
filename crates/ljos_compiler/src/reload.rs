@@ -244,8 +244,24 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
         let mut texts = layer.base.files.clone();
         if users {
             let (user, refused) = layer.dir.list(Self::users_file);
-            layer.refused.extend(refused);
             texts.extend(user);
+            // A file of the running session that is refused now keeps the
+            // text it ran, as a save that does not compile does. At the
+            // start there is none, and the application's file is used.
+            for why in &refused {
+                let Refusal::LinkOut(name) = why else {
+                    continue;
+                };
+                let key = if is_script(name) {
+                    Some(name.as_str())
+                } else {
+                    name.strip_suffix(".qml")
+                };
+                if let Some(text) = key.and_then(|key| self.sources.get(key)) {
+                    texts.insert(name.clone(), text.clone());
+                }
+            }
+            layer.refused.extend(refused);
         }
         let style = layer.base.style.clone();
         // The first scan compares with the application's scripts, which
@@ -435,8 +451,11 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
     /// The text of the file at `path`, a path of the session's: through
     /// the user's directory's checks for a [`layered`](Self::layered)
     /// session, where what is refused is told by
-    /// [`take_refused`](Self::take_refused) and reads as a file that is
-    /// gone, so the application's own file is used again.
+    /// [`take_refused`](Self::take_refused) and reads as
+    /// [`PermissionDenied`](std::io::ErrorKind::PermissionDenied). A
+    /// refused save is a fault as a broken one is: what runs is kept, and
+    /// only a file that is gone ([`NotFound`](std::io::ErrorKind::NotFound))
+    /// gives way to the application's own.
     pub fn read_file(&mut self, path: &Path) -> std::io::Result<String> {
         let Some(layer) = &mut self.layer else {
             return std::fs::read_to_string(path);
@@ -447,7 +466,10 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
             Err(ReadError::Refused(why)) => {
                 let message = why.to_string();
                 layer.refused.push(why);
-                Err(std::io::Error::new(std::io::ErrorKind::NotFound, message))
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    message,
+                ))
             }
         }
     }

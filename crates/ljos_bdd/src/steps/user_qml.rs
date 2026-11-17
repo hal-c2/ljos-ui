@@ -28,6 +28,13 @@ fn user_saves(w: &mut LjosWorld, name: String, step: &Step) -> StepResult {
     w.each(|b| b.application()?.user_qml_file(&name, Some(&text)))
 }
 
+#[when(
+    regex = r#"^the user saves the file "([^"]+)" as a link to a file outside the user's directory$"#
+)]
+fn user_saves_link_out(w: &mut LjosWorld, name: String) -> StepResult {
+    w.each(|b| b.application()?.user_qml_link_out(&name))
+}
+
 #[when("the user's directory is removed and made again")]
 fn user_dir_made_again(w: &mut LjosWorld) -> StepResult {
     w.each(|b| b.application()?.user_qml_dir_made_again())

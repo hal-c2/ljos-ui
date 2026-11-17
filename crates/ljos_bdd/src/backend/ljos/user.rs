@@ -181,8 +181,14 @@ impl Live {
             "import QtQuick\nItem { objectName: \"outside\" }\n",
         )
         .map_err(failed)?;
+        let link = user.dir.path().join(name);
+        // A save as a link replaces what the file was.
+        match std::fs::remove_file(&link) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(failed(e)),
+            _ => {}
+        }
         #[cfg(unix)]
-        std::os::unix::fs::symlink(&outside, user.dir.path().join(name)).map_err(failed)?;
+        std::os::unix::fs::symlink(&outside, &link).map_err(failed)?;
         #[cfg(not(unix))]
         return Err(BackendError::NotImplemented("links on this system"));
         if user.session.is_none() {
