@@ -12,6 +12,9 @@ cd "$root"
 # task | mode | arguments | why it is only a dry run
 #   run: a real, quick, non-interactive run of `mise run <task> <arguments>`
 #   dry: `mise run -n <task> <arguments>` (usage and depends resolve) and bash -n
+#   stdio: a real run of a server that speaks JSON-RPC on stdio, sent an MCP
+#     initialize request: the first line of its output must answer it, so
+#     nothing else may write there
 # Both with --skip-tools: mise's tools come from setup, so a missing one is
 # the task's failure to say so, not a download mise does on its behalf.
 # @tmp@ in the arguments is a scratch directory removed at the end. Adding
@@ -60,7 +63,7 @@ gallery:reference|dry||needs Qt 6 (qml6) and the corpus; CI's scheduled gallery 
 gallery:run|run|--list|
 install|dry|--root @tmp@/install|a release build of ljos, minutes long; build runs the same code in debug
 lottie|run|--check|
-mcp|run||
+mcp|stdio||
 oxc:check|dry||a scratch build of the newest oxc_parser release, minutes long
 oxc:diff|run|--brief|
 parse|dry||a release build over the whole qtdoc corpus
@@ -223,6 +226,20 @@ while IFS='|' read -r task mode args why; do
   case "$mode" in
     run) mise run --skip-tools "$task" ${words[@]+"${words[@]}"} </dev/null || result=FAIL ;;
     dry) { mise run --skip-tools -n "$task" ${words[@]+"${words[@]}"} </dev/null && bash -n "$source"; } || result=FAIL ;;
+    stdio)
+      printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"tasks:smoke","version":"0"}}}' |
+        mise run --skip-tools "$task" ${words[@]+"${words[@]}"} >"$scratch/stdout" || result=FAIL
+      python3 -I -c '
+import json, sys
+first = open(sys.argv[1]).readline()
+try:
+    answer = json.loads(first)
+except ValueError:
+    sys.exit("tasks:smoke: the first line of its output is no JSON-RPC answer: %r" % first)
+if answer.get("id") != 1 or "result" not in answer:
+    sys.exit("tasks:smoke: it did not answer initialize: %r" % first)
+' "$scratch/stdout" || result=FAIL
+      ;;
     *)
       echo "tasks:smoke: '$task' has unknown mode '$mode'" >&2
       result=FAIL
