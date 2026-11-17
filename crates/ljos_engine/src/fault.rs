@@ -96,8 +96,12 @@ pub struct FaultReport {
     /// stopped, when it was a run nested in `origin`'s dispatch (a handler
     /// a write set off, a binding a read woke), and the boundaries around
     /// it then, the nearest first. `None` when it stopped `origin`'s own run.
-    pub(crate) stopped: Option<(ObjectId, Vec<ObjectId>)>,
+    pub(crate) stopped: Option<Stopped>,
 }
+
+/// A run an interrupt stopped: its object and the boundaries around it,
+/// the nearest first.
+pub(crate) type Stopped = (ObjectId, Vec<ObjectId>);
 
 impl FaultReport {
     /// The kind as a name: `"JsException"`, `"JsInterrupted"`,
@@ -177,9 +181,11 @@ pub(crate) struct FaultState {
     /// Faults reported so far.
     filed: Cell<u64>,
     /// The innermost nested run an interrupt stopped in the dispatch that
-    /// unwinds now: `Some(origin)` once one has, which is `None` for a run
-    /// with no object of its own.
-    stopped: Cell<Option<Option<ObjectId>>>,
+    /// unwinds now, with the boundaries around it as they were when it
+    /// stopped (a later handler of the same signal may destroy it before
+    /// the dispatch reports): `Some(None)` once one with no object of its
+    /// own has.
+    stopped: RefCell<Option<Option<Stopped>>>,
     handler: RefCell<Option<FaultHandler>>,
     /// Set by the JS bridge for the QML function it is about to call: an
     /// exception in it is the calling script's to catch.
@@ -385,8 +391,7 @@ impl Engine {
                 let (file, line) = self.declared_place(origin);
                 let stopped = stopped
                     .flatten()
-                    .filter(|_| matches!(other, JsFault::JsInterrupted { .. }))
-                    .map(|o| (o, self.boundaries_around(Some(o))));
+                    .filter(|_| matches!(other, JsFault::JsInterrupted { .. }));
                 self.warn_and_file(
                     other.to_string(),
                     FaultReport {
@@ -420,16 +425,21 @@ impl Engine {
 
     /// A dispatch into JS begins: no run of it has been stopped yet.
     pub(crate) fn forget_js_stopped(&self) {
-        self.inner.faults.stopped.set(None);
+        self.inner.faults.stopped.take();
     }
 
-    /// A nested run came back interrupted. The first to is the run the
-    /// interrupt stopped, and its object is the one running now.
+    /// A nested run came back interrupted. The first to come back so is
+    /// the run the interrupt stopped, and its object is the one running now.
     pub(crate) fn note_js_stopped(&self) {
         let state = &self.inner.faults;
-        if state.stopped.get().is_none() {
-            state.stopped.set(Some(state.origin.get()));
+        if state.stopped.borrow().is_some() {
+            return;
         }
+        let stopped = state
+            .origin
+            .get()
+            .map(|o| (o, self.boundaries_around(Some(o))));
+        *state.stopped.borrow_mut() = Some(stopped);
     }
 
     /// How many faults have been reported: a fault whose

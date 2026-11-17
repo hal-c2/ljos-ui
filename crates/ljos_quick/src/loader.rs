@@ -25,7 +25,9 @@
 //! while the item is made, or in the item's own code. A short handler of a
 //! made item whose dispatch was cut short in other objects' code (a click
 //! that sets off long work elsewhere) was set off by whatever ran the
-//! handler, not by the loading, so the Loader loads again each time.
+//! handler, not by the loading, so the Loader loads again each time, up to
+//! [`ELSEWHERE_STREAK`] in a row, each soon after the one before: beyond
+//! that the item sets the work off again by itself.
 //! An exception in a handler is not such a fault: Qt logs it and keeps
 //! the item, and so does this. The work of making the item is charged to
 //! the Loader as its owner.
@@ -47,6 +49,13 @@ use crate::tree;
 /// How long after loading again for an interrupted script a Loader takes
 /// another such fault as final.
 const SECOND_CHANCE: Duration = Duration::from_secs(10);
+
+/// How many interrupts of scripts an item set off elsewhere, each within
+/// [`SECOND_CHANCE`] of the one before, a Loader loads again for. A person
+/// clicking a row seldom chains that many; an item whose own timer sets
+/// the work off again each time it is made chains them on its own, however
+/// long the cut-off scripts ran.
+const ELSEWHERE_STREAK: u32 = 8;
 
 /// `Loader` (QtQuick).
 #[derive(Debug, QmlObject)]
@@ -132,6 +141,9 @@ struct Run {
     emptied_quietly: bool,
     /// When an interrupted script last made the Loader load again.
     second_chance: Option<Time>,
+    /// When a script an item set off elsewhere was last interrupted, and
+    /// how many were, each within [`SECOND_CHANCE`] of the one before.
+    elsewhere: Option<(Time, u32)>,
     /// [`Engine::faults_reported`] when the item was last made: a fault
     /// reported by then came from making it. `u64::MAX` while it is being
     /// published.
@@ -435,13 +447,32 @@ enum Again {
 fn load_again(e: &Engine, me: ObjectId, at: Time, again: Again) {
     let place = e.declared_at(me).unwrap_or_default();
     if again == Again::Elsewhere {
-        warn(
-            e,
-            format!(
-                "{place}Loader: a script its item set off in another object was interrupted, loading again"
+        let streak = with_run(e, me, |r| {
+            let n = match r.elsewhere {
+                Some((t, n)) if at.saturating_since(t) < SECOND_CHANCE => n + 1,
+                _ => 1,
+            };
+            r.elsewhere = Some((at, n));
+            n
+        });
+        match streak {
+            Some(n) if n < ELSEWHERE_STREAK => {
+                warn(
+                    e,
+                    format!(
+                        "{place}Loader: a script its item set off in another object was interrupted, loading again"
+                    ),
+                );
+                reload(e, me, true);
+            }
+            Some(n) => warn(
+                e,
+                format!(
+                    "{place}Loader: scripts its item set off in other objects were interrupted {n} times in a row, so it stays at Loader.Error until it is told to load"
+                ),
             ),
-        );
-        reload(e, me, true);
+            None => {}
+        }
         return;
     }
     let tried = with_run(e, me, |r| {
