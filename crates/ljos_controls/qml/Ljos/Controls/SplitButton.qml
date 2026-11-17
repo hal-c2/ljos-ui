@@ -35,8 +35,12 @@ T.Control {
     function openMenu() {
         if (menu) {
             menu.parent = control
-            menu.x = control.mirrored ? 0 : control.width - menu.width
-            menu.y = control.height + Theme.spacingSmall
+            // Under the chevron's end, and kept there as the button's width
+            // changes. A popover places itself by its edge.
+            if (menu.side === undefined) {
+                menu.x = Qt.binding(() => control.mirrored ? 0 : control.width - menu.width)
+                menu.y = Qt.binding(() => control.height + Theme.spacingSmall)
+            }
             menu.open()
         }
         control.menuRequested()
@@ -58,6 +62,9 @@ T.Control {
                 // Inside the outline, so a pixel shorter at each edge than a
                 // button of its own, and that is its size too.
                 implicitHeight: Theme.controlHeight - 2
+                // All the chevron leaves, so a split button made wider is
+                // all action up to the seam.
+                width: parent.width - 1 - more.width
                 height: parent.height - 2
                 subtle: true
                 text: control.compact ? "" : control.text

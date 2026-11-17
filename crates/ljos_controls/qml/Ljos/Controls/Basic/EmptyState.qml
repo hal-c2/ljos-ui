@@ -1,7 +1,8 @@
 // Ljos.Controls.Basic's empty state (docs/DIALECT.md §4.16): the same
 // title, description and actions as Ljos.Controls' (its file says what
 // each is for), in the Basic style's labels and buttons. The Basic style
-// has no icons, so "loading" is said in words instead.
+// has no icons, so "loading" and an error without a title are said in
+// words instead.
 import QtQuick
 import QtQuick.Templates as T
 import QtQuick.Controls.Basic as Basic
@@ -38,7 +39,8 @@ T.Control {
                 anchors.horizontalCenter: parent.horizontalCenter
                 width: Math.min(implicitWidth, control.maximumTextWidth)
                 text: control.status === "loading" ? qsTr("Loading…")
-                      : control.title
+                      : control.title.length > 0 ? control.title
+                      : control.status === "error" ? qsTr("Something went wrong") : ""
                 font.pixelSize: control.font.pixelSize + 4
                 font.bold: true
                 horizontalAlignment: Text.AlignHCenter

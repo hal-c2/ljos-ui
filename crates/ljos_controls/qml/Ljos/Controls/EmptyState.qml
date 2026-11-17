@@ -73,10 +73,14 @@ T.Control {
                             to: 360
                             duration: 1600
                             loops: Animation.Infinite
+                            // A stopped animation leaves the angle where it
+                            // was, so the icon that follows would be tilted.
+                            onRunningChanged: if (!running) glyph.rotation = 0
                         }
                         SequentialAnimation on opacity {
                             running: control.status === "loading" && control.visible && Motion.reduced
                             loops: Animation.Infinite
+                            onRunningChanged: if (!running) glyph.opacity = 1
                             NumberAnimation { to: 0.4; duration: 800; easing.type: Easing.InOutSine }
                             NumberAnimation { to: 1; duration: 800; easing.type: Easing.InOutSine }
                         }

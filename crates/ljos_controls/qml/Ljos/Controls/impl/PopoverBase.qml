@@ -32,6 +32,9 @@ T.Popup {
     // A press on its parent does not close it, so a button that opens it
     // can close it again.
     closePolicy: T.Popup.CloseOnEscape | T.Popup.CloseOnPressOutsideParent
+    // Escape closes a popup that has the keys, and a popover holding only
+    // text would otherwise leave them outside it.
+    focus: true
 
     function placed() {
         if (!parent)

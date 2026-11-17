@@ -30,8 +30,12 @@ T.Control {
     function openMenu() {
         if (menu) {
             menu.parent = control
-            menu.x = control.mirrored ? 0 : control.width - menu.width
-            menu.y = control.height
+            // Under the chevron's end, and kept there as the button's width
+            // changes. A popover places itself by its edge.
+            if (menu.side === undefined) {
+                menu.x = Qt.binding(() => control.mirrored ? 0 : control.width - menu.width)
+                menu.y = Qt.binding(() => control.height)
+            }
             menu.open()
         }
         control.menuRequested()

@@ -418,7 +418,7 @@ module Ljos.Controls.Basic
 	SwipeView QtQuick/Controls/Basic/SwipeView.qml
 	Switch QtQuick/Controls/Basic/Switch.qml
 	TabBar QtQuick/Controls/Basic/TabBar.qml
-	TabButton QtQuick/Controls/Basic/TabButton.qml
+	TabButton Ljos/Controls/Basic/TabButton.qml
 	TextArea QtQuick/Controls/Basic/TextArea.qml
 	TextField QtQuick/Controls/Basic/TextField.qml
 	ToolBar QtQuick/Controls/Basic/ToolBar.qml
@@ -465,6 +465,10 @@ module Ljos.Controls.Basic
 		signal clicked
 		signal menuRequested
 		method openMenu
+	type Ljos/Controls/Basic/TabButton.qml TabButton
+		prototype QtQuick.Controls.Basic.TabButton named
+		prop iconName QtQml.string named
+		signal iconNameChanged
 
 module Ljos.Controls.impl
 	PopoverBase Ljos/Controls/impl/PopoverBase.qml

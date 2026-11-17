@@ -80,6 +80,11 @@ pub(crate) fn register(engine: &Engine, basic: &[String], own_basic: &[String]) 
         engine.register_type(MODULE, version, MetaRef::Static(meta));
     }
     for name in DRAWN {
+        // A twin that adds Ljos.Controls' members to Basic's control (its
+        // TabButton's `iconName`) stands in for it.
+        if own_basic.iter().any(|n| n == name) {
+            continue;
+        }
         if !basic.iter().any(|n| n == name) {
             // The style's build said why; `register` warns of it.
             continue;
