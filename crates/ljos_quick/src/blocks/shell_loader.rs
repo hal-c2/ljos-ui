@@ -18,6 +18,7 @@
 //! by the fallback: a reload that does not compile keeps the generation
 //! that runs, and says why in the reload error, not in `error`.
 
+use std::ops::Range;
 use std::time::Duration;
 
 use ljos_engine::{
@@ -269,28 +270,30 @@ fn make(e: &Engine, me: ObjectId, url: &str) -> Result<ObjectId, String> {
     let after = last_fault(e);
     with_run(e, me, |r| r.handled = after);
     let obj = made.map_err(|err| err.to_string())?;
-    if let Some(report) = fault_in(e, obj, before) {
+    if let Some(report) = fault_in(e, obj, before + 1..u64::MAX) {
         discard(e, obj);
         return Err(describe(&report));
     }
     // A binding that throws while the shell is made is a fault only if
     // it still throws once the creation around the loader is complete,
-    // as an application starts: the shell is judged again then.
-    e.after_creation_told(move |e| judge_again(e, me, obj, before));
+    // as an application starts: the shell is judged again then, by those
+    // faults alone. One raised after it was made, as by a handler the
+    // rest of the tree sets off as it completes, is the boundary's.
+    e.after_creation_told(move |e, told| judge_again(e, me, obj, told));
     Ok(obj)
 }
 
-/// The first fault after `before` in `obj` or what it owns.
-fn fault_in(e: &Engine, obj: ObjectId, before: u64) -> Option<FaultReport> {
+/// The first fault in `seqs` raised in `obj` or what it owns.
+fn fault_in(e: &Engine, obj: ObjectId, seqs: Range<u64>) -> Option<FaultReport> {
     e.faults()
         .into_iter()
-        .find(|r| r.seq > before && r.origin.is_some_and(|o| within(e, o, obj)))
+        .find(|r| seqs.contains(&r.seq) && r.origin.is_some_and(|o| within(e, o, obj)))
 }
 
-/// What [`make`] would have said had the shell's faults been told while
-/// it made it: the source's shell gives way to the fallback, and a
-/// fallback leaves nothing shown.
-fn judge_again(e: &Engine, me: ObjectId, obj: ObjectId, before: u64) {
+/// What [`make`] would have said had the shell's faults in `told` been
+/// told while it made it: the source's shell gives way to the fallback,
+/// and a fallback leaves nothing shown.
+fn judge_again(e: &Engine, me: ObjectId, obj: ObjectId, told: Range<u64>) {
     if !e.is_alive(me) {
         return;
     }
@@ -300,7 +303,7 @@ fn judge_again(e: &Engine, me: ObjectId, obj: ObjectId, before: u64) {
     if shown != Some(obj) {
         return;
     }
-    let Some(report) = fault_in(e, obj, before) else {
+    let Some(report) = fault_in(e, obj, told) else {
         return;
     };
     let why = describe(&report);

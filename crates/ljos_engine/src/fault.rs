@@ -387,6 +387,11 @@ impl Engine {
         }
     }
 
+    /// The `seq` of the last fault filed; 0 before the first.
+    pub(crate) fn faults_filed(&self) -> u64 {
+        self.inner.faults.filed.get()
+    }
+
     pub(crate) fn file_fault(&self, mut report: FaultReport) {
         let state = &self.inner.faults;
         state.filed.set(state.filed.get() + 1);

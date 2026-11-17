@@ -23,6 +23,7 @@
 //! one tells nothing itself.
 
 use std::cell::{Cell, RefCell};
+use std::ops::Range;
 
 use crate::engine::Engine;
 use crate::fault::FaultReport;
@@ -42,10 +43,11 @@ pub(crate) struct DelayedErrors {
     after: RefCell<Vec<AfterCreation>>,
     /// What runs once the creation it names is complete and what it held
     /// is told ([`Engine::after_creation_told`]).
-    told: RefCell<Vec<(u64, AfterCreation)>>,
+    told: RefCell<Vec<(u64, AfterTold)>>,
 }
 
 type AfterCreation = Box<dyn FnOnce(&Engine)>;
+type AfterTold = Box<dyn FnOnce(&Engine, Range<u64>)>;
 
 struct Held {
     creation: u64,
@@ -153,16 +155,22 @@ impl Engine {
     }
 
     /// Runs `f` once what the creations running now hold is logged or
-    /// filed as a fault: at once when none is running, else when the
-    /// outermost one is complete. Unlike [`Engine::after_creation`], the
-    /// end of a slice is not enough, as a slice ends with its bindings'
-    /// faults still held. For what judges a tree by its faults, as a
-    /// loader that falls back does: a binding that throws while the tree
-    /// is made may recover before the creation around it is complete.
-    pub fn after_creation_told(&self, f: impl FnOnce(&Engine) + 'static) {
+    /// filed as a fault, with the `seq`s of the faults that were held
+    /// ([`FaultReport::seq`]): at once, with none, when no creation is
+    /// running, else when the outermost one is complete. Unlike
+    /// [`Engine::after_creation`], the end of a slice is not enough, as a
+    /// slice ends with its bindings' faults still held. For what judges a
+    /// tree by its faults, as a loader that falls back does: a binding
+    /// that throws while the tree is made may recover before the creation
+    /// around it is complete. A fault filed at once, as a handler's
+    /// exception is, is not in the range: it was told when it was raised.
+    pub fn after_creation_told(&self, f: impl FnOnce(&Engine, Range<u64>) + 'static) {
         let outermost = self.inner.delayed.open.borrow().first().copied();
         match outermost {
-            None => f(self),
+            None => {
+                let now = self.faults_filed() + 1;
+                f(self, now..now);
+            }
             Some(c) => self.inner.delayed.told.borrow_mut().push((c, Box::new(f))),
         }
     }
@@ -192,6 +200,7 @@ impl Engine {
             *held = rest;
             mine.into_iter().flat_map(|h| h.said).collect()
         };
+        let from = self.faults_filed() + 1;
         for said in said {
             match said {
                 Said::Warning(msg) => self.warn(msg),
@@ -201,7 +210,8 @@ impl Engine {
                 }
             }
         }
-        let due: Vec<AfterCreation> = {
+        let told = from..self.faults_filed() + 1;
+        let due: Vec<AfterTold> = {
             let mut told = d.told.borrow_mut();
             let (due, rest) = std::mem::take(&mut *told)
                 .into_iter()
@@ -210,7 +220,7 @@ impl Engine {
             due.into_iter().map(|(_, f)| f).collect()
         };
         for f in due {
-            f(self);
+            f(self, told.clone());
         }
         self.run_after_creation();
     }

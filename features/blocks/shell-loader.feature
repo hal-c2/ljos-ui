@@ -70,6 +70,36 @@ Feature: A ShellLoader shows a user's shell, or the application's own when the u
       And the property "width" of "loader" is 50
       And the log has no warning matching "TypeError"
 
+    Scenario: A shell whose handler throws while the application around it completes is shown, and the exception logged
+      Given the file "Shell.qml":
+        """qml
+        import QtQuick
+        Rectangle {
+          objectName: "user-shell"; width: 50; height: 20
+          Connections {
+            target: root
+            function onReadyChanged() { throw new Error("the shell's handler threw") }
+          }
+        }
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        import Ljos.Blocks
+        Item {
+          id: root
+          objectName: "root"
+          property bool ready: false
+          ShellLoader { objectName: "loader"; source: "Shell.qml"; fallback: "Default.qml" }
+          Component.onCompleted: ready = true
+        }
+        """
+      Then the log has a warning matching "the shell's handler threw"
+      And the object "loader/user-shell" exists
+      And the object "default-shell" does not exist
+      And the property "error" of "loader" is ""
+      And the property "status" of "loader" is 1
+
   Rule: A shell that does not work gives way to the fallback
 
     Scenario: A shell that does not compile falls back and says where the mistake is
