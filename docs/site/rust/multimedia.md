@@ -107,7 +107,7 @@ Multimedia components obey the same 0 % idle CPU guarantee as the rest of Ljós:
 
 ## Reading hardware sensors with `QtSensors`
 
-The `QtSensors` module provides `Sensor`, `Accelerometer`, `Gyroscope`, `Magnetometer`, `Compass`, `PressureSensor`, `AmbientLightSensor`, `OrientationSensor` and their reading types:
+The `QtSensors` module provides `Sensor`, `Accelerometer`, `Gyroscope`, `Magnetometer`, `Compass`, `PressureSensor`, `AmbientLightSensor`, `OrientationSensor` and their reading types.
 
 The example below starts an accelerometer and shows what it reads. Where nothing measures motion, `start()` returns `false` and the text says there is no reading. A reading counts once its `timestamp` is set, because a sensor that has started but not yet measured anything holds a reading of all zeros:
 
