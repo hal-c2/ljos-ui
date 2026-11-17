@@ -384,6 +384,17 @@ impl Platform {
         self.promise(what.into(), None, false, true)
     }
 
+    /// [`Platform::expect_busy`] for work last asked for at `since`: more
+    /// of the same work, promised again after it settled, is waited on
+    /// only for what is left of [`BUSY_WAIT`] from then, not afresh.
+    pub fn expect_busy_since(&self, what: impl Into<Cow<'static, str>>, since: Instant) -> Reply {
+        let reply = self.expect_busy(what);
+        if let Some(p) = self.promises.borrow_mut().get_mut(&reply.id) {
+            p.since = since.min(p.since);
+        }
+        reply
+    }
+
     /// Waits on `reply` afresh, as a busy one is when its work was asked
     /// for again: [`Promise::since`] is now.
     pub fn renew(&self, reply: &Reply) {
@@ -1614,6 +1625,32 @@ mod tests {
                 .iter()
                 .all(|e| e.level != LogLevel::Warning)
         );
+    }
+
+    #[test]
+    fn busy_work_promised_again_is_waited_on_from_when_it_was_asked_for() {
+        let engine = Engine::new();
+        let platform = Platform::of(&engine);
+        let asked = Instant::now();
+        // Promised again just after it was asked for: what is left of the
+        // bound is waited on.
+        let busy = platform.expect_busy_since("a browser's work", asked);
+        assert_eq!(platform.awaited(), 1);
+        drop(busy);
+        platform.finish(&engine);
+        // Promised again once the bound has passed since it was asked for,
+        // as a browser that keeps asking for work of its own is: not
+        // waited on, though it is still promised.
+        let long_ago = Instant::now() - BUSY_WAIT;
+        let busy = platform.expect_busy_since("a browser's work", long_ago);
+        assert_eq!(platform.pending(), 1);
+        assert_eq!(platform.awaited(), 0);
+        let started = Instant::now();
+        platform.finish(&engine);
+        assert!(started.elapsed() < Duration::from_secs(1));
+        // Asked for more, it is waited on again.
+        platform.renew(&busy);
+        assert_eq!(platform.awaited(), 1);
     }
 
     /// The warnings that name busy work still under way when waiting ended.

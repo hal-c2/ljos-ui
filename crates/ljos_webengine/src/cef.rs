@@ -223,22 +223,36 @@ thread_local! {
     /// it settle, so the promise is busy work: waited on while a browser
     /// starts or loads, and after that for a while from when the view
     /// last told the browser something, and no longer.
-    static AWAKE: RefCell<(Option<std::rc::Rc<Platform>>, Option<Reply>)> =
-        const { RefCell::new((None, None)) };
+    /// The third is when the view last told the browser something (or a
+    /// page last loaded), or when the engine came: work the browser asks
+    /// for on its own account is waited on from then.
+    static AWAKE: RefCell<(Option<std::rc::Rc<Platform>>, Option<Reply>, Option<Instant>)> =
+        const { RefCell::new((None, None, None)) };
 }
 
 /// The browser has work: promised to the Engine thread, when this is it.
 /// `told`: the view told it something, so what follows is awaited afresh.
+/// Otherwise it is the browser's own work, awaited from when it was last
+/// told something: a browser that keeps asking for work of its own (an
+/// idle DevTools front end does, a few times a second) would otherwise
+/// settle and be promised again over and over, each time waited on anew,
+/// and a harness's wait would never end.
 fn hold_awake(told: bool) {
     let _ = AWAKE.try_with(|a| {
         let mut a = a.borrow_mut();
-        let (Some(platform), held) = &mut *a else {
+        let (Some(platform), held, told_at) = &mut *a else {
             return;
         };
+        if told {
+            *told_at = Some(Instant::now());
+        }
         match held {
             Some(reply) if told => platform.renew(reply),
             Some(_) => {}
-            None => *held = Some(platform.expect_busy("the web engine's work")),
+            None => {
+                let since = told_at.unwrap_or_else(Instant::now);
+                *held = Some(platform.expect_busy_since("the web engine's work", since));
+            }
         }
     });
 }
@@ -475,7 +489,7 @@ fn pump_into(e: &Engine) {
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
         .posted = false;
-    let _ = AWAKE.try_with(|a| *a.borrow_mut() = (Some(platform), None));
+    let _ = AWAKE.try_with(|a| *a.borrow_mut() = (Some(platform), None, Some(Instant::now())));
 }
 
 // --- start-up ---------------------------------------------------------------
@@ -4047,7 +4061,7 @@ pub(crate) fn shutdown() -> bool {
             .unwrap_or_else(PoisonError::into_inner)
             .take();
     }
-    let _ = AWAKE.try_with(|a| *a.borrow_mut() = (None, None));
+    let _ = AWAKE.try_with(|a| *a.borrow_mut() = (None, None, None));
     let Global {
         contexts,
         this_run,
