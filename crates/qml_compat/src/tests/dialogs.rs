@@ -87,8 +87,8 @@ fn a_file_of_the_project_a_ljos_module_would_shadow_keeps_the_file() {
     // A name no module the lowered file imports has is still the project's.
     assert!(matches!(
         lower(
-            "import QtQuick\nimport QtQuick.Dialogs\nItem { Card { } }\n",
-            &only("Card")
+            "import QtQuick\nimport QtQuick.Dialogs\nItem { Swatch { } }\n",
+            &only("Swatch")
         ),
         Outcome::Lowered(_)
     ));

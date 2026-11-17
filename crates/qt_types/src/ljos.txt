@@ -474,7 +474,7 @@ module Ljos.Controls.impl
 	type Ljos/Controls/impl/PopoverBase.qml PopoverBase
 		prototype QtQuick.Templates.Popup named
 		prop edge QtQml.int named
-		prop side QtQml.int named
+		prop side QtQml.int named readonly
 		prop gap QtQml.real named
 		prop anchorWidth QtQml.real named readonly
 		prop anchorHeight QtQml.real named readonly
