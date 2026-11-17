@@ -797,6 +797,24 @@ mod tests {
     }
 
     #[test]
+    fn a_stream_whose_item_panics_as_it_drops_still_leaves_the_registry() {
+        struct PanicsOnDrop;
+        impl Drop for PanicsOnDrop {
+            fn drop(&mut self) {
+                panic!("an item that panics as it drops");
+            }
+        }
+        let (inbox, tx) = UiInbox::<u32>::channel(4);
+        let (batch, sender) = tx.batch("test.panicking", 4, crate::BatchPolicy::DropNewest);
+        assert!(sender.send(PanicsOnDrop).is_ok());
+        assert_eq!(inbox.shared.streams().len(), 1);
+        let dropped = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drop(batch)));
+        assert!(dropped.is_err(), "the item's drop panics");
+        assert_eq!(inbox.shared.streams().len(), 0);
+        assert!(sender.is_closed());
+    }
+
+    #[test]
     fn fifo_and_bounded() {
         let (inbox, tx) = UiInbox::channel(3);
         for i in 0..3 {

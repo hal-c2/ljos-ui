@@ -504,12 +504,15 @@ impl<T> Drop for UiBatch<T> {
                 std::mem::take(&mut ring.keyed),
             )
         };
-        // Dropped outside the lock: arbitrary `T::drop` code.
-        drop(items);
-        drop(keyed);
+        // Leave the registry before any `T::drop` runs: nothing prunes
+        // it, so an item whose drop panics must not skip this. The stream
+        // is closed and empty already, so nothing is lost by leaving now.
         if let Some(forget) = self.forget.take() {
             forget();
         }
+        // Dropped outside the lock: arbitrary `T::drop` code.
+        drop(items);
+        drop(keyed);
     }
 }
 
