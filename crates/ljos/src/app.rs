@@ -51,7 +51,9 @@
 //! ([`Engine::take_log`]); a handler the application sets on the Engine
 //! itself, in a module or in [`App::run_with`]'s setup, replaces either.
 //! A headless [`App::build`] keeps the log in the Engine unless told
-//! otherwise, for the test that reads it.
+//! otherwise, for the test that reads it; one told to write stderr
+//! calls [`flush_log_to_stderr`](crate::flush_log_to_stderr) before it
+//! ends, as [`App::run`] does itself.
 //!
 //! Neither the builder nor its parameters name an egui type; the
 //! shell's loop, and its 0 % CPU idle, stay the shell's business.
@@ -604,6 +606,13 @@ impl<M> App<M> {
     /// entries, for [`Engine::take_log`]: an application that logs
     /// nothing anywhere, or reads its own log when it wants it.
     ///
+    /// The lines are written from a thread of their own, after the call
+    /// that logged them returns. [`run`](App::run) waits for the last of
+    /// them before it returns; a host that opened the application with
+    /// [`build`](App::build) or [`build_engine`](App::build_engine) and
+    /// `true` here calls [`flush_log_to_stderr`](crate::flush_log_to_stderr)
+    /// before it ends, or the lines still queued then are lost.
+    ///
     /// Of this and [`on_log`](App::on_log), the last call wins.
     #[must_use]
     pub fn log_to_stderr(mut self, writes: bool) -> Self {
@@ -615,7 +624,10 @@ impl<M> App<M> {
     /// standard modules, then this application's, then its
     /// components and context state. What it logs is kept in it
     /// ([`Engine::take_log`]) unless [`on_log`](App::on_log) or
-    /// [`log_to_stderr`](App::log_to_stderr) said otherwise.
+    /// [`log_to_stderr`](App::log_to_stderr) said otherwise; the host
+    /// of an Engine that writes stderr flushes it
+    /// ([`flush_log_to_stderr`](crate::flush_log_to_stderr)) before it
+    /// ends.
     pub fn build_engine(self) -> Engine {
         let Self {
             modules,
