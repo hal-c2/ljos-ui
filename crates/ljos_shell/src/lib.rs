@@ -69,6 +69,7 @@ mod screen_reader;
 mod settings;
 #[cfg(gl_painter)]
 mod software;
+mod streams;
 mod surface;
 mod system_fonts;
 #[cfg(all(test, target_os = "linux"))]
@@ -89,7 +90,9 @@ pub use color_space::ColorSpace;
 use ljos_egui::{QmlView, ViewError};
 use ljos_engine::{Color, Engine, ObjectId, TurnCause};
 use ljos_quick::TimerHook;
-use ljos_runtime::{Clock, DrainBudget, DrainReport, UiHandle, UiInbox};
+use ljos_runtime::{
+    BatchPolicy, BatchSender, Clock, Drain, DrainBudget, DrainReport, UiHandle, UiInbox,
+};
 
 /// Window and pipeline settings. A root that is a `Window` (or an
 /// `ApplicationWindow`) says its own title, size, limits and colour; what
@@ -254,6 +257,7 @@ pub struct Setup<'a, M> {
     clock: Arc<dyn Clock>,
     on_message: Option<MessageHandler<M>>,
     message_kinds: Option<fn(&M) -> &'static str>,
+    streams: streams::Streams,
     timer_hook: Option<TimerHook>,
     #[cfg(feature = "dev")]
     dev: dev::DevSetup,
@@ -293,6 +297,53 @@ impl<M> Setup<'_, M> {
         self.on_message = Some(Box::new(f));
     }
 
+    /// Makes a side stream (ARCHITECTURE.md §3.3): a bounded queue of
+    /// `T` beside the application's inbox, for a thread that feeds the UI
+    /// many small items (folder events, a child process's output, the
+    /// deltas of a stream). It wakes the UI as the inbox does, and each
+    /// frame the items queued are handed to its [`Setup::on_batch`]
+    /// handler together, in one turn, after the inbox's messages and out
+    /// of the same [`ShellConfig::drain_budget`] count. `capacity` is
+    /// fixed; when full, `policy` says what gives way. Clone the sender
+    /// into the threads that feed it; it never blocks. An observer lists
+    /// the stream by `name`, as a mailbox of kind `batch`.
+    pub fn batch<T: Send + 'static>(
+        &mut self,
+        name: &'static str,
+        capacity: usize,
+        policy: BatchPolicy<T>,
+    ) -> BatchSender<T>
+    where
+        M: Send + 'static,
+    {
+        let (batch, sender) = self.handle.batch(name, capacity, policy);
+        self.streams.add(batch);
+        sender
+    }
+
+    /// Runs on the UI thread for the items `sender`'s stream queued, at
+    /// the start of a frame: one turn ([`Engine::turn`]) for the whole run,
+    /// in the order they were sent. Items the handler does not take from
+    /// the [`Drain`] are dropped. A stream without a handler drops its
+    /// items, with a warning.
+    ///
+    /// # Panics
+    ///
+    /// When `sender` was not made by this setup's [`Setup::batch`].
+    pub fn on_batch<T: Send + 'static>(
+        &mut self,
+        sender: &BatchSender<T>,
+        f: impl FnMut(&Engine, Drain<'_, T>) + 'static,
+    ) {
+        let Some(stream) = self.streams.find(sender) else {
+            panic!(
+                "Setup::on_batch: the stream {:?} was not made by this setup's Setup::batch",
+                sender.name()
+            );
+        };
+        stream.handler = Some(Box::new(f));
+    }
+
     /// Names each message's kind (its variant, never what it carries),
     /// for an observer of the `application` mailbox and for a turn that
     /// runs long: the warning then says which message it was.
@@ -321,6 +372,7 @@ impl<M> std::fmt::Debug for Setup<'_, M> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Setup")
             .field("on_message", &self.on_message.is_some())
+            .field("streams", &self.streams.len())
             .field("timer_hook", &self.timer_hook.is_some())
             .finish_non_exhaustive()
     }
@@ -336,6 +388,8 @@ pub struct ShellApp<M> {
     view: QmlView,
     inbox: UiInbox<M>,
     on_message: Option<MessageHandler<M>>,
+    /// The side streams the setup made, drained after the inbox.
+    streams: streams::Streams,
     budget: DrainBudget,
     background: egui::Color32,
     /// Whether [`ShellApp::show`] paints the background: not behind a
@@ -483,6 +537,7 @@ impl<M: Send + 'static> ShellApp<M> {
             clock: Arc::clone(&clock),
             on_message: None,
             message_kinds: None,
+            streams: streams::Streams::default(),
             timer_hook: None,
             #[cfg(feature = "dev")]
             dev: dev::DevSetup::new(Arc::clone(&wake)),
@@ -496,6 +551,7 @@ impl<M: Send + 'static> ShellApp<M> {
         let Setup {
             on_message,
             message_kinds,
+            streams,
             timer_hook,
             #[cfg(feature = "dev")]
             dev,
@@ -523,6 +579,7 @@ impl<M: Send + 'static> ShellApp<M> {
             view,
             inbox,
             on_message,
+            streams,
             budget: config.drain_budget,
             background: egui::Color32::from_rgba_unmultiplied(r, g, b, a),
             backdrop: true,
@@ -555,20 +612,24 @@ impl<M: Send + 'static> ShellApp<M> {
         self.last_drain
     }
 
-    /// Pipeline step 1: deliver queued messages. The view's waker is held
-    /// because the pass that follows shows whatever the handlers changed.
+    /// Pipeline step 1: deliver queued messages, then each side stream's
+    /// run ([`Setup::batch`]), under one [`DrainBudget`]. The report adds
+    /// the streams' items to the inbox's messages. The view's waker is
+    /// held because the pass that follows shows whatever the handlers
+    /// changed.
     pub fn drain_inbox(&mut self) -> DrainReport {
         let Self {
             view,
             inbox,
             on_message,
+            streams,
             budget,
             ..
         } = self;
         let report = view.without_wake(|view| {
             let engine = Rc::clone(view.engine());
             let clock = Arc::clone(view.clock());
-            inbox.drain(*budget, &*clock, |m| {
+            let report = inbox.drain(*budget, &*clock, |m| {
                 if let Some(f) = on_message.as_mut() {
                     // One message, one turn: a handler that panics is a
                     // fault of the application, not the end of it, and
@@ -579,7 +640,16 @@ impl<M: Send + 'static> ShellApp<M> {
                     };
                     engine.turn_for(cause, None, || f(&engine, m));
                 }
-            })
+            });
+            if streams.len() == 0 {
+                return report;
+            }
+            let more = streams.drain(&engine, *budget, report.drained, &*clock);
+            DrainReport {
+                drained: report.drained + more.drained,
+                remaining: report.remaining + more.remaining,
+                elapsed: report.elapsed + more.elapsed,
+            }
         });
         self.last_drain = report;
         report
