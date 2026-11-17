@@ -1,0 +1,240 @@
+#!/usr/bin/env bash
+#MISE description="Run every mise task in a quick, non-interactive mode, so a broken task turns CI red"
+#USAGE flag "--list" help="Print the table of tasks and how each is smoke-tested, and run nothing"
+#USAGE flag "--only <task>" help="Smoke-test this one task"
+#USAGE flag "--dry" help="Dry-run every task, the ones the table runs too: what a machine that builds nothing checks"
+set -euo pipefail
+# shellcheck source-path=SCRIPTDIR source=../_lib/env.sh
+. "$(dirname "$0")/../_lib/env.sh"
+root="$ljos_root"
+cd "$root"
+
+# task | mode | arguments | why it is only a dry run
+#   run: a real, quick, non-interactive run of `mise run <task> <arguments>`
+#   dry: `mise run -n <task> <arguments>` (usage and depends resolve) and bash -n
+# Both with --skip-tools: mise's tools come from setup, so a missing one is
+# the task's failure to say so, not a download mise does on its behalf.
+# @tmp@ in the arguments is a scratch directory removed at the end. Adding
+# or removing a task without changing this table fails the smoke test.
+# tasks:smoke tests only its own --list, so it never recurses. The rows that
+# build share one debug ljos, built by the first of them.
+table() {
+  cat <<'EOF_TABLE'
+accesskit:diff|run|--brief|
+bench|dry||release builds measured on Ljós and qml6 in the headless sandbox, minutes long and wanting a quiet machine
+bench:3d|dry||release builds measured on Ljós and qml6 in the headless sandbox, with the corpus's 3D apps
+bench:cross|dry||needs an aarch64 linker and a board's sysroot, which CI does not have
+bench:egui|dry||release builds measured on Ljós, qml6 and egui in the headless sandbox
+bench:hot|dry|--check|needs valgrind, nm and the headless sandbox; --check says what a run would rewrite where they are
+bench:js|dry||a release ljos, valgrind and Qt's qmltestrunner, measured five times over
+build|run||
+check|dry||CI runs it in full as its own job (clippy)
+check:wasm|dry||mise run check runs it, and CI runs check as its own job
+ci:changes|run|HEAD|
+ci:test|run||
+compare|run|-- --help|
+compile|dry||a release build over the whole qtdoc corpus; CI's gallery job reads the corpus
+desktop:cua|dry|bench/minimal.qml|needs sway, Xwayland, at-spi2-registryd and cua-driver; the @desktop scenarios run it in CI's features job
+desktop:cua:call|dry|get_window_state|needs a running desktop:cua sandbox and cua-driver
+desktop:cua:exec|dry|true|needs sway, Xwayland, at-spi2-registryd and cua-driver
+desktop:cua:stop|run||
+desktop:drag-in|run|--check|
+dev|run|--check|
+docs|dry||CI's docs job builds the same docs; a second full cargo doc here is minutes long
+features|dry||CI runs the whole ledger in its features job
+features:acceptance|dry|example|CI runs it in its acceptance job
+features:acceptance-test|dry||CI runs it in its acceptance job
+features:changed|run|--base HEAD|
+features:lint|run||
+features:ljos|dry||the whole ledger on Ljós; CI's features job runs it
+features:parity|dry||needs Qt 6 (qml6); CI's scheduled qt-types job has it
+features:run|run|tooling/fmt.feature|
+fmt|run|--check|
+fuzz:qt|dry||needs Qt 6 (qml6); CI's scheduled gallery job runs it against the pinned Qt
+gallery|dry||renders the whole qtdoc corpus against qml6's pictures; CI's scheduled gallery job runs it
+gallery:assets|run||
+gallery:build|dry||mise run gallery runs it first, in CI's scheduled gallery job
+gallery:drive|dry||needs the desktop:cua sandbox's sway and cua-driver, and the corpus
+gallery:hot|dry|clocks|needs the desktop:cua sandbox's sway and cua-driver, and the corpus
+gallery:reference|dry||needs Qt 6 (qml6) and the corpus; CI's scheduled gallery job runs it
+gallery:run|run|--list|
+install|dry|--root @tmp@/install|a release build of ljos, minutes long; build runs the same code in debug
+lottie|run|--check|
+mcp|run||
+oxc:check|dry||a scratch build of the newest oxc_parser release, minutes long
+oxc:diff|run|--brief|
+parse|dry||a release build over the whole qtdoc corpus
+qttest|run|crates/ljos_test/tests/qml/suite/tst_assertions.qml|
+qttest:parity|dry||needs Qt 6's qmltestrunner
+quickjs:diff|run|--brief|
+run|run|bench/minimal.qml --check|
+setup|run|--check --no-corpus|
+tasks:smoke|run|--list|
+tasks:test|run||
+test|dry||CI runs it in full as its own job
+types|dry||needs Qt 6's QML modules; CI's scheduled qt-types job runs it
+webengine:build|dry||fetches CEF (about 1.5 GB) and builds ljos with it
+webengine:run|dry|examples/webbrowser/Main.qml|needs webengine:build's CEF
+EOF_TABLE
+}
+
+if [ "${usage_list:-}" = true ]; then
+  printf '%-25s %-4s %-30s %s\n' TASK MODE ARGUMENTS "WHY DRY"
+  table | while IFS='|' read -r task mode args why; do
+    printf '%-25s %-4s %-30s %s\n' "$task" "$mode" "${args:--}" "$why"
+  done
+  exit 0
+fi
+only="${usage_only:-}"
+all_dry="${usage_dry:-false}"
+
+# The tasks this repo defines, as "name<TAB>source"; mise also lists any
+# global tasks, which are not this repo's to test.
+need_python3
+tasks="$(mise tasks --json | python3 -I -c '
+import json, sys
+root = sys.argv[1].rstrip("/") + "/"
+for t in json.load(sys.stdin):
+    if t["source"].startswith(root):
+        print(t["name"] + "\t" + t["source"])
+' "$root")"
+[ -n "$tasks" ] || die "tasks:smoke: mise lists no tasks from $root (mise trust $root?)"
+names="$(printf '%s\n' "$tasks" | cut -f1 | sort)"
+tabled="$(table | cut -d'|' -f1 | sort)"
+
+failed=0
+results=""
+record() {
+  results="$results$(printf '%-25s %-6s %-6s %-8s %s' "$1" "$2" "$3" "$4" "${5:-}")
+"
+  [ "$3" = ok ] || failed=1
+}
+
+for t in $(comm -23 <(printf '%s\n' "$names") <(printf '%s\n' "$tabled")); do
+  echo "tasks:smoke: task '$t' has no entry in the table in mise-tasks/tasks/smoke; add one" >&2
+  record "$t" "-" FAIL 0
+done
+for t in $(comm -13 <(printf '%s\n' "$names") <(printf '%s\n' "$tabled")); do
+  echo "tasks:smoke: the table names '$t', which is no longer a task; remove it" >&2
+  record "$t" "-" FAIL 0
+done
+
+# Every task file, whether or not --only picks it, and what they share. A
+# file with a #MISE header that mise does not list is one it cannot run.
+lint=""
+problem() {
+  echo "tasks:smoke: $1:$2" >&2
+  lint=1
+}
+# What macOS's bash 3.2 and BSD tools lack, each with what to write instead.
+# Comment lines are left out, so a comment may name what it avoids.
+bash32() {
+  local f="$1" code
+  code="$(grep -v '^[[:space:]]*#' "$f" || true)"
+  printf '%s\n' "$code" | grep -Eq '(^|[;&|[:space:](])(mapfile|readarray)[[:space:]]' &&
+    printf ' mapfile/readarray (bash 4: read in a while loop);'
+  printf '%s\n' "$code" | grep -Eq '(declare|local|typeset) -[a-zA-Z]*A' &&
+    printf ' an associative array (bash 4: a case function);'
+  printf '%s\n' "$code" | grep -Eq '\$\{[A-Za-z_][A-Za-z_0-9]*(\^|,)' &&
+    printf ' ${var^}/${var,} (bash 4: tr);'
+  printf '%s\n' "$code" | grep -Eq 'shopt -s globstar|\$\{[A-Za-z_][A-Za-z_0-9]*@[QEPAaUuLK]\}' &&
+    printf ' globstar or ${var@…} (bash 4: find);'
+  printf '%s\n' "$code" | grep -Eq '(^|[;&|[:space:](])(realpath|readlink -f)[[:space:]]' &&
+    printf ' realpath/readlink -f (not on macOS: physical in _lib/env.sh);'
+  printf '%s\n' "$code" | grep -Eq '(^|[;&|[:space:](])sed -i' &&
+    printf ' sed -i (BSD and GNU differ: write to a file and mv it);'
+  printf '%s\n' "$code" | grep -Eq '(^|[;&|[:space:](])stat -c' &&
+    printf ' stat -c (GNU only: wc -c, or ls);'
+  printf '%s\n' "$code" | grep -Eq '(^|[;&|[:space:](])env -C' &&
+    printf ' env -C (GNU only: cd in a subshell);'
+  return 0
+}
+listed="$(printf '%s\n' "$tasks" | cut -f2)"
+for f in $(find mise-tasks -type f | sort); do
+  problems=""
+  case "$f" in
+    *.py)
+      python3 -I -c 'import ast, sys; ast.parse(open(sys.argv[1]).read(), sys.argv[1])' "$f" 2>/dev/null ||
+        problem "$f" " python3 cannot parse it;"
+      continue
+      ;;
+    mise-tasks/_lib/*) ;;
+    *)
+      grep -q '^#MISE ' "$f" || continue
+      printf '%s\n' "$listed" | grep -qxF "$root/$f" ||
+        problems="$problems mise does not list it (is it executable?);"
+      grep -q '^#MISE description=' "$f" || problems="$problems no #MISE description;"
+      grep -q '^set -euo pipefail' "$f" || problems="$problems no 'set -euo pipefail';"
+      ;;
+  esac
+  bash -n "$f" 2>/dev/null || problems="$problems bash -n fails;"
+  if command -v shellcheck >/dev/null 2>&1 && ! shellcheck -x -S warning "$f" >/dev/null 2>&1; then
+    problems="$problems shellcheck -S warning fails (run: shellcheck -x -S warning $f);"
+  fi
+  # This file spells out what bash32 looks for, so only it is left out.
+  [ "$f" = mise-tasks/tasks/smoke ] || problems="$problems$(bash32 "$f")"
+  [ -z "$problems" ] || problem "$f" "$problems"
+done
+if ! command -v shellcheck >/dev/null 2>&1; then
+  echo "tasks:smoke: shellcheck is not on PATH, so the tasks are not linted with it: install it (pacman -S shellcheck, apt install shellcheck, brew install shellcheck)" >&2
+  lint=1
+fi
+if [ -z "$lint" ]; then
+  record "(static)" lint ok 0
+else
+  record "(static)" lint FAIL 0
+fi
+
+# Off-screen: a smoke run never opens a window, and Qt's platform theme
+# would still reach for a display.
+unset WAYLAND_DISPLAY DISPLAY SWAYSOCK HYPRLAND_INSTANCE_SIGNATURE QT_QPA_PLATFORMTHEME
+scratch="$(mktemp -d "$(physical "${TMPDIR:-/tmp}")/ljos-smoke.XXXXXX")"
+trap 'rm -rf "$scratch"' EXIT
+
+found_only=""
+while IFS='|' read -r task mode args why; do
+  [ -z "$only" ] || [ "$only" = "$task" ] || continue
+  found_only=1
+  source="$(printf '%s\n' "$tasks" | awk -F'\t' -v t="$task" '$1 == t { print $2 }')"
+  [ -n "$source" ] || continue
+  # Split as words first, then @tmp@ filled in each, so a scratch path
+  # with a space stays one argument.
+  raw=()
+  words=()
+  read -r -a raw <<<"$args" || true
+  for word in ${raw[@]+"${raw[@]}"}; do
+    words+=("${word//@tmp@/$scratch}")
+  done
+  args="${args//@tmp@/$scratch}"
+  note=""
+  if [ "$mode" = dry ] && [ -z "$why" ]; then
+    echo "tasks:smoke: '$task' is a dry run with no reason given" >&2
+    record "$task" "$mode" FAIL 0
+    continue
+  fi
+  if [ "$all_dry" = true ] && [ "$mode" = run ]; then
+    mode=dry
+    note="--dry"
+  fi
+  echo "== tasks:smoke: $mode $task $args${note:+ ($note)}"
+  start="$(date +%s)"
+  result=ok
+  # ${words[@]+…}: bash 3.2 calls an empty array unset under set -u.
+  case "$mode" in
+    run) mise run --skip-tools "$task" ${words[@]+"${words[@]}"} </dev/null || result=FAIL ;;
+    dry) { mise run --skip-tools -n "$task" ${words[@]+"${words[@]}"} </dev/null && bash -n "$source"; } || result=FAIL ;;
+    *)
+      echo "tasks:smoke: '$task' has unknown mode '$mode'" >&2
+      result=FAIL
+      ;;
+  esac
+  record "$task" "$mode" "$result" "$(($(date +%s) - start))" "$note"
+done < <(table)
+if [ -n "$only" ] && [ -z "$found_only" ]; then
+  die "tasks:smoke: --only '$only' is not in the table"
+fi
+
+echo
+printf '%-25s %-6s %-6s %-8s %s\n' TASK MODE RESULT SECONDS NOTE
+printf '%s' "$results"
+exit "$failed"
