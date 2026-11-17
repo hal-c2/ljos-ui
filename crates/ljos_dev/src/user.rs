@@ -27,7 +27,7 @@ use std::{
 
 use ljos_compiler::{
     CompileFault,
-    confine::{Refusal, UserDir, check_address},
+    confine::{ReadError, Refusal, UserDir, check_address},
     sources::PackSources,
 };
 use ljos_design::theme::Theme;
@@ -213,14 +213,19 @@ where
                 reloader.seed(&key, text, file);
             }
         }
-        let faults = reloader.start_seeded();
+        let mut faults = reloader.start_seeded();
         let (seen, theme) = if users {
             match dir.read(&theme_path) {
                 Ok(text) => {
                     let theme = parse_theme(THEME_FILE, &text);
                     (Some(text), Some(theme))
                 }
-                Err(_) => (None, None),
+                // A theme that links out is told as a file that does.
+                Err(ReadError::Refused(why)) => {
+                    faults.push(why.fault());
+                    (None, None)
+                }
+                Err(ReadError::Io(_)) => (None, None),
             }
         } else {
             (None, None)
@@ -386,13 +391,17 @@ enum State {
     Making,
     /// The user's files run, and are watched unless asked not to be.
     Active { watcher: Option<Watcher> },
+    /// The pack carries no sources the user's files could compile
+    /// against: they are not read and nothing is watched, so why is told
+    /// once.
+    Off,
 }
 
 /// The one watch kept while the user has no file.
 struct Dormant {
     _fs: notify::RecommendedWatcher,
-    /// Whether it is on the directory itself rather than above it.
-    on_dir: bool,
+    /// The directory, or the nearest one above it that is there.
+    target: PathBuf,
 }
 
 /// An application's users' files over its own, as it runs.
@@ -503,7 +512,10 @@ impl UserSession {
                     let built = make(engine)(making);
                     session.activate(engine, built, false);
                 }
-                Err(fault) => session.tell(engine, &[fault]),
+                Err(fault) => {
+                    session.state = State::Off;
+                    session.tell(engine, &[fault]);
+                }
             }
         } else {
             session.state = State::Dormant { make, watch: None };
@@ -611,21 +623,14 @@ impl UserSession {
             return;
         };
         let root = self.dir.root().to_owned();
-        let on_dir = root.is_dir();
-        if watch.as_ref().is_some_and(|w| w.on_dir == on_dir) {
+        // A directory made on the way down moves the watch nearer.
+        let Some(target) = root.ancestors().find(|p| p.is_dir()).map(Path::to_owned) else {
+            return;
+        };
+        if watch.as_ref().is_some_and(|w| w.target == target) {
             return;
         }
-        let target = if on_dir {
-            Some(root.clone())
-        } else {
-            root.ancestors()
-                .skip(1)
-                .find(|p| p.is_dir())
-                .map(Path::to_owned)
-        };
-        let Some(target) = target else {
-            return;
-        };
+        let on_dir = target == root;
         let handle = self.handle.clone();
         let below = root.clone();
         let made = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
@@ -653,7 +658,7 @@ impl UserSession {
             Ok(fs)
         });
         match made {
-            Ok(fs) => *watch = Some(Dormant { _fs: fs, on_dir }),
+            Ok(fs) => *watch = Some(Dormant { _fs: fs, target }),
             Err(e) => {
                 let fault = self.fault(format!("cannot watch {}: {e}", target.display()));
                 self.tell(engine, &[fault]);
@@ -683,6 +688,7 @@ impl UserSession {
             State::Dormant { watch, .. } => watch.is_some(),
             State::Making => true,
             State::Active { watcher } => watcher.is_some(),
+            State::Off => false,
         }
     }
 
@@ -731,6 +737,10 @@ impl UserSession {
 
     /// Something changed in or above the directory while it had no file.
     fn woke(&mut self, engine: &Engine) {
+        // A wake queued before the session left its dormant state.
+        if !matches!(self.state, State::Dormant { .. }) {
+            return;
+        }
         self.rearm(engine);
         if !has_user_files(&self.dir) {
             return;
@@ -738,6 +748,8 @@ impl UserSession {
         let making = match self.making(false) {
             Ok(making) => making,
             Err(fault) => {
+                // Dropping the watch: every later event would tell it again.
+                self.state = State::Off;
                 self.tell(engine, &[fault]);
                 return;
             }

@@ -1655,8 +1655,13 @@ impl Application for LjosBackend {
         self.live()?.user_qml_link_out(name)
     }
 
-    fn run_with_user_qml(&mut self, entry: &str, built_from: &[(String, String)]) -> Result<()> {
-        self.live()?.run_with_user_qml(entry, built_from)
+    fn run_with_user_qml(
+        &mut self,
+        entry: &str,
+        built_from: &[(String, String)],
+        sources: bool,
+    ) -> Result<()> {
+        self.live()?.run_with_user_qml(entry, built_from, sources)
     }
 
     fn user_qml_seen(&mut self) -> Result<super::UserSeen> {

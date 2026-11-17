@@ -33,11 +33,14 @@ pub(super) struct User {
     /// What the application's fault handler was told, in order.
     told: Rc<RefCell<Vec<String>>>,
     dir: tempfile::TempDir,
+    /// Where a file outside the user's directory is, removed with it.
+    outside: tempfile::TempDir,
 }
 
 impl User {
     fn new() -> Result<Self> {
         let dir = tempfile::tempdir().map_err(failed)?;
+        let outside = tempfile::tempdir().map_err(failed)?;
         let (tx, woke) = mpsc::channel();
         Ok(Self {
             session: None,
@@ -47,6 +50,7 @@ impl User {
             }),
             told: Rc::default(),
             dir,
+            outside,
         })
     }
 }
@@ -72,11 +76,13 @@ impl Live {
 
     /// Runs `entry` of the scenario's files built ahead, with the user's
     /// directory over them. `built_from`: files the build compiled from
-    /// other texts than the sources it carries.
+    /// other texts than the sources it carries; `with_sources`: whether
+    /// it carries them.
     pub(super) fn run_with_user_qml(
         &mut self,
         entry: &str,
         built_from: &[(String, String)],
+        with_sources: bool,
     ) -> Result<()> {
         let sources = self.application_files();
         let mut compiled = sources.clone();
@@ -91,9 +97,12 @@ impl Live {
                 .collect(),
             style: self.controls_style.clone(),
         };
-        let pack = source
-            .to_pack_with_trailer(&carried.encode(true))
-            .map_err(failed)?;
+        let trailer = if with_sources {
+            carried.encode(true)
+        } else {
+            Vec::new()
+        };
+        let pack = source.to_pack_with_trailer(&trailer).map_err(failed)?;
         let pack = MapSource::from_pack(&pack).map_err(failed)?;
         // The user's files are on the real disk: the scenario's sandbox
         // would look elsewhere for whatever they read beside themselves.
@@ -156,7 +165,8 @@ impl Live {
             Some(text) => super::disk::write(&path, text)?,
             None => std::fs::remove_file(&path).map_err(failed)?,
         }
-        if user.session.is_none() {
+        // Nothing watched: the save brings nothing to wait for.
+        if !user.session.as_ref().is_some_and(UserSession::is_watching) {
             return Ok(());
         }
         self.take_user_save(name)
@@ -165,14 +175,7 @@ impl Live {
     /// Makes `name` in the user's directory a link to a file outside it.
     pub(super) fn user_qml_link_out(&mut self, name: &str) -> Result<()> {
         let user = self.user()?;
-        let outside = user.dir.path().join("..").join(format!(
-            "{}-outside.qml",
-            user.dir
-                .path()
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-        ));
+        let outside = user.outside.path().join("Outside.qml");
         std::fs::write(
             &outside,
             "import QtQuick\nItem { objectName: \"outside\" }\n",
@@ -194,7 +197,11 @@ impl Live {
             user.woke
                 .recv_timeout(PATIENCE)
                 .map_err(|_| failed(format!("the application did not wake for {name}")))?;
-            if !self.pump_user()?.is_empty() {
+            let reports = self.pump_user()?;
+            let user = self.user.as_ref().expect("written above");
+            // A session that stopped watching told why, and brings no more.
+            let watching = user.session.as_ref().is_some_and(UserSession::is_watching);
+            if !reports.is_empty() || !watching {
                 break;
             }
         }
