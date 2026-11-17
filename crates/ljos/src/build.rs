@@ -204,6 +204,11 @@ pub struct Options {
 impl Default for Options {
     /// Sources when the build's own `ljos` has `user-qml` on: a build
     /// script that names the feature builds for a program that has it.
+    /// `dev` turns `user-qml` on too, and so does any other crate's
+    /// build-dependency on `ljos` with either feature in the same build,
+    /// as Cargo unifies them: a program that ships without its sources
+    /// says so with [`without_sources`](Self::without_sources), one that
+    /// ships with them with [`with_sources`](Self::with_sources).
     fn default() -> Self {
         Self {
             sources: cfg!(feature = "user-qml"),

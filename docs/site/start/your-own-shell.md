@@ -244,7 +244,33 @@ To make a shell from a file it was not built with, the app compiles that file on
 
 ## A shipped app its users change
 
-With `user-qml`, the build keeps the text of each file it compiles in the pack (`build::Options::with_sources`, on by default with the feature), so that a user's file compiles against the same files the app was built from. The app names one directory:
+With `user-qml`, the build keeps the text of each file it compiles in the pack, so that a user's file compiles against the same files the app was built from. Ask for the sources in `build.rs` by name: the default follows whether the build script's own `ljos` has `user-qml`, and Cargo shares features between a crate's build-dependencies and its dependencies only in some setups.
+
+```toml
+[dependencies]
+ljos = { version = "…", default-features = false, features = ["shell", "user-qml"] }
+
+[build-dependencies]
+ljos = { version = "…", default-features = false, features = ["build", "user-qml"] }
+```
+
+```rust
+// build.rs
+use std::path::PathBuf;
+
+fn main() {
+    let dir = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
+    let out = PathBuf::from(std::env::var("OUT_DIR").unwrap());
+    ljos::build::Options::new()
+        .with_sources()
+        .compile_dirs(&[&dir.join("qml")], |_| {}, &out.join("qml.pack"))
+        .unwrap();
+}
+```
+
+A pack built without its sources still runs: a user's file is then not compiled, and `on_fault` is told why once.
+
+The app names one directory:
 
 ```rust
 use ljos::prelude::{Location, PathEnv};

@@ -862,19 +862,22 @@ impl<M> App<M> {
                 inspector.serve(s)?;
             }
             // The shell's Engine already holds the standard modules;
-            // `prepare` must not register them a second time, so it
-            // is the same function `build_engine` uses on its own.
+            // `install` must not register them a second time, so it
+            // is the first half of the `prepare` `build_engine` uses.
             #[cfg(feature = "dev-qml")]
             let source = Source {
                 source,
                 texts: dev.texts,
             };
-            prepare(s.engine(), modules, source, context, on_window);
-            // After the modules: the user's files compile against them.
+            install(s.engine(), modules, source);
+            // After the modules, whose types the user's files compile
+            // against; before the context, whose values may be objects
+            // of the user's types.
             #[cfg(feature = "user-qml")]
             if let Some((pack, config)) = user_qml {
                 s.user_qml(pack, config, crate::oracle::EngineOracle::from_engine);
             }
+            put_context(s.engine(), context, on_window);
             #[cfg(all(feature = "dev", feature = "dev-qml"))]
             s.set_qml_dirs(dev.dirs);
             #[cfg(all(feature = "dev-qml", not(feature = "dev")))]
@@ -968,6 +971,12 @@ fn prepare(
     context: Vec<BuildStep>,
     on_window: Vec<BuildStep>,
 ) {
+    install(engine, modules, source);
+    put_context(engine, context, on_window);
+}
+
+/// The first half of [`prepare`]: the modules, then the components.
+fn install(engine: &Engine, modules: Vec<Module>, source: Source) {
     for module in modules {
         module(engine);
     }
@@ -987,6 +996,10 @@ fn prepare(
     if let Some(source) = source {
         engine.set_component_source(source);
     }
+}
+
+/// The second half of [`prepare`]: the context, then the window hooks.
+fn put_context(engine: &Engine, context: Vec<BuildStep>, on_window: Vec<BuildStep>) {
     for put in context {
         put(engine);
     }
