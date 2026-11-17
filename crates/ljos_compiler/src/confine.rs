@@ -110,22 +110,27 @@ impl UserDir {
     }
 
     /// The text of the file at `path`. A path outside the directory, or
-    /// whose links lead out of it, is refused. The file is opened before
-    /// it is checked and read through that handle: on unix the handle
-    /// must be the file the check found (device and inode), so a link
-    /// changed between the two reads nothing outside. Anything but a
-    /// regular file (a pipe, a device) is not read, and opening one does
-    /// not wait for a writer.
+    /// whose links lead out of it, is refused. The file is opened first,
+    /// and what is checked is where that handle is, as the system says
+    /// (`/proc/self/fd` on Linux, `F_GETPATH` on Apple's systems,
+    /// `GetFinalPathNameByHandleW` on Windows): a link or a directory
+    /// swapped while it is read changes nothing that is read. Elsewhere
+    /// the path is resolved again and must be the handle's file (device
+    /// and inode). Anything but a regular file (a pipe, a device) is not
+    /// read, and opening one does not wait for a writer.
     pub fn read(&self, path: &Path) -> Result<String, ReadError> {
         use std::io::Read as _;
         let relative = self.relative(path).map_err(ReadError::Refused)?;
         let mut file = open_without_waiting(path)?;
         let opened = file.metadata()?;
-        let real = path.canonicalize()?;
         let root = self.real_root().ok_or_else(|| {
             std::io::Error::new(std::io::ErrorKind::NotFound, "the directory is gone")
         })?;
-        if !real.starts_with(&root) {
+        let inside = match opened_path(&file) {
+            Some(at) => at.starts_with(&root),
+            None => resolved_is(path, &opened, &root)?,
+        };
+        if !inside {
             return Err(ReadError::Refused(Refusal::LinkOut(relative)));
         }
         if !opened.is_file() {
@@ -133,14 +138,6 @@ impl UserDir {
                 std::io::ErrorKind::InvalidInput,
                 "not a file",
             )));
-        }
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::MetadataExt as _;
-            let checked = std::fs::metadata(&real)?;
-            if (checked.dev(), checked.ino()) != (opened.dev(), opened.ino()) {
-                return Err(ReadError::Refused(Refusal::LinkOut(relative)));
-            }
         }
         let mut text = String::new();
         file.read_to_string(&mut text)?;
@@ -225,6 +222,86 @@ impl UserDir {
             }
         }
         (files, refused)
+    }
+}
+
+/// Where the open `file` is, links resolved; None where the system
+/// cannot say.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn opened_path(file: &std::fs::File) -> Option<PathBuf> {
+    use std::os::fd::AsRawFd as _;
+    std::fs::read_link(format!("/proc/self/fd/{}", file.as_raw_fd())).ok()
+}
+
+#[cfg(target_vendor = "apple")]
+fn opened_path(file: &std::fs::File) -> Option<PathBuf> {
+    use std::os::{fd::AsRawFd as _, unix::ffi::OsStrExt as _};
+    let mut buf = vec![0u8; libc::PATH_MAX as usize];
+    // SAFETY: F_GETPATH writes at most PATH_MAX bytes, NUL-terminated,
+    // into `buf`, which is that long; the descriptor is open.
+    if unsafe { libc::fcntl(file.as_raw_fd(), libc::F_GETPATH, buf.as_mut_ptr()) } == -1 {
+        return None;
+    }
+    let len = buf.iter().position(|&b| b == 0)?;
+    Some(PathBuf::from(std::ffi::OsStr::from_bytes(&buf[..len])))
+}
+
+#[cfg(windows)]
+fn opened_path(file: &std::fs::File) -> Option<PathBuf> {
+    use std::os::windows::{ffi::OsStringExt as _, io::AsRawHandle as _};
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_NAME_NORMALIZED, GetFinalPathNameByHandleW, VOLUME_NAME_DOS,
+    };
+    let mut buf = vec![0u16; 1024];
+    loop {
+        let size = u32::try_from(buf.len()).ok()?;
+        // SAFETY: `buf` holds `size` u16s; the handle is open.
+        let n = unsafe {
+            GetFinalPathNameByHandleW(
+                file.as_raw_handle() as _,
+                buf.as_mut_ptr(),
+                size,
+                FILE_NAME_NORMALIZED | VOLUME_NAME_DOS,
+            )
+        } as usize;
+        if n == 0 {
+            return None;
+        }
+        if n < buf.len() {
+            // `\\?\`-prefixed, as `canonicalize` gives the root.
+            return Some(PathBuf::from(std::ffi::OsString::from_wide(&buf[..n])));
+        }
+        buf.resize(n + 1, 0);
+    }
+}
+
+#[cfg(not(any(
+    target_os = "linux",
+    target_os = "android",
+    target_vendor = "apple",
+    windows
+)))]
+fn opened_path(_: &std::fs::File) -> Option<PathBuf> {
+    None
+}
+
+/// Whether `path`, resolved again, is under `root` and is the file
+/// `opened` describes (device and inode, on unix).
+fn resolved_is(path: &Path, opened: &std::fs::Metadata, root: &Path) -> std::io::Result<bool> {
+    let real = path.canonicalize()?;
+    if !real.starts_with(root) {
+        return Ok(false);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt as _;
+        let checked = std::fs::metadata(&real)?;
+        Ok((checked.dev(), checked.ino()) == (opened.dev(), opened.ino()))
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = opened;
+        Ok(true)
     }
 }
 
