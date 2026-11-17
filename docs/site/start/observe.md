@@ -40,7 +40,7 @@ Shows the application's window size, scale, appearance, active painter (`gl` or 
 ### Processes and Mailboxes
 
 - **Processes** lists OS threads (with state, CPU time and wakeups where the platform measures them), running QML `Timer`s (with interval, repeat flag and time until next firing), running animations and scheduler owners.
-- **Mailboxes** shows the bounded `UiInbox` queues that carry work to the UI thread: current depth, capacity, oldest message age, and totals for sent, refused, coalesced (`replaced`) and drained messages, plus the front message kinds (`peek`). Because mailboxes are read on the inspector's server thread, you can still inspect them if the UI thread is blocked.
+- **Mailboxes** shows the bounded `UiInbox` queues that carry work to the UI thread: current depth, capacity, oldest message age, and totals for sent, refused, coalesced (`replaced`) and drained messages, plus the front message kinds (`peek`). Side streams (an application's `Setup::batch`, for bursts of small items such as file events or a process's output) are listed beside them by their own name, marked `batch`, with how many items they `evicted` to make room; they name no kinds. Because mailboxes are read on the inspector's server thread, you can still inspect them if the UI thread is blocked.
 
 ### Objects
 
