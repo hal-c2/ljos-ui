@@ -23,7 +23,6 @@
 //! they were written.
 
 use std::collections::VecDeque;
-use std::io::Write as _;
 use std::sync::mpsc::{SyncSender, sync_channel};
 use std::sync::{Condvar, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::Duration;
@@ -77,10 +76,10 @@ impl Writer {
                 Some(Msg::Dropped(n)) => *n += 1,
                 _ => queue.msgs.push_back(Msg::Dropped(1)),
             }
-            return;
+        } else {
+            queue.bytes += bytes.len();
+            queue.msgs.push_back(Msg::Line(bytes));
         }
-        queue.bytes += bytes.len();
-        queue.msgs.push_back(Msg::Line(bytes));
         drop(queue);
         self.ready.notify_one();
     }
@@ -153,14 +152,13 @@ fn writer() -> Option<&'static Writer> {
         .as_ref()
 }
 
-/// Writes `bytes` to stderr from the writer's thread, or from this one
-/// when that thread could not be started. Never waits for stderr.
+/// Writes `bytes` to stderr from the writer's thread. Never waits for
+/// stderr: when that thread could not be started, a process out of
+/// threads, the bytes are dropped rather than written from this one,
+/// which a stderr nobody reads would hold up.
 pub fn write(bytes: Vec<u8>) {
-    match writer() {
-        Some(w) => w.line(bytes),
-        None => {
-            let _ = std::io::stderr().write_all(&bytes);
-        }
+    if let Some(w) = writer() {
+        w.line(bytes);
     }
 }
 
@@ -186,7 +184,7 @@ pub fn flush() {
 }
 
 /// Whether the writer's thread was started: by the first line written,
-/// unless it could not be, and the lines are written from the caller.
+/// unless it could not be, and the lines are dropped.
 pub fn started() -> bool {
     WRITER.get().is_some_and(Option::is_some)
 }
