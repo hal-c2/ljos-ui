@@ -15,7 +15,7 @@ set -euo pipefail
 . "$(dirname "$0")/../_lib/env.sh"
 root="$ljos_root"
 need_corpus
-need timeout "install GNU coreutils' timeout (macOS: brew install coreutils, which names it gtimeout: put its gnubin first on PATH)"
+need_timeout
 pictures=0
 for png in "$root"/corpus/reference/*.png; do
   if [ -e "$png" ]; then

@@ -244,3 +244,32 @@ need_pinned_rust() {
   why="$(wrong_rustc)"
   [ -z "$why" ] || die "${MISE_TASK_NAME:-this task}: $why"
 }
+
+need_valgrind() {
+  need valgrind "install Valgrind (Arch: pacman -S valgrind; Debian, Ubuntu: apt install valgrind; not on macOS)"
+}
+
+need_systemd_run() {
+  need systemd-run "the bench holds each run to a budget in a systemd scope, which needs systemd's user service manager (Linux only)"
+}
+
+need_timeout() {
+  need timeout "install GNU coreutils' timeout (macOS: brew install coreutils, which names it gtimeout: put its gnubin first on PATH)"
+}
+
+# Whether ljos bench's options leave Qt in (it is, unless --runtime names
+# runtimes without qt).
+bench_has_qt() {
+  local want=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --runtime) want="${2:-}"; shift ;;
+      --runtime=*) want="${1#--runtime=}" ;;
+    esac
+    shift
+  done
+  case ",${want:-qt}," in
+    *,qt,*) return 0 ;;
+    *) return 1 ;;
+  esac
+}

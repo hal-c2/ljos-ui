@@ -18,10 +18,18 @@ set -euo pipefail
 # 0 leaves the probe out. BENCH_QT (default: dice and the FX showroom, which
 # qml6 6.12 runs with their stand-ins although corpus/examples.json says it
 # cannot) names corpus apps to measure on qml6 all the same.
-root="$(pwd)"
-target="${CARGO_TARGET_DIR:-$root/target}"
+# shellcheck source-path=SCRIPTDIR source=../_lib/env.sh
+. "$(dirname "$0")/../_lib/env.sh"
+root="$ljos_root"
+target="$(target_dir)"
 # Absolute: the probe runs each scene where the bench ran it.
-out="$(realpath -m "${BENCH_DIR:-$target/bench3d}")"
+out="$(from_asked "${BENCH_DIR:-$target/bench3d}")"
+mkdir -p "$out"
+out="$(physical "$out")"
+need_python3
+need_qml6
+need_timeout
+unset QT_QPA_PLATFORMTHEME
 
 ids=()
 opts=()
@@ -78,7 +86,7 @@ PY
     # QSG_RHI_PROFILE asks Qt for the GPU timestamps lastCompletedGpuTime
     # comes from, which it leaves off otherwise.
     (cd "$dir" && "$root/scripts/cua-sandbox.sh" exec env WAYLAND_DISPLAY="$wayland" QT_FORCE_STDERR_LOGGING=1 QT_QPA_PLATFORM=wayland QSG_RHI_PROFILE=1 \
-      QT_QUICK_CONTROLS_STYLE=Basic ${envs[@]+"${envs[@]}"} timeout "$seconds" qml6 ${args[@]+"${args[@]}"} \
+      QT_QUICK_CONTROLS_STYLE=Basic ${envs[@]+"${envs[@]}"} timeout "$seconds" "${QML6:-qml6}" ${args[@]+"${args[@]}"} \
       "$root/bench/quick3d/renderstats-probe.qml" -- "$file" ${launched[@]+"${launched[@]}"} > "$logs/$id.log" 2>&1 < /dev/null) || true
   done
 

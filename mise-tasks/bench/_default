@@ -8,8 +8,10 @@ set -euo pipefail
 # (BENCH_DEFAULTS= for none). A long run can be made in parts with --append.
 # BENCH_PROFILE=dist measures the binary that is handed out (one LLVM
 # module, a much longer build) instead of release. See docs/BENCHMARKS.md.
-root="$(pwd)"
-target="${CARGO_TARGET_DIR:-$root/target}"
+# shellcheck source-path=SCRIPTDIR source=../_lib/env.sh
+. "$(dirname "$0")/../_lib/env.sh"
+root="$ljos_root"
+target="$(target_dir)"
 out="${BENCH_DIR:-$target/bench}"
 
 read -r -a defaults <<< "${BENCH_DEFAULTS---warm-up --repeat 3 --bisect pi-zero}"
@@ -18,6 +20,16 @@ opts=()
 for a in "$@"; do
   if [[ $a == -* || ${#opts[@]} -gt 0 ]]; then opts+=("$a"); else ids+=("$a"); fi
 done
+need_python3
+need_systemd_run
+qt=false
+if bench_has_qt ${defaults[@]+"${defaults[@]}"} ${opts[@]+"${opts[@]}"}; then
+  need_qml6
+  qt=true
+fi
+# The apps run on the sandbox's Wayland; a desktop platform theme (gtk3,
+# qt6ct) would load a desktop's plugin into qml6 there.
+unset QT_QPA_PLATFORMTHEME
 
 # The release build is what is measured unless BENCH_PROFILE names
 # another; nothing compiles while it runs. BENCH_BUILD=0 measures what is
@@ -27,7 +39,10 @@ profile="${BENCH_PROFILE:-release}"
 case "$profile" in
   release) build="lto thin" ;;
   dist) build="lto fat, one codegen unit" ;;
-  *) echo "BENCH_PROFILE is release or dist, not $profile" >&2; exit 2 ;;
+  *)
+    echo "BENCH_PROFILE is release or dist, not $profile" >&2
+    exit 2
+    ;;
 esac
 if [[ ${BENCH_BUILD:-1} != 0 ]]; then
   cargo build --quiet --profile "$profile" -p ljos_cli
@@ -43,14 +58,18 @@ sandbox="$("$root/scripts/cua-sandbox.sh" env)"
 value() { sed -n "s/^$1=//p" <<< "$sandbox"; }
 
 # qml6 aborts on --version without a display, hence offscreen for the note.
+qt_note="qt: not measured"
+if [ "$qt" = true ]; then
+  qt_note="qt: $(QT_QPA_PLATFORM=offscreen "${QML6:-qml6}" --version 2>&1 | sed -n 1p), QT_QUICK_CONTROLS_STYLE=Basic"
+fi
 exec "$target/$profile/ljos" bench --manifest "$manifest" \
   --sway "$(value SWAYSOCK)" --wayland "$(value WAYLAND_DISPLAY)" \
   --app-env "DBUS_SESSION_BUS_ADDRESS=$(value DBUS_SESSION_BUS_ADDRESS)" \
   --app-env "XDG_CONFIG_HOME=$(value XDG_CONFIG_HOME)" --app-env "XDG_DATA_HOME=$(value XDG_DATA_HOME)" \
   --app-env "XDG_STATE_HOME=$(value XDG_STATE_HOME)" \
   --app-env "LJOS_SCREEN_READER=$(value LJOS_SCREEN_READER)" \
-  "${defaults[@]}" \
+  ${defaults[@]+"${defaults[@]}"} \
   --note "ljos: $(git -C "$root" rev-parse --short HEAD), cargo build --profile $profile ($build)" \
-  --note "qt: $(QT_QPA_PLATFORM=offscreen qml6 --version 2>&1 | head -1), QT_QUICK_CONTROLS_STYLE=Basic" \
+  --note "$qt_note" \
   --note "both on the sandbox's headless sway (${LJOS_CUA_GPU:-pixman}), as Wayland clients" \
-  --out "$out" "${opts[@]}"
+  --out "$out" ${opts[@]+"${opts[@]}"}

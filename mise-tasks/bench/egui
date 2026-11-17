@@ -5,8 +5,13 @@
 set -euo pipefail
 # Options go to every `ljos bench` run after the defaults; BENCH_DEFAULTS
 # replaces the defaults. See docs/BENCHMARKS.md, "Ljós against egui".
-root="$(pwd)"
-target="${CARGO_TARGET_DIR:-$root/target}"
+# shellcheck source-path=SCRIPTDIR source=../_lib/env.sh
+. "$(dirname "$0")/../_lib/env.sh"
+root="$ljos_root"
+target="$(target_dir)"
+need_systemd_run
+need_qml6
+unset QT_QPA_PLATFORMTHEME
 out="${BENCH_DIR:-$target/bench-egui}"
 read -r -a defaults <<< "${BENCH_DEFAULTS---warm-up --repeat 3}"
 
@@ -39,10 +44,10 @@ bench() {
     --app-env "XDG_CONFIG_HOME=$(value XDG_CONFIG_HOME)" --app-env "XDG_DATA_HOME=$(value XDG_DATA_HOME)" \
     --app-env "XDG_STATE_HOME=$(value XDG_STATE_HOME)" \
     --app-env "LJOS_SCREEN_READER=$(value LJOS_SCREEN_READER)" \
-    "${defaults[@]}" \
+    ${defaults[@]+"${defaults[@]}"} \
     --note "ljos: $(git -C "$root" rev-parse --short HEAD), cargo build --release (lto thin)" \
     --note "egui: examples/feed_egui.rs, eframe on egui's GL painter, cargo build --release" \
-    --note "qt: $(QT_QPA_PLATFORM=offscreen qml6 --version 2>&1 | head -1), QT_QUICK_CONTROLS_STYLE=Basic" \
+    --note "qt: $(QT_QPA_PLATFORM=offscreen "${QML6:-qml6}" --version 2>&1 | sed -n 1p), QT_QUICK_CONTROLS_STYLE=Basic" \
     --note "all on the sandbox's headless sway (${LJOS_CUA_GPU:-pixman}), as Wayland clients" \
     --out "$out" "$@"
 }

@@ -12,7 +12,7 @@ set -euo pipefail
 root="$ljos_root"
 need_corpus
 need_qml6
-need timeout "install GNU coreutils' timeout (macOS: brew install coreutils, which names it gtimeout: put its gnubin first on PATH)"
+need_timeout
 qml6="${QML6:-qml6}"
 target="$(target_dir)"
 work="${GALLERY_DIR:-$target/gallery}/reference-work"
