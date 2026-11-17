@@ -176,25 +176,40 @@ const USES: &str =
     "import QtQuick\nimport \"calc.js\" as Calc\nItem { property int n: Calc.n() }\n";
 const CALC: &str = "function n() { return 1 }\n";
 
-/// A layered session over `Main` that imports `calc.js`, seeded with
-/// what a build compiled from both.
-fn seeded_with_script(
-    dir: &std::path::Path,
-) -> (
+type Seeded = (
     ReloadSession<QtTypeOracle>,
     FileSet,
     Vec<ljos_compiler::CompileFault>,
-) {
-    let pack = built(&[("Main", USES), ("calc.js", CALC)]);
+);
+
+/// A layered session over `Main` that imports `calc.js`, seeded with
+/// what a build compiled from both.
+fn seeded_with_script(dir: &std::path::Path) -> Seeded {
+    seeded_with_scripts(dir, USES, &[("calc.js", CALC)])
+}
+
+/// A layered session over `Main` (`main`) and `scripts`, seeded with
+/// what a build compiled from them.
+fn seeded_with_scripts(dir: &std::path::Path, main: &str, scripts: &[(&str, &str)]) -> Seeded {
+    let mut files = vec![("Main", main)];
+    files.extend_from_slice(scripts);
+    let pack = built(&files);
     let base = Arc::new(PackSources {
-        files: [("Main.qml", USES), ("calc.js", CALC)]
-            .into_iter()
-            .map(|(k, t)| (k.to_owned(), t.to_owned()))
+        files: files
+            .iter()
+            .map(|(k, t)| {
+                let key = if k.ends_with(".js") {
+                    (*k).to_owned()
+                } else {
+                    format!("{k}.qml")
+                };
+                (key, (*t).to_owned())
+            })
             .collect(),
         style: None,
     });
     let mut s = ReloadSession::layered(UserDir::new(dir), base, QtTypeOracle);
-    assert!(s.seed("Main", USES, Arc::clone(&pack["Main"])));
+    assert!(s.seed("Main", main, Arc::clone(&pack["Main"])));
     let faults = s.start_seeded();
     (s, pack, faults)
 }
@@ -238,4 +253,36 @@ fn a_users_script_that_does_not_parse_is_told_and_what_imports_it_runs_as_built(
     s.rescan().unwrap();
     let patch = s.build().expect("compiles").expect("Main again");
     assert!(patch.files.iter().any(|f| f.file.file == "Main"));
+}
+
+const THROUGH: &str = "import QtQuick\nimport \"a.js\" as A\nItem { property int n: A.n() }\n";
+const A_JS: &str = ".import \"calc.js\" as Calc\nfunction n() { return Calc.n() }\n";
+
+#[test]
+fn a_users_script_that_does_not_parse_behind_another_script_leaves_what_imports_them_as_built() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("calc.js"), "function n( {\n").unwrap();
+    let (s, pack, faults) =
+        seeded_with_scripts(dir.path(), THROUGH, &[("a.js", A_JS), ("calc.js", CALC)]);
+    assert_eq!(faults.len(), 1, "{faults:?}");
+    assert_eq!(faults[0].file, "calc.js");
+    assert!(
+        Arc::ptr_eq(&s.live()["Main"], &pack["Main"]),
+        "Main compiled with the broken script"
+    );
+}
+
+#[test]
+fn a_users_script_behind_another_script_compiles_again_what_imports_them() {
+    let theirs = "function n() { return 2 }\n";
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("calc.js"), theirs).unwrap();
+    let (s, pack, faults) =
+        seeded_with_scripts(dir.path(), THROUGH, &[("a.js", A_JS), ("calc.js", CALC)]);
+    assert!(faults.is_empty(), "{faults:?}");
+    assert!(!Arc::ptr_eq(&s.live()["Main"], &pack["Main"]), "Main taken");
+    assert_eq!(
+        s.live()["Main"],
+        built(&[("Main", THROUGH), ("a.js", A_JS), ("calc.js", theirs)])["Main"]
+    );
 }

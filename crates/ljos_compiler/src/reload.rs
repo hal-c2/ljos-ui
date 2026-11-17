@@ -319,13 +319,19 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
         let Some(layer) = &self.layer else {
             return BTreeSet::new();
         };
-        let name = |key: &str| key.rsplit('/').next().unwrap_or(key).to_owned();
-        let mut changed: BTreeSet<String> = self
+        let changed = self
             .project
             .scripts()
             .filter(|(k, t)| layer.base.files.get(*k).map(String::as_str) != Some(*t))
-            .map(|(k, _)| name(k))
+            .map(|(k, _)| script_name(k).to_owned())
             .collect();
+        self.with_importing_scripts(changed)
+    }
+
+    /// `names`, scripts' names, with the names of the scripts that import
+    /// one of them, over and over.
+    fn with_importing_scripts(&self, mut changed: BTreeSet<String>) -> BTreeSet<String> {
+        let name = |key: &str| script_name(key).to_owned();
         loop {
             let more: Vec<String> = self
                 .project
@@ -455,18 +461,22 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
                 self.reverted.insert(key.clone());
             }
         }
-        // A user's script that does not parse: what imports it runs its
-        // seed, with the application's script, until it is saved again.
-        for (script, fault) in &self.broken_scripts {
-            faults.push(fault.clone());
-            let name = script.rsplit('/').next().unwrap_or(script);
-            for (key, source) in &self.sources {
-                if let Some(seed) = self.seeds.get(key)
-                    && source.contains(name)
-                {
-                    self.compiled.insert(key.clone(), seed.clone());
-                    self.reverted.insert(key.clone());
-                }
+        // A user's script that does not parse: what imports it, itself or
+        // through another script, runs its seed, with the application's
+        // scripts, until it is saved again.
+        faults.extend(self.broken_scripts.values().cloned());
+        let broken = self.with_importing_scripts(
+            self.broken_scripts
+                .keys()
+                .map(|k| script_name(k).to_owned())
+                .collect(),
+        );
+        for (key, source) in &self.sources {
+            if let Some(seed) = self.seeds.get(key)
+                && broken.iter().any(|name| source.contains(name.as_str()))
+            {
+                self.compiled.insert(key.clone(), seed.clone());
+                self.reverted.insert(key.clone());
             }
         }
         let reverted = &self.reverted;
@@ -1149,4 +1159,9 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
         }
         out
     }
+}
+
+/// The name a file imports the script `key` by: its last path part.
+fn script_name(key: &str) -> &str {
+    key.rsplit('/').next().unwrap_or(key)
 }

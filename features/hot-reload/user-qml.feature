@@ -240,6 +240,35 @@ Feature: A shipped application its users change while it runs
       Then the property "by" of "main" is "the application"
       And the application was told of a fault matching "calc\.js"
 
+    Scenario: A user's script that does not parse behind another script is told, and what imports them runs as built
+      Given the file "calc.js":
+        """js
+        function by() { return "the application" }
+        """
+      And the file "names.js":
+        """js
+        .import "calc.js" as Calc
+        function by() { return Calc.by() }
+        """
+      And the file "Main.qml":
+        """qml
+        import QtQuick
+        import "names.js" as Names
+        Item { objectName: "main"; property string by: Names.by() }
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        Item { objectName: "root" }
+        """
+      And the user's file "calc.js":
+        """js
+        function by( { return "the user" }
+        """
+      When the application runs "Main.qml" built ahead, with the user's directory over it
+      Then the property "by" of "main" is "the application"
+      And the application was told of a fault matching "calc\.js"
+
   Rule: An application built without its sources runs as built, and says why once
 
     Scenario: A user's file over an application built without its sources is told once and nothing is watched
