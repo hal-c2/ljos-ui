@@ -147,8 +147,11 @@ jobs:
           runner=$(cargo test -p ljos_bdd --test features --no-run --message-format=json \
             | jq -r 'select(.reason == "compiler-artifact" and .target.name == "features" and .executable != null) | .executable')
           cp "$runner" "$RUNNER_TEMP/bin/features"
-          cargo build -p ljos_cli -p ljos_fuzz -p ljos_bdd --bin ljos --bin ljos-fuzz --bin features-lint
-          cp target/debug/ljos target/debug/ljos-fuzz target/debug/features-lint "$RUNNER_TEMP/bin/"
+          # One build, so that `ljos` is built once, with the features all of them need.
+          cargo build -p ljos_cli -p ljos_fuzz -p ljos_bdd -p ljos --bin ljos --bin ljos-fuzz \
+            --bin features-lint --example packed_log
+          cp target/debug/ljos target/debug/ljos-fuzz target/debug/features-lint \
+            target/debug/examples/packed_log "$RUNNER_TEMP/bin/"
           ls -la "$RUNNER_TEMP/bin"
       - uses: actions/upload-artifact@v4
         with:
@@ -208,6 +211,7 @@ jobs:
           LJOS_BDD_FEATURES_BIN: ${{ runner.temp }}/bin/features
           LJOS_BIN: ${{ runner.temp }}/bin/ljos
           LJOS_FUZZ_BIN: ${{ runner.temp }}/bin/ljos-fuzz
+          LJOS_PACKED_LOG_BIN: ${{ runner.temp }}/bin/packed_log
 
   # External acceptance suites (acceptance/README.md): the in-repo example proves the
   # mechanism; both tasks read a fixture in this repository and need no Qt.
