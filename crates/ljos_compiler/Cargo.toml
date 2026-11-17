@@ -26,6 +26,8 @@ oxc_isolated_declarations.workspace = true
 # scoping leaves unbound, and this is oxc's scope analysis of the same AST.
 oxc_semantic.workspace = true
 blake3.workspace = true
+# The sources a pack carries for its users (`sources.rs`), deflated.
+miniz_oxide.workspace = true
 thiserror.workspace = true
 anyhow.workspace = true
 tempfile.workspace = true

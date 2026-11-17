@@ -4141,6 +4141,7 @@ dependencies = [
  "ljos_i18n",
  "ljos_ir",
  "ljos_oxc_parser",
+ "miniz_oxide 0.8.9",
  "oxc_allocator",
  "oxc_ast",
  "oxc_ast_visit",
@@ -4217,6 +4218,7 @@ dependencies = [
  "ljos_drive",
  "ljos_engine",
  "ljos_ir",
+ "ljos_js",
  "ljos_mcp_core",
  "ljos_platform",
  "ljos_quick",
@@ -4372,6 +4374,13 @@ dependencies = [
  "ljos",
  "ljos_compiler",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "ljos_example_user_shell"
+version = "0.0.0"
+dependencies = [
+ "ljos",
 ]
 
 [[package]]
