@@ -52,6 +52,24 @@ pub trait ComponentSource {
     fn bytecode(&self, _key: &str) -> Option<Bytecode> {
         None
     }
+
+    /// `rel` as the document at `base` writes it, with a step up (`..`),
+    /// before it is resolved: `Some` refuses it and is the address to
+    /// load instead, one no file has. Resolving folds a step up at the
+    /// root away (`../A.qml` beside `file:///Main.qml` is
+    /// `file:///A.qml`), so a source that confines what its documents
+    /// reach looks at the address as written. Asked only of an address
+    /// with no scheme.
+    fn refuse_step_up(&self, _base: &str, _rel: &str) -> Option<String> {
+        None
+    }
+}
+
+/// Whether `rel`, an address with no scheme, takes a step up.
+fn steps_up(rel: &str) -> bool {
+    rel.contains("..")
+        && !has_scheme(rel)
+        && strip_query(rel).split(['/', '\\']).any(|part| part == "..")
 }
 
 /// `url` without its query and fragment. A file is the same file whatever
@@ -868,9 +886,22 @@ impl Engine {
                 .map(|l| l.url)
         };
         match base {
-            Some(base) if !url.is_empty() => join_url(&base, url),
+            Some(base) if !url.is_empty() => self.join_from(&base, url),
             _ => url.to_owned(),
         }
+    }
+
+    /// `rel` as the file at `base` means it ([`join_url`]), unless the
+    /// component source refuses the step up it is written with
+    /// ([`ComponentSource::refuse_step_up`]).
+    pub(crate) fn join_from(&self, base: &str, rel: &str) -> String {
+        if steps_up(rel) {
+            let source = self.inner.loader.borrow().source.clone();
+            if let Some(refused) = source.and_then(|s| s.refuse_step_up(base, rel)) {
+                return refused;
+            }
+        }
+        join_url(base, rel)
     }
 
     /// The address of the file that declares `obj`, which is what
@@ -1141,6 +1172,16 @@ impl Engine {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_step_up_is_seen_as_written() {
+        assert!(steps_up("../A.qml"));
+        assert!(steps_up("parts/../../A.qml"));
+        assert!(steps_up("..\\A.qml"));
+        assert!(!steps_up("A..B.qml"));
+        assert!(!steps_up("https://example.com/../A.qml"));
+        assert!(!steps_up("A.qml?from=.."));
+    }
+
     #[test]
     fn a_file_url_is_written_as_qt_writes_it() {
         // What qml6 gives for Qt.resolvedUrl beside a file in this directory.

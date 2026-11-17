@@ -393,10 +393,53 @@ Feature: A shipped application its users change while it runs
       And the reload error matches "refused"
 
       Examples:
-        | address                      | told                                  |
-        | https://example.com/Evil.qml | a network address                     |
-        | ../../etc/Evil.qml           | names a place outside the application |
-        | /etc/Evil.qml                | names a place outside the application |
+        | address                      | told                                                                |
+        | https://example.com/Evil.qml | a network address                                                   |
+        | ../Escape.qml                | [.][.]/Escape[.]qml: names a place outside the application          |
+        | ../../etc/Evil.qml           | [.][.]/[.][.]/etc/Evil[.]qml: names a place outside the application |
+        | /etc/Evil.qml                | names a place outside the application                               |
+
+    Scenario: A step up out of the user's directory is refused where the application has the file
+      Given the file "Escape.qml":
+        """qml
+        import QtQuick
+        Rectangle { objectName: "escaped" }
+        """
+      And the user's file "Shell.qml":
+        """qml
+        import QtQuick
+        Item {
+          objectName: "user-shell"
+          Loader { source: "../Escape.qml" }
+          Loader { source: Qt.resolvedUrl("../Escape.qml") }
+          Component.onCompleted: Qt.createComponent("../Escape.qml")
+        }
+        """
+      When the application runs "Main.qml" built ahead, with the user's directory over it
+      Then the object "loader/user-shell" exists
+      And the object "escaped" does not exist
+      And the application was told of a fault matching "refused: \.\./Escape\.qml: names a place outside"
+      And the reload error matches "refused"
+
+    Scenario: A step up that stays in the user's directory is loaded
+      Given the user's file "Part.qml":
+        """qml
+        import QtQuick
+        Rectangle { objectName: "part" }
+        """
+      And the user's file "pages/Page.qml":
+        """qml
+        import QtQuick
+        Item { objectName: "page"; Loader { source: "../Part.qml" } }
+        """
+      And the user's file "Shell.qml":
+        """qml
+        import QtQuick
+        Item { objectName: "user-shell"; Loader { source: "pages/Page.qml" } }
+        """
+      When the application runs "Main.qml" built ahead, with the user's directory over it
+      Then the object "part" exists
+      And the application was told of no fault
 
     Scenario: A user's file that links out of the directory is refused and told
       Given the user's file "Shell.qml" links to a file outside the user's directory

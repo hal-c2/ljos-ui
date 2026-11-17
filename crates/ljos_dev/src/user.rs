@@ -326,6 +326,10 @@ impl ComponentSource for LayeredSource {
     }
 
     fn key(&self, url: &str) -> String {
+        // Refused before it was resolved ([`Self::refuse_step_up`]).
+        if url.starts_with(REFUSED) {
+            return url.to_owned();
+        }
         if let Err(why) = check_address(url) {
             self.shared.refuse(url, why);
             return format!("{REFUSED}{url}");
@@ -342,6 +346,31 @@ impl ComponentSource for LayeredSource {
         }
         self.shared.refuse(url, Refusal::Outside(url.to_owned()));
         format!("{REFUSED}{url}")
+    }
+
+    fn refuse_step_up(&self, base: &str, rel: &str) -> Option<String> {
+        // Counted from the directory of the document that writes it, by
+        // key: the application's files and its user's share one root, and
+        // a packed application has nothing above it. Resolving would fold
+        // a step above the root away and load beside it, unseen.
+        let path = rel.split(['?', '#']).next().unwrap_or(rel);
+        let mut depth = if path.starts_with(['/', '\\']) {
+            0
+        } else {
+            self.pack.key(base).matches('/').count()
+        };
+        for part in path.split(['/', '\\']) {
+            match part {
+                "" | "." => {}
+                ".." if depth == 0 => {
+                    self.shared.refuse(rel, Refusal::Outside(rel.to_owned()));
+                    return Some(format!("{REFUSED}{rel}"));
+                }
+                ".." => depth -= 1,
+                _ => depth += 1,
+            }
+        }
+        None
     }
 
     fn bytecode(&self, key: &str) -> Option<Bytecode> {
