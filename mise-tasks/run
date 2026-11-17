@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+#MISE description="Run a QML file on ljos from this checkout, as ljos run does, without dev's reload on save: run <file.qml> [--release] [--check] [ljos run args…]. --release runs an optimised build; --check builds it and runs it for 2 s with no window"
+#MISE dir="{{config_root}}"
+#USAGE arg "<file>" help="QML file to run, relative to where mise was started"
+#USAGE flag "--release" help="Build and run an optimised ljos (what a frame rate or a start-up time means)"
+#USAGE flag "--check" help="Build ljos and run the file for 2 s with no window or display (ljos run --headless), then stop: fails when it does not build or load"
+#USAGE arg "[args]..." var=#true help="Arguments for ljos run after the file (--size, --mcp=inspect,input, --headless); the app's own arguments go after -- --, as mise takes the first --"
+set -euo pipefail
+# shellcheck source-path=SCRIPTDIR source=_lib/env.sh
+. "$(dirname "$0")/_lib/env.sh"
+cd "$ljos_root"
+# Read from the raw arguments, as dev does: mise's own parsing drops a `--`
+# that ljos run needs. --check and --release are this task's before it.
+check=
+profile=debug
+args=()
+apps=
+for a in "$@"; do
+  if [ -z "$apps" ] && [ "$a" = --check ]; then
+    check=1
+  elif [ -z "$apps" ] && [ "$a" = --release ]; then
+    profile=release
+  else
+    [ "$a" != -- ] || apps=1
+    args+=("$a")
+  fi
+done
+set -- ${args[@]+"${args[@]}"}
+[ $# -gt 0 ] && [ "${1#-}" = "$1" ] || die "usage: mise run run <file.qml> [--release] [--check] [ljos run args…] (mise run dev reloads on save)"
+file="$(from_asked "$1")"
+shift
+[ -f "$file" ] || die "run: no such file: $file"
+cargo build --quiet -p ljos_cli --bin ljos --profile "$( [ "$profile" = debug ] && echo dev || echo release)"
+ljos="$(target_dir)/$profile/ljos"
+if [ -n "$check" ]; then
+  check_run "$ljos" run "$file" "$@"
+  exit
+fi
+exec "$ljos" run "$file" "$@"

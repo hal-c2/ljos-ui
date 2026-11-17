@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+#MISE description="Build the API docs of every crate (cargo doc --no-deps; rustdoc's warnings, such as a broken intra-doc link, are printed, and RUSTDOCFLAGS='-D warnings' makes them fail), then check the links of the Markdown docs (scripts/doc_links.py); -p <crate> builds only that crate's, --open opens them. The design notes are docs/*.md"
+#MISE dir="{{config_root}}"
+#USAGE flag "--open" help="Open them in a browser when built"
+#USAGE arg "[args]..." var=#true help="More arguments for cargo doc: -p <crate> for only that crate's docs, --document-private-items"
+set -euo pipefail
+# shellcheck source-path=SCRIPTDIR source=_lib/env.sh
+. "$(dirname "$0")/_lib/env.sh"
+cd "$ljos_root"
+need_python3
+# Narrowed when a crate is named, as test is.
+scope=(--workspace)
+for arg in "$@"; do
+  case "$arg" in
+    -p | --package | -p?* | --package=*) scope=() ;;
+  esac
+done
+# Only Ljós's own crates: the dependencies' docs are on docs.rs. Warnings are
+# not denied: no CI job builds the docs, so a doc comment broken on main would
+# stop every author's docs, not the change that broke it.
+cargo doc --no-deps ${scope[@]+"${scope[@]}"} "$@"
+python3 scripts/doc_links.py
+echo "docs: built into $(target_dir)/doc (one directory per crate, as ljos_quick/index.html)"

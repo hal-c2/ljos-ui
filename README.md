@@ -24,24 +24,32 @@ Ljós is a clean-room implementation: see `CLEAN_ROOM.md`.
 
 ## Getting started
 
-Install [mise](https://mise.jdx.dev/getting-started.html), then:
+Install [mise](https://mise.jdx.dev/getting-started.html), then, in the clone:
 
 ```sh
-mise run setup      # Rust and tools from mise.toml, submodules, Qt's types if Qt is here; says what it skipped
+mise trust          # mise reads this checkout's mise.toml (its Rust pin and settings) only once trusted
+mise run setup      # Rust 1.98.1 and tools from mise.toml, submodules, Qt's types if Qt is here; says what it did, skipped and lacks
+mise run check      # format and clippy, with the pinned Rust (it prints cargo --version)
 mise run dev        # a QML app reloaded on save (bench/feed.qml; or: mise run dev path/to/Main.qml)
 ```
+
+`mise run --skip-tools setup --check` installs nothing and says what is missing, each with the one command that gets it. mise.toml puts its Rust first on `PATH` for every task, so a system `cargo` of another version is never the one a task runs.
 
 Then:
 
 ```sh
-mise run test       # Rust tests
+mise run test       # Rust tests (-p <crate> for one)
 mise run features   # the Gherkin ledger
-mise run check      # format and clippy
+mise run fmt        # rustfmt every crate (--check only says what would change)
+mise run docs       # API docs (warnings printed) and the Markdown links
+mise run run path/to/Main.qml   # one QML file, without reload (--release, --check)
+mise run build      # target/debug/ljos (--release)
 mise run install    # puts ljos on your PATH (cargo install --path crates/ljos_cli --locked; --root <dir>)
+mise run tasks:smoke  # every task in a quick mode, as CI runs them
 mise tasks          # every task; mise run <task> --help shows its arguments
 ```
 
-Qt 6 is optional. Without it Ljós reads QML against its own types and the Qt comparisons (`features:parity`, `gallery:reference`, `fuzz:qt`) can't run; `mise run setup` says which.
+Qt 6 is optional. Without it Ljós reads QML against its own types and the Qt comparisons (`features:parity`, `gallery:reference`, `fuzz:qt`, `qttest:parity`) can't run; `mise run setup` says which. CI compares with Qt 6.11.2 (the version `.github/workflows/ci.yml` pins), and `setup --check` fails on another minor version, saying how to install that one.
 
 ### QtWebEngine
 
