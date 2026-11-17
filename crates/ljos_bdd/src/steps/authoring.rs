@@ -111,6 +111,38 @@ fn author_runs(w: &mut LjosWorld, line: String) -> StepResult {
     author.run(files, &line)
 }
 
+// A task of the repository's `mise-tasks/`, run on the scenario's project
+// as a checkout of its own (features/tooling/mcp-build.feature).
+#[when(regex = r#"^the author runs "(mise-tasks/[^"]+)" in "([^"]+)"$"#)]
+fn author_runs_in(w: &mut LjosWorld, line: String, dir: String) -> StepResult {
+    let (author, files) = w.author_acts();
+    author.run_within(files, &line, &dir)
+}
+
+#[given(regex = r#"^the author's environment has "([^"]+)" set to "([^"]*)"$"#)]
+fn author_env_set(w: &mut LjosWorld, name: String, value: String) -> StepResult {
+    let (author, files) = w.author();
+    author.set_env(files, &name, Some(&value))
+}
+
+#[given(regex = r#"^the author's environment has no "([^"]+)"$"#)]
+fn author_env_unset(w: &mut LjosWorld, name: String) -> StepResult {
+    let (author, files) = w.author();
+    author.set_env(files, &name, None)
+}
+
+#[given(regex = r#"^the project is a git checkout with the linked worktree "([^"]+)"$"#)]
+fn project_git_checkout(w: &mut LjosWorld, worktree: String) -> StepResult {
+    let (author, files) = w.author();
+    author.git_checkout(files, &worktree)
+}
+
+#[then(regex = r#"^the project has no "([^"]+)"$"#)]
+fn project_has_none(w: &mut LjosWorld, name: String) -> StepResult {
+    let (author, files) = w.author();
+    author.has_none(files, &name)
+}
+
 // The application is left running, and the scenario's agent speaks to
 // the inspector it names on its errors, as a parent process finds it.
 #[when(regex = r#"^the author starts "([^"]+)"$"#)]
@@ -309,6 +341,12 @@ fn pictures_alike(w: &mut LjosWorld, a: String, b: String) -> StepResult {
 fn command_prints(w: &mut LjosWorld, step: &Step) -> StepResult {
     let want = author_doc(step)?;
     w.author().0.ran()?.printed(&want)
+}
+
+#[then("the command's standard output is:")]
+fn command_standard_output(w: &mut LjosWorld, step: &Step) -> StepResult {
+    let want = author_doc(step)?;
+    w.author().0.ran()?.printed_alone(&want)
 }
 
 #[then(regex = r"^the command exits with status (\d+)$")]

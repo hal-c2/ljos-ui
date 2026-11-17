@@ -436,7 +436,7 @@ into the answer's structured content.
 
 An agent asks `ljos mcp` (ARCHITECTURE.md 19.3) through a real MCP client, or an author runs `ljos`
 in a terminal. There is no application: the files the scenario gives (`Given the file "X":`, with
-any name, written without the indent of its doc string; one whose name ends in `.sh` may be run) are
+any name, written without the indent of its doc string; one whose name ends in `.sh` or whose text starts with `#!` may be run) are
 a project in a directory of its own. Once the tools are connected, the agent's steps of the
 inspector above (`When the agent calls the tool …`, `When the agent reads the resource …`,
 `Then the answer's "/pointer" …`, `Then the agent is refused with …`, `Then the refusal mentions …`,
@@ -452,7 +452,10 @@ inspector above (`When the agent calls the tool …`, `When the agent reads the 
 | `Given the agent has called the tool "name" with:` + doc string | a call whose answer a later step builds on |
 | `When the agent lists the resources` | MCP `resources/list`; the answer is the URIs, one a line |
 | `When the agent asks for the prompt "name"` / `When the agent asks for the prompt "name" with:` + doc string | an MCP prompt, with the arguments in the doc string (labelled `json`) |
-| `When the author runs "ljos fmt --check ."` / `Given the author has run "…"` | the command line, run in the project's directory; it starts with `ljos` (or `ljos-fuzz`, the differential fuzzer) |
+| `When the author runs "ljos fmt --check ."` / `Given the author has run "…"` | the command line, run in the project's directory; it starts with `ljos` (or `ljos-fuzz`, the differential fuzzer), or with a task of this repository's `mise-tasks/`, which runs on the project as a checkout of its own: git finds no repository above it, and what it writes on its output is kept apart from its errors |
+| `When the author runs "mise-tasks/mcp" in "wt"` | a task of `mise-tasks/`, run in a directory of the project |
+| `Given the author's environment has "NAME" set to "value"` / `has no "NAME"` | a variable of the commands the author runs from then on, or one taken away; `{project}` in a value is the project's directory with no link in it, `{PATH}` the runner's own `PATH` |
+| `Given the project is a git checkout with the linked worktree "wt"` | the project made a git repository with its files committed, and `git worktree add` of a worktree inside it (excluded from the repository) on a branch of its own; the files given before it are in both, those given after it only in the main checkout, outside git |
 | `Given the author's desktop setting "org.freedesktop.appearance" "reduced-motion" is uint32 1` | what the settings portal of a session bus of the scenario's own says to the commands the author runs: `"text"`, `uint32 N`, `true` or `false`; without one their bus is not there, so the developer's desktop never reaches them |
 | `Then the answer's "/pointer" is:` + doc string | a text of the last answer, whole (a diff, a formatted file) |
 | `Then the prompt contains "text"` | part of the prompt's text |
@@ -460,11 +463,13 @@ inspector above (`When the agent calls the tool …`, `When the agent reads the 
 | `Then the agent is offered the prompts "a, b, c"` | the prompt list, in order |
 | `Then the authoring tools' instructions match "regex"` | what the server tells an agent when it connects |
 | `Then the file "X" is:` + doc string | the whole text of a file of the project, as it is now |
+| `Then the project has no "X"` | no file, directory or link at that path of the project |
 | `Then the JSON file "X" has "/pointer" equal to V` | a value of a JSON file of the project, written as JSON (`null`, `true`, `"text"`, a number) |
 | `Then the picture "X.png" is W by H pixels` | the size of a PNG of the project, as a command wrote it |
 | `Then the pictures "a.png" and "b.png" have the same pixels` | two PNGs of the project, as commands wrote them, are one picture: the same size and every pixel alike |
 | `Then a desktop with the system files under "root" keeps up to N MiB of decoded pictures` | the image budget (ARCHITECTURE §8.5) the files under a directory of the project give, read as `/`: `proc/meminfo`, `proc/self/cgroup` and `sys/fs/cgroup/…/memory.max`; or `a phone` (`@ljos-only`: Qt has no such budget) |
 | `Then the command prints:` + doc string | everything the command wrote to its output |
+| `Then the command's standard output is:` + doc string | what a task of `mise-tasks/` wrote to its output, without its errors |
 | `Then the command exits with status N` | |
 | `Then the command's output mentions "text"` / `does not mention "text"` | in what it wrote to its output or as errors |
 
