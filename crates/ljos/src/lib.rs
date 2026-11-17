@@ -330,6 +330,12 @@ pub use ljos_engine::log_to_stderr;
 pub use ljos_engine::module;
 #[cfg(not(target_arch = "wasm32"))]
 pub use ljos_engine::{ComponentSource, Engine, MapSource, ObjectId};
+/// Waits until every line [`log_to_stderr`] queued so far is written, at
+/// most two seconds: what a host that opened the application with
+/// [`App::build`] and writes its log to stderr calls before it ends, so
+/// its last lines are not lost. [`App::run`] calls it itself.
+#[cfg(not(target_arch = "wasm32"))]
+pub use ljos_runtime::stderr::flush as flush_log_to_stderr;
 
 /// An Engine with the standard modules registered (QtQml, QtQuick,
 /// QtQuick.Controls, with `media` QtMultimedia, and what they pull in), ready for an application's

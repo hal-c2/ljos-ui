@@ -133,3 +133,11 @@ fn a_handler_a_module_sets_wins_over_the_builder_s() {
     assert!(mine.borrow().is_empty(), "{:?}", mine.borrow());
     assert_eq!(*module.borrow(), ["debug: hello 2"]);
 }
+
+#[test]
+fn a_built_application_told_to_write_stderr_writes_it_and_flushes() {
+    let (engine, _) = says_hello().log_to_stderr(true).build().unwrap();
+    assert!(engine.take_log().is_empty(), "written, not kept");
+    // The host's last call: returns once the line is written.
+    ljos::flush_log_to_stderr();
+}
