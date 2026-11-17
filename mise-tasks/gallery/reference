@@ -1,23 +1,38 @@
 #!/usr/bin/env bash
-#MISE description="Take the qml6 reference pictures of the corpus into corpus/reference/ (offscreen, software, every run under timeout); local only, never committed"
+#MISE description="Take the qml6 reference pictures of the corpus into corpus/reference/ (offscreen, software, every run under timeout); local only, never committed. Fails when an example gives no picture, or none is made; says when qml6 is not the Qt CI pins"
+#MISE dir="{{config_root}}"
 #USAGE arg "[ids]..." var=#true help="Corpus example ids to take pictures of (default: every runnable one)"
 set -euo pipefail
 # Arguments: example ids to take only those.
 # qml6 is a black box here: it is only run, and its pictures are test input.
 # They are Qt output and large, so corpus/reference/ is git-ignored and each
 # machine makes its own.
-root="$(cd "$(dirname "$0")/../.." && pwd)"
-target="${CARGO_TARGET_DIR:-$root/target}"
+# shellcheck source-path=SCRIPTDIR source=../_lib/env.sh
+. "$(dirname "$0")/../_lib/env.sh"
+root="$ljos_root"
+need_corpus
+need_qml6
+need timeout "install GNU coreutils' timeout (macOS: brew install coreutils, which names it gtimeout: put its gnubin first on PATH)"
+qml6="${QML6:-qml6}"
+target="$(target_dir)"
 work="${GALLERY_DIR:-$target/gallery}/reference-work"
 refs="$root/corpus/reference"
 mkdir -p "$work" "$refs"
 cargo build --quiet -p qml_compare --manifest-path "$root/Cargo.toml"
+# Asked first, so a manifest qml-compare cannot read stops the run instead of
+# leaving no pictures and a zero count.
+examples="$("$target/debug/qml-compare" list --manifest "$root/corpus/examples.json" --runnable "$@")"
+[ -n "$examples" ] || die "gallery:reference: no runnable example${*:+ among $*} in corpus/examples.json"
+# Pictures from another Qt are not the ones CI's gallery compares with.
+mismatch="$(qt_mismatch)"
+[ -z "$mismatch" ] || printf 'gallery:reference: %s\n' "$mismatch" >&2
 
 # What an example saves must not change the next picture, nor the user's own data.
 . "$root/scripts/own-home.sh"
 own_home "$work/home"
 
-export QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software QT_FORCE_STDERR_LOGGING=1 \
+qt_offscreen
+export QT_QUICK_BACKEND=software QT_FORCE_STDERR_LOGGING=1 \
   TZ=UTC LANG=en_US.UTF-8 GSETTINGS_BACKEND=memory QML_DISABLE_DISK_CACHE=1
 
 made=0
@@ -34,15 +49,17 @@ while IFS=$'\t' read -r id dir entry width height settle _; do
   # harness/stubs stands in for an example's own C++ module (after the
   # overlay, so it comes first).
   # `timeout` also ends the process group's child when it hangs; -k makes sure.
-  if timeout -k 5 60 qml6 -I "$dir" -I "$overlay" -I "$root/corpus/harness/stubs" "$root/corpus/harness/reference.qml" \
-      -- "file://$dir/$entry" "$width" "$height" "$settle" "$png" >"$log" 2>&1 && [ -s "$png" ]; then
+  if timeout -k 5 60 "$qml6" -I "$dir" -I "$overlay" -I "$root/corpus/harness/stubs" "$root/corpus/harness/reference.qml" \
+      -- "file://$dir/$entry" "$width" "$height" "$settle" "$png" </dev/null >"$log" 2>&1 && [ -s "$png" ]; then
     made=$((made + 1))
   else
     rm -f "$png"
     failed=$((failed + 1))
     echo "no picture: $id ($(grep -m1 -E 'Error|error|not installed|unavailable|No such' "$log" | cut -c1-160))" >&2
   fi
-done < <("$target/debug/qml-compare" list --manifest "$root/corpus/examples.json" --runnable "$@")
+done <<EOF
+$examples
+EOF
 
 # When each picture was taken, read back from the files themselves.
 {
@@ -60,3 +77,6 @@ done < <("$target/debug/qml-compare" list --manifest "$root/corpus/examples.json
 # (Only ours: other jobs on the machine may be running qml6 too.)
 if pgrep -f "$root/corpus/harness/reference.qml" >/dev/null; then echo "a reference qml6 process is still running" >&2; fi
 echo "reference pictures: $made made, $failed failed (in $refs)"
+# A run that made nothing, or lost an example, is not a reference to compare with.
+[ "$made" -gt 0 ] || die "gallery:reference made no picture"
+[ "$failed" -eq 0 ] || die "gallery:reference: $failed example(s) gave no picture (each is named above, its log in $work)"
