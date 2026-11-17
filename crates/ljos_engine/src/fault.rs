@@ -92,6 +92,11 @@ pub struct FaultReport {
     pub(crate) boundaries: Vec<ObjectId>,
     /// A boundary reporting that it could not make its own content.
     pub(crate) target: Option<ObjectId>,
+    /// For an interrupted script: the object whose run the interrupt
+    /// stopped, when it was a run nested in `origin`'s dispatch (a handler
+    /// a write set off, a binding a read woke), and the boundaries around
+    /// it then, the nearest first. `None` when it stopped `origin`'s own run.
+    pub(crate) stopped: Option<(ObjectId, Vec<ObjectId>)>,
 }
 
 impl FaultReport {
@@ -110,6 +115,16 @@ impl FaultReport {
             Fault::Startup(m) | Fault::Internal(m) => m.clone(),
             other => other.to_string(),
         }
+    }
+
+    /// Whether the run an interrupt stopped was code outside `boundary`'s
+    /// content that a dispatch begun inside it set off. The dispatch is
+    /// still the content's fault, as its own run was cut short too, but
+    /// the time went elsewhere.
+    pub fn stopped_outside(&self, boundary: ObjectId) -> bool {
+        self.stopped
+            .as_ref()
+            .is_some_and(|(_, around)| !around.contains(&boundary))
     }
 }
 
@@ -161,6 +176,10 @@ pub(crate) struct FaultState {
     noting: RefCell<Vec<Vec<FaultReport>>>,
     /// Faults reported so far.
     filed: Cell<u64>,
+    /// The innermost nested run an interrupt stopped in the dispatch that
+    /// unwinds now: `Some(origin)` once one has, which is `None` for a run
+    /// with no object of its own.
+    stopped: Cell<Option<Option<ObjectId>>>,
     handler: RefCell<Option<FaultHandler>>,
     /// Set by the JS bridge for the QML function it is about to call: an
     /// exception in it is the calling script's to catch.
@@ -262,6 +281,7 @@ impl Engine {
             seq: 0,
             origin_name: origin.and_then(|o| self.label_of(o)),
             taken_by: TakenBy::Waiting,
+            stopped: None,
         });
     }
 
@@ -283,6 +303,7 @@ impl Engine {
             seq: 0,
             origin_name: self.label_of(boundary),
             taken_by: TakenBy::Waiting,
+            stopped: None,
         });
     }
 
@@ -313,6 +334,7 @@ impl Engine {
     pub(crate) fn report_js_fault(&self, fault: &JsFault) {
         let state = &self.inner.faults;
         let origin = state.origin.get();
+        let stopped = state.stopped.take();
         match fault {
             JsFault::JsException {
                 message,
@@ -351,6 +373,7 @@ impl Engine {
                         seq: 0,
                         origin_name: origin.and_then(|o| self.label_of(o)),
                         taken_by: TakenBy::Waiting,
+                        stopped: None,
                     },
                 );
             }
@@ -360,6 +383,10 @@ impl Engine {
             other => {
                 // The JS host's own words: they name what was running.
                 let (file, line) = self.declared_place(origin);
+                let stopped = stopped
+                    .flatten()
+                    .filter(|_| matches!(other, JsFault::JsInterrupted { .. }))
+                    .map(|o| (o, self.boundaries_around(Some(o))));
                 self.warn_and_file(
                     other.to_string(),
                     FaultReport {
@@ -374,6 +401,7 @@ impl Engine {
                         seq: 0,
                         origin_name: origin.and_then(|o| self.label_of(o)),
                         taken_by: TakenBy::Waiting,
+                        stopped,
                     },
                 );
             }
@@ -388,6 +416,26 @@ impl Engine {
             self.warn(msg);
             self.file_fault(report);
         }
+    }
+
+    /// A dispatch into JS begins: no run of it has been stopped yet.
+    pub(crate) fn forget_js_stopped(&self) {
+        self.inner.faults.stopped.set(None);
+    }
+
+    /// A nested run came back interrupted. The first to is the run the
+    /// interrupt stopped, and its object is the one running now.
+    pub(crate) fn note_js_stopped(&self) {
+        let state = &self.inner.faults;
+        if state.stopped.get().is_none() {
+            state.stopped.set(Some(state.origin.get()));
+        }
+    }
+
+    /// How many faults have been reported: a fault whose
+    /// [`FaultReport::seq`] is at most this was reported by now.
+    pub fn faults_reported(&self) -> u64 {
+        self.inner.faults.filed.get()
     }
 
     pub(crate) fn file_fault(&self, mut report: FaultReport) {

@@ -21,6 +21,11 @@
 //! A JS run cut short may not happen again (what it did before may have
 //! finished the work, or the data may have changed), so after one the Loader
 //! loads again by itself, once in [`SECOND_CHANCE`], and the log says so.
+//! That limit is for a run that loading again could cut short again: one
+//! while the item is made, or in the item's own code. A short handler of a
+//! made item whose dispatch was cut short in other objects' code (a click
+//! that sets off long work elsewhere) was set off by whatever ran the
+//! handler, not by the loading, so the Loader loads again each time.
 //! An exception in a handler is not such a fault: Qt logs it and keeps
 //! the item, and so does this. The work of making the item is charged to
 //! the Loader as its owner.
@@ -127,6 +132,10 @@ struct Run {
     emptied_quietly: bool,
     /// When an interrupted script last made the Loader load again.
     second_chance: Option<Time>,
+    /// [`Engine::faults_reported`] when the item was last made: a fault
+    /// reported by then came from making it. `u64::MAX` while it is being
+    /// published.
+    made_through: u64,
 }
 
 #[qml_impl]
@@ -372,9 +381,10 @@ impl Boundary for LoaderBoundary {
         let begun = with_run(e, me, |r| {
             // What a running job makes is not wanted any more.
             r.generation += 1;
-            (r.job.take(), r.incubating.take())
+            let making = r.job.is_some() || report.seq <= r.made_through;
+            (r.job.take(), r.incubating.take(), making)
         });
-        let Some((job, half_made)) = begun else {
+        let Some((job, half_made, making)) = begun else {
             return;
         };
         if let Some(job) = job {
@@ -389,7 +399,12 @@ impl Boundary for LoaderBoundary {
         set(e, me, Loader::STATUS.index, loader_status::ERROR.into());
         set(e, me, Loader::PROGRESS.index, 1.0.into());
         if matches!(report.fault, Fault::JsInterrupted { .. }) {
-            load_again(e, me, report.at);
+            let again = if making || !report.stopped_outside(me) {
+                Again::Counted
+            } else {
+                Again::Elsewhere
+            };
+            load_again(e, me, report.at, again);
         }
     }
 
@@ -404,9 +419,31 @@ impl Boundary for LoaderBoundary {
     }
 }
 
+/// Whether an interrupt counts toward a Loader's giving up on its item.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Again {
+    /// Loading again could be cut short again: the run was the item's own
+    /// code, or ran while the item was made.
+    Counted,
+    /// The item's handler set off other objects' code after it was made,
+    /// and the interrupt stopped that.
+    Elsewhere,
+}
+
 /// After a script was interrupted at `at`: loads again unless that was just
 /// tried. The log has the fault already; this says what became of the item.
-fn load_again(e: &Engine, me: ObjectId, at: Time) {
+fn load_again(e: &Engine, me: ObjectId, at: Time, again: Again) {
+    let place = e.declared_at(me).unwrap_or_default();
+    if again == Again::Elsewhere {
+        warn(
+            e,
+            format!(
+                "{place}Loader: a script its item set off in another object was interrupted, loading again"
+            ),
+        );
+        reload(e, me, true);
+        return;
+    }
     let tried = with_run(e, me, |r| {
         let tried = r
             .second_chance
@@ -416,7 +453,6 @@ fn load_again(e: &Engine, me: ObjectId, at: Time) {
         }
         tried
     });
-    let place = e.declared_at(me).unwrap_or_default();
     match tried {
         Some(false) => {
             warn(
@@ -615,6 +651,8 @@ fn finish(e: &Engine, me: ObjectId, generation: u64, made: Result<ObjectId, Engi
     let emptied_quietly = with_run(e, me, |r| {
         r.job = None;
         r.incubating = None;
+        // What `loaded` or a change of `item` sets off is still making it.
+        r.made_through = u64::MAX;
         std::mem::take(&mut r.emptied_quietly)
     })
     .unwrap_or(false);
@@ -640,6 +678,9 @@ fn finish(e: &Engine, me: ObjectId, generation: u64, made: Result<ObjectId, Engi
             }
             set(e, me, Loader::PROGRESS.index, 1.0.into());
         }
+    }
+    if is_current(e, me, generation) {
+        with_run(e, me, |r| r.made_through = e.faults_reported());
     }
 }
 

@@ -1419,8 +1419,7 @@ impl Engine {
                 return None;
             }
         };
-        let slice = js.slice();
-        match js.host.enter_naming(label, what, slice, f) {
+        match self.enter_js(&js, label, what, f) {
             Ok(v) => Some(v),
             // Nested in a dispatch that is now over: the dispatch is the
             // fault, and is reported when it unwinds.
@@ -1430,6 +1429,27 @@ impl Engine {
                 None
             }
         }
+    }
+
+    /// One run of JS, outermost or nested, noting which run an interrupt
+    /// stopped for the dispatch's fault ([`FaultReport::stopped_outside`]).
+    ///
+    /// [`FaultReport::stopped_outside`]: crate::FaultReport::stopped_outside
+    fn enter_js<R>(
+        &self,
+        js: &JsState,
+        label: &str,
+        what: impl FnOnce() -> String,
+        f: impl for<'js> FnOnce(&Scope<'js>) -> rquickjs::Result<R>,
+    ) -> Result<R, JsFault> {
+        if !js.host.in_run() {
+            self.forget_js_stopped();
+        }
+        let r = js.host.enter_naming(label, what, js.slice(), f);
+        if matches!(r, Err(JsFault::JsInterrupted { .. })) && js.host.interrupted() {
+            self.note_js_stopped();
+        }
+        r
     }
 
     /// Whether promise jobs (a `then` callback, the rest of an `async`
@@ -1452,6 +1472,7 @@ impl Engine {
         if !js.host.has_pending_jobs() {
             return;
         }
+        self.forget_js_stopped();
         let until = std::time::Instant::now() + js.slice().hard;
         let pumped = js.host.pump_jobs(until);
         for fault in &pumped.faults {
@@ -1474,9 +1495,7 @@ impl Engine {
         let js = self
             .js()
             .map_err(|e| crate::JsError::Failed(e.to_string()))?;
-        let slice = js.slice();
-        js.host
-            .enter_naming(label, String::new, slice, f)
+        self.enter_js(&js, label, String::new, f)
             .map_err(|fault| match fault {
                 JsFault::JsException {
                     message,
