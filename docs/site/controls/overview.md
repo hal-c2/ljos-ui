@@ -43,7 +43,7 @@ Column {
 }
 ```
 
-The style has `Button` (with `primary`, `destructive`, `subtle`, `chevron` and `iconName`), `Switch`, `CheckBox`, `ComboBox`, `TextField`, `SpinBox`, `Slider`, `Menu`, `MenuItem`, `MenuSeparator`, `Label`, `ToolTip` and `Icon`, which draws Lucide's icons. `TextArea`, `Dialog`, `ItemDelegate`, `Popup`, `ScrollBar`, `ScrollView`, `FileDialog` and `FolderDialog` are there too, drawn as the Basic style draws them until the style has its own.
+The style has `Button` (with `primary`, `destructive`, `subtle`, `chevron` and `iconName`), `Switch`, `CheckBox`, `ComboBox`, `TextField`, `SpinBox`, `Slider`, `Menu`, `MenuItem`, `MenuSeparator`, `Label`, `ToolTip` and `Icon`, which draws Lucide's icons. For laying an app out it has `TabBar` and `TabButton`, `Card`, `Popover` (a popup beside the item it belongs to), `SplitButton` (an action with a menu of its other options) and `EmptyState` (what a view shows while it has nothing to show). `TextArea`, `Dialog`, `ItemDelegate`, `Popup`, `ScrollBar`, `ScrollView`, `FileDialog` and `FolderDialog` are there too, drawn as the Basic style draws them until the style has its own.
 
 Every colour is a role of `Theme` (`canvas`, `surface`, `input`, `border`, `text`, `textMuted`, `accent`, `focus`, `link`, `destructive` and more), and every role is derived from three: `canvas`, `text` and `accent`, which follow `Ljos.Design`'s `Colors` in light and dark. Each derived role is moved until it meets its WCAG contrast ratio against every fill it is drawn on, so a theme built from your own three colours stays legible. Set any role to override it (`Theme.input = "#b00020"`); the others still follow the three.
 

@@ -1777,7 +1777,21 @@ The style has `Button` (`primary`, `destructive`, `subtle`, `chevron`,
 `iconName`), `Switch`, `CheckBox`, `ComboBox` (`outline`), `TextField`,
 `SpinBox`, `Slider`, `Menu`, `MenuItem` (`shortcut`, `iconSpace`,
 `destructive`, `iconName`), `MenuSeparator`, `Label`, `ToolTip` and `Icon`
-(Lucide's marks, under Lucide's ISC licence). It has every control
+(Lucide's marks, under Lucide's ISC licence). Beside them it has the parts
+an app is laid out with: `TabBar` and `TabButton` (`iconName`), a strip of
+tabs each as wide as its text, the current one raised and its text
+heavier; `Card`, a frame on the `surface` with the large radius;
+`Popover`, a popup beside its parent (`edge`: `Edge.Bottom` by default,
+`Edge.Top`, `Edge.Left` or `Edge.Right`, and the other side where the
+window has no room; `side` says where it opens, `gap` how far; a reader
+meets it as a dialog, so give it an `Accessible.name`); `SplitButton`
+(`text`, `iconName`, `compact`, `menu`, `menuName`, `clicked`,
+`menuRequested`), an action and a chevron that opens a menu of its other
+options; and `EmptyState` (`status` `"empty"`, `"loading"` or `"error"`,
+`iconName`, `title`, `description`, `actionText`, `secondaryActionText`,
+`actionTriggered`, `secondaryActionTriggered`). `Ljos.Controls.Basic` has
+each of these too, drawn as the Basic style would (a card is Basic's
+frame), so the promise below holds both ways. It has every control
 `Ljos.Controls.Basic` has, so a file moves from one to the other by its
 import alone: `TextArea`, `Dialog`, `ItemDelegate`, `Popup`, `ScrollBar`,
 `ScrollView` and the K6 controls below are Basic's until the style draws
@@ -1814,8 +1828,9 @@ drawn, and the others still follow the three.
 Motion is `Ljos.Design`'s `Motion`: a pressed button gives a little
 (`Motion.pressScale`), a switch's thumb slides in `Motion.moveSmall` and a
 menu fades in. With reduced motion nothing moves and a change still shows:
-the button keeps its size and its fill says it is pressed, and the thumb is
-at its end at once while the track's colour still fades. Each control has
+the button keeps its size and its fill says it is pressed, the thumb is
+at its end at once while the track's colour still fades, and a loading
+empty state's icon pulses where it would turn. Each control has
 a ring of the `focus` role where a key brought the keyboard, and the style
 passes `ljos_audit` in light and dark.
 

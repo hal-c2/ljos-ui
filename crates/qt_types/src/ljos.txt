@@ -125,11 +125,13 @@ module Ljos.Controls
 	BusyIndicator QtQuick/Controls/Basic/BusyIndicator.qml
 	Button Ljos/Controls/Button.qml
 	ButtonGroup QtQuick.Templates.ButtonGroup
+	Card Ljos/Controls/Card.qml
 	CheckBox Ljos/Controls/CheckBox.qml
 	ComboBox Ljos/Controls/ComboBox.qml
 	Control QtQuick/Controls/Basic/Control.qml
 	DelayButton QtQuick/Controls/Basic/DelayButton.qml
 	Dialog QtQuick/Controls/Basic/Dialog.qml
+	EmptyState Ljos/Controls/EmptyState.qml
 	FileDialog QtQuick.Dialogs.FileDialog
 	FolderDialog QtQuick.Dialogs.FolderDialog
 	Frame QtQuick/Controls/Basic/Frame.qml
@@ -142,6 +144,7 @@ module Ljos.Controls
 	MenuSeparator Ljos/Controls/MenuSeparator.qml
 	Page QtQuick/Controls/Basic/Page.qml
 	Pane QtQuick/Controls/Basic/Pane.qml
+	Popover Ljos/Controls/Popover.qml
 	Popup Ljos/Controls/Popup.qml
 	ProgressBar QtQuick/Controls/Basic/ProgressBar.qml
 	RadioButton QtQuick/Controls/Basic/RadioButton.qml
@@ -150,10 +153,11 @@ module Ljos.Controls
 	ScrollView QtQuick/Controls/Basic/ScrollView.qml
 	Slider Ljos/Controls/Slider.qml
 	SpinBox Ljos/Controls/SpinBox.qml
+	SplitButton Ljos/Controls/SplitButton.qml
 	SwipeView QtQuick/Controls/Basic/SwipeView.qml
 	Switch Ljos/Controls/Switch.qml
-	TabBar QtQuick/Controls/Basic/TabBar.qml
-	TabButton QtQuick/Controls/Basic/TabButton.qml
+	TabBar Ljos/Controls/TabBar.qml
+	TabButton Ljos/Controls/TabButton.qml
 	TextArea QtQuick/Controls/Basic/TextArea.qml
 	TextField Ljos/Controls/TextField.qml
 	Theme Ljos/Controls/Theme.qml
@@ -180,6 +184,8 @@ module Ljos.Controls
 		signal filledChanged
 		signal fillChanged
 		signal inkChanged
+	type Ljos/Controls/Card.qml Card
+		prototype QtQuick.Templates.Frame named
 	type Ljos/Controls/CheckBox.qml CheckBox
 		prototype QtQuick.Templates.CheckBox named
 	type Ljos/Controls/ComboBox.qml ComboBox
@@ -196,6 +202,24 @@ module Ljos.Controls
 		signal iconNameChanged
 		signal startSpaceChanged
 		signal endSpaceChanged
+	type Ljos/Controls/EmptyState.qml EmptyState
+		prototype QtQuick.Templates.Control named
+		prop status QtQml.string named
+		prop iconName QtQml.string named
+		prop title QtQml.string named
+		prop description QtQml.string named
+		prop actionText QtQml.string named
+		prop secondaryActionText QtQml.string named
+		prop maximumTextWidth QtQml.real named
+		signal statusChanged
+		signal iconNameChanged
+		signal titleChanged
+		signal descriptionChanged
+		signal actionTextChanged
+		signal secondaryActionTextChanged
+		signal maximumTextWidthChanged
+		signal actionTriggered
+		signal secondaryActionTriggered
 	type Ljos/Controls/Icon.qml Icon
 		prototype QtQuick.Item named
 		prop name QtQml.string named
@@ -230,14 +254,43 @@ module Ljos.Controls
 		signal inkChanged
 	type Ljos/Controls/MenuSeparator.qml MenuSeparator
 		prototype QtQuick.Templates.MenuSeparator named
+	type Ljos/Controls/Popover.qml Popover
+		prototype Ljos.Controls.impl.PopoverBase named
 	type Ljos/Controls/Popup.qml Popup
 		prototype QtQuick.Templates.Popup named
 	type Ljos/Controls/Slider.qml Slider
 		prototype QtQuick.Templates.Slider named
 	type Ljos/Controls/SpinBox.qml SpinBox
 		prototype QtQuick.Templates.SpinBox named
+	type Ljos/Controls/SplitButton.qml SplitButton
+		prototype QtQuick.Templates.Control named
+		prop text QtQml.string named
+		prop iconName QtQml.string named
+		prop compact QtQml.bool named
+		prop actionEnabled QtQml.bool named
+		prop menuEnabled QtQml.bool named
+		prop menu Ljos.Controls.Popup named pointer
+		prop menuName QtQml.string named
+		signal textChanged
+		signal iconNameChanged
+		signal compactChanged
+		signal actionEnabledChanged
+		signal menuEnabledChanged
+		signal menuChanged
+		signal menuNameChanged
+		signal clicked
+		signal menuRequested
+		method openMenu
 	type Ljos/Controls/Switch.qml Switch
 		prototype QtQuick.Templates.Switch named
+	type Ljos/Controls/TabBar.qml TabBar
+		prototype QtQuick.Templates.TabBar named
+	type Ljos/Controls/TabButton.qml TabButton
+		prototype QtQuick.Templates.TabButton named
+		prop iconName QtQml.string named
+		prop ink QtQuick.color named readonly
+		signal iconNameChanged
+		signal inkChanged
 	type Ljos/Controls/TextField.qml TextField
 		prototype QtQuick.Templates.TextField named
 	type Ljos/Controls/Theme.qml Theme
@@ -271,6 +324,7 @@ module Ljos.Controls
 		prop dark QtQml.bool named readonly
 		prop radius QtQml.real named
 		prop radiusSmall QtQml.real named readonly
+		prop radiusMedium QtQml.real named readonly
 		prop radiusLarge QtQml.real named readonly
 		prop controlHeight QtQml.int named
 		prop spacingSmall QtQml.int named readonly
@@ -307,6 +361,7 @@ module Ljos.Controls
 		signal darkChanged
 		signal radiusChanged
 		signal radiusSmallChanged
+		signal radiusMediumChanged
 		signal radiusLargeChanged
 		signal controlHeightChanged
 		signal spacingSmallChanged
@@ -332,11 +387,13 @@ module Ljos.Controls.Basic
 	BusyIndicator QtQuick/Controls/Basic/BusyIndicator.qml
 	Button QtQuick/Controls/Basic/Button.qml
 	ButtonGroup QtQuick.Templates.ButtonGroup
+	Card Ljos/Controls/Basic/Card.qml
 	CheckBox QtQuick/Controls/Basic/CheckBox.qml
 	ComboBox QtQuick/Controls/Basic/ComboBox.qml
 	Control QtQuick/Controls/Basic/Control.qml
 	DelayButton QtQuick/Controls/Basic/DelayButton.qml
 	Dialog QtQuick/Controls/Basic/Dialog.qml
+	EmptyState Ljos/Controls/Basic/EmptyState.qml
 	FileDialog QtQuick.Dialogs.FileDialog
 	FolderDialog QtQuick.Dialogs.FolderDialog
 	Frame QtQuick/Controls/Basic/Frame.qml
@@ -348,6 +405,7 @@ module Ljos.Controls.Basic
 	MenuSeparator QtQuick/Controls/Basic/MenuSeparator.qml
 	Page QtQuick/Controls/Basic/Page.qml
 	Pane QtQuick/Controls/Basic/Pane.qml
+	Popover Ljos/Controls/Basic/Popover.qml
 	Popup QtQuick/Controls/Basic/Popup.qml
 	ProgressBar QtQuick/Controls/Basic/ProgressBar.qml
 	RadioButton QtQuick/Controls/Basic/RadioButton.qml
@@ -356,6 +414,7 @@ module Ljos.Controls.Basic
 	ScrollView QtQuick/Controls/Basic/ScrollView.qml
 	Slider QtQuick/Controls/Basic/Slider.qml
 	SpinBox QtQuick/Controls/Basic/SpinBox.qml
+	SplitButton Ljos/Controls/Basic/SplitButton.qml
 	SwipeView QtQuick/Controls/Basic/SwipeView.qml
 	Switch QtQuick/Controls/Basic/Switch.qml
 	TabBar QtQuick/Controls/Basic/TabBar.qml
@@ -365,11 +424,66 @@ module Ljos.Controls.Basic
 	ToolBar QtQuick/Controls/Basic/ToolBar.qml
 	ToolButton QtQuick/Controls/Basic/ToolButton.qml
 	ToolTip QtQuick/Controls/Basic/ToolTip.qml
+	type Ljos/Controls/Basic/Card.qml Card
+		prototype QtQuick.Controls.Basic.Frame named
+	type Ljos/Controls/Basic/EmptyState.qml EmptyState
+		prototype QtQuick.Templates.Control named
+		prop status QtQml.string named
+		prop iconName QtQml.string named
+		prop title QtQml.string named
+		prop description QtQml.string named
+		prop actionText QtQml.string named
+		prop secondaryActionText QtQml.string named
+		prop maximumTextWidth QtQml.real named
+		signal statusChanged
+		signal iconNameChanged
+		signal titleChanged
+		signal descriptionChanged
+		signal actionTextChanged
+		signal secondaryActionTextChanged
+		signal maximumTextWidthChanged
+		signal actionTriggered
+		signal secondaryActionTriggered
+	type Ljos/Controls/Basic/Popover.qml Popover
+		prototype Ljos.Controls.impl.PopoverBase named
+	type Ljos/Controls/Basic/SplitButton.qml SplitButton
+		prototype QtQuick.Templates.Control named
+		prop text QtQml.string named
+		prop iconName QtQml.string named
+		prop compact QtQml.bool named
+		prop actionEnabled QtQml.bool named
+		prop menuEnabled QtQml.bool named
+		prop menu QtQuick.Controls.Basic.Popup named pointer
+		prop menuName QtQml.string named
+		signal textChanged
+		signal iconNameChanged
+		signal compactChanged
+		signal actionEnabledChanged
+		signal menuEnabledChanged
+		signal menuChanged
+		signal menuNameChanged
+		signal clicked
+		signal menuRequested
+		method openMenu
 
 module Ljos.Controls.impl
+	PopoverBase Ljos/Controls/impl/PopoverBase.qml
 	PopupEnter Ljos/Controls/impl/PopupEnter.qml
 	PopupShade Ljos/Controls/impl/PopupShade.qml
 	PopupSurface Ljos/Controls/impl/PopupSurface.qml
+	type Ljos/Controls/impl/PopoverBase.qml PopoverBase
+		prototype QtQuick.Templates.Popup named
+		prop edge QtQml.int named
+		prop side QtQml.int named
+		prop gap QtQml.real named
+		prop anchorWidth QtQml.real named readonly
+		prop anchorHeight QtQml.real named readonly
+		signal edgeChanged
+		signal sideChanged
+		signal gapChanged
+		signal anchorWidthChanged
+		signal anchorHeightChanged
+		method placed
 	type Ljos/Controls/impl/PopupEnter.qml PopupEnter
 		prototype QtQuick.Transition named
 	type Ljos/Controls/impl/PopupShade.qml PopupShade

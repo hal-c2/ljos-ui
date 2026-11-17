@@ -59,12 +59,17 @@ pub(crate) const DRAWN: &[&str] = &[
     "ToolTip",
 ];
 
+/// The directory of the controls Ljos.Controls has that the Basic style
+/// has none of, drawn as Basic would: a file moves between the two
+/// modules by its import alone.
+pub(crate) const OWN_BASIC: &str = "Ljos/Controls/Basic";
+
 /// The templates the module has: they draw nothing, so they are the same
 /// types in every style.
 pub(crate) const TEMPLATES: &[fn() -> &'static MetaObject] =
     &[AbstractButton::static_meta, ButtonGroup::static_meta];
 
-pub(crate) fn register(engine: &Engine, basic: &[String]) {
+pub(crate) fn register(engine: &Engine, basic: &[String], own_basic: &[String]) {
     let version = Version::new(1, 0);
     for meta in TEMPLATES {
         engine.register_type(MODULE, version, MetaRef::Static(meta()));
@@ -80,6 +85,12 @@ pub(crate) fn register(engine: &Engine, basic: &[String]) {
             continue;
         }
         if let Err(err) = engine.register_qml_type(MODULE, version, &format!("{BASIC}/{name}")) {
+            util::warn(engine, format!("{MODULE}.{name}: {err}"));
+        }
+    }
+    for name in own_basic {
+        let key = format!("{OWN_BASIC}/{name}");
+        if let Err(err) = engine.register_qml_type(MODULE, version, &key) {
             util::warn(engine, format!("{MODULE}.{name}: {err}"));
         }
     }

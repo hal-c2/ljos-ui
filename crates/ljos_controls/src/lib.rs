@@ -292,7 +292,11 @@ pub fn register(engine: &Engine) {
     // Ljós's own API: the controls of its slice, as Basic draws them, and
     // in Ljós's own style.
     let basic = styles.get(BASIC).map_or(&[][..], Vec::as_slice);
-    ljos::register(engine, basic);
+    ljos::register(
+        engine,
+        basic,
+        styles.get(ljos::OWN_BASIC).map_or(&[][..], Vec::as_slice),
+    );
     ljos_style::register(
         engine,
         styles
