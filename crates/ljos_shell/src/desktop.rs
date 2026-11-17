@@ -2278,6 +2278,35 @@ impl<M: Send + 'static> HostApp<WinitHost<ShellEvent>> for Desktop<M> {
     }
 }
 
+/// The application before and after the loop's first turn. It is built in
+/// that turn, once the platform has said which displays there are, so that
+/// a window reads the display it will be shown on as it is made, as in Qt:
+/// winit names the displays only to a running loop.
+struct Launch<M> {
+    build: Option<Build<M>>,
+    desktop: Option<Desktop<M>>,
+    failure: Rc<RefCell<Option<ShellError>>>,
+}
+
+type Build<M> = Box<dyn FnOnce(&Control<'_>) -> Result<Desktop<M>, ShellError>>;
+
+impl<M: Send + 'static> HostApp<WinitHost<ShellEvent>> for Launch<M> {
+    fn event(&mut self, host: &mut Control<'_>, event: Event<'_, RawEvent, ShellEvent>) {
+        if let Some(build) = self.build.take() {
+            match build(host) {
+                Ok(desktop) => self.desktop = Some(desktop),
+                Err(error) => {
+                    *self.failure.borrow_mut() = Some(error);
+                    host.exit();
+                }
+            }
+        }
+        if let Some(desktop) = &mut self.desktop {
+            desktop.event(host, event);
+        }
+    }
+}
+
 /// [`crate::run`].
 pub(crate) fn run<M: Send + 'static>(
     mut config: ShellConfig,
@@ -2311,73 +2340,83 @@ pub(crate) fn run<M: Send + 'static>(
     use_fonts(&config, desktop_font);
     let proxy: Proxy = Arc::new(Mutex::new(host.proxy()));
     let ctx = new_context(0, &proxy);
-    // True from the start: the first turn of the loop opens the windows.
-    let needs_sync = Rc::new(Cell::new(true));
-    let hosting = Hosting {
-        display: if host.is_wayland() {
-            crate::platform::Display::Wayland
-        } else {
-            crate::platform::Display::Other
-        },
-        tree: Some(tree_id(0)),
-        wake: waker(0, &proxy),
-        changed: Some({
-            let needs_sync = Rc::clone(&needs_sync);
-            Box::new(move || needs_sync.set(true))
-        }),
+    let display = if host.is_wayland() {
+        crate::platform::Display::Wayland
+    } else {
+        crate::platform::Display::Other
     };
-    #[cfg_attr(not(feature = "mcp"), allow(unused_mut))]
-    let mut app = ShellApp::hosted(&ctx, &config, Arc::new(SystemClock::new()), setup, hosting)?;
-    if chosen.automatic {
-        app.engine().log(
-            LogLevel::Info,
-            CATEGORY,
-            "drawn on the processor: EGL would draw in software",
-        );
-    }
-    crate::color_space::settle(
-        &mut config,
-        std::env::var(crate::color_space::VAR).ok().as_deref(),
-        |unknown| app.engine().log(LogLevel::Warning, CATEGORY, unknown),
-    );
-    #[cfg(feature = "mcp")]
-    app.record_startup(ljos_dev::mcp::StartupStep::Built, began.elapsed());
+    let handle = host.display_handle();
     let failure = Rc::new(RefCell::new(None));
-    #[cfg_attr(not(feature = "mcp"), allow(unused_mut))]
-    let mut desktop = Desktop::new(
-        app,
-        config,
-        ctx,
-        proxy,
-        needs_sync,
-        Rc::clone(&failure),
-        starting,
-    );
-    #[cfg(feature = "mcp")]
-    {
-        desktop.began = began;
-    }
-    *desktop.drags.borrow_mut() = drags::Drags::start(&host.display_handle(), {
-        let proxy = Arc::clone(&desktop.proxy);
-        Arc::new(move |step| {
-            let proxy = crate::lock(&proxy);
-            // An error is a loop that has ended, and the drag with it.
-            let _ = proxy.send_event(ShellEvent::Drag(step));
-        })
-    });
-    // What follows drags in carries them out too.
-    let follows = desktop.drags.borrow().is_some();
-    if !follows && wayland_drag::is_wayland(&host.display_handle()) {
-        crate::platform::note_no_wayland_drops(desktop.app.engine());
-    }
-    if follows {
-        let drag_out = Rc::new(drags::DragOut::new(Rc::clone(&desktop.drags)));
-        ljos_platform::Platform::of(desktop.app.engine()).set_drag_out(Some(
-            Rc::clone(&drag_out) as Rc<dyn ljos_platform::DragOutService>
-        ));
-        desktop.drag_out = Some(drag_out);
-    }
-    host.run(desktop)?;
+    let build = {
+        let failure = Rc::clone(&failure);
+        move |host: &Control<'_>| -> Result<Desktop<M>, ShellError> {
+            // True from the start: the first turn of the loop opens the windows.
+            let needs_sync = Rc::new(Cell::new(true));
+            let screens = host.screens();
+            let hosting = Hosting {
+                display,
+                tree: Some(tree_id(0)),
+                wake: waker(0, &proxy),
+                changed: Some({
+                    let needs_sync = Rc::clone(&needs_sync);
+                    Box::new(move || needs_sync.set(true))
+                }),
+                screens: screens.iter().map(screen_spec).collect(),
+            };
+            #[cfg_attr(not(feature = "mcp"), allow(unused_mut))]
+            let mut app =
+                ShellApp::hosted(&ctx, &config, Arc::new(SystemClock::new()), setup, hosting)?;
+            if chosen.automatic {
+                app.engine().log(
+                    LogLevel::Info,
+                    CATEGORY,
+                    "drawn on the processor: EGL would draw in software",
+                );
+            }
+            crate::color_space::settle(
+                &mut config,
+                std::env::var(crate::color_space::VAR).ok().as_deref(),
+                |unknown| app.engine().log(LogLevel::Warning, CATEGORY, unknown),
+            );
+            #[cfg(feature = "mcp")]
+            app.record_startup(ljos_dev::mcp::StartupStep::Built, began.elapsed());
+            let mut desktop = Desktop::new(app, config, ctx, proxy, needs_sync, failure, starting);
+            // The engine has these already; the first settle reads them again
+            // only for which display each window lands on.
+            desktop.screens = screens;
+            #[cfg(feature = "mcp")]
+            {
+                desktop.began = began;
+            }
+            *desktop.drags.borrow_mut() = drags::Drags::start(&handle, {
+                let proxy = Arc::clone(&desktop.proxy);
+                Arc::new(move |step| {
+                    let proxy = crate::lock(&proxy);
+                    // An error is a loop that has ended, and the drag with it.
+                    let _ = proxy.send_event(ShellEvent::Drag(step));
+                })
+            });
+            // What follows drags in carries them out too.
+            let follows = desktop.drags.borrow().is_some();
+            if !follows && wayland_drag::is_wayland(&handle) {
+                crate::platform::note_no_wayland_drops(desktop.app.engine());
+            }
+            if follows {
+                let drag_out = Rc::new(drags::DragOut::new(Rc::clone(&desktop.drags)));
+                ljos_platform::Platform::of(desktop.app.engine())
+                    .set_drag_out(Some(
+                        Rc::clone(&drag_out) as Rc<dyn ljos_platform::DragOutService>
+                    ));
+                desktop.drag_out = Some(drag_out);
+            }
+            Ok(desktop)
+        }
+    };
+    host.run(Launch::<M> {
+        build: Some(Box::new(build)),
+        desktop: None,
+        failure: Rc::clone(&failure),
+    })?;
     match failure.borrow_mut().take() {
         Some(error) => Err(error),
         None => Ok(()),
