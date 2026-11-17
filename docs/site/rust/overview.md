@@ -79,6 +79,30 @@ fn main() {
 
 A shipped application compiles its QML ahead of time in `build.rs` into a binary pack in `OUT_DIR` and embeds it with `ljos::include_qml!`. Because the QML is already lowered to intermediate representation (`ljos_ir`), the shipped binary links no QML parser or compiler. During development, you can enable the non-default `dev-qml` feature and use `App::qml_dir` (or `App::qml_dirs` for multiple import trees) to compile QML from disk at start-up.
 
+### Where the log goes
+
+An application started with `App::run`, `App::run_headless` or their `_with` forms writes what it logs (`console.log`, `console.warn`, `console.error` and the runtime's own warnings) to stderr, one line per entry after its level, exactly as `ljos run` does:
+
+```text
+debug: hello 2
+warning: careful
+```
+
+A thread of its own writes these lines, so a terminal that scrolls slowly, a pipe nobody reads or a closed stderr never holds up the UI thread. That thread starts with the first line, so an application that logs nothing starts no thread. If stderr does not keep up for long enough to fill a 1 MiB queue, the lines that do not fit are dropped, and one line in their place says how many were lost. When the application ends, it waits up to two seconds for the remaining lines to be written.
+
+To handle the log yourself, pass a handler to `App::on_log`. Each `LogEntry` then goes to your handler, and nothing goes to stderr. `LogEntry::line` formats an entry as the stderr line above:
+
+```rust
+ljos::App::new("Hello")
+    .source(ljos::include_qml!("qml.pack"))
+    .root("Main")
+    .on_log(|entry| my_logger::info(&entry.line()))
+    .run()
+    .unwrap();
+```
+
+`App::log_to_stderr(false)` writes the log nowhere and keeps it in the Engine instead, where `Engine::take_log` reads the latest 1024 entries. Whichever of `on_log` and `log_to_stderr` you call last applies. A handler set with `Engine::set_log_handler` while the application starts, from a module's `register` or from the setup closure of `run_with`, replaces either one. `App::build` and `App::build_engine` keep the log in the Engine unless you call one of these methods, since you run that Engine yourself.
+
 ## The Engine and the UI thread
 
 An application normally has one `Engine`. It lives on the main UI thread and is `!Send`, so it can never be moved across threads or shared behind a mutex.
