@@ -44,6 +44,32 @@ impl fmt::Display for LogEntry {
     }
 }
 
+impl LogEntry {
+    /// The line a terminal shows for the entry: its level, then its
+    /// message (`debug: hello 2`, `warning: …`, and `error: …` for a
+    /// critical one). What `ljos run` writes, and an application on the
+    /// `ljos` facade by default.
+    pub fn line(&self) -> String {
+        let level = match self.level {
+            LogLevel::Debug => "debug",
+            LogLevel::Info => "info",
+            LogLevel::Warning => "warning",
+            LogLevel::Critical => "error",
+        };
+        format!("{level}: {}", self.message)
+    }
+}
+
+/// A log handler ([`Engine::set_log_handler`]) that writes each entry's
+/// [`LogEntry::line`] to stderr. Not from this thread: a write to stderr
+/// can block, for ever when nobody reads it, and the handler runs inside
+/// the script that logged. The line goes to a thread of its own
+/// (`ljos_runtime::stderr`), started by the first line, so an application
+/// that logs nothing starts none.
+pub fn log_to_stderr(entry: &LogEntry) {
+    ljos_runtime::stderr::line(&entry.line());
+}
+
 pub(crate) type LogHandler = Box<dyn FnMut(&LogEntry)>;
 pub(crate) type WarningHandler = Box<dyn FnMut(&str)>;
 

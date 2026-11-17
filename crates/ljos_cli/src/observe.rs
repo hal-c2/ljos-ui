@@ -104,14 +104,14 @@ impl Observe {
                     calls_per_second: rate,
                     ..InspectorAccess::default()
                 };
-                let at = setup.serve_inspector_as(options, access, crate::run::print_log)?;
+                let at = setup.serve_inspector_as(options, access, ljos_engine::log_to_stderr)?;
                 crate::stderr::line(&format!(
                     "ljos: the observer's inspector at {}, token in {}",
                     at.url,
                     at.token_file.display()
                 ));
             } else {
-                setup.engine().set_log_handler(crate::run::print_log);
+                setup.engine().set_log_handler(ljos_engine::log_to_stderr);
             }
             let engine = setup.engine();
             register(engine);

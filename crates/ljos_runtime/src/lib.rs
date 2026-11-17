@@ -15,6 +15,7 @@
 //! | [`memory`] | `MemoryPressure`, `Evictable`, byte budgets, `ByteLru` | 8.5 |
 //! | [`observe`] | named mailboxes and their counters, for an observer | 3.4, 19.4 |
 //! | [`platform`] | points to pixels and the starting font, per platform | 7 |
+//! | [`stderr`] | stderr written off the UI thread, never waited for, started by the first line | 0 % idle, 3.3 |
 //!
 //! Nothing in this crate polls or sleeps: the only things that wake the UI
 //! thread are the shell's event loop and the inbox's wake hook.
@@ -30,6 +31,7 @@ pub mod observe;
 pub mod platform;
 pub mod pool;
 pub mod scheduler;
+pub mod stderr;
 pub mod supervisor;
 pub mod time;
 
