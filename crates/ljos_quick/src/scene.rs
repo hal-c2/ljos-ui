@@ -1455,6 +1455,11 @@ pub struct QuickScene {
     platform: Option<Rc<ljos_platform::Platform>>,
     /// Whether it hears what Animators show (once per scene).
     watching_shown: bool,
+    /// What [`QuickScene::set_window_active`] was last told, kept for a
+    /// root shown after it: a host that knows its window has no keyboard
+    /// yet says so before the root is shown, and the root's window never
+    /// has active focus to lose.
+    pub(crate) window_active: bool,
     /// The root [`QuickScene::replace_root`] lets go of, while it does:
     /// what it owns is destroyed next and is not given back what the
     /// scene gave it.
@@ -1550,6 +1555,7 @@ impl QuickScene {
             },
             platform: None,
             watching_shown: false,
+            window_active: true,
             going: None,
             timing: None,
             saw_input: std::cell::Cell::new(false),
@@ -1588,7 +1594,7 @@ impl QuickScene {
                 let going = self.going.take();
                 if self.adopt(engine, old, None, top, 0).is_ok() {
                     self.root = Some(old);
-                    crate::focus::tree::add_window(engine, old);
+                    crate::focus::tree::add_window(engine, old, self.window_active);
                 } else {
                     self.unadopt(engine, old, true);
                 }
@@ -1613,7 +1619,7 @@ impl QuickScene {
         self.root = Some(root);
         self.rooted(engine);
         // The scene is the window: its focus item gets active focus.
-        crate::focus::tree::add_window(engine, root);
+        crate::focus::tree::add_window(engine, root, self.window_active);
         // canPaste hears of other applications' copies when the window
         // comes back or an editor gets the keyboard.
         crate::Clipboard::follow_window(engine, root);
