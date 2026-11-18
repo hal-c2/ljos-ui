@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#MISE description="Test what the tasks share (mise-tasks/_lib/env.sh) against stand-in tools: the Qt CI pins read from ci.yml alone, another Qt minor version found by qmake6, qtpaths or qml6 is a mismatch setup --check fails on, paths hold under a TMPDIR with a trailing slash or a link, and NVIDIA's Vulkan driver is left out of tests only when its kernel driver is not loaded"
+#MISE description="Test what the tasks share (mise-tasks/_lib/env.sh) against stand-in tools: the Qt CI pins read from ci.yml alone, another Qt minor version found by qmake6, qtpaths or qml6 is a mismatch setup notes and exits 0 on (it fails only on what is missing, a rustc that is not mise.toml's say), paths hold under a TMPDIR with a trailing slash or a link, and NVIDIA's Vulkan driver is left out of tests only when its kernel driver is not loaded"
 set -euo pipefail
 # shellcheck source-path=SCRIPTDIR source=../_lib/env.sh
 . "$(dirname "$0")/../_lib/env.sh"
@@ -117,25 +117,50 @@ stand_reset
 out="$(with_stands qt_mismatch)"
 if [ -z "$out" ]; then ok "no Qt found is no mismatch"; else bad "no Qt found was a mismatch" "$out"; fi
 
-# --- setup --check fails on the mismatch, and only on it -----------------------
+# --- setup notes another Qt, and fails only on what is missing -------------------
 
-qt_line() { printf '%s\n' "$1" | grep -c "is not CI's Qt" || true; }
-
-stand_reset
-stand qmake6 6.12.3
-if out="$(with_stands bash mise-tasks/setup --check 2>&1)"; then
-  bad "setup --check passed with Qt 6.12.3 against the $got pin" "$out"
-else
-  case "$out" in
-    *"setup is missing:"*"Qt 6.12.3 (qmake6) is not CI's Qt"*) ok "setup --check fails on Qt 6.12.3, saying so under what is missing" ;;
-    *) bad "setup --check failed, but not on the Qt mismatch" "$out" ;;
-  esac
-fi
+# The corpus and Qt's type table are left out: CI's smoke job has neither, and
+# a full setup would otherwise make the table from this machine's Qt.
+for args in "--check --no-corpus" "--no-corpus --no-types"; do
+  stand_reset
+  stand qmake6 6.12.3
+  # shellcheck disable=SC2086 # the flags are words
+  if out="$(with_stands bash mise-tasks/setup $args 2>&1)"; then
+    case "$out" in
+      *"setup notes:"*"found Qt 6.12.3: qmake6 ($stands/qmake6)"*"CI pins Qt $got (.github/workflows/ci.yml)"*"for CI's results, install Qt $got as CI does (pip install aqtinstall && aqt install-qt "*)
+        case "$out" in
+          *"setup is missing:"*) bad "setup $args with Qt 6.12.3 said something is missing, and still passed" "$out" ;;
+          *) ok "setup $args with Qt 6.12.3 passes, noting the Qt it found, CI's pin and how to get it" ;;
+        esac
+        ;;
+      *) bad "setup $args with Qt 6.12.3 passed without the note on CI's Qt" "$out" ;;
+    esac
+  else
+    bad "setup $args failed with Qt 6.12.3 against the $got pin" "$out"
+  fi
+done
 
 stand_reset
 stand qmake6 "${got%.*}.0"
-out="$(with_stands bash mise-tasks/setup --check 2>&1 || true)"
-if [ "$(qt_line "$out")" = 0 ]; then ok "setup --check names no mismatch for Qt ${got%.*}.0"; else bad "setup --check called Qt ${got%.*}.0 a mismatch" "$out"; fi
+out="$(with_stands bash mise-tasks/setup --check --no-corpus 2>&1 || true)"
+case "$out" in
+  *"setup notes:"*) bad "setup --check noted CI's own Qt ${got%.*}.0" "$out" ;;
+  *) ok "setup --check notes nothing for Qt ${got%.*}.0" ;;
+esac
+
+# A rustc that is not mise.toml's is truly missing: --check fails on it.
+stand_reset
+printf '#!/bin/sh\necho "rustc 1.50.0 (stand-in)"\n' >"$stands/rustc"
+chmod +x "$stands/rustc"
+if out="$(with_stands bash mise-tasks/setup --check --no-corpus 2>&1)"; then
+  bad "setup --check passed with rustc 1.50.0" "$out"
+else
+  case "$out" in
+    *"setup is missing:"*"Rust: the rustc tasks build with ($stands/rustc) is rustc 1.50.0"*) ok "setup --check fails on a rustc that is not mise.toml's, saying so under what is missing" ;;
+    *) bad "setup --check failed, but not on the rustc" "$out" ;;
+  esac
+fi
+rm "$stands/rustc"
 
 # --- Paths ---------------------------------------------------------------------
 

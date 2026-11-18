@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-#MISE description="First run after a clone, safe to repeat: mise.toml's tools (Rust 1.98.1 with its components and wasm target, cargo-nextest), the submodules, Qt's type table when Qt is here, CEF only with --webengine. Ends with what it did, what it skipped and what is missing, and fails when Rust is not mise.toml's. --check installs nothing"
+#MISE description="First run after a clone, safe to repeat: mise.toml's tools (Rust 1.98.1 with its components and wasm target, cargo-nextest), the submodules, Qt's type table when Qt is here, CEF only with --webengine. Ends with what it did, what it skipped, notes (a Qt that is not the one CI pins) and what is missing, and fails only when something is missing (Rust that is not mise.toml's, a submodule). --check installs nothing"
 #MISE dir="{{config_root}}"
-#USAGE flag "--check" help="Install, fetch and build nothing: say what is there, what each task would lack, and whether this machine's Qt is the one CI pins; fail when something is missing or Qt is another minor version. Ask it as `mise run --skip-tools setup --check`, or mise first installs mise.toml's missing tools"
+#USAGE flag "--check" help="Install, fetch and build nothing: say what is there, what each task would lack, and whether this machine's Qt is the one CI pins; fail only when something is missing (another Qt is a note). Ask it as `mise run --skip-tools setup --check`, or mise first installs mise.toml's missing tools"
 #USAGE flag "--webengine" help="Also build ljos with QtWebEngine (mise run webengine:build), which fetches CEF (about 1.5 GB unpacked) into $CEF_PATH"
 #USAGE flag "--no-corpus" help="Leave out the qtdoc corpus submodule (gallery, parse and compile need it)"
 #USAGE flag "--no-types" help="Do not generate Qt's type table (crates/qt_types/src/types.txt) even when Qt is found"
@@ -25,10 +25,12 @@ done
 check="${usage_check:-false}"
 done_list=""
 skipped=""
+notes=""
 missing=""
 item() { printf '\n  - %s' "$1"; }
 did() { done_list="$done_list$(item "$1")"; }
 skip() { skipped="$skipped$(item "$1")"; }
+note() { notes="$notes$(item "$1")"; }
 lack() { missing="$missing$(item "$1")"; }
 
 if [ "$check" = true ]; then
@@ -112,17 +114,24 @@ fi
 # --- Qt ---------------------------------------------------------------------
 
 # CI compares with one Qt (the install-qt-action steps of ci.yml). Another
-# minor version here names other types and draws other pictures, so --check
-# fails on it; a full setup says so and goes on, since most tasks never run Qt.
+# minor version here is a Qt all the same: Qt is only what Ljós is compared
+# with, and every task that compares says so itself when it runs. So it is a
+# note, in --check too, and never a failure.
 pin="$(qt_pin)"
-mismatch="$(qt_mismatch)"
+other="$(qt_other)"
 found="$(qt_found | sed -n 1p)"
-if [ -n "$mismatch" ]; then
-  while IFS= read -r line; do
-    if [ "$check" = true ]; then lack "$line"; else skip "$line"; fi
+if [ -n "$other" ]; then
+  while read -r version tools; do
+    at=""
+    for tool in ${tools//,/ }; do
+      at="${at:+$at, }$tool ($(command -v "$tool"))"
+    done
+    note "found Qt $version: $at"
   done <<EOF
-$mismatch
+$other
 EOF
+  note "CI pins Qt $pin (.github/workflows/ci.yml): the type table made here and qml6's pictures are not the ones CI compares with"
+  note "for CI's results, $(qt_pin_fix "$pin")"
 elif [ -n "$found" ]; then
   did "found Qt ${found#* } (${found%% *}), CI's Qt ${pin%.*} (ci.yml pins $pin)"
 else
@@ -219,6 +228,9 @@ printf '\nsetup %s:%s\n' "$verb" "${done_list:-
   - nothing}"
 if [ -n "$skipped" ]; then
   printf 'setup skipped:%s\n' "$skipped"
+fi
+if [ -n "$notes" ]; then
+  printf 'setup notes:%s\n' "$notes"
 fi
 if [ -n "$missing" ]; then
   printf 'setup is missing:%s\n' "$missing" >&2

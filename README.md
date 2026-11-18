@@ -49,7 +49,7 @@ mise run tasks:smoke  # every task in a quick mode, as CI runs them
 mise tasks          # every task; mise run <task> --help shows its arguments
 ```
 
-Qt 6 is optional. Without it Ljós reads QML against its own types and the Qt comparisons (`features:parity`, `gallery:reference`, `fuzz:qt`, `qttest:parity`) can't run; `mise run setup` says which. CI compares with Qt 6.11.2 (the version `.github/workflows/ci.yml` pins), and `setup --check` fails on another minor version, saying how to install that one.
+Qt 6 is optional. Without it Ljós reads QML against its own types and the Qt comparisons (`features:parity`, `gallery:reference`, `fuzz:qt`, `qttest:parity`) can't run; `mise run setup` says which. CI compares with Qt 6.11.2 (the version `.github/workflows/ci.yml` pins), and `setup` (with `--check` too) notes another minor version, with the command that installs CI's, and goes on: it fails only when something it needs is missing.
 
 ### QtWebEngine
 

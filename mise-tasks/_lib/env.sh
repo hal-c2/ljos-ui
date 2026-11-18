@@ -153,22 +153,30 @@ qt_pin_fix() {
     "$pin" "$host" "$pin" "$arch" "$pin" "$dir"
 }
 
-# Empty when every Qt 6 tool found is CI's minor version (or none is found);
-# otherwise one line per other version, naming the tools that report it, with
-# the fix.
-qt_mismatch() {
-  local pin want
-  pin="$(qt_pin)"
-  want="${pin%.*}"
-  qt_found | awk -v want="$want" -v pin="$pin" -v fix="$(qt_pin_fix "$pin")" '
+# The Qt 6 tools found that are not CI's minor version: one "<version>
+# <tool>[, <tool>…]" line per version, in the order qt_found names them.
+qt_other() {
+  local want
+  want="$(qt_pin)"
+  want="${want%.*}"
+  qt_found | awk -v want="$want" '
     $2 != want && index($2, want ".") != 1 {
       if (!($2 in tools)) order[++n] = $2
       tools[$2] = ($2 in tools) ? tools[$2] ", " $1 : $1
     }
-    END {
-      for (i = 1; i <= n; i++)
-        printf "Qt %s (%s) is not CI'"'"'s Qt %s (.github/workflows/ci.yml pins %s), so its type table and qml6'"'"'s pictures are not what CI compares with: %s\n", order[i], tools[order[i]], want, pin, fix
-    }'
+    END { for (i = 1; i <= n; i++) printf "%s %s\n", order[i], tools[order[i]] }'
+}
+
+# Empty when every Qt 6 tool found is CI's minor version (or none is found);
+# otherwise one line per other version, naming the tools that report it, with
+# the fix.
+qt_mismatch() {
+  local pin version tools
+  pin="$(qt_pin)"
+  qt_other | while read -r version tools; do
+    printf "Qt %s (%s) is not CI's Qt %s (.github/workflows/ci.yml pins %s), so its type table and qml6's pictures are not what CI compares with: %s\n" \
+      "$version" "$tools" "${pin%.*}" "$pin" "$(qt_pin_fix "$pin")"
+  done
 }
 
 # --- The Rust mise.toml pins ---------------------------------------------------
