@@ -5,8 +5,8 @@ import Ljos.Design
 // The screens, one at a time, and the swipes between them. A new screen
 // comes in from where the finger sent it: from below for notifications,
 // from above for quick settings, from the right going in and from the
-// left coming back. With reduced motion it still comes in, from much
-// nearer and without growing.
+// left coming back. With reduced motion it does not move: it fades in
+// where it ends, as the runtime does with every movement.
 WatchScreen {
     id: pages
 
@@ -15,7 +15,7 @@ WatchScreen {
     // Where the new screen comes from: -1 left or above, 1 right or below.
     property int fromX: 0
     property int fromY: 0
-    readonly property real travel: Motion.reduced ? 18 : Math.min(pages.width, pages.height) * 0.32
+    readonly property real travel: Math.min(pages.width, pages.height) * 0.32
 
     property string shown: pages.watch.page
     onShownChanged: {
@@ -30,6 +30,7 @@ WatchScreen {
             : to === "settings" ? -1 : 0
         pages.cameFrom = to
         enter.restart()
+        fadeIn.restart()
     }
     property string cameFrom: "face"
 
@@ -38,6 +39,17 @@ WatchScreen {
         target: pages
         property: "shift"
         from: 0
+        to: 1
+        duration: Motion.enterScreen
+        easing.type: Easing.OutCubic
+    }
+    // Its own animation, so that with reduced motion, which takes what
+    // moves to its end at once, the new screen still fades in.
+    NumberAnimation {
+        id: fadeIn
+        target: stage
+        property: "opacity"
+        from: 0.2
         to: 1
         duration: Motion.enterScreen
         easing.type: Easing.OutCubic
@@ -65,12 +77,12 @@ WatchScreen {
 
     Item {
         id: stage
+        objectName: "stage"
         width: pages.width
         height: pages.height
         x: (1 - pages.shift) * pages.travel * pages.fromX
         y: (1 - pages.shift) * pages.travel * pages.fromY
-        opacity: 0.2 + 0.8 * pages.shift
-        scale: Motion.reduced ? 1 : 0.94 + 0.06 * pages.shift
+        scale: 0.94 + 0.06 * pages.shift
 
         FacePulse {
             anchors.fill: parent

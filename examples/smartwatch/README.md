@@ -60,7 +60,7 @@ A running workout, stopwatch or track counts from the time it started, never fro
 
 - **Dark only:** the screen is OLED, so black is off.
 - **Neon is kept for what matters:** only the lit ring, the hands and the highlighted control glow. *Glow* in quick settings turns the bloom off.
-- **Reduced motion:** screens still slide in, from closer and for less long. Nothing snaps.
+- **Reduced motion:** a screen does not slide in: it is in place at once and fades in, as Ljós does with every movement. The heart beats with its glow instead of its size, and the 3D watch turns five times slower. Nothing that tells you something changed is lost.
 - **Contrast:** `ljos audit Main.qml --touch` finds no contrast errors at either size.
 
 ## The files

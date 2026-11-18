@@ -14,12 +14,15 @@ Item {
 
     implicitHeight: big.height + 14 + pulse.chartHeight
 
-    // One beat per sample; with reduced motion it beats smaller.
+    // One beat per sample. The heart grows and its glow comes up; with
+    // reduced motion, which takes what moves to its end at once, the glow
+    // is what is left of the beat.
     property real beat: 0
     readonly property int sampled: pulse.watch.samples
     onSampledChanged: {
         if (pulse.visible) {
             thump.restart()
+            glow.restart()
         }
     }
     SequentialAnimation {
@@ -39,6 +42,15 @@ Item {
             easing.type: Easing.InOutCubic
         }
     }
+    NumberAnimation {
+        id: glow
+        target: heart
+        property: "opacity"
+        from: 0.45
+        to: 1
+        duration: 380
+        easing.type: Easing.OutCubic
+    }
 
     Item {
         id: big
@@ -53,7 +65,7 @@ Item {
             theme: pulse.theme
             tint: pulse.theme.magenta
             spread: 0.5
-            scale: 1 + pulse.beat * (Motion.reduced ? 0.06 : 0.18)
+            scale: 1 + pulse.beat * 0.18
             Icon {
                 anchors.fill: parent
                 glyph: "heart"

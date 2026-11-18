@@ -11,7 +11,8 @@ Feature: The smartwatch example
   one object, `watch`; the screens only read it and call its functions.
   The crown turns like a mouse wheel, the side button is the Escape key,
   and a finger swipes and taps. These scenarios load the example as it
-  ships and wear it the way its owner does.
+  ships and wear it the way its owner does, who taps a screen once it
+  has come in.
 
   Background:
     Given the files of the example "smartwatch"
@@ -56,6 +57,7 @@ Feature: The smartwatch example
 
     Scenario Outline: A swipe from the face opens a screen
       When the user drags from <from> to <to>
+      And 400 milliseconds pass
       Then the property "page" of "watch" is "<page>"
 
       Examples:
@@ -66,12 +68,16 @@ Feature: The smartwatch example
 
     Scenario: A swipe to the right goes back to the face
       When the user drags from 400, 227 to 60, 227
+      And 400 milliseconds pass
       And the user drags from 60, 227 to 400, 227
+      And 400 milliseconds pass
       Then the property "page" of "watch" is "face"
 
     Scenario: The side button comes home from any screen
       When the user drags from 400, 227 to 60, 227
+      And 400 milliseconds pass
       And the user clicks the "button" "Timer"
+      And 400 milliseconds pass
       And the user presses "Escape"
       Then the property "page" of "watch" is "face"
 
@@ -80,6 +86,7 @@ Feature: The smartwatch example
     Background:
       When "Main.qml" is loaded
       And the user drags from 400, 227 to 60, 227
+      And 400 milliseconds pass
 
     Scenario: Turning the crown moves the launcher's choice, and pressing it opens the app
       Then the property "current" of "launcher" is 0
@@ -113,12 +120,14 @@ Feature: The smartwatch example
     Background:
       When "Main.qml" is loaded
       And the user drags from 227, 400 to 227, 80
+      And 400 milliseconds pass
 
     Scenario: The watch starts with unread notifications
       Then the property "unread" of "watch" is 4
 
     Scenario: Tapping a notification opens it, and dismissing it takes it away
       When the user clicks the "button" "Open the message from Ásta"
+      And 400 milliseconds pass
       Then the property "page" of "watch" is "notification"
       When the user clicks the "button" "Dismiss"
       Then the property "page" of "watch" is "notifications"
@@ -138,7 +147,9 @@ Feature: The smartwatch example
 
     Scenario: The heart screen samples once a second and draws the beats
       When the user drags from 400, 227 to 60, 227
+      And 400 milliseconds pass
       And the user clicks the "button" "Heart"
+      And 400 milliseconds pass
       Then the property "running" of "beat" is true
       When 3 seconds pass
       Then the property "bpm" of "watch" is at least 50
@@ -150,7 +161,9 @@ Feature: The smartwatch example
     Background:
       When "Main.qml" is loaded
       And the user drags from 400, 227 to 60, 227
+      And 400 milliseconds pass
       And the user clicks the "button" "Workout"
+      And 400 milliseconds pass
 
     Scenario: A started workout counts its seconds, and a paused one stops counting
       When the user clicks the "button" "Start run"
@@ -173,15 +186,18 @@ Feature: The smartwatch example
     Background:
       When "Main.qml" is loaded
       And the user drags from 400, 227 to 60, 227
+      And 400 milliseconds pass
 
     Scenario: The crown sets the timer's minutes
       When the user clicks the "button" "Timer"
+      And 400 milliseconds pass
       Then the property "timerMinutes" of "watch" is 5
       When the user turns the wheel 3 notches down at 227, 227
       Then the property "timerMinutes" of "watch" is 8
 
     Scenario: A one-minute timer rings when its minute is up
       When the user clicks the "button" "Timer"
+      And 400 milliseconds pass
       And the user turns the wheel 4 notches up at 227, 227
       And the user clicks the "button" "Start timer"
       Then the property "timerState" of "watch" is "running"
@@ -190,6 +206,7 @@ Feature: The smartwatch example
 
     Scenario: The stopwatch counts, keeps laps, and stops
       When the user clicks the "button" "Stopwatch"
+      And 400 milliseconds pass
       And the user clicks the "button" "Start stopwatch"
       And 3 seconds pass
       And the user clicks the "button" "Lap"
@@ -202,7 +219,9 @@ Feature: The smartwatch example
     Background:
       When "Main.qml" is loaded
       And the user drags from 400, 227 to 60, 227
+      And 400 milliseconds pass
       And the user clicks the "button" "Music"
+      And 400 milliseconds pass
 
     Scenario: Play and pause
       When the user clicks the "button" "Play"
@@ -224,6 +243,7 @@ Feature: The smartwatch example
     Background:
       When "Main.qml" is loaded
       And the user drags from 227, 60 to 227, 380
+      And 400 milliseconds pass
 
     Scenario Outline: A switch turns a mode on and off
       Then the property "<mode>" of "watch" is <before>
@@ -266,7 +286,9 @@ Feature: The smartwatch example
 
     Scenario: A running stopwatch keeps its time while the screen sleeps
       When the user drags from 400, 227 to 60, 227
+      And 400 milliseconds pass
       And the user clicks the "button" "Stopwatch"
+      And 400 milliseconds pass
       And the user clicks the "button" "Start stopwatch"
       And 20 seconds pass
       Then the property "ambient" of "watch" is true
@@ -274,10 +296,20 @@ Feature: The smartwatch example
       When the user presses "Escape"
       Then the property "stopwatchMs" of "watch" is at least 20000
 
-  Rule: With reduced motion screens still move between each other; only less
+  Rule: With reduced motion a screen does not move in; it fades in where it ends
 
-    Scenario: With reduced motion a screen still slides in
+    Scenario: With reduced motion a screen is in place at once and fades in
       Given the system setting "reduced motion" is true
+      When "Main.qml" is loaded
+      And the user drags from 400, 227 to 60, 227
+      And 60 milliseconds pass
+      Then the property "shift" of "pages" is 1
+      And the property "opacity" of "stage" is at least 0.25
+      And the property "opacity" of "stage" is at most 0.95
+      When 1 second passes
+      Then the property "opacity" of "stage" is 1
+
+    Scenario: Without reduced motion a screen slides in
       When "Main.qml" is loaded
       And the user drags from 400, 227 to 60, 227
       And 60 milliseconds pass
