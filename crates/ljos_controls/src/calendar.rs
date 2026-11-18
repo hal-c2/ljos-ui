@@ -16,8 +16,8 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use ljos_engine::{
-    Atom, Cx, Engine, EngineError, ItemModel, MetaRef, ModelChange, ModelListeners, ObjectId,
-    PropIndex, PropertyFlags, QmlObject, QmlType, Value, qml_impl,
+    Atom, Cx, Engine, EngineError, ItemModel, MetaRef, ModelChange, ModelListeners, NodeId,
+    ObjectId, PropIndex, PropertyFlags, QmlObject, QmlType, Value, qml_impl,
 };
 use ljos_i18n::LocaleInfo;
 use ljos_i18n::calendar::{NameWidth, civil_from_days, days_from_civil, iso_week_number};
@@ -27,6 +27,7 @@ use ljos_quick::{
 use ljos_render::kurbo;
 
 use crate::control::{Control, hover, is_left, takes_input};
+use crate::parts::declared_by_style;
 use crate::ticker;
 use crate::util::{check, num, object, warn};
 
@@ -231,9 +232,11 @@ pub(crate) struct Cells {
     kind: Cell<Kind>,
     /// Each cell's item, and the object that is its context.
     made: RefCell<Vec<(ObjectId, ObjectId)>>,
-    /// The content item the cells are in, and the one that is watched.
+    /// The content item the cells are in, and the one that is watched,
+    /// with the watches on its size.
     host: Cell<Option<ObjectId>>,
     watched: Cell<Option<ObjectId>>,
+    watches: RefCell<Vec<NodeId>>,
     /// A press is held, on this cell.
     held: Cell<bool>,
     current: Cell<Option<usize>>,
@@ -402,20 +405,27 @@ fn rebuild(e: &Engine, obj: ObjectId) {
             object(e, obj, kind.delegate()),
         )
     });
+    // The days go in the content item the style made. One the application
+    // gives is the application's: no days are made in it, and it asks for
+    // the room the application says.
+    let content = content.filter(|c| declared_by_style(e, *c));
     cells.host.set(content);
+    if cells.watched.get() != content {
+        cells.watched.set(content);
+        e.graph().dispose_all(&cells.watches.take());
+        let size = content
+            .into_iter()
+            .flat_map(|c| [(c, Item::WIDTH.index), (c, Item::HEIGHT.index)]);
+        for (c, p) in size {
+            match e.watch(c, p, move |e, _| layout(e, obj)) {
+                Ok(node) => cells.watches.borrow_mut().push(node),
+                Err(err) => check(e, "content", Err(err)),
+            }
+        }
+    }
     let Some(content) = content else {
         return;
     };
-    if cells.watched.get() != Some(content) {
-        cells.watched.set(Some(content));
-        for p in [Item::WIDTH.index, Item::HEIGHT.index] {
-            check(
-                e,
-                "content",
-                e.watch(content, p, move |e, _| layout(e, obj)).map(|_| ()),
-            );
-        }
-    }
     // With no delegate, or no month to show, there are no days, and the
     // content item asks for no room: binding it to the cells just destroyed
     // would keep asking for the gaps between them.
@@ -465,7 +475,11 @@ fn make_cells(
         });
         match item {
             Ok(item) => made.push((item, ctx)),
-            Err(err) => check(e, "delegate", Err(err)),
+            Err(err) => {
+                // Nothing has the cell as its model now.
+                check(e, "delegate", Err(err));
+                e.destroy(ctx);
+            }
         }
     }
     made
@@ -622,7 +636,7 @@ fn start(e: &Engine, obj: ObjectId, kind: Kind) -> Result<(), EngineError> {
                 );
                 return;
             }
-            refresh(e, obj);
+            back_in_range(e, obj);
         })?;
         e.watch(obj, year, move |e, v| {
             let y = v.to_number();
@@ -637,10 +651,19 @@ fn start(e: &Engine, obj: ObjectId, kind: Kind) -> Result<(), EngineError> {
                 );
                 return;
             }
-            refresh(e, obj);
+            back_in_range(e, obj);
         })?;
     }
     Ok(())
+}
+
+/// A month and year in range are shown: the days are made again if a
+/// month or year out of range left none.
+fn back_in_range(e: &Engine, obj: ObjectId) {
+    if cells_of(e, obj).is_some_and(|c| c.made.borrow().is_empty()) {
+        rebuild(e, obj);
+    }
+    refresh(e, obj);
 }
 
 /// Today's month and year, for a control that was not given any.
