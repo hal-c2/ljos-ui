@@ -3,6 +3,7 @@
 #   docs/site/controls/overview.md (Ljos.Controls.Basic has the same controls)
 #   https://www.w3.org/WAI/ARIA/apg/patterns/tabs/
 #   https://www.w3.org/WAI/WCAG22/Understanding/focus-appearance.html
+#   https://doc.qt.io/qt-6.11/qml-qtquick-scaleanimator.html (the scale reads its old value until the animator ends)
 # Ljós's own style is Ljós's: Qt has no Ljos.Controls to compare it with, so
 # every scenario is `@ljos-only`. The colours expected are those
 # crates/ljos_design/src/roles.rs derives from white, black and #0066cc.
@@ -232,7 +233,8 @@ Feature: Ljós's own style: tabs, cards, popovers, split buttons and empty state
 
     # An animator moves what is drawn alone: the scale reads 1 until it
     # ends, as in Qt, and the room is measured where `mapToItem` says the
-    # button is. Told its end, the popover is placed again.
+    # button is. Told its end, the popover is placed again. The animator is
+    # running before the popover opens.
     @api-QtQuick.ScaleAnimator
     Scenario: A popover opened while an ancestor's ScaleAnimator runs is placed by the scale it reads, and again when the animator ends
       Given the QML:
@@ -246,7 +248,7 @@ Feature: Ljós's own style: tabs, cards, popovers, split buttons and empty state
           Item {
             id: grows
             width: 200; height: 200; transformOrigin: Item.TopLeft
-            ScaleAnimator { id: grower; target: grows; from: 1; to: 2; duration: 1000 }
+            ScaleAnimator { objectName: "grower"; target: grows; from: 1; to: 2; duration: 1000 }
             Button {
               x: 10; y: 150; width: 60; height: 20; text: "Filter"
               Popover { id: pop; objectName: "pop"; width: 100; height: 100; margins: 8 }
@@ -254,10 +256,13 @@ Feature: Ljós's own style: tabs, cards, popovers, split buttons and empty state
           }
           property real grown: grows.scale
           property real popY: pop.y
-          function grow() { grower.start(); pop.open() }
         }
         """
-      When the method "grow" of "root" is called
+      When the method "start" of "grower" is called
+      And 100 milliseconds pass
+      Then the property "running" of "grower" is true
+      And the property "grown" of "root" is 1
+      When the method "open" of "pop" is called
       And 200 milliseconds pass
       Then the property "visible" of "pop" is true
       And the property "grown" of "root" is 1
@@ -268,7 +273,9 @@ Feature: Ljós's own style: tabs, cards, popovers, split buttons and empty state
 
     # The room is measured where `mapToItem` says the button is, and the
     # popover is put where its place maps to, perspective and all, as Qt
-    # puts a popup.
+    # puts a popup: at the start of the box the turned button fills, 4
+    # below it. The first two answers hold the place against `x` and `y`,
+    # the last two against the button.
     @api-QtQuick.Rotation.axis
     Scenario: A popover under an ancestor turned in perspective is where its place maps to
       Given the QML:
@@ -290,7 +297,9 @@ Feature: Ljós's own style: tabs, cards, popovers, split buttons and empty state
           function measure() {
             const shown = pop.background.mapToItem(root, -pop.background.x, -pop.background.y)
             const meant = filter.mapToItem(root, pop.x, pop.y)
-            got = [Math.round(shown.x - meant.x), Math.round(shown.y - meant.y)]
+            const box = filter.mapToItem(root, 0, 0, filter.width, filter.height)
+            got = [Math.round(shown.x - meant.x), Math.round(shown.y - meant.y),
+                   Math.round(shown.x - box.x), Math.round(shown.y - (box.y + box.height + 4))]
           }
         }
         """
@@ -298,7 +307,7 @@ Feature: Ljós's own style: tabs, cards, popovers, split buttons and empty state
       And 200 milliseconds pass
       Then the property "visible" of "pop" is true
       When the method "measure" of "root" is called
-      Then the property "got" of "root" is [0, 0]
+      Then the property "got" of "root" is [0, 0, 0, 0]
 
     Scenario: A popover fades in on the overlay surface and closes at once
       Given the QML:
@@ -724,7 +733,7 @@ Feature: Ljós's own style: tabs, cards, popovers, split buttons and empty state
           LayoutMirroring.childrenInherit: true
           SplitButton {
             id: split; width: 400; text: "Run"
-            menu: QB.Menu { id: options; width: 120; QB.MenuItem { text: "Run all" } }
+            menu: QB.Menu { id: options; objectName: "options"; width: 120; QB.MenuItem { text: "Run all" } }
           }
           function part(i, name) { for (const k of i.children) { if (k.objectName === name) return k; const f = part(k, name); if (f) return f } return null }
           property var got: []
@@ -736,7 +745,8 @@ Feature: Ljós's own style: tabs, cards, popovers, split buttons and empty state
         """
       When the user clicks the "button" "More Run options"
       And 200 milliseconds pass
-      And the method "measure" of "root" is called
+      Then the property "visible" of "options" is true
+      When the method "measure" of "root" is called
       Then the property "got" of "root" is [<mirrored>, 0]
 
       Examples:

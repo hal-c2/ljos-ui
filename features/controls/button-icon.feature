@@ -330,6 +330,7 @@ Feature: The icon of a button
         import QtQuick
         import QtQuick.Controls.Basic
         Rectangle {
+          objectName: "root"
           width: 300; height: 300; color: "white"
           Button { id: bare; objectName: "bare"; icon.source: "red.png" }
           Button {
@@ -338,8 +339,11 @@ Feature: The icon of a button
           }
           Button {
             id: linkedBack; objectName: "linkedBack"; y: 100
-            icon: bare.icon; action: Action { icon: linkedBack.icon }
+            icon: bare.icon; action: Action { id: back; icon: linkedBack.icon }
           }
+          // The action holds the picture it was given back.
+          readonly property bool backGiven: String(back.icon.source).endsWith("red.png")
+                                            && String(back.icon.source) === String(linkedBack.icon.source)
         }
         """
 
@@ -352,4 +356,5 @@ Feature: The icon of a button
     Scenario: A button whose action is given back its own icon draws it in its text's colour, and is no loop
       Then the pixel at 50, 120 of the window is "#26282a"
       And the property "icon.color" of "linkedBack" is "#00000000"
+      And the property "backGiven" of "root" is true
       And the log has no warnings

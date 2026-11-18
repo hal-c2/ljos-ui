@@ -112,11 +112,7 @@ Feature: Ljós's own style: the icon and the text of a button and a menu row
 
   Rule: A menu keeps the icons' column only for the icons it shows
 
-    # A row shown as its text alone shows no icon, so the others keep no
-    # column for it; a row with no text shows its icon whatever its
-    # display, and a row told to keep the column keeps it.
-    @api-QtQuick.Controls.AbstractButton.display
-    Scenario: A menu whose only icon is on a row shown as its text keeps no column
+    Background:
       Given the QML:
         """qml
         import QtQuick
@@ -138,9 +134,21 @@ Feature: Ljós's own style: the icon and the text of a button and a menu row
           }
         }
         """
+
+    # A row shown as its text alone shows no icon, so the others keep no
+    # column for it.
+    @api-QtQuick.Controls.AbstractButton.display
+    Scenario: A menu whose only icon is on a row shown as its text keeps no column
       Then the property "contentItem.gutter" of "hidden" is 0
       And the property "contentItem.gutter" of "other" is 0
-      And the property "contentItem.gutter" of "kept" is 24
+
+    Scenario: A row told to keep the icons' column keeps it in a menu that keeps none
+      Then the property "contentItem.gutter" of "kept" is 24
+
+    # A row with no text shows its icon whatever its display.
+    @api-QtQuick.Controls.AbstractButton.display
+    Scenario: A row with no text shown as its text shows its icon, and the others keep its column
+      Then the property "contentItem.gutter" of "lone" is 24
       And the property "contentItem.gutter" of "beside" is 24
 
   Rule: A button shows what its display asks for
@@ -235,6 +243,9 @@ Feature: Ljós's own style: the icon and the text of a button and a menu row
 
   Rule: A button shown under its icon has the two in its middle
 
+    # The last answer is how far the middle of the block, from the top of
+    # the icon to the foot of the text, is from the middle of the room
+    # inside a button taller than it asks to be.
     @api-QtQuick.Controls.AbstractButton.display
     Scenario: A button shown under its icon asks for the wider of the two, the icon over the text in the middle, and half a spacing above and below
       Given the QML:
@@ -244,23 +255,26 @@ Feature: Ljós's own style: the icon and the text of a button and a menu row
         import Ljos.Controls
         Item {
           id: root; objectName: "root"
-          width: 200; height: 100
+          width: 240; height: 100
           Button { id: plain; text: "Save" }
           Button { id: under; x: 80; text: "Save"; iconName: "plus"; display: IconLabel.TextUnderIcon }
+          Button { id: tall; x: 160; height: 100; text: "Save"; iconName: "plus"; display: IconLabel.TextUnderIcon }
           function part(c, name) { for (const k of c.contentItem.children) if (k.objectName === name) return k; return null }
           function middle(name) { const i = part(under, name); return Math.round(i.mapToItem(under, 0, 0).x + i.width / 2) }
+          function block(c) { const g = part(c, "glyph"), l = part(c, "label"); return (g.mapToItem(c, 0, 0).y + l.mapToItem(c, 0, l.height).y) / 2 }
           property var got: []
           function measure() {
             const glyph = part(under, "glyph"), label = part(under, "label")
             got = [under.implicitContentWidth - part(plain, "label").implicitWidth,
                    under.implicitContentHeight - (16 + under.spacing + label.implicitHeight),
                    glyph.mapToItem(under, 0, 0).y + glyph.height <= label.mapToItem(under, 0, 0).y,
-                   middle("glyph") - middle("label"), under.implicitHeight - under.implicitContentHeight]
+                   middle("glyph") - middle("label"), under.implicitHeight - under.implicitContentHeight,
+                   Math.round(block(tall) - (tall.topPadding + tall.availableHeight / 2))]
           }
         }
         """
       When the method "measure" of "root" is called
-      Then the property "got" of "root" is [0, 0, true, 0, 8]
+      Then the property "got" of "root" is [0, 0, true, 0, 8, 0]
 
   Rule: A button given the padding of one edge keeps the other's
 
@@ -464,6 +478,26 @@ Feature: Ljós's own style: the icon and the text of a button and a menu row
       When the method "measure" of "root" is called
       Then the property "got" of "root" is [[true, false, 12], [true, false, 12], [false, true, 0]]
       And the property "implicitContentWidth" of "pictured" is 12
+
+    # An IconLabel draws its picture in `icon.color` where one is given and
+    # in its `color` where none is, so the tab's ink tints the picture.
+    @api-QtQuick.Controls.AbstractButton.icon.color
+    Scenario: A tab's picture is drawn in the colour of its text
+      Given a 16 by 16 image file "red.png" filled with "#ff0000"
+      And the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.impl
+        import Ljos.Controls
+        Rectangle {
+          width: 120; height: 60; color: "#ffffff"
+          Component.onCompleted: { Theme.canvas = "#ffffff"; Theme.text = "#0066cc" }
+          TabButton { x: 10; y: 10; width: 40; height: 40; checked: true; icon.source: "red.png"; display: IconLabel.IconOnly }
+          TabButton { x: 60; y: 10; width: 40; height: 40; icon.source: "red.png"; display: IconLabel.IconOnly }
+        }
+        """
+      Then the pixel at 30, 30 of the window is "#0066cc"
+      And the pixel at 80, 30 of the window is not "#ff0000"
 
   Rule: The text is drawn as its mnemonic says, and the keys read it as written
 
