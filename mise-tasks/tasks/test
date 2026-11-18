@@ -24,6 +24,38 @@ bad() {
   failed=1
 }
 
+# --- Nothing here fetches, or touches the checkout --------------------------------
+
+# setup fetches submodules when it runs in a checkout, and this test runs
+# setup. Every git run from here on goes through a stand-in that refuses to
+# fetch or to change submodules and notes what it was asked; the rest is the
+# real git's. The checkout's submodules and tracked files are compared at the
+# end. Untracked files are not: tasks running beside this one may make them.
+real_git="$(command -v git || true)"
+guard="$real/guard"
+mkdir "$guard"
+: >"$guard/refused"
+cat >"$guard/git" <<EOF
+#!/bin/sh
+case " \$* " in
+  *" submodule "*" status "*) ;;
+  *" submodule "*|*" fetch "*|*" clone "*|*" pull "*)
+    echo "git \$*" >>"$guard/refused"
+    exit 1 ;;
+esac
+[ -n "$real_git" ] || exit 127
+exec "$real_git" "\$@"
+EOF
+chmod +x "$guard/git"
+checkout_state() {
+  [ -n "$real_git" ] || return 0
+  "$real_git" -C "$ljos_root" submodule status 2>&1 || true
+  echo --
+  "$real_git" -C "$ljos_root" status --porcelain --untracked-files=no 2>&1 || true
+}
+checkout_before="$(checkout_state)"
+export PATH="$guard:$PATH"
+
 # Stand-ins for every Qt tool _lib/env.sh asks, so this machine's own Qt is
 # never what answers. `stand <tool> <version>` makes one answer as Qt's does;
 # the rest fail, as a tool that is not there would be skipped.
@@ -244,6 +276,20 @@ if [ "$(uname -s)" = Linux ]; then
     printf '%s' "${VK_LOADER_DRIVERS_DISABLE-unset}"
   )"
   if [ "$out" = unset ]; then ok "NVIDIA's driver is kept when its kernel driver is loaded"; else bad "with the kernel driver loaded, VK_LOADER_DRIVERS_DISABLE is $out"; fi
+fi
+
+# --- The checkout is as it was ---------------------------------------------------
+
+if [ -s "$guard/refused" ]; then
+  bad "tasks:test asked git to fetch or to change submodules (refused)" "$(cat "$guard/refused")"
+else
+  ok "tasks:test asked git to fetch nothing and to change no submodule"
+fi
+checkout_after="$(checkout_state)"
+if [ "$checkout_before" = "$checkout_after" ]; then
+  ok "the checkout's submodules and tracked files are as they were"
+else
+  bad "the checkout's submodules or tracked files changed during tasks:test" "before:" "$checkout_before" "after:" "$checkout_after"
 fi
 
 exit "$failed"
