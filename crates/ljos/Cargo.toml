@@ -82,6 +82,8 @@ ljos_blocks = { path = "../ljos_blocks" }
 serde_json.workspace = true
 # A player reading a stream from a server of the test's own (`media_stream.rs`).
 ljos_platform = { path = "../ljos_platform", features = ["http"] }
+# The `grab_item` example writes the pictures it takes as PNG files.
+png.workspace = true
 # So the tests see the facade as an application with dev-qml does.
 ljos = { path = ".", features = ["dev-qml", "build", "render", "testing"] }
 
