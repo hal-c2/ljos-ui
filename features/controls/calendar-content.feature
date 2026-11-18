@@ -63,6 +63,19 @@ Feature: Where a calendar puts its days
     And the property "width" of "late" is 0
     And the property "height" of "late" is 0
 
+  # Only Ljós starts a grid on a month out of range with no days (see the
+  # scenario above), so only Ljós shows that such a grid makes its days once
+  # it is given a month in range.
+  @qt-diverges
+  Scenario: A month grid that started on a month out of range shows its days once given one in range
+    When 100 milliseconds pass
+    Then the object "l0" does not exist
+    When the property "month" of "late" is set to 1
+    And 100 milliseconds pass
+    Then the object "l41" exists
+    And the property "width" of "late" is 176
+    And the property "height" of "late" is 90
+
   Scenario: A month grid given a month in range shows its days
     When the property "month" of "late" is set to 1
     And 100 milliseconds pass
