@@ -66,7 +66,7 @@ Tags on a `Feature`, `Rule` or `Examples` table apply to everything below them.
 
 | Group | Tags |
 |---|---|
-| Surface | `@headless` (default when no surface tag), `@desktop`, `@android`, `@ios`, `@wgpu`. The runner skips scenarios that name only surfaces it does not provide. It provides `@desktop` when the desktop sandbox runs (`scripts/cua-sandbox.sh`: a headless sway on its own bus whose seat has a virtual pointer and no keyboard): `mise run features:ljos` starts one when the selected files have a `@desktop` scenario, runs those on `ljos run` there, and stops it after; without sway or `dbus-run-session` it leaves them out and says why. `@chromium`: a web page shown in a `WebEngineView`; it runs headless, on a build with the web engine (`--features webengine`, a runtime found beside it) and on Qt; any other run leaves it out and says why. |
+| Surface | `@headless` (default when no surface tag), `@desktop`, `@android`, `@ios`, `@wgpu`. The runner skips scenarios that name only surfaces it does not provide. It provides `@desktop` when the desktop sandbox runs (`scripts/cua-sandbox.sh`: a headless sway on its own bus whose seat has a virtual pointer, and a virtual keyboard that types nothing so that the focus comes and goes): `mise run features:ljos` starts one when the selected files have a `@desktop` scenario, runs those on `ljos run` there, and stops it after; without sway or `dbus-run-session` it leaves them out and says why. `@chromium`: a web page shown in a `WebEngineView`; it runs headless, on a build with the web engine (`--features webengine`, a runtime found beside it) and on Qt; any other run leaves it out and says why. |
 | Status | none = passes everywhere it applies · `@backlog` (passes nowhere yet) · `@backlog-<surface>` (does not pass on that surface yet) · `@dropped` (decided against; a comment gives the reason) · `@blocked` (a comment names what it waits for) · `@priority-high` / `@priority-low` |
 | Oracle | `@qt-parity` · `@qt-diverges` · `@ljos-only` · `@qt-pixels` |
 | Ledger | `@api-<Module>.<Type>.<member>` · `@a11y` |
@@ -248,7 +248,8 @@ setter tries to write `depth` and logs the error it gets.
 | `When the user presses "chord"` | press and release a key chord: `"Ctrl+S"`, `"Shift+Tab"`, `"Return"`, `"A"` (key names as in a `Shortcut` sequence) |
 | `When the user holds down "chord" until it repeats N times` | one press, `N` auto-repeated presses, one release |
 | `When the user keeps "chord" down` / `the user lets go of "chord"` | the press without its release, and the release, so time can pass between (`@ljos-only`) |
-| `When the window loses focus` / `When the window gains focus` | another window takes the keyboard, or gives it back |
+| `When the window loses focus` / `When the window gains focus` | another window takes the keyboard, or gives it back; on `@desktop`, another client's window takes the compositor's focus, and the window gets it back |
+| `Given the seat has no keyboard` | the seat has a pointer and no keyboard, from before the application starts (`@desktop`) |
 | `When the user touches X, Y` | touch at a position |
 | `When the user presses the pointer at X, Y` / `releases the pointer at X, Y` | the two halves of a click, for what happens while the button is held |
 | `When the user moves the pointer to X, Y` | move the pointer, with the button held if it was pressed and not released (a drag), without it otherwise (hover) |
