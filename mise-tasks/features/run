@@ -232,7 +232,7 @@ if [ -n "$desktop" ]; then
     # same target while the ledger runs (pin_programs).
     if [ -z "${LJOS_BIN:-}" ]; then
       programs="$(pin_programs "$work/bin" build --quiet -p ljos_cli --bin ljos)" || die "features: ljos did not build"
-      LJOS_BIN="$(printf '%s\n' "$programs" | awk '$1 == "ljos" { print $2 }')"
+      LJOS_BIN="$(pinned_program ljos "$programs")"
       [ -n "$LJOS_BIN" ] || die "features: the build made no ljos"
       export LJOS_BIN
     fi

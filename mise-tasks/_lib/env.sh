@@ -547,6 +547,15 @@ EOF_PROGRAMS
   printf '%s' "$pinned"
 }
 
+# pinned_program <name> <pin_programs output>: the path pinned for program
+# <name>, all of it (a path may hold spaces); nothing when there is none.
+pinned_program() {
+  local line
+  while IFS= read -r line; do
+    case "$line" in "$1 "*) printf '%s\n' "${line#"$1 "}"; return 0 ;; esac
+  done <<<"$2"
+}
+
 # pinned_as_built <dir> <messages>: whether the build of <messages> found
 # every program fresh and left each where it says, with the bytes of its
 # link in <dir> (cmp, as a copy is no hard link).

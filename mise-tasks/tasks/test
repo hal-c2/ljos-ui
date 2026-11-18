@@ -1006,6 +1006,10 @@ rm -rf "$real/pin.2"
 out="$(pinned 2 1)"
 if [ "$out" = "3 builds, prog $real/pin.2/bin/prog: build 1" ]; then ok "a program another checkout's build put in place before it was pinned is pinned again from the build that finds it fresh"; else bad "pin_programs with another program in place of the build's: $out"; fi
 
+programs="$(printf '%s\n' "ljos-x $real/a b/bin/ljos-x" "ljos $real/a b/bin/ljos" "qml-compare $real/a b/bin/qml-compare")"
+out="$(pinned_program ljos "$programs")|$(pinned_program qml-compare "$programs")|$(pinned_program qml "$programs")"
+if [ "$out" = "$real/a b/bin/ljos|$real/a b/bin/qml-compare|" ]; then ok "a pinned program's path is all of it, spaces and all"; else bad "pinned_program gave: $out"; fi
+
 # --- Vulkan drivers --------------------------------------------------------------
 
 mkdir -p "$real/icd" "$real/nvidia"

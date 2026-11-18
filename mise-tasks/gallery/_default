@@ -32,8 +32,8 @@ mkdir -p "$report"
 # put its programs in place of these. Their paths are the ones cargo gives,
 # whatever layout its settings choose.
 programs="$(pin_programs "$report/bin" build --quiet -p ljos_cli -p qml_compare)" || die "gallery: ljos and qml-compare did not build"
-ljos="$(printf '%s\n' "$programs" | awk '$1 == "ljos" { print $2 }')"
-compare="$(printf '%s\n' "$programs" | awk '$1 == "qml-compare" { print $2 }')"
+ljos="$(pinned_program ljos "$programs")"
+compare="$(pinned_program qml-compare "$programs")"
 [ -n "$ljos" ] && [ -n "$compare" ] || die "gallery: the build made no ljos or no qml-compare"
 
 # Each run starts from an empty home, with the user's fonts (scripts/own-home.sh).
