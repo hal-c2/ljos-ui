@@ -4996,6 +4996,7 @@ dependencies = [
  "ljos_platform",
  "ljos_quick",
  "ljos_render",
+ "objc2 0.6.5",
  "serde_json",
  "sha1_smol",
  "tempfile",
