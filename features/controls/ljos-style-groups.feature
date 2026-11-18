@@ -186,7 +186,8 @@ Feature: Ljós's own style: tabs, cards, popovers, split buttons and empty state
         """
       When the method "open" of "pop" is called
       And 200 milliseconds pass
-      Then the property "popX" of "root" is <px>
+      Then the property "visible" of "pop" is true
+      And the property "popX" of "root" is <px>
       And the property "popY" of "root" is <py>
 
       # The window is 400 by 400, as the root is. Scaled, the button is at
