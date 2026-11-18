@@ -117,9 +117,11 @@ fi
 # minor version here is a Qt all the same: Qt is only what Ljós is compared
 # with, and every task that compares says so itself when it runs. So it is a
 # note, in --check too, and never a failure.
+# Asked once: what is classified below is what is reported.
 pin="$(qt_pin)"
-other="$(qt_other)"
-found="$(qt_found | sed -n 1p)"
+inventory="$(qt_found)"
+other="$(qt_other "$pin" "$inventory")"
+found="$(printf '%s\n' "$inventory" | sed -n 1p)"
 if [ -n "$other" ]; then
   while read -r version tools; do
     at=""
@@ -130,7 +132,7 @@ if [ -n "$other" ]; then
   done <<EOF
 $other
 EOF
-  note "CI pins Qt $pin (.github/workflows/ci.yml): the type table made here and qml6's pictures are not the ones CI compares with"
+  note "CI pins Qt $pin (.github/workflows/ci.yml), another minor version than the tools above"
   note "for CI's results, $(qt_pin_fix "$pin")"
 elif [ -n "$found" ]; then
   did "found Qt ${found#* } (${found%% *}), CI's Qt ${pin%.*} (ci.yml pins $pin)"

@@ -128,13 +128,16 @@ qt_pin() {
 
 # What Qt 6 on this machine says it is, one "<tool> <version>" line per tool
 # that answers (Qt 5's tools, often what a bare `qtpaths` is, are left out).
+# With programs named (QML6's path, say), only those are asked; each is told
+# apart by its name.
 qt_found() {
   local tool v
-  for tool in qmake6 qtpaths6 qtpaths qml6; do
+  [ $# -gt 0 ] || set -- qmake6 qtpaths6 qtpaths qml6
+  for tool in "$@"; do
     command -v "$tool" >/dev/null 2>&1 || continue
-    case "$tool" in
-      qmake6) v="$("$tool" -query QT_VERSION 2>/dev/null || true)" ;;
-      qml6) v="$(QT_QPA_PLATFORM=offscreen "$tool" --version 2>/dev/null | sed -n 's/^Qml Runtime //p' | sed -n 1p || true)" ;;
+    case "${tool##*/}" in
+      qmake*) v="$("$tool" -query QT_VERSION 2>/dev/null || true)" ;;
+      qml*) v="$(QT_QPA_PLATFORM=offscreen "$tool" --version 2>/dev/null | sed -n 's/^Qml Runtime //p' | sed -n 1p || true)" ;;
       *) v="$("$tool" --qt-version 2>/dev/null || true)" ;;
     esac
     case "$v" in
@@ -153,28 +156,30 @@ qt_pin_fix() {
     "$pin" "$host" "$pin" "$arch" "$pin" "$dir"
 }
 
-# The Qt 6 tools found that are not CI's minor version: one "<version>
-# <tool>[, <tool>…]" line per version, in the order qt_found names them.
+# qt_other <pin> <inventory>: of the "<tool> <version>" lines qt_found gave,
+# those that are not the pin's minor version, as one "<version> <tool>[,
+# <tool>…]" line per version, in the order they came. The caller asks qt_pin
+# and qt_found once, so what it reports is what it classified.
 qt_other() {
-  local want
-  want="$(qt_pin)"
-  want="${want%.*}"
-  qt_found | awk -v want="$want" '
-    $2 != want && index($2, want ".") != 1 {
+  printf '%s\n' "$2" | awk -v want="${1%.*}" '
+    NF >= 2 && $2 != want && index($2, want ".") != 1 {
       if (!($2 in tools)) order[++n] = $2
       tools[$2] = ($2 in tools) ? tools[$2] ", " $1 : $1
     }
     END { for (i = 1; i <= n; i++) printf "%s %s\n", order[i], tools[order[i]] }'
 }
 
-# Empty when every Qt 6 tool found is CI's minor version (or none is found);
-# otherwise one line per other version, naming the tools that report it, with
-# the fix.
+# qt_mismatch [program]: empty when the Qt a task runs is CI's minor version
+# (or no Qt 6 answers); otherwise one line per other version, naming the
+# tools that report it, with the fix. With a program (the qml6 the task runs,
+# QML6 or not), that program is the one asked; without, every Qt 6 tool on
+# PATH. Fails, having said why, when ci.yml's pin cannot be read.
 qt_mismatch() {
-  local pin version tools
-  pin="$(qt_pin)"
-  qt_other | while read -r version tools; do
-    printf "Qt %s (%s) is not CI's Qt %s (.github/workflows/ci.yml pins %s), so its type table and qml6's pictures are not what CI compares with: %s\n" \
+  local pin inventory version tools
+  pin="$(qt_pin)" || return 1
+  inventory="$(qt_found "$@")"
+  qt_other "$pin" "$inventory" | while read -r version tools; do
+    printf "Qt %s (%s) is not CI's Qt %s (.github/workflows/ci.yml pins %s), so what it gives here can differ from what CI compares with: %s\n" \
       "$version" "$tools" "${pin%.*}" "$pin" "$(qt_pin_fix "$pin")"
   done
 }

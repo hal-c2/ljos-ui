@@ -8,7 +8,7 @@ set -euo pipefail
 # shellcheck source-path=SCRIPTDIR source=../_lib/env.sh
 . "$(dirname "$0")/../_lib/env.sh"
 need_qml6
-mismatch="$(qt_mismatch)"
+mismatch="$(qt_mismatch "${QML6:-qml6}")" || exit 1
 [ -z "$mismatch" ] || printf 'features:parity: %s\n' "$mismatch" >&2
 qt_offscreen
 exec "$(dirname "$0")/run" --backend qt "$@"

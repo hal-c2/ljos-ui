@@ -23,8 +23,9 @@ cargo build --quiet -p qml_compare --manifest-path "$root/Cargo.toml"
 # leaving no pictures and a zero count.
 examples="$("$target/debug/qml-compare" list --manifest "$root/corpus/examples.json" --runnable "$@")"
 [ -n "$examples" ] || die "gallery:reference: no runnable example${*:+ among $*} in corpus/examples.json"
-# Pictures from another Qt are not the ones CI's gallery compares with.
-mismatch="$(qt_mismatch)"
+# Pictures from another Qt are not the ones CI's gallery compares with. The
+# qml6 asked is the one that takes them.
+mismatch="$(qt_mismatch "$qml6")" || exit 1
 [ -z "$mismatch" ] || printf 'gallery:reference: %s\n' "$mismatch" >&2
 
 # What an example saves must not change the next picture, nor the user's own data.

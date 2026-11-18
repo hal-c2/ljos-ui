@@ -12,7 +12,7 @@ cd "$ljos_root"
 target="$(target_dir)"
 need_qml6
 qml="${QML6:-qml6}"
-qt_mismatch >&2 || true
+qt_mismatch "$qml" >&2 || exit 1
 # ljos-fuzz runs qml6 off-screen; a desktop platform theme would still reach
 # for a display.
 qt_offscreen
