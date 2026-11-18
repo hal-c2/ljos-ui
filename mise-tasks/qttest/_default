@@ -5,6 +5,13 @@ set -euo pipefail
 # shellcheck source-path=SCRIPTDIR source=../_lib/env.sh
 . "$(dirname "$0")/../_lib/env.sh"
 root="$ljos_root"
+# Built in the checkout, where cargo finds a worktree's own settings, and
+# run from the run's own link to it: the suite runs elsewhere (below), and
+# the target may be shared with another checkout.
+programs="$(cd "$root" && pin_programs "$(checkout_dir qttest)/bin" build --quiet -p ljos_cli --bin ljos)" ||
+  die "qttest: ljos did not build"
+ljos="$(pinned_program ljos "$programs")"
+[ -n "$ljos" ] || die "qttest: the build made no ljos"
 if [ $# -eq 0 ]; then
   set -- "$root/crates/ljos_test/tests/qml/suite" -import "$root/crates/ljos_test/tests/qml/imports"
   # The suite saves a picture (`grabImage(...).save(name)`) into the current
@@ -16,4 +23,4 @@ else
   # Paths given are from where mise was started.
   cd "$(asked_in)"
 fi
-cargo run --quiet -p ljos_cli --bin ljos --manifest-path "$root/Cargo.toml" -- test "$@"
+"$ljos" test "$@"
