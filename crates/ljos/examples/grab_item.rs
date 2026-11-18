@@ -27,17 +27,21 @@ use ljos::prelude::*;
 
 /// What the worker asks the Engine thread to do.
 enum Ask {
-    /// A picture of the item of that `objectName`.
-    Picture(&'static str),
-    /// A picture of the item, which is then destroyed in the same turn:
-    /// at once (`true`) or as QML's `destroy()` does, at the next pass.
-    Doomed(&'static str, bool),
+    /// A picture of the item of that `objectName`, told on `reply`. With
+    /// `doomed`, the item is destroyed in the same turn: at once (`true`)
+    /// or as QML's `destroy()` does, at the next pass (`false`).
+    Grab {
+        name: &'static str,
+        doomed: Option<bool>,
+        reply: mpsc::Sender<Heard>,
+    },
     Finish,
 }
 
-/// What a callback came to, for the worker: the size of the picture, if
-/// one came, or why it could not be kept.
-type Heard = (&'static str, Result<Option<(u32, u32)>, String>);
+/// What a grab came to, for the worker: the size of the picture, if one
+/// came, or why there is none to keep. Each ask has a channel of its
+/// own, so a callback that comes late is never taken for the next one's.
+type Heard = Result<Option<(u32, u32)>, String>;
 
 fn main() -> ExitCode {
     let Some(out) = std::env::args().nth(1).map(PathBuf::from) else {
@@ -48,7 +52,6 @@ fn main() -> ExitCode {
         eprintln!("grab_item: {}: {e}", out.display());
         return ExitCode::FAILURE;
     }
-    let (heard_tx, heard_rx) = mpsc::channel::<Heard>();
     let (failed_tx, failed_rx) = mpsc::channel::<String>();
     let start = Instant::now();
     let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/examples/grab_item");
@@ -60,7 +63,7 @@ fn main() -> ExitCode {
         .expect("the example's QML compiles")
         .on_message(move |engine, ask: Ask| {
             if let Some(root) = at.get() {
-                answer(engine, root, ask, &heard_tx, &out, start);
+                answer(engine, root, ask, &out, start);
             }
         });
     let ran = app.run_with(move |setup| {
@@ -74,22 +77,30 @@ fn main() -> ExitCode {
             // The window is up and its first frames are drawn by then:
             // the application is idle when the first ask comes.
             std::thread::sleep(Duration::from_millis(2000));
-            for (name, ask, pictured) in [
-                ("card", Ask::Picture("card"), true),
-                ("doomed", Ask::Doomed("doomed", false), false),
-                ("doomedNow", Ask::Doomed("doomedNow", true), false),
+            for (name, doomed) in [
+                ("card", None),
+                ("doomed", Some(false)),
+                ("doomedNow", Some(true)),
             ] {
-                if ui.send(ask).is_err() {
+                let pictured = doomed.is_none();
+                let (reply, heard) = mpsc::channel::<Heard>();
+                if ui
+                    .send(Ask::Grab {
+                        name,
+                        doomed,
+                        reply,
+                    })
+                    .is_err()
+                {
                     let _ = failed_tx.send(format!("{name}: the application is gone"));
                     return;
                 }
-                let failed = match heard_rx.recv_timeout(Duration::from_secs(2)) {
-                    Ok((n, _)) if n != name => Some(format!("{name}: {n} was called back instead")),
-                    Ok((_, Err(e))) => Some(format!("{name}: {e}")),
-                    Ok((_, Ok(Some((w, h))))) if !pictured => {
+                let failed = match heard.recv_timeout(Duration::from_secs(2)) {
+                    Ok(Err(e)) => Some(format!("{name}: {e}")),
+                    Ok(Ok(Some((w, h)))) if !pictured => {
                         Some(format!("{name}: a destroyed item gave a {w}x{h} picture"))
                     }
-                    Ok((_, Ok(None))) if pictured => Some(format!("{name}: no picture came")),
+                    Ok(Ok(None)) if pictured => Some(format!("{name}: no picture came")),
                     Ok(_) => None,
                     Err(mpsc::RecvTimeoutError::Timeout) => {
                         Some(format!("{name}: no callback within 2 s"))
@@ -101,7 +112,7 @@ fn main() -> ExitCode {
                 if let Some(f) = failed {
                     let _ = failed_tx.send(f);
                 }
-                // Idle between asks, so each callback is the ask's own.
+                // Idle between asks, so each is asked of an idle application.
                 std::thread::sleep(Duration::from_millis(300));
             }
             // Idle again before it quits, so a watcher outside sees that
@@ -130,27 +141,23 @@ fn main() -> ExitCode {
 }
 
 /// Asks for the picture `ask` names, on the Engine thread.
-fn answer(
-    engine: &Engine,
-    root: ObjectId,
-    ask: Ask,
-    heard_tx: &mpsc::Sender<Heard>,
-    out: &Path,
-    start: Instant,
-) {
-    let (name, doomed) = match ask {
-        Ask::Picture(name) => (name, None),
-        Ask::Doomed(name, now) => (name, Some(now)),
+fn answer(engine: &Engine, root: ObjectId, ask: Ask, out: &Path, start: Instant) {
+    let (name, doomed, reply) = match ask {
+        Ask::Grab {
+            name,
+            doomed,
+            reply,
+        } => (name, doomed, reply),
         Ask::Finish => {
             let _ = engine.invoke_by_name(root, "finish", &[]);
             return;
         }
     };
     let Some(item) = named(engine, root, name) else {
-        eprintln!("grab_item: no item is called {name}");
+        let _ = reply.send(Err("no item has that objectName".to_owned()));
         return;
     };
-    let heard = heard_tx.clone();
+    let heard = reply.clone();
     let file = out.join(format!("{name}.png"));
     let asked = ljos::item::grab(engine, item, move |_, picture| {
         let size = picture.as_ref().map(|p| (p.width(), p.height()));
@@ -163,10 +170,12 @@ fn answer(
             Some(p) => write_png(&file, p).map_err(|e| format!("{}: {e}", file.display())),
             None => Ok(()),
         };
-        let _ = heard.send((name, kept.map(|()| size)));
+        let _ = heard.send(kept.map(|()| size));
     });
-    // A refused ask never calls back: the worker says so when its wait
-    // runs out, and this line says why.
+    // A refused ask never calls back, so the worker is told here.
+    if let Err(why) = &asked {
+        let _ = reply.send(Err(format!("refused: {why}")));
+    }
     eprintln!(
         "[{:>6} ms] grab of {name}: asked ({})",
         start.elapsed().as_millis(),
