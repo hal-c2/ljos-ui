@@ -597,11 +597,27 @@ pub(crate) struct LoaderState {
     /// source gives, by the first part of their name (`QtGraphs`): what
     /// the design audit reads, so a new source starts it again.
     pub(crate) stood_in: HashSet<String>,
+    /// What stands in in the files of a library the program adds types
+    /// from ([`Engine::add_component_library`]): those are loaded once and kept,
+    /// so a new source does not start these again.
+    pub(crate) library_stood_in: HashSet<String>,
     /// What the log has said stands in: a module by the first part of its
     /// name (`QtGraphs`), a type of one the runtime builds part of by its
     /// module and name (`QtQuick3D.Helpers.Name`). Once each for the
     /// engine, however many files or sources name them.
     pub(crate) told_stood_in: HashSet<String>,
+}
+
+impl LoaderState {
+    /// Notes that `name` stands in, for the source or, from a library
+    /// file, for the engine.
+    fn stands_in(&mut self, name: &str, library: bool) {
+        if library {
+            self.library_stood_in.insert(name.to_owned());
+        } else {
+            self.stood_in.insert(name.to_owned());
+        }
+    }
 }
 
 /// A binding that reads a path of properties from one parameter
@@ -1047,7 +1063,7 @@ impl Engine {
                 ljos_ir::IR_VERSION
             )));
         }
-        self.check_imports(&url, &ir)?;
+        self.check_imports(&url, &ir, false)?;
         let used = modules_of(&ir);
         let file = Rc::new(LoadedFile::new(key, url, ir, bytecode));
         file.epoch.set(self.inner.reload.epoch.get());
@@ -1088,15 +1104,15 @@ impl Engine {
     /// types stand in as empty Items, by the first part of their name
     /// (`QtGraphs`), sorted: what they would show is not in the scene.
     pub fn stood_in_modules(&self) -> Vec<String> {
-        let mut out: Vec<String> = self
-            .inner
-            .loader
-            .borrow()
+        let loader = self.inner.loader.borrow();
+        let mut out: Vec<String> = loader
             .stood_in
             .iter()
+            .chain(&loader.library_stood_in)
             .cloned()
             .collect();
         out.sort();
+        out.dedup();
         out
     }
 
@@ -1182,7 +1198,14 @@ impl Engine {
     /// the log says so, once for the module, or of one the runtime builds
     /// part of, once for each type of it that stands in, where a file
     /// first names it.
-    pub(crate) fn check_imports(&self, url: &str, ir: &CompiledFile) -> Result<(), EngineError> {
+    /// `library` is a file of a library the program adds types from,
+    /// which is kept past a new source.
+    pub(crate) fn check_imports(
+        &self,
+        url: &str,
+        ir: &CompiledFile,
+        library: bool,
+    ) -> Result<(), EngineError> {
         for import in &ir.imports {
             let ImportSource::Module(uri) = &import.source else {
                 continue;
@@ -1194,7 +1217,7 @@ impl Engine {
             // may all be built: only a type that stands in is told, even
             // where the program registers types of the module.
             if let Some(types) = &import.stood_in {
-                self.tell_stood_in(url, uri, types);
+                self.tell_stood_in(url, uri, types, library);
                 continue;
             }
             if self.has_module(uri) {
@@ -1213,7 +1236,7 @@ impl Engine {
                 Some((first, _)) => first,
             };
             let mut loader = self.inner.loader.borrow_mut();
-            loader.stood_in.insert(family.to_owned());
+            loader.stands_in(family, library);
             let told = loader.told_stood_in.insert(family.to_owned());
             drop(loader);
             if told {
@@ -1228,10 +1251,10 @@ impl Engine {
 
     /// Says of each type of the module `uri` that stands in that it does,
     /// once for the engine, where the file `url` first names it.
-    fn tell_stood_in(&self, url: &str, uri: &str, types: &[ljos_ir::StoodIn]) {
+    fn tell_stood_in(&self, url: &str, uri: &str, types: &[ljos_ir::StoodIn], library: bool) {
         for ty in types {
             let mut loader = self.inner.loader.borrow_mut();
-            loader.stood_in.insert(uri.to_owned());
+            loader.stands_in(uri, library);
             let told = loader.told_stood_in.insert(format!("{uri}.{}", ty.name));
             drop(loader);
             if told {
@@ -1472,6 +1495,51 @@ mod tests {
         );
         let debug = format!("{source:?}");
         assert!(debug.contains("failures: [\"c\", \"d\"]"), "{debug}");
+    }
+
+    /// A file that only `module` stands in for: the types it names are
+    /// told under the import when `named` is some.
+    fn standing_in(module: &str, named: Option<&str>) -> CompiledFile {
+        CompiledFile {
+            version: ljos_ir::IR_VERSION,
+            file: "Main".to_owned(),
+            source_hash: [0; 32],
+            imports: vec![ljos_ir::Import {
+                source: ImportSource::Module(module.to_owned()),
+                version: None,
+                alias: None,
+                in_project: false,
+                stands_in: true,
+                stood_in: named.map(|name| {
+                    vec![ljos_ir::StoodIn {
+                        name: name.to_owned(),
+                        span: ljos_ir::SourceSpan::default(),
+                        known: true,
+                    }]
+                }),
+            }],
+            pragmas: Vec::new(),
+            components: Vec::new(),
+            exprs: Vec::new(),
+            translations: Vec::new(),
+            js: ljos_ir::JsModule::default(),
+            invocable: Vec::new(),
+            scripts: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn what_stands_in_in_a_library_outlasts_a_new_source() {
+        // A library file is loaded once and kept, so its imports are not
+        // checked again under the next source: what it stood in for stays.
+        let engine = Engine::new();
+        let library = standing_in("QtQuick3D.Helpers", Some("SceneGizmo"));
+        let app = standing_in("QtGraphs", None);
+        engine.check_imports("lib:Gizmo", &library, true).unwrap();
+        engine.check_imports("app:Main", &app, false).unwrap();
+        assert_eq!(engine.stood_in_modules(), ["QtGraphs", "QtQuick3D.Helpers"]);
+        engine.set_component_source(MapSource::new());
+        assert_eq!(engine.stood_in_modules(), ["QtQuick3D.Helpers"]);
     }
 
     #[test]

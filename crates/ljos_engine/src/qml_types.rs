@@ -232,7 +232,7 @@ impl Engine {
                 ljos_ir::IR_VERSION
             )));
         }
-        self.check_imports(&url, &ir)?;
+        self.check_imports(&url, &ir, true)?;
         let file = Rc::new(LoadedFile::new(key, url, ir, source.bytecode(key)));
         self.inner
             .loader

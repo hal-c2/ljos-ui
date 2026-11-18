@@ -177,7 +177,7 @@ Feature: The types of a Qt module Ljós does not have stand in as empty items
       """
     Then the property "objectName" of "gizmo" is "gizmo"
     And the log has 1 warnings matching "type SceneGizmo of module .QtQuick3D.Helpers. is not part of Ljós"
-    And the log has a warning matching ":7:3: type SceneGizmo of module .QtQuick3D.Helpers. is not part of Ljós"
+    And the log has a warning matching ":7:9: type SceneGizmo of module .QtQuick3D.Helpers. is not part of Ljós"
     And the log has no warning matching "module .QtQuick3D.Helpers. is not part of Ljós: the types"
 
   Scenario: What Ljós builds of such a module is itself through a qualified import

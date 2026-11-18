@@ -972,6 +972,12 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
         chain: &[String],
         offset: u32,
     ) {
+        // A script that reads a type that stands in (`SceneGizmo.Mode`)
+        // loses what it reads all the same: told where it is read.
+        if let Origin::StandIn(uri) = &found.origin {
+            let span = Span::new(offset, offset + name.len() as u32);
+            self.stood_in_at(&[name], &uri.clone(), span);
+        }
         let Kind::Builtin(ty) = found.kind else {
             return;
         };
