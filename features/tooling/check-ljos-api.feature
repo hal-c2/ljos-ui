@@ -263,6 +263,31 @@ Feature: Checking the scripts of a file written in Ljós's API
         ljos: 1 errors
         """
 
+    Scenario: An enum another component's function declares is that enum
+      Given the file "Helper.qml":
+        """qml
+        import Ljos.Ui
+        Item {
+          function centre(): Text.HAlignment { return Text.AlignHCenter }
+        }
+        """
+      And the file "Main.qml":
+        """qml
+        import Ljos.Ui
+        Item {
+          Helper { id: helper }
+          property string wrong: helper.centre()
+          Text { align: helper.centre() }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        Main.qml:4:34: error: `wrong` is a string; this gives it a Text.HAlignment [ts-assign-type]
+        2 files, 1 errors, 0 warnings
+        ljos: 1 errors
+        """
+
     Scenario: Arrays, arrows, templates and object literals are typed
       Given the file "Gauge.qml":
         """qml

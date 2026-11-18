@@ -730,6 +730,19 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
             let elem = self.named(elem, types);
             return self.arena.array(elem, false);
         }
+        // `Text.HAlignment`: an enum the type declares, as `annot` reads it in
+        // the declaring file.
+        if let Some((left, right)) = name.split_once('.')
+            && !right.contains('.')
+            && let Some(found) = types.find(&[left])
+            && types.declared_enum(&found.kind, right) == Some(true)
+        {
+            let object = self.of_kind(&found.kind);
+            return self.arena.intern(Kind::Enum {
+                object,
+                name: right.into(),
+            });
+        }
         match name {
             "void" => Ty::VOID,
             "undefined" => Ty::UNDEFINED,
