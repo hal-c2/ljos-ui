@@ -42,8 +42,10 @@ Object {
     // one is done.
     function tick() {
         const target = Drive.targetSpeed(car.gear, car.current)
-        // A car closes most of the gap in a second, not all of it.
-        const next = Math.abs(target - car.speed) < 1 ? target : car.speed + (target - car.speed) * 0.55
+        // A car closes most of the gap in a second, not all of it, and one
+        // too slow to count as moving has stopped: the clock stops with it.
+        const eased = Math.abs(target - car.speed) < 1 ? target : car.speed + (target - car.speed) * 0.55
+        const next = eased <= 0.5 ? 0 : eased
         // A car that has come to rest draws nothing, whatever the last
         // second's braking won back: the clock may stop on this tick.
         car.power = car.gear === "P" || next === 0 ? 0 : Drive.power(car.speed, next)

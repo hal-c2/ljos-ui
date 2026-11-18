@@ -149,14 +149,20 @@ Feature: The car cockpit example
       When 3 seconds pass
       Then the property "speed" of "car" is 0
 
-    Scenario: A car that coasts to rest in neutral draws no power
+    Scenario Outline: A car that coasts to rest in neutral draws no power
       When the user clicks the "button" "R"
-      And the property "speed" of "car" is set to 6
+      And the property "speed" of "car" is set to <speed>
       And the user clicks the "button" "N"
       And 5 seconds pass
       Then the property "speed" of "car" is 0
       And the property "running" of "drive" is false
       And the property "power" of "car" is 0
+
+      # From 5 the eased speed lands just under the moving threshold.
+      Examples:
+        | speed |
+        | 5     |
+        | 6     |
 
   Rule: The player plays, pauses and skips
 
