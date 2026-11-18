@@ -290,6 +290,22 @@ fn a_child_moved_back_under_bindings_that_share_a_line_leaves_them_on_it() {
 }
 
 #[test]
+fn an_object_with_a_member_beside_its_brace_is_opened_up_for_a_child() {
+    let source = "Item { width: 100\n    x: 1; y: 2\n}\n";
+    assert_eq!(
+        applied(
+            source,
+            Edit::InsertObject {
+                parent: root(),
+                index: 0,
+                text: "Item {\n    width: 1\n}".into(),
+            }
+        ),
+        "Item {\n    width: 100\n    x: 1\n    y: 2\n    Item {\n        width: 1\n    }\n}\n"
+    );
+}
+
+#[test]
 fn crlf_files_stay_crlf() {
     let source = PAGE.replace('\n', "\r\n");
     let out = apply(

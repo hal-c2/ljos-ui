@@ -1312,7 +1312,10 @@ impl<'s> Text<'s> {
         let (open, close) = self.braces(object);
         let (start, end) = (span.start as usize, self.end_of(span));
         let first = line_start(self.src, start);
-        if first <= open || !is_blank(&self.src[line_start(self.src, close)..close]) {
+        if first <= open
+            || self.line_end_after(open + 1).is_none()
+            || !is_blank(&self.src[line_start(self.src, close)..close])
+        {
             return None;
         }
         let last = self.line_end_after(end);
