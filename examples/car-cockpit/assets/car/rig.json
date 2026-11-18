@@ -1,0 +1,375 @@
+{
+  "name": "Svala GT",
+  "generator": "build_car.py (Blender, headless)",
+  "units": "metres",
+  "axes": {
+    "up": "+Y",
+    "front": "+Z",
+    "left": "+X",
+    "handedness": "right"
+  },
+  "origin": "on the ground, centred between the axles",
+  "dimensions": {
+    "length": 4.62,
+    "width": 1.95,
+    "height": 1.25,
+    "wheelbase": 2.8,
+    "bounds_min": [
+      -0.975,
+      0.0,
+      -2.3
+    ],
+    "bounds_max": [
+      0.975,
+      1.25,
+      2.32
+    ]
+  },
+  "notes": [
+    "Each part file holds one node at its own origin; that origin is the pivot. Place the file under a node at `pivot` and rotate that node about `axis` by up to `open_angle_deg` (right-hand rule, sign included) to open it.",
+    "wheel.glb is a LEFT wheel, axle along X, outer face towards +X. Right wheels use the same file turned by `rotation_deg` (180 about Y). Rolling forward is a positive spin about the wheel's own X for left wheels and negative for right ones (`forward_spin_sign`).",
+    "Light strips are not in the part files. Strips whose group names a door have `center` relative to that door's pivot and move with it; the rest are relative to the car origin. Boxes are axis-aligned.",
+    "car.glb holds everything assembled under the node `svala`, with the strips and the named animations."
+  ],
+  "parts": [
+    {
+      "name": "body",
+      "file": "body.glb",
+      "node": "body",
+      "pivot": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "triangles": 7180
+    },
+    {
+      "name": "door_left",
+      "file": "door_left.glb",
+      "node": "door_left",
+      "pivot": [
+        0.34,
+        1.245,
+        -0.135
+      ],
+      "axis": [
+        0,
+        0,
+        1
+      ],
+      "open_angle_deg": 70.0,
+      "animation": "door_left_open",
+      "triangles": 352
+    },
+    {
+      "name": "door_right",
+      "file": "door_right.glb",
+      "node": "door_right",
+      "pivot": [
+        -0.34,
+        1.245,
+        -0.135
+      ],
+      "axis": [
+        0,
+        0,
+        1
+      ],
+      "open_angle_deg": -70.0,
+      "animation": "door_right_open",
+      "triangles": 352
+    },
+    {
+      "name": "frunk",
+      "file": "frunk.glb",
+      "node": "frunk",
+      "pivot": [
+        0.0,
+        0.9101,
+        0.92
+      ],
+      "axis": [
+        1,
+        0,
+        0
+      ],
+      "open_angle_deg": -55.0,
+      "animation": "frunk_open",
+      "triangles": 228
+    },
+    {
+      "name": "trunk",
+      "file": "trunk.glb",
+      "node": "trunk",
+      "pivot": [
+        0.0,
+        1.2088,
+        -0.8
+      ],
+      "axis": [
+        1,
+        0,
+        0
+      ],
+      "open_angle_deg": 60.0,
+      "animation": "trunk_open",
+      "triangles": 360
+    },
+    {
+      "name": "charge_port",
+      "file": "charge_port.glb",
+      "node": "charge_port",
+      "pivot": [
+        0.9388,
+        0.7852,
+        -1.95
+      ],
+      "axis": [
+        0,
+        1,
+        0
+      ],
+      "open_angle_deg": -95.0,
+      "animation": "charge_port_open",
+      "triangles": 108
+    }
+  ],
+  "wheel": {
+    "file": "wheel.glb",
+    "node": "wheel",
+    "radius": 0.37,
+    "width": 0.28,
+    "spin_axis": [
+      1,
+      0,
+      0
+    ],
+    "spin_deg_per_second": 360.0,
+    "triangles": 3336,
+    "positions": [
+      {
+        "name": "wheel_fl",
+        "center": [
+          0.83,
+          0.37,
+          1.4
+        ],
+        "side": "left",
+        "rotation_deg": [
+          0,
+          0,
+          0
+        ],
+        "forward_spin_sign": 1
+      },
+      {
+        "name": "wheel_fr",
+        "center": [
+          -0.83,
+          0.37,
+          1.4
+        ],
+        "side": "right",
+        "rotation_deg": [
+          0,
+          180,
+          0
+        ],
+        "forward_spin_sign": -1
+      },
+      {
+        "name": "wheel_rl",
+        "center": [
+          0.83,
+          0.37,
+          -1.4
+        ],
+        "side": "left",
+        "rotation_deg": [
+          0,
+          0,
+          0
+        ],
+        "forward_spin_sign": 1
+      },
+      {
+        "name": "wheel_rr",
+        "center": [
+          -0.83,
+          0.37,
+          -1.4
+        ],
+        "side": "right",
+        "rotation_deg": [
+          0,
+          180,
+          0
+        ],
+        "forward_spin_sign": -1
+      }
+    ]
+  },
+  "light_strips": [
+    {
+      "name": "strip_front",
+      "group": "front",
+      "center": [
+        0.0,
+        0.43,
+        2.304
+      ],
+      "center_relative_to": "car",
+      "size": [
+        1.56,
+        0.03,
+        0.012
+      ],
+      "color": "#00e5ff",
+      "emissive_strength": 4.0
+    },
+    {
+      "name": "strip_rear",
+      "group": "rear",
+      "center": [
+        0.0,
+        0.8,
+        -2.304
+      ],
+      "center_relative_to": "car",
+      "size": [
+        1.64,
+        0.04,
+        0.012
+      ],
+      "color": "#ff0d59",
+      "emissive_strength": 4.0
+    },
+    {
+      "name": "strip_side_left",
+      "group": "side",
+      "center": [
+        0.932,
+        0.3,
+        0.0
+      ],
+      "center_relative_to": "car",
+      "size": [
+        0.012,
+        0.022,
+        1.7
+      ],
+      "color": "#00e5ff",
+      "emissive_strength": 4.0
+    },
+    {
+      "name": "strip_side_right",
+      "group": "side",
+      "center": [
+        -0.932,
+        0.3,
+        0.0
+      ],
+      "center_relative_to": "car",
+      "size": [
+        0.012,
+        0.022,
+        1.7
+      ],
+      "color": "#00e5ff",
+      "emissive_strength": 4.0
+    },
+    {
+      "name": "strip_door_left",
+      "group": "door_left",
+      "center": [
+        0.6281,
+        -0.465,
+        0.0
+      ],
+      "center_relative_to": "door_left",
+      "size": [
+        0.012,
+        0.014,
+        0.97
+      ],
+      "color": "#00e5ff",
+      "emissive_strength": 4.0
+    },
+    {
+      "name": "strip_door_right",
+      "group": "door_right",
+      "center": [
+        -0.6281,
+        -0.465,
+        0.0
+      ],
+      "center_relative_to": "door_right",
+      "size": [
+        0.012,
+        0.014,
+        0.97
+      ],
+      "color": "#00e5ff",
+      "emissive_strength": 4.0
+    }
+  ],
+  "animations": [
+    {
+      "name": "door_left_open",
+      "duration_s": 1.0,
+      "loop": false,
+      "nodes": [
+        "door_left"
+      ]
+    },
+    {
+      "name": "door_right_open",
+      "duration_s": 1.0,
+      "loop": false,
+      "nodes": [
+        "door_right"
+      ]
+    },
+    {
+      "name": "frunk_open",
+      "duration_s": 1.0,
+      "loop": false,
+      "nodes": [
+        "frunk"
+      ]
+    },
+    {
+      "name": "trunk_open",
+      "duration_s": 1.0,
+      "loop": false,
+      "nodes": [
+        "trunk"
+      ]
+    },
+    {
+      "name": "charge_port_open",
+      "duration_s": 1.0,
+      "loop": false,
+      "nodes": [
+        "charge_port"
+      ]
+    },
+    {
+      "name": "wheels_spin",
+      "duration_s": 1.0,
+      "loop": true,
+      "nodes": [
+        "wheel_fl",
+        "wheel_fr",
+        "wheel_rl",
+        "wheel_rr"
+      ]
+    }
+  ],
+  "materials": {
+    "paint": "graphite satin, metallic 0.35, roughness 0.38",
+    "glass": "black glass, roughness 0.18",
+    "neon_front_side": "#00e5ff",
+    "neon_rear": "#ff0d59"
+  }
+}
