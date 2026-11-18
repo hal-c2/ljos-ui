@@ -989,7 +989,9 @@ fi
 # before that are another checkout's, sharing the target, building between.
 # A fresh build puts the checkout's own last program back, as cargo links it
 # again from its deps; right after build OTHER_AFTER another checkout's
-# program takes its place.
+# program takes its place. With SAME set, a build that is not fresh makes the
+# same program each time, as one whose build script watches a file that is
+# not there does (qt_types' types.txt in a worktree that never ran setup).
 pinfakes="$real/pinfakes"
 mkdir "$pinfakes"
 cat >"$pinfakes/cargo" <<'EOF_CARGO'
@@ -997,7 +999,7 @@ cat >"$pinfakes/cargo" <<'EOF_CARGO'
 n=$(( $(cat "$PIN_COUNT" 2>/dev/null || echo 0) + 1 ))
 echo "$n" >"$PIN_COUNT"
 fresh=false
-[ "$n" -ge "$FRESH_FROM" ] && fresh=true || echo "build $n" >"$PIN_TARGET/mine"
+[ "$n" -ge "$FRESH_FROM" ] && fresh=true || echo "build ${SAME:-$n}" >"$PIN_TARGET/mine"
 rm -f "$PIN_TARGET/prog"
 cp "$PIN_TARGET/mine" "$PIN_TARGET/prog"
 if [ "$n" = "${OTHER_AFTER:-0}" ]; then rm -f "$PIN_TARGET/prog"; echo other >"$PIN_TARGET/prog"; fi
@@ -1032,6 +1034,8 @@ if [ "$out" = "4 builds, prog $real/pin.4/bin/prog: build 3" ]; then ok "a build
 rm -rf "$real/pin.2"
 out="$(pinned 2 1)"
 if [ "$out" = "3 builds, prog $real/pin.2/bin/prog: build 1" ]; then ok "a program another checkout's build put in place before it was pinned is pinned again from the build that finds it fresh"; else bad "pin_programs with another program in place of the build's: $out"; fi
+out="$(SAME=again pinned 99)"
+if [ "$out" = "2 builds, prog $real/pin.99/bin/prog: build again" ]; then ok "a build that is never fresh but makes the same program is pinned after one more build"; else bad "pin_programs with builds never fresh that make the same program: $out"; fi
 
 programs="$(printf '%s\n' "ljos-x $real/a b/bin/ljos-x" "ljos $real/a b/bin/ljos" "qml-compare $real/a b/bin/qml-compare")"
 out="$(pinned_program ljos "$programs")|$(pinned_program qml-compare "$programs")|$(pinned_program qml "$programs")"

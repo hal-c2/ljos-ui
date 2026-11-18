@@ -523,11 +523,13 @@ pin_build() {
 # file it was made to, as cargo and the linker put new files in place of old
 # ones (a <dir> on another drive than the target gets a copy). The links
 # are this build's only if no other build came between it and them: so
-# cargo builds again, and the links are kept only when that build finds
-# every program fresh and each one it leaves in the target holds what its
-# link does (a fresh build links this checkout's own program there again,
-# so another checkout's that came in before the links shows as a
-# difference). Else they are made again from that build.
+# cargo builds again, and the links are kept only when each program that
+# build leaves in the target holds what its link does (a build, fresh or
+# not, links this checkout's own program there again, so another
+# checkout's that came in before the links shows as a difference). Else
+# they are made again from that build. Whether it was fresh is not asked: a
+# package whose build script watches a file that is not there is never
+# fresh, and makes the same program each time.
 pin_programs() {
   local into="$1" messages exe pinned tries=0
   shift
@@ -547,7 +549,7 @@ EOF_PROGRAMS
     pinned_as_built "$into" "$messages" && break
     tries=$((tries + 1))
     if [ "$tries" -ge 10 ]; then
-      printf '%s\n' "$(task_name): other builds into $CARGO_TARGET_DIR kept coming between this build and its programs; build when they are done, or set CARGO_TARGET_DIR to a target of this checkout's own" >&2
+      printf '%s\n' "$(task_name): the programs each build left in $CARGO_TARGET_DIR kept changing: other builds kept coming between this build and its programs, or the build makes different bytes each time; build when they are done, or set CARGO_TARGET_DIR to a target of this checkout's own" >&2
       return 1
     fi
   done
@@ -563,12 +565,11 @@ pinned_program() {
   done <<<"$2"
 }
 
-# pinned_as_built <dir> <messages>: whether the build of <messages> found
-# every program fresh and left each where it says, with the bytes of its
-# link in <dir> (cmp, as a copy is no hard link).
+# pinned_as_built <dir> <messages>: whether the build of <messages> left
+# each program where it says with the bytes of its link in <dir> (cmp, as a
+# copy is no hard link).
 pinned_as_built() {
   local exe
-  ! grep -q '^{"reason":"compiler-artifact".*"executable":".*"fresh":false' <<<"$2" || return 1
   while IFS= read -r exe; do
     [ -z "$exe" ] || cmp -s "$exe" "$1/${exe##*/}" || return 1
   done <<EOF_PROGRAMS
