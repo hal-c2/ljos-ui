@@ -1693,6 +1693,7 @@ impl QuickScene {
         if !engine.is_alive(item) {
             return false;
         }
+        let _acting = crate::input::Delivering::begin(engine);
         crate::focus::force_active_focus(engine, item, crate::focus::FocusReason::Other);
         true
     }

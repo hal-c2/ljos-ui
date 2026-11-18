@@ -53,12 +53,12 @@ use crate::tree;
 /// another such fault as final.
 const SECOND_CHANCE: Duration = Duration::from_secs(10);
 
-/// How many interrupts of scripts an item set off elsewhere by itself (a
-/// timer of its own, not input someone gave it),
+/// How many interrupts in a row of scripts an item set off elsewhere by
+/// itself (a timer of its own, not input someone gave it) a Loader takes,
 /// each within [`SECOND_CHANCE`] of the one before and of the item it
-/// loaded again, a Loader loads again for: an item that sets the work off
-/// again each time it is made would chain them for good, however long the
-/// cut-off scripts ran.
+/// loaded again. It loads again for the ones before; this one leaves it at
+/// `Loader.Error`. An item that sets the work off again each time it is
+/// made would chain them for good, however long the cut-off scripts ran.
 const ELSEWHERE_STREAK: u32 = 8;
 
 /// `Loader` (QtQuick).
