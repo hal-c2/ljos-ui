@@ -18,11 +18,13 @@
 Feature: Starting the authoring server from a checkout of Ljós
   `mise-tasks/mcp` starts `ljos mcp` on a checkout of Ljós: the repository's
   `.mcp.json` runs it for an editor or an agent, and so does `mise run mcp`.
-  It builds the server first, then starts it. Every worktree of one
-  repository builds into the target directory of the main checkout (the
-  `build.target-dir` its cargo settings name, else its `target/`), so a new
-  worktree does not make a build of its own; `CARGO_TARGET_DIR` overrides
-  that. The build goes through the machine's build wrapper when
+  It builds the server first, then starts it. A linked worktree whose own
+  cargo settings name no target builds into the target directory of the
+  main checkout (the `build.target-dir` its cargo settings name, else its
+  `target/`), so a new worktree does not make a build of its own; a
+  `build.target-dir` in the worktree's own settings is where it builds, and
+  `CARGO_TARGET_DIR`, then `CARGO_BUILD_TARGET_DIR`, override them all.
+  The build goes through the machine's build wrapper when
   `LJOS_BUILD_WRAPPER` names one, and through cargo alone when nothing does.
   `LJOS_BIN` names a server built already, which is started without a build.
   The server speaks JSON-RPC on its output, so nothing else is written there:
@@ -74,6 +76,7 @@ Feature: Starting the authoring server from a checkout of Ljós
       """
     And the author's environment has "PATH" set to "{project}/bin:{PATH}"
     And the author's environment has no "CARGO_TARGET_DIR"
+    And the author's environment has no "CARGO_BUILD_TARGET_DIR"
     And the author's environment has no "LJOS_BUILD_WRAPPER"
     And the author's environment has no "LJOS_BIN"
     And the author's environment has no "CARGO_BUILD_TARGET"
