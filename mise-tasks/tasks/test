@@ -601,11 +601,14 @@ mkdir "$real/plain"
 # what answers.
 where() { (unset CARGO_TARGET_DIR CARGO_BUILD_TARGET_DIR && CARGO_HOME="$real/cargo-home" target_dir "$1"); }
 
-# Settings above the fixtures are cargo's to read as well; say so rather than
-# leave the cases that expect target/ failing with no cause.
+# Settings above the fixtures are cargo's to read as well, and nothing stops
+# cargo (or target_dir, which reads as it does) from reading them: say so
+# rather than leave the cases that expect target/ failing with no cause. The
+# case with settings above a checkout ("outer") is the one that checks they
+# win.
 while IFS= read -r file; do
   if [ -n "$(settings_target_dir "$file")" ]; then
-    echo "note  $file, above $real, names a target-dir: the cases below that expect target/ fail here for that reason"
+    echo "note  $file, above $real, names a target-dir: the cases below that expect target/ fail here for that reason; run with TMPDIR set to a directory with no such settings above it"
   fi
 done <<EOF_ABOVE
 $(CARGO_HOME="$real/cargo-home" settings_files "$(dirname "$real")")
@@ -788,6 +791,16 @@ chmod +x "$target/debug/ljos"
 printf '{"reason":"compiler-artifact","executable":"%s"}\n' "$target/debug/ljos"
 EOF_CARGO
 chmod +x "$fakes/cargo"
+# The target given again after a worktree's settings is a TOML string: what
+# a path may hold that TOML writes escaped comes escaped.
+argfakes="$real/argfakes"
+mkdir "$argfakes"
+printf '#!/bin/sh\nfor a in "$@"; do printf "%%s|" "$a"; done\n' >"$argfakes/cargo"
+chmod +x "$argfakes/cargo"
+: >"$real/given.toml"
+out="$(ljos_cargo_config="$real/given.toml" CARGO_TARGET_DIR="$(printf 'a\\b"c\td\re\nf')" PATH="$argfakes:$PATH" cargo build)"
+if [ "$out" = "--config|$real/given.toml|--config|build.target-dir=\"a\\\\b\\\"c\\td\\re\\nf\"|build|" ]; then ok "the target given with a worktree's settings is a TOML string, whatever its path holds"; else bad "cargo in a worktree gave: $out"; fi
+
 # in_worktree <task>: the task, run from the worktree's copy of the tasks as
 # mise would (in the worktree's root), with the stand-in cargo and cargo's
 # home a fixture's, and no target asked for; prints what it noted.

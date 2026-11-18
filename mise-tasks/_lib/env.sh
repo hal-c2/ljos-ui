@@ -300,15 +300,20 @@ ljos_cargo_config="$(cargo_config)"
 
 # cargo, with the main checkout's settings in a worktree. --config outranks
 # CARGO_TARGET_DIR, so a target-dir in those files would win over it: the
-# target is given again after it, as a TOML string. A task runs `cargo`, never
-# `exec cargo` or `command cargo`, which would go round this (tasks:smoke
-# holds every task to that).
+# target is given again after it, as a TOML string: a backslash, a quote, a
+# tab, a newline and a carriage return in it come escaped (another control
+# character, which no target's path has, is left). A task runs `cargo`,
+# never `exec cargo` or `command cargo`, which would go round this
+# (tasks:smoke holds every task to that).
 cargo() {
   local t config_args
   if [ -n "$ljos_cargo_config" ]; then
     config_args "$ljos_cargo_config"
     t="${CARGO_TARGET_DIR//\\/\\\\}"
     t="${t//\"/\\\"}"
+    t="${t//$'\t'/\\t}"
+    t="${t//$'\n'/\\n}"
+    t="${t//$'\r'/\\r}"
     command cargo "${config_args[@]}" --config "build.target-dir=\"$t\"" "$@"
   else
     command cargo "$@"
