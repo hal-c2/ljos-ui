@@ -161,11 +161,32 @@ struct Tree {
     held: Vec<(String, Tree)>,
 }
 
-fn tree(source: &str) -> Tree {
+/// A file as its pragmas, imports and comments around the root object,
+/// and the root as a [`Tree`].
+fn tree(source: &str) -> (Vec<String>, Tree) {
     let allocator = Allocator::default();
     let parsed = qml_syntax::parse(&allocator, source);
     assert!(parsed.is_ok(), "the file no longer parses\n{source}");
-    shape(source, &parsed.document.root)
+    let root = &parsed.document.root;
+    let around = format!(
+        "{}\n{}",
+        &source[..root.span.start as usize],
+        &source[root.span.end as usize..]
+    );
+    (layout_aside(&around), shape(source, root))
+}
+
+/// `text`'s lines with their spacing made one space, blank ones dropped,
+/// sorted: what a line says, not where it stands or how it is indented.
+/// A space inside a line is kept, so `"A B"` is not `"AB"`.
+fn layout_aside(text: &str) -> Vec<String> {
+    let mut lines: Vec<String> = text
+        .lines()
+        .map(|line| line.split_whitespace().collect::<Vec<_>>().join(" "))
+        .filter(|line| !line.is_empty())
+        .collect();
+    lines.sort();
+    lines
 }
 
 fn shape(source: &str, object: &QmlObject<'_>) -> Tree {
@@ -228,15 +249,9 @@ fn shape(source: &str, object: &QmlObject<'_>) -> Tree {
         at = span.end as usize;
     }
     own.push_str(&source[at..object.span.end as usize]);
-    let mut lines: Vec<String> = own
-        .lines()
-        .map(|line| line.split_whitespace().collect::<String>())
-        .filter(|line| !line.is_empty())
-        .collect();
-    lines.sort();
     Tree {
         type_name: object.type_name.to_string(),
-        lines,
+        lines: layout_aside(&own),
         children,
         held,
     }
@@ -361,5 +376,23 @@ fn split_child(path: &NodePath) -> Option<(NodePath, usize)> {
     match path.0.last() {
         Some(Step::Child(n)) => Some((NodePath(path.0[..path.0.len() - 1].to_vec()), *n)),
         _ => None,
+    }
+}
+
+#[test]
+fn the_round_trip_tree_sees_what_a_move_must_not_change() {
+    let base = "import Ljos.Ui\nItem {\n    environment: Rect { width: 10 }\n    property string label: \"A B\"\n    Rect { width: 20 }\n}\n";
+    // A child back elsewhere among the bindings is the same tree.
+    let moved = "import Ljos.Ui\nItem {\n    Rect { width: 20 }\n    environment: Rect { width: 10 }\n    property string label: \"A B\"\n}\n";
+    assert_eq!(tree(base), tree(moved));
+    for changed in [
+        // A value that went from one object to another of the same type.
+        "import Ljos.Ui\nItem {\n    environment: Rect { width: 20 }\n    property string label: \"A B\"\n    Rect { width: 10 }\n}\n",
+        // A space inside a string.
+        "import Ljos.Ui\nItem {\n    environment: Rect { width: 10 }\n    property string label: \"AB\"\n    Rect { width: 20 }\n}\n",
+        // An import.
+        "import Ljos.Core\nItem {\n    environment: Rect { width: 10 }\n    property string label: \"A B\"\n    Rect { width: 20 }\n}\n",
+    ] {
+        assert_ne!(tree(base), tree(changed), "{changed}");
     }
 }
