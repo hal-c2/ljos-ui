@@ -269,12 +269,16 @@ fn in_shown_window(engine: &Engine, item: ObjectId) -> Result<(), GrabRefused> {
     }
     // The item's window is the nearest Window it is in, which need not be
     // the top of its tree: a Window declared inside an item hangs from
-    // that item. One not shown has `visibility` Hidden (0); a scene's
-    // plain root item has no `visibility`.
+    // that item. One not shown has `visibility` Hidden (0). Only a Window
+    // says so: any item may have a property of that name, and a scene's
+    // plain root item is no Window.
     engine.untrack(|| {
         let mut at = Some(item);
         while let Some(obj) = at {
-            if engine.find_property(obj, "visibility").is_some() {
+            if engine
+                .meta_of(obj)
+                .is_some_and(|m| m.inherits_name("Window"))
+            {
                 if engine.read_by_name(obj, "visibility").to_number() == 0.0 {
                     return Err(GrabRefused::WindowHidden);
                 }

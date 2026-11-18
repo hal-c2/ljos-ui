@@ -33,6 +33,7 @@ Feature: A picture of an item taken for the program's own Rust
         Item { objectName: "flat"; width: 0; height: 10 }
         Item { id: leaving; objectName: "leaving"; width: 10; height: 10 }
         Item { objectName: "doomed"; width: 10; height: 10 }
+        Item { objectName: "own"; width: 10; height: 10; property int visibility: 0 }
         Window {
           visible: false; width: 40; height: 40
           Item { objectName: "unseen"; width: 10; height: 10 }
@@ -66,6 +67,11 @@ Feature: A picture of an item taken for the program's own Rust
   Scenario: An item of a window that is not shown is refused at once
     When the host asks for a picture of "unseen"
     Then the host is refused a picture because "item's window is not visible"
+
+  Scenario: An item's own property called visibility does not hide its window
+    When the host asks for a picture of "own"
+    And 200 milliseconds pass
+    Then the host's picture is 10 by 10 pixels
 
   Scenario: An item destroyed before the frame gives no picture
     When the host asks for a picture of "doomed"
