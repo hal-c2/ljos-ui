@@ -201,6 +201,12 @@ pub trait TypeOracle {
         false
     }
 
+    /// Of such a module, the module the runtime builds its type `name` in
+    /// when that is another: the type is that one's, as itself.
+    fn built_in(&self, _uri: &str, _name: &str) -> Option<&str> {
+        None
+    }
+
     /// Whether the type `name` of such a module is an Item where it is
     /// written, placed as one; otherwise it keeps nothing of the Item but
     /// its name, its children and what the file declares on it.
@@ -572,6 +578,10 @@ impl TypeOracle for QtTypeOracle {
 
     fn builds_part_of(&self, uri: &str) -> bool {
         qt_types::builds_part_of(uri)
+    }
+
+    fn built_in(&self, uri: &str, name: &str) -> Option<&str> {
+        qt_types::built_in(uri, name)
     }
 
     fn is_built(&self, ty: QtType) -> bool {

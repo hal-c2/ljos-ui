@@ -311,11 +311,18 @@ impl Checked {
                         };
                         for ty in types {
                             let (line, column) = (ty.span.line, ty.span.column);
+                            // Of several such modules none known to have it,
+                            // naming one would be a guess.
+                            let of = if ty.known {
+                                format!(" of module \"{uri}\"")
+                            } else {
+                                String::new()
+                            };
                             self.warnings += 1;
                             self.diagnostics.push(format!(
-                                "{name}.qml:{line}:{column}: warning: `{}` of module \"{uri}\" \
-                                 is not part of Ljós: it stands in as an empty Item, and what \
-                                 only it has is left out [stand-in]",
+                                "{name}.qml:{line}:{column}: warning: `{}`{of} is not part of \
+                                 Ljós: it stands in as an empty Item, and what only it has is \
+                                 left out [stand-in]",
                                 ty.name
                             ));
                         }

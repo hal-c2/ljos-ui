@@ -377,10 +377,10 @@ struct Compiler<'t, 'a, 'p, O: TypeOracle> {
     ljos_ui: bool,
     /// The TypeScript modules the file reaches, checked.
     modules: Vec<crate::CheckedModule>,
-    /// The names of a module the runtime does not have that stand in,
+    /// The names of a module the runtime builds part of that stand in,
     /// with the module and where each is written, beside the objects
-    /// the tree has of them: a property's type.
-    stood_in: Vec<(String, String, SourceSpan)>,
+    /// the tree has of them: a property's type, a type that attaches.
+    stood_in: Vec<(String, StoodIn)>,
 }
 
 impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
@@ -615,7 +615,7 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                     if path == ["id"] {
                         continue;
                     }
-                    if self.stand_in_lacks(owner, &path) {
+                    if self.stand_in_lacks(owner, &path, binding.name.span) {
                         self.keep_objects(owner, &binding.value);
                         continue;
                     }
@@ -677,21 +677,24 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
     /// Whether `path` is written on a type that stands in for one of a
     /// module the runtime does not have ([`Origin::StandIn`]), and is what
     /// only the missing type has: left out, as the missing type is.
-    fn stand_in_lacks(&self, owner: usize, path: &[&str]) -> bool {
+    fn stand_in_lacks(&mut self, owner: usize, path: &[&str], span: Span) -> bool {
         let Some(first) = path.first() else {
             return false;
         };
         if first.starts_with(|c: char| c.is_ascii_uppercase()) {
             // What such a type attaches (`Type.member`, `Module.Type.member`).
-            return (1..path.len().min(3)).any(|n| {
-                matches!(
-                    self.types.find(&path[..n]),
-                    Some(Found {
-                        origin: Origin::StandIn(_),
-                        ..
-                    })
-                )
+            let attached = (1..path.len().min(3)).find_map(|n| match self.types.find(&path[..n]) {
+                Some(Found {
+                    origin: Origin::StandIn(uri),
+                    ..
+                }) => Some((n, uri)),
+                _ => None,
             });
+            let Some((n, uri)) = attached else {
+                return false;
+            };
+            self.stood_in_at(&path[..n], &uri, span);
+            return true;
         }
         let object = &self.tree.objects[owner];
         let stand_in = match (&object.origin, &object.kind) {
@@ -1057,7 +1060,7 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
         let ty = if module_typed {
             "var".to_string()
         } else {
-            self.property_type_name(&type_name.name.parts, type_name.span)
+            self.property_type_name(&type_name.name.parts, type_name.name.span)
         };
         self.def_mut(at).properties.push(PropertyDecl {
             name: name.clone(),
@@ -1105,12 +1108,30 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                 ..
             }) = self.types.find(parts)
         {
-            let name = parts.last().copied().unwrap_or_default().to_string();
-            let span = self.span(span);
-            self.stood_in.push((uri, name, span));
+            self.stood_in_at(parts, &uri, span);
             return "Item".to_string();
         }
         parts.join(".")
+    }
+
+    /// Notes that the dotted name `parts`, written at `span`, stands in
+    /// for a type of `origin` ([`Origin::StandIn`]), when it is of a
+    /// module the runtime builds part of.
+    fn stood_in_at(&mut self, parts: &[&str], origin: &str, span: Span) {
+        if let Some(found) = self.stand_in_found(parts, origin, self.span(span)) {
+            self.stood_in.push(found);
+        }
+    }
+
+    fn stand_in_found(
+        &self,
+        parts: &[&str],
+        origin: &str,
+        span: SourceSpan,
+    ) -> Option<(String, StoodIn)> {
+        let (uri, known) = self.types.stand_in_of(parts, origin)?;
+        let name = parts.last().copied().unwrap_or_default().to_string();
+        Some((uri, StoodIn { name, span, known }))
     }
 
     /// Of each module the runtime builds part of, the types of it the
@@ -1121,25 +1142,19 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
             .objects
             .iter()
             .filter_map(|object| match &object.origin {
-                Some(Origin::StandIn(uri)) => Some((
-                    uri.clone(),
-                    object
-                        .name
-                        .rsplit('.')
-                        .next()
-                        .unwrap_or_default()
-                        .to_string(),
-                    self.span(object.span),
-                )),
+                Some(Origin::StandIn(uri)) => {
+                    let parts: Vec<&str> = object.name.split('.').collect();
+                    self.stand_in_found(&parts, uri, self.span(object.span))
+                }
                 _ => None,
             });
         let mut named: Vec<_> = objects.chain(self.stood_in.iter().cloned()).collect();
-        named.sort_by_key(|(_, _, span)| (span.line, span.column));
+        named.sort_by_key(|(_, ty)| (ty.span.line, ty.span.column));
         let mut out: HashMap<String, Vec<StoodIn>> = HashMap::new();
-        for (uri, name, span) in named {
+        for (uri, ty) in named {
             let types = out.entry(uri).or_default();
-            if !types.iter().any(|t| t.name == name) {
-                types.push(StoodIn { name, span });
+            if !types.iter().any(|t| t.name == ty.name) {
+                types.push(ty);
             }
         }
         out

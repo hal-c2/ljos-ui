@@ -593,13 +593,15 @@ pub(crate) struct LoaderState {
     /// What [`Engine::uses_module`] tracks: moved when `used_modules`
     /// changes. Made at the first read; until then nobody follows it.
     pub(crate) modules_node: Option<ljos_reactive::NodeId>,
-    /// The modules whose types stand in as empty Items that the log has
-    /// said so of, by the first part of their name (`QtGraphs`): once
-    /// each, however many files import them.
+    /// The modules whose types stand in as empty Items in the files the
+    /// source gives, by the first part of their name (`QtGraphs`): what
+    /// the design audit reads, so a new source starts it again.
     pub(crate) stood_in: HashSet<String>,
-    /// Of a module the runtime builds part of, the types that stand in
-    /// that the log has said so of (`QtQuick3D.Helpers.Name`), once each.
-    pub(crate) stood_in_types: HashSet<String>,
+    /// What the log has said stands in: a module by the first part of its
+    /// name (`QtGraphs`), a type of one the runtime builds part of by its
+    /// module and name (`QtQuick3D.Helpers.Name`). Once each for the
+    /// engine, however many files or sources name them.
+    pub(crate) told_stood_in: HashSet<String>,
 }
 
 /// A binding that reads a path of properties from one parameter
@@ -866,6 +868,7 @@ impl Engine {
         l.source = Some(Rc::new(source));
         l.files.clear();
         l.used_modules.clear();
+        l.stood_in.clear();
         drop(l);
         self.singletons_sources_changed();
     }
@@ -1184,7 +1187,17 @@ impl Engine {
             let ImportSource::Module(uri) = &import.source else {
                 continue;
             };
-            if import.in_project || self.has_module(uri) {
+            if import.in_project {
+                continue;
+            }
+            // Of a module the runtime builds part of, what the file names
+            // may all be built: only a type that stands in is told, even
+            // where the program registers types of the module.
+            if let Some(types) = &import.stood_in {
+                self.tell_stood_in(url, uri, types);
+                continue;
+            }
+            if self.has_module(uri) {
                 continue;
             }
             if !import.stands_in {
@@ -1199,31 +1212,11 @@ impl Engine {
                 Some(("QtQuick" | "QtQuick3D", _)) | None => uri.as_str(),
                 Some((first, _)) => first,
             };
-            // Of a module the runtime builds part of, what the file names
-            // may all be built: only a type that stands in is told.
-            if let Some(types) = &import.stood_in {
-                for ty in types {
-                    let mut loader = self.inner.loader.borrow_mut();
-                    loader.stood_in.insert(family.to_owned());
-                    let told = loader.stood_in_types.insert(format!("{uri}.{}", ty.name));
-                    drop(loader);
-                    if told {
-                        self.warn(format!(
-                            "{url}:{}:{}: type {} of module \"{uri}\" is not part of Ljós: it \
-                             is an empty Item, and what only it has is left out",
-                            ty.span.line, ty.span.column, ty.name
-                        ));
-                    }
-                }
-                continue;
-            }
-            if self
-                .inner
-                .loader
-                .borrow_mut()
-                .stood_in
-                .insert(family.to_owned())
-            {
+            let mut loader = self.inner.loader.borrow_mut();
+            loader.stood_in.insert(family.to_owned());
+            let told = loader.told_stood_in.insert(family.to_owned());
+            drop(loader);
+            if told {
                 self.warn(format!(
                     "{url}: module \"{uri}\" is not part of Ljós: the types of {family} and the \
                      modules below it are empty Items, and what only they have is left out"
@@ -1231,6 +1224,29 @@ impl Engine {
             }
         }
         Ok(())
+    }
+
+    /// Says of each type of the module `uri` that stands in that it does,
+    /// once for the engine, where the file `url` first names it.
+    fn tell_stood_in(&self, url: &str, uri: &str, types: &[ljos_ir::StoodIn]) {
+        for ty in types {
+            let mut loader = self.inner.loader.borrow_mut();
+            loader.stood_in.insert(uri.to_owned());
+            let told = loader.told_stood_in.insert(format!("{uri}.{}", ty.name));
+            drop(loader);
+            if told {
+                let of = if ty.known {
+                    format!(" of module \"{uri}\"")
+                } else {
+                    String::new()
+                };
+                self.warn(format!(
+                    "{url}:{}:{}: type {}{of} is not part of Ljós: it is an empty Item, and \
+                     what only it has is left out",
+                    ty.span.line, ty.span.column, ty.name
+                ));
+            }
+        }
     }
 }
 

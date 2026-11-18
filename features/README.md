@@ -292,6 +292,7 @@ setter tries to write `depth` and logs the error it gets.
 | `Then loading "X.qml" is rejected` | the file does not load (syntax error, unknown type) |
 | `Then the object "o" exists` / `does not exist` | lookup by `objectName` |
 | `Then the log has a warning matching "regex"` | some warning matches |
+| `Then the log has N warnings matching "regex"` | exactly that many warnings match |
 | `Then the log has an info matching "regex"` | some info message matches |
 | `Then the log has N infos matching "regex"` / `Then the log has no info matching "regex"` | exactly that many info messages match, or none do |
 | `Then the log has no warning matching "regex"` / `Then the log has no warnings` | none do |

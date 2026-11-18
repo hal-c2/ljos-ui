@@ -237,6 +237,11 @@ pub struct Import {
 pub struct StoodIn {
     pub name: String,
     pub span: SourceSpan,
+    /// Whether the module is known to have the type. False when the file
+    /// imports several modules the runtime builds part of and none of
+    /// their tables has the name: it is filed under the one it resolved
+    /// through, and is told without naming a module.
+    pub known: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
