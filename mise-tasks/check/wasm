@@ -5,6 +5,9 @@ set -euo pipefail
 # shellcheck source-path=SCRIPTDIR source=../_lib/env.sh
 . "$(dirname "$0")/../_lib/env.sh"
 cd "$ljos_root"
+# Run alone it has to check the Rust itself, as `check`, which ends in it, does.
+need_pinned_rust
+need_rust_target wasm32-unknown-unknown
 # The protocol half of ljos_mcp_core stays free of rmcp and tokio, and so builds
 # for the web without tokio's unstable cfg. Neither builds there otherwise.
 if cargo tree -p ljos_mcp_core --no-default-features --features inspect -e normal \

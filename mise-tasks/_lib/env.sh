@@ -20,7 +20,7 @@ die() {
 # program it runs is not on PATH.
 need() {
   command -v "$1" >/dev/null 2>&1 ||
-    die "${MISE_TASK_NAME:-this task} needs $1, which is not on PATH: $2"
+    die "$(task_name) needs $1, which is not on PATH: $2"
 }
 
 # A directory with its links resolved.
@@ -28,27 +28,49 @@ physical() {
   (cd "$1" && pwd -P)
 }
 
-# Where the person was: mise runs a task in the repository's root and says
-# where it was started in MISE_ORIGINAL_CWD. A program started from a mise
-# task elsewhere (an editor or agent under another project's `mise run`)
-# hands all of mise's variables down, MISE_TASK_NAME too, to what it runs
-# without mise (.mcp.json's `bash mise-tasks/mcp .`). So it counts only when
-# the task mise runs is one of this checkout's: MISE_TASK_FILE is in its
-# mise-tasks/, which a task this one calls directly (features calls
-# features/run) shares.
-asked_in() {
+# Whether mise is running one of this checkout's tasks. A program started from
+# a mise task elsewhere (an editor or agent under another project's `mise
+# run`) hands all of mise's variables down, MISE_TASK_NAME too, to what it
+# runs without mise (.mcp.json's `bash mise-tasks/mcp .`). So mise's variables
+# count only when MISE_TASK_FILE is in this checkout's mise-tasks/, which a
+# task this one calls directly (features calls features/run) shares.
+own_task() {
   local tasks file
-  if [ -n "${MISE_ORIGINAL_CWD:-}" ] && [ -n "${MISE_TASK_FILE:-}" ] &&
+  [ -n "${MISE_TASK_FILE:-}" ] &&
     tasks="$(physical "$ljos_root/mise-tasks" 2>/dev/null)" &&
-    file="$(physical "$(dirname "$MISE_TASK_FILE")" 2>/dev/null)"; then
-    case "$file/" in
-      "$tasks"/*)
-        printf '%s\n' "$MISE_ORIGINAL_CWD"
-        return
-        ;;
-    esac
+    file="$(physical "$(dirname "$MISE_TASK_FILE")" 2>/dev/null)" || return 1
+  case "$file/" in
+    "$tasks"/*) return 0 ;;
+  esac
+  return 1
+}
+
+# Where the person was: mise runs a task in the repository's root and says
+# where it was started in MISE_ORIGINAL_CWD (own_task).
+asked_in() {
+  if [ -n "${MISE_ORIGINAL_CWD:-}" ] && own_task; then
+    printf '%s\n' "$MISE_ORIGINAL_CWD"
+  else
+    printf '%s\n' "$PWD"
   fi
-  printf '%s\n' "$PWD"
+}
+
+# The task's name for its messages: mise's (own_task), else the one its path
+# under mise-tasks/ gives (check/wasm is check:wasm), else "this task".
+task_name() {
+  local rel
+  if [ -n "${MISE_TASK_NAME:-}" ] && own_task; then
+    printf '%s\n' "$MISE_TASK_NAME"
+    return
+  fi
+  case "$0" in
+    mise-tasks/* | */mise-tasks/*)
+      rel="${0##*mise-tasks/}"
+      rel="${rel%/_default}"
+      printf '%s\n' "${rel//\//:}"
+      ;;
+    *) printf 'this task\n' ;;
+  esac
 }
 
 # A path a person typed, absolute from where they typed it (asked_in). It
@@ -91,7 +113,7 @@ need_curl() {
 
 need_corpus() {
   [ -d "$ljos_root/corpus/qtdoc/examples" ] ||
-    die "${MISE_TASK_NAME:-this task} needs the qtdoc corpus, which is not checked out: git submodule update --init --depth 1 corpus/qtdoc (or mise run setup)"
+    die "$(task_name) needs the qtdoc corpus, which is not checked out: git submodule update --init --depth 1 corpus/qtdoc (or mise run setup)"
 }
 
 # Qt 6's qmltestrunner: QMLTESTRUNNER, else the one in the bin directory Qt's
@@ -125,7 +147,7 @@ find_qmltestrunner() {
     printf '%s\n' "$candidate"
     return 0
   fi
-  die "${MISE_TASK_NAME:-this task} needs Qt 6's qmltestrunner, which was not found: install Qt 6's QML test tools (Arch: pacman -S qt6-declarative; Debian, Ubuntu: apt install qt6-declarative-dev-tools), or set QMLTESTRUNNER"
+  die "$(task_name) needs Qt 6's qmltestrunner, which was not found: install Qt 6's QML test tools (Arch: pacman -S qt6-declarative; Debian, Ubuntu: apt install qt6-declarative-dev-tools), or set QMLTESTRUNNER"
 }
 
 # --- The Qt CI pins ------------------------------------------------------------
@@ -281,7 +303,23 @@ need_pinned_rust() {
   local why
   cargo --version
   why="$(wrong_rustc)"
-  [ -z "$why" ] || die "${MISE_TASK_NAME:-this task}: $why"
+  [ -z "$why" ] || die "$(task_name): $why"
+}
+
+# need_rust_target <triple>: stops a task that builds for a target the Rust in
+# use lacks, before cargo's longer "can't find crate for `core`". A Rust that
+# rustup does not manage is left to cargo, which says what it lacks itself.
+need_rust_target() {
+  local installed
+  installed="$(rustup target list --installed 2>/dev/null)" || return 0
+  case "
+$installed
+" in
+    *"
+$1
+"*) ;;
+    *) die "$(task_name): Rust $(rust_pin version) has no $1 target: run mise run setup, or rustup target add $1 --toolchain $(rust_pin version)" ;;
+  esac
 }
 
 # The Vulkan loader starts every driver whose manifest it finds, NVIDIA's too
@@ -375,7 +413,7 @@ check_run() {
   shift
   [ "${1:-}" = run ] || die "check_run: $* is not an ljos run"
   shift
-  echo "${MISE_TASK_NAME:-this task} --check: ljos run --headless $*, ended after ${LJOS_CHECK_SECONDS:-2} s" >&2
+  echo "$(task_name) --check: ljos run --headless $*, ended after ${LJOS_CHECK_SECONDS:-2} s" >&2
   sleep "${LJOS_CHECK_SECONDS:-2}" | "$ljos" run --headless --quit-with-stdin "$@"
 }
 

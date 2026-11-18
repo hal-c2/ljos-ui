@@ -32,7 +32,7 @@ bench:hot|dry|--check|needs valgrind, nm and the headless sandbox; --check says 
 bench:js|dry||a release ljos, valgrind and Qt's qmltestrunner, measured five times over
 build|run||
 check|dry||CI runs it in full as its own job (clippy)
-check:wasm|dry||mise run check runs it, and CI runs check as its own job
+check:wasm|dry||mise run check ends in it; CI's clippy job runs it when a change reaches the web build
 ci:changes|run|HEAD|
 ci:test|run||
 compare|run|-- --help|

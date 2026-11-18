@@ -258,6 +258,52 @@ with_setup() {
   GIT_CEILING_DIRECTORIES="$real" PATH="$rust:$stands:$PATH" bash "$root/mise-tasks/setup" "$@"
 }
 
+# check:wasm builds for the web target, which a Rust without it cannot. It
+# says so in one line, with the way to get it, before it builds anything.
+cat >"$rust/cargo" <<'SH'
+#!/bin/sh
+echo "$*" >>"$(dirname "$0")/cargo.log"
+[ "$1" != --version ] || echo "cargo (stand-in)"
+SH
+chmod +x "$rust/cargo"
+# Run as another project's task hands it down (an agent started by its `mise
+# run`): the task is named by its own path, not by that one.
+with_check_wasm() {
+  : >"$rust/cargo.log"
+  PATH="$rust:$PATH" MISE_TASK_NAME=agents MISE_TASK_FILE="$real/other/mise-tasks/agents" \
+    bash "$root/mise-tasks/check/wasm" 2>&1
+}
+grep -v '^wasm32-unknown-unknown$' "$rust/targets" >"$rust/targets.kept" || true
+cp "$rust/targets" "$rust/targets.all"
+cp "$rust/targets.kept" "$rust/targets"
+if out="$(with_check_wasm)"; then
+  bad "check:wasm passed on a Rust without the wasm32-unknown-unknown target" "$out"
+else
+  case "$(printf '%s\n' "$out" | tail -1):$(grep -vc '^--version$' "$rust/cargo.log" || true)" in
+    "check:wasm: Rust $(rust_pin version) has no wasm32-unknown-unknown target: run mise run setup, or rustup target add wasm32-unknown-unknown --toolchain $(rust_pin version)":0)
+      ok "check:wasm without the wasm target says in one line how to get it, and builds nothing" ;;
+    *) bad "check:wasm without the wasm target did not stop with the one line before building" "$out
+cargo: $(cat "$rust/cargo.log")" ;;
+  esac
+fi
+cp "$rust/targets.all" "$rust/targets"
+if out="$(with_check_wasm)" && grep -q 'check -p qml_syntax --target wasm32-unknown-unknown' "$rust/cargo.log"; then
+  ok "check:wasm with the wasm target builds for it"
+else
+  bad "check:wasm with the wasm target did not build for it" "$out
+cargo: $(cat "$rust/cargo.log")"
+fi
+pinned_rustc 1.99.1
+if out="$(with_check_wasm)"; then
+  bad "check:wasm passed on a Rust that is not mise.toml's" "$out"
+else
+  case "$out" in
+    *"check:wasm: the rustc tasks build with"*"not mise.toml's $(rust_pin version)"*) ok "check:wasm stops on a Rust that is not mise.toml's, as check does" ;;
+    *) bad "check:wasm on Rust 1.99.1 did not stop on it" "$out" ;;
+  esac
+fi
+pinned_rustc "$(rust_pin version)"
+
 # The corpus and Qt's type table are left out: CI's smoke job has neither, and
 # a full setup would otherwise make the table from this machine's Qt. The
 # copy has no Cargo.toml, so nothing uses FilmCraft.
