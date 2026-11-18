@@ -142,7 +142,7 @@ start_sway() {
   stop_one keyboard
   mkdir -p "$run" && chmod 700 "$run"
   # A new sandbox's seat has its keyboard, whatever the last one was told.
-  rm -f "$home/display" "$home/bus" "$home/sway.raw" "$home/keyboard.off"
+  rm -f "$home/display" "$home/wayland" "$home/bus" "$home/sway.raw" "$home/keyboard.off"
   # The stock session bus listens in /tmp; this one's socket goes with the sandbox's others.
   cat > "$home/bus.config" << EOF
 <!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus Configuration 1.0//EN"
@@ -166,6 +166,7 @@ default_border none
 # Windows keep the size they ask for, as on a desktop that does not tile.
 for_window [all] floating enable
 xwayland enable
+exec printenv WAYLAND_DISPLAY > "$home/wayland"
 exec printenv DISPLAY > "$home/display"
 EOF
   local renderer=(WLR_RENDERER=pixman)
@@ -184,14 +185,20 @@ EOF
   load_sandbox
 }
 
-# The compositor's Wayland and IPC sockets, in $wayland and $sock. Sway names its IPC socket
-# by its pid, and one that died left its socket behind, so the socket is the running sway's.
+# The compositor's Wayland and IPC sockets, in $wayland and $sock. A sway that died leaves its
+# sockets behind, so both are the running sway's: the Wayland one by the name it gave its
+# clients, the IPC one by its pid, which sway names it after.
 sockets() {
   local pid
   pid=$(pid_of sway) || die "the sandbox is not running: mise run desktop:cua"
-  for wayland in "$run"/wayland-*; do
-    [[ -S $wayland ]] && break
-  done
+  if [[ -s $home/wayland ]]; then
+    wayland="$run/$(< "$home/wayland")"
+  else
+    # A sandbox started before sway wrote its socket's name down.
+    for wayland in "$run"/wayland-*; do
+      [[ -S $wayland ]] && break
+    done
+  fi
   sock="$run/sway-ipc.$(id -u).$pid.sock"
   [[ -S $wayland && -S $sock ]] || die "the sandbox's sway has no sockets in $run"
 }
