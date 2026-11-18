@@ -215,7 +215,8 @@ while IFS='|' read -r task mode args why; do
     record "$task" "$mode" FAIL 0
     continue
   fi
-  if [ "$all_dry" = true ] && [ "$mode" = run ]; then
+  # A stdio row starts the server, which builds it first: --dry builds nothing.
+  if [ "$all_dry" = true ] && { [ "$mode" = run ] || [ "$mode" = stdio ]; }; then
     mode=dry
     note="--dry"
   fi
