@@ -393,7 +393,8 @@ Feature: A view answers what a page asks permission for
       }
       """
     When 3 seconds pass
-    Then the property "title" of "view" is "waiting"
+    Then the log has no info matching "the view is not asked"
+    And the property "title" of "view" is "waiting"
 
   @api-QtWebEngine.WebEnginePermission.grant
   Scenario: A request kept and answered later answers the page then
@@ -411,7 +412,8 @@ Feature: A view answers what a page asks permission for
       }
       """
     When 1 second passes
-    Then the property "title" of "view" is "waiting"
+    Then the log has no info matching "the view is not asked"
+    And the property "title" of "view" is "waiting"
     When 2 seconds pass
     Then the property "title" of "view" is "granted"
 
@@ -440,6 +442,66 @@ Feature: A view answers what a page asks permission for
     When 2 seconds pass
     Then the property "title" of "view" is "granted granted"
     And the property "asked" of "view" is 1
+
+  # A question that goes on to Chromium without the view asked says why on
+  # the log, so a page refused where its view should have been asked
+  # names the way it went: here the page's own answer, and the view's
+  # answer before.
+  @ljos-only @api-QtWebEngine.WebEngineView.permissionRequested
+  Scenario: The log says a page with its answer goes on without its view asked
+    Given the web server serves the text file "twice.html":
+      """
+      <!doctype html>
+      <html><head><title>waiting</title></head><body><script>
+      Notification.requestPermission()
+        .then(first => Notification.requestPermission().then(second => document.title = first + " " + second))
+      </script></body></html>
+      """
+    And the QML:
+      """qml
+      import QtQuick
+      import QtWebEngine
+      WebEngineView {
+        id: view; objectName: "view"
+        width: 200; height: 100
+        url: "$SERVER/twice.html"
+        onPermissionRequested: permission => permission.grant()
+      }
+      """
+    When 2 seconds pass
+    Then the property "title" of "view" is "granted granted"
+    And the log has 1 info matching "asked for notifications, and the view is not asked: the page had an answer already: Notification.permission was not .default."
+
+  @ljos-only @api-QtWebEngine.WebEngineView.permissionRequested @api-QtWebEngine.WebEngineProfile.persistentPermissionsPolicy
+  Scenario: The log says a page its view answered before goes on without its view asked
+    Given the web server serves the text file "twice.html":
+      """
+      <!doctype html>
+      <html><head><title>waiting</title></head><body><script>
+      Notification.requestPermission()
+        .then(first => Notification.requestPermission().then(second => document.title = first + " " + second))
+      </script></body></html>
+      """
+    And the QML:
+      """qml
+      import QtQuick
+      import QtWebEngine
+      WebEngineView {
+        id: view; objectName: "view"
+        width: 200; height: 100
+        property int asked: 0
+        profile: WebEngineProfile {
+          storageName: "AskedBefore"; offTheRecord: false
+          persistentPermissionsPolicy: WebEngineProfile.AskEveryTime
+        }
+        url: "$SERVER/twice.html"
+        onPermissionRequested: permission => { asked++; permission.grant() }
+      }
+      """
+    When 2 seconds pass
+    Then the property "title" of "view" is "granted granted"
+    And the property "asked" of "view" is 1
+    And the log has 1 info matching "asked for notifications, and the view is not asked: the view allowed it before"
 
   # A profile whose policy is AskEveryTime keeps no answer: each view is
   # asked, and remembers what it was told for every page it shows. One

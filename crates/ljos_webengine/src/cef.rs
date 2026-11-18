@@ -1383,6 +1383,13 @@ impl Asked {
             .key()
             .and_then(|key| Shared::lock(&shared.answered).get(&key).copied());
         if let Some(allow) = before {
+            if let Asked::Scripted { origin, kind, .. } = &self {
+                shared.sink.send(Ev::Note(not_asked(
+                    origin,
+                    *kind,
+                    Unasked::AnsweredBefore(allow),
+                )));
+            }
             self.answer(allow, shared);
             return;
         }
@@ -1711,6 +1718,11 @@ const ASK_FIRST: &str = r#"((EVERY_TIME) => {
       return question.answer.then(() => true, () => false);
     }
   });
+  // The view's log says why a question goes to Chromium without the view
+  // asked (`unasked_in_console`); the console is the one the page had
+  // before its own scripts ran.
+  const info = console.info.bind(console);
+  const unasked = (kind, why) => info("\u0001ljos-unasked " + kind + " " + why);
   // `call` once the view has answered `kind`, if `unanswered` says the
   // page has no answer yet; what `call` gives is what the page is given.
   const first = (kind, unanswered, call) => {
@@ -1718,14 +1730,18 @@ const ASK_FIRST: &str = r#"((EVERY_TIME) => {
     const question = {};
     let ask;
     try { ask = EVERY_TIME || unanswered(); } catch { ask = true; }
+    if (typeof asking !== "function") unasked(kind, "binding");
     const asked = typeof asking !== "function"
       ? Promise.resolve()
-      : Promise.resolve(ask).then(ask => ask && new Promise(go => {
-          const number = ++next;
-          question.go = go;
-          waiting.set(number, question);
-          asking(kind + ":" + number);
-        }));
+      : Promise.resolve(ask).then(ask => {
+          if (!ask) return unasked(kind, "answered");
+          return new Promise(go => {
+            const number = ++next;
+            question.go = go;
+            waiting.set(number, question);
+            asking(kind + ":" + number);
+          });
+        });
     const answer = asked.then(call);
     question.answer = answer;
     return answer;
@@ -2564,7 +2580,7 @@ wrap_display_handler! {
 
         fn on_console_message(
             &self,
-            _browser: Option<&mut Browser>,
+            browser: Option<&mut Browser>,
             level: LogSeverity,
             message: Option<&CefString>,
             source: Option<&CefString>,
@@ -2574,6 +2590,17 @@ wrap_display_handler! {
             if self.shared.booting() {
                 return 0;
             }
+            let message = string_of(message);
+            if let Some((kind, why)) = unasked_in_console(&message) {
+                let page = browser
+                    .and_then(|b| b.main_frame())
+                    .map(|f| frame_url(&f))
+                    .unwrap_or_default();
+                self.shared
+                    .sink
+                    .send(Ev::Note(not_asked(&page, kind, why)));
+                return 1;
+            }
             let level = match *level.as_ref() {
                 L::LOGSEVERITY_WARNING => 1,
                 L::LOGSEVERITY_ERROR | L::LOGSEVERITY_FATAL => 2,
@@ -2581,7 +2608,7 @@ wrap_display_handler! {
             };
             self.shared.sink.send(Ev::Console {
                 level,
-                message: string_of(message),
+                message,
                 line,
                 source: string_of(source),
             });
@@ -3258,8 +3285,13 @@ fn dev_event(shared: &Shared, method: &str, params: &Json) {
             let context = params["executionContextId"].as_i64();
             let origin = context.and_then(|c| dev.origins.get(&c)).cloned();
             drop(dev);
-            let (kind, number) = asked_in_script(params["payload"].as_str().unwrap_or(""));
+            let payload = params["payload"].as_str().unwrap_or("");
+            let (kind, number) = asked_in_script(payload);
             let (Some(context), Some(number), Some(origin)) = (context, number, origin) else {
+                shared.sink.send(Ev::Note(format!(
+                    "WebEngineView: a page asked {payload:?} in a context it does not know \
+                     ({context:?}), and it is never answered"
+                )));
                 return;
             };
             // A page with no origin of its own (a sandboxed frame, data:)
@@ -3271,10 +3303,18 @@ fn dev_event(shared: &Shared, method: &str, params: &Json) {
             // refusal reaches the page as the view meant it.
             let asks_itself = origin.starts_with("file:") && !NO_DISPLAY.load(Ordering::Relaxed);
             let Some(kind) = kind.filter(|k| *k == NOTIFICATIONS_KIND || !asks_itself) else {
+                if let Some(kind) = kind {
+                    shared
+                        .sink
+                        .send(Ev::Note(not_asked(&origin, kind, Unasked::File)));
+                }
                 pass_to_chromium(shared, context, number, Pending::Ignore);
                 return;
             };
             if origin.is_empty() || origin == "null" {
+                shared
+                    .sink
+                    .send(Ev::Note(not_asked(&origin, kind, Unasked::NoOrigin)));
                 pass_to_chromium(shared, context, number, Pending::Ignore);
                 return;
             }
@@ -3335,6 +3375,66 @@ fn asked_in_script(payload: &str) -> (Option<i32>, Option<u64>) {
     let kind = kind.parse::<i32>().ok().filter(|k| matches!(k, 7..=9));
     (kind, number.parse::<u64>().ok())
 }
+
+/// Why a page's question went on to Chromium, which answers it itself,
+/// without the view asked: what the engine's log says of it, so a page
+/// refused where a view should have been asked says which way it went.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Unasked {
+    /// [`ASK_FIRST`]'s script found no [`ASKING`] in the page's context.
+    NoBinding,
+    /// The page had an answer already, as the script reads it.
+    Answered,
+    /// The page has no origin of its own to be allowed anything.
+    NoOrigin,
+    /// A file's page, which Chromium asks the view about itself.
+    File,
+    /// The view answered this origin before, allowing it or not.
+    AnsweredBefore(bool),
+}
+
+/// How the engine's log says that `origin`'s question for `kind` went on
+/// without the view asked, and why.
+fn not_asked(origin: &str, kind: i32, why: Unasked) -> String {
+    let what = match kind {
+        NOTIFICATIONS_KIND => "notifications",
+        CLIPBOARD_READ_KIND => "the clipboard",
+        _ => "its location",
+    };
+    let why = match why {
+        Unasked::NoBinding => format!("{ASKING} was not yet a function in the page's context"),
+        Unasked::Answered if kind == NOTIFICATIONS_KIND => {
+            "the page had an answer already: Notification.permission was not \"default\"".to_owned()
+        }
+        Unasked::Answered => {
+            "the page had an answer already: its permission's state was not \"prompt\"".to_owned()
+        }
+        Unasked::NoOrigin => "the page has no origin of its own".to_owned(),
+        Unasked::File => "Chromium asks the view itself about a file's page".to_owned(),
+        Unasked::AnsweredBefore(true) => "the view allowed it before".to_owned(),
+        Unasked::AnsweredBefore(false) => "the view refused it before".to_owned(),
+    };
+    format!("WebEngineView: {origin:?} asked for {what}, and the view is not asked: {why}")
+}
+
+/// The console line [`ASK_FIRST`]'s script writes when a question goes to
+/// Chromium without the view asked, as `\u{1}ljos-unasked kind why`; the
+/// page's console does not show it. A page could write such a line too,
+/// which only adds to the log; any other line is the page's.
+fn unasked_in_console(message: &str) -> Option<(i32, Unasked)> {
+    let rest = message.strip_prefix(UNASKED_MARK)?;
+    let (kind, why) = rest.split_once(' ')?;
+    let (kind, _) = asked_in_script(&format!("{kind}:0"));
+    let why = match why {
+        "binding" => Unasked::NoBinding,
+        "answered" => Unasked::Answered,
+        _ => return None,
+    };
+    Some((kind?, why))
+}
+
+/// What starts [`unasked_in_console`]'s line.
+const UNASKED_MARK: &str = "\u{1}ljos-unasked ";
 
 /// The questions the page's script asked where scripts ran in `context`
 /// (in any, with `None`) are no longer asked: the page went.
@@ -4317,6 +4417,50 @@ mod tests {
     fn the_asking_script_calls_the_names_the_view_uses() {
         assert!(ASK_FIRST.contains(&format!("globalThis.{ASKING};")));
         assert!(ASK_FIRST.contains(&format!("\"{ANSWERED}\"")));
+    }
+
+    #[test]
+    fn the_asking_script_says_why_it_did_not_ask_as_the_view_reads_it() {
+        assert!(ASK_FIRST.contains(r#""\u0001ljos-unasked ""#));
+        assert_eq!(UNASKED_MARK, "\u{1}ljos-unasked ");
+        for why in ["binding", "answered"] {
+            assert!(ASK_FIRST.contains(&format!("unasked(kind, \"{why}\")")));
+        }
+        assert_eq!(
+            unasked_in_console("\u{1}ljos-unasked 7 binding"),
+            Some((7, Unasked::NoBinding))
+        );
+        assert_eq!(
+            unasked_in_console("\u{1}ljos-unasked 9 answered"),
+            Some((9, Unasked::Answered))
+        );
+        // What else a page writes is the page's, unmarked or not the script's.
+        assert_eq!(unasked_in_console("ljos-unasked 7 binding"), None);
+        assert_eq!(unasked_in_console("\u{1}ljos-unasked 1 binding"), None);
+        assert_eq!(unasked_in_console("\u{1}ljos-unasked 7 anything"), None);
+    }
+
+    #[test]
+    fn the_log_says_which_way_a_question_went_unasked() {
+        let line = not_asked("http://127.0.0.1:8000/", 7, Unasked::NoOrigin);
+        assert_eq!(
+            line,
+            "WebEngineView: \"http://127.0.0.1:8000/\" asked for notifications, \
+             and the view is not asked: the page has no origin of its own"
+        );
+        let lines = [
+            not_asked("o", 8, Unasked::NoBinding),
+            not_asked("o", 9, Unasked::Answered),
+            not_asked("o", 9, Unasked::File),
+            not_asked("o", 8, Unasked::AnsweredBefore(true)),
+            not_asked("o", 8, Unasked::AnsweredBefore(false)),
+        ];
+        assert!(lines[0].contains("__ljosPermission was not yet a function"));
+        assert!(lines[1].contains("the clipboard"));
+        assert!(lines[3].ends_with("allowed it before"));
+        assert!(lines[4].ends_with("refused it before"));
+        // The scenarios look for one phrase in every one of them.
+        assert!(lines.iter().all(|l| l.contains("the view is not asked")));
     }
 
     #[test]
