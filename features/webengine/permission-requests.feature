@@ -97,6 +97,10 @@ Feature: A view answers what a page asks permission for
   # A page from a web server asks the view to read the clipboard after a
   # click. The off-screen Qt oracle never shows this page: its title stays
   # the host and nothing is asked, so it cannot say what the page read.
+  # With a display (the desktop sandbox, LJOS_WEBENGINE_CHROMIUM_FLAGS set
+  # empty) Chromium reads the clipboard through its connection to the
+  # display, a glib source the pump dispatches. Undispatched, the read
+  # never came back and the title stayed "waiting".
   @ljos-only @api-QtWebEngine.WebEngineView.permissionRequested @api-QtWebEngine.WebEnginePermission.grant
   Scenario: A page granted the clipboard reads it
     Given the web server serves the text file "paste.html":
