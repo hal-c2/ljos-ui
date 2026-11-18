@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#MISE description="First run after a clone, safe to repeat: mise.toml's tools (Rust 1.98.1 with its components and wasm target, cargo-nextest), the submodules, Qt's type table when Qt is here, CEF only with --webengine. Ends with what it did, what it skipped, notes (a Qt that is not the one CI pins) and what is missing, and fails only when something is missing (Rust that is not mise.toml's, a submodule). --check installs nothing"
+#MISE description="First run after a clone, safe to repeat: mise.toml's tools (Rust 1.98.1 with its components and wasm target, cargo-nextest), the submodules, Qt's type table when Qt is here, CEF only with --webengine. Ends with what it did, what it skipped, notes (a Qt that is not the one CI pins) and what is missing, and fails only when something is missing (Rust that is not mise.toml's, a submodule a Cargo.toml uses). --check installs nothing"
 #MISE dir="{{config_root}}"
 #USAGE flag "--check" help="Install, fetch and build nothing: say what is there, what each task would lack, and whether this machine's Qt is the one CI pins; fail only when something is missing (another Qt is a note). Ask it as `mise run --skip-tools setup --check`, or mise first installs mise.toml's missing tools"
 #USAGE flag "--webengine" help="Also build ljos with QtWebEngine (mise run webengine:build), which fetches CEF (about 1.5 GB unpacked) into $CEF_PATH"
@@ -86,29 +86,123 @@ rust_report
 
 # --- Submodules -------------------------------------------------------------
 
-# The workspace builds FilmCraft's crates by path (QtMultimedia's decoders):
-# nothing builds without it. Shallow, as CI fetches it.
-submodule() {
-  local path="$1" what="$2"
-  if [ -f "$path/.git" ] || [ -d "$path/.git" ]; then
-    did "found submodule $path ($what)"
-  elif [ "$check" = true ]; then
-    lack "submodule $path ($what): mise run setup fetches it (git submodule update --init --depth 1 $path)"
+# The Cargo.toml files of this checkout: what git tracks or would add (a
+# submodule's own are not listed), else, outside git, what is on disk.
+manifests() {
+  if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    git ls-files --cached --others --exclude-standard -- 'Cargo.toml' '*/Cargo.toml'
   else
-    echo "setup: git submodule update --init --depth 1 $path" >&2
-    git submodule update --init --depth 1 "$path"
-    did "submodule $path ($what)"
+    find . \( -name target -o -name .git \) -prune -o -name Cargo.toml -print | sed 's|^\./||'
   fi
 }
+
+# manifests_use <dir>: whether a manifest outside <dir> names a path at or
+# below it, as a `path = "…"` dependency or a `members` entry, read from the
+# manifest's own directory as cargo reads it. A submodule is needed when one
+# does: the rule is the manifests', not this machine's. `exclude = […]` and
+# comments name nothing. Read as text, so it needs neither cargo nor the
+# submodule's files, which `cargo metadata` would.
+manifests_use() {
+  manifests | awk -v dir="$1" -v root="$ljos_root" '
+    function normal(p,    n, i, k, part, out) {
+      n = split(p, part, "/"); k = 0
+      for (i = 1; i <= n; i++) {
+        if (part[i] == "" || part[i] == ".") continue
+        # Above the checkout is outside it: no submodule of it is there.
+        if (part[i] == "..") { if (k == 0) return "/"; k--; continue }
+        out[++k] = part[i]
+      }
+      p = ""
+      for (i = 1; i <= k; i++) p = p (i > 1 ? "/" : "") out[i]
+      return p
+    }
+    function under(m, v,    base) {
+      if (substr(v, 1, 1) == "/") {
+        if (index(v, root "/") != 1) return 0
+        v = substr(v, length(root) + 2)
+      } else {
+        base = m; sub(/\/?Cargo\.toml$/, "", base)
+        v = (base == "" ? v : base "/" v)
+      }
+      v = normal(v)
+      return v == dir || index(v, dir "/") == 1
+    }
+    # The quoted strings of a line, into s[1..n]; their count.
+    function strings(line, s,    n) {
+      n = 0
+      while (match(line, /"[^"]*"|\047[^\047]*\047/)) {
+        s[++n] = substr(line, RSTART + 1, RLENGTH - 2)
+        line = substr(line, RSTART + RLENGTH)
+      }
+      return n
+    }
+    {
+      m = $0
+      if (index(m, dir "/") == 1) next
+      members = 0
+      while ((getline line < m) > 0) {
+        sub(/#.*/, "", line)
+        if (members || line ~ /^[[:space:]]*members[[:space:]]*=/) {
+          members = (line !~ /\]/)
+          n = strings(line, s)
+          for (i = 1; i <= n; i++) if (under(m, s[i])) found = 1
+        }
+        # A key starts a line or follows `{`, `,` or a space.
+        rest = " " line
+        while (match(rest, /[{,[:space:]]path[[:space:]]*=[[:space:]]*("[^"]*"|\047[^\047]*\047)/)) {
+          v = substr(rest, RSTART, RLENGTH); sub(/^[^"\047]*["\047]/, "", v); v = substr(v, 1, length(v) - 1)
+          if (under(m, v)) found = 1
+          rest = substr(rest, RSTART + RLENGTH)
+        }
+      }
+      close(m)
+    }
+    END { exit found ? 0 : 1 }'
+}
+
+# A submodule by its path: found at the commit this checkout records, moved
+# there (normal setup; never forced over changes in it), or fetched shallow,
+# as CI fetches it. --check moves and fetches nothing.
+submodule() {
+  local path="$1" what="$2" state
+  state="$(git submodule status -- "$path" 2>/dev/null | cut -c1 || true)"
+  if ! [ -f "$path/.git" ] && ! [ -d "$path/.git" ]; then
+    if [ "$check" = true ]; then
+      lack "submodule $path ($what): mise run setup fetches it (git submodule update --init --depth 1 $path)"
+    else
+      echo "setup: git submodule update --init --depth 1 $path" >&2
+      git submodule update --init --depth 1 -- "$path"
+      did "submodule $path ($what)"
+    fi
+  elif [ "$state" = "+" ] && [ "$check" = true ]; then
+    note "submodule $path is at another commit than this checkout records (git submodule status): mise run setup checks out the recorded one, unless that would overwrite changes in it"
+  elif [ "$state" = "+" ]; then
+    echo "setup: git submodule update --depth 1 $path (it is at another commit than this checkout records)" >&2
+    if git submodule update --depth 1 -- "$path"; then
+      did "submodule $path moved to the commit this checkout records ($what)"
+    else
+      lack "submodule $path is at another commit than this checkout records, and git could not move it (see above; changes in it are kept): commit or set them aside, then run mise run setup again"
+    fi
+  elif [ "$state" = U ]; then
+    note "submodule $path has a merge conflict on its commit (git submodule status): resolve it in this checkout"
+  else
+    did "found submodule $path ($what)"
+  fi
+}
+filmcraft="QtMultimedia's decoders; the workspace's manifests build its crates by path"
+if ! manifests_use third_party/filmcraft; then
+  skip "submodule third_party/filmcraft: the workspace's manifests do not use it; media decoding is off"
+  filmcraft=""
+fi
 if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-  submodule third_party/filmcraft "QtMultimedia's decoders; every build needs it"
+  [ -z "$filmcraft" ] || submodule third_party/filmcraft "$filmcraft"
   if [ "${usage_no_corpus:-false}" = true ]; then
     skip "submodule corpus/qtdoc (--no-corpus): gallery, gallery:run, parse and compile need it"
   else
     submodule corpus/qtdoc "the examples gallery, parse and compile read"
   fi
 else
-  skip "submodules: not a git checkout; fetch third_party/filmcraft and corpus/qtdoc yourself"
+  skip "submodules: not a git checkout; fetch ${filmcraft:+third_party/filmcraft and }corpus/qtdoc yourself"
 fi
 
 # --- Qt ---------------------------------------------------------------------
@@ -198,6 +292,7 @@ want() {
   command -v "$tool" >/dev/null 2>&1 || skip "$tool not found: $why"
 }
 want python3 "gallery, gallery:*, ci:changes, ci:test and bench need it, and desktop:cua gives its seat a keyboard with it"
+want timeout "gallery, gallery:reference, qttest:parity, bench:js and bench:3d hold their runs to a time limit with GNU timeout (macOS: brew install coreutils, then put its gnubin first on PATH)"
 want curl "accesskit:diff, quickjs:diff, oxc:diff and oxc:check fetch upstream with it"
 want qml6 "features:parity, gallery:reference, fuzz:qt, lottie --qt and bench's Qt side run Qt 6's QML runtime"
 if ! (find_qmltestrunner >/dev/null 2>&1); then

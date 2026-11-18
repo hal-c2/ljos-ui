@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 #MISE description="Test what the tasks share (mise-tasks/_lib/env.sh) against stand-in tools: the Qt CI pins read from ci.yml alone, another Qt minor version found by qmake6, qtpaths or qml6 is a mismatch setup notes and exits 0 on (it fails only on what is missing, a rustc that is not mise.toml's say), paths hold under a TMPDIR with a trailing slash or a link, and NVIDIA's Vulkan driver is left out of tests only when its kernel driver is not loaded"
 set -euo pipefail
+# What the caller's shell says is not what is tested: a workflow to read the
+# pin from, setup's flags as mise hands them over, a git repository to work in.
+unset LJOS_CI_WORKFLOW usage_check usage_webengine usage_no_corpus usage_no_types \
+  GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES \
+  GIT_COMMON_DIR GIT_NAMESPACE GIT_PREFIX GIT_CEILING_DIRECTORIES GIT_DISCOVERY_ACROSS_FILESYSTEM \
+  GIT_CONFIG GIT_CONFIG_PARAMETERS GIT_CONFIG_COUNT
 # shellcheck source-path=SCRIPTDIR source=../_lib/env.sh
 . "$(dirname "$0")/../_lib/env.sh"
 cd "$ljos_root"
@@ -30,15 +36,20 @@ bad() {
 # setup. Every git run from here on goes through a stand-in that refuses to
 # fetch or to change submodules and notes what it was asked; the rest is the
 # real git's. The checkout's submodules and tracked files are compared at the
-# end. Untracked files are not: tasks running beside this one may make them.
+# end, by their contents too: a task that rewrote an edited file would leave
+# its status as it was. Untracked files are not: tasks running beside this one
+# may make them. A git that cannot read the checkout is said, not taken for
+# a checkout that stayed the same.
 real_git="$(command -v git || true)"
 guard="$real/guard"
 mkdir "$guard"
 : >"$guard/refused"
+: >"$guard/calls"
 cat >"$guard/git" <<EOF
 #!/bin/sh
+echo "git \$*" >>"$guard/calls"
 case " \$* " in
-  *" submodule "*" status "*) ;;
+  *" submodule status "*) ;;
   *" submodule "*|*" fetch "*|*" clone "*|*" pull "*)
     echo "git \$*" >>"$guard/refused"
     exit 1 ;;
@@ -48,13 +59,21 @@ exec "$real_git" "\$@"
 EOF
 chmod +x "$guard/git"
 checkout_state() {
-  [ -n "$real_git" ] || return 0
-  "$real_git" -C "$ljos_root" submodule status 2>&1 || true
-  echo --
-  "$real_git" -C "$ljos_root" status --porcelain --untracked-files=no 2>&1 || true
+  "$real_git" -C "$ljos_root" submodule status &&
+    echo -- &&
+    "$real_git" -C "$ljos_root" status --porcelain --untracked-files=no &&
+    echo -- &&
+    "$real_git" -C "$ljos_root" diff --binary --cached | "$real_git" hash-object --stdin &&
+    "$real_git" -C "$ljos_root" diff --binary | "$real_git" hash-object --stdin
 }
-checkout_before="$(checkout_state)"
+checkout=
+if [ -n "$real_git" ] && "$real_git" -C "$ljos_root" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  checkout=1
+  checkout_before="$(checkout_state 2>&1)" || bad "git could not read the checkout before tasks:test ran" "$checkout_before"
+fi
 export PATH="$guard:$PATH"
+# How many git calls so far had $1 among their words.
+git_calls() { grep -c -- " $1 " "$guard/calls" || true; }
 
 # Stand-ins for every Qt tool _lib/env.sh asks, so this machine's own Qt is
 # never what answers. `stand <tool> <version>` makes one answer as Qt's does;
@@ -68,19 +87,21 @@ stand_reset() {
     chmod +x "$stands/$tool"
   done
 }
+# stand <tool> <version> [file]: the stand-in at file, else in $stands.
 stand() {
-  case "$1" in
-    qmake6) printf '#!/bin/sh\n[ "$1 $2" = "-query QT_VERSION" ] || exit 1\necho %s\n' "$2" ;;
-    qml6) printf '#!/bin/sh\n[ "$1" = --version ] || exit 1\necho "Qml Runtime %s"\n' "$2" ;;
+  case "${1##*/}" in
+    qmake*) printf '#!/bin/sh\n[ "$1 $2" = "-query QT_VERSION" ] || exit 1\necho %s\n' "$2" ;;
+    qml*) printf '#!/bin/sh\n[ "$1" = --version ] || exit 1\necho "Qml Runtime %s"\n' "$2" ;;
     *) printf '#!/bin/sh\n[ "$1" = --qt-version ] || exit 1\necho %s\n' "$2" ;;
-  esac >"$stands/$1"
+  esac >"${3:-$stands/$1}"
+  chmod +x "${3:-$stands/$1}"
 }
 with_stands() { PATH="$stands:$PATH" "$@"; }
 
 # A workflow with the install-qt-action steps ci.yml has, pinning $1 (and $2
-# in the second step, when given).
+# in the second step, when given), in both quote styles.
 workflow() {
-  cat <<EOF
+  cat <<YML
 jobs:
   types:
     steps:
@@ -93,15 +114,20 @@ jobs:
     steps:
       - uses: jurplel/install-qt-action@v4
         with:
-          version: "${2:-$1}"
+          version: '${2:-$1}'
       - run: mise run gallery
-EOF
+YML
 }
 
 # --- The pin is ci.yml's ---------------------------------------------------------
 
+# What the install-qt-action steps of ci.yml say, read here without qt_pin.
+want="$(awk '
+  /install-qt-action/ { step = 1; next }
+  step && /^[[:space:]]*-/ { step = 0 }
+  step && /version:/ { sub(/.*version:[[:space:]]*/, ""); gsub(/["\047[:space:]]/, ""); print; step = 0 }
+' .github/workflows/ci.yml | sort -u)"
 got="$(qt_pin)"
-want="$(sed -n 's/^ *version: *"\(6\.[0-9.]*\)".*/\1/p' .github/workflows/ci.yml | sort -u)"
 if [ -n "$got" ] && [ "$got" = "$want" ]; then ok "qt_pin reads ci.yml's install-qt-action pin ($got)"; else bad "qt_pin read '$got' from ci.yml, whose install-qt-action steps say '$want'"; fi
 
 workflow 6.11.2 6.12.0 >"$real/split.yml"
@@ -116,12 +142,17 @@ fi
 
 # --- Another minor version is a mismatch -------------------------------------
 
+# Against a workflow of their own, pinning 6.11.2, so the cases hold whatever
+# ci.yml pins.
+workflow 6.11.2 >"$real/pin611.yml"
+export LJOS_CI_WORKFLOW="$real/pin611.yml"
+
 stand_reset
 stand qmake6 6.12.3
 out="$(with_stands qt_mismatch)"
 case "$out" in
-  *"Qt 6.12.3 (qmake6) is not CI's Qt ${got%.*} "*"aqt install-qt "*"$got"*) ok "qmake6 at 6.12.3 is a mismatch with the pin, with the fix" ;;
-  *) bad "qmake6 at 6.12.3 against $got gave no mismatch with a fix" "$out" ;;
+  *"Qt 6.12.3 (qmake6) is not CI's Qt 6.11 "*"aqt install-qt "*"6.11.2"*) ok "qmake6 at 6.12.3 is a mismatch with a 6.11.2 pin, with the fix" ;;
+  *) bad "qmake6 at 6.12.3 against a 6.11.2 pin gave no mismatch with a fix" "$out" ;;
 esac
 
 stand_reset
@@ -134,10 +165,25 @@ case "$out" in
 esac
 
 stand_reset
-stand qmake6 "${got%.*}.0"
+stand qmake6 6.11.0
 stand qtpaths 5.15.19
 out="$(with_stands qt_mismatch)"
-if [ -z "$out" ]; then ok "Qt ${got%.*}.0 matches the pin, and Qt 5's qtpaths is not asked"; else bad "Qt ${got%.*}.0 with Qt 5's qtpaths was a mismatch" "$out"; fi
+if [ -z "$out" ]; then ok "Qt 6.11.0 matches a 6.11.2 pin, and Qt 5's qtpaths is not asked"; else bad "Qt 6.11.0 with Qt 5's qtpaths was a mismatch" "$out"; fi
+
+# The qml6 a task runs (QML6, say) is the one asked, not the Qt on PATH.
+stand_reset
+stand qml6 6.11.2
+mkdir -p "$real/qt612/bin"
+stand qml 6.12.3 "$real/qt612/bin/qml"
+out="$(with_stands qt_mismatch "$real/qt612/bin/qml")"
+case "$out" in
+  *"Qt 6.12.3 ($real/qt612/bin/qml) is not"*) ok "the qml6 a task picked is asked, though the one on PATH is CI's" ;;
+  *) bad "a picked qml at 6.12.3 was not a mismatch while PATH's qml6 is 6.11.2" "$out" ;;
+esac
+stand_reset
+stand qmake6 6.12.3
+out="$(with_stands qt_mismatch "$stands/qml6")"
+if [ -z "$out" ]; then ok "with a qml6 picked, other Qt tools on PATH are not asked"; else bad "qt_mismatch asked qmake6 though a qml6 was picked" "$out"; fi
 
 stand_reset
 stand qmake6 6.12.3
@@ -145,15 +191,25 @@ workflow 6.12.0 >"$real/pin612.yml"
 out="$(LJOS_CI_WORKFLOW="$real/pin612.yml" with_stands qt_mismatch)"
 if [ -z "$out" ]; then ok "the pin comes from the workflow alone: one pinning 6.12.0 takes Qt 6.12.3"; else bad "a workflow pinning 6.12.0 still called Qt 6.12.3 a mismatch" "$out"; fi
 
+if out="$(LJOS_CI_WORKFLOW="$real/split.yml" with_stands qt_mismatch 2>&1)"; then
+  bad "qt_mismatch passed on a workflow it cannot read a pin from" "$out"
+else
+  case "$out" in
+    *"pin different Qt versions"*) ok "qt_mismatch fails, saying why, when the pin cannot be read" ;;
+    *) bad "qt_mismatch failed on two pins without saying so" "$out" ;;
+  esac
+fi
+
 stand_reset
 out="$(with_stands qt_mismatch)"
 if [ -z "$out" ]; then ok "no Qt found is no mismatch"; else bad "no Qt found was a mismatch" "$out"; fi
+unset LJOS_CI_WORKFLOW
 
 # --- setup notes another Qt, and fails only on what is missing -------------------
 
-# setup runs on a copy of the tasks, in a directory that is no git checkout
-# (so its submodules are skipped, never fetched), with stand-ins for mise,
-# rustup and rustc that say mise.toml's Rust is all there. Nothing is
+# setup runs on a copy of the tasks: a git checkout of its own, with a ci.yml
+# of its own (pinning 6.11.2) and stand-ins for mise, rustup and rustc that
+# say mise.toml's Rust is all there and note what mise is asked. Nothing is
 # installed or fetched, and what this machine has or lacks (CI's docs job has
 # no Rust) is not what answers.
 root="$real/root"
@@ -161,41 +217,45 @@ rust="$real/rust"
 mkdir -p "$root/.github/workflows" "$rust"
 cp -R mise-tasks "$root/mise-tasks"
 cp mise.toml "$root/mise.toml"
-cp .github/workflows/ci.yml "$root/.github/workflows/ci.yml"
+workflow 6.11.2 >"$root/.github/workflows/ci.yml"
+git init -q "$root"
 rust_pin components | tr ' ' '\n' >"$rust/components"
 rust_pin targets | tr ' ' '\n' >"$rust/targets"
-cat >"$rust/rustup" <<'EOF'
+cat >"$rust/rustup" <<'SH'
 #!/bin/sh
 case "$1 $2 $3" in
   "component list --installed") cat "$(dirname "$0")/components" ;;
   "target list --installed") cat "$(dirname "$0")/targets" ;;
   *) exit 1 ;;
 esac
-EOF
-cat >"$rust/mise" <<'EOF'
+SH
+cat >"$rust/mise" <<'SH'
 #!/bin/sh
+echo "$*" >>"$(dirname "$0")/mise.log"
 case "$1" in
   where) dirname "$0" ;;
   install) ;;
   *) exit 1 ;;
 esac
-EOF
+SH
 pinned_rustc() { printf '#!/bin/sh\necho "rustc %s (stand-in)"\n' "$1" >"$rust/rustc"; }
 pinned_rustc "$(rust_pin version)"
 chmod +x "$rust/rustup" "$rust/mise" "$rust/rustc"
 with_setup() {
+  : >"$rust/mise.log"
   GIT_CEILING_DIRECTORIES="$real" PATH="$rust:$stands:$PATH" bash "$root/mise-tasks/setup" "$@"
 }
 
 # The corpus and Qt's type table are left out: CI's smoke job has neither, and
-# a full setup would otherwise make the table from this machine's Qt.
+# a full setup would otherwise make the table from this machine's Qt. The
+# copy has no Cargo.toml, so nothing uses FilmCraft.
 for args in "--check --no-corpus" "--no-corpus --no-types"; do
   stand_reset
   stand qmake6 6.12.3
   # shellcheck disable=SC2086 # the flags are words
   if out="$(with_setup $args 2>&1)"; then
     case "$out" in
-      *"setup notes:"*"found Qt 6.12.3: qmake6 ($stands/qmake6)"*"CI pins Qt $got (.github/workflows/ci.yml)"*"for CI's results, install Qt $got as CI does (pip install aqtinstall && aqt install-qt "*)
+      *"setup notes:"*"found Qt 6.12.3: qmake6 ($stands/qmake6)"*"CI pins Qt 6.11.2 (.github/workflows/ci.yml), another minor version than the tools above"*"for CI's results, install Qt 6.11.2 as CI does (pip install aqtinstall && aqt install-qt "*)
         case "$out" in
           *"setup is missing:"*) bad "setup $args with Qt 6.12.3 said something is missing, and still passed" "$out" ;;
           *) ok "setup $args with Qt 6.12.3 passes, noting the Qt it found, CI's pin and how to get it" ;;
@@ -204,21 +264,27 @@ for args in "--check --no-corpus" "--no-corpus --no-types"; do
       *) bad "setup $args with Qt 6.12.3 passed without the note on CI's Qt" "$out" ;;
     esac
   else
-    bad "setup $args failed with Qt 6.12.3 against the $got pin" "$out"
+    bad "setup $args failed with Qt 6.12.3 against a 6.11.2 pin" "$out"
   fi
+  installs="$(grep -c '^install' "$rust/mise.log" || true)"
+  case "$args:$installs:$(grep -c '^install --yes$' "$rust/mise.log" || true)" in
+    --check*:0:0) ok "setup $args asks mise to install nothing" ;;
+    --no-corpus*:1:1) ok "setup $args asks mise once to install, as mise install --yes" ;;
+    *) bad "setup $args asked mise to install $installs times" "$(cat "$rust/mise.log")" ;;
+  esac
 done
 
 stand_reset
-stand qmake6 "${got%.*}.0"
+stand qmake6 6.11.0
 if out="$(with_setup --check --no-corpus 2>&1)"; then
-  :
+  case "$out" in
+    *"setup notes:"*) bad "setup --check noted Qt 6.11.0, the minor version CI pins" "$out" ;;
+    *"found Qt 6.11.0 (qmake6), CI's Qt 6.11 (ci.yml pins 6.11.2)"*) ok "setup --check finds Qt 6.11.0 as CI's minor version, and notes nothing" ;;
+    *) bad "setup --check did not say it found Qt 6.11.0" "$out" ;;
+  esac
 else
-  bad "setup --check failed with Qt ${got%.*}.0 and everything else there" "$out"
+  bad "setup --check failed with Qt 6.11.0 and everything else there" "$out"
 fi
-case "$out" in
-  *"setup notes:"*) bad "setup --check noted CI's own Qt ${got%.*}.0" "$out" ;;
-  *) ok "setup --check notes nothing for Qt ${got%.*}.0" ;;
-esac
 
 # A rustc that is not mise.toml's is truly missing: --check fails on it.
 stand_reset
@@ -232,6 +298,51 @@ else
   esac
 fi
 pinned_rustc "$(rust_pin version)"
+
+# --- A submodule is needed when a manifest uses it -------------------------------
+
+stand_reset
+# A manifest that names FilmCraft only as excluded, or in a comment, does not
+# use it.
+cat >"$root/Cargo.toml" <<'TOML'
+[workspace]
+members = ["crates/*"]
+exclude = ["vendor", "third_party/filmcraft"]
+# FilmCraft's decoders: path = "third_party/filmcraft/crates/codecs"
+TOML
+for args in "--check --no-corpus" "--no-corpus --no-types"; do
+  calls="$(git_calls submodule)"
+  # shellcheck disable=SC2086 # the flags are words
+  if out="$(with_setup $args 2>&1)"; then
+    case "$out" in
+      *"setup is missing:"*) bad "setup $args passed, saying something is missing" "$out" ;;
+      *"setup skipped:"*"submodule third_party/filmcraft: the workspace's manifests do not use it; media decoding is off"*) ok "setup $args skips FilmCraft when no manifest uses it" ;;
+      *) bad "setup $args did not say it skipped the FilmCraft no manifest uses" "$out" ;;
+    esac
+  else
+    bad "setup $args failed though no manifest uses FilmCraft" "$out"
+  fi
+  if [ "$(git_calls submodule)" = "$calls" ]; then ok "setup $args asks git nothing of a FilmCraft no manifest uses"; else bad "setup $args ran git submodule though no manifest uses FilmCraft" "$(grep ' submodule ' "$guard/calls")"; fi
+done
+
+# A path dependency under it, from a member's own directory, is a use.
+mkdir -p "$root/crates/media"
+cat >"$root/crates/media/Cargo.toml" <<'TOML'
+[package]
+name = "media"
+
+[dependencies]
+filmcraft-codecs = { version = "0.1", path = "../../third_party/filmcraft/crates/codecs" }
+TOML
+if out="$(with_setup --check --no-corpus 2>&1)"; then
+  bad "setup --check passed though a manifest uses the FilmCraft that is not there" "$out"
+else
+  case "$out" in
+    *"setup is missing:"*"submodule third_party/filmcraft ("*"mise run setup fetches it (git submodule update --init --depth 1 third_party/filmcraft)"*) ok "setup --check fails on a FilmCraft a manifest uses, saying how to fetch it" ;;
+    *) bad "setup --check failed, but not on the FilmCraft a manifest uses" "$out" ;;
+  esac
+fi
+rm -r "$root/crates" "$root/Cargo.toml"
 
 # --- Paths ---------------------------------------------------------------------
 
@@ -285,8 +396,11 @@ if [ -s "$guard/refused" ]; then
 else
   ok "tasks:test asked git to fetch nothing and to change no submodule"
 fi
-checkout_after="$(checkout_state)"
-if [ "$checkout_before" = "$checkout_after" ]; then
+if [ -z "$checkout" ]; then
+  ok "the checkout is not one git reads, so there is no checkout to compare"
+elif ! checkout_after="$(checkout_state 2>&1)"; then
+  bad "git could not read the checkout after tasks:test ran" "$checkout_after"
+elif [ "$checkout_before" = "$checkout_after" ]; then
   ok "the checkout's submodules and tracked files are as they were"
 else
   bad "the checkout's submodules or tracked files changed during tasks:test" "before:" "$checkout_before" "after:" "$checkout_after"

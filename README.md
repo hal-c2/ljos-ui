@@ -35,6 +35,8 @@ mise run dev        # a QML app reloaded on save (bench/feed.qml; or: mise run d
 
 `mise run --skip-tools setup --check` installs nothing and says what is missing, each with the one command that gets it. mise.toml puts its Rust first on `PATH` for every task, so a system `cargo` of another version is never the one a task runs.
 
+The workspace builds FilmCraft's crates (QtMultimedia's decoders) from the `third_party/filmcraft` submodule, which setup fetches with git. `mise trust` gives git no access: you need read access to its repository (https://github.com/storytold/filmcraft, in `.gitmodules`) and git credentials for github.com, as `gh auth setup-git` or another credential helper gives. When git cannot fetch it, setup stops there; once git can, run `mise run setup` again. setup asks for a submodule only while a `Cargo.toml` names a path in it, so a checkout whose manifests do not use FilmCraft skips it.
+
 Then:
 
 ```sh
