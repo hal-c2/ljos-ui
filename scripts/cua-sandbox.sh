@@ -383,10 +383,11 @@ focus_target() {
   focus "$criteria"
 }
 focus() {
-  local sock
-  for sock in "$run"/sway-ipc.*.sock; do
-    [[ -S $sock ]] && break
-  done
+  local pid sock
+  # The running sway's socket, by its pid as in sockets(): a dead sway's would take the
+  # command and focus nothing. Without one there is nothing to focus, which is not an error.
+  pid=$(pid_of sway) || return 0
+  sock="$run/sway-ipc.$(id -u).$pid.sock"
   [[ -S $sock ]] || return 0
   swaymsg -s "$sock" "[$1] focus" > /dev/null 2>&1 || true
 }
