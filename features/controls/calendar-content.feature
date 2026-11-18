@@ -52,6 +52,16 @@ Feature: Where a calendar puts its days
     Then the object "m0" does not exist
     And the object "d0" does not exist
 
+  # qml6 refuses a month out of range ("month 12 is out of range [0...11]")
+  # and goes on showing the month it had. Ljós keeps the month it is given,
+  # and there are no days in it to show.
+  @qt-diverges
+  Scenario: A month grid given a month out of range shows no days
+    When 100 milliseconds pass
+    Then the object "l0" does not exist
+    And the property "width" of "late" is 0
+    And the property "height" of "late" is 0
+
   Scenario: A month grid given a month in range shows its days
     When the property "month" of "late" is set to 1
     And 100 milliseconds pass
