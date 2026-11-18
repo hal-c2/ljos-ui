@@ -61,11 +61,7 @@ fn main() -> ExitCode {
     let app = ljos::App::new("Grab an item")
         .qml_dir(dir, "Main")
         .expect("the example's QML compiles")
-        .on_message(move |engine, ask: Ask| {
-            if let Some(root) = at.get() {
-                answer(engine, root, ask, &out, start);
-            }
-        });
+        .on_message(move |engine, ask: Ask| answer(engine, at.get(), ask, &out, start));
     let ran = app.run_with(move |setup| {
         let made = setup
             .engine()
@@ -140,8 +136,9 @@ fn main() -> ExitCode {
     }
 }
 
-/// Asks for the picture `ask` names, on the Engine thread.
-fn answer(engine: &Engine, root: ObjectId, ask: Ask, out: &Path, start: Instant) {
+/// Asks for the picture `ask` names, on the Engine thread, of the items
+/// under `root`: none before the setup has made it.
+fn answer(engine: &Engine, root: Option<ObjectId>, ask: Ask, out: &Path, start: Instant) {
     let (name, doomed, reply) = match ask {
         Ask::Grab {
             name,
@@ -149,9 +146,15 @@ fn answer(engine: &Engine, root: ObjectId, ask: Ask, out: &Path, start: Instant)
             reply,
         } => (name, doomed, reply),
         Ask::Finish => {
-            let _ = engine.invoke_by_name(root, "finish", &[]);
+            if let Some(root) = root {
+                let _ = engine.invoke_by_name(root, "finish", &[]);
+            }
             return;
         }
+    };
+    let Some(root) = root else {
+        let _ = reply.send(Err("asked before the window's root was made".to_owned()));
+        return;
     };
     let Some(item) = named(engine, root, name) else {
         let _ = reply.send(Err("no item has that objectName".to_owned()));
