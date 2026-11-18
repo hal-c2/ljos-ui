@@ -869,7 +869,7 @@ shell_code() {
 # a command. A command substitution inside double quotes is code again. An
 # inline comment is left out, and so is a here-document's text, up to its
 # terminator: it is what a command reads, not commands (a `<<` inside
-# `$(( ))` is a shift).
+# `$(( ))` is a shift, and `<<<` a here-string, whose word is all it reads).
 command_words() {
   awk '
     function neutral(c) { return c ~ /[ \t;&|()<>`{}]/ ? "_" : c }
@@ -899,7 +899,8 @@ command_words() {
         }
         if (ch == "\\") { out = out "__"; i += 2; continue }
         if (ch == "#" && (i == 1 || substr(s, i - 1, 1) ~ /[ \t;&|(]/)) break
-        if (two == "<<" && substr(s, i + 2, 1) != "<" && !(top == "c" && n > 0 && dp[n] > 1)) {
+        if (substr(s, i, 3) == "<<<") { out = out "<<<"; i += 3; continue }
+        if (two == "<<" && !(top == "c" && n > 0 && dp[n] > 1)) {
           j = i + 2; dash = 0; w = ""
           if (substr(s, j, 1) == "-") { dash = 1; j++ }
           while (substr(s, j, 1) ~ /[ \t]/) j++
@@ -939,22 +940,23 @@ command_words() {
 # (timeout, nice, env, capped, mise exec, …) run the cargo program, not
 # env.sh's cargo, so each of those counts as both. A script of the
 # checkout's scripts/ (under <root>, this checkout by default) that the task
-# names and that runs cargo runs it for the task: env.sh's CARGO_TARGET_DIR
-# is what puts that build in the shared target, so the task sources env.sh
-# for it. cargo counts only as a command's program: where a command starts
-# (after a separator, a keyword such as if, or assignments), or as the
-# program such a wrapper runs. A wrapper takes only its own options and
-# their values (timeout its duration, taskset its mask or CPU list, chrt
-# its priority), so the next word is the program:
+# names and that runs cargo is held to the same, as the script's own: a
+# shell function does not reach the program a task runs, so the script's
+# cargo is env.sh's only when the script sources env.sh itself (a task
+# that sourced it would hand the script the target directory, but not the
+# main checkout's settings). cargo counts only as a command's program:
+# where a command starts (after a separator, a keyword such as if, or
+# assignments), or as the program such a wrapper runs. A wrapper takes
+# only its own options and their values (timeout its duration, taskset its
+# mask or CPU list, chrt its priority), so the next word is the program:
 # `exec "$prog" --note "cargo build"` runs $prog, and command -v cargo runs
 # nothing. command_words makes quoted text one word, so a message that names
 # a cargo command runs none. The text goes to grep as a here-string, not
 # down a pipe: under pipefail, grep -q stopping early fails a long task's
 # printf on the closed pipe, and the match with it.
 cargo_problems() {
-  local code words pre via runs="" script s o v
+  local code pre via script s o v
   code="$(shell_code "$1")"
-  words="$(command_words <<<"$code")"
   pre='(^|[;&|({`])[[:space:]]*((then|do|else|elif|if|while|until|!|time)[[:space:]]+)*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*'
   s='[[:space:]]+'
   o="-[^[:space:];&|]*$s"
@@ -971,25 +973,28 @@ cargo_problems() {
   via+="|xargs$s((-n|-I|-P|-L|-s|-d|-E|-a|--max-args|--replace|--max-procs|--max-lines|--max-chars|--delimiter|--eof|--arg-file)$s$v|$o)*"
   via+="|mise$s(exec|x)$s((-C|--cd|-E|--env|-j|--jobs)$s$v|$o|[^[:space:];&|@]+@[^[:space:];&|]+$s)*"
   via+="|\"?([^[:space:];&|\"]*/)?capped\"?$s($o)*))"
-  if grep -Eq "${pre}${via}*cargo([[:space:]]|$)" <<<"$words"; then
-    runs=1
-  else
-    while IFS= read -r script; do
-      case "$script" in *.py | *.qml) continue ;; esac
-      [ -f "${2:-$ljos_root}/$script" ] || continue
-      if grep -Eq "${pre}${via}*cargo([[:space:]]|$)" <<<"$(shell_code "${2:-$ljos_root}/$script" | command_words)"; then
-        runs=1
-        break
-      fi
-    done <<EOF_SCRIPTS
+  cargo_rules "$code" ""
+  while IFS= read -r script; do
+    case "$script" in *.py | *.qml) continue ;; esac
+    [ -f "${2:-$ljos_root}/$script" ] || continue
+    cargo_rules "$(shell_code "${2:-$ljos_root}/$script")" "$script: "
+  done <<EOF_SCRIPTS
 $(grep -oE 'scripts/[A-Za-z0-9_.-]+' <<<"$code" | sort -u)
 EOF_SCRIPTS
-  fi
-  [ -n "$runs" ] || return 0
-  grep -Eq '^[[:space:]]*(\.|source)[[:space:]].*_lib/env\.sh"?[[:space:]]*$' <<<"$code" ||
-    printf ' runs cargo without sourcing _lib/env.sh, so it builds into a worktree'"'"'s own target/;'
+  return 0
+}
+
+# cargo_rules <code> <who>: cargo_problems's word on one shell program's
+# code, each problem led by <who> ("<script>: " for a script, nothing
+# for the task); pre and via are cargo_problems's.
+cargo_rules() {
+  local words
+  words="$(command_words <<<"$1")"
+  grep -Eq "${pre}${via}*cargo([[:space:]]|$)" <<<"$words" || return 0
+  grep -Eq '^[[:space:]]*(\.|source)[[:space:]].*_lib/env\.sh"?[[:space:]]*$' <<<"$1" ||
+    printf ' %sruns cargo without sourcing _lib/env.sh, so it builds into a worktree'"'"'s own target/;' "$2"
   grep -Eq "${pre}${via}+cargo([[:space:]]|$)" <<<"$words" &&
-    printf ' exec cargo, command cargo or a program that runs cargo (timeout, nice, env, capped) goes round env.sh'"'"'s cargo (run cargo, or exec_cargo where cargo takes the task'"'"'s process);'
+    printf ' %sexec cargo, command cargo or a program that runs cargo (timeout, nice, env, capped) goes round env.sh'"'"'s cargo (run cargo, or exec_cargo where cargo takes the process);' "$2"
   return 0
 }
 

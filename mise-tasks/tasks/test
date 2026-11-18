@@ -1162,6 +1162,8 @@ lints "an inline comment runs none" none ': built # ; cargo build'
 lints "a here-document's text runs none" none "cat <<'EOF'" 'cargo build' 'EOF'
 lints "an indented here-document's text runs none, and a cargo after its terminator is a cargo run" source 'cat <<-"END" | grep x' '	cargo run' '	END' 'cargo test'
 lints "a shift in arithmetic is no here-document" source 'x=$((1 << n))' 'cargo test'
+lints "a here-string is no here-document" source 'x="$(sed s/a/b/ <<<"$y")"' 'cargo test'
+lints "a here-string of a word is no here-document" source 'grep -q x <<< y' 'cargo test'
 lints "cargo in a quoted command substitution is a cargo run" source 'x="$(timeout 60 cargo metadata)"'
 # A wrapper takes its own options, and the next word is its program.
 lints "exec of another program whose flag names cargo runs none" none 'exec "$prog" run --note "cargo build"'
@@ -1190,14 +1192,21 @@ long=()
 for _ in $(seq 20000); do long+=(': filler line for a task longer than a pipe holds'); done
 lints "a long task that sources env.sh and runs cargo is taken" none "$env_line" 'cargo test' "${long[@]}"
 lints "a long task that runs exec cargo goes round env.sh's cargo" round "$env_line" 'exec cargo test' "${long[@]}"
-# A task's scripts run with its environment, so a script's cargo builds
-# where the task's settings say: the task sources env.sh for it.
+# env.sh's cargo is a shell function, which no script a task runs has: a
+# script that runs cargo sources env.sh itself, or its cargo builds without
+# the main checkout's settings.
 mkdir "$real/lint/scripts"
 printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail' 'cargo build -p ljos_cli' >"$real/lint/scripts/build.sh"
+printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail' '. "$(dirname "$0")/../mise-tasks/_lib/env.sh"' 'cargo build -p ljos_cli' >"$real/lint/scripts/sourced.sh"
+printf '%s\n' '#!/usr/bin/env bash' '. "$(dirname "$0")/../mise-tasks/_lib/env.sh"' 'exec cargo build -p ljos_cli' >"$real/lint/scripts/round.sh"
 printf '%s\n' '#!/usr/bin/env bash' 'echo "no cargo here"' >"$real/lint/scripts/quiet.sh"
-lints "a task whose script runs cargo, and that does not source env.sh, is refused" source 'exec scripts/build.sh start "$@"'
-lints "a task whose script runs cargo is taken when it sources env.sh" none "$env_line" 'exec scripts/build.sh start "$@"'
+lints "a task whose script runs cargo, and neither sources env.sh, is refused" source 'exec scripts/build.sh start "$@"'
+lints "a task whose script runs cargo without sourcing env.sh is refused, though the task sources it" source "$env_line" 'exec scripts/build.sh start "$@"'
+lints "a task whose script runs cargo is taken when the script sources env.sh" none 'exec scripts/sourced.sh start "$@"'
+lints "a script that runs exec cargo goes round env.sh's cargo" round "$env_line" 'exec scripts/round.sh'
 lints "a task whose script runs no cargo need not source env.sh" none '"$root/scripts/quiet.sh" "$out"'
+got="$(cargo_problems "$ljos_root/mise-tasks/desktop/cua/_default" "$ljos_root")"
+if [ -z "$got" ]; then ok "desktop:cua's sandbox builds through env.sh's cargo"; else bad "desktop:cua: cargo_problems said '$got'"; fi
 
 # --- What a checkout's runs write ------------------------------------------------
 
@@ -1232,7 +1241,7 @@ bdir() {
     cd "$dir" && ljos_root="$dir" && ljos_cargo_config="$(cargo_config "$dir")" && build_dir
   )
 }
-if command cargo -V >/dev/null 2>&1 && [ -d "$real/wt" ]; then
+if cargo -V >/dev/null 2>&1 && [ -d "$real/wt" ]; then
   printf '[workspace]\n' >"$real/wt/Cargo.toml"
   printf '[workspace]\n' >"$repo/Cargo.toml"
   printf '[build]\njobs = 2\n' >"$repo/.cargo/config.toml"
@@ -1317,7 +1326,7 @@ if [ "$out" = "$want" ]; then ok "a run's programs are built once, with the buil
 # With the real cargo: a program built already in the shared target is
 # pinned from the same build (cargo finds it fresh in the build directory
 # and copies it to the run's target), not built again.
-if command cargo -V >/dev/null 2>&1; then
+if cargo -V >/dev/null 2>&1; then
   pinws="$real/pinws"
   mkdir -p "$pinws/src"
   printf '[package]\nname = "pinws"\nversion = "0.1.0"\nedition = "2021"\n\n[workspace]\n' >"$pinws/Cargo.toml"
@@ -1329,8 +1338,11 @@ if command cargo -V >/dev/null 2>&1; then
     [ -z "$rustup_home" ] || export RUSTUP_HOME="$rustup_home"
     export CARGO_HOME="$real/cargo-home" CARGO_TARGET_DIR="$pinws/shared"
     cd "$pinws" && ljos_root="$pinws" && ljos_cargo_config="" || exit 1
-    command cargo build --quiet --offline 2>&1 || exit 1
-    built="$(ls "$pinws"/shared/debug/deps/pinws-* | grep -v '\.d$')"
+    cargo build --quiet --offline 2>&1 || exit 1
+    built=""
+    for f in "$pinws"/shared/debug/deps/pinws-*; do
+      case "$f" in *.d) ;; *) built="$f" ;; esac
+    done
     before="$(ls -i "$built" | awk '{ print $1 }')"
     programs="$(pin_programs "$pinws/bin" build --quiet --offline 2>&1)" || { echo "failed: $programs"; exit 0; }
     after="$(ls -i "$built" | awk '{ print $1 }')"
