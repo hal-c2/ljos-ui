@@ -15,9 +15,9 @@ View3D {
     property bool dark: true
     property color stripTint: "#00e5ff"
     property color tailTint: "#ff0d59"
-    // Wheel turn and steering in degrees, and a lean into the lane change.
-    property real roll: 0
-    property real steer: 0
+    // A turn of the whole car, in degrees, as it drifts across the lane. The
+    // wheels stay still: the drive steps once a second, too coarse to turn
+    // them by.
     property real sway: 0
 
     readonly property real m: 100
@@ -71,8 +71,6 @@ View3D {
 
     CarModel {
         eulerRotation.y: chase.sway
-        roll: chase.roll
-        steer: chase.steer
         stripTint: chase.stripTint
         tailTint: chase.tailTint
     }
