@@ -151,8 +151,9 @@ pub struct EnumKey {
 #[derive(Debug, Clone, Default)]
 pub struct FunctionShape {
     pub params: Vec<ParamShape>,
-    /// Whether it ends in `...rest`.
-    pub rest: bool,
+    /// What its `...rest` is written as, where it ends in one; `number[]`
+    /// for one that takes numbers.
+    pub rest: Option<Written>,
     pub returns: Written,
 }
 
@@ -169,6 +170,10 @@ impl FunctionShape {
     /// takes and gives what it is handed.
     pub fn is_typed(&self) -> bool {
         !matches!(self.returns, Written::Missing)
+            || self
+                .rest
+                .as_ref()
+                .is_some_and(|rest| !matches!(rest, Written::Missing))
             || self
                 .params
                 .iter()
@@ -191,11 +196,13 @@ pub enum Written {
 }
 
 impl Written {
-    fn of(ty: &TSType<'_>) -> Self {
-        Self::name(ty).map_or(Self::Other, Self::Name)
+    /// `generic` are the function's own type parameters: a name among them
+    /// is not the type the file has of that name.
+    fn of(ty: &TSType<'_>, generic: &[&str]) -> Self {
+        Self::name(ty, generic).map_or(Self::Other, Self::Name)
     }
 
-    fn name(ty: &TSType<'_>) -> Option<String> {
+    fn name(ty: &TSType<'_>, generic: &[&str]) -> Option<String> {
         Some(match ty {
             TSType::TSStringKeyword(_) => "string".into(),
             TSType::TSNumberKeyword(_) => "number".into(),
@@ -204,10 +211,16 @@ impl Written {
             TSType::TSUndefinedKeyword(_) => "undefined".into(),
             TSType::TSUnknownKeyword(_) => "unknown".into(),
             TSType::TSNeverKeyword(_) => "never".into(),
-            TSType::TSArrayType(array) => format!("{}[]", Self::name(&array.element_type)?),
-            TSType::TSParenthesizedType(inner) => Self::name(&inner.type_annotation)?,
+            TSType::TSArrayType(array) => {
+                format!("{}[]", Self::name(&array.element_type, generic)?)
+            }
+            TSType::TSParenthesizedType(inner) => Self::name(&inner.type_annotation, generic)?,
             TSType::TSTypeReference(reference) if reference.type_arguments.is_none() => {
-                type_name(&reference.type_name)?
+                let name = type_name(&reference.type_name)?;
+                if generic.contains(&name.as_str()) {
+                    return None;
+                }
+                name
             }
             _ => return None,
         })
@@ -227,9 +240,15 @@ fn type_name(name: &TSTypeName<'_>) -> Option<String> {
 }
 
 fn function_shape(function: &Function<'_>) -> FunctionShape {
+    let generic: Vec<&str> = function
+        .type_parameters
+        .iter()
+        .flat_map(|declaration| &declaration.params)
+        .map(|parameter| parameter.name.name.as_str())
+        .collect();
     let written = |annotation: Option<&qml_syntax::js::TSTypeAnnotation<'_>>| {
         annotation.map_or(Written::Missing, |annotation| {
-            Written::of(&annotation.type_annotation)
+            Written::of(&annotation.type_annotation, &generic)
         })
     };
     FunctionShape {
@@ -247,7 +266,11 @@ fn function_shape(function: &Function<'_>) -> FunctionShape {
                 optional: param.optional || param.initializer.is_some(),
             })
             .collect(),
-        rest: function.params.rest.is_some(),
+        rest: function
+            .params
+            .rest
+            .as_ref()
+            .map(|rest| written(rest.type_annotation.as_deref())),
         returns: written(function.return_type.as_deref()),
     }
 }

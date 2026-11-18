@@ -692,9 +692,18 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
         // What gives no type written gives `unknown`, as a method the type
         // table names without one does (TYPES.md).
         let ret = self.declared(&function.returns, Ty::UNKNOWN, types);
+        // A rest is written as the array it collects; a call is checked
+        // against what each of its elements is.
+        let rest = function.rest.as_ref().map(|written| {
+            let ty = self.declared(written, Ty::ERROR, types);
+            match *self.arena.kind(ty) {
+                Kind::Array { elem, .. } => elem,
+                _ => Ty::ERROR,
+            }
+        });
         self.arena.function(Sig {
             params: params.into_boxed_slice(),
-            rest: function.rest.then_some(Ty::ERROR),
+            rest,
             ret,
             guard: None,
         })

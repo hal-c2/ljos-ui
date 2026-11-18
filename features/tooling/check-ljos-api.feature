@@ -216,6 +216,53 @@ Feature: Checking the scripts of a file written in Ljós's API
         ljos: 2 errors
         """
 
+    Scenario: A type parameter of another component's function is not the type it shares a name with
+      Given the file "Helper.qml":
+        """qml
+        import Ljos.Ui
+        Item {
+          function first<Row>(rows: Row[]): Row { return rows[0] }
+        }
+        """
+      And the file "Main.qml":
+        """qml
+        import Ljos.Ui
+        Item {
+          Helper { id: helper }
+          property string name: helper.first(["a"])
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        2 files, 0 errors, 0 warnings
+        """
+
+    Scenario: A typed rest parameter of another component's function takes only what it declares
+      Given the file "Helper.qml":
+        """qml
+        import Ljos.Ui
+        Item {
+          property real sum: 0
+          function add(...values: real[]) { sum = values.reduce((a, b) => a + b, sum) }
+        }
+        """
+      And the file "Main.qml":
+        """qml
+        import Ljos.Ui
+        Item {
+          Helper { id: helper }
+          function go() { helper.add(1, "2") }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        Main.qml:4:41: error: `rest` is a number; this gives it a string [ts-assign-type]
+        2 files, 1 errors, 0 warnings
+        ljos: 1 errors
+        """
+
     Scenario: Arrays, arrows, templates and object literals are typed
       Given the file "Gauge.qml":
         """qml
