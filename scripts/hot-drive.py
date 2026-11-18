@@ -34,6 +34,9 @@ spec.loader.exec_module(gd)
 
 TARGET, SANDBOX = gd.TARGET, gd.SANDBOX
 PROFILE = os.environ.get("GALLERY_PROFILE", "debug")
+# gallery:hot's own link to the build (LJOS_BIN), so another checkout building into a
+# shared target while the examples run cannot put its ljos in place of this one.
+LJOS = os.environ.get("LJOS_BIN") or os.path.join(TARGET, PROFILE, "ljos")
 # How long a save may take to show before the driver says it never did.
 RELOAD_WAIT_MS = 20000
 STARTUP = 60
@@ -285,7 +288,7 @@ def drive(out, e):
     log_path = os.path.join(d, "stderr.log")
     log = open(log_path, "w")
     before = set(gd.glob.glob(TARGET + "/ljos/mcp-*.json"))
-    cmd = [SANDBOX, "exec", os.path.join(TARGET, PROFILE, "ljos"), "run", os.path.join(src, e["entry"]),
+    cmd = [SANDBOX, "exec", LJOS, "run", os.path.join(src, e["entry"]),
            "--project", src, "--example", eid, "--watch", "--mcp=inspect,input,eval"]
     p = subprocess.Popen(cmd, cwd=ROOT, stdout=log, stderr=log, start_new_session=True)
     rep = open(os.path.join(d, "report.txt"), "w")
