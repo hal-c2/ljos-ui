@@ -835,15 +835,23 @@ EOF_SETTINGS
   esac
 }
 
-# unexport_settings: what export_settings exported, here or in a task that
-# started this one, gone again. export_settings notes each variable it sets
-# in LJOS_SETTINGS_EXPORTED, as NAME=value lines, and exports the list with
-# them: a task started by a task inherits both, and its checkout may be
-# another one, whose main checkout's settings these are not (mise-tasks/mcp
-# for another project, `mise -C <other checkout> run`). Left alone they would
-# read as the developer's, keep that checkout's own settings out and outrank
-# its files. A variable whose value is no longer the noted one was set again
-# since, by the developer, and is kept.
+# noted_export <name> <value>: exports it, noted in LJOS_SETTINGS_EXPORTED
+# (NAME=value lines, exported with it) as env.sh's, not the developer's.
+noted_export() {
+  local nl=$'\n'
+  export "$1=$2"
+  export LJOS_SETTINGS_EXPORTED="${LJOS_SETTINGS_EXPORTED:+$LJOS_SETTINGS_EXPORTED$nl}$1=$2"
+}
+
+# unexport_settings: what env.sh exported (noted_export: the target, the
+# main checkout's settings), here or in a task that started this one, gone
+# again. A task started by a task inherits the variables and the note, and
+# its checkout may be another one, whose target and main checkout's settings
+# these are not (mise-tasks/mcp for another project, `mise -C <other
+# checkout> run`). Left alone they would read as the developer's: the
+# target would be this one's, and the settings would keep that checkout's
+# own out and outrank its files. A variable whose value is no longer the
+# noted one was set again since, by the developer, and is kept.
 unexport_settings() {
   local line name
   while IFS= read -r line; do
@@ -863,12 +871,17 @@ unexport_settings
 # Every task builds where target_dir says, and so does every cargo its cargo
 # starts (ljos_bdd's builds of ljos, say), through the variable. What was
 # asked for before that is kept for a task that builds another checkout
-# (mise-tasks/mcp).
+# (mise-tasks/mcp). A target nobody asked for is env.sh's, and noted so: a
+# task this one starts for another checkout finds its own.
 # shellcheck disable=SC2034 # read by mise-tasks/mcp
 ljos_asked_target_dir="${CARGO_TARGET_DIR-}"
 # Each failure says what stops it, in one line of its own.
 CARGO_TARGET_DIR="$(target_dir)" || exit 1
-export CARGO_TARGET_DIR
+if [ -n "$ljos_asked_target_dir" ]; then
+  export CARGO_TARGET_DIR
+else
+  noted_export CARGO_TARGET_DIR "$CARGO_TARGET_DIR"
+fi
 ljos_cargo_config="$(cargo_config)" || exit 1
 
 # export_settings <cargo_config output> [env]: the settings a variable can
@@ -880,10 +893,9 @@ ljos_cargo_config="$(cargo_config)" || exit 1
 # well, for a program that runs cargo by itself and was not started by cargo,
 # which gives them to whatever it starts (mise-tasks/mcp's server); a forced
 # one replaces the user's, as cargo's does. The variables are named in
-# ljos_settings_exported, and noted with their values in
-# LJOS_SETTINGS_EXPORTED for unexport_settings. What no variable can carry
-# (cargo_settings says which) reaches only a task's cargo, which the task
-# says once.
+# ljos_settings_exported, and noted (noted_export) for unexport_settings.
+# What no variable can carry (cargo_settings says which) reaches only a
+# task's cargo, which the task says once.
 ljos_settings_exported=""
 export_settings() {
   local line names rest kind name value blocked n exported nl=$'\n' tab=$'\t'
@@ -919,9 +931,8 @@ export_settings() {
       case "$exported" in *"$nl$n$nl"*) blocked=1 && break ;; esac
     done
     [ -z "$blocked" ] || continue
-    export "$name=$value"
+    noted_export "$name" "$value"
     ljos_settings_exported="${ljos_settings_exported:+$ljos_settings_exported }$name"
-    export LJOS_SETTINGS_EXPORTED="${LJOS_SETTINGS_EXPORTED:+$LJOS_SETTINGS_EXPORTED$nl}$name=$value"
   done <<EOF_SETTINGS
 $1
 EOF_SETTINGS

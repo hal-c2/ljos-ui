@@ -1491,6 +1491,41 @@ if [ -d "$real/wt" ]; then
   out="$(from_worktree CARGO_BUILD_JOBS=7 | tr '\n' '#')"
   want="mcp --project $repo|7||#7||#"
   if [ "$out" = "$want" ]; then ok "a variable the developer set again after a task exported it is the developer's, and is kept"; else bad "with CARGO_BUILD_JOBS=7 set after the export, another checkout's MCP server and task got:" "gave: $out" "not:  $want"; fi
+  # The target a task in the linked worktree found is its main checkout's
+  # too: a task it starts in another repository (`mise -C <it> run`) builds
+  # into that one's, unless the developer named a target before either ran.
+  mkdir "$real/apart"
+  cp -R "$ljos_root/mise-tasks" "$real/apart/"
+  quiet_git -C "$real/apart" init
+  quiet_git -C "$real/apart" add mise-tasks
+  quiet_git -C "$real/apart" commit -q -m fixture
+  apart_task() {
+    (
+      unexported
+      unset LJOS_UNEXPORTED_NOTED LJOS_SETTINGS_EXPORTED CARGO_TARGET_DIR
+      export CARGO_HOME="$real/cargo-home"
+      [ -z "${1-}" ] || export "${1?}"
+      cd "$real/wt" && bash -c '. mise-tasks/_lib/env.sh && printf "%s|" "$CARGO_TARGET_DIR" && cd "$1" && bash -c ". mise-tasks/_lib/env.sh && printf %s \"\$CARGO_TARGET_DIR\""' task "$real/apart" 2>/dev/null
+    )
+  }
+  out="$(apart_task)"
+  want="$(where "$real/wt")|$(where "$real/apart")"
+  if [ "$out" = "$want" ]; then ok "a task in a linked worktree that starts a task in another repository leaves it that repository's own target"; else bad "a linked worktree's task, then another repository's, built into:" "gave: $out" "not:  $want"; fi
+  out="$(apart_task CARGO_TARGET_DIR="$real/mine")"
+  want="$real/mine|$real/mine"
+  if [ "$out" = "$want" ]; then ok "a target the developer named before any task ran is kept by a task another repository's task starts"; else bad "with CARGO_TARGET_DIR=$real/mine, a linked worktree's task, then another repository's, built into:" "gave: $out" "not:  $want"; fi
+  # The MCP server, built already (LJOS_BIN), runs with the target of the
+  # checkout it is served in, as one built there does, not this script's.
+  printf '#!/bin/sh\nprintf "%%s\\n" "${CARGO_TARGET_DIR-}"\n' >"$real/targetserver"
+  chmod +x "$real/targetserver"
+  out="$( (
+    unexported
+    unset LJOS_SETTINGS_EXPORTED CARGO_TARGET_DIR
+    export CARGO_HOME="$real/cargo-home" LJOS_BIN="$real/targetserver"
+    cd "$real/apart" && bash "$ljos_root/mise-tasks/mcp" "$real/apart" 2>/dev/null
+  ) )"
+  want="$(where "$real/apart")"
+  if [ "$out" = "$want" ]; then ok "the MCP server, built already, runs with the target of the checkout it is served in"; else bad "the MCP server built already (LJOS_BIN), served in $real/apart, was given the target:" "gave: $out" "not:  $want"; fi
   printf '[build]\njobs = 2\n' >"$repo/.cargo/config.toml"
 fi
 

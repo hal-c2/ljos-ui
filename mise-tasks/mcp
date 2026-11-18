@@ -38,9 +38,27 @@ project="$(physical "$project")"
 # project: with the settings of the project's main checkout when the project
 # is a linked worktree, and [env]'s too, as nothing cargo starts gives it
 # them (export_settings). The ones env.sh exported for this script's own
-# checkout are not the build's either, which goes below with its checkout's.
+# checkout are not the build's either, which goes below with its checkout's,
+# and neither is the target env.sh found for it.
 unexport_settings
 served="$(cargo_config "$project")" || exit 1
+
+# The checkout this runs in, which need not be the one this script came from:
+# its build goes where target_dir says for it (CARGO_TARGET_DIR as asked, not
+# as env.sh resolved it for the script's own checkout), with its main
+# checkout's cargo settings when it is a linked worktree (cargo_config). The
+# server, built here or named, runs with that target too.
+if checkout="$(git rev-parse --show-toplevel 2>/dev/null)" && [ -n "$checkout" ]; then
+  checkout="$(physical "$checkout")"
+else
+  checkout="$(pwd -P)"
+fi
+target="$(CARGO_TARGET_DIR="$ljos_asked_target_dir" target_dir "$checkout")" || exit 1
+if [ -n "$ljos_asked_target_dir" ]; then
+  export CARGO_TARGET_DIR="$target"
+else
+  noted_export CARGO_TARGET_DIR "$target"
+fi
 
 if [ -n "${LJOS_BIN:-}" ]; then
   [ -x "$LJOS_BIN" ] || die "mcp: LJOS_BIN is $LJOS_BIN, which is not a program"
@@ -49,17 +67,6 @@ if [ -n "${LJOS_BIN:-}" ]; then
   exec "$LJOS_BIN" mcp --project "$project"
 fi
 
-# The checkout this runs in, which need not be the one this script came from:
-# its build goes where target_dir says for it (CARGO_TARGET_DIR as asked, not
-# as env.sh resolved it for the script's own checkout), with its main
-# checkout's cargo settings when it is a linked worktree (cargo_config).
-if checkout="$(git rev-parse --show-toplevel 2>/dev/null)" && [ -n "$checkout" ]; then
-  checkout="$(physical "$checkout")"
-else
-  checkout="$(pwd -P)"
-fi
-target="$(CARGO_TARGET_DIR="$ljos_asked_target_dir" target_dir "$checkout")" || exit 1
-export CARGO_TARGET_DIR="$target"
 # The settings file config_args writes lives until the build is over, or
 # until this stops before it (exec runs no trap).
 settings="$(mktemp -d "${TMPDIR:-/tmp}/ljos-cargo.XXXXXX")"
