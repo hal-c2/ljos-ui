@@ -306,6 +306,22 @@ fn an_object_with_a_member_beside_its_brace_is_opened_up_for_a_child() {
 }
 
 #[test]
+fn comments_after_the_brace_leave_a_line_of_members_as_it_is() {
+    let source = "Item { /* a */ /* b */\n    x: 1; y: 2\n}\n";
+    assert_eq!(
+        applied(
+            source,
+            Edit::InsertObject {
+                parent: root(),
+                index: 0,
+                text: "Item {\n    width: 1\n}".into(),
+            }
+        ),
+        "Item { /* a */ /* b */\n    x: 1; y: 2\n    Item {\n        width: 1\n    }\n}\n"
+    );
+}
+
+#[test]
 fn crlf_files_stay_crlf() {
     let source = PAGE.replace('\n', "\r\n");
     let out = apply(

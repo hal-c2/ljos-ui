@@ -1332,7 +1332,7 @@ impl<'s> Text<'s> {
         }
     }
 
-    /// Past the line end after `end`, when only a `;`, blanks and a comment
+    /// Past the line end after `end`, when only a `;`, blanks and comments
     /// are between them.
     fn line_end_after(&self, end: usize) -> Option<usize> {
         let bytes = self.src.as_bytes();
@@ -1340,7 +1340,7 @@ impl<'s> Text<'s> {
         if bytes.get(at) == Some(&b';') {
             at = skip_blanks(bytes, at + 1);
         }
-        if let Some(comment_end) = self.comment_from(at)
+        while let Some(comment_end) = self.comment_from(at)
             && !self.src[at..comment_end].contains('\n')
         {
             at = skip_blanks(bytes, comment_end);
