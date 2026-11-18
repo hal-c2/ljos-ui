@@ -255,26 +255,32 @@ fn fs_glow(in: VsOut) -> @location(0) vec4<f32> {
     let c = textureSampleLevel(a, smooth_sampler, in.uv, 0.0);
     let g = textureSampleLevel(b, smooth_sampler, in.uv, 0.0).rgb * post.glow.y;
     let mode = u32(post.glow.w + 0.5);
+    // The light each blend adds, which also says how far it covers a
+    // seen-through pixel.
+    var lit = g;
     var rgb = c.rgb + g;
     if mode == 1u {
         let s = clamp(c.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
         let k = clamp(g, vec3<f32>(0.0), vec3<f32>(1.0));
-        rgb = max(c.rgb, s + k - s * k);
+        lit = max(k * (vec3<f32>(1.0) - s) - (c.rgb - s), vec3<f32>(0.0));
+        rgb = c.rgb + lit;
     } else if mode == 2u {
-        // Only the brightening half of the soft-light curve, towards the
-        // colour's square root: its darkening half squares a colour under
-        // a dark layer, and no glow at all is the darkest layer there is.
+        // Soft light with the glow as a layer from mid grey up to white, so
+        // that no glow is the neutral layer: the glow as it is would be a
+        // dark layer wherever it is faint, and soft light under a dark layer
+        // squares the colour.
         let s = clamp(c.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
         let k = clamp(g, vec3<f32>(0.0), vec3<f32>(1.0));
-        rgb = c.rgb + k * (sqrt(s) - s);
+        lit = k * (sqrt(s) - s);
+        rgb = c.rgb + lit;
     } else if mode == 3u {
         rgb = g;
     }
-    // Glow lights what was not drawn too, by as much light as it added
-    // there: covering a seen-through pixel without lighting it would show
-    // dark against what is behind the view.
-    let lit = select(max(rgb - c.rgb, vec3<f32>(0.0)), g, mode == 3u);
-    let alpha = max(c.a, clamp(max(lit.r, max(lit.g, lit.b)), 0.0, 1.0));
+    // Glow covers a seen-through pixel by as much light as it added there:
+    // covering it without lighting it would show dark against what is
+    // behind the view.
+    let added = clamp(max(lit.r, max(lit.g, lit.b)), 0.0, 1.0);
+    let alpha = c.a + added * (1.0 - c.a);
     return vec4<f32>(rgb, alpha);
 }
 

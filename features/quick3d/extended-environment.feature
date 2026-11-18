@@ -121,10 +121,12 @@ Feature: ExtendedSceneEnvironment's built-in effects and ambient occlusion
       And the property "glowEnabled" of "env" is set to true
       Then the pixel at 46, 100 of the window is not "#000000"
 
-  # Glow only adds light. Its default blend, soft light, over nothing
-  # bright enough to glow leaves the picture as it was, and over a
-  # transparent background it does not darken what shows through.
-  Rule: Glow leaves the light it does not brighten as it was
+  # Glow blended additively, by screen or by soft light only adds light.
+  # Its default blend, soft light, over nothing bright enough to glow
+  # leaves the picture as it was, and over a transparent background it does
+  # not darken what shows through. Replace shows the glow alone, so it is
+  # not here.
+  Rule: Glow that adds leaves the light it does not brighten as it was
 
     Scenario Outline: Glow over nothing bright enough keeps the grey in <blend> blending
       When the property "glowBlendMode" of "env" is set to <mode>
@@ -136,6 +138,12 @@ Feature: ExtendedSceneEnvironment's built-in effects and ambient occlusion
         | additive   | 0    |
         | screen     | 1    |
         | soft light | 2    |
+
+    Scenario: Soft light glow brightens the square that glows
+      When the property "glowHDRMinimumValue" of "env" is set to 0
+      And the property "glowBloom" of "env" is set to 1
+      And the property "glowEnabled" of "env" is set to true
+      Then the pixel at 100, 100 of the window is within 3 of "#dbdbdb"
 
     Scenario: Soft light glow over a transparent background does not darken the window behind
       When the property "color" of "window" is set to "white"
