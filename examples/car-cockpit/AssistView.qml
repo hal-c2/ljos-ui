@@ -112,35 +112,20 @@ Item {
         }
     }
 
-    // This car, from behind and above.
-    Neon {
-        width: 150
-        height: 70
-        x: view.cx - 75
-        y: view.height - 92
-        theme: view.theme
-        tint: view.theme.cyan
-        Shape {
-            anchors.fill: parent
-            ShapePath {
-                strokeColor: view.theme.cyan
-                strokeWidth: 3
-                fillColor: view.theme.surface
-                joinStyle: ShapePath.RoundJoin
-                PathSvg {
-                    path: "M 8 62 L 14 30 C 18 18 28 10 44 8 L 106 8 C 122 10 132 18 136 30 L 142 62 Z"
-                }
-            }
-            ShapePath {
-                strokeColor: view.theme.magenta
-                strokeWidth: 4
-                fillColor: "transparent"
-                capStyle: ShapePath.RoundCap
-                PathSvg {
-                    path: "M 22 46 L 128 46"
-                }
-            }
-        }
+    // This car, from behind and above: the same model the car panel shows.
+    ChaseView {
+        objectName: "chaseCar"
+        width: 340
+        height: 170
+        x: view.cx - 170
+        y: view.height - 170
+        bloom: view.theme.bloom
+        dark: view.theme.dark
+        stripTint: view.theme.cyan
+        tailTint: view.theme.magenta
+        sway: -view.drift * 0.08
+        Accessible.role: Accessible.Graphic
+        Accessible.name: t`Your car`
     }
 
     // The limit of the road.

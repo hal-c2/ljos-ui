@@ -121,12 +121,6 @@ Rectangle {
                     theme: theme
                     car: car
                 }
-                LauncherPanel {
-                    anchors.fill: parent
-                    visible: car.page === "apps"
-                    theme: theme
-                    car: car
-                }
             }
 
             Dock {

@@ -4,12 +4,12 @@
 import type { Glyph } from "./glyphs.ts"
 
 export type Part = "doorLeft" | "doorRight" | "frunk" | "trunk" | "chargePort"
-export type Page = "nav" | "media" | "climate" | "car" | "settings" | "apps"
+export type Page = "nav" | "media" | "climate" | "car" | "settings"
 export type Look = "dark" | "light" | "auto"
 
 export const parts: readonly Part[] = ["doorLeft", "doorRight", "frunk", "trunk", "chargePort"]
 
-// The pages the launcher offers, with the glyph each is drawn with.
+// The pages the dock offers, with the glyph each is drawn with.
 export interface App {
     readonly page: Page
     readonly glyph: Glyph
@@ -21,7 +21,6 @@ export const apps: readonly App[] = [
     { page: "climate", glyph: "fan" },
     { page: "car", glyph: "car" },
     { page: "settings", glyph: "gear" },
-    { page: "apps", glyph: "grid" },
 ]
 
 // The 3D scene names each part's node after its file (rig.json); a tap on

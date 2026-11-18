@@ -229,6 +229,12 @@ Feature: The car cockpit example
       When the user clicks the "button" "Off"
       Then the property "bloom" of "theme" is false
 
+    Scenario: The cluster shows this car in 3D, and its glow follows the setting
+      Then the object "chaseCar" is exposed as an "image" named "Your car"
+      And the property "bloom" of "chaseCar" is true
+      When the user clicks the "button" "Off"
+      Then the property "bloom" of "chaseCar" is false
+
   Rule: The clock wakes once a minute, on the minute
 
     Scenario: The clock's next wake is the start of the next minute

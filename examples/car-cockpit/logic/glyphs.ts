@@ -4,7 +4,7 @@
 export type Glyph =
     | "left" | "right" | "lamp" | "door" | "battery" | "belt" | "park"
     | "play" | "pause" | "prev" | "next" | "nav" | "media" | "fan" | "car"
-    | "gear" | "grid" | "snow" | "flame" | "defrost" | "lock" | "unlock"
+    | "gear" | "snow" | "flame" | "defrost" | "lock" | "unlock"
     | "bolt" | "plus" | "minus" | "volume" | "seat" | "link" | "power"
     | "straight" | "assist"
 
@@ -31,7 +31,6 @@ export function path(glyph: Mark): string {
         case "fan": return "M 12 12 C 12 6 15 3 18 5 C 20 7 16 11 12 12 C 18 12 21 15 19 18 C 17 20 13 16 12 12 C 12 18 9 21 6 19 C 4 17 8 13 12 12 C 6 12 3 9 5 6 C 7 4 11 8 12 12"
         case "car": return "M 3 15 L 5 9 C 6 7 7 6 9 6 L 15 6 C 17 6 18 7 19 9 L 21 15 L 21 18 L 3 18 Z M 3 13 L 21 13 M 6 18 L 6 20 M 18 18 L 18 20"
         case "gear": return "M 12 8 A 4 4 0 1 1 12 16 A 4 4 0 1 1 12 8 M 12 2 L 12 5 M 12 19 L 12 22 M 2 12 L 5 12 M 19 12 L 22 12 M 5 5 L 7 7 M 17 17 L 19 19 M 5 19 L 7 17 M 17 7 L 19 5"
-        case "grid": return "M 4 4 L 10 4 L 10 10 L 4 10 Z M 14 4 L 20 4 L 20 10 L 14 10 Z M 4 14 L 10 14 L 10 20 L 4 20 Z M 14 14 L 20 14 L 20 20 L 14 20 Z"
         case "snow": return "M 12 2 L 12 22 M 3.5 7 L 20.5 17 M 3.5 17 L 20.5 7 M 9 3.5 L 12 6 L 15 3.5 M 9 20.5 L 12 18 L 15 20.5"
         case "flame": return "M 12 22 C 7 22 5 18 6 14 C 7 10 11 9 11 3 C 15 6 18 10 18 15 C 18 19 16 22 12 22 Z M 12 22 C 10 22 9 20 10 17 C 11 15 12 15 12 13 C 14 15 15 17 14 19"
         case "defrost": return "M 3 16 C 5 6 19 6 21 16 Z M 8 20 C 7 19 9 18 8 17 M 12 20 C 11 19 13 18 12 17 M 16 20 C 15 19 17 18 16 17"

@@ -189,7 +189,6 @@ Object {
             case "climate": return t`Climate`
             case "car": return t`Car`
             case "settings": return t`Settings`
-            case "apps": return t`All apps`
         }
     }
 }

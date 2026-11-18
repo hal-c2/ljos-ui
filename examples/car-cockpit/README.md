@@ -11,7 +11,7 @@ mise run dev examples/car-cockpit/Main.qml
 
 - **Cluster.** Speed and power dials, the gear (P R N D), range and charge,
   the turn signals and hazard lights, warnings, and a driving-assist view of
-  the lane and the car ahead.
+  the lane, the car ahead and this car in 3D, seen from behind.
 - **Car.** The car in 3D, from `assets/car/` (a Blender script; see its
   README). Tap a part on the car, or its button at the side, to open or close
   the doors, frunk, trunk or charge port. A car that is locked, out of park
@@ -25,7 +25,6 @@ mise run dev examples/car-cockpit/Main.qml
   following the car.
 - **Settings.** Dark, light or as the system; the glow on or off; kilometres or
   miles; °C or °F; the simulated drive and the hazard lights.
-- **All apps.** Every page as a tile.
 
 ## How it is made
 
@@ -34,12 +33,14 @@ mise run dev examples/car-cockpit/Main.qml
   finger does (`features/examples/car-cockpit.feature`).
 - `logic/*.ts` holds the typed rules: the drive's legs, the media library, the
   map and the route, climate units, the dials' geometry and the icons.
-- The 2D pages are written in the Ljós dialect. `CarScene.qml` and
-  `WallClock.qml` are QML as Qt writes it: the first because the 3D scene uses
-  `QtQuick3D`, the second because it reads the local time from `Date`.
+- The 2D pages are written in the Ljós dialect. `CarModel.qml`,
+  `CarScene.qml`, `ChaseView.qml` and `WallClock.qml` are QML as Qt writes it:
+  the first three because the 3D scenes use `QtQuick3D`, the last because it
+  reads the local time from `Date`. `CarModel` is the car itself, rigged; the
+  car panel and the cluster each look at it with their own camera.
 - The glow is `Neon.qml` on 2D (neon edges, the dials' arcs and needles, the
   active control) and the scene environment's glow on 3D (the car's light
-  strips). Text is never blurred. Settings → Glow turns both off.
+  strips, in the car panel and the cluster). Text is never blurred. Settings → Glow turns both off.
 
 ## Nothing runs at rest
 
