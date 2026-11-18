@@ -19,7 +19,8 @@ Feature: Starting the authoring server from a checkout of Ljós
   `mise-tasks/mcp` starts `ljos mcp` on a checkout of Ljós: the repository's
   `.mcp.json` runs it for an editor or an agent, and so does `mise run mcp`.
   It builds the server first, then starts it. Every worktree of one
-  repository builds into the target directory of the main checkout, so a new
+  repository builds into the target directory of the main checkout (the
+  `build.target-dir` its cargo settings name, else its `target/`), so a new
   worktree does not make a build of its own; `CARGO_TARGET_DIR` overrides
   that. The build goes through the machine's build wrapper when
   `LJOS_BUILD_WRAPPER` names one, and through cargo alone when nothing does.
@@ -167,7 +168,7 @@ Feature: Starting the authoring server from a checkout of Ljós
       {"jsonrpc":"2.0","id":1,"result":{"serverInfo":{"name":"ljos"}}}
       """
 
-  Scenario: A linked worktree builds with the cargo settings the main checkout keeps outside git, into the shared target all the same
+  Scenario: A linked worktree builds into the target directory its main checkout's cargo settings name
     Given the project is a git checkout with the linked worktree "wt"
     And the file ".cargo/config.toml":
       """toml
@@ -179,8 +180,9 @@ Feature: Starting the authoring server from a checkout of Ljós
     Then the command exits with status 0
     And the file "built.log" is:
       """
-      cargo build --quiet -p ljos_cli --bin ljos --message-format=json-render-diagnostics --target-dir ./target --config ./.cargo/config.toml in ./wt
+      cargo build --quiet -p ljos_cli --bin ljos --message-format=json-render-diagnostics --target-dir ./elsewhere in ./wt
       """
+    And the project has no "wt/target"
 
   Scenario: The build goes through the build wrapper LJOS_BUILD_WRAPPER names
     Given the project is a git checkout with the linked worktree "wt"
