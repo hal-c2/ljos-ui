@@ -547,7 +547,7 @@ EOF_PROGRAMS
     pinned_as_built "$into" "$messages" && break
     tries=$((tries + 1))
     if [ "$tries" -ge 10 ]; then
-      printf '%s\n' "${MISE_TASK_NAME:-this task}: other builds into $CARGO_TARGET_DIR kept coming between this build and its programs; build when they are done, or set CARGO_TARGET_DIR to a target of this checkout's own" >&2
+      printf '%s\n' "$(task_name): other builds into $CARGO_TARGET_DIR kept coming between this build and its programs; build when they are done, or set CARGO_TARGET_DIR to a target of this checkout's own" >&2
       return 1
     fi
   done
