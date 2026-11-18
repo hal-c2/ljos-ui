@@ -1020,10 +1020,13 @@ pub fn map_to_scene(engine: &Engine, obj: ObjectId, p: kurbo::Point) -> kurbo::P
 }
 
 /// Where `p`, in the scene's coordinates, lies in the item's, mapped
-/// exactly, as `mapFromItem(null, p)`: the inverse of [`map_to_scene`].
-pub fn map_from_scene(engine: &Engine, obj: ObjectId, p: kurbo::Point) -> kurbo::Point {
-    let q = map_point(engine, None, Some(obj), Point { x: p.x, y: p.y });
-    kurbo::Point::new(q.x, q.y)
+/// exactly: the inverse of [`map_to_scene`]. `None` where there is no
+/// inverse, as under an ancestor scaled to 0, or where the inverse sends
+/// `p` to infinity or behind the viewer. `mapFromItem(null, p)` gives `p`
+/// back there instead; a caller that writes the result as the item's own
+/// coordinates must not take a scene point for one.
+pub fn map_from_scene(engine: &Engine, obj: ObjectId, p: kurbo::Point) -> Option<kurbo::Point> {
+    crate::transform::scene_map(engine, obj).inverse()?.apply(p)
 }
 
 fn map_arguments(

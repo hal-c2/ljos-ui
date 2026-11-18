@@ -159,7 +159,12 @@ pub(super) fn place(engine: &Engine, popup: ObjectId) -> Result<(), EngineError>
     engine.untrack(|| {
         set_computed(engine, item, Item::X.index, Value::Real(pos.x))?;
         set_computed(engine, item, Item::Y.index, Value::Real(pos.y))?;
-        let local = map_from_scene(engine, parent, pos);
+        // Under a parent with no inverse (scaled to 0, say) no point of the
+        // parent's is where the popup is: `x` and `y` keep what they say,
+        // rather than be told a scene point as if it were the parent's.
+        let Some(local) = map_from_scene(engine, parent, pos) else {
+            return Ok(());
+        };
         state.placing.set(true);
         let wrote = set_derived(engine, popup, Popup::X.index, Value::Real(local.x))
             .and_then(|()| set_derived(engine, popup, Popup::Y.index, Value::Real(local.y)));

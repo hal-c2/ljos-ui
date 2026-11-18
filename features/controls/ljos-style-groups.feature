@@ -309,6 +309,55 @@ Feature: Ljós's own style: tabs, cards, popovers, split buttons and empty state
       When the method "measure" of "root" is called
       Then the property "got" of "root" is [0, 0, 0, 0]
 
+    # Scaled to nothing, the parent has no point of its own where the
+    # popover is: each of them is drawn at the one point it is shrunk to.
+    # The popover keeps its parent's corner rather than take the window's
+    # point it is placed at for one of the parent's.
+    @api-QtQuick.Item.scale
+    Scenario: A popover under an ancestor scaled to nothing keeps its parent's corner
+      Given the QML:
+        """qml
+        import Ljos.Ui
+        import Ljos.Controls
+        Item {
+          width: 400; height: 400
+          Item {
+            x: 100; y: 100; width: 200; height: 200; scale: 0
+            Button {
+              width: 60; height: 20; text: "Filter"
+              Popover { objectName: "pop"; width: 100; height: 100 }
+            }
+          }
+        }
+        """
+      When the method "open" of "pop" is called
+      And 200 milliseconds pass
+      Then the property "visible" of "pop" is true
+      And the property "x" of "pop" is 0
+      And the property "y" of "pop" is 0
+
+    # A popup placed by its `x` and `y` keeps them there, as no point of the
+    # parent's is where it is drawn.
+    @api-QtQuick.Controls.Popup.x
+    Scenario: A popup under an ancestor scaled to nothing keeps the place it is given
+      Given the QML:
+        """qml
+        import Ljos.Ui
+        import Ljos.Controls
+        Item {
+          width: 400; height: 400
+          Item {
+            x: 100; y: 100; width: 200; height: 200; scale: 0
+            Popup { objectName: "pop"; x: 10; y: 10; width: 50; height: 50 }
+          }
+        }
+        """
+      When the method "open" of "pop" is called
+      And 200 milliseconds pass
+      Then the property "visible" of "pop" is true
+      And the property "x" of "pop" is 10
+      And the property "y" of "pop" is 10
+
     Scenario: A popover fades in on the overlay surface and closes at once
       Given the QML:
         """qml

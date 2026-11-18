@@ -78,6 +78,13 @@ T.Popup {
                  : side === Qt.BottomEdge ? at.y + at.height + gap
                  : at.y
         const back = anchor.mapFromItem(top, px, py)
+        // Where the parent's transforms have no inverse (it is scaled to 0,
+        // say) `mapFromItem` gives the window's point back as it was, and
+        // no point of the parent's is where the popover goes: it keeps the
+        // parent's corner, rather than take a window's point for one.
+        const again = anchor.mapToItem(top, back.x, back.y)
+        if (Math.abs(again.x - px) > 0.5 || Math.abs(again.y - py) > 0.5)
+            return { side: side, x: 0, y: 0 }
         return { side: side, x: back.x, y: back.y }
     }
 }
