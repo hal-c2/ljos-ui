@@ -193,7 +193,7 @@ View3D {
                 geometry: ProceduralMesh {
                     primitiveMode: ProceduralMesh.TriangleFan
                     positions: scene.disc(scene.screenR, scene.screenZ, 96)
-                    uv0: scene.discUv(96)
+                    uv0s: scene.discUv(96)
                 }
                 materials: PrincipledMaterial {
                     // Black and rough, so the lights add nothing: the
