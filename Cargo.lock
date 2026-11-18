@@ -4380,6 +4380,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "ljos_example_smartwatch"
+version = "0.0.0"
+
+[[package]]
 name = "ljos_example_user_shell"
 version = "0.0.0"
 dependencies = [
