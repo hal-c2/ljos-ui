@@ -9,6 +9,7 @@ import Ljos.Core
 // it plays; the clock wakes once a minute.
 Rectangle {
     id: root
+    objectName: "cockpit"
 
     width: 1600
     height: 900

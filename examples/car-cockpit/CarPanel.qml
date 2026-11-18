@@ -84,7 +84,9 @@ Item {
         }
     }
     // The camera turns to what was tapped. With reduced motion it stays
-    // where it is: the part still opens and the strips still flare.
+    // where it is and a part is open at once, as Ljós has every number
+    // that moves; its button's fill and ring still fade, so the change
+    // shows.
     property real yaw: Motion.reduced ? 38 : panel.view
     Behavior on yaw {
         NumberAnimation {
@@ -128,7 +130,8 @@ Item {
         plinth: panel.theme.stage
         stripTint: panel.theme.dark ? "#00e5ff" : "#00b8cc"
 
-        aimName: panel.names
+        // Not the part's own name: that is its button's.
+        aimName: t`Car model: ${panel.names}`
         help: t`The car. Arrow keys choose a part; Space opens or closes it.`
         onAimed: (node: string) => {
             const part = Car.partOfNode(node)

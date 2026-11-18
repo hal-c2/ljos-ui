@@ -4325,6 +4325,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "ljos_example_car_cockpit"
+version = "0.0.0"
+
+[[package]]
 name = "ljos_example_carconfigurator"
 version = "0.0.0"
 dependencies = [
