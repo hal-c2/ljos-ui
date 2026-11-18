@@ -363,6 +363,49 @@ shell_code() {
   ' "$1"
 }
 
+# command_words: shell_code's output with each quoted string made one word:
+# a blank or separator inside quotes becomes _, and a string that runs on
+# over lines is joined, so words in a message or a flag's value never start
+# a command. A command substitution inside double quotes is code again. An
+# inline comment is left out.
+command_words() {
+  awk '
+    function neutral(c) { return c ~ /[ \t;&|()<>`{}]/ ? "_" : c }
+    BEGIN { n = 0; st[0] = "c"; buf = "" }
+    {
+      s = $0; len = length(s); out = ""; i = 1
+      while (i <= len) {
+        ch = substr(s, i, 1); two = substr(s, i, 2); top = st[n]
+        if (top == "s") {
+          if (ch == "\047") n--
+          out = out neutral(ch); i++; continue
+        }
+        if (top == "a" || top == "d") {
+          if (ch == "\\") { out = out "__"; i += 2; continue }
+          if (top == "a" && ch == "\047") { n--; out = out ch; i++; continue }
+          if (top == "d" && ch == "\"") { n--; out = out ch; i++; continue }
+          if (top == "d" && two == "$(") { st[++n] = "c"; dp[n] = 1; out = out two; i += 2; continue }
+          if (top == "d" && ch == "`") { st[++n] = "b"; out = out ch; i++; continue }
+          out = out neutral(ch); i++; continue
+        }
+        if (ch == "\\") { out = out "__"; i += 2; continue }
+        if (ch == "#" && (i == 1 || substr(s, i - 1, 1) ~ /[ \t;&|(]/)) break
+        if (two == "$\047") { st[++n] = "a"; out = out two; i += 2; continue }
+        if (ch == "\047") st[++n] = "s"
+        else if (ch == "\"") st[++n] = "d"
+        else if (two == "$(") { st[++n] = "c"; dp[n] = 1; out = out two; i += 2; continue }
+        else if (ch == "`") { if (top == "b") n--; else st[++n] = "b" }
+        else if (ch == "(" && top == "c" && n > 0) dp[n]++
+        else if (ch == ")" && top == "c" && n > 0 && --dp[n] == 0) n--
+        out = out ch; i++
+      }
+      if (st[n] == "s" || st[n] == "a" || st[n] == "d") buf = buf out "_"
+      else { print buf out; buf = "" }
+    }
+    END { if (buf != "") print buf }
+  '
+}
+
 # cargo_problems <task> [root]: what is wrong with how a task runs cargo,
 # for tasks:smoke to list, or nothing. A task's cargo builds where
 # target_dir says, with the main checkout's settings in a worktree, only
@@ -373,23 +416,40 @@ shell_code() {
 # checkout's scripts/ (under <root>, this checkout by default) that the task
 # names and that runs cargo runs it for the task: env.sh's CARGO_TARGET_DIR
 # is what puts that build in the shared target, so the task sources env.sh
-# for it. cargo counts only where a command starts (after a separator, a
-# keyword such as if, assignments, or such a program and its arguments), so
-# a message that names a cargo command runs none. The text goes to grep as
-# a here-string, not down a pipe: under pipefail, grep -q stopping early
-# fails a long task's printf on the closed pipe, and the match with it.
+# for it. cargo counts only as a command's program: where a command starts
+# (after a separator, a keyword such as if, or assignments), or as the
+# program such a wrapper runs. A wrapper takes only its own options and
+# their values (and timeout its duration), so the next word is the program:
+# `exec "$prog" --note "cargo build"` runs $prog, and command -v cargo runs
+# nothing. command_words makes quoted text one word, so a message that names
+# a cargo command runs none. The text goes to grep as a here-string, not
+# down a pipe: under pipefail, grep -q stopping early fails a long task's
+# printf on the closed pipe, and the match with it.
 cargo_problems() {
-  local code pre via runs="" script
+  local code words pre via runs="" script s o v
   code="$(shell_code "$1")"
+  words="$(command_words <<<"$code")"
   pre='(^|[;&|({`])[[:space:]]*((then|do|else|elif|if|while|until|!|time)[[:space:]]+)*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*'
-  via='((exec|command|builtin|env|nice|nohup|timeout|stdbuf|ionice|chrt|taskset|setsid|xargs|mise|"?([^[:space:];&|"]*/)?capped"?)([[:space:]]+[^[:space:];&|]+)*[[:space:]]+)'
-  if grep -Eq "${pre}${via}*cargo([[:space:]]|$)" <<<"$code"; then
+  s='[[:space:]]+'
+  o="-[^[:space:];&|]*$s"
+  v="[^[:space:];&|]+$s"
+  via="((exec$s(-a$s$v|-[cl]+$s)*"
+  via+="|command$s(-p$s)*"
+  via+="|env$s((-u|-C|-S|--unset|--chdir|--split-string)$s$v|$o|[A-Za-z_][A-Za-z0-9_]*=[^[:space:];&|]*$s)*"
+  via+="|nice$s((-n|--adjustment)$s$v|$o)*"
+  via+="|(nohup|setsid)$s($o)*"
+  via+="|timeout$s((-s|-k|--signal|--kill-after)$s$v|$o)*$v"
+  via+="|stdbuf$s((-i|-o|-e)$s$v|$o)*"
+  via+="|ionice$s((-c|-n|-p|-P|-u)$s$v|$o)*"
+  via+="|mise$s(exec|x)$s((-C|--cd|-E|--env|-j|--jobs)$s$v|$o|[^[:space:];&|@]+@[^[:space:];&|]+$s)*"
+  via+="|\"?([^[:space:];&|\"]*/)?capped\"?$s($o)*))"
+  if grep -Eq "${pre}${via}*cargo([[:space:]]|$)" <<<"$words"; then
     runs=1
   else
     while IFS= read -r script; do
       case "$script" in *.py | *.qml) continue ;; esac
       [ -f "${2:-$ljos_root}/$script" ] || continue
-      if grep -Eq "${pre}${via}*cargo([[:space:]]|$)" <<<"$(shell_code "${2:-$ljos_root}/$script")"; then
+      if grep -Eq "${pre}${via}*cargo([[:space:]]|$)" <<<"$(shell_code "${2:-$ljos_root}/$script" | command_words)"; then
         runs=1
         break
       fi
@@ -400,7 +460,7 @@ EOF_SCRIPTS
   [ -n "$runs" ] || return 0
   grep -Eq '^[[:space:]]*(\.|source)[[:space:]].*_lib/env\.sh"?[[:space:]]*$' <<<"$code" ||
     printf ' runs cargo without sourcing _lib/env.sh, so it builds into a worktree'"'"'s own target/;'
-  grep -Eq "${pre}${via}+cargo([[:space:]]|$)" <<<"$code" &&
+  grep -Eq "${pre}${via}+cargo([[:space:]]|$)" <<<"$words" &&
     printf ' exec cargo, command cargo or a program that runs cargo (timeout, nice, env, capped) goes round env.sh'"'"'s cargo (run cargo);'
   return 0
 }

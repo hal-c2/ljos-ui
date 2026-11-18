@@ -900,6 +900,32 @@ for wrapped in 'timeout 60 cargo test' 'nice -n 10 cargo build' 'env X=1 cargo t
   lints "$wrapped goes round env.sh's cargo" round "$env_line" "$wrapped"
 done
 lints "a message that names a wrapped cargo runs none" none 'echo "run timeout 60 cargo test"'
+lints "a message that names cargo runs none" none 'echo "run cargo"'
+lints "a message in single quotes after a separator runs none" none "printf '%s\n' 'built; cargo build'"
+lints "a message that runs on over lines runs none" none 'echo "first line' 'cargo build"'
+lints "an inline comment runs none" none ': built # ; cargo build'
+lints "cargo in a quoted command substitution is a cargo run" source 'x="$(timeout 60 cargo metadata)"'
+# A wrapper takes its own options, and the next word is its program.
+lints "exec of another program whose flag names cargo runs none" none 'exec "$prog" run --note "cargo build"'
+lints "timeout of another program whose argument is cargo runs none" none 'timeout 60 "$prog" cargo'
+lints "command -v cargo runs none" none 'command -v cargo >/dev/null || echo "no cargo"'
+lints "exec -a names the program, and cargo after it goes round env.sh's cargo" round "$env_line" 'exec -a build cargo build'
+# mise-tasks/bench/_default's last command, as it is there.
+bench=(
+  'exec "$target/$profile/ljos" bench --manifest "$manifest" \'
+  '  --sway "$(value SWAYSOCK)" --wayland "$(value WAYLAND_DISPLAY)" \'
+  '  --app-env "DBUS_SESSION_BUS_ADDRESS=$(value DBUS_SESSION_BUS_ADDRESS)" \'
+  '  --app-env "XDG_CONFIG_HOME=$(value XDG_CONFIG_HOME)" --app-env "XDG_DATA_HOME=$(value XDG_DATA_HOME)" \'
+  '  --app-env "XDG_STATE_HOME=$(value XDG_STATE_HOME)" \'
+  '  --app-env "LJOS_SCREEN_READER=$(value LJOS_SCREEN_READER)" \'
+  '  --qml6 "$qml" ${defaults[@]+"${defaults[@]}"} \'
+  '  --note "ljos: $(git -C "$root" rev-parse --short HEAD), cargo build --profile $profile ($build)" \'
+  '  --note "$qt_note" \'
+  '  --note "both on the sandbox'"'"'s headless sway (${LJOS_CUA_GPU:-pixman}), as Wayland clients" \'
+  '  --out "$out" ${opts[@]+"${opts[@]}"}'
+)
+lints "exec of the bench, whose note names cargo build, runs no cargo" none "${bench[@]}"
+lints "exec of the bench, in a task that runs cargo, does not go round env.sh's cargo" none "$env_line" 'cargo build' "${bench[@]}"
 # Longer than a pipe holds: a lint that pipes the task to grep -q sees the
 # match fail under pipefail once grep stops reading.
 long=()
