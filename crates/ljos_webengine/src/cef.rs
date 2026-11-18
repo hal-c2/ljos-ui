@@ -1725,9 +1725,10 @@ const ASK_FIRST: &str = r#"((EVERY_TIME, MARK) => {
   // before its own scripts ran, and `MARK` is known to this script alone
   // (`null` when the view could not make one: then nothing is said). The
   // view cannot tell which frame wrote a console line, so the line names
-  // the frame's origin.
+  // the frame's origin: its document's, which a srcdoc frame inherits
+  // where its address (`about:srcdoc`) would say "null".
   const info = console.info.bind(console);
-  const origin = location.origin;
+  const origin = self.origin;
   const unasked = (kind, why) => {
     if (MARK !== null) info(MARK + kind + " " + why + " " + origin);
   };
@@ -4507,6 +4508,7 @@ mod tests {
     fn the_asking_script_says_why_it_did_not_ask_as_the_view_reads_it() {
         assert!(ASK_FIRST.contains("info(MARK + kind"));
         assert!(ASK_FIRST.contains("if (MARK !== null)"));
+        assert!(ASK_FIRST.contains("const origin = self.origin;"));
         let mark = unasked_mark().expect("the system has randomness");
         assert!(ask_first_script(Keep::Never).contains(&serde_json::to_string(mark).unwrap()));
         for why in ["binding", "answered"] {
