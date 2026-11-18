@@ -11,6 +11,8 @@
 use std::path::{Path, PathBuf};
 
 use qml_edit::{Applied, Edit, Error, NodePath, Step, apply, objects, splice};
+use qml_syntax::Allocator;
+use qml_syntax::ast::{QmlBindingValue, QmlMember, QmlObject};
 
 const DIRECTORIES: &[&str] = &[
     "crates/ljos_controls/qml",
@@ -115,30 +117,12 @@ fn round_trip(
     if restored != source && matches!(there, Edit::MoveObject { .. }) {
         // Child indices do not say where among the bindings a child stood,
         // so moving it back may also put it elsewhere among them, even past
-        // an object a binding holds (`environment: …`): every object at the
-        // same path, so the children in the same order, and the same lines
-        // once formatted, empty ones aside.
-        let objects = |text: &str| {
-            let mut all: Vec<String> = objects(text)
-                .unwrap()
-                .into_iter()
-                .map(|(path, type_name)| format!("{path:?} {type_name}"))
-                .collect();
-            all.sort();
-            all
-        };
-        let lines = |text: &str| {
-            let mut lines: Vec<String> = qml_fmt::format(text)
-                .unwrap()
-                .lines()
-                .filter(|line| !line.is_empty())
-                .map(str::to_owned)
-                .collect();
-            lines.sort();
-            lines
-        };
+        // an object a binding holds (`environment: …`). Each object must
+        // still hold what it held: its own lines, its children in order and
+        // the objects its bindings hold by name, so a value that moved from
+        // one object to another fails even when every line is still there.
         assert!(
-            objects(source) == objects(&restored) && lines(source) == lines(&restored),
+            tree(source) == tree(&restored),
             "{where_}: {there:?} then {back:?} changed the document\n{restored}"
         );
         if qml_fmt::same_tree(source, &restored).is_ok() {
@@ -163,6 +147,99 @@ fn round_trip(
         "{where_}: {there:?} then {back:?} did not give the file back\n--- after the first edit\n{changed}\n--- after the second\n{restored}"
     );
     tally.round_trips += 1;
+}
+
+/// An object as what it holds, wherever among its members each thing is
+/// written: its own lines without the objects in it (blanks and spacing
+/// aside, sorted), its children in order, and its groups and the objects
+/// its bindings hold, by name.
+#[derive(Debug, PartialEq, Eq)]
+struct Tree {
+    type_name: String,
+    lines: Vec<String>,
+    children: Vec<Tree>,
+    held: Vec<(String, Tree)>,
+}
+
+fn tree(source: &str) -> Tree {
+    let allocator = Allocator::default();
+    let parsed = qml_syntax::parse(&allocator, source);
+    assert!(parsed.is_ok(), "the file no longer parses\n{source}");
+    shape(source, &parsed.document.root)
+}
+
+fn shape(source: &str, object: &QmlObject<'_>) -> Tree {
+    let mut nested = Vec::new();
+    let mut children = Vec::new();
+    let mut held = Vec::new();
+    let mut hold = |name: String, inner: &QmlObject<'_>, nested: &mut Vec<_>| {
+        nested.push(inner.span);
+        held.push((name, shape(source, inner)));
+    };
+    for member in &object.members {
+        match member {
+            QmlMember::Object(inner)
+                if inner.type_name.parts[0].starts_with(char::is_lowercase) =>
+            {
+                hold(format!("{} {{", inner.type_name), inner, &mut nested);
+            }
+            QmlMember::Object(inner) => {
+                nested.push(inner.span);
+                children.push(shape(source, inner));
+            }
+            QmlMember::Binding(binding) => match &binding.value {
+                QmlBindingValue::Object(inner) => {
+                    hold(binding.name.to_string(), inner, &mut nested)
+                }
+                QmlBindingValue::Objects(list) => {
+                    for inner in list {
+                        hold(binding.name.to_string(), inner, &mut nested);
+                    }
+                }
+                _ => {}
+            },
+            QmlMember::Property(declared) => match &declared.value {
+                Some(QmlBindingValue::Object(inner)) => {
+                    hold(declared.name.name.to_string(), inner, &mut nested);
+                }
+                Some(QmlBindingValue::Objects(list)) => {
+                    for inner in list {
+                        hold(declared.name.name.to_string(), inner, &mut nested);
+                    }
+                }
+                _ => {}
+            },
+            QmlMember::InlineComponent(component) => {
+                hold(
+                    component.name.name.to_string(),
+                    &component.object,
+                    &mut nested,
+                );
+            }
+            _ => {}
+        }
+    }
+    // A list keeps its order; only where each name stands may change.
+    held.sort_by(|a, b| a.0.cmp(&b.0));
+    let mut own = String::new();
+    let mut at = object.span.start as usize;
+    for span in &nested {
+        own.push_str(&source[at..span.start as usize]);
+        at = span.end as usize;
+    }
+    own.push_str(&source[at..object.span.end as usize]);
+    let mut lines: Vec<String> = own
+        .lines()
+        .map(|line| line.split_whitespace().collect::<String>())
+        .filter(|line| !line.is_empty())
+        .collect();
+    lines.sort();
+    Tree {
+        type_name: object.type_name.to_string(),
+        lines,
+        children,
+        held,
+    }
 }
 
 fn children(source: &str, parent: &NodePath) -> usize {
