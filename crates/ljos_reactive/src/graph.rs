@@ -1841,11 +1841,8 @@ impl<V: Clone + 'static> Graph<V> {
 
     #[inline(never)]
     fn leave_untracked(&self) {
-        let mut g = self.inner.borrow_mut();
-        let i = &mut *g;
-        if let Some(f) = i.frames.pop() {
-            unhide(&mut i.nodes, &mut i.hidden, &i.frames, f.stamp);
-        }
+        // An untracked frame reads nothing and so hides nothing.
+        self.inner.borrow_mut().frames.pop();
     }
 
     /// Whether a read right now would be recorded as a dependency: true
@@ -1895,15 +1892,25 @@ impl<V: Clone + 'static> Graph<V> {
         if f.node.is_none() || at >= f.reads.len() {
             return;
         }
-        for n in f.reads.drain(at..) {
-            if let Some(node) = i.nodes.get_mut(n) {
+        let stamp = f.stamp;
+        for k in at..f.reads.len() {
+            let n = f.reads[k];
+            if let Some(node) = i.nodes.get_mut(n)
+                && node.read_stamp == stamp
+            {
                 // No run has stamp 0: the next read records it again. A
                 // run this one hid stays in `hidden`, and is named again
-                // when this one ends.
+                // when this one ends. A stamp an adopted reader took
+                // stays its.
                 node.read_stamp = 0;
+            }
+            // Hidden no more: this run no longer holds `n`.
+            if !i.hidden.is_empty() && !f.reads[..at].contains(&n) {
+                i.hidden.retain(|h| !(h.node == n && h.stamp == stamp));
             }
             out.extend([n]);
         }
+        f.reads.truncate(at);
     }
 
     /// The sources the running binding or effect read after its first
@@ -4144,17 +4151,28 @@ fn read_by_a_run(frames: &[Frame], n: NodeId, read_stamp: u64) -> bool {
         .any(|f| f.node.is_some_and(|r| r != n) && (f.stamp == read_stamp || f.reads.contains(&n)))
 }
 
-/// Whether a tracked run with stamp `s` is going. Tracked runs start in
-/// stamp order (an untracked frame has 0), so a stamp outside the first
-/// and last of them is no run going, without a scan.
+/// The tracked run with stamp `s`, if it is going. Tracked runs start in
+/// stamp order (an untracked frame has 0): a stamp from before the
+/// outermost, as most are, or after the innermost, is none, at once.
+fn running(frames: &[Frame], s: u64) -> Option<&Frame> {
+    if s == 0
+        || frames
+            .last()
+            .is_some_and(|f| f.node.is_some() && s > f.stamp)
+    {
+        return None;
+    }
+    if s < frames.iter().find(|f| f.node.is_some())?.stamp {
+        return None;
+    }
+    frames
+        .iter()
+        .rev()
+        .find(|f| f.stamp == s && f.node.is_some())
+}
+
 fn is_running(frames: &[Frame], s: u64) -> bool {
-    let mut tracked = frames.iter().filter(|f| f.node.is_some());
-    let (Some(lo), Some(hi)) = (tracked.next(), frames.iter().rfind(|f| f.node.is_some())) else {
-        return false;
-    };
-    s != 0
-        && (lo.stamp..=hi.stamp).contains(&s)
-        && frames.iter().any(|f| f.stamp == s && f.node.is_some())
+    running(frames, s).is_some()
 }
 
 /// The runs still going, other than `n`'s own, that read `n`, each with
@@ -4166,12 +4184,16 @@ fn runs_holding<'a>(
     n: NodeId,
     read_stamp: u64,
 ) -> impl Iterator<Item = (NodeId, u64)> + 'a {
-    let hid = hidden.iter().filter(move |h| h.node == n).map(|h| h.stamp);
-    std::iter::once(read_stamp)
+    let hid = hidden
+        .iter()
+        .filter(move |h| h.node == n)
+        .map(|h| (h.stamp, true));
+    std::iter::once((read_stamp, false))
         .chain(hid)
-        .filter(|&s| is_running(frames, s))
-        .filter_map(move |s| {
-            let f = frames.iter().rev().find(|f| f.stamp == s)?;
+        .filter_map(move |(s, was_hidden)| {
+            let f = running(frames, s)?;
+            // The table says no more than the run's own reads do.
+            debug_assert!(!was_hidden || f.reads.contains(&n));
             Some((f.node.filter(|r| *r != n)?, s))
         })
 }
@@ -4199,7 +4221,8 @@ fn push_holders(
 /// `n` was last read under `old` and is now read under `by`: if a run
 /// still going has `old`, it holds `n` and is hidden while `by` does.
 fn hide(hidden: &mut SmallVec<[Hidden; 4]>, frames: &[Frame], n: NodeId, old: u64, by: u64) {
-    if old != by && is_running(frames, old) {
+    if old != by && !hidden.iter().any(|h| h.node == n && h.stamp == old) && is_running(frames, old)
+    {
         hidden.push(Hidden {
             node: n,
             stamp: old,

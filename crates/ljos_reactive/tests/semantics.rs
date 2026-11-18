@@ -1297,6 +1297,51 @@ fn effects_hear_of_a_change_to_what_they_were_adopted_as_reading_inner_first_unt
 }
 
 #[test]
+fn an_effect_adopted_as_reading_by_a_nested_run_that_takes_its_own_read_back_still_hears() {
+    // The nested effect reads the node, adopts the first effect as its
+    // reader, then takes its own read back: the first effect runs again
+    // when the node changes, and the nested one, which no longer reads
+    // it, does not.
+    let g = Graph::new();
+    let gate = g.property(g.root(), 0).unwrap();
+    let n = g.property(g.root(), 0).unwrap();
+    let out = g.property(g.root(), 0).unwrap();
+    let out2 = g.property(g.root(), 0).unwrap();
+    let outer_reader: Rc<Cell<Option<Reader>>> = Rc::default();
+    let (outer, nested) = (Rc::new(Cell::new(0)), Rc::new(Cell::new(0)));
+    let (k, r) = (outer.clone(), outer_reader.clone());
+    g.effect(g.root(), move |g| {
+        if g.get(gate) != 0 {
+            r.set(g.reader());
+            g.set(out, 1);
+            k.set(k.get() + 1);
+        }
+    })
+    .unwrap();
+    let (k, r) = (nested.clone(), outer_reader.clone());
+    g.effect(g.root(), move |g| {
+        if g.get(out) != 0 {
+            let at = g.reads_len().unwrap();
+            g.get(n);
+            g.adopt_readers(n, r.take());
+            let mut gone: Vec<NodeId> = Vec::new();
+            g.take_reads_since(at, &mut gone);
+            g.set(out2, 1);
+            k.set(k.get() + 1);
+        }
+    })
+    .unwrap();
+    g.effect(g.root(), move |g| {
+        if g.get(out2) != 0 {
+            g.set(n, 7);
+        }
+    })
+    .unwrap();
+    g.set(gate, 1);
+    assert_eq!((outer.get(), nested.get()), (2, 1));
+}
+
+#[test]
 fn only_an_assigned_value_holds_what_a_write_would_write() {
     let g = Graph::new();
     let a = g.property(g.root(), 1).unwrap();
