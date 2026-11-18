@@ -8,13 +8,16 @@ import Ljos.Controls.impl
 T.Menu {
     id: control
 
-    // Whether any row has an icon, so the others keep its column: one of
+    // Whether any row shows an icon, so the others keep its column: one of
     // the style's own, or the row's or its action's picture (`icon`
-    // reads the action's where the row follows one).
+    // reads the action's where the row follows one). A row shown as its
+    // text shows none, unless it has no text.
     readonly property bool hasIcons: {
         for (let i = 0; i < count; i++) {
             const item = itemAt(i)
             if (!item)
+                continue
+            if (item.display === T.AbstractButton.TextOnly && item.text && item.text.length > 0)
                 continue
             if (item.iconName !== undefined && item.iconName.length > 0)
                 return true

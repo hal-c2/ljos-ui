@@ -110,7 +110,40 @@ Feature: Ljós's own style: the icon and the text of a button and a menu row
       And the property "contentItem.gutter" of "save" is 24
       And the property "contentItem.gutter" of "quit" is 24
 
-  Rule: A button, a menu row and a tab show what their display asks for
+  Rule: A menu keeps the icons' column only for the icons it shows
+
+    # A row shown as its text alone shows no icon, so the others keep no
+    # column for it; a row with no text shows its icon whatever its
+    # display, and a row told to keep the column keeps it.
+    @api-QtQuick.Controls.AbstractButton.display
+    Scenario: A menu whose only icon is on a row shown as its text keeps no column
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.impl
+        import Ljos.Controls
+        Item {
+          width: 480; height: 240
+          Menu {
+            Component.onCompleted: open()
+            MenuItem { objectName: "hidden"; text: "Open"; iconName: "folder"; display: IconLabel.TextOnly }
+            MenuItem { objectName: "other"; text: "Close" }
+            MenuItem { objectName: "kept"; text: "Keep"; iconSpace: true }
+          }
+          Menu {
+            x: 240
+            Component.onCompleted: open()
+            MenuItem { objectName: "lone"; iconName: "folder"; display: IconLabel.TextOnly }
+            MenuItem { objectName: "beside"; text: "Close" }
+          }
+        }
+        """
+      Then the property "contentItem.gutter" of "hidden" is 0
+      And the property "contentItem.gutter" of "other" is 0
+      And the property "contentItem.gutter" of "kept" is 24
+      And the property "contentItem.gutter" of "beside" is 24
+
+  Rule: A button shows what its display asks for
 
     Background:
       Given a 16 by 16 image file "red.png" filled with "#ff0000"
@@ -121,101 +154,316 @@ Feature: Ljós's own style: the icon and the text of a button and a menu row
         import Ljos.Controls
         Item {
           id: root; objectName: "root"
-          width: 480; height: 160
+          width: 560; height: 60
           Button { id: plain; text: "Save" }
-          Button { id: beside; x: 80; text: "Save"; iconName: "plus" }
-          Button { id: iconOnly; x: 160; text: "Save"; iconName: "plus"; display: IconLabel.IconOnly }
-          Button { id: textOnly; x: 240; text: "Save"; iconName: "plus"; display: IconLabel.TextOnly }
-          Button { id: under; x: 320; text: "Save"; iconName: "plus"; display: IconLabel.TextUnderIcon }
-          Button { id: pictureTextOnly; x: 400; text: "Save"; icon.source: "red.png"; display: IconLabel.TextOnly }
-          MenuItem { id: rowIconOnly; y: 60; width: 120; text: "Open"; iconName: "folder"; display: IconLabel.IconOnly }
-          MenuItem { id: rowTextOnly; x: 120; y: 60; width: 120; text: "Open"; iconName: "folder"; display: IconLabel.TextOnly }
-          TabButton { id: tabIconOnly; x: 240; y: 60; text: "Files"; iconName: "folder"; display: IconLabel.IconOnly }
-          TabButton { id: tabTextOnly; x: 300; y: 60; text: "Files"; iconName: "folder"; display: IconLabel.TextOnly }
-          TabButton { id: tabUnder; x: 360; y: 60; text: "Files"; iconName: "folder"; display: IconLabel.TextUnderIcon }
-          function part(item, name) {
-            for (const child of item.children) {
-              if (child.objectName === name) return child
-              const found = part(child, name)
-              if (found) return found
-            }
-            return null
-          }
-          function shows(control) {
-            const glyph = part(control.contentItem, "glyph")
-            const picture = part(control.contentItem, "picture")
-            return [(glyph !== null && glyph.visible) || (picture !== null && picture.visible),
-                    part(control.contentItem, "label").visible]
-          }
-          // The middle of a part, across its control, and whether the icon is over the text.
-          function middle(control, name) {
-            const item = part(control.contentItem, name)
-            return Math.round(item.mapToItem(control, 0, 0).x + item.width / 2)
-          }
-          function over(control) {
-            const glyph = part(control.contentItem, "glyph")
-            return glyph.mapToItem(control, 0, 0).y + glyph.height <= part(control.contentItem, "label").mapToItem(control, 0, 0).y
-          }
+          Button { objectName: "beside"; x: 80; text: "Save"; iconName: "plus" }
+          Button { objectName: "iconOnly"; x: 160; text: "Save"; iconName: "plus"; display: IconLabel.IconOnly }
+          Button { objectName: "textOnly"; x: 240; text: "Save"; iconName: "plus"; display: IconLabel.TextOnly }
+          Button { objectName: "pictureTextOnly"; x: 320; text: "Save"; icon.source: "red.png"; display: IconLabel.TextOnly }
+          Button { objectName: "noIcon"; x: 400; text: "Save"; display: IconLabel.IconOnly }
+          Button { objectName: "noText"; x: 480; iconName: "plus"; display: IconLabel.TextOnly }
+          function part(c, name) { for (const k of c.contentItem.children) if (k.objectName === name) return k; return null }
           property var got: []
-          function measure(which) {
-            const text = part(plain.contentItem, "label").implicitWidth
-            got = which === "beside" ? [beside.implicitContentWidth - text, shows(beside)]
-                : which === "iconOnly" ? [iconOnly.implicitContentWidth, shows(iconOnly)]
-                : which === "textOnly" ? [textOnly.implicitContentWidth - text, shows(textOnly)]
-                : which === "pictureTextOnly" ? [pictureTextOnly.implicitContentWidth - text, shows(pictureTextOnly)]
-                : which === "under" ? [under.implicitContentWidth - text,
-                                       under.implicitContentHeight - (16 + under.spacing + part(under.contentItem, "label").implicitHeight),
-                                       over(under), middle(under, "glyph") - middle(under, "label"),
-                                       under.implicitHeight - under.implicitContentHeight]
-                : which === "rowIconOnly" ? [rowIconOnly.contentItem.gutter, shows(rowIconOnly)]
-                : which === "rowTextOnly" ? [rowTextOnly.contentItem.gutter, shows(rowTextOnly)]
-                : which === "tabIconOnly" ? shows(tabIconOnly)
-                : which === "tabTextOnly" ? shows(tabTextOnly)
-                : [over(tabUnder), middle(tabUnder, "glyph") - middle(tabUnder, "label"),
-                   middle(tabUnder, "label") - Math.round(tabUnder.width / 2),
-                   tabUnder.implicitHeight - tabUnder.implicitContentHeight]
+          // What it asks for besides its text, and whether it shows its icon and its text.
+          function measure(name) {
+            let c = null
+            for (const k of root.children) if (k.objectName === name) c = k
+            const label = part(c, "label").visible
+            got = [c.implicitContentWidth - (label ? part(plain, "label").implicitWidth : 0),
+                   [part(c, "glyph").visible || part(c, "picture").visible, label]]
           }
         }
         """
 
     # Each answer is set against what a button with the same text and no
-    # icon asks for, so that no font's widths are written here.
+    # icon asks for, so that no font's widths are written here. A button
+    # with only one of the two shows it, whatever its display says.
     @api-QtQuick.Controls.AbstractButton.display
     Scenario Outline: A <control> shown <how> asks for the room of <what>
       When the method "measure" of "root" is called with "<control>"
       Then the property "got" of "root" is <got>
 
       Examples:
-        | control         | how             | what                                       | got                        |
-        | beside          | beside its text | its icon, the spacing and its text         | [24, [true, true]]         |
-        | iconOnly        | as its icon     | its icon alone                             | [16, [true, false]]        |
-        | textOnly        | as its text     | its text alone                             | [0, [false, true]]         |
-        | pictureTextOnly | as its text     | its text alone, though given a picture     | [0, [false, true]]         |
-        | under           | under its icon  | the wider of the two, the icon over the text in the middle, and half a spacing above and below | [0, 0, true, 0, 8] |
+        | control         | how             | what                                   | got                 |
+        | beside          | beside its text | its icon, the spacing and its text     | [24, [true, true]]  |
+        | iconOnly        | as its icon     | its icon alone                         | [16, [true, false]] |
+        | textOnly        | as its text     | its text alone                         | [0, [false, true]]  |
+        | pictureTextOnly | as its text     | its text alone, though given a picture | [0, [false, true]]  |
+        | noIcon          | as its icon     | its text, as it has no icon            | [0, [false, true]]  |
+        | noText          | as its text     | its icon, as it has no text            | [16, [true, false]] |
+
+  Rule: A button loads no picture it does not show
+
+    Background:
+      Given a 16 by 16 image file "red.png" filled with "#ff0000"
+      And the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.impl
+        import QtQuick.Templates as T
+        import Ljos.Controls
+        Item {
+          id: root; objectName: "root"
+          width: 400; height: 60
+          Button { objectName: "named"; text: "Save"; iconName: "plus"; icon.source: "red.png" }
+          Button { objectName: "textOnly"; x: 80; text: "Save"; icon.source: "red.png"; display: IconLabel.TextOnly }
+          Button { objectName: "acting"; x: 160; display: IconLabel.TextOnly; action: T.Action { text: "Save"; icon.source: "red.png" } }
+          Button { objectName: "alone"; x: 240; icon.source: "red.png"; display: IconLabel.TextOnly }
+          function part(c, name) { for (const k of c.contentItem.children) if (k.objectName === name) return k; return null }
+          property var got: []
+          // How large each one's picture was made: one never loaded is nothing.
+          function measure() { got = Array.from(root.children).map((c) => part(c, "picture").implicitWidth) }
+        }
+        """
+
+    # A glyph wins over the picture, and a display of the text alone hides
+    # it where there is text; a button with no text shows its picture.
+    @api-QtQuick.Controls.AbstractButton.icon.source
+    Scenario: A button whose glyph or display hides its picture loads none
+      When the method "measure" of "root" is called
+      Then the property "got" of "root" is [0, 0, 0, 16]
+
+    # The picture it shows then is the button's or its action's, from the
+    # file that named it.
+    @api-QtQuick.Controls.AbstractButton.action
+    Scenario: A button shows the picture it hid once nothing hides it
+      When the property "iconName" of "named" is set to ""
+      And the property "display" of "textOnly" is set to 2
+      And the property "display" of "acting" is set to 2
+      And the method "measure" of "root" is called
+      Then the property "got" of "root" is [16, 16, 16, 16]
+
+  Rule: A button shown under its icon has the two in its middle
+
+    @api-QtQuick.Controls.AbstractButton.display
+    Scenario: A button shown under its icon asks for the wider of the two, the icon over the text in the middle, and half a spacing above and below
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.impl
+        import Ljos.Controls
+        Item {
+          id: root; objectName: "root"
+          width: 200; height: 100
+          Button { id: plain; text: "Save" }
+          Button { id: under; x: 80; text: "Save"; iconName: "plus"; display: IconLabel.TextUnderIcon }
+          function part(c, name) { for (const k of c.contentItem.children) if (k.objectName === name) return k; return null }
+          function middle(name) { const i = part(under, name); return Math.round(i.mapToItem(under, 0, 0).x + i.width / 2) }
+          property var got: []
+          function measure() {
+            const glyph = part(under, "glyph"), label = part(under, "label")
+            got = [under.implicitContentWidth - part(plain, "label").implicitWidth,
+                   under.implicitContentHeight - (16 + under.spacing + label.implicitHeight),
+                   glyph.mapToItem(under, 0, 0).y + glyph.height <= label.mapToItem(under, 0, 0).y,
+                   middle("glyph") - middle("label"), under.implicitHeight - under.implicitContentHeight]
+          }
+        }
+        """
+      When the method "measure" of "root" is called
+      Then the property "got" of "root" is [0, 0, true, 0, 8]
+
+  Rule: A button given the padding of one edge keeps the other's
+
+    # Beside its icon a button has no padding above or below; under it,
+    # half a spacing each.
+    @api-QtQuick.Controls.Control.bottomPadding
+    Scenario: A button given its top padding keeps its bottom padding
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.impl
+        import Ljos.Controls
+        Item {
+          width: 200; height: 100
+          Button { objectName: "beside"; topPadding: 12; text: "Save" }
+          Button { objectName: "under"; x: 80; topPadding: 12; text: "Save"; iconName: "plus"; display: IconLabel.TextUnderIcon }
+        }
+        """
+      Then the property "bottomPadding" of "beside" is 0
+      And the property "bottomPadding" of "under" is 4
+
+  Rule: A button that shows its icon alone has it in its middle, as tall as it is drawn
+
+    # Wider than it asks for, the icon is in the middle of the button, in
+    # either direction, whether its display or an empty text leaves the
+    # icon alone.
+    @api-QtQuick.Controls.AbstractButton.display
+    Scenario Outline: A button <width> wide with <what> <how> has it in its middle
+      Given a 16 by 16 image file "red.png" filled with "#ff0000"
+      And the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.impl
+        import Ljos.Controls
+        Item {
+          id: root; objectName: "root"
+          width: 200; height: 60
+          LayoutMirroring.enabled: <mirrored>
+          LayoutMirroring.childrenInherit: true
+          Button { id: button; x: 20; width: <width>; <icon>; <text>; display: IconLabel.<display> }
+          property var got: []
+          // How far the middle of the icon it shows is from the button's.
+          function measure() {
+            let mark = null
+            for (const k of button.contentItem.children)
+              if ((k.objectName === "glyph" || k.objectName === "picture") && k.visible) mark = k
+            got = [Math.round(mark.mapToItem(button, 0, 0).x + mark.width / 2 - button.width / 2)]
+          }
+        }
+        """
+      When the method "measure" of "root" is called
+      Then the property "got" of "root" is [0]
+
+      Examples:
+        | width | what                     | icon                   | text         | display        | how                         | mirrored |
+        | 48    | its own icon             | iconName: "plus"       | text: "Save" | IconOnly       | shown as its icon           | false    |
+        | 48    | a picture                | icon.source: "red.png" | text: "Save" | IconOnly       | shown as its icon           | false    |
+        | 48    | its own icon             | iconName: "plus"       | text: "Save" | IconOnly       | shown as its icon, mirrored | true     |
+        | 48    | its own icon and no text | iconName: "plus"       | text: ""     | TextBesideIcon | beside its text             | false    |
+
+    # The icon's size is a limit to a picture, not its size: a smaller
+    # picture is drawn as large as it is, and the button asks for that.
+    @api-QtQuick.Controls.AbstractButton.icon.height
+    Scenario: A button shown as its icon asks for the height its icon is drawn at
+      Given a 16 by 16 image file "red.png" filled with "#ff0000"
+      And the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.impl
+        import Ljos.Controls
+        Item {
+          width: 200; height: 100
+          Button { objectName: "small"; iconSize: 64; icon.source: "red.png"; text: "Save"; display: IconLabel.IconOnly }
+          Button { objectName: "large"; x: 100; iconSize: 64; iconName: "plus"; text: "Save"; display: IconLabel.IconOnly }
+        }
+        """
+      Then the property "implicitContentHeight" of "small" is 16
+      And the property "implicitContentHeight" of "large" is 64
+
+  Rule: A menu row shows what its display asks for
+
+    Background:
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.impl
+        import Ljos.Controls
+        Item {
+          id: root; objectName: "root"
+          width: 480; height: 160
+          MenuItem { objectName: "rowIconOnly"; width: 120; text: "Open"; iconName: "folder"; display: IconLabel.IconOnly }
+          MenuItem { objectName: "rowTextOnly"; x: 120; width: 120; text: "Open"; iconName: "folder"; display: IconLabel.TextOnly }
+          MenuItem { objectName: "rowNoIcon"; x: 240; width: 120; text: "Open"; display: IconLabel.IconOnly }
+          MenuItem { objectName: "rowNoText"; x: 360; width: 120; iconName: "folder"; display: IconLabel.TextOnly }
+          MenuItem { id: tall; y: 60; width: 120; text: "Open"; iconName: "folder"; display: IconLabel.IconOnly; font.pixelSize: 80 }
+          readonly property bool tallFits: tall.implicitHeight === Theme.controlHeight
+          function part(c, name) { for (const k of c.contentItem.children) if (k.objectName === name) return k; return null }
+          property var got: []
+          function measure(name) {
+            let c = null
+            for (const k of root.children) if (k.objectName === name) c = k
+            got = [c.contentItem.gutter, [part(c, "glyph").visible || part(c, "picture").visible, part(c, "label").visible]]
+          }
+        }
+        """
 
     # A row keeps its icons in the column the menu keeps for them, so the
     # text under the icon is drawn beside it; out of a menu, a row with no
-    # icon shown keeps no column.
+    # icon shown keeps no column. A row with only one of the two shows it.
     @api-QtQuick.Controls.AbstractButton.display
     Scenario Outline: A menu row shown <how> shows <what>
       When the method "measure" of "root" is called with "<control>"
       Then the property "got" of "root" is <got>
 
       Examples:
-        | control     | how         | what                     | got                 |
-        | rowIconOnly | as its icon | its icon in the column   | [24, [true, false]] |
-        | rowTextOnly | as its text | its text, and no column  | [0, [false, true]]  |
+        | control     | how         | what                                      | got                 |
+        | rowIconOnly | as its icon | its icon in the column                    | [24, [true, false]] |
+        | rowTextOnly | as its text | its text, and no column                   | [0, [false, true]]  |
+        | rowNoIcon   | as its icon | its text, as it has no icon               | [0, [false, true]]  |
+        | rowNoText   | as its text | its icon in the column, as it has no text | [24, [true, false]] |
 
+    @api-QtQuick.Controls.AbstractButton.display
+    Scenario: A menu row shown as its icon is as tall as a row, whatever the size of the text it hides
+      Then the property "tallFits" of "root" is true
+
+  Rule: A tab shows what its display asks for, in its middle
+
+    Background:
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.impl
+        import Ljos.Controls
+        Item {
+          id: root; objectName: "root"; width: 560; height: 60
+          TabButton { objectName: "tabIconOnly"; text: "Files"; iconName: "folder"; display: IconLabel.IconOnly }
+          TabButton { objectName: "tabTextOnly"; x: 60; text: "Files"; iconName: "folder"; display: IconLabel.TextOnly }
+          TabButton { objectName: "tabPlain"; x: 160; text: "Files" }
+          TabButton { objectName: "tabNoIcon"; x: 260; text: "Files"; display: IconLabel.IconOnly }
+          TabButton { objectName: "tabNoText"; x: 360; iconName: "folder"; display: IconLabel.TextOnly }
+          TabButton { objectName: "tabUnder"; x: 420; text: "Files"; iconName: "folder"; display: IconLabel.TextUnderIcon }
+          function part(i, name) { for (const k of i.children) { if (k.objectName === name) return k; const f = part(k, name); if (f) return f } return null }
+          function middle(c, i) { return Math.round(i.mapToItem(c, 0, 0).x + i.width / 2) }
+          property var got: []
+          function measure(name) {
+            let c = null; for (const k of root.children) if (k.objectName === name) c = k
+            const glyph = part(c.contentItem, "glyph"), label = part(c.contentItem, "label"), lone = glyph.visible ? glyph : label
+            got = name === "tabUnder"
+                ? [glyph.mapToItem(c, 0, 0).y + glyph.height <= label.mapToItem(c, 0, 0).y, middle(c, glyph) - middle(c, label),
+                   middle(c, label) - Math.round(c.width / 2), c.implicitHeight - c.implicitContentHeight]
+                : [[glyph.visible, label.visible], c.implicitContentWidth - lone.width, middle(c, lone) - Math.round(c.width / 2)]
+          }
+        }
+        """
+
+    # What a tab shows alone is in its middle, and the tab asks for its
+    # room alone. A tab with only one of the two shows it.
     @api-QtQuick.Controls.AbstractButton.display
     Scenario Outline: A tab shown <how> shows <what>
       When the method "measure" of "root" is called with "<control>"
       Then the property "got" of "root" is <got>
 
       Examples:
-        | control     | how            | what                                     | got               |
-        | tabIconOnly | as its icon    | its icon alone                           | [true, false]     |
-        | tabTextOnly | as its text    | its text alone                           | [false, true]     |
-        | tabUnder    | under its icon | the icon over the text, in the tab's middle, and half a spacing above and below | [true, 0, 0, 8] |
+        | control     | how            | what                                                                            | got                   |
+        | tabIconOnly | as its icon    | its icon alone, in its middle                                                   | [[true, false], 0, 0] |
+        | tabTextOnly | as its text    | its text alone, in its middle                                                   | [[false, true], 0, 0] |
+        | tabPlain    | with no icon   | its text alone, in its middle                                                   | [[false, true], 0, 0] |
+        | tabNoIcon   | as its icon    | its text, as it has no icon                                                     | [[false, true], 0, 0] |
+        | tabNoText   | as its text    | its icon, as it has no text                                                     | [[true, false], 0, 0] |
+        | tabUnder    | under its icon | the icon over the text, in the tab's middle, and half a spacing above and below | [true, 0, 0, 8]       |
+
+  Rule: A tab shows the picture it or its action is given, as a button does
+
+    # `iconName` wins over the picture, as on a button; a tab shown as its
+    # text loads no picture.
+    @api-QtQuick.Controls.AbstractButton.icon.source
+    Scenario: A tab shown as its icon shows its picture or its action's, and one shown as its text loads none
+      Given a 16 by 16 image file "red.png" filled with "#ff0000"
+      And the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.impl
+        import QtQuick.Templates as T
+        import Ljos.Controls
+        Item {
+          id: root; objectName: "root"; width: 400; height: 60
+          TabButton { objectName: "pictured"; text: "Files"; icon.source: "red.png"; display: IconLabel.IconOnly }
+          TabButton { objectName: "acting"; x: 100; display: IconLabel.IconOnly; action: T.Action { text: "Files"; icon.source: "red.png" } }
+          TabButton { objectName: "textOnly"; x: 200; text: "Files"; icon.source: "red.png"; display: IconLabel.TextOnly }
+          function part(i, name) { for (const k of i.children) { if (k.objectName === name) return k; const f = part(k, name); if (f) return f } return null }
+          property var got: []
+          // Whether each shows its picture and its text, and how large its picture was made.
+          function measure() {
+            got = Array.from(root.children).map((c) => {
+              const p = part(c.contentItem, "picture")
+              return p === null ? null : [p.visible, part(c.contentItem, "label").visible, p.implicitWidth]
+            })
+          }
+        }
+        """
+      When the method "measure" of "root" is called
+      Then the property "got" of "root" is [[true, false, 12], [true, false, 12], [false, true, 0]]
+      And the property "implicitContentWidth" of "pictured" is 12
 
   Rule: The text is drawn as its mnemonic says, and the keys read it as written
 

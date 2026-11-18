@@ -53,8 +53,12 @@ T.MenuItem {
 
     contentItem: Component {
         Item {
-            readonly property bool showsIcon: control.display !== T.AbstractButton.TextOnly
-            readonly property bool showsText: control.display !== T.AbstractButton.IconOnly
+            // A row with only one of the two shows it whatever the
+            // display, as IconLabel does.
+            readonly property bool hasIcon: control.iconName.length > 0 || picture.implicitWidth > 0
+            readonly property bool hasLabel: control.text.length > 0
+            readonly property bool showsIcon: hasIcon && (control.display !== T.AbstractButton.TextOnly || !hasLabel)
+            readonly property bool showsText: hasLabel && (control.display !== T.AbstractButton.IconOnly || !hasIcon)
             // The style's own icon, else the row's or its action's.
             readonly property Item mark: glyph.visible ? glyph : picture.visible ? picture : null
             readonly property real gutter: mark || control.iconSpace
@@ -64,7 +68,9 @@ T.MenuItem {
                                         + (control.checkable ? Theme.iconSize + control.spacing : 0)
             readonly property real iconSize: Theme.iconSize
             implicitWidth: gutter + (showsText ? label.implicitWidth : 0) + end
-            implicitHeight: Math.max(label.implicitHeight, Theme.iconSize)
+            // A hidden label is still measured: its text's height is not
+            // the row's.
+            implicitHeight: Math.max(showsText ? label.implicitHeight : 0, Theme.iconSize)
 
             // Mirroring moves anchors only: the icon's column is at the
             // start of the row, and the shortcut, the check's room and the

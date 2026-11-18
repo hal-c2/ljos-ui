@@ -47,8 +47,9 @@ T.Button {
     // One line is centred in the background's height. The icon over the
     // text is taller than that, so the button grows to it and keeps half a
     // spacing above and below, as it keeps a spacing beside its text.
+    // Each edge on its own, so a button given one keeps the other.
     topPadding: display === T.AbstractButton.TextUnderIcon ? Theme.spacing / 2 : 0
-    bottomPadding: topPadding
+    bottomPadding: display === T.AbstractButton.TextUnderIcon ? Theme.spacing / 2 : 0
     spacing: Theme.spacing
     hoverEnabled: true
     font.pixelSize: Theme.fontSize
@@ -62,35 +63,40 @@ T.Button {
     contentItem: Component {
         Item {
             // What `display` lets it show: the icon alone, the text alone,
-            // or both, the icon over the text or, by default, before it.
-            readonly property bool showsIcon: control.display !== T.AbstractButton.TextOnly
-            readonly property bool showsText: control.display !== T.AbstractButton.IconOnly
+            // or both, the icon over the text or, by default, before it. A
+            // button with only one of the two shows it whatever the display,
+            // as IconLabel does.
+            readonly property bool hasIcon: control.iconName.length > 0 || picture.implicitWidth > 0
+            readonly property bool hasLabel: control.text.length > 0
+            readonly property bool showsIcon: hasIcon && (control.display !== T.AbstractButton.TextOnly || !hasLabel)
+            readonly property bool showsText: hasLabel && (control.display !== T.AbstractButton.IconOnly || !hasIcon)
             readonly property bool under: control.display === T.AbstractButton.TextUnderIcon
-            readonly property bool hasText: showsText && control.text.length > 0
             // What is drawn at the start, or over the text: the style's own
             // icon, else the button's or its action's.
             readonly property Item mark: glyph.visible ? glyph : picture.visible ? picture : null
             readonly property real textWidth: showsText ? label.implicitWidth : 0
-            readonly property real textHeight: hasText ? label.implicitHeight : 0
-            readonly property real start: mark && !under ? mark.width + (hasText ? control.spacing : 0) : 0
+            readonly property real textHeight: showsText ? label.implicitHeight : 0
+            readonly property real start: mark && !under ? mark.width + (showsText ? control.spacing : 0) : 0
             readonly property real end: more.visible ? control.spacing + more.width : 0
             // Under, the mark and the text are one block in the middle.
-            readonly property real top: mark && under ? mark.height + (hasText ? control.spacing : 0) : 0
+            readonly property real top: mark && under ? mark.height + (showsText ? control.spacing : 0) : 0
             readonly property real stacked: top + textHeight
             implicitWidth: (under ? Math.max(mark ? mark.width : 0, textWidth) : start + textWidth) + end
+            // The mark as it is drawn: `iconSize` is only a limit to a
+            // smaller picture.
             implicitHeight: under ? stacked
-                                  : Math.max(showsText ? label.implicitHeight : 0,
-                                             showsIcon ? control.iconSize : 0)
+                                  : Math.max(textHeight, mark ? mark.height : 0)
 
             // Mirroring moves anchors only, so each part is placed for
-            // either direction. Under the text, the mark is in the middle of
-            // what the chevron leaves.
+            // either direction. Over the text or with no text beside it,
+            // the mark is in the middle of what the chevron leaves.
             Icon {
                 id: glyph
                 objectName: "glyph"
                 visible: control.iconName.length > 0 && parent.showsIcon
-                x: parent.under ? (control.mirrored ? parent.end : 0) + (parent.width - parent.end - width) / 2
-                                : control.mirrored ? parent.width - width : 0
+                x: parent.under || !parent.showsText
+                   ? (control.mirrored ? parent.end : 0) + (parent.width - parent.end - width) / 2
+                   : control.mirrored ? parent.width - width : 0
                 y: parent.under ? (parent.height - parent.stacked) / 2 : (parent.height - height) / 2
                 name: control.iconName
                 size: control.iconSize
@@ -104,10 +110,23 @@ T.Button {
                 id: picture
                 objectName: "picture"
                 visible: control.iconName.length === 0 && parent.showsIcon && implicitWidth > 0
-                x: parent.under ? (control.mirrored ? parent.end : 0) + (parent.width - parent.end - width) / 2
-                                : control.mirrored ? parent.width - width : 0
+                x: parent.under || !parent.showsText
+                   ? (control.mirrored ? parent.end : 0) + (parent.width - parent.end - width) / 2
+                   : control.mirrored ? parent.width - width : 0
                 y: parent.under ? (parent.height - parent.stacked) / 2 : (parent.height - height) / 2
                 color: control.ink
+            }
+            // Where the picture would not be shown it loads nothing. Not by
+            // writing its own `icon.source`: that would stand for the
+            // button's or the action's and be read from this file, so a
+            // relative source would be looked for beside it. While `when`
+            // does not hold, the picture is told no source of its own again.
+            Binding {
+                target: picture
+                property: "icon.source"
+                value: ""
+                when: control.iconName.length > 0
+                      || control.display === T.AbstractButton.TextOnly && control.text.length > 0
             }
 
             // The text as its mnemonic says: the letter after a lone "&"

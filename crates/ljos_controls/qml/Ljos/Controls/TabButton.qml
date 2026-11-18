@@ -2,10 +2,14 @@
 // its text, so a strip of them reads as a row of words. The current tab is
 // raised, and its text is heavier and in the text's colour; the others are
 // muted, and the pointer over one lifts it a little. The weight is what
-// says which is current to a reader who cannot tell the colours apart. `iconName`, one of the style's own
-// icons, is drawn before the text, or over it, alone, or not at all as
-// `display` says (AbstractButton.TextUnderIcon, IconOnly, TextOnly).
+// says which is current to a reader who cannot tell the colours apart. Its
+// icon (`icon.source`, or its action's) is drawn in the text's colour;
+// `iconName`, one of the style's own icons, wins over it. The icon is drawn
+// before the text, or over it, alone, or not at all as `display` says
+// (AbstractButton.TextUnderIcon, IconOnly, TextOnly); a tab with only one
+// of the two shows it whatever the display.
 import QtQuick
+import QtQuick.Controls.impl
 import QtQuick.Templates as T
 import Ljos.Design
 
@@ -34,6 +38,10 @@ T.TabButton {
 
     contentItem: Component {
         Item {
+            id: content
+            readonly property bool hasIcon: control.iconName.length > 0 || picture.implicitWidth > 0
+            readonly property bool showsIcon: control.display !== T.AbstractButton.TextOnly
+                                              || control.text.length === 0
             implicitWidth: row.implicitWidth
             implicitHeight: row.implicitHeight
 
@@ -41,7 +49,9 @@ T.TabButton {
             Grid {
                 id: row
                 anchors.centerIn: parent
-                columns: control.display === T.AbstractButton.TextUnderIcon ? 1 : 2
+                // Two only when both are shown: a grid keeps the spacing
+                // after a lone part in a first column of two.
+                columns: (glyph.visible || picture.visible) && label.visible && control.display !== T.AbstractButton.TextUnderIcon ? 2 : 1
                 columnSpacing: control.spacing
                 rowSpacing: control.spacing
                 horizontalItemAlignment: Grid.AlignHCenter
@@ -52,16 +62,30 @@ T.TabButton {
                 LayoutMirroring.enabled: false
 
                 Icon {
+                    id: glyph
                     objectName: "glyph"
-                    visible: control.iconName.length > 0 && control.display !== T.AbstractButton.TextOnly
+                    visible: control.iconName.length > 0 && content.showsIcon
                     name: control.iconName
                     size: Theme.iconSizeSmall
                     color: control.ink
                 }
 
+                // Text-less, it is the icon alone, taken from the tab or the
+                // action it follows, no larger than the style's icons.
+                IconLabel {
+                    id: picture
+                    objectName: "picture"
+                    visible: control.iconName.length === 0 && content.showsIcon && implicitWidth > 0
+                    icon.width: Theme.iconSizeSmall
+                    icon.height: Theme.iconSizeSmall
+                    color: control.ink
+                }
+
                 Text {
+                    id: label
                     objectName: "label"
-                    visible: control.display !== T.AbstractButton.IconOnly
+                    visible: control.text.length > 0
+                             && (control.display !== T.AbstractButton.IconOnly || !content.hasIcon)
                     // As wide as the heavier text, so a tab keeps its
                     // width as it becomes current and the strip stays put.
                     width: Math.max(implicitWidth, Math.ceil(heavy.advanceWidth))
@@ -81,6 +105,15 @@ T.TabButton {
                         text: control.text
                     }
                 }
+            }
+            // Where the picture would not be shown it loads nothing, as a
+            // button's does (Button.qml says why it is not its own source).
+            Binding {
+                target: picture
+                property: "icon.source"
+                value: ""
+                when: control.iconName.length > 0
+                      || control.display === T.AbstractButton.TextOnly && control.text.length > 0
             }
         }
     }
