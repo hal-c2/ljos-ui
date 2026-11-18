@@ -8,8 +8,10 @@
 # built, the build's own output) goes to stderr.
 #
 # Where the build goes is target_dir's (mise-tasks/_lib/env.sh), as for every
-# task: CARGO_TARGET_DIR, else the main checkout's target/ (a linked worktree
-# shares it rather than growing a build of its own). LJOS_BIN names a server
+# task, in cargo's own order: CARGO_TARGET_DIR, else CARGO_BUILD_TARGET_DIR,
+# else the build.target-dir cargo's settings name, else the main checkout's
+# target/ (a linked worktree shares it rather than growing a build of its
+# own); target_dir is where that order is kept. LJOS_BIN names a server
 # built already and skips the build. LJOS_BUILD_WRAPPER names a program the
 # build runs through (one that queues builds machine-wide, say); it wraps the
 # build only, never the server, which runs for the whole session.
@@ -40,8 +42,8 @@ fi
 
 # The checkout this runs in, which need not be the one this script came from:
 # its build goes where target_dir says for it (CARGO_TARGET_DIR as asked, not
-# as env.sh resolved it for the script's own checkout), with the main
-# checkout's cargo settings when it is a worktree with none of its own.
+# as env.sh resolved it for the script's own checkout), with its main
+# checkout's cargo settings when it is a linked worktree (cargo_config).
 if checkout="$(git rev-parse --show-toplevel 2>/dev/null)" && [ -n "$checkout" ]; then
   checkout="$(physical "$checkout")"
 else
@@ -49,7 +51,7 @@ else
 fi
 target="$(CARGO_TARGET_DIR="$ljos_asked_target_dir" target_dir "$checkout")"
 export CARGO_TARGET_DIR="$target"
-config="$(cargo_config "$checkout")"
+config_args "$(cargo_config "$checkout")"
 # The build is put together here, for that checkout: env.sh's cargo adds the
 # script's own checkout's settings.
 unset -f cargo
@@ -57,10 +59,8 @@ unset -f cargo
 # --target-dir as well as CARGO_TARGET_DIR: a build.target-dir in a --config
 # file would outrank the variable. Cargo's messages name the program it made.
 build=(cargo build --quiet -p ljos_cli --bin ljos
-  --message-format=json-render-diagnostics --target-dir "$target")
-if [ -n "$config" ]; then
-  build+=(--config "$config")
-fi
+  --message-format=json-render-diagnostics --target-dir "$target"
+  ${config_args[@]+"${config_args[@]}"})
 # The toolchain is the one the checkout pins, not whichever cargo is first
 # on PATH.
 if [ -f "$checkout/mise.toml" ] && command -v mise >/dev/null 2>&1; then

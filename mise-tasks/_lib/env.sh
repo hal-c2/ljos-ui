@@ -84,47 +84,97 @@ from_asked() {
 
 # --- Where cargo builds ----------------------------------------------------------
 
-# The main checkout of the repository whose top <dir> is. A linked worktree's
-# common git dir is its main checkout's .git; a bare repository's or a
-# submodule's is something else, and such a checkout, like one that is no
-# git checkout or is only a directory inside one, is its own main checkout.
+# The main checkout of the repository whose top <dir> is, from what git
+# keeps in the repository's common git directory, whatever its name: a
+# directory git names in core.worktree there (a submodule's), else the one
+# holding it when it is a .git. A bare repository (core.bare) has no main
+# checkout, and git keeps no word of where the checkout of a git directory
+# made elsewhere (git init --separate-git-dir) is; so those worktrees, like
+# a checkout that is no git checkout or is only a directory inside one, are
+# their own main checkouts.
 main_checkout() {
-  local dir top common
+  local dir top common tree
   dir="$(physical "$1")"
   top="$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null || true)"
   if [ -n "$top" ] && [ -d "$top" ] && [ "$(physical "$top")" = "$dir" ]; then
     common="$(git -C "$dir" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
-    if [ -n "$common" ] && [ "$(basename "$common")" = .git ] && [ -d "$(dirname "$common")" ]; then
-      physical "$(dirname "$common")"
-      return 0
+    if [ -n "$common" ] && [ -d "$common" ] &&
+      [ "$(git --git-dir="$common" rev-parse --is-bare-repository 2>/dev/null)" = false ]; then
+      tree="$(git --git-dir="$common" config core.worktree 2>/dev/null || true)"
+      if [ -n "$tree" ]; then
+        tree="$(cd "$common" && cd "$tree" 2>/dev/null && pwd -P || true)"
+      elif [ "$(basename "$common")" = .git ]; then
+        tree="$(dirname "$common")"
+      fi
+      if [ -n "$tree" ] && [ -d "$tree" ]; then
+        physical "$tree"
+        return 0
+      fi
     fi
   fi
   printf '%s\n' "$dir"
 }
 
+# toml_unescape <text>: a TOML basic string's escapes decoded (\" \\ \b \t
+# \n \f \r \e, \xHH, \uHHHH and \UHHHHHHHH). Only a setting with a backslash
+# in it comes here, so only that needs python3. (need_python3 is defined
+# below, after this runs as env.sh is sourced.)
+toml_unescape() {
+  need python3 "install Python 3 (Arch: pacman -S python; Debian, Ubuntu: apt install python3; macOS: brew install python) to read the escapes in a cargo target-dir setting"
+  python3 -I -c '
+import re, sys
+plain = {"b": "\b", "t": "\t", "n": "\n", "f": "\f", "r": "\r", "e": "\x1b", "\"": "\"", "\\": "\\"}
+def one(m):
+    e = m.group(1)
+    return chr(int(e[1:], 16)) if e[0] in "xuU" else plain.get(e, "\\" + e)
+sys.stdout.write(re.sub(r"\\(x[0-9A-Fa-f]{2}|u[0-9A-Fa-f]{4}|U[0-9A-Fa-f]{8}|.)", one, sys.argv[1]))
+' "$1"
+}
+
 # settings_target_dir <config.toml>: the build.target-dir a cargo settings
 # file names, from the directory that holds its .cargo as cargo reads it, or
 # nothing. A line-wise reading rather than a TOML parser, since macOS's
-# python3 has no tomllib: a [build] table's target-dir, or a dotted
-# build.target-dir, quoted either way; the last one wins.
+# python3 has no tomllib: a [build] table's target-dir, a dotted
+# build.target-dir, or one in an inline `build = { … }`, with any part of the
+# key quoted either way; the last one wins. A basic ("…") string's escapes
+# are decoded as cargo decodes them, a literal ('…') one is taken as it is.
+# Multi-line strings are not read: no path needs one.
 settings_target_dir() {
   local file="$1" value
   [ -f "$file" ] || return 0
   value="$(awk '
-    { sub(/\r$/, "") }
-    /^[ \t]*\[/ { table = $0; sub(/^[ \t]*\[[ \t]*/, "", table); sub(/[ \t]*\].*$/, "", table); next }
-    {
-      line = $0
-      if (table == "build" && line ~ /^[ \t]*target-dir[ \t]*=/) { sub(/^[ \t]*target-dir[ \t]*=[ \t]*/, "", line) }
-      else if (table == "" && line ~ /^[ \t]*build\.target-dir[ \t]*=/) { sub(/^[ \t]*build\.target-dir[ \t]*=[ \t]*/, "", line) }
-      else next
-      q = substr(line, 1, 1)
-      if (q != "\"" && q != "'\''") next
-      rest = substr(line, 2); end = index(rest, q)
-      if (end > 0) found = substr(rest, 1, end - 1)
+    function bare(s) { gsub(/["'\'' \t]/, "", s); return s }
+    # The string at the start of s: "b:" or "l:" and what is between its quotes.
+    function string(s,   q, i, c) {
+      q = substr(s, 1, 1)
+      if (q == "'\''") { i = index(substr(s, 2), q); return i > 0 ? "l:" substr(s, 2, i - 1) : "" }
+      if (q != "\"") return ""
+      for (i = 2; i <= length(s); i++) {
+        c = substr(s, i, 1)
+        if (c == "\\") i++
+        else if (c == "\"") return "b:" substr(s, 2, i - 2)
+      }
+      return ""
     }
-    END { if (found != "") print found }
+    { sub(/\r$/, "") }
+    /^[ \t]*#/ { next }
+    /^[ \t]*\[/ { table = $0; sub(/\].*$/, "", table); gsub(/\[/, "", table); table = bare(table); next }
+    {
+      eq = index($0, "=")
+      if (eq == 0) next
+      key = bare(substr($0, 1, eq - 1)); value = substr($0, eq + 1); sub(/^[ \t]*/, "", value)
+      if (table == "build" && key == "target-dir") s = string(value)
+      else if (table == "" && key == "build.target-dir") s = string(value)
+      else if (table == "" && key == "build" && match(value, /[{,][ \t]*["'\'']?target-dir["'\'']?[ \t]*=[ \t]*/)) s = string(substr(value, RSTART + RLENGTH))
+      else next
+      if (s != "") found = s
+    }
+    END { if (length(found) > 2) print found }
   ' "$file")"
+  case "$value" in
+    b:*\\*) value="$(toml_unescape "${value#b:}")" ;;
+    *) value="${value#?:}" ;;
+  esac
   case "$value" in
     "") ;;
     /*) printf '%s\n' "$value" ;;
@@ -195,20 +245,47 @@ EOF_SETTINGS
   printf '%s\n' "$target"
 }
 
-# cargo_config [dir]: the main checkout's .cargo/config(.toml), when <dir> is a
-# linked worktree with none of its own. Cargo looks for its settings from
-# where it runs upwards, so a worktree made elsewhere would build without the
-# ones a main checkout keeps outside git (a compile cache, a cap on jobs,
-# incremental builds off), and the two would keep rebuilding each other's
-# crates in the target they share.
+# cargo_config [dir]: the settings files to give cargo with --config, one
+# per line, when <dir> is a linked worktree. Cargo looks for its settings
+# from where it runs upwards, so a worktree made elsewhere would build
+# without the ones its main checkout keeps outside git (a compile cache, a
+# cap on jobs, incremental builds off, in the checkout's .cargo or a
+# directory above it), and the two would keep rebuilding each other's crates
+# in the target they share. So: every file cargo reads for the main checkout
+# that it does not read in the worktree, the farthest first, as a later
+# --config binds more. A worktree with settings of its own gets them again
+# last, so its keys still win over its main checkout's (an array in them,
+# such as rustflags, then comes twice). Nothing for a main checkout, whose
+# settings cargo finds itself.
 cargo_config() {
-  local dir main settings
+  local dir main here file given=""
   dir="$(physical "${1:-$ljos_root}")"
   main="$(main_checkout "$dir")"
-  settings="$(settings_file "$main")"
-  if [ "$main" != "$dir" ] && [ -n "$settings" ] && [ -z "$(settings_file "$dir")" ]; then
-    printf '%s\n' "$settings"
-  fi
+  [ "$main" != "$dir" ] || return 0
+  here="$(settings_files "$dir")"
+  while IFS= read -r file; do
+    if [ -z "$file" ] || printf '%s\n' "$here" | grep -qxF "$file"; then continue; fi
+    given="$file${given:+
+$given}"
+  done <<EOF_MAIN
+$(settings_files "$main")
+EOF_MAIN
+  [ -n "$given" ] || return 0
+  printf '%s\n' "$given"
+  file="$(settings_file "$dir")"
+  if [ -n "$file" ]; then printf '%s\n' "$file"; fi
+}
+
+# config_args <files>: a --config for each line of <files>, in order, into
+# the array config_args.
+config_args() {
+  local file
+  config_args=()
+  while IFS= read -r file; do
+    if [ -n "$file" ]; then config_args+=(--config "$file"); fi
+  done <<EOF_FILES
+$1
+EOF_FILES
 }
 
 # Every task builds where target_dir says, and so does every cargo its cargo
@@ -222,16 +299,17 @@ export CARGO_TARGET_DIR
 ljos_cargo_config="$(cargo_config)"
 
 # cargo, with the main checkout's settings in a worktree. --config outranks
-# CARGO_TARGET_DIR, so a target-dir in that file would win over it: the
+# CARGO_TARGET_DIR, so a target-dir in those files would win over it: the
 # target is given again after it, as a TOML string. A task runs `cargo`, never
 # `exec cargo` or `command cargo`, which would go round this (tasks:smoke
 # holds every task to that).
 cargo() {
-  local t
+  local t config_args
   if [ -n "$ljos_cargo_config" ]; then
+    config_args "$ljos_cargo_config"
     t="${CARGO_TARGET_DIR//\\/\\\\}"
     t="${t//\"/\\\"}"
-    command cargo --config "$ljos_cargo_config" --config "build.target-dir=\"$t\"" "$@"
+    command cargo "${config_args[@]}" --config "build.target-dir=\"$t\"" "$@"
   else
     command cargo "$@"
   fi
@@ -256,14 +334,142 @@ except (OSError, ValueError, AttributeError) as e:
     problem("%s cannot be read (%s)" % (path, e))
 if not isinstance(server, dict):
     problem("%s has no ljos server" % path)
-run = [str(server.get("command", ""))] + [str(a) for a in server.get("args", [])]
+args = server.get("args", [])
+if not isinstance(args, list):
+    problem("%s's ljos server has args that are not a list (%s)" % (path, json.dumps(args)))
+run = [str(server.get("command", ""))] + [str(a) for a in args]
 launcher = ("mise-tasks/mcp", "./mise-tasks/mcp")
+# The task is a bash script: sh, which may be dash, would stop at its first
+# bash-only line.
+if run[0] == "sh" and len(run) > 1 and run[1] in launcher:
+    problem("%s's ljos server runs mise-tasks/mcp with sh, which need not be bash" % path)
 if not (run[0] in launcher
-        or (run[0] in ("bash", "sh") and len(run) > 1 and run[1] in launcher)
+        or (run[0] == "bash" and len(run) > 1 and run[1] in launcher)
         or (run[0] == "mise" and run[1:3] == ["run", "mcp"])):
     problem("%s's ljos server runs `%s`, not mise-tasks/mcp, so in a linked worktree it builds into that worktree's own target/"
             % (path, " ".join(run)))
 EOF_MCP
+}
+
+# shell_code <file>: a shell script with its comment lines left out and its
+# continued lines joined, one command line per line.
+shell_code() {
+  awk '
+    /^[ \t]*#/ { next }
+    { line = line $0 }
+    /\\$/ { sub(/\\$/, "", line); next }
+    { print line; line = "" }
+    END { if (line != "") print line }
+  ' "$1"
+}
+
+# cargo_problems <task> [root]: what is wrong with how a task runs cargo,
+# for tasks:smoke to list, or nothing. A task's cargo builds where
+# target_dir says, with the main checkout's settings in a worktree, only
+# through env.sh's cargo: a task that runs cargo sources env.sh, and never
+# goes round its cargo with exec or command. A script of the checkout's
+# scripts/ (under <root>, this checkout by default) that the task names and
+# that runs cargo runs it for the task: env.sh's CARGO_TARGET_DIR is what
+# puts that build in the shared target, so the task sources env.sh for it.
+# cargo counts only where a command starts (after a separator, a keyword
+# such as if, or assignments), so a message that names a cargo command runs
+# none.
+cargo_problems() {
+  local code pre runs="" script
+  code="$(shell_code "$1")"
+  pre='(^|[;&|({`])[[:space:]]*((then|do|else|elif|if|while|until|!|time)[[:space:]]+)*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*'
+  if printf '%s\n' "$code" | grep -Eq "${pre}((exec|command)[[:space:]]+)?cargo([[:space:]]|$)"; then
+    runs=1
+  else
+    while IFS= read -r script; do
+      case "$script" in *.py | *.qml) continue ;; esac
+      [ -f "${2:-$ljos_root}/$script" ] || continue
+      if shell_code "${2:-$ljos_root}/$script" | grep -Eq "${pre}((exec|command)[[:space:]]+)?cargo([[:space:]]|$)"; then
+        runs=1
+        break
+      fi
+    done <<EOF_SCRIPTS
+$(printf '%s\n' "$code" | grep -oE 'scripts/[A-Za-z0-9_.-]+' | sort -u)
+EOF_SCRIPTS
+  fi
+  [ -n "$runs" ] || return 0
+  printf '%s\n' "$code" | grep -Eq '^[[:space:]]*(\.|source)[[:space:]].*_lib/env\.sh"?[[:space:]]*$' ||
+    printf ' runs cargo without sourcing _lib/env.sh, so it builds into a worktree'"'"'s own target/;'
+  printf '%s\n' "$code" | grep -Eq "${pre}(exec|command)[[:space:]]+cargo([[:space:]]|$)" &&
+    printf ' exec cargo or command cargo goes round env.sh'"'"'s cargo (run cargo);'
+  return 0
+}
+
+# checkout_dir <name> [dir]: where the runs of the checkout at <dir> (this
+# one by default) keep what they write under <name> (a report, a sandbox's
+# home): in the target directory, and for a linked worktree, which shares
+# that with its main checkout, in worktrees/<its name>-<a sum of its path>/
+# there, so two checkouts' runs never write over or clear each other's.
+checkout_dir() {
+  local dir target
+  dir="$(physical "${2:-$ljos_root}")"
+  target="$(target_dir "$dir")"
+  if [ "$(main_checkout "$dir")" = "$dir" ]; then
+    printf '%s/%s\n' "$target" "$1"
+  else
+    printf '%s/worktrees/%s-%s/%s\n' "$target" "$(basename "$dir")" "$(printf '%s' "$dir" | cksum | awk '{ print $1 }')" "$1"
+  fi
+}
+
+# built_programs: from cargo's JSON messages on stdin, the path of every
+# program the build made, one per line. The path is a JSON string: a quote,
+# a backslash or a slash in it comes escaped. Any other escape is a control
+# character, which no path of a build has; it is left, and the path is then
+# no program.
+built_programs() {
+  sed -n -E 's/^\{"reason":"compiler-artifact".*"executable":"(([^"\\]|\\.)*)".*/\1/p' |
+    sed -E 's/\\(["\\/])/\1/g'
+}
+
+# pin_build <cargo args…>: cargo with its JSON messages on stdout; any other
+# line it prints there goes to stderr.
+pin_build() {
+  local out
+  out="$(cargo "$@" --message-format=json-render-diagnostics)" || return 1
+  printf '%s\n' "$out" | grep -v -e '^{"reason":' -e '^$' >&2 || true
+  printf '%s\n' "$out" | grep '^{"reason":' || true
+}
+
+# pin_programs <dir> <cargo args…>: builds, gives the run its own link to
+# every program the build made, in <dir>, and prints "<name> <path>" for
+# each. A target directory may be shared (a linked worktree's is its main
+# checkout's), and another checkout's build while a long run goes on would
+# put that checkout's programs where the run's were. A hard link keeps the
+# file it was made to, as cargo and the linker put new files in place of old
+# ones (a <dir> on another drive than the target gets a copy). The links
+# are this build's only if no other build came between it and them: so
+# cargo builds again, and only when it finds every program fresh are they
+# kept; else they are made again from that build.
+pin_programs() {
+  local into="$1" messages exe name pinned tries=0
+  shift
+  mkdir -p "$into"
+  messages="$(pin_build "$@")" || return 1
+  while :; do
+    pinned=""
+    while IFS= read -r exe; do
+      [ -n "$exe" ] || continue
+      name="$(basename "$exe")"
+      ln -f "$exe" "$into/$name" 2>/dev/null || cp -p "$exe" "$into/$name" || return 1
+      pinned="$pinned$name $into/$name
+"
+    done <<EOF_PROGRAMS
+$(printf '%s\n' "$messages" | built_programs)
+EOF_PROGRAMS
+    messages="$(pin_build "$@")" || return 1
+    printf '%s\n' "$messages" | grep -q '^{"reason":"compiler-artifact".*"executable":".*"fresh":false' || break
+    tries=$((tries + 1))
+    if [ "$tries" -ge 10 ]; then
+      printf '%s\n' "${MISE_TASK_NAME:-this task}: other builds into $CARGO_TARGET_DIR kept coming between this build and its programs; build when they are done, or set CARGO_TARGET_DIR to a target of this checkout's own" >&2
+      return 1
+    fi
+  done
+  printf '%s' "$pinned"
 }
 
 # Off-screen Qt: no window opens, and a platform theme set for the desktop
@@ -639,3 +845,9 @@ built_program() {
   [ -n "$program" ] && [ -x "$program" ] || die "cargo build $* named no program it made"
   printf '%s\n' "$program"
 }
+
+# The desktop:cua sandbox's home (scripts/cua-sandbox.sh), one per checkout:
+# a linked worktree shares its main checkout's target, and a sandbox started
+# from one would end the app another drives.
+LJOS_CUA_HOME="${LJOS_CUA_HOME:-$(checkout_dir cua)}"
+export LJOS_CUA_HOME
