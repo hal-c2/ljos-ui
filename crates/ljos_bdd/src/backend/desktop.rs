@@ -312,16 +312,31 @@ impl Running {
         said
     }
 
-    /// Waits until the UI thread has rested once more than `count` times,
-    /// or until `deadline`: whether it did.
-    fn rest_after(&mut self, count: u64, deadline: Instant) -> Result<bool> {
+    /// How many frames the UI thread has run and how many times it has
+    /// rested, to wait from with [`Running::turned_after`].
+    fn turns(&mut self) -> Result<(u64, u64)> {
+        let told = self.ask("app_watch", json!({"topics": ["frames", "rests"]}))?;
+        let count = |k: &str| told["counts"][k].as_u64().unwrap_or(0);
+        Ok((count("frames"), count("rests")))
+    }
+
+    /// Waits until the UI thread has run a frame or rested anew since
+    /// `turns`, or until `deadline`: whether it did. A rest is counted
+    /// only when it says something new, and a window told of the focus
+    /// can go back to the same rest it had, so the frame it ran for it
+    /// counts too.
+    fn turned_after(&mut self, (frames, rests): (u64, u64), deadline: Instant) -> Result<bool> {
         let left = deadline.saturating_duration_since(Instant::now());
         let wait_ms = u64::try_from(left.as_millis()).unwrap_or(u64::MAX).max(1);
         let told = self.ask(
             "app_watch",
-            json!({"since": {"rests": count}, "topics": ["rests"], "wait_ms": wait_ms}),
+            json!({
+                "since": {"frames": frames, "rests": rests},
+                "topics": ["frames", "rests"], "wait_ms": wait_ms,
+            }),
         )?;
-        Ok(told["counts"]["rests"].as_u64().is_some_and(|n| n > count))
+        let past = |k: &str, was: u64| told["counts"][k].as_u64().is_some_and(|n| n > was);
+        Ok(past("frames", frames) || past("rests", rests))
     }
 
     /// The UI thread's last rest (`app_watch`'s `rest`), and the count of
@@ -1057,7 +1072,7 @@ impl Input for DesktopBackend {
     /// scenario's to say; this waits only until the compositor has moved
     /// it and the application has woken for what it was told.
     fn window_active(&mut self, active: bool) -> Result<()> {
-        let (count, _) = self.running()?.rest()?;
+        let turns = self.running()?.turns()?;
         let target = if active {
             self.running()?.app.id()
         } else {
@@ -1093,7 +1108,7 @@ impl Input for DesktopBackend {
         // The compositor tells the window in the same turn it moves the
         // focus. A window it tells nothing does not wake, and the steps
         // after this say what it missed.
-        self.running()?.rest_after(count, deadline)?;
+        self.running()?.turned_after(turns, deadline)?;
         Ok(())
     }
 
