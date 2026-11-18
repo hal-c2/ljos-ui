@@ -161,6 +161,43 @@ Feature: Ljós's own style: tabs, cards, popovers, split buttons and empty state
         | Edge.Right  | 20 | 20  | after it                                   | 84 | 0   |
         | Edge.Bottom | 20 | 360 | above it, as the window has no room below  | 0  | -64 |
 
+    # The room on each side, and the gap, are the window's, wherever the
+    # button is drawn and whatever its ancestors' scale; the margins the
+    # popover keeps from the window's edges are not room.
+    @api-QtQuick.Controls.Popup.margins
+    Scenario Outline: A popover <how> opens <where>
+      Given the QML:
+        """qml
+        import Ljos.Ui
+        import Ljos.Controls
+        Item {
+          id: root; objectName: "root"
+          width: 400; height: 400
+          Item {
+            width: 200; height: 200; scale: <scale>; transformOrigin: Item.TopLeft
+            Button {
+              x: <x>; y: <y>; width: 60; height: 20; text: "Filter"
+              Popover { id: pop; objectName: "pop"; width: 100; height: <height>; margins: <margins> }
+            }
+          }
+          property real popX: pop.x
+          property real popY: pop.y
+        }
+        """
+      When the method "open" of "pop" is called
+      And 200 milliseconds pass
+      Then the property "popX" of "root" is <px>
+      And the property "popY" of "root" is <py>
+
+      # The window is 400 by 400, as the root is. Scaled, the button is at
+      # 300 to 340 in the window, and the popover 4 above it is at -52 in
+      # the button's terms.
+      Examples:
+        | how                     | scale | x   | y   | height | margins | where                                       | px | py   |
+        | under a scaled ancestor | 2     | 10  | 150 | 100    | 8       | above it, as the window has 56 below        | 0  | -52  |
+        | with margins            | 1     | 200 | 250 | 120    | 12      | above it, as 114 is left below its margins  | 0  | -124 |
+        | with room below         | 1     | 200 | 20  | 100    | 0       | below it                                    | 0  | 24   |
+
     Scenario: A popover fades in on the overlay surface and closes at once
       Given the QML:
         """qml
