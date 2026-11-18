@@ -96,12 +96,24 @@ pub(super) fn answer_cef_app_protocol() -> Result<(), String> {
 
 /// Gives `class` the messages of CEF's application protocol, unless it
 /// has them already (an application with its own CEF-aware subclass).
+/// Nothing is changed unless all of it can be: a class half taught would
+/// still end the process at Chromium's first message it lacks.
 fn teach(class: &AnyClass) -> Result<(), String> {
-    if class.responds_to(sel!(isHandlingSendEvent)) {
-        return Ok(());
-    }
     let name = class.name().to_string_lossy().into_owned();
     let failed = |what: &str| format!("could not teach {name} CEF's application protocol: {what}");
+    match (
+        class.responds_to(sel!(isHandlingSendEvent)),
+        class.responds_to(sel!(setHandlingSendEvent:)),
+    ) {
+        (true, true) => return Ok(()),
+        (false, false) => {}
+        _ => {
+            return Err(failed(
+                "it answers only one of isHandlingSendEvent and setHandlingSendEvent:, \
+                 and Chromium sends both",
+            ));
+        }
+    }
     let cls = class as *const AnyClass as *mut AnyClass;
     let send = sel!(sendEvent:);
     let original = class
@@ -188,6 +200,51 @@ mod tests {
             );
         }
         builder.register()
+    }
+
+    unsafe extern "C-unwind" fn never_handling(_this: &AnyObject, _cmd: Sel) -> Bool {
+        Bool::NO
+    }
+
+    #[test]
+    fn a_class_answering_half_of_the_protocol_is_left_as_it_was() {
+        let mut builder =
+            ClassBuilder::new(c"LjosHalfAwareApplication", NSObject::class()).expect("a new class");
+        // SAFETY: the signatures are `-sendEvent:`'s and `-isHandlingSendEvent`'s.
+        unsafe {
+            builder.add_method(
+                sel!(sendEvent:),
+                own_send_event as unsafe extern "C-unwind" fn(_, _, _),
+            );
+            builder.add_method(
+                sel!(isHandlingSendEvent),
+                never_handling as unsafe extern "C-unwind" fn(_, _) -> _,
+            );
+        }
+        let class = builder.register();
+        let own_send = class
+            .instance_method(sel!(sendEvent:))
+            .expect("its own -sendEvent:")
+            .implementation();
+
+        let why = super::teach(class).expect_err("a half-aware class is refused");
+
+        assert!(
+            why.contains("LjosHalfAwareApplication") && why.contains("setHandlingSendEvent:"),
+            "the warning names the class and what it lacks: {why}"
+        );
+        assert!(
+            !class.responds_to(sel!(setHandlingSendEvent:)),
+            "nothing was added"
+        );
+        assert_eq!(
+            class
+                .instance_method(sel!(sendEvent:))
+                .expect("still there")
+                .implementation() as usize,
+            own_send as usize,
+            "its -sendEvent: was not replaced"
+        );
     }
 
     #[test]
