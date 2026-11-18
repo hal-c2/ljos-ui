@@ -1761,7 +1761,10 @@ fn primitive(written: &str) -> Option<Ty> {
         "int" | "real" | "double" | "number" | "qreal" | "float" => Ty::NUMBER,
         "string" | "QString" | "url" | "QUrl" => Ty::STRING,
         "color" | "QColor" => Ty::COLOR,
-        "var" | "variant" | "unknown" | "QVariant" | "QJSValue" => Ty::UNKNOWN,
+        // A QVariantMap is written as an object and a QVariantList as an
+        // array, and what they hold is anything: as dts.rs declares them.
+        "var" | "variant" | "unknown" | "QVariant" | "QJSValue" | "QVariantMap"
+        | "QVariantList" => Ty::UNKNOWN,
         // DECISION: TYPES.md has no `date`: what holds one is let by.
         "date" | "QDateTime" => Ty::ERROR,
         _ => return None,
