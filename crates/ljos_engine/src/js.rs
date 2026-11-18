@@ -1479,7 +1479,11 @@ impl Engine {
         let pumped = js.host.pump_jobs(until);
         let mut stopped = self.swap_js_stopped(began_in).flatten();
         for fault in &pumped.faults {
-            self.report_js_fault(fault, stopped.take());
+            // An exception before it in the same pump does not take it.
+            let run = matches!(fault, JsFault::JsInterrupted { .. })
+                .then(|| stopped.take())
+                .flatten();
+            self.report_js_fault(fault, run);
         }
     }
 
