@@ -136,6 +136,17 @@ impl Sway {
         Ok(get("width").zip(get("height")))
     }
 
+    /// The process whose window has the focus, if a client's window has it.
+    ///
+    /// # Errors
+    /// The compositor cannot be reached.
+    pub fn focused(&self) -> std::io::Result<Option<u32>> {
+        let mut stream = self.connect()?;
+        send(&mut stream, GET_TREE, "")?;
+        let (_, tree) = receive(&mut stream)?;
+        Ok(focused(&tree))
+    }
+
     /// Runs a sway command (`[pid=…] focus`).
     ///
     /// # Errors
@@ -145,6 +156,17 @@ impl Sway {
         send(&mut stream, RUN_COMMAND, command)?;
         Ok(receive(&mut stream)?.1)
     }
+}
+
+fn focused(node: &Value) -> Option<u32> {
+    if node["focused"] == Value::Bool(true) {
+        return node["pid"].as_u64().and_then(|p| u32::try_from(p).ok());
+    }
+    ["nodes", "floating_nodes"]
+        .iter()
+        .filter_map(|k| node[*k].as_array())
+        .flatten()
+        .find_map(focused)
 }
 
 fn find(node: &Value, pid: u32) -> Option<(i32, i32, i32, i32)> {

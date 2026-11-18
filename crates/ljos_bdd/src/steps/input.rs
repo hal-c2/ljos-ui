@@ -1,6 +1,6 @@
 //! What the user does with the pointer, the keyboard and an input method.
 
-use cucumber::when;
+use cucumber::{given, when};
 
 use crate::backend::{OtherButton, PointerStep, TouchFrame, WheelBy};
 use crate::world::LjosWorld;
@@ -32,6 +32,13 @@ fn user_keeps_down(w: &mut LjosWorld, chord: String) -> StepResult {
 #[when(regex = r#"^the user lets go of "([^"]+)"$"#)]
 fn user_lets_go(w: &mut LjosWorld, chord: String) -> StepResult {
     w.each(|b| b.input()?.key_state(&chord, false))
+}
+
+// A seat with a pointer and no keyboard: a kiosk, a tablet. Before the
+// application starts, which hears of the seat's keyboards once.
+#[given(regex = r"^the seat has no keyboard$")]
+fn seat_without_keyboard(w: &mut LjosWorld) -> StepResult {
+    w.each(|b| b.input()?.seat_keyboard(false))
 }
 
 // Another window takes the keyboard, or gives it back.
