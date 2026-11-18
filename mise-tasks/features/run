@@ -70,6 +70,8 @@ if [ -n "$input" ]; then
     input="$(physical "$input")/**/*.feature"
   elif [ -f "$input" ]; then
     input="$(physical "$(dirname "$input")")/{$(basename "$input")}"
+  elif [ "${input%%[*?{[]*}" = "$input" ]; then
+    die "features:run: --input $asked is no file or directory"
   else
     # A pattern: the directory before its first pattern character.
     lead="${input%%[*?{[]*}"
@@ -168,11 +170,16 @@ glob_regex() {
     print "^" out "$"
   }' <<<"$1"
 }
+# Searched from the input's own directory, the part before its first
+# pattern character, so a suite outside features/ is read as well.
 selected() {
   if [ -z "$input" ]; then
     find features -name '*.feature'
   else
-    find "$root/features" -name '*.feature' | grep -E "$(glob_regex "$input")" || true
+    local from="${input%%[*?{[]*}"
+    from="${from%/*}"
+    [ -d "${from:-/}" ] || return 0
+    find "${from:-/}" -name '*.feature' | grep -E "$(glob_regex "$input")" || true
   fi
 }
 # A selection that names no feature file would pass with 0 scenarios run.

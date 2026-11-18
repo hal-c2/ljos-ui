@@ -369,6 +369,53 @@ if [ "$out" = "$PWD/app.qml" ]; then ok "another project's mise task, handed dow
 out="$(CARGO_TARGET_DIR=build target_dir)"
 if [ "$out" = "$ljos_root/build" ]; then ok "a relative CARGO_TARGET_DIR is from the root"; else bad "target_dir gave $out for CARGO_TARGET_DIR=build"; fi
 
+# --- features:run reads a suite outside features/ --------------------------------
+
+# The ledger is a stand-in that counts the scenarios of the files its --input
+# names (the real one is checked in the PR's runs). bash 3.2 has no globstar,
+# so its ** is one directory, as deep as the suite's file lies.
+suite="$real/suite"
+mkdir -p "$suite/part"
+printf 'Feature: outside\n  Scenario: one\n    Given a step\n  Scenario: two\n    Given a step\n' >"$suite/part/outside.feature"
+cat >"$real/ledger" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+shopt -s nullglob
+glob=
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --input) glob="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+# The ledger's glob reads {a} as a; bash's braces need a comma.
+glob="$(printf '%s' "$glob" | sed -E 's/\{([^{},]*)\}/\1/g')"
+eval "files=($glob)"
+n=0
+[ ${#files[@]} -eq 0 ] || n=$(cat "${files[@]}" | grep -c 'Scenario:' || true)
+echo "ledger: $n scenarios"
+[ "$n" -gt 0 ]
+SH
+chmod +x "$real/ledger"
+features_run() { LJOS_BDD_FEATURES_BIN="$real/ledger" bash mise-tasks/features/run "$@" 2>&1; }
+for given in "$suite" "$suite/part/outside.feature"; do
+  if out="$(features_run --input "$given")"; then
+    case "$out" in
+      *"ledger: 2 scenarios"*) ok "features:run --input ${given#"$real/"} outside features/ runs its scenarios" ;;
+      *) bad "features:run --input ${given#"$real/"} passed, but not with its 2 scenarios" "$out" ;;
+    esac
+  else
+    bad "features:run --input ${given#"$real/"} outside features/ failed" "$out"
+  fi
+done
+if out="$(features_run --input "$suite/missing")"; then
+  bad "features:run --input of a missing path passed" "$out"
+elif [ "$out" = "features:run: --input $suite/missing is no file or directory" ]; then
+  ok "features:run --input of a missing path fails, saying so in one line"
+else
+  bad "features:run --input of a missing path failed, but not with the one line" "$out"
+fi
+
 # --- Vulkan drivers --------------------------------------------------------------
 
 mkdir -p "$real/icd" "$real/nvidia"
