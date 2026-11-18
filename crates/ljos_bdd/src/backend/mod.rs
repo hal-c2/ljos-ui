@@ -968,9 +968,11 @@ pub trait Platform: Backend {
 /// What the application written around the QML does: windows of its
 /// own, models written in Rust, files it watches, faults in native code.
 pub trait Application: Backend {
-    /// The application makes a root of the loaded file `name` with no
-    /// parent, as it makes each window it opens beside the first.
-    fn open_window(&mut self, _name: &str) -> Result<()> {
+    /// The application makes a root of `name` with no parent, as it
+    /// makes each window it opens beside the first. `files`: what the
+    /// application is made of by now, a file given since the last load
+    /// among them.
+    fn open_window(&mut self, _files: &[QmlFile], _name: &str) -> Result<()> {
         Err(BackendError::NotImplemented("a window of its own"))
     }
 
@@ -1037,6 +1039,29 @@ pub trait Application: Backend {
         _sources: bool,
     ) -> Result<()> {
         Err(BackendError::NotImplemented("a user's directory"))
+    }
+
+    /// As [`run_with_user_qml`](Self::run_with_user_qml) with its
+    /// sources, the root made with no parent and shown in a window of its
+    /// own, as an application's first window is. `files`: what the
+    /// application is built from, a file given since the last load among
+    /// them.
+    fn run_with_user_qml_in_window(&mut self, _files: &[QmlFile], _entry: &str) -> Result<()> {
+        Err(BackendError::NotImplemented("a user's directory"))
+    }
+
+    /// Each `Window` is a platform window of its own, as where the
+    /// application runs on a desktop: a tree of its own wherever it is
+    /// declared. Given before anything is loaded.
+    fn windows_of_their_own(&mut self) -> Result<()> {
+        Err(BackendError::NotImplemented("platform windows"))
+    }
+
+    /// The `objectName` of what each of the application's platform
+    /// windows shows: the roots shown in windows of their own, then each
+    /// other `Window` that is shown.
+    fn application_windows(&mut self) -> Result<Vec<String>> {
+        Err(BackendError::NotImplemented("platform windows"))
     }
 
     /// What the application's user's files are doing.

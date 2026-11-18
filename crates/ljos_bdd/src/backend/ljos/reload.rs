@@ -283,9 +283,21 @@ impl Live {
             &self.roots,
             Some(driver),
             &mut |engine, old, new| {
-                if windows.contains(&old) {
+                let swaps = ljos_quick::roots::RootSwaps::of(engine);
+                // What the window of `old` shows: `old`, or the window it
+                // stands for.
+                let face = swaps
+                    .presented(old)
+                    .filter(|w| windows.contains(w))
+                    .unwrap_or(old);
+                if windows.contains(&face) {
                     // A window of its own stays one.
-                    ljos_quick::roots::RootSwaps::of(engine).shows(Some(old), new);
+                    if face != old {
+                        // The window the new root stands for takes the
+                        // one the old stood for at its size.
+                        ljos_quick::roots::adopt(engine, face, new);
+                    }
+                    swaps.shows(engine, Some(face), new);
                     moved.push(new);
                 } else {
                     // `createObject(driver)`, as the first load did.

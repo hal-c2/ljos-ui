@@ -210,6 +210,8 @@ pub struct LjosBackend {
     /// Bindings are worked out when they are read, as `ljos run` runs
     /// them, rather than when they are installed and after every change.
     bindings_when_read: bool,
+    /// [`Application::windows_of_their_own`].
+    windows_of_their_own: bool,
     /// [`ljos_quick::texts_measured`] when the scenario started counting.
     measures_from: Option<u64>,
 }
@@ -488,6 +490,9 @@ impl LjosBackend {
         if self.bindings_when_read {
             live.engine.set_eager_bindings(false);
         }
+        if self.windows_of_their_own {
+            ljos_controls::WindowSystem::of(&live.engine).set_host(|| {});
+        }
         if let Some(vars) = self.locale_env.take() {
             let system = ljos_i18n::SystemLocale::from_vars(|k| {
                 vars.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone())
@@ -749,25 +754,7 @@ impl Live {
     }
 
     fn load(&mut self, files: &[QmlFile], entry: &str) -> Result<()> {
-        let mut wanted: BTreeMap<String, String> = files
-            .iter()
-            .map(|f| (f.name.clone(), f.source.clone()))
-            .collect();
-        wanted.insert(format!("{DRIVER}.qml"), DRIVER_SOURCE.to_owned());
-        if wanted != self.compiled_from {
-            // A scenario that reloads compiles through its reload session.
-            if !self.reload_compile(&wanted)? {
-                let source = compile(&wanted, self.controls_style.as_ref(), self.lowered)?;
-                self.engine.set_component_source(source);
-            }
-            self.engine
-                .set_qml_text_compiler(Some(text::compiler(&wanted)));
-            self.compiled_from = wanted;
-            if self.ahead {
-                let names: Vec<&str> = files.iter().map(|f| f.name.as_str()).collect();
-                self.compiled_ahead(&names)?;
-            }
-        }
+        self.compile_files(files, false)?;
         let obj = self
             .engine
             .create_from_url(key_of(entry), Some(self.driver), Vec::new())
@@ -781,6 +768,38 @@ impl Live {
         Ok(())
     }
 
+    /// Compiles `files` when they are not what the engine runs: what a
+    /// scenario gave since the last load is made from then on. `kept`: a
+    /// file the reload session refuses is the engine's reload error, for
+    /// what is made of the files to meet, rather than this step's failure.
+    fn compile_files(&mut self, files: &[QmlFile], kept: bool) -> Result<()> {
+        let mut wanted: BTreeMap<String, String> = files
+            .iter()
+            .map(|f| (f.name.clone(), f.source.clone()))
+            .collect();
+        wanted.insert(format!("{DRIVER}.qml"), DRIVER_SOURCE.to_owned());
+        if wanted != self.compiled_from {
+            // A scenario that reloads compiles through its reload session.
+            match self.reload_compile(&wanted) {
+                Ok(true) => {}
+                Ok(false) => {
+                    let source = compile(&wanted, self.controls_style.as_ref(), self.lowered)?;
+                    self.engine.set_component_source(source);
+                }
+                Err(_) if kept && self.engine.last_reload_error().is_some() => {}
+                Err(e) => return Err(e),
+            }
+            self.engine
+                .set_qml_text_compiler(Some(text::compiler(&wanted)));
+            self.compiled_from = wanted;
+            if self.ahead {
+                let names: Vec<&str> = files.iter().map(|f| f.name.as_str()).collect();
+                self.compiled_ahead(&names)?;
+            }
+        }
+        Ok(())
+    }
+
     fn open_window(&mut self, name: &str) -> Result<()> {
         let obj = self
             .engine
@@ -788,7 +807,7 @@ impl Live {
             .map_err(|e| failed(format!("cannot open {name}: {e}")))?;
         self.roots.push(obj);
         self.windows.push(obj);
-        ljos_quick::roots::RootSwaps::of(&self.engine).shows(None, obj);
+        ljos_quick::roots::RootSwaps::of(&self.engine).shows(&self.engine, None, obj);
         self.settle()
     }
 
@@ -1121,24 +1140,31 @@ struct Hosting<'a> {
 impl Host for Hosting<'_> {
     /// The host's part of [`Live::put_in_window`]: each window of its own
     /// shows the root asked for, at its size, and the old root goes.
-    fn before_settle(&mut self, engine: &Engine, _: &mut QuickScene) {
+    fn before_frame(&mut self, engine: &Engine, _: &mut QuickScene) {
         let swaps = ljos_quick::roots::RootSwaps::of(engine);
         if !swaps.is_pending() {
             return;
         }
         for i in 0..self.windows.len() {
-            while let Some(new) = swaps.take(engine, self.windows[i]) {
-                let old = self.windows[i];
-                ljos_quick::roots::adopt(engine, old, new);
-                self.windows[i] = new;
-                for r in self.roots.iter_mut() {
-                    if *r == old {
-                        *r = new;
-                    }
+            let (shown, gone) = swaps.swap_in(engine, self.windows[i], &mut |_, _| true);
+            self.windows[i] = shown;
+            // A root that stands for the window shown stays the root of
+            // what the scenario made; one that is gone gives its place to
+            // what the window shows now.
+            for r in self.roots.iter_mut() {
+                if gone.contains(r) {
+                    *r = shown;
                 }
-                engine.destroy(old);
             }
         }
+    }
+
+    /// A root asked for in a window of its own during a frame (a
+    /// `ShellLoader` that took another shell) is shown before the settle
+    /// ends, as a host shows it at its next frame.
+    fn wants_frame(&self, engine: &Engine) -> bool {
+        let swaps = ljos_quick::roots::RootSwaps::of(engine);
+        self.windows.iter().any(|w| swaps.is_pending_for(*w))
     }
 
     /// After a frame: what its creation jobs cost goes to the `top`
@@ -1626,8 +1652,10 @@ impl Files for LjosBackend {
 }
 
 impl Application for LjosBackend {
-    fn open_window(&mut self, name: &str) -> Result<()> {
-        self.live()?.open_window(name)
+    fn open_window(&mut self, files: &[QmlFile], name: &str) -> Result<()> {
+        let live = self.live()?;
+        live.compile_files(files, true)?;
+        live.open_window(name)
     }
 
     fn put_in_window(&mut self, name: &str, old: &str) -> Result<()> {
@@ -1670,6 +1698,46 @@ impl Application for LjosBackend {
         sources: bool,
     ) -> Result<()> {
         self.live()?.run_with_user_qml(entry, built_from, sources)
+    }
+
+    fn run_with_user_qml_in_window(&mut self, files: &[QmlFile], entry: &str) -> Result<()> {
+        self.live()?
+            .run_with_user_qml_at(entry, files, &[], true, true)
+    }
+
+    fn windows_of_their_own(&mut self) -> Result<()> {
+        self.windows_of_their_own = true;
+        if let Some(live) = self.live.as_ref() {
+            // A Window made before the host was set is an item for good.
+            let system = ljos_controls::WindowSystem::of(&live.engine);
+            if !system.windows(&live.engine).is_empty() {
+                return Err(failed(
+                    "windows are said to be platform windows before any Window is made",
+                ));
+            }
+            system.set_host(|| {});
+        }
+        Ok(())
+    }
+
+    fn application_windows(&mut self) -> Result<Vec<String>> {
+        let live = self.live()?;
+        let engine = &live.engine;
+        let mut shown = live.windows.clone();
+        for w in ljos_controls::WindowSystem::of(engine).windows(engine) {
+            let visible = engine.read_by_name(w, "visible").to_boolean();
+            if visible && !shown.contains(&w) {
+                shown.push(w);
+            }
+        }
+        Ok(shown
+            .into_iter()
+            .map(|w| {
+                engine
+                    .to_js_string(&engine.read_by_name(w, "objectName"))
+                    .to_string()
+            })
+            .collect())
     }
 
     fn user_qml_seen(&mut self) -> Result<super::UserSeen> {

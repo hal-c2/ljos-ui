@@ -12,6 +12,13 @@
 //! It is not a `Loader`: a Loader only logs why it could not load, and it
 //! holds one URL. The two make their item the same way.
 //!
+//! A shell may be a `Window`. Where each `Window` is a platform window of
+//! its own, a loader that is the root of what a window shows stands for
+//! its shell there ([`RootSwaps::present`]): the platform window shows the
+//! shell's `Window`, not the loader and another window beside it, and a
+//! shell that takes its place, a `Window` or an item, takes that platform
+//! window at the size it has.
+//!
 //! Under `--watch` a saved file is reloaded by making the application's
 //! roots again (ARCHITECTURE §12.1), and so the loader tries its source
 //! again. A shell that was shown and that an edit breaks is not replaced
@@ -28,6 +35,7 @@ use ljos_runtime::{Fault, Intensity, Restart};
 
 use super::contribution::text;
 use crate::item::{Item, is_item, size_follows_implicit, write_computed};
+use crate::roots::RootSwaps;
 use crate::tree;
 
 /// `ShellLoader.status`.
@@ -203,6 +211,7 @@ fn load(e: &Engine, me: ObjectId) {
     match make(e, me, &source) {
         Ok(obj) => {
             set(e, me, ShellLoader::ITEM.index, Value::Object(obj));
+            present(e, me, obj);
             set(e, me, ShellLoader::STATUS.index, shell_status::READY.into());
             set(e, me, ShellLoader::ERROR.index, "".into());
         }
@@ -233,6 +242,7 @@ fn show_fallback(e: &Engine, me: ObjectId, why: String) {
         Ok(obj) => {
             with_run(e, me, |r| r.fallback_item = Some(obj));
             set(e, me, ShellLoader::ITEM.index, Value::Object(obj));
+            present(e, me, obj);
             set(e, me, ShellLoader::ERROR.index, why.as_str().into());
             set(
                 e,
@@ -358,9 +368,31 @@ fn drop_item(e: &Engine, me: ObjectId) {
         .as_object();
     with_run(e, me, |r| r.fallback_item = None);
     set(e, me, ShellLoader::ITEM.index, Value::Null);
+    let let_go = RootSwaps::of(e).present(e, me, None);
     if let Some(item) = item {
-        discard(e, item);
+        if let_go {
+            // The window it showed goes once no window shows it.
+            e.announce_destruction(item);
+        } else {
+            discard(e, item);
+        }
     }
+}
+
+/// A shell that is a window of its own, as a `Window` is where each has a
+/// platform window: a loader that is the root of what a window shows
+/// stands for it there, and the platform window shows the shell's
+/// `Window` in its place.
+fn present(e: &Engine, me: ObjectId, obj: ObjectId) {
+    let window = own_window(e, me, obj).then_some(obj);
+    RootSwaps::of(e).present(e, me, window);
+}
+
+/// Whether `obj` is a `Window` that is not among the loader's items.
+fn own_window(e: &Engine, me: ObjectId, obj: ObjectId) -> bool {
+    e.is_alive(obj)
+        && e.untrack(|| e.visual_parent(obj)) != Some(me)
+        && e.meta_of(obj).is_some_and(|m| m.inherits_name("Window"))
 }
 
 /// Takes `obj` off the loader now and destroys it at the next frame: a
@@ -387,7 +419,9 @@ fn resize(e: &Engine, me: ObjectId, horizontal: bool) -> Result<(), EngineError>
     let own = e.read(me, size).to_number();
     let follows = size_follows_implicit(e, me, horizontal);
     let shown = e.read(me, ShellLoader::ITEM.index).as_object();
-    let Some(shown) = shown.filter(|s| e.is_alive(*s) && is_item(e, *s)) else {
+    // A window of its own has the platform window's size.
+    let Some(shown) = shown.filter(|s| e.is_alive(*s) && is_item(e, *s) && !own_window(e, me, *s))
+    else {
         return Ok(());
     };
     if follows {

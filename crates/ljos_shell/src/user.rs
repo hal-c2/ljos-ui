@@ -97,8 +97,8 @@ impl Host for ViewHost<'_> {
         self.view.scene().root()
     }
 
-    fn show(&mut self, engine: &Engine, old: Option<ObjectId>, new: ObjectId) {
-        crate::roots::show_root(self.view, engine, old, new);
+    fn show(&mut self, engine: &Engine, _: Option<ObjectId>, new: ObjectId) {
+        crate::roots::show_root(self.view, engine, new);
     }
 }
 

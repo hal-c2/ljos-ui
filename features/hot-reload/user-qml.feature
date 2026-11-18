@@ -209,6 +209,87 @@ Feature: A shipped application its users change while it runs
       And 1 save of the user's files has been applied
       And there is no reload error
 
+  Rule: A user's shell that is a Window is the application's window
+
+    An application whose root is a `ShellLoader` shows a shell that is a
+    `Window` as its window, where each `Window` is a platform window. A
+    save of the user's shell is applied to it in that window, as a save is
+    applied to any file; its removal puts the application's shell in that
+    window at the size the window has.
+
+    Background:
+      Given each Window has a platform window of its own
+      And the file "DefaultWindow.qml":
+        """qml
+        import QtQuick
+        Window { objectName: "default-window"; width: 300; height: 240; visible: true }
+        """
+      And the file "App.qml":
+        """qml
+        import Ljos.Blocks
+        ShellLoader { objectName: "loader"; source: "Shell.qml"; fallback: "DefaultWindow.qml" }
+        """
+
+    Scenario: A user's shell that is a Window is the only window
+      Given the user's file "Shell.qml":
+        """qml
+        import QtQuick
+        Window { objectName: "user-window"; width: 200; height: 100; visible: true }
+        """
+      When the application runs "App.qml" built ahead in a window of its own, with the user's directory over it
+      Then the application's windows are "user-window"
+      And the property "width" of "user-window" is 200
+      And the property "status" of "loader" is 1
+
+    Scenario: A save of the user's Window shell is applied in the same window
+      Given the user's file "Shell.qml":
+        """qml
+        import QtQuick
+        Window { objectName: "user-window"; width: 200; height: 100; visible: true }
+        """
+      When the application runs "App.qml" built ahead in a window of its own, with the user's directory over it
+      And the user saves the file "Shell.qml" as:
+        """qml
+        import QtQuick
+        Window {
+          objectName: "user-window"; width: 200; height: 100; visible: true
+          title: "Edited"
+          Item { objectName: "part" }
+        }
+        """
+      Then 1 save of the user's files has been applied
+      And there is no reload error
+      And the application's windows are "user-window"
+      And the property "title" of "user-window" is "Edited"
+      And the object "loader/part" exists
+
+    Scenario: The user's Window shell removed gives the window to the application's
+      Given the user's file "Shell.qml":
+        """qml
+        import QtQuick
+        Window { objectName: "user-window"; width: 200; height: 100; visible: true }
+        """
+      When the application runs "App.qml" built ahead in a window of its own, with the user's directory over it
+      And the user removes the file "Shell.qml"
+      Then the application's windows are "default-window"
+      And the property "width" of "default-window" is 200
+      And the property "status" of "loader" is 2
+      And there is no reload error
+
+    Scenario: A user's shell that is an item, saved and removed, leaves the application's window
+      When the application runs "App.qml" built ahead in a window of its own, with the user's directory over it
+      And the user saves the file "Shell.qml" as:
+        """qml
+        import QtQuick
+        Rectangle { objectName: "user-shell" }
+        """
+      Then the application's windows are "loader"
+      And the object "loader/user-shell" exists
+      When the user removes the file "Shell.qml"
+      Then the application's windows are "default-window"
+      And the property "width" of "default-window" is 300
+      And the application was told of no fault
+
   Rule: A file that does not work leaves the application as it was, and is told
 
     Scenario: A save that does not compile keeps what runs and is told to the application

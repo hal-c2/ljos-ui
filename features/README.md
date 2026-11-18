@@ -206,6 +206,7 @@ Objects are named by `objectName`; `a/b` finds `b` below `a`. Properties may be 
 | `Given the system has an accelerometer` | the device has that sensor, which reads what the scenario says; give it before the QML. Also `a gyroscope`, `a magnetometer`, `a compass`, `a pressure sensor`, `an ambient light sensor`, `an orientation sensor`. Without it the device has no sensors, as a desktop (`@ljos-only`) |
 | `Given the system's position is latitude 64.1466, longitude -21.9426` | the system's position service is there and the device is at that place, with `, altitude 10` (metres) when it knows its height; give it before the QML. A started `PositionSource` is given it as a fix. Without it the system has no position service, as a desktop (`@ljos-only`) |
 | `Given the application works out a binding only when it is read` | bindings are worked out when they are read, as `ljos run` runs them, not when they are installed and after every change, as the Ljós backend otherwise does to report binding loops when Qt does; give it before the QML (`@ljos-only`) |
+| `Given each Window has a platform window of its own` | the application is hosted as a desktop one is: each `Window` it makes is a window of its own, not an item of what declares it; give it before any `Window` is made (`@ljos-only`) |
 | `Given a tree model "files" that reads a folder's rows 100 ms after a view asks for them:` + table | the application gives the QML a tree model in Rust under that name; the table's `folder` and `name` columns list each folder's rows (an empty folder is the top). A folder has its expand arrow before it is read, and its rows come that long after a view asks; give it before the QML (`@ljos-only`: the Qt backend cannot be given a C++ model) |
 | `Given a list model "pages" of 50 rows that reads 20 at a time, 100 ms after a view asks for more` | the application gives the QML a list model in Rust under that name, with no rows read at the start; its rows are `row 0`, `row 1` and so on in the `display` role. Each time a view asks for more it reads the next page that long later, and asking again while a page is on the way reads nothing; give it before the QML (`@ljos-only`) |
 
@@ -222,7 +223,7 @@ setter tries to write `depth` and logs the error it gets.
 | Step | Meaning |
 |---|---|
 | `When "X.qml" is loaded` | create an instance of `X.qml`; objects become findable by `objectName` |
-| `When the file "X.qml" is opened in a window of its own` | the application makes a root of the given file with no parent, as it makes each window it opens beside the first; its objects are findable as a load's are (`@ljos-only`: on Qt each window would need its own engine) |
+| `When the file "X.qml" is opened in a window of its own` | the application makes a root of the given file with no parent, as it makes each window it opens beside the first, of every file given so far (a file that does not compile is the reload error where the files are watched); its objects are findable as a load's are (`@ljos-only`: on Qt each window would need its own engine) |
 | `When the UI language is set to "…"` | what assigning `Qt.uiLanguage` does (`"is_IS"`, `"de"`, `""`) |
 | `When the storage of profile "X" is ready` | waits until the web engine has readied the storage of the profile whose `storageName` is X, and lets it go if it is held unready; views waiting for it are shown now. It fails, saying so, when the storage is not ready after 10 s. On Qt a profile's storage is ready once it is made, so there is nothing to wait for |
 | `When the system setting "font scale" changes to 1.5` | the user changes a setting of the system while the application runs; the settings and values of `Given the system setting` (`@ljos-only`) |
@@ -291,6 +292,7 @@ setter tries to write `depth` and logs the error it gets.
 
 | Step | Meaning |
 |---|---|
+| `Then the application's windows are "a, b"` | the `objectName`s of the platform windows the application shows, in the order they were opened; a root that stands for a window (a `ShellLoader` whose shell is a `Window`) is named by that window (`@ljos-only`) |
 | `Then the property "p" of "o" is V` | equals; numbers compare numerically, colours are lower-case hex |
 | `Then the property "p" of "o" is not V` | differs |
 | `Then the property "p" of "o" is at least N` / `is at most N` | numeric bound |
@@ -494,6 +496,7 @@ their sources; the user's directory is a directory on the real disk. The steps c
 | `Given the user's file "X" links to a file outside the user's directory` | the file is a link that leads out of the directory |
 | `When the application runs "Main.qml" built ahead, with the user's directory over it` | the scenario's files built ahead (`build::Options::with_sources`), run with the user's directory over them; the root is made of the entry in a window of its own |
 | `When the application runs "Main.qml" built ahead from an older "X.qml", with the user's directory over it:` + doc string | the same, with `X.qml` compiled from the doc string while the pack carries the scenario's text of it, as a build that was not redone after a change |
+| `When the application runs "App.qml" built ahead in a window of its own, with the user's directory over it` | the same, of every file given so far, with the root made of the entry with no parent and shown in a window of its own, as an application's first window is |
 | `When the user saves the file "X" as:` + doc string / `When the user removes the file "X"` | while the application runs; the step waits for what the save brings |
 | `When the user saves the file "X" as a link to a file outside the user's directory` | while the application runs, the file becomes a link that leads out of the directory; the step waits for what the save brings |
 | `When the user's directory is removed and made again` | the directory is removed and made again at its path before the application hears of either; the step waits for the wake |

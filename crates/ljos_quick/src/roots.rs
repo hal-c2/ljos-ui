@@ -25,12 +25,33 @@ pub enum RootError {
     NotAnItem(ObjectId),
 }
 
+/// A root a host is to show in place of one it shows.
+#[derive(Debug)]
+struct Swap {
+    old: ObjectId,
+    new: ObjectId,
+    /// Destroyed once `new` is shown.
+    retire: Vec<ObjectId>,
+    /// Destroyed when the window cannot show `new`.
+    refused: Option<ObjectId>,
+    /// `new` takes the size `old` has first: the window keeps its own.
+    adopt: bool,
+}
+
 /// The roots the hosts of an engine show, and the replacements asked for
 /// and not yet made.
+///
+/// A root may stand for a window it holds ([`present`](Self::present)):
+/// a host asked to show the root shows that window, in the platform
+/// window the root would have had, and the root lives on unshown. That
+/// is how a `ShellLoader` at the root of an application whose shell is a
+/// `Window` makes that window the application's.
 #[derive(Default)]
 pub struct RootSwaps {
     shown: RefCell<Vec<ObjectId>>,
-    pending: RefCell<Vec<(ObjectId, ObjectId)>>,
+    pending: RefCell<Vec<Swap>>,
+    /// Each root that stands for a window, and the window.
+    presents: RefCell<Vec<(ObjectId, ObjectId)>>,
     wake: RefCell<Option<Rc<dyn Fn()>>>,
 }
 
@@ -39,6 +60,7 @@ impl std::fmt::Debug for RootSwaps {
         f.debug_struct("RootSwaps")
             .field("shown", &self.shown.borrow())
             .field("pending", &self.pending.borrow())
+            .field("presents", &self.presents.borrow())
             .finish_non_exhaustive()
     }
 }
@@ -50,11 +72,19 @@ impl RootSwaps {
     }
 
     /// A host shows `root` in a window of its own; `old`, when given, is
-    /// the root it showed there before.
-    pub fn shows(&self, old: Option<ObjectId>, root: ObjectId) {
-        let mut shown = self.shown.borrow_mut();
-        shown.retain(|r| Some(*r) != old && *r != root);
-        shown.push(root);
+    /// the root it showed there before. A root that stands for a window
+    /// is replaced by it before the next frame, at the size `old` had
+    /// (at its own when there was none).
+    pub fn shows(&self, engine: &Engine, old: Option<ObjectId>, root: ObjectId) {
+        {
+            let mut shown = self.shown.borrow_mut();
+            shown.retain(|r| Some(*r) != old && *r != root);
+            shown.push(root);
+        }
+        self.prune(engine);
+        if self.present_now(engine, root, old.is_some()) {
+            self.wake();
+        }
     }
 
     /// The host no longer shows `root`.
@@ -73,20 +103,178 @@ impl RootSwaps {
         !self.pending.borrow().is_empty()
     }
 
-    /// The root asked to go in the window of `root`, if one was. The host
-    /// calls [`adopt`] and puts it in the window, then destroys `root`. One
-    /// destroyed since it was asked for is dropped, and `root` stays.
-    pub fn take(&self, engine: &Engine, root: ObjectId) -> Option<ObjectId> {
-        let new = {
-            let mut pending = self.pending.borrow_mut();
-            let at = pending.iter().position(|(old, _)| *old == root)?;
-            pending.remove(at).1
+    /// Whether a replacement waits to be made in the window of `root`.
+    pub fn is_pending_for(&self, root: ObjectId) -> bool {
+        self.pending.borrow().iter().any(|s| s.old == root)
+    }
+
+    /// The window `holder` stands for, if it stands for one.
+    pub fn presented(&self, holder: ObjectId) -> Option<ObjectId> {
+        let presents = self.presents.borrow();
+        presents.iter().find(|(h, _)| *h == holder).map(|(_, w)| *w)
+    }
+
+    /// `holder` stands for `window` from now on (None: for nothing, and
+    /// it is shown itself). Where a host shows the holder, or the window
+    /// it stood for, the host shows what it stands for now before the
+    /// next frame. True when the window it stood for is no longer the
+    /// holder's to destroy: it goes once the host has let go of it.
+    pub fn present(&self, engine: &Engine, holder: ObjectId, window: Option<ObjectId>) -> bool {
+        self.prune(engine);
+        let before = {
+            let mut presents = self.presents.borrow_mut();
+            let before = presents
+                .iter()
+                .position(|(h, _)| *h == holder)
+                .map(|at| presents.remove(at).1);
+            if let Some(w) = window {
+                presents.push((holder, w));
+            }
+            before
         };
-        if lasts(engine, new) {
-            return Some(new);
+        let target = window.unwrap_or(holder);
+        let current = {
+            let mut shown = self.shown.borrow_mut();
+            let Some(at) = shown
+                .iter()
+                .position(|r| *r == holder || Some(*r) == before)
+            else {
+                // No host shows it: its windows are its own business.
+                return false;
+            };
+            let current = std::mem::replace(&mut shown[at], target);
+            if current == target {
+                return false;
+            }
+            current
+        };
+        // A window the holder let go of; never the holder itself.
+        let let_go = current != holder;
+        let mut pending = self.pending.borrow_mut();
+        match pending.iter().position(|s| s.new == current) {
+            // `current` never got the window.
+            Some(at) => {
+                if pending[at].old == target {
+                    pending.remove(at);
+                } else {
+                    pending[at].new = target;
+                }
+                drop(pending);
+                if let_go {
+                    engine.destroy(current);
+                }
+            }
+            None => {
+                pending.push(Swap {
+                    old: current,
+                    new: target,
+                    retire: if let_go { vec![current] } else { Vec::new() },
+                    refused: None,
+                    adopt: true,
+                });
+                drop(pending);
+            }
         }
-        self.shows(Some(new), root);
-        None
+        self.wake();
+        let_go
+    }
+
+    /// Shows in the window of `root` what was asked to go there, as
+    /// often as was asked: each time [`adopt`] where it is to, `show`
+    /// puts `new` in the window of `old` (false: it cannot, and `old`
+    /// stays), and what `new` replaces is destroyed. The root shown in
+    /// the end, and the roots destroyed on the way, for a host that keeps
+    /// its own list of them.
+    pub fn swap_in(
+        &self,
+        engine: &Engine,
+        root: ObjectId,
+        show: &mut dyn FnMut(ObjectId, ObjectId) -> bool,
+    ) -> (ObjectId, Vec<ObjectId>) {
+        let mut root = root;
+        let mut gone = Vec::new();
+        loop {
+            let swap = {
+                let mut pending = self.pending.borrow_mut();
+                let Some(at) = pending.iter().position(|s| s.old == root) else {
+                    break;
+                };
+                pending.remove(at)
+            };
+            // One destroyed since it was asked for is dropped, and `root`
+            // stays.
+            if !lasts(engine, swap.new) {
+                self.restore(swap.new, root);
+                continue;
+            }
+            if swap.adopt {
+                adopt(engine, root, swap.new);
+            }
+            if show(root, swap.new) {
+                for r in swap.retire {
+                    engine.destroy(r);
+                    gone.push(r);
+                }
+                root = swap.new;
+                self.present_now(engine, root, true);
+            } else {
+                self.restore(swap.new, root);
+                if let Some(n) = swap.refused {
+                    engine.destroy(n);
+                }
+            }
+        }
+        (root, gone)
+    }
+
+    /// The window shows `old` again in place of `new`.
+    fn restore(&self, new: ObjectId, old: ObjectId) {
+        let mut shown = self.shown.borrow_mut();
+        shown.retain(|r| *r != old);
+        if let Some(at) = shown.iter().position(|r| *r == new) {
+            shown[at] = old;
+        } else {
+            shown.push(old);
+        }
+    }
+
+    /// Asks for the window `root` stands for in place of `root`, which a
+    /// host shows. True when it was asked for.
+    fn present_now(&self, engine: &Engine, root: ObjectId, adopt: bool) -> bool {
+        let Some(window) = self.presented(root).filter(|w| lasts(engine, *w)) else {
+            return false;
+        };
+        {
+            let mut shown = self.shown.borrow_mut();
+            if shown.contains(&window) {
+                return false;
+            }
+            let Some(at) = shown.iter().position(|r| *r == root) else {
+                return false;
+            };
+            shown[at] = window;
+        }
+        self.pending.borrow_mut().push(Swap {
+            old: root,
+            new: window,
+            retire: Vec::new(),
+            refused: None,
+            adopt,
+        });
+        true
+    }
+
+    fn prune(&self, engine: &Engine) {
+        self.presents
+            .borrow_mut()
+            .retain(|(h, w)| engine.is_alive(*h) && engine.is_alive(*w));
+    }
+
+    fn wake(&self) {
+        let wake = self.wake.borrow().clone();
+        if let Some(wake) = wake {
+            wake();
+        }
     }
 
     fn ask(&self, engine: &Engine, old: ObjectId, new: ObjectId) -> Result<(), RootError> {
@@ -98,36 +286,60 @@ impl RootSwaps {
         if !is_item(engine, new) {
             return Err(RootError::NotAnItem(new));
         }
-        {
+        self.prune(engine);
+        // `old` may be a root that stands for the window shown, or that
+        // window: the root goes, and the window with it.
+        let holder = match self.presented(old) {
+            Some(_) => Some(old),
+            None => {
+                let presents = self.presents.borrow();
+                presents.iter().find(|(_, w)| *w == old).map(|(h, _)| *h)
+            }
+        };
+        let face = {
             let mut shown = self.shown.borrow_mut();
             if shown.contains(&new) {
                 return Err(RootError::Shown(new));
             }
+            let window = holder.and_then(|h| self.presented(h));
             let at = shown
                 .iter()
-                .position(|r| *r == old)
+                .position(|r| *r == old || Some(*r) == holder || Some(*r) == window)
                 .ok_or(RootError::NotShown(old))?;
             // From now on `new` is the one to ask about, before the host
             // has made the change: a handler may hand the window on at once.
-            shown[at] = new;
-        }
+            std::mem::replace(&mut shown[at], new)
+        };
+        let goes = holder.unwrap_or(old);
         let mut pending = self.pending.borrow_mut();
-        match pending.iter_mut().find(|(_, n)| *n == old) {
-            // `old` never got the window: `new` takes the place it was to have.
+        match pending.iter_mut().find(|s| s.new == face) {
+            // `face` never got the window: `new` takes the place it was to have.
             Some(waiting) => {
-                let skipped = std::mem::replace(&mut waiting.1, new);
+                let skipped = std::mem::replace(&mut waiting.new, new);
+                if let Some(h) = holder
+                    && !waiting.retire.contains(&h)
+                {
+                    waiting.retire.push(h);
+                }
+                waiting.refused = Some(new);
+                waiting.adopt = true;
                 drop(pending);
-                engine.destroy(skipped);
+                if Some(skipped) != holder {
+                    engine.destroy(skipped);
+                }
             }
             None => {
-                pending.push((old, new));
+                pending.push(Swap {
+                    old: face,
+                    new,
+                    retire: vec![goes],
+                    refused: Some(new),
+                    adopt: true,
+                });
                 drop(pending);
             }
         }
-        let wake = self.wake.borrow().clone();
-        if let Some(wake) = wake {
-            wake();
-        }
+        self.wake();
         Ok(())
     }
 }

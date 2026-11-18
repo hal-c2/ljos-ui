@@ -270,7 +270,10 @@ impl LjosWorld {
     }
 
     /// Every staged file, with `$SERVER` the scenario's web server.
-    fn staged(&mut self) -> Result<Vec<QmlFile>, String> {
+    ///
+    /// # Errors
+    /// The scenario's web server could not be started.
+    pub fn staged(&mut self) -> Result<Vec<QmlFile>, String> {
         let names_server = self
             .files
             .values()

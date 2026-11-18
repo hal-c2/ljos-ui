@@ -10,36 +10,38 @@ use ljos_quick::roots::{RootSwaps, adopt};
 
 use crate::ShellApp;
 
-/// Shows `new` in `view` where `old` was, at its size: the view sizes its
-/// root only when the window's size changes, which it has not. False when
-/// the view cannot show it, and `old` stays.
-pub(crate) fn show_root(
-    view: &mut QmlView,
-    engine: &Engine,
-    old: Option<ObjectId>,
-    new: ObjectId,
-) -> bool {
-    if let Some(old) = old {
-        adopt(engine, old, new);
-    }
-    let swaps = RootSwaps::of(engine);
+/// Shows `new` in `view` where its root was: false when the view cannot
+/// show it, and the root stays.
+fn put(view: &mut QmlView, engine: &Engine, new: ObjectId) -> bool {
     match view.scene_mut().replace_root(engine, new) {
-        Ok(()) => {
-            swaps.shows(old, new);
-            true
-        }
+        Ok(()) => true,
         Err(e) => {
             engine.log(
                 LogLevel::Warning,
                 "ljos.window",
                 format!("the new root cannot be shown: {e}"),
             );
-            if let Some(old) = old {
-                swaps.shows(Some(new), old);
-            }
             false
         }
     }
+}
+
+/// Shows the root a reload made, `new`, where the view's root was, at its
+/// size: the view sizes its root only when the window's size changes,
+/// which it has not. The view's root may be a window the root a reload
+/// replaces stood for (`RootSwaps::present`); a root that stands for one
+/// gives way to it before the next frame. False when the view cannot show
+/// it, and its root stays.
+pub(crate) fn show_root(view: &mut QmlView, engine: &Engine, new: ObjectId) -> bool {
+    let old = view.scene().root();
+    if let Some(old) = old {
+        adopt(engine, old, new);
+    }
+    let shown = put(view, engine, new);
+    if shown {
+        RootSwaps::of(engine).shows(engine, old, new);
+    }
+    shown
 }
 
 impl<M> ShellApp<M> {
@@ -52,13 +54,11 @@ impl<M> ShellApp<M> {
         if !swaps.is_pending() {
             return;
         }
-        while let Some(old) = self.view.scene().root()
-            && let Some(new) = swaps.take(&engine, old)
-        {
-            let shown = self
-                .view
-                .without_wake(|view| show_root(view, &engine, Some(old), new));
-            engine.destroy(if shown { old } else { new });
-        }
+        let Some(root) = self.view.scene().root() else {
+            return;
+        };
+        self.view.without_wake(|view| {
+            swaps.swap_in(&engine, root, &mut |_, new| put(view, &engine, new));
+        });
     }
 }

@@ -295,9 +295,9 @@ impl Host for ViewHost<'_> {
         self.view.scene().root()
     }
 
-    fn show(&mut self, engine: &Engine, old: Option<ObjectId>, new: ObjectId) {
+    fn show(&mut self, engine: &Engine, _: Option<ObjectId>, new: ObjectId) {
         let placeholder = self.placeholder.take();
-        let shown = crate::roots::show_root(self.view, engine, old.or(placeholder), new);
+        let shown = crate::roots::show_root(self.view, engine, new);
         // The placeholder is what the window shows until a root is.
         match placeholder {
             Some(empty) if shown => {

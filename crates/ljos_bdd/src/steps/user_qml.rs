@@ -53,6 +53,14 @@ fn runs_with_user_qml(w: &mut LjosWorld, entry: String) -> StepResult {
 }
 
 #[when(
+    regex = r#"^the application runs "([^"]+\.qml)" built ahead in a window of its own, with the user's directory over it$"#
+)]
+fn runs_with_user_qml_in_window(w: &mut LjosWorld, entry: String) -> StepResult {
+    let files = w.staged()?;
+    w.each(|b| b.application()?.run_with_user_qml_in_window(&files, &entry))
+}
+
+#[when(
     regex = r#"^the application runs "([^"]+\.qml)" built ahead without its sources, with the user's directory over it$"#
 )]
 fn runs_without_sources(w: &mut LjosWorld, entry: String) -> StepResult {

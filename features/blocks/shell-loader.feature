@@ -305,6 +305,112 @@ Feature: A ShellLoader shows a user's shell, or the application's own when the u
       And the property "error" of "loader" is ""
       And the property "status" of "loader" is 1
 
+  Rule: A shell that is a Window is the application's window
+
+    Where each `Window` is a platform window, a loader at the root of an
+    application's window stands for the shell it shows: a shell that is a
+    `Window` is that window, not a second one, and the shell that takes
+    its place takes the same window at the size it has.
+
+    Background:
+      Given each Window has a platform window of its own
+      And the file "Window.qml":
+        """qml
+        import QtQuick
+        Window { objectName: "default-window"; width: 300; height: 240; visible: true }
+        """
+      And the file "Main.qml":
+        """qml
+        import Ljos.Blocks
+        ShellLoader { objectName: "loader"; source: "Shell.qml"; fallback: "Window.qml" }
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        Item { objectName: "root" }
+        """
+
+    Scenario: A fallback that is a Window is the only window
+      Given the file "Shell.qml":
+        """qml
+        import QtQuick
+        Rectangle { NoSuchThing { } }
+        """
+      When the file "Main.qml" is opened in a window of its own
+      Then the application's windows are "default-window"
+      And the property "status" of "loader" is 2
+
+    Scenario: The user's Window takes the window the fallback had, at its size
+      Given the file "Shell.qml":
+        """qml
+        import QtQuick
+        Rectangle { NoSuchThing { } }
+        """
+      And the file "Other.qml":
+        """qml
+        import QtQuick
+        Window { objectName: "other-window"; width: 200; height: 100; visible: true }
+        """
+      When the file "Main.qml" is opened in a window of its own
+      And the property "source" of "loader" is set to "Other.qml"
+      Then the application's windows are "other-window"
+      And the property "width" of "other-window" is 300
+      And the property "height" of "other-window" is 240
+      And the object "default-window" does not exist
+      And the property "status" of "loader" is 1
+
+    Scenario: A shell that is not a Window gives the window back to the loader
+      Given the file "Shell.qml":
+        """qml
+        import QtQuick
+        Rectangle { NoSuchThing { } }
+        """
+      And the file "Other.qml":
+        """qml
+        import QtQuick
+        Rectangle { objectName: "user-shell" }
+        """
+      When the file "Main.qml" is opened in a window of its own
+      And the property "source" of "loader" is set to "Other.qml"
+      Then the application's windows are "loader"
+      And the property "width" of "loader" is 300
+      And the object "loader/user-shell" exists
+      And the object "default-window" does not exist
+
+    Scenario: A Window shell that fails after it was made gives its window to the fallback
+      Given the file "Shell.qml":
+        """qml
+        import QtQuick
+        Window {
+          objectName: "user-window"; width: 200; height: 100; visible: true
+          Item { objectName: "part" }
+        }
+        """
+      When the file "Main.qml" is opened in a window of its own
+      And a native handler of "part" panics with "shell broke"
+      Then the application's windows are "default-window"
+      And the property "width" of "default-window" is 200
+      And the object "user-window" does not exist
+      And the property "status" of "loader" is 2
+
+    Scenario: Mending a Window shell's file replaces the fallback in the same window
+      Given the file "Shell.qml":
+        """qml
+        import QtQuick
+        Window { NoSuchThing { } }
+        """
+      When the file "Main.qml" is opened in a window of its own
+      And the file "Shell.qml" is changed to:
+        """qml
+        import QtQuick
+        Window { objectName: "user-window"; width: 200; height: 100; visible: true }
+        """
+      And a reload happens
+      Then there is no reload error
+      And the application's windows are "user-window"
+      And the property "width" of "user-window" is 300
+      And the property "status" of "loader" is 1
+
   Rule: Editing the shell while the application runs
 
     Scenario: Mending the shell's file replaces the fallback
