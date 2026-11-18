@@ -443,8 +443,12 @@ pub struct DesktopBackend {
 
 impl Drop for DesktopBackend {
     fn drop(&mut self) {
-        if self.keyboard_off {
-            let _ = sandbox_keyboard(true);
+        // Every later desktop scenario of the run would fail without a
+        // keyboard, far from this cause, so a failed restore says so here.
+        if self.keyboard_off
+            && let Err(err) = sandbox_keyboard(true)
+        {
+            eprintln!("[desktop] the seat's keyboard was not given back: {err}");
         }
     }
 }
@@ -1069,6 +1073,11 @@ impl Input for DesktopBackend {
                 "the seat's keyboard changes before the application starts, which hears of it once"
                     .into(),
             ));
+        }
+        // `keyboard off` can fail after it has taken the keyboard away, so
+        // the keyboard is given back whenever it was asked to go.
+        if !present {
+            self.keyboard_off = true;
         }
         sandbox_keyboard(present)?;
         self.keyboard_off = !present;
