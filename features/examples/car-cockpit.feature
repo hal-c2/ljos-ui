@@ -201,15 +201,19 @@ Feature: The car cockpit example
       And the user clicks the "button" "Miles"
       Then the property "ahead.unit" of "navPanel" is not "m"
 
+    # The car starts parked 8 % along the route, 510 m short of its first
+    # corner, and its drive clock only runs in gear: nothing moves it here.
     Scenario: The next turn is spoken as a whole sentence in the chosen unit
       When "Main.qml" is loaded
       And the property "width" of "cockpit" is set to 400
       And the property "height" of "cockpit" is set to 225
-      Then the object "nextTurn" is exposed as a "label" named "In 970 metres, left onto Ember Avenue"
+      Then the property "travelled" of "car" is 0.08
+      And the property "running" of "drive" is false
+      And the object "nextTurn" is exposed as a "label" named "In 510 metres, left onto Ember Avenue"
       When the user clicks the "button" "Settings"
       And the user clicks the "button" "Miles"
       And the user clicks the "button" "Navigation"
-      Then the object "nextTurn" is exposed as a "label" named "In 0.6 miles, left onto Ember Avenue"
+      Then the object "nextTurn" is exposed as a "label" named "In 0.3 miles, left onto Ember Avenue"
 
   Rule: Settings change the look and the glow
 
