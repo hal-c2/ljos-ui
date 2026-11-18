@@ -56,7 +56,10 @@ T.MenuItem {
             // A row with only one of the two shows it whatever the
             // display, as IconLabel does.
             readonly property bool hasIcon: control.iconName.length > 0 || picture.implicitWidth > 0
-            readonly property bool hasLabel: control.text.length > 0
+            // Text that draws something once its mnemonic markers are gone,
+            // as a button's (Button.qml).
+            readonly property bool hasLabel: control.text.indexOf("&&") >= 0
+                                             || control.text.split("&").join("").length > 0
             readonly property bool showsIcon: hasIcon && (control.display !== T.AbstractButton.TextOnly || !hasLabel)
             readonly property bool showsText: hasLabel && (control.display !== T.AbstractButton.IconOnly || !hasIcon)
             // The style's own icon, else the row's or its action's.

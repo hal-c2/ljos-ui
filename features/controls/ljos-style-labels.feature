@@ -119,7 +119,7 @@ Feature: Ljós's own style: the icon and the text of a button and a menu row
         import QtQuick.Controls.impl
         import Ljos.Controls
         Item {
-          width: 480; height: 240
+          width: 480; height: 360
           Menu {
             Component.onCompleted: open()
             MenuItem { objectName: "hidden"; text: "Open"; iconName: "folder"; display: IconLabel.TextOnly }
@@ -131,6 +131,12 @@ Feature: Ljós's own style: the icon and the text of a button and a menu row
             Component.onCompleted: open()
             MenuItem { objectName: "lone"; iconName: "folder"; display: IconLabel.TextOnly }
             MenuItem { objectName: "beside"; text: "Close" }
+          }
+          Menu {
+            y: 180
+            Component.onCompleted: open()
+            MenuItem { objectName: "marker"; text: "&"; iconName: "folder"; display: IconLabel.TextOnly }
+            MenuItem { objectName: "besideMarker"; text: "Close" }
           }
         }
         """
@@ -151,6 +157,13 @@ Feature: Ljós's own style: the icon and the text of a button and a menu row
       Then the property "contentItem.gutter" of "lone" is 24
       And the property "contentItem.gutter" of "beside" is 24
 
+    # A lone "&" is a mnemonic's marker and is not drawn, so the row has no
+    # text and shows its icon.
+    @api-QtQuick.Controls.AbstractButton.display
+    Scenario: A row whose text is a lone "&" shows its icon, and the others keep its column
+      Then the property "contentItem.gutter" of "marker" is 24
+      And the property "contentItem.gutter" of "besideMarker" is 24
+
   Rule: A button shows what its display asks for
 
     Background:
@@ -162,7 +175,7 @@ Feature: Ljós's own style: the icon and the text of a button and a menu row
         import Ljos.Controls
         Item {
           id: root; objectName: "root"
-          width: 560; height: 60
+          width: 640; height: 60
           Button { id: plain; text: "Save" }
           Button { objectName: "beside"; x: 80; text: "Save"; iconName: "plus" }
           Button { objectName: "iconOnly"; x: 160; text: "Save"; iconName: "plus"; display: IconLabel.IconOnly }
@@ -170,6 +183,7 @@ Feature: Ljós's own style: the icon and the text of a button and a menu row
           Button { objectName: "pictureTextOnly"; x: 320; text: "Save"; icon.source: "red.png"; display: IconLabel.TextOnly }
           Button { objectName: "noIcon"; x: 400; text: "Save"; display: IconLabel.IconOnly }
           Button { objectName: "noText"; x: 480; iconName: "plus"; display: IconLabel.TextOnly }
+          Button { objectName: "mnemonicOnly"; x: 560; text: "&"; icon.source: "red.png"; display: IconLabel.TextOnly }
           function part(c, name) { for (const k of c.contentItem.children) if (k.objectName === name) return k; return null }
           property var got: []
           // What it asks for besides its text, and whether it shows its icon and its text.
@@ -185,7 +199,8 @@ Feature: Ljós's own style: the icon and the text of a button and a menu row
 
     # Each answer is set against what a button with the same text and no
     # icon asks for, so that no font's widths are written here. A button
-    # with only one of the two shows it, whatever its display says.
+    # with only one of the two shows it, whatever its display says; a lone
+    # "&" is a mnemonic's marker and draws nothing, so it is no text.
     @api-QtQuick.Controls.AbstractButton.display
     Scenario Outline: A <control> shown <how> asks for the room of <what>
       When the method "measure" of "root" is called with "<control>"
@@ -199,6 +214,7 @@ Feature: Ljós's own style: the icon and the text of a button and a menu row
         | pictureTextOnly | as its text     | its text alone, though given a picture | [0, [false, true]]  |
         | noIcon          | as its icon     | its text, as it has no icon            | [0, [false, true]]  |
         | noText          | as its text     | its icon, as it has no text            | [16, [true, false]] |
+        | mnemonicOnly    | as its text     | its picture, as "&" draws no text      | [16, [true, false]] |
 
   Rule: A button loads no picture it does not show
 
@@ -217,6 +233,7 @@ Feature: Ljós's own style: the icon and the text of a button and a menu row
           Button { objectName: "textOnly"; x: 80; text: "Save"; icon.source: "red.png"; display: IconLabel.TextOnly }
           Button { objectName: "acting"; x: 160; display: IconLabel.TextOnly; action: T.Action { text: "Save"; icon.source: "red.png" } }
           Button { objectName: "alone"; x: 240; icon.source: "red.png"; display: IconLabel.TextOnly }
+          Button { objectName: "marker"; x: 320; text: "&"; icon.source: "red.png"; display: IconLabel.TextOnly }
           function part(c, name) { for (const k of c.contentItem.children) if (k.objectName === name) return k; return null }
           property var got: []
           // How large each one's picture was made: one never loaded is nothing.
@@ -225,11 +242,12 @@ Feature: Ljós's own style: the icon and the text of a button and a menu row
         """
 
     # A glyph wins over the picture, and a display of the text alone hides
-    # it where there is text; a button with no text shows its picture.
+    # it where there is text; a button with no text that draws, none at all
+    # or a lone "&", shows its picture.
     @api-QtQuick.Controls.AbstractButton.icon.source
     Scenario: A button whose glyph or display hides its picture loads none
       When the method "measure" of "root" is called
-      Then the property "got" of "root" is [0, 0, 0, 16]
+      Then the property "got" of "root" is [0, 0, 0, 16, 16]
 
     # The picture it shows then is the button's or its action's, from the
     # file that named it.
@@ -239,7 +257,7 @@ Feature: Ljós's own style: the icon and the text of a button and a menu row
       And the property "display" of "textOnly" is set to 2
       And the property "display" of "acting" is set to 2
       And the method "measure" of "root" is called
-      Then the property "got" of "root" is [16, 16, 16, 16]
+      Then the property "got" of "root" is [16, 16, 16, 16, 16]
 
   Rule: A button shown under its icon has the two in its middle
 
@@ -369,6 +387,7 @@ Feature: Ljós's own style: the icon and the text of a button and a menu row
           MenuItem { objectName: "rowTextOnly"; x: 120; width: 120; text: "Open"; iconName: "folder"; display: IconLabel.TextOnly }
           MenuItem { objectName: "rowNoIcon"; x: 240; width: 120; text: "Open"; display: IconLabel.IconOnly }
           MenuItem { objectName: "rowNoText"; x: 360; width: 120; iconName: "folder"; display: IconLabel.TextOnly }
+          MenuItem { objectName: "rowMarker"; x: 120; y: 60; width: 120; text: "&"; iconName: "folder"; display: IconLabel.TextOnly }
           MenuItem { id: tall; y: 60; width: 120; text: "Open"; iconName: "folder"; display: IconLabel.IconOnly; font.pixelSize: 80 }
           readonly property bool tallFits: tall.implicitHeight === Theme.controlHeight
           function part(c, name) { for (const k of c.contentItem.children) if (k.objectName === name) return k; return null }
@@ -383,7 +402,8 @@ Feature: Ljós's own style: the icon and the text of a button and a menu row
 
     # A row keeps its icons in the column the menu keeps for them, so the
     # text under the icon is drawn beside it; out of a menu, a row with no
-    # icon shown keeps no column. A row with only one of the two shows it.
+    # icon shown keeps no column. A row with only one of the two shows it,
+    # and a lone "&" draws no text.
     @api-QtQuick.Controls.AbstractButton.display
     Scenario Outline: A menu row shown <how> shows <what>
       When the method "measure" of "root" is called with "<control>"
@@ -395,6 +415,7 @@ Feature: Ljós's own style: the icon and the text of a button and a menu row
         | rowTextOnly | as its text | its text, and no column                   | [0, [false, true]]  |
         | rowNoIcon   | as its icon | its text, as it has no icon               | [0, [false, true]]  |
         | rowNoText   | as its text | its icon in the column, as it has no text | [24, [true, false]] |
+        | rowMarker   | as its text | its icon in the column, as "&" draws none | [24, [true, false]] |
 
     @api-QtQuick.Controls.AbstractButton.display
     Scenario: A menu row shown as its icon is as tall as a row, whatever the size of the text it hides

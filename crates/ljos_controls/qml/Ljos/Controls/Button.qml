@@ -62,12 +62,16 @@ T.Button {
 
     contentItem: Component {
         Item {
+            id: content
             // What `display` lets it show: the icon alone, the text alone,
             // or both, the icon over the text or, by default, before it. A
             // button with only one of the two shows it whatever the display,
             // as IconLabel does.
             readonly property bool hasIcon: control.iconName.length > 0 || picture.implicitWidth > 0
-            readonly property bool hasLabel: control.text.length > 0
+            // Text that draws something once its mnemonic markers are gone:
+            // a lone "&" goes and "&&" is one "&", so "&" alone is no text.
+            readonly property bool hasLabel: control.text.indexOf("&&") >= 0
+                                             || control.text.split("&").join("").length > 0
             readonly property bool showsIcon: hasIcon && (control.display !== T.AbstractButton.TextOnly || !hasLabel)
             readonly property bool showsText: hasLabel && (control.display !== T.AbstractButton.IconOnly || !hasIcon)
             readonly property bool under: control.display === T.AbstractButton.TextUnderIcon
@@ -126,7 +130,7 @@ T.Button {
                 property: "icon.source"
                 value: ""
                 when: control.iconName.length > 0
-                      || control.display === T.AbstractButton.TextOnly && control.text.length > 0
+                      || control.display === T.AbstractButton.TextOnly && content.hasLabel
             }
 
             // The text as its mnemonic says: the letter after a lone "&"
