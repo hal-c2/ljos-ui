@@ -19,6 +19,8 @@ pub mod procfs;
 pub mod profile;
 pub mod report;
 pub mod sway;
+pub mod throttle;
+pub mod tree;
 pub mod wayland;
 
 use std::{
