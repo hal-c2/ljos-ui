@@ -172,8 +172,15 @@ Item {
         fill: panel.theme.raised
         border.color: panel.theme.line
         border.width: 1
+        objectName: "nextTurn"
         Accessible.role: Accessible.StaticText
-        Accessible.name: t`In ${panel.ahead.amount} ${panel.ahead.unit === "m" ? "metres" : panel.ahead.unit === "ft" ? "feet" : "miles"}, ${panel.turn.kind} onto ${panel.turn.street}`
+        // One whole sentence per unit, each counted by plural, so a
+        // translator sees the full phrase and the language's own forms.
+        Accessible.name: panel.ahead.unit === "m"
+            ? t`In ${plural(panel.ahead.amount, { one: "# metre", other: "# metres" })}, ${panel.turn.kind} onto ${panel.turn.street}`
+            : panel.ahead.unit === "ft"
+            ? t`In ${plural(panel.ahead.amount, { one: "# foot", other: "# feet" })}, ${panel.turn.kind} onto ${panel.turn.street}`
+            : t`In ${plural(panel.ahead.amount, { one: "# mile", other: "# miles" })}, ${panel.turn.kind} onto ${panel.turn.street}`
         Neon {
             x: 20
             y: 24
