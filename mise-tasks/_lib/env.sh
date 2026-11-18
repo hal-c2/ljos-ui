@@ -441,7 +441,8 @@ EOF_SETTINGS
 # - a path the file names relative to it is made whole, as the settings
 #   reach cargo from a file of their own somewhere else.
 # A line is the variables that set its key instead, a tab, then the setting
-# as a TOML line. Reading TOML takes Python 3.11's tomllib (or tomli);
+# as a TOML line, and what a variable can carry of it (cargo_settings says
+# how), for export_settings. Reading TOML takes Python 3.11's tomllib (or tomli);
 # without it (macOS's python3 is 3.9), or when a file cannot be read, the
 # files are given whole ("@file", a tab, the file), the farthest first, then
 # the worktree's own again so that they still win, and the task says why
@@ -484,7 +485,7 @@ EOF_HERE
     127) why="reading them key by key takes python3, which is not on PATH" ;;
     *) why="python3 stopped with status $status reading them (above)" ;;
   esac
-  printf '%s: %s; so the main checkout'\''s cargo settings (%s) are given as whole files, and this worktree'\''s own after them: an exported CARGO_* variable may be outranked by them, and an array both set comes more than once\n' \
+  printf '%s: %s; so the main checkout'\''s cargo settings (%s) are given as whole files, and this worktree'\''s own after them: an exported CARGO_* variable may be outranked by them, an array both set comes more than once, and a cargo that a program runs by itself builds with none of them\n' \
     "$(task_name)" "$why" "$(printf '%s ' "${given[@]}" | sed 's/ $//')" >&2
   for file in "${given[@]}"; do
     printf '@file\t%s\n' "$file"
@@ -699,8 +700,69 @@ for f, d in given:
         if isinstance(v, list) and isinstance(merged.get(p), list):
             v = merged[p] + v
         merged[p] = v
+
+# The variable cargo reads a setting from (CARGO_ and its key, upper case,
+# - and . as _), for the settings a cargo that a program starts by itself
+# should build with too (ljos_bdd's build of ljos, the MCP server's cargo
+# test): the build's and the network's, the four profiles cargo has, a
+# target's linker, runner and flags, aliases and registries. A key with a
+# character a variable cannot spell (a target cfg(...), a package name), a
+# table cargo does not read from variables ([patch], [source], [unstable]),
+# a custom profile, which cargo finds only in files, and a registry token,
+# which every program the task runs would see, have none.
+SPELLED = re.compile(r"[A-Za-z0-9_-]+\Z")
+PROFILES = ("dev", "release", "test", "bench")
+WHOLE = ("build", "net", "http", "term", "cargo-new", "future-incompat-report", "cache",
+         "resolver", "alias", "doc", "install")
+def cargo_variable(p):
+    if not all(SPELLED.match(k) for k in p):
+        return None
+    if not (p[0] in WHOLE
+            or (p[0] == "profile" and p[1:2] and p[1] in PROFILES
+                and (len(p) == 3 or (len(p) == 4 and p[2] == "build-override")))
+            or (p[0] == "target" and len(p) == 3 and p[2] in ("linker", "runner", "rustflags", "rustdocflags"))
+            or (p[0] == "registry" and len(p) == 2 and p[1] != "token")
+            or (p[0] == "registries" and len(p) == 3 and p[2] != "token")):
+        return None
+    return "CARGO_" + "_".join(k.upper().replace("-", "_") for k in p)
+
+# A value as a variable holds it: an array as its words, which cargo splits
+# on whitespace and adds after the files' (cargo 1.98.1 reads no TOML array
+# from a variable), so not one with a word that holds whitespace.
+def spelled(v):
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, int):
+        return str(v)
+    if isinstance(v, str):
+        return None if "\n" in v or "\t" in v else v
+    if isinstance(v, list) and all(isinstance(x, str) and x and not any(c.isspace() for c in x) for x in v):
+        return " ".join(v)
+    return None
+
+# A line is the variables that set the key instead, a tab, the setting as a
+# TOML line, and, for what a variable can carry, a tab, its kind, a tab, the
+# variable and a tab, its value: "set" for a cargo setting, "env" for an
+# [env] entry (its value, given to what cargo starts unless set already),
+# "force" for one that is forced on it. What no variable carries is named on
+# a line of its own, "@unexported", a tab, the keys.
+unexported = []
 for p, v in merged.items():
-    print("%s\t%s = %s" % (" ".join(variables(p, v)), key(p), value(v)))
+    line = "%s\t%s = %s" % (" ".join(variables(p, v)), key(p), value(v))
+    if p[0] == "env":
+        name = p[1] if len(p) == 2 or (len(p) == 3 and p[2] == "value") else None
+        forced = len(p) == 3 and merged.get(("env", p[1], "force")) is True
+        if name and NAME.match(name) and isinstance(v, str) and "\n" not in v and "\t" not in v:
+            line += "\t%s\t%s\t%s" % ("force" if forced else "env", name, v)
+    elif p != ("build", "target-dir") and not (isinstance(v, list) and not v):
+        name, text = cargo_variable(p), spelled(v)
+        if name and text is not None:
+            line += "\tset\t%s\t%s" % (name, text)
+        else:
+            unexported.append(key(p))
+    print(line)
+if unexported:
+    print("@unexported\t%s" % " ".join(unexported))
 EOF_SETTINGS
 }
 
@@ -719,11 +781,12 @@ toml_string() {
 # settings, into the array config_args. The settings no exported variable
 # sets instead go into <dir>/settings.toml, a new file in a directory only
 # the user can read, never into the arguments, where any user of the machine
-# can read them (an [env] token, say). Whole files are given as they are,
+# can read them (an [env] token, say), nor what export_settings put in the
+# environment already. Whole files are given as they are,
 # with the target CARGO_TARGET_DIR names and the build directory
 # CARGO_BUILD_BUILD_DIR names after them, as they would outrank those.
 config_args() {
-  local line names name value overridden exported nl=$'\n' tab=$'\t' settings="" whole=""
+  local line names name value rest overridden exported nl=$'\n' tab=$'\t' settings="" whole=""
   config_args=()
   # Only an exported variable reaches cargo (one given to this call as
   # `VAR=1 cargo` is exported to it).
@@ -732,16 +795,31 @@ config_args() {
     [ -n "$line" ] || continue
     names="${line%%"$tab"*}"
     value="${line#*"$tab"}"
-    if [ "$names" = "@file" ]; then
-      config_args+=(--config "$value")
-      whole=1
-      continue
-    fi
+    case "$names" in
+      @file)
+        config_args+=(--config "$value")
+        whole=1
+        continue
+        ;;
+      @*) continue ;;
+    esac
     overridden=
     for name in $names; do
       case "$exported" in *"$nl$name$nl"*) overridden=1 && break ;; esac
     done
     [ -z "$overridden" ] || continue
+    # A setting export_settings put in its variable is there already: given
+    # again, an array would come twice.
+    case "$value" in
+      *"$tab"set"$tab"*)
+        rest="${value#*"$tab"set"$tab"}"
+        name="${rest%%"$tab"*}"
+        case "$exported" in
+          *"$nl$name$nl"*) [ "${!name}" != "${rest#*"$tab"}" ] || continue ;;
+        esac
+        ;;
+    esac
+    value="${value%%"$tab"*}"
     settings="$2/settings.toml"
     printf '%s\n' "$value" >>"$settings"
   done <<EOF_SETTINGS
@@ -767,6 +845,70 @@ ljos_asked_target_dir="${CARGO_TARGET_DIR-}"
 CARGO_TARGET_DIR="$(target_dir)" || exit 1
 export CARGO_TARGET_DIR
 ljos_cargo_config="$(cargo_config)" || exit 1
+
+# export_settings <cargo_config output> [env]: the settings a variable can
+# carry, exported, each unless the user exported one of the variables that
+# set it (then the user's wins, as in plain cargo), so that a cargo that a
+# program starts by itself builds with them too: ljos_bdd builds ljos with
+# the cargo that runs its tests, and the MCP server runs cargo test, and
+# neither is a task's cargo. With env, the [env] entries are exported as
+# well, for a program that runs cargo by itself and was not started by cargo,
+# which gives them to whatever it starts (mise-tasks/mcp's server); a forced
+# one replaces the user's, as cargo's does. The variables are named in
+# ljos_settings_exported. What no variable can carry (cargo_settings says
+# which) reaches only a task's cargo, which the task says once.
+ljos_settings_exported=""
+export_settings() {
+  local line names rest kind name value blocked n exported nl=$'\n' tab=$'\t'
+  exported="$nl$(compgen -e)$nl"
+  while IFS= read -r line; do
+    case "$line" in
+      "@unexported$tab"*)
+        rest="${line#*"$tab"}"
+        if [ "${LJOS_UNEXPORTED_NOTED-}" != "$rest" ]; then
+          printf '%s: the main checkout'\''s cargo settings %s reach cargo only through a task'\''s cargo: no variable can carry them, so a cargo that a program runs by itself builds without them\n' "$(task_name)" "$rest" >&2
+          export LJOS_UNEXPORTED_NOTED="$rest"
+        fi
+        continue
+        ;;
+      @* | "") continue ;;
+    esac
+    names="${line%%"$tab"*}"
+    rest="${line#*"$tab"}"
+    case "$rest" in *"$tab"*) ;; *) continue ;; esac
+    rest="${rest#*"$tab"}"
+    kind="${rest%%"$tab"*}"
+    rest="${rest#*"$tab"}"
+    name="${rest%%"$tab"*}"
+    value="${rest#*"$tab"}"
+    case "$kind" in
+      set) names="$names $name" ;;
+      env) [ "${2-}" = env ] || continue; names="$name" ;;
+      force) [ "${2-}" = env ] || continue; names="" ;;
+      *) continue ;;
+    esac
+    blocked=
+    for n in $names; do
+      case "$exported" in *"$nl$n$nl"*) blocked=1 && break ;; esac
+    done
+    [ -z "$blocked" ] || continue
+    export "$name=$value"
+    ljos_settings_exported="${ljos_settings_exported:+$ljos_settings_exported }$name"
+  done <<EOF_SETTINGS
+$1
+EOF_SETTINGS
+}
+
+# unexport_settings: what export_settings exported, gone again, for a task
+# that builds another checkout than its own (mise-tasks/mcp).
+unexport_settings() {
+  local name
+  for name in $ljos_settings_exported; do
+    unset "$name"
+  done
+  ljos_settings_exported=""
+}
+export_settings "$ljos_cargo_config"
 
 # cargo, with the main checkout's settings in a worktree, from a settings
 # file of its own that is gone once cargo is. A task runs `cargo` (or

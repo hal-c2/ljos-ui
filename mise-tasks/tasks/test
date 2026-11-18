@@ -746,6 +746,75 @@ if [ "$out" = "$want" ]; then ok "a vendored source, a patch and a credential pr
 printf '[env]\nODD = "a\\\\b\\"c\\td\\u007f"\n' >"$repo/.cargo/config.toml"
 out="$(given "$real/wt")"
 if [ "$out" = 'env.ODD = "a\\b\"c\td\u007F"|' ]; then ok "a string in the main checkout's settings is given as the same TOML string"; else bad "cargo in a worktree was given '$out' for env.ODD"; fi
+# A cargo that a program starts by itself (ljos_bdd's build of ljos, the
+# MCP server's cargo test) is given no --config: export_settings puts what
+# a variable can carry in the environment, unless a variable of the
+# developer's sets it already, and says once what none can carry (a cfg
+# target's, a custom profile's, a token, an array with a word that holds a
+# space). [env] is exported only when asked: cargo gives it to what it
+# starts itself. exported_by <dir> <env or nothing> [VAR=value…]:
+# NAME=value| for each variable exported, then the task's note.
+printf '[build]\njobs = 2\nrustflags = ["--cfg", "main"]\n[profile.dev]\nopt-level = 1\n[profile.fast]\ninherits = "dev"\n[alias]\nb2 = "build -v"\n[env]\nSEEN = "yes"\nFORCED = { value = "theirs", force = true }\n[target."cfg(unix)"]\nrunner = "run"\n[target.x86_64-unknown-linux-gnu]\nlinker = "cc"\n[registry]\ntoken = "secret"\n[net]\nssh.known-hosts = ["host ssh-ed25519 AAA"]\n' >"$repo/.cargo/config.toml"
+exported_by() {
+  local dir="$1" mode="$2" a
+  shift 2
+  (
+    unexported
+    unset LJOS_UNEXPORTED_NOTED
+    for a in "$@"; do export "${a?}"; done
+    CARGO_HOME="$real/cargo-home"
+    ljos_settings_exported=""
+    lines="$(cargo_config "$dir")"
+    export_settings "$lines" ${mode:+"$mode"} 2>"$real/note.err"
+    for n in $ljos_settings_exported; do printf '%s=%s|' "$n" "${!n}"; done
+    cat "$real/note.err"
+  )
+}
+note="tasks:test: the main checkout's cargo settings profile.fast.inherits target.\"cfg(unix)\".runner registry.token net.ssh.known-hosts reach cargo only through a task's cargo: no variable can carry them, so a cargo that a program runs by itself builds without them"
+want="CARGO_BUILD_JOBS=2|CARGO_BUILD_RUSTFLAGS=--cfg main|CARGO_PROFILE_DEV_OPT_LEVEL=1|CARGO_ALIAS_B2=build -v|CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=cc|$note"
+out="$(exported_by "$real/wt" "")"
+if [ "$out" = "$want" ]; then ok "a linked worktree's main checkout's settings are exported for a cargo a program runs, and the task names those none can carry"; else bad "export_settings in a linked worktree:" "gave: $out" "not:  $want"; fi
+out="$(exported_by "$real/wt" env)"
+want="CARGO_BUILD_JOBS=2|CARGO_BUILD_RUSTFLAGS=--cfg main|CARGO_PROFILE_DEV_OPT_LEVEL=1|CARGO_ALIAS_B2=build -v|SEEN=yes|FORCED=theirs|CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=cc|$note"
+if [ "$out" = "$want" ]; then ok "asked for, [env] is exported too, for a program that runs cargo and was not started by it"; else bad "export_settings with env:" "gave: $out" "not:  $want"; fi
+out="$(exported_by "$repo" "")"
+if [ -z "$out" ]; then ok "a main checkout exports nothing: every cargo there finds its settings"; else bad "export_settings in the main checkout gave: $out"; fi
+# The developer's variables win: one that sets a key (or replaces an array,
+# as RUSTFLAGS does) leaves it unexported, and an [env] entry is the
+# developer's unless forced.
+out="$(exported_by "$real/wt" env CARGO_BUILD_JOBS=1 RUSTFLAGS=-g SEEN=mine FORCED=mine | sed 's/tasks:test: .*//')"
+want="CARGO_PROFILE_DEV_OPT_LEVEL=1|CARGO_ALIAS_B2=build -v|FORCED=theirs|CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=cc|"
+if [ "$out" = "$want" ]; then ok "a variable the developer exported wins over the main checkout's setting, and a forced [env] entry over the developer's"; else bad "export_settings with the developer's variables:" "gave: $out" "not:  $want"; fi
+# A task's cargo is then given only the rest, so no array comes twice; and
+# a task started by a task says nothing again.
+out="$( (
+  unexported
+  unset LJOS_UNEXPORTED_NOTED
+  CARGO_HOME="$real/cargo-home"
+  lines="$(cargo_config "$real/wt")"
+  export_settings "$lines" 2>/dev/null
+  d="$(mktemp -d)"
+  config_args "$lines" "$d"
+  shown "$d"
+  export_settings "$lines" 2>&1
+) )"
+want='profile.fast.inherits = "dev"|env.SEEN = "yes"|env.FORCED.value = "theirs"|env.FORCED.force = true|target."cfg(unix)".runner = "run"|registry.token = "secret"|net.ssh.known-hosts = ["host ssh-ed25519 AAA"]|'
+if [ "$out" = "$want" ]; then ok "a task's cargo is given only what the environment does not carry, and the note comes once"; else bad "config_args after export_settings:" "gave: $out" "not:  $want"; fi
+# The developer's own CARGO_BUILD_RUSTFLAGS is added to the files', so the
+# main checkout's rustflags still reach a task's cargo with it.
+out="$( (
+  unexported
+  CARGO_HOME="$real/cargo-home"
+  export CARGO_BUILD_RUSTFLAGS=-g
+  lines="$(cargo_config "$real/wt")"
+  export_settings "$lines" 2>/dev/null
+  d="$(mktemp -d)"
+  config_args "$lines" "$d"
+  shown "$d"
+) | grep -o 'build.rustflags = [^|]*' )"
+if [ "$out" = 'build.rustflags = ["--cfg", "main"]' ]; then ok "with the developer's CARGO_BUILD_RUSTFLAGS, the main checkout's rustflags are still given to a task's cargo"; else bad "with CARGO_BUILD_RUSTFLAGS=-g, a task's cargo was given '$out' for rustflags"; fi
+printf '[build]\njobs = 2\n' >"$repo/.cargo/config.toml"
+
 # Without Python's tomllib (macOS's python3 is 3.9) the settings cannot be
 # read key by key: they are given as whole files, the worktree's own after
 # them, with the target the environment names last, and the task says so.
@@ -951,13 +1020,14 @@ rm "$real/cargo-home/config.toml"
 # same place with the same settings. The stand-in cargo notes the target it
 # would build into (--target-dir, else a build.target-dir --config, else
 # CARGO_TARGET_DIR, else ./target as cargo's own) and the settings it was
-# given with --config, in order, and makes a server there. It writes nothing outside
+# given, CARGO_BUILD_JOBS first and then each --config in order, and makes a
+# server there. It writes nothing outside
 # the fixture: a target anywhere else is refused before anything is made.
 fakes="$real/fakes"
 mkdir "$fakes"
 cat >"$fakes/cargo" <<'EOF_CARGO'
 #!/bin/sh
-target="${CARGO_TARGET_DIR:-$PWD/target}" config=""
+target="${CARGO_TARGET_DIR:-$PWD/target}" config="${CARGO_BUILD_JOBS:+build.jobs = $CARGO_BUILD_JOBS}"
 while [ $# -gt 0 ]; do
   case "$1" in
     --target-dir) target="$2"; shift ;;
@@ -1353,6 +1423,53 @@ if cargo -V >/dev/null 2>&1; then
   if [ "$out" = "same build|the build's program|pinned" ]; then ok "with cargo, a run pins the program the shared build directory holds, without building it again"; else bad "pin_programs with the real cargo: $out"; fi
 else
   echo "note  no cargo runs here: pinning from the real cargo's build directory is left out"
+fi
+
+# --- A program that runs cargo itself builds with the main checkout's settings
+
+# With the real cargo, started by a program rather than by a task's cargo
+# (sh knows no function of env.sh's): in a linked worktree it builds with
+# the main checkout's rustflags, as ljos_bdd's build of ljos and the MCP
+# server's cargo test do.
+if cargo -V >/dev/null 2>&1 && [ -d "$real/wt" ]; then
+  probe="$real/wt/probe"
+  mkdir -p "$probe/src"
+  printf '[package]\nname = "probe"\nversion = "0.1.0"\nedition = "2021"\n\n[workspace]\n\n[lints.rust]\nunexpected_cfgs = "allow"\n' >"$probe/Cargo.toml"
+  printf '#[cfg(main_settings)]\nfn main() { println!("main settings"); }\n#[cfg(not(main_settings))]\nfn main() { println!("none"); }\n' >"$probe/src/main.rs"
+  printf '[build]\nrustflags = ["--cfg", "main_settings"]\n' >"$repo/.cargo/config.toml"
+  out="$(
+    toolchain="${RUSTUP_TOOLCHAIN-}" rustup_home="${RUSTUP_HOME-}"
+    unexported
+    unset LJOS_UNEXPORTED_NOTED
+    [ -z "$toolchain" ] || export RUSTUP_TOOLCHAIN="$toolchain"
+    [ -z "$rustup_home" ] || export RUSTUP_HOME="$rustup_home"
+    export CARGO_HOME="$real/cargo-home" CARGO_TARGET_DIR="$probe/tgt"
+    cd "$probe" && export_settings "$(cargo_config "$real/wt")" 2>&1 || exit 1
+    sh -c 'cargo run --quiet --offline' 2>&1
+  )"
+  if [ "$out" = "main settings" ]; then ok "a cargo a program runs in a linked worktree builds with the main checkout's rustflags"; else bad "a cargo run by sh in a linked worktree gave: $out"; fi
+  rm -r "$probe"
+  printf '[build]\njobs = 2\n' >"$repo/.cargo/config.toml"
+else
+  echo "note  no cargo runs here: a cargo a program runs is left out"
+fi
+
+# The MCP server runs cargo test itself in the project it authors: it gets
+# the settings of the project's main checkout, [env] too, whether it was
+# built or named (LJOS_BIN). This stand-in says what it got.
+if [ -d "$real/wt" ]; then
+  printf '[build]\njobs = 2\nrustflags = ["--cfg", "main"]\n[env]\nSEEN = "yes"\n' >"$repo/.cargo/config.toml"
+  printf '#!/bin/sh\nprintf "%%s|%%s|%%s|%%s\\n" "$*" "${CARGO_BUILD_JOBS-}" "${CARGO_BUILD_RUSTFLAGS-}" "${SEEN-}"\n' >"$real/envserver"
+  chmod +x "$real/envserver"
+  out="$( (
+    unexported
+    unset LJOS_UNEXPORTED_NOTED SEEN
+    export CARGO_HOME="$real/cargo-home" LJOS_BIN="$real/envserver"
+    bash "$ljos_root/mise-tasks/mcp" "$real/wt" 2>/dev/null
+  ) )"
+  want="mcp --project $real/wt|2|--cfg main|yes"
+  if [ "$out" = "$want" ]; then ok "the MCP server gets the settings of its project's main checkout for the cargo it runs"; else bad "the MCP server was given:" "gave: $out" "not:  $want"; fi
+  printf '[build]\njobs = 2\n' >"$repo/.cargo/config.toml"
 fi
 
 programs="$(printf '%s\n' "ljos-x $real/a b/bin/ljos-x" "ljos $real/a b/bin/ljos" "qml-compare $real/a b/bin/qml-compare")"

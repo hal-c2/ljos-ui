@@ -34,9 +34,18 @@ esac
 [ -d "$project" ] || die "mcp: no project directory $project"
 project="$(physical "$project")"
 
+# The server runs cargo itself (a scenario run is a cargo test), in the
+# project: with the settings of the project's main checkout when the project
+# is a linked worktree, and [env]'s too, as nothing cargo starts gives it
+# them (export_settings). The ones env.sh exported for this script's own
+# checkout are not the build's either, which goes below with its checkout's.
+unexport_settings
+served="$(cargo_config "$project")" || exit 1
+
 if [ -n "${LJOS_BIN:-}" ]; then
   [ -x "$LJOS_BIN" ] || die "mcp: LJOS_BIN is $LJOS_BIN, which is not a program"
   say "starting $LJOS_BIN, built already (LJOS_BIN)"
+  export_settings "$served" env
   exec "$LJOS_BIN" mcp --project "$project"
 fi
 
@@ -56,7 +65,11 @@ export CARGO_TARGET_DIR="$target"
 settings="$(mktemp -d "${TMPDIR:-/tmp}/ljos-cargo.XXXXXX")"
 settings_gone() { rm -f "$settings/settings.toml" && rmdir "$settings" 2>/dev/null || true; }
 trap settings_gone EXIT
-main_settings="$(cargo_config "$checkout")" || exit 1
+if [ "$checkout" = "$project" ]; then
+  main_settings="$served"
+else
+  main_settings="$(cargo_config "$checkout")" || exit 1
+fi
 config_args "$main_settings" "$settings"
 # The build is put together here, for that checkout: env.sh's cargo adds the
 # script's own checkout's settings.
@@ -96,4 +109,5 @@ settings_gone
 [ "$status" -eq 0 ] || die "mcp: the build of ljos failed"
 server="$(printf '%s\n' "$messages" | cargo_executable)"
 [ -n "$server" ] && [ -x "$server" ] || die "mcp: the build named no ljos program it made"
+export_settings "$served" env
 exec "$server" mcp --project "$project"
