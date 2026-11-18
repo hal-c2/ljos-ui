@@ -200,13 +200,52 @@ Feature: Ljós's own style: tabs, cards, popovers, split buttons and empty state
         | with margins            | 1     | 200 | 250 | 120    | 12      | above it, as 114 is left below its margins  | 0  | -124 |
         | with room below         | 1     | 200 | 20  | 100    | 0       | below it                                    | 0  | 24   |
 
+    # The room is the window's and the popover is drawn in the window: its
+    # place is measured in the top of its parent chain, past the root, the
+    # window's own content, which no scale of the root's scales. So a root
+    # scaled up is measured as it is drawn: scaled by 2, the button
+    # is at 300 to 340 in a window 400 high, the popover has 48 below it
+    # and goes above, 4 over the button, at 196, which is -52 in the
+    # button's terms. The answers are where the popover is drawn, where
+    # the button is, and the gap left between them.
+    @api-QtQuick.Controls.Popup.margins
+    Scenario: A popover under a root scaled up opens on the side the window has room on
+      Given the QML:
+        """qml
+        import QtQuick
+        import Ljos.Controls
+        Item {
+          id: root; objectName: "root"
+          width: 400; height: 400; scale: 2; transformOrigin: Item.TopLeft
+          Button {
+            id: filter; x: 10; y: 150; width: 60; height: 20; text: "Filter"
+            Popover { id: pop; objectName: "pop"; width: 100; height: 100; margins: 8 }
+          }
+          property real popY: pop.y
+          property var got: []
+          function measure() {
+            const shown = pop.background.mapToItem(null, -pop.background.x, -pop.background.y)
+            const box = filter.mapToItem(null, 0, 0, filter.width, filter.height)
+            got = [Math.round(shown.y), Math.round(box.y), Math.round(box.y - shown.y - pop.height)]
+          }
+        }
+        """
+      When the method "open" of "pop" is called
+      And 200 milliseconds pass
+      Then the property "visible" of "pop" is true
+      And the property "popY" of "root" is -52
+      When the method "measure" of "root" is called
+      Then the property "got" of "root" is [196, 300, 4]
+
     # Its place is found again when a transform of an ancestor changes, as
-    # when the ancestor's position or scale does.
+    # when the ancestor's position or scale does, and it is drawn there:
+    # the last answers are where it is drawn against where the button is,
+    # in the window.
     @api-QtQuick.Item.transform
     Scenario: A popover follows its button when a transform of an ancestor moves it
       Given the QML:
         """qml
-        import Ljos.Ui
+        import QtQuick
         import Ljos.Controls
         Item {
           id: root; objectName: "root"
@@ -216,31 +255,43 @@ Feature: Ljós's own style: tabs, cards, popovers, split buttons and empty state
             width: 400; height: 400
             transform: Translate { y: root.shift }
             Button {
-              y: 300; width: 60; height: 20; text: "Filter"
+              id: filter; x: 10; y: 300; width: 60; height: 20; text: "Filter"
               Popover { id: pop; objectName: "pop"; width: 100; height: 100 }
             }
           }
           property real popY: pop.y
+          property var got: []
+          function measure() {
+            const shown = pop.background.mapToItem(root, -pop.background.x, -pop.background.y)
+            const box = filter.mapToItem(root, 0, 0, filter.width, filter.height)
+            got = [pop.visible, Math.round(shown.x - box.x), Math.round(shown.y - box.y)]
+          }
         }
         """
       When the method "open" of "pop" is called
       And 200 milliseconds pass
       Then the property "visible" of "pop" is true
       And the property "popY" of "root" is -104
+      When the method "measure" of "root" is called
+      Then the property "got" of "root" is [true, 0, -104]
       When the property "shift" of "root" is set to -200
       And 200 milliseconds pass
       Then the property "popY" of "root" is 24
+      When the method "measure" of "root" is called
+      Then the property "got" of "root" is [true, 0, 24]
 
     # An animator moves what is drawn alone: the scale reads 1 until it
     # ends, as in Qt, and the room is measured where `mapToItem` says the
     # button is. Told its end, the popover is placed again. The animator is
-    # running before the popover opens.
+    # running before the popover opens. The last answers are where it is
+    # drawn against where the button is, in the window: 4 below the button
+    # as the scale reads 1, 4 above it (100 high) once it reads 2.
     @api-QtQuick.ScaleAnimator
     Scenario: A popover opened while an ancestor's ScaleAnimator runs is placed by the scale it reads, and again when the animator ends
       Given the QML:
         """qml
         import QtQuick
-        import Ljos.Ui
+        import QtQuick
         import Ljos.Controls
         Item {
           id: root; objectName: "root"
@@ -250,12 +301,18 @@ Feature: Ljós's own style: tabs, cards, popovers, split buttons and empty state
             width: 200; height: 200; transformOrigin: Item.TopLeft
             ScaleAnimator { objectName: "grower"; target: grows; from: 1; to: 2; duration: 1000 }
             Button {
-              x: 10; y: 150; width: 60; height: 20; text: "Filter"
+              id: filter; x: 10; y: 150; width: 60; height: 20; text: "Filter"
               Popover { id: pop; objectName: "pop"; width: 100; height: 100; margins: 8 }
             }
           }
           property real grown: grows.scale
           property real popY: pop.y
+          property var got: []
+          function measure() {
+            const shown = pop.background.mapToItem(root, -pop.background.x, -pop.background.y)
+            const box = filter.mapToItem(root, 0, 0, filter.width, filter.height)
+            got = [pop.visible, Math.round(shown.x - box.x), Math.round(shown.y - box.y)]
+          }
         }
         """
       When the method "start" of "grower" is called
@@ -267,9 +324,13 @@ Feature: Ljós's own style: tabs, cards, popovers, split buttons and empty state
       Then the property "visible" of "pop" is true
       And the property "grown" of "root" is 1
       And the property "popY" of "root" is 24
+      When the method "measure" of "root" is called
+      Then the property "got" of "root" is [true, 0, 24]
       When 1000 milliseconds pass
       Then the property "grown" of "root" is 2
       And the property "popY" of "root" is -52
+      When the method "measure" of "root" is called
+      Then the property "got" of "root" is [true, 0, -104]
 
     # The room is measured where `mapToItem` says the button is, and the
     # popover is put where its place maps to, perspective and all, as Qt
@@ -312,9 +373,10 @@ Feature: Ljós's own style: tabs, cards, popovers, split buttons and empty state
     # Scaled to nothing, the parent has no point of its own where the
     # popover is: each of them is drawn at the one point it is shrunk to.
     # The popover keeps its parent's corner rather than take the window's
-    # point it is placed at for one of the parent's.
+    # point it is placed at for one of the parent's, even with no gap, where
+    # that point is the one the parent is shrunk to.
     @api-QtQuick.Item.scale
-    Scenario: A popover under an ancestor scaled to nothing keeps its parent's corner
+    Scenario Outline: A popover <with> under an ancestor scaled to nothing keeps its parent's corner
       Given the QML:
         """qml
         import Ljos.Ui
@@ -325,7 +387,7 @@ Feature: Ljós's own style: tabs, cards, popovers, split buttons and empty state
             x: 100; y: 100; width: 200; height: 200; scale: 0
             Button {
               width: 60; height: 20; text: "Filter"
-              Popover { objectName: "pop"; width: 100; height: 100 }
+              Popover { objectName: "pop"; width: 100; height: 100; gap: <gap> }
             }
           }
         }
@@ -335,6 +397,11 @@ Feature: Ljós's own style: tabs, cards, popovers, split buttons and empty state
       Then the property "visible" of "pop" is true
       And the property "x" of "pop" is 0
       And the property "y" of "pop" is 0
+
+      Examples:
+        | with           | gap |
+        | with its gap   | 4   |
+        | with no gap    | 0   |
 
     # A popup placed by its `x` and `y` keeps them there, as no point of the
     # parent's is where it is drawn.
@@ -565,7 +632,7 @@ Feature: Ljós's own style: tabs, cards, popovers, split buttons and empty state
           function measure() {
             got = [part(empty.contentItem, "title").width - empty.availableWidth,
                    part(empty.contentItem, "description").width - empty.availableWidth,
-                   empty.implicitWidth]
+                   empty.availableWidth, empty.implicitWidth]
           }
         }
         """
@@ -574,11 +641,11 @@ Feature: Ljós's own style: tabs, cards, popovers, split buttons and empty state
 
       # 360 is the width an empty state's text is kept to; Basic pads it by 12.
       Examples:
-        | module               | how                         | width       | fits                                                  | got           |
-        | Ljos.Controls        | narrower than its text      | width: 200  | is as wide as it, and it asks for its text's width     | [0, 0, 360]   |
-        | Ljos.Controls        | as wide as it asks          |             | is as wide as it asks                                  | [0, 0, 360]   |
-        | Ljos.Controls.Basic  | of Basic narrower than its text | width: 200 | is as wide as it, and it asks for its text's width  | [0, 0, 384]   |
-        | Ljos.Controls.Basic  | of Basic as wide as it asks |             | is as wide as it asks                                  | [0, 0, 384]   |
+        | module               | how                             | width      | fits                                                | got                |
+        | Ljos.Controls        | narrower than its text          | width: 200 | is as wide as it, and it asks for its text's width  | [0, 0, 200, 360]   |
+        | Ljos.Controls        | as wide as it asks              |            | is as wide as it asks                               | [0, 0, 360, 360]   |
+        | Ljos.Controls.Basic  | of Basic narrower than its text | width: 200 | is as wide as it, and it asks for its text's width  | [0, 0, 176, 384]   |
+        | Ljos.Controls.Basic  | of Basic as wide as it asks     |            | is as wide as it asks                               | [0, 0, 360, 384]   |
 
     Scenario: An error shows a warning, in the warning colour
       Given the QML:
