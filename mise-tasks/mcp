@@ -79,11 +79,11 @@ fi
 
 cd "$checkout"
 # The build's stdout is read here, never passed on: its JSON messages say
-# where the program is (under a target triple when a build target is set),
-# and its other lines (a wrapper's word, say) go to stderr.
+# where the program is (under a target triple when a build target is set).
+# Its other lines (a wrapper's word on a busy queue, say) go to stderr as they
+# come, not once the build is over.
 status=0
-messages="$("${build[@]}")" || status=$?
-printf '%s\n' "$messages" | grep -v -e '^{"reason":' -e '^$' >&2 || true
+messages="$("${build[@]}" | tee >({ grep -v -e '^{"reason":' -e '^$' || true; } >&2))" || status=$?
 [ "$status" -eq 0 ] || die "the build of ljos failed"
 server="$(printf '%s\n' "$messages" |
   sed -n 's/^{"reason":"compiler-artifact".*"executable":"\([^"]*\)".*/\1/p' | tail -n 1)"
