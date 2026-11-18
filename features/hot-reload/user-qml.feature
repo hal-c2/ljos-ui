@@ -179,6 +179,36 @@ Feature: A shipped application its users change while it runs
       Then the property "accent" of "main" is "#2e7d32"
       And there is no reload error
 
+    Scenario: A save that adds a view whose first page reads its parent is applied without a word
+      Given the user's file "Shell.qml":
+        """qml
+        import QtQuick
+        import QtQuick.Controls
+        Item { objectName: "user-shell"; width: 200; height: 100 }
+        """
+      When the application runs "Main.qml" built ahead, with the user's directory over it
+      And the user saves the file "Shell.qml" as:
+        """qml
+        import QtQuick
+        import QtQuick.Controls
+        Item {
+          objectName: "user-shell"; width: 200; height: 100
+          StackView {
+            anchors.fill: parent
+            initialItem: Rectangle {
+              objectName: "page"
+              anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top
+              height: 60
+            }
+          }
+        }
+        """
+      Then the property "width" of "page" is 200
+      And the log has no warning matching "TypeError"
+      And the application was told of no fault
+      And 1 save of the user's files has been applied
+      And there is no reload error
+
   Rule: A file that does not work leaves the application as it was, and is told
 
     Scenario: A save that does not compile keeps what runs and is told to the application

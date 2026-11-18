@@ -586,6 +586,11 @@ impl ComponentSource for Files {
             _ => url.strip_suffix(".qml").unwrap_or(url).to_owned(),
         }
     }
+
+    /// A test suite may reach beside its directory, as `qmltestrunner` lets it.
+    fn refuse_step_up(&self, _base: &str, _rel: &str) -> Option<String> {
+        None
+    }
 }
 
 #[cfg(test)]

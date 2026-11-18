@@ -557,8 +557,8 @@ impl Engine {
                 }
             }
         }
-        self.close_creation(errors);
         if failed {
+            self.close_creation(errors);
             // What was added goes, and the full reload makes it and
             // tells what is wrong.
             for g in &grown {
@@ -572,6 +572,10 @@ impl Engine {
             self.reload_restore_loader(saved);
             return not_here("what is added cannot be made");
         }
+        // The added objects complete further on, and what their bindings
+        // say waits for that, as in a fresh load: a view takes its
+        // `initialItem` in as it completes.
+        self.pause_creation(errors);
         drop(saved);
         // A singleton of an edited file is the one it was, with the edit,
         // before anything reads it.
@@ -937,6 +941,7 @@ impl Engine {
         // The added objects complete as made objects do, and are known by
         // their places from now on.
         let mut tops: Vec<Rc<Instance>> = Vec::new();
+        self.resume_creation(errors);
         for g in &grown {
             self.in_place_complete(g);
             let mut top = g.old.clone();
@@ -948,6 +953,7 @@ impl Engine {
                 tops.push(top);
             }
         }
+        self.close_creation(errors);
         for top in &tops {
             self.reload_repath(top);
         }

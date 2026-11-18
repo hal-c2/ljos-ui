@@ -286,6 +286,29 @@ fn every_kind_has_a_name_and_the_history_is_bounded() {
     assert_eq!(e.application_fault().unwrap().message(), "39");
 }
 
+#[test]
+fn what_notes_faults_is_given_every_one_filed_while_it_ran_however_many() {
+    let h = engine();
+    let e = &h.engine;
+    e.report_fault(None, Fault::Startup("before".into()));
+    let (((), inner), outer) = e.noting_faults(|| {
+        e.report_fault(None, Fault::Startup("outer".into()));
+        e.noting_faults(|| {
+            for i in 0..40 {
+                e.report_fault(None, Fault::Startup(format!("{i}")));
+            }
+        })
+    });
+    let messages = |faults: &[FaultReport]| faults.iter().map(|f| f.message()).collect::<Vec<_>>();
+    let forty: Vec<String> = (0..40).map(|i| i.to_string()).collect();
+    assert_eq!(messages(&inner), forty);
+    assert_eq!(messages(&outer)[0], "outer");
+    assert_eq!(messages(&outer)[1..], forty[..]);
+    assert_eq!(e.faults().len(), 32, "the history keeps only the latest");
+    let ((), after) = e.noting_faults(|| {});
+    assert!(after.is_empty(), "nothing is noted once it returned");
+}
+
 // -------------------------------------------------------------- boundaries
 
 #[test]

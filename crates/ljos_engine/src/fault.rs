@@ -156,6 +156,9 @@ pub(crate) struct FaultState {
     delivering: Cell<bool>,
     application: RefCell<Option<FaultReport>>,
     history: RefCell<VecDeque<FaultReport>>,
+    /// What each [`Engine::noting_faults`] running has noted so far, the
+    /// outermost first.
+    noting: RefCell<Vec<Vec<FaultReport>>>,
     /// Faults reported so far.
     filed: Cell<u64>,
     handler: RefCell<Option<FaultHandler>>,
@@ -327,27 +330,29 @@ impl Engine {
                     text.push('\n');
                     text.push_str(trace);
                 }
-                self.warn(text);
                 let (declared, declared_line) = self.declared_place(origin);
-                self.file_fault(FaultReport {
-                    fault: Fault::JsException(JsErrorInfo {
-                        message: message.clone(),
-                        file: file.as_deref().map(Into::into),
-                        line: line.unwrap_or(0),
-                        column: 0,
-                        stack: trace,
-                    }),
-                    origin,
-                    file: file.clone().or(declared),
-                    line: line.unwrap_or(declared_line),
-                    stack: frames,
-                    at: self.now(),
-                    boundaries: self.boundaries_around(origin),
-                    target: None,
-                    seq: 0,
-                    origin_name: origin.and_then(|o| self.label_of(o)),
-                    taken_by: TakenBy::Waiting,
-                });
+                self.warn_and_file(
+                    text,
+                    FaultReport {
+                        fault: Fault::JsException(JsErrorInfo {
+                            message: message.clone(),
+                            file: file.as_deref().map(Into::into),
+                            line: line.unwrap_or(0),
+                            column: 0,
+                            stack: trace,
+                        }),
+                        origin,
+                        file: file.clone().or(declared),
+                        line: line.unwrap_or(declared_line),
+                        stack: frames,
+                        at: self.now(),
+                        boundaries: self.boundaries_around(origin),
+                        target: None,
+                        seq: 0,
+                        origin_name: origin.and_then(|o| self.label_of(o)),
+                        taken_by: TakenBy::Waiting,
+                    },
+                );
             }
             JsFault::Panic { message, .. } => {
                 self.report_fault(origin, Fault::Panic(message.clone().into()));
@@ -355,25 +360,37 @@ impl Engine {
             other => {
                 // The JS host's own words: they name what was running.
                 let (file, line) = self.declared_place(origin);
-                self.warn(other.to_string());
-                self.file_fault(FaultReport {
-                    fault: other.clone().into(),
-                    origin,
-                    file,
-                    line,
-                    stack: Vec::new(),
-                    at: self.now(),
-                    boundaries: self.boundaries_around(origin),
-                    target: None,
-                    seq: 0,
-                    origin_name: origin.and_then(|o| self.label_of(o)),
-                    taken_by: TakenBy::Waiting,
-                });
+                self.warn_and_file(
+                    other.to_string(),
+                    FaultReport {
+                        fault: other.clone().into(),
+                        origin,
+                        file,
+                        line,
+                        stack: Vec::new(),
+                        at: self.now(),
+                        boundaries: self.boundaries_around(origin),
+                        target: None,
+                        seq: 0,
+                        origin_name: origin.and_then(|o| self.label_of(o)),
+                        taken_by: TakenBy::Waiting,
+                    },
+                );
             }
         }
     }
 
-    fn file_fault(&self, mut report: FaultReport) {
+    /// Logs `msg` and files `report`, or holds both while a binding runs
+    /// during a creation (delayed_errors.rs): a run that is fixed by a
+    /// later one is neither logged nor anybody's fault.
+    fn warn_and_file(&self, msg: String, report: FaultReport) {
+        if let Some((msg, report)) = self.hold_fault(msg, report) {
+            self.warn(msg);
+            self.file_fault(report);
+        }
+    }
+
+    pub(crate) fn file_fault(&self, mut report: FaultReport) {
         let state = &self.inner.faults;
         state.filed.set(state.filed.get() + 1);
         report.seq = state.filed.get();
@@ -383,6 +400,9 @@ impl Engine {
         let logged = matches!(report.fault, Fault::JsException(_)) && report.boundaries.is_empty();
         if logged {
             report.taken_by = TakenBy::Log;
+        }
+        for noted in state.noting.borrow_mut().iter_mut() {
+            noted.push(report.clone());
         }
         {
             let mut history = state.history.borrow_mut();
@@ -534,6 +554,29 @@ impl Engine {
     /// One handler; a second call replaces it.
     pub fn set_fault_handler(&self, f: impl Fn(&Engine, &FaultReport) + 'static) {
         *self.inner.faults.handler.borrow_mut() = Some(Rc::new(f));
+    }
+
+    /// Runs `f` and gives every fault filed while it ran, the oldest
+    /// first, however many. What judges what `f` made by its faults asks
+    /// this, not [`Engine::faults`], which keeps only the latest.
+    pub fn noting_faults<R>(&self, f: impl FnOnce() -> R) -> (R, Vec<FaultReport>) {
+        struct Noting<'a>(&'a FaultState);
+        impl Drop for Noting<'_> {
+            fn drop(&mut self) {
+                self.0.noting.borrow_mut().pop();
+            }
+        }
+        let state = &self.inner.faults;
+        let depth = {
+            let mut noting = state.noting.borrow_mut();
+            noting.push(Vec::new());
+            noting.len()
+        };
+        let noting = Noting(state);
+        let r = f();
+        let noted = std::mem::take(&mut state.noting.borrow_mut()[depth - 1]);
+        drop(noting);
+        (r, noted)
     }
 
     /// The latest faults of every kind, the oldest first: at most 32,

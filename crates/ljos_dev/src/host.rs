@@ -253,6 +253,11 @@ impl<O: TypeOracle + Clone> ComponentSource for DevSource<O> {
             _ => self.urls.key(url),
         }
     }
+
+    /// A project run from its directory may reach beside it, as `qml` lets it.
+    fn refuse_step_up(&self, _base: &str, _rel: &str) -> Option<String> {
+        None
+    }
 }
 
 /// The file of the component `key`, as the reloader names it.

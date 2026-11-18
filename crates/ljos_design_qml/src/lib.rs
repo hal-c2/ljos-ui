@@ -74,6 +74,11 @@ impl ComponentSource for DesignLibrary {
         let s = url.strip_prefix(URL_PREFIX).unwrap_or(url);
         s.strip_suffix(".qml").unwrap_or(s).to_owned()
     }
+
+    /// A library's files name only one another: a step up is resolved as any address.
+    fn refuse_step_up(&self, _base: &str, _rel: &str) -> Option<String> {
+        None
+    }
 }
 
 #[derive(Default)]
