@@ -562,7 +562,10 @@ fi
 # with a worktree "bw", and a submodule "sub". Git looks no higher than
 # $real, so the checkout this runs in is never what answers.
 export GIT_CEILING_DIRECTORIES="$real"
-quiet_git() { git -c user.name=tasks -c user.email=tasks@example.invalid -c init.defaultBranch=main -c protocol.file.allow=always "$@" >/dev/null 2>&1; }
+# The fixtures are made with the real git, which the guard above stands in
+# for: a bare clone and a submodule of a repository in $real, never of the
+# checkout. A step that fails leaves a fixture out, which the cases below say.
+quiet_git() { "${real_git:-git}" -c user.name=tasks -c user.email=tasks@example.invalid -c init.defaultBranch=main -c protocol.file.allow=always "$@" >/dev/null 2>&1 || true; }
 repo="$real/repo"
 mkdir "$repo"
 cp -R "$ljos_root/mise-tasks" "$repo/mise-tasks"
