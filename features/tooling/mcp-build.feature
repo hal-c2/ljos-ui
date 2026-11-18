@@ -9,8 +9,9 @@
 # The project is a checkout of its own, made a git repository with a linked worktree "wt" by the
 # step that says so. Nothing is compiled: "bin/cargo" stands in for cargo and "bin/mise" for mise
 # (first on the PATH the author's commands see), and each notes in "built.log" what it was asked
-# to do. The stand-in cargo puts "server.sh" where the server would be built, and that answers as
-# the server would. "build-wrapper.sh" stands in for a machine's build wrapper: it notes that the
+# to do. The stand-in cargo puts "server.sh" where the server would be built (under the build
+# target CARGO_BUILD_TARGET names, if any), says where in a message as cargo does, and the copy
+# answers as the server would. "build-wrapper.sh" stands in for a machine's build wrapper: it notes that the
 # build went through it, says something on its output as a real one may, and runs the build.
 
 @ljos-only @headless
@@ -37,11 +38,16 @@ Feature: Starting the authoring server from a checkout of Ljós
       #!/bin/sh
       root=$(cd "$(dirname "$0")/.." && pwd -P)
       here=$(pwd -P)
-      echo "cargo $* in .${here#"$root"} into .${CARGO_TARGET_DIR#"$root"}" | sed "s|$root|.|g" >> "$root/built.log"
+      echo "cargo $* in .${here#"$root"}" | sed "s|$root|.|g" >> "$root/built.log"
+      [ "$CARGO_TARGET_DIR" = "$(echo "$*" | sed 's/.*--target-dir \([^ ]*\).*/\1/')" ] ||
+        echo "CARGO_TARGET_DIR is not the --target-dir" >> "$root/built.log"
+      out="$CARGO_TARGET_DIR${CARGO_BUILD_TARGET:+/$CARGO_BUILD_TARGET}/debug"
+      mkdir -p "$out"
+      cp "$root/server.sh" "$out/ljos"
       echo "   Compiling ljos_cli"
+      echo "{\"reason\":\"compiler-artifact\",\"executable\":\"$out/ljos\",\"fresh\":false}"
+      echo '{"reason":"build-finished","success":true}'
       echo "    Finished" >&2
-      mkdir -p "$CARGO_TARGET_DIR/debug"
-      cp "$root/server.sh" "$CARGO_TARGET_DIR/debug/ljos"
       """
     And the file "bin/mise":
       """sh
@@ -68,6 +74,7 @@ Feature: Starting the authoring server from a checkout of Ljós
     And the author's environment has no "CARGO_TARGET_DIR"
     And the author's environment has no "LJOS_BUILD_WRAPPER"
     And the author's environment has no "LJOS_BIN"
+    And the author's environment has no "CARGO_BUILD_TARGET"
 
   Scenario: A linked worktree builds into the main checkout's target directory
     Given the project is a git checkout with the linked worktree "wt"
@@ -75,7 +82,7 @@ Feature: Starting the authoring server from a checkout of Ljós
     Then the command exits with status 0
     And the file "built.log" is:
       """
-      cargo build --quiet -p ljos_cli --bin ljos in ./wt into ./target
+      cargo build --quiet -p ljos_cli --bin ljos --message-format=json-render-diagnostics --target-dir ./target in ./wt
       """
     And the project has no "wt/target"
 
@@ -85,7 +92,7 @@ Feature: Starting the authoring server from a checkout of Ljós
     Then the command exits with status 0
     And the file "built.log" is:
       """
-      cargo build --quiet -p ljos_cli --bin ljos in . into ./target
+      cargo build --quiet -p ljos_cli --bin ljos --message-format=json-render-diagnostics --target-dir ./target in .
       """
 
   Scenario: A checkout that is no git repository builds into its own target directory
@@ -93,7 +100,7 @@ Feature: Starting the authoring server from a checkout of Ljós
     Then the command exits with status 0
     And the file "built.log" is:
       """
-      cargo build --quiet -p ljos_cli --bin ljos in . into ./target
+      cargo build --quiet -p ljos_cli --bin ljos --message-format=json-render-diagnostics --target-dir ./target in .
       """
 
   Scenario: A main checkout's target directory that is a link is followed to where it leads
@@ -107,7 +114,7 @@ Feature: Starting the authoring server from a checkout of Ljós
     Then the command exits with status 0
     And the file "built.log" is:
       """
-      cargo build --quiet -p ljos_cli --bin ljos in ./wt into ./elsewhere
+      cargo build --quiet -p ljos_cli --bin ljos --message-format=json-render-diagnostics --target-dir ./elsewhere in ./wt
       """
     And the project has no "wt/target"
 
@@ -118,21 +125,22 @@ Feature: Starting the authoring server from a checkout of Ljós
     Then the command exits with status 0
     And the file "built.log" is:
       """
-      cargo build --quiet -p ljos_cli --bin ljos in ./wt into ./shared
+      cargo build --quiet -p ljos_cli --bin ljos --message-format=json-render-diagnostics --target-dir ./shared in ./wt
       """
 
-  Scenario: A linked worktree builds with the cargo settings the main checkout keeps outside git
+  Scenario: A linked worktree builds with the cargo settings the main checkout keeps outside git, into the shared target all the same
     Given the project is a git checkout with the linked worktree "wt"
     And the file ".cargo/config.toml":
       """toml
       [build]
       jobs = 2
+      target-dir = "elsewhere"
       """
     When the author runs "mise-tasks/mcp" in "wt"
     Then the command exits with status 0
     And the file "built.log" is:
       """
-      cargo build --quiet -p ljos_cli --bin ljos --config ./.cargo/config.toml in ./wt into ./target
+      cargo build --quiet -p ljos_cli --bin ljos --message-format=json-render-diagnostics --target-dir ./target --config ./.cargo/config.toml in ./wt
       """
 
   Scenario: The build goes through the build wrapper LJOS_BUILD_WRAPPER names
@@ -143,7 +151,7 @@ Feature: Starting the authoring server from a checkout of Ljós
     And the file "built.log" is:
       """
       through the build wrapper
-      cargo build --quiet -p ljos_cli --bin ljos in ./wt into ./target
+      cargo build --quiet -p ljos_cli --bin ljos --message-format=json-render-diagnostics --target-dir ./target in ./wt
       """
     And the command's output mentions "build-wrapper.sh" once
 
@@ -174,7 +182,7 @@ Feature: Starting the authoring server from a checkout of Ljós
     And the file "built.log" is:
       """
       mise exec
-      cargo build --quiet -p ljos_cli --bin ljos in ./wt into ./target
+      cargo build --quiet -p ljos_cli --bin ljos --message-format=json-render-diagnostics --target-dir ./target in ./wt
       """
 
   Scenario: The launcher's output is the server's alone
@@ -182,6 +190,21 @@ Feature: Starting the authoring server from a checkout of Ljós
     And the author's environment has "LJOS_BUILD_WRAPPER" set to "{project}/build-wrapper.sh"
     When the author runs "mise-tasks/mcp" in "wt"
     Then the command's standard output is:
+      """json
+      {"jsonrpc":"2.0","id":1,"result":{"serverInfo":{"name":"ljos"}}}
+      """
+
+  Scenario: With a build target set, the server started is the one the build made under it
+    Given the project is a git checkout with the linked worktree "wt"
+    And the file "target/debug/ljos":
+      """sh
+      #!/bin/sh
+      echo '{"jsonrpc":"2.0","id":1,"result":{"serverInfo":{"name":"an older build"}}}'
+      """
+    And the author's environment has "CARGO_BUILD_TARGET" set to "x86_64-unknown-linux-gnu"
+    When the author runs "mise-tasks/mcp" in "wt"
+    Then the command exits with status 0
+    And the command's standard output is:
       """json
       {"jsonrpc":"2.0","id":1,"result":{"serverInfo":{"name":"ljos"}}}
       """

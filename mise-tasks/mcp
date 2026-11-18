@@ -52,7 +52,10 @@ if [ -d "$target" ]; then
 fi
 export CARGO_TARGET_DIR="$target"
 
-build=(cargo build --quiet -p ljos_cli --bin ljos)
+# --target-dir as well as CARGO_TARGET_DIR: a build.target-dir in a --config
+# file would outrank the variable. Cargo's messages name the program it made.
+build=(cargo build --quiet -p ljos_cli --bin ljos
+  --message-format=json-render-diagnostics --target-dir "$target")
 # The main checkout's cargo settings (a compiler cache, a cap on jobs) are
 # often kept outside git; a linked worktree builds with them too.
 if [ "$main" != "$checkout" ] && [ -f "$main/.cargo/config.toml" ] &&
@@ -75,7 +78,14 @@ else
 fi
 
 cd "$checkout"
-"${build[@]}" >&2 || die "the build of ljos failed"
-server="$target/debug/ljos"
-[ -x "$server" ] || die "the build made no $server"
+# The build's stdout is read here, never passed on: its JSON messages say
+# where the program is (under a target triple when a build target is set),
+# and its other lines (a wrapper's word, say) go to stderr.
+status=0
+messages="$("${build[@]}")" || status=$?
+printf '%s\n' "$messages" | grep -v -e '^{"reason":' -e '^$' >&2 || true
+[ "$status" -eq 0 ] || die "the build of ljos failed"
+server="$(printf '%s\n' "$messages" |
+  sed -n 's/^{"reason":"compiler-artifact".*"executable":"\([^"]*\)".*/\1/p' | tail -n 1)"
+[ -n "$server" ] && [ -x "$server" ] || die "the build named no ljos program it made"
 exec "$server" mcp --project "$project"
