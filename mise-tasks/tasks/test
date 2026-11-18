@@ -180,6 +180,18 @@ case "$out" in
   *"Qt 6.12.3 ($real/qt612/bin/qml) is not"*) ok "the qml6 a task picked is asked, though the one on PATH is CI's" ;;
   *) bad "a picked qml at 6.12.3 was not a mismatch while PATH's qml6 is 6.11.2" "$out" ;;
 esac
+# A picked qml6 whose path has a space (a TMPDIR of "task scratch", say) is
+# still one tool with one version.
+mkdir -p "$real/qt 612/bin" "$real/qt 611/bin"
+stand qml 6.12.3 "$real/qt 612/bin/qml"
+stand qml 6.11.2 "$real/qt 611/bin/qml"
+out="$(with_stands qt_mismatch "$real/qt 612/bin/qml")"
+case "$out" in
+  "Qt 6.12.3 ($real/qt 612/bin/qml) is not"*) ok "a picked qml whose path has a space is a mismatch naming the whole path" ;;
+  *) bad "a picked qml at 6.12.3 under a path with a space was not one mismatch naming it" "$out" ;;
+esac
+out="$(with_stands qt_mismatch "$real/qt 611/bin/qml")"
+if [ -z "$out" ]; then ok "a picked qml at CI's Qt under a path with a space is no mismatch"; else bad "a picked qml at 6.11.2 under a path with a space was a mismatch" "$out"; fi
 stand_reset
 stand qmake6 6.12.3
 out="$(with_stands qt_mismatch "$stands/qml6")"

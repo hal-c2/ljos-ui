@@ -182,12 +182,15 @@ qt_pin_fix() {
 # qt_other <pin> <inventory>: of the "<tool> <version>" lines qt_found gave,
 # those that are not the pin's minor version, as one "<version> <tool>[,
 # <tool>…]" line per version, in the order they came. The caller asks qt_pin
-# and qt_found once, so what it reports is what it classified.
+# and qt_found once, so what it reports is what it classified. The version is
+# the last field: a tool's path may have spaces.
 qt_other() {
   printf '%s\n' "$2" | awk -v want="${1%.*}" '
-    NF >= 2 && $2 != want && index($2, want ".") != 1 {
-      if (!($2 in tools)) order[++n] = $2
-      tools[$2] = ($2 in tools) ? tools[$2] ", " $1 : $1
+    NF >= 2 && $NF != want && index($NF, want ".") != 1 {
+      v = $NF
+      tool = substr($0, 1, length($0) - length(v) - 1)
+      if (!(v in tools)) order[++n] = v
+      tools[v] = (v in tools) ? tools[v] ", " tool : tool
     }
     END { for (i = 1; i <= n; i++) printf "%s %s\n", order[i], tools[order[i]] }'
 }

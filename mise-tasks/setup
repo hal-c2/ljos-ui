@@ -229,7 +229,7 @@ EOF
   note "CI pins Qt $pin (.github/workflows/ci.yml), another minor version than the tools above"
   note "for CI's results, $(qt_pin_fix "$pin")"
 elif [ -n "$found" ]; then
-  did "found Qt ${found#* } (${found%% *}), CI's Qt ${pin%.*} (ci.yml pins $pin)"
+  did "found Qt ${found##* } (${found% *}), CI's Qt ${pin%.*} (ci.yml pins $pin)"
 else
   skip "Qt 6: none found (qmake6, qtpaths6, qml6). features:parity, gallery:reference, qttest, fuzz:qt and bench's Qt side need it: $(qt_pin_fix "$pin")"
 fi
