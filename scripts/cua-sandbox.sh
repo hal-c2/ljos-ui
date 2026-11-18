@@ -347,7 +347,7 @@ print_env() {
     "DBUS_SESSION_BUS_ADDRESS=$(< "$home/bus")" "XDG_RUNTIME_DIR=$run" \
     "XDG_CONFIG_HOME=$home/xdg/config" "XDG_DATA_HOME=$home/xdg/data" "XDG_STATE_HOME=$home/xdg/state" \
     "XDG_CACHE_HOME=$home/xdg/cache" "HOME=$home/xdg/home" "LJOS_GUARD_HOME=${LJOS_GUARD_HOME:-$HOME}" \
-    "LJOS_SCREEN_READER=${LJOS_SCREEN_READER:-off}"
+    "LJOS_SCREEN_READER=${LJOS_SCREEN_READER:-off}" "LJOS_CUA_HOME=$home"
 }
 
 # Adds "key":value to the json object unless it has the key or the tool does not take it.

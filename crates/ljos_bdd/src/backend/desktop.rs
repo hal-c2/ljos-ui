@@ -446,7 +446,8 @@ impl Drop for DesktopBackend {
         // Every later desktop scenario of the run would fail without a
         // keyboard, far from this cause, so a failed restore says so here.
         if self.keyboard_off
-            && let Err(err) = sandbox_keyboard(true)
+            && let Some(sandbox) = &self.sandbox
+            && let Err(err) = sandbox_keyboard(sandbox, true)
         {
             eprintln!("[desktop] the seat's keyboard was not given back: {err}");
         }
@@ -454,13 +455,15 @@ impl Drop for DesktopBackend {
 }
 
 /// Gives the sandbox's seat its keyboard, or takes it away
-/// (`cua-sandbox.sh keyboard on|off`). The script finds the sandbox the
-/// task that started it named (`LJOS_CUA_HOME`), as this process inherits.
-fn sandbox_keyboard(on: bool) -> Result<()> {
+/// (`cua-sandbox.sh keyboard on|off`), on the sandbox the description
+/// names (its `LJOS_CUA_HOME`), which is the one the application runs on
+/// whatever this process inherited.
+fn sandbox_keyboard(sandbox: &Sandbox, on: bool) -> Result<()> {
     let script = crate::runner::workspace_root().join("scripts/cua-sandbox.sh");
     let told = Command::new(&script)
         .args(["keyboard", if on { "on" } else { "off" }])
         .stdin(Stdio::null())
+        .env("LJOS_CUA_HOME", sandbox.path("LJOS_CUA_HOME")?)
         .output()?;
     if told.status.success() {
         Ok(())
@@ -1079,7 +1082,7 @@ impl Input for DesktopBackend {
         if !present {
             self.keyboard_off = true;
         }
-        sandbox_keyboard(present)?;
+        sandbox_keyboard(sandbox, present)?;
         self.keyboard_off = !present;
         Ok(())
     }
@@ -1094,6 +1097,10 @@ impl Files for DesktopBackend {
 }
 
 impl Probes for DesktopBackend {
+        let sandbox = match &self.sandbox {
+            Some(s) => s,
+            None => self.sandbox.insert(Sandbox::from_env()?),
+        };
     fn draw_on_processor(&mut self) -> Result<()> {
         self.env.push(("LJOS_PAINTER".to_owned(), "cpu".to_owned()));
         Ok(())
