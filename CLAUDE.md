@@ -42,7 +42,7 @@ Ljós is a general-purpose Rust UI toolkit for malleable software: apps that peo
 | Benchmarks against Qt (docs/BENCHMARKS.md) | `mise run bench [ids…]`, `bench:3d`, `bench:egui`, `bench:js`, `bench:cross`, `bench:hot [--check]` |
 | Play a Lottie file | `mise run lottie [file] [--qt] [--check]` |
 | Build / run with QtWebEngine (CEF, fetched once into `$CEF_PATH`, default `<target>/cef`) | `mise run webengine:build`, `mise run webengine:run <file.qml>` |
-| MCP authoring server | `mise run mcp [project]` (what `.mcp.json` runs; builds into the main checkout's target, through `LJOS_BUILD_WRAPPER` when set; `LJOS_BIN` skips the build) |
+| MCP authoring server | `mise run mcp [project]` (what `.mcp.json` runs; builds where the tasks do, through `LJOS_BUILD_WRAPPER` when set; `LJOS_BIN` skips the build) |
 | Run an app off-screen (headless sway, own bus, cua-driver) | `mise run desktop:cua <file.qml> [args]`, `desktop:cua:exec <command…>`, `desktop:cua:call <tool> [json]`, `desktop:cua:stop` |
 | See what drags from other applications carry | `mise run desktop:drag-in [--check]` |
 | Diff a vendored fork against its release; try the oxc patch on the newest one | `mise run accesskit:diff`, `quickjs:diff`, `oxc:diff` (`--brief`), `mise run oxc:check` |
@@ -53,6 +53,6 @@ Ljós is a general-purpose Rust UI toolkit for malleable software: apps that peo
 ## Conventions
 
 - Rust 1.98.1, edition 2024, resolver 3. Versions are pinned in `[workspace.dependencies]`.
-- `mise-tasks/` are bash scripts with `#MISE` headers and `set -euo pipefail`.
+- `mise-tasks/` are bash scripts with `#MISE` headers and `set -euo pipefail`. A task that runs cargo sources `mise-tasks/_lib/env.sh` and runs `cargo` (never `exec cargo`): `target_dir` there is the one place the target directory is decided. That is `CARGO_TARGET_DIR`, else a linked worktree's main checkout's `target/` (with its `.cargo/config.toml`), else `target/`. So a new worktree, and the MCP server its `.mcp.json` starts, reuse the main checkout's build.
 - Use `thiserror` in libraries and `anyhow` only in binaries.
 - Comments explain why, not what.

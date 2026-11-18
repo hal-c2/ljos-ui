@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-#MISE description="Build the ljos CLI ($CARGO_TARGET_DIR, else target/, then debug/ljos, or release/ljos with --release); --workspace builds every crate. QtWebEngine: mise run webengine:build"
+#MISE description="Build the ljos CLI into the target directory (CARGO_TARGET_DIR, else a linked worktree's main checkout's target/, else target/), as debug/ljos, or release/ljos with --release; --workspace builds every crate. QtWebEngine: mise run webengine:build"
 #MISE dir="{{config_root}}"
-#USAGE flag "--release" help="Optimised build, into target/release"
+#USAGE flag "--release" help="Optimised build, into release/ in the target directory"
 #USAGE flag "--workspace" help="Every crate of the workspace, not only ljos"
 set -euo pipefail
 # shellcheck source-path=SCRIPTDIR source=_lib/env.sh

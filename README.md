@@ -51,11 +51,13 @@ mise run tasks:smoke  # every task in a quick mode, as CI runs them
 mise tasks          # every task; mise run <task> --help shows its arguments
 ```
 
+Builds go to `CARGO_TARGET_DIR` when it is set, else `target/`. A linked git worktree builds into its main checkout's `target/` instead (following it when it is a link), with the main checkout's `.cargo/config.toml` when the worktree has none, so every task and the MCP server `.mcp.json` starts reuse the build that is there rather than making one in each new worktree. A bare repository's worktrees and submodules keep their own. The paths below say `target/` for that directory.
+
 Qt 6 is optional. Without it Ljós reads QML against its own types and the Qt comparisons (`features:parity`, `gallery:reference`, `fuzz:qt`, `qttest:parity`) can't run; `mise run setup` says which. CI compares with Qt 6.11.2 (the version `.github/workflows/ci.yml` pins), and `setup` (with `--check` too) notes another minor version, with the command that installs CI's, and goes on: it fails only when something it needs is missing.
 
 ### QtWebEngine
 
-`import QtWebEngine` is an opt-in cargo feature (`webengine`) that shows pages through the Chromium Embedded Framework. The first build downloads CEF (about 1.5 GB unpacked) into `$CEF_PATH`, by default `target/cef`:
+`import QtWebEngine` is an opt-in cargo feature (`webengine`) that shows pages through the Chromium Embedded Framework. The first build downloads CEF (about 1.5 GB unpacked) into `$CEF_PATH`, by default `cef/` in the target directory:
 
 ```sh
 mise run webengine:build                               # ljos with QtWebEngine, and its helper
