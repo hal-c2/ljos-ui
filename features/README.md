@@ -33,6 +33,7 @@ One directory per language or toolkit area, not per surface. Surfaces are tags.
 | `quick3d/` | `QtQuick3D`: `View3D` and the scene in it (nodes, models, cameras, lights, materials, the scene environment), how it is drawn among other items, and that a still scene costs nothing |
 | `blocks/` | the module `Ljos.Blocks`: a `Slot` and the `Contribution`s it shows, and a `ShellLoader` that falls back when a shell does not work |
 | `design/` | the module `Ljos.Design`: its colours, motion, spacing and type, and the transitions and behaviours made of them |
+| `examples/` | the applications of `examples/`, loaded as they ship and driven by their controls |
 | `parity/` | generated outlines (API ledger); never hand edited |
 
 ## Writing rules
@@ -155,6 +156,7 @@ Objects are named by `objectName`; `a/b` finds `b` below `a`. Properties may be 
 | `Given the QML:` + doc string | write the source as `Scenario.qml` and create it |
 | `Given the file "X.qml":` + doc string | make `X.qml` available; nothing is created yet. The name may be a path (`kit/Badge.qml`), and a file named `qmldir` (`kit/qmldir`) describes the module of its directory |
 | `Given the files of the module Ljos.Design` | make the files `ljos design export` writes available in `Ljos/Design`, so that `import Ljos.Design` finds the module in the scenario's directory on either backend |
+| `Given the files of the example "smartwatch"` | make every file of `examples/smartwatch` available at its own path below the scenario's directory: its QML, scripts and `qmldir` files to load, anything else (models, pictures) beside them; nothing is created yet, so a scenario then loads its `Main.qml` |
 | `Given the translation file "X.ts":` + doc string | make the translations of a Qt Linguist file (doc string labelled `xml`) available for the language its `language` attribute names; give it before the QML |
 | `Given the translation file "X.po":` + doc string | make the `t` messages of a PO catalogue (doc string labelled `po`) available for the language its `Language:` header names, or else its file name; Ljós only |
 | `Given the application starts with the controls style "Kit"` | the Controls style the application starts with, as `QT_QUICK_CONTROLS_STYLE` chooses it: a built-in style's name, or a module of the scenario's own that is a custom style (a directory with a `qmldir`, given by `Given the file`); give it before the QML |
