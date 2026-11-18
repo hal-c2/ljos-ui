@@ -10873,8 +10873,8 @@ module QtQuick3D.Helpers
 		signal normalsChanged
 		signal tangentsChanged
 		signal binormalsChanged
-		signal uv0Changed
-		signal uv1Changed
+		signal uv0sChanged
+		signal uv1sChanged
 		signal colorsChanged
 		signal indexesChanged
 		signal primitiveModeChanged
