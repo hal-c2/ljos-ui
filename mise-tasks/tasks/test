@@ -575,7 +575,19 @@ quiet_git -C "$real/bare.git" worktree add "$real/bw"
 quiet_git -C "$repo" submodule add "$real/bare.git" sub
 mkdir "$real/plain"
 # where <dir>: target_dir for <dir> with no CARGO_TARGET_DIR.
-where() { (unset CARGO_TARGET_DIR CARGO_BUILD_TARGET_DIR && target_dir "$1"); }
+# Cargo's own home is a fixture's too, so this machine's settings are never
+# what answers.
+where() { (unset CARGO_TARGET_DIR CARGO_BUILD_TARGET_DIR && CARGO_HOME="$real/cargo-home" target_dir "$1"); }
+
+# Settings above the fixtures are cargo's to read as well; say so rather than
+# leave the cases that expect target/ failing with no cause.
+while IFS= read -r file; do
+  if [ -n "$(settings_target_dir "$file")" ]; then
+    echo "note  $file, above $real, names a target-dir: the cases below that expect target/ fail here for that reason"
+  fi
+done <<EOF_ABOVE
+$(CARGO_HOME="$real/cargo-home" settings_files "$(dirname "$real")")
+EOF_ABOVE
 
 if [ -d "$real/wt" ] && [ -d "$real/bw" ] && [ -d "$repo/sub" ]; then
   out="$(where "$real/wt")"
@@ -632,9 +644,26 @@ mkdir "$real/wt/.cargo"
 printf '[build]\ntarget-dir = "own"\n' >"$real/wt/.cargo/config.toml"
 out="$(where "$real/wt")"
 if [ "$out" = "$real/wt/own" ]; then ok "a worktree with settings of its own builds where they say"; else bad "target_dir gave $out for a worktree whose own config sets target-dir own"; fi
+printf '[build]\njobs = 3\n' >"$real/wt/.cargo/config.toml"
+printf '[build]\ntarget-dir = "%s"\n' "$real/roomy-cfg" >"$repo/.cargo/config.toml"
+out="$(where "$real/wt")"
+if [ "$out" = "$real/roomy-cfg" ]; then ok "a worktree whose own settings name no target builds where its main checkout's say"; else bad "target_dir gave $out for a worktree with settings of its own and a main config with target-dir $real/roomy-cfg"; fi
 rm "$real/wt/.cargo/config.toml"
 rmdir "$real/wt/.cargo"
 printf '[build]\njobs = 2\n' >"$repo/.cargo/config.toml"
+
+# Cargo reads settings in every directory above where it runs too, and in its
+# home, after the checkout's own.
+mkdir -p "$real/outer/.cargo" "$real/outer/plain" "$real/cargo-home"
+printf '[build]\ntarget-dir = "outer-target"\n' >"$real/outer/.cargo/config.toml"
+out="$(where "$real/outer/plain")"
+if [ "$out" = "$real/outer/outer-target" ]; then ok "a target-dir in a directory above the checkout is the one used"; else bad "target_dir gave $out under $real/outer, whose .cargo/config.toml sets target-dir outer-target"; fi
+printf '[build]\ntarget-dir = "%s"\n' "$real/home-target" >"$real/cargo-home/config.toml"
+out="$(where "$real/outer/plain")"
+if [ "$out" = "$real/outer/outer-target" ]; then ok "the settings above the checkout win over cargo's home"; else bad "target_dir gave $out under $real/outer with a target-dir in cargo's home too"; fi
+out="$(where "$real/wt")"
+if [ "$out" = "$real/home-target" ]; then ok "a target-dir in cargo's home is the one used when the checkout's settings name none"; else bad "target_dir gave $out for a worktree with target-dir $real/home-target in CARGO_HOME/config.toml"; fi
+rm "$real/cargo-home/config.toml"
 
 # A cargo task and the MCP server, both run in the worktree, build into the
 # same place with the same settings. The stand-in cargo notes the target it

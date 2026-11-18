@@ -53,6 +53,6 @@ Ljós is a general-purpose Rust UI toolkit for malleable software: apps that peo
 ## Conventions
 
 - Rust 1.98.1, edition 2024, resolver 3. Versions are pinned in `[workspace.dependencies]`.
-- `mise-tasks/` are bash scripts with `#MISE` headers and `set -euo pipefail`. A task that runs cargo sources `mise-tasks/_lib/env.sh` and runs `cargo` (never `exec cargo`): `target_dir` there is the one place the target directory is decided. That is cargo's own order: `CARGO_TARGET_DIR`, else `CARGO_BUILD_TARGET_DIR`, else a `build.target-dir` in `.cargo/config.toml`, else `target/`. A linked worktree takes its main checkout's `.cargo/config.toml` and `target/` when it has no config of its own. So a new worktree, and the MCP server its `.mcp.json` starts, reuse the main checkout's build.
+- `mise-tasks/` are bash scripts with `#MISE` headers and `set -euo pipefail`. A task that runs cargo sources `mise-tasks/_lib/env.sh` and runs `cargo` (never `exec cargo`): `target_dir` there is the one place the target directory is decided. That is cargo's own order: `CARGO_TARGET_DIR`, else `CARGO_BUILD_TARGET_DIR`, else the first `build.target-dir` in the settings cargo reads (the checkout's `.cargo/config.toml`, those above it, cargo's home), else `target/`. A linked worktree takes its main checkout's settings and `target/` after its own. So a new worktree, and the MCP server its `.mcp.json` starts, reuse the main checkout's build.
 - Use `thiserror` in libraries and `anyhow` only in binaries.
 - Comments explain why, not what.

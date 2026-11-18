@@ -132,25 +132,58 @@ settings_target_dir() {
   esac
 }
 
+# settings_file <dir>: the settings file in <dir>/.cargo, which cargo takes
+# without the extension when both are there, or nothing.
+settings_file() {
+  if [ -f "$1/.cargo/config" ]; then
+    printf '%s\n' "$1/.cargo/config"
+  elif [ -f "$1/.cargo/config.toml" ]; then
+    printf '%s\n' "$1/.cargo/config.toml"
+  fi
+}
+
+# settings_files <dir>: the settings files cargo reads when it runs in <dir>,
+# the one that binds most first: <dir>'s, every directory's above it, then
+# cargo's home's.
+settings_files() {
+  local dir="$1" home="${CARGO_HOME:-$HOME/.cargo}"
+  while :; do
+    settings_file "$dir"
+    if [ "$dir" = / ] || [ -z "$dir" ]; then break; fi
+    dir="$(dirname "$dir")"
+  done
+  if [ -f "$home/config" ]; then
+    printf '%s\n' "$home/config"
+  elif [ -f "$home/config.toml" ]; then
+    printf '%s\n' "$home/config.toml"
+  fi
+}
+
 # target_dir [dir]: where cargo builds for the checkout at <dir> (this one by
 # default), the one place that is decided, in cargo's own order:
 # CARGO_TARGET_DIR, then CARGO_BUILD_TARGET_DIR (a relative one of either is
-# from the checkout, where the tasks build), then a target-dir in the
-# checkout's .cargo/config.toml, or in the main checkout's when a linked
-# worktree has none, so a target put on a drive with room stays there. Else
-# the main checkout's target/, so a linked worktree reuses the build that is
-# there rather than growing one of its own wherever the worktree was made. A
-# target that is a link (to a drive with room, say) is where it leads.
+# from the checkout, where the tasks build), then the first target-dir in the
+# settings cargo reads, so a target put on a drive with room stays there. A
+# linked worktree's own settings come first, then those its main checkout
+# builds with (its own, the directories' above it, cargo's home), then the
+# worktree's surroundings. Else the main checkout's target/, so a linked
+# worktree reuses the build that is there rather than growing one of its own
+# wherever the worktree was made. A target that is a link (to a drive with
+# room, say) is where it leads.
 target_dir() {
   local dir="${1:-$ljos_root}" asked="${CARGO_TARGET_DIR:-${CARGO_BUILD_TARGET_DIR:-}}" target main
   case "$asked" in
     "")
       main="$(main_checkout "$dir")"
-      if [ -f "$dir/.cargo/config.toml" ]; then
-        target="$(settings_target_dir "$dir/.cargo/config.toml")"
-      else
-        target="$(settings_target_dir "$main/.cargo/config.toml")"
-      fi
+      local file
+      while IFS= read -r file; do
+        target="$(settings_target_dir "$file")"
+        if [ -n "$target" ]; then break; fi
+      done <<EOF_SETTINGS
+$(settings_file "$dir")
+$(settings_files "$main")
+$(settings_files "$dir")
+EOF_SETTINGS
       if [ -z "$target" ]; then target="$main/target"; fi
       ;;
     /*) target="$asked" ;;
