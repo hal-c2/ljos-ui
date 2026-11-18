@@ -1893,24 +1893,34 @@ impl<V: Clone + 'static> Graph<V> {
             return;
         }
         let stamp = f.stamp;
-        for k in at..f.reads.len() {
-            let n = f.reads[k];
+        // Out and back in, not copied: the frames are looked at meanwhile.
+        let mut reads = std::mem::take(&mut f.reads);
+        for &n in &reads[at..] {
             if let Some(node) = i.nodes.get_mut(n)
                 && node.read_stamp == stamp
             {
-                // No run has stamp 0: the next read records it again. A
-                // run this one hid stays in `hidden`, and is named again
-                // when this one ends. A stamp an adopted reader took
-                // stays its.
+                // The run this one hid is named again, as when this one
+                // ends. Else no run: stamp 0, and the next read records it
+                // again. A stamp an adopted reader took stays its.
                 node.read_stamp = 0;
-            }
-            // Hidden no more: this run no longer holds `n`.
-            if !i.hidden.is_empty() && !f.reads[..at].contains(&n) {
-                i.hidden.retain(|h| !(h.node == n && h.stamp == stamp));
+                if let Some(k) = i.hidden.iter().rposition(|h| {
+                    h.node == n && h.by == stamp && running(&i.frames, h.stamp).is_some()
+                }) {
+                    node.read_stamp = i.hidden.remove(k).stamp;
+                }
             }
             out.extend([n]);
         }
-        f.reads.truncate(at);
+        // Hidden no more: this run no longer holds what it gave back.
+        if !i.hidden.is_empty() {
+            let (kept, taken) = reads.split_at(at);
+            i.hidden
+                .retain(|h| h.stamp != stamp || !taken.contains(&h.node) || kept.contains(&h.node));
+        }
+        reads.truncate(at);
+        if let Some(f) = i.frames.last_mut() {
+            f.reads = reads;
+        }
     }
 
     /// The sources the running binding or effect read after its first
@@ -1952,7 +1962,10 @@ impl<V: Clone + 'static> Graph<V> {
                 && i.frames[at].stamp == r.run
             {
                 let node = &mut i.nodes[n];
-                if node.read_stamp != r.run {
+                // Not a run that holds `n` already, named or hidden.
+                if node.read_stamp != r.run
+                    && !i.hidden.iter().any(|h| h.node == n && h.stamp == r.run)
+                {
                     hide(&mut i.hidden, &i.frames, n, node.read_stamp, r.run);
                     node.read_stamp = r.run;
                     i.frames[at].reads.push(n);
@@ -4141,10 +4154,9 @@ fn note<V>(noted: &mut Waiting, n: NodeId, node: &mut Node<V>) {
 }
 
 /// Whether a run still going that is not `n`'s own read `n` (last read in
-/// a run stamped `read_stamp`). It has no edge to `n` until it finishes;
-/// `read_stamp` names only the last reader, and none once a run takes its
-/// reads back (`take_reads_since`): a nested run that read `n` leaves an
-/// outer one holding `n` in its reads under another stamp.
+/// a run stamped `read_stamp`). It has no edge to `n` until it finishes.
+/// From the runs' own reads, which say what [`runs_holding`] says, at the
+/// cost of a scan: for a caller that asks once, not for every mark.
 fn read_by_a_run(frames: &[Frame], n: NodeId, read_stamp: u64) -> bool {
     frames
         .iter()
@@ -4153,26 +4165,18 @@ fn read_by_a_run(frames: &[Frame], n: NodeId, read_stamp: u64) -> bool {
 
 /// The tracked run with stamp `s`, if it is going. Tracked runs start in
 /// stamp order (an untracked frame has 0): a stamp from before the
-/// outermost, as most are, or after the innermost, is none, at once.
+/// outermost, as most are, is none at once, and the walk in from the
+/// innermost stops at the first older run.
 fn running(frames: &[Frame], s: u64) -> Option<&Frame> {
-    if s == 0
-        || frames
-            .last()
-            .is_some_and(|f| f.node.is_some() && s > f.stamp)
-    {
+    if s == 0 || s < frames.iter().find(|f| f.node.is_some())?.stamp {
         return None;
     }
-    if s < frames.iter().find(|f| f.node.is_some())?.stamp {
-        return None;
-    }
-    frames
+    let f = frames
         .iter()
         .rev()
-        .find(|f| f.stamp == s && f.node.is_some())
-}
-
-fn is_running(frames: &[Frame], s: u64) -> bool {
-    running(frames, s).is_some()
+        .filter(|f| f.node.is_some())
+        .find(|f| f.stamp <= s)?;
+    (f.stamp == s).then_some(f)
 }
 
 /// The runs still going, other than `n`'s own, that read `n`, each with
@@ -4221,7 +4225,9 @@ fn push_holders(
 /// `n` was last read under `old` and is now read under `by`: if a run
 /// still going has `old`, it holds `n` and is hidden while `by` does.
 fn hide(hidden: &mut SmallVec<[Hidden; 4]>, frames: &[Frame], n: NodeId, old: u64, by: u64) {
-    if old != by && !hidden.iter().any(|h| h.node == n && h.stamp == old) && is_running(frames, old)
+    if old != by
+        && !hidden.iter().any(|h| h.node == n && h.stamp == old)
+        && running(frames, old).is_some()
     {
         hidden.push(Hidden {
             node: n,
@@ -4233,7 +4239,8 @@ fn hide(hidden: &mut SmallVec<[Hidden; 4]>, frames: &[Frame], n: NodeId, old: u6
 
 /// The run stamped `by` ended. What it hid is named again, if that run
 /// is still going and no other run going is named; if one is, it hides
-/// it now. An untracked frame hides nothing.
+/// it now. What hid `by` hides nothing any more. An untracked frame hides
+/// nothing.
 fn unhide<V>(
     nodes: &mut Slots<NodeId, Node<V>>,
     hidden: &mut SmallVec<[Hidden; 4]>,
@@ -4251,18 +4258,23 @@ fn unhide<V>(
     while k > 0 {
         k -= 1;
         let h = hidden[k];
+        // A run that hid nothing more once the run it hid ended.
+        if h.stamp == by {
+            hidden.remove(k);
+            continue;
+        }
         if h.by != by {
             continue;
         }
         let Some(node) = nodes
             .get_mut(h.node)
-            .filter(|_| is_running(frames, h.stamp))
+            .filter(|_| running(frames, h.stamp).is_some())
         else {
             hidden.remove(k);
             continue;
         };
         let now = node.read_stamp;
-        if now != h.stamp && is_running(frames, now) {
+        if now != h.stamp && running(frames, now).is_some() {
             hidden[k].by = now;
         } else {
             node.read_stamp = h.stamp;
