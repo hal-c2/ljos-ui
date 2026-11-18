@@ -597,6 +597,9 @@ pub(crate) struct LoaderState {
     /// said so of, by the first part of their name (`QtGraphs`): once
     /// each, however many files import them.
     pub(crate) stood_in: HashSet<String>,
+    /// Of a module the runtime builds part of, the types that stand in
+    /// that the log has said so of (`QtQuick3D.Helpers.Name`), once each.
+    pub(crate) stood_in_types: HashSet<String>,
 }
 
 /// A binding that reads a path of properties from one parameter
@@ -1173,7 +1176,9 @@ fn modules_of(ir: &CompiledFile) -> Vec<String> {
 impl Engine {
     /// Refuses a file that imports a module the engine does not have,
     /// unless the compiler made its types stand in as empty Items: then
-    /// the log says so, once for the module.
+    /// the log says so, once for the module, or of one the runtime builds
+    /// part of, once for each type of it that stands in, where a file
+    /// first names it.
     pub(crate) fn check_imports(&self, url: &str, ir: &CompiledFile) -> Result<(), EngineError> {
         for import in &ir.imports {
             let ImportSource::Module(uri) = &import.source else {
@@ -1194,6 +1199,24 @@ impl Engine {
                 Some(("QtQuick" | "QtQuick3D", _)) | None => uri.as_str(),
                 Some((first, _)) => first,
             };
+            // Of a module the runtime builds part of, what the file names
+            // may all be built: only a type that stands in is told.
+            if let Some(types) = &import.stood_in {
+                for ty in types {
+                    let mut loader = self.inner.loader.borrow_mut();
+                    loader.stood_in.insert(family.to_owned());
+                    let told = loader.stood_in_types.insert(format!("{uri}.{}", ty.name));
+                    drop(loader);
+                    if told {
+                        self.warn(format!(
+                            "{url}:{}:{}: type {} of module \"{uri}\" is not part of Ljós: it \
+                             is an empty Item, and what only it has is left out",
+                            ty.span.line, ty.span.column, ty.name
+                        ));
+                    }
+                }
+                continue;
+            }
             if self
                 .inner
                 .loader

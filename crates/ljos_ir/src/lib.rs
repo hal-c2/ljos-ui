@@ -29,7 +29,7 @@ pub mod color;
 /// Bumped whenever the serialised shape changes, or what the compiled
 /// functions ask of the engine, so a cache written by an older compiler is
 /// rebuilt instead of misread.
-pub const IR_VERSION: u32 = 16;
+pub const IR_VERSION: u32 = 17;
 
 macro_rules! index {
     ($(#[$doc:meta])* $name:ident) => {
@@ -224,6 +224,19 @@ pub struct Import {
     /// The runtime does not have the module, and its types stand in as
     /// empty Items: the file loads without it.
     pub stands_in: bool,
+    /// Of such a module the runtime builds part of, the types of it the
+    /// file names that stand in, each where it is first named: none, and
+    /// the file loses nothing of the module. `None` for a module none of
+    /// whose types the runtime builds, which the import itself tells.
+    pub stood_in: Option<Vec<StoodIn>>,
+}
+
+/// A type of a module the runtime builds part of that stands in as an
+/// empty Item where a file names it ([`Import::stood_in`]).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StoodIn {
+    pub name: String,
+    pub span: SourceSpan,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]

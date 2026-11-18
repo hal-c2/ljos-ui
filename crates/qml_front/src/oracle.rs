@@ -193,6 +193,14 @@ pub trait TypeOracle {
         false
     }
 
+    /// Whether the runtime builds part of `uri`, a module that
+    /// [`stands_in`](Self::stands_in): then a file that imports it loses
+    /// nothing unless it names a type of it that stands in, and it is that
+    /// name that is told, not the import.
+    fn builds_part_of(&self, _uri: &str) -> bool {
+        false
+    }
+
     /// Whether the type `name` of such a module is an Item where it is
     /// written, placed as one; otherwise it keeps nothing of the Item but
     /// its name, its children and what the file declares on it.
@@ -560,6 +568,10 @@ impl TypeOracle for QtTypeOracle {
 
     fn stands_in_as_item(&self, name: &str) -> bool {
         qt_types::stands_in_as_item(name)
+    }
+
+    fn builds_part_of(&self, uri: &str) -> bool {
+        qt_types::builds_part_of(uri)
     }
 
     fn is_built(&self, ty: QtType) -> bool {

@@ -377,6 +377,10 @@ struct Compiler<'t, 'a, 'p, O: TypeOracle> {
     ljos_ui: bool,
     /// The TypeScript modules the file reaches, checked.
     modules: Vec<crate::CheckedModule>,
+    /// The names of a module the runtime does not have that stand in,
+    /// with the module and where each is written, beside the objects
+    /// the tree has of them: a property's type.
+    stood_in: Vec<(String, String, SourceSpan)>,
 }
 
 impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
@@ -445,6 +449,7 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
             dialect: false,
             ljos_ui: false,
             modules: Vec::new(),
+            stood_in: Vec::new(),
         }
     }
 
@@ -1052,7 +1057,7 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
         let ty = if module_typed {
             "var".to_string()
         } else {
-            self.property_type_name(&type_name.name.parts)
+            self.property_type_name(&type_name.name.parts, type_name.span)
         };
         self.def_mut(at).properties.push(PropertyDecl {
             name: name.clone(),
@@ -1088,24 +1093,56 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
     /// that stands in for a type of a module the runtime does not have:
     /// then the `Item` it stands in as, so that the property holds such an
     /// object (`property View3D view: parent`).
-    fn property_type_name(&self, parts: &[&str]) -> String {
+    fn property_type_name(&mut self, parts: &[&str], span: Span) -> String {
         // A value type (`int`, `vector3d`) is no object type, though a
         // name nothing else has is taken for one of the missing module.
         let object_type = parts
             .last()
             .is_some_and(|name| name.starts_with(|c: char| c.is_ascii_uppercase()));
         if object_type
-            && matches!(
-                self.types.find(parts),
-                Some(Found {
-                    origin: Origin::StandIn(_),
-                    ..
-                })
-            )
+            && let Some(Found {
+                origin: Origin::StandIn(uri),
+                ..
+            }) = self.types.find(parts)
         {
+            let name = parts.last().copied().unwrap_or_default().to_string();
+            let span = self.span(span);
+            self.stood_in.push((uri, name, span));
             return "Item".to_string();
         }
         parts.join(".")
+    }
+
+    /// Of each module the runtime builds part of, the types of it the
+    /// file names that stand in, each once, where it is first written.
+    fn stood_in(&self) -> HashMap<String, Vec<StoodIn>> {
+        let objects = self
+            .tree
+            .objects
+            .iter()
+            .filter_map(|object| match &object.origin {
+                Some(Origin::StandIn(uri)) => Some((
+                    uri.clone(),
+                    object
+                        .name
+                        .rsplit('.')
+                        .next()
+                        .unwrap_or_default()
+                        .to_string(),
+                    self.span(object.span),
+                )),
+                _ => None,
+            });
+        let mut named: Vec<_> = objects.chain(self.stood_in.iter().cloned()).collect();
+        named.sort_by_key(|(_, _, span)| (span.line, span.column));
+        let mut out: HashMap<String, Vec<StoodIn>> = HashMap::new();
+        for (uri, name, span) in named {
+            let types = out.entry(uri).or_default();
+            if !types.iter().any(|t| t.name == name) {
+                types.push(StoodIn { name, span });
+            }
+        }
+        out
     }
 
     /// The object `id` names from the object `owner`, nearest context first.
@@ -2286,6 +2323,7 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
     }
 
     fn finish(mut self, document: &QmlDocument<'a>) -> Compiled {
+        let mut stood_in = self.stood_in();
         let scripts = self.scripts(document);
         let tree = self.tree;
         let mut inline = Vec::new();
@@ -2422,6 +2460,16 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                         QmlImportSource::Module(name) if self.types.oracle.stands_in(&name.to_string())
                             && !self.project.front.has_module(&name.to_string())
                     ),
+                    stood_in: match &import.source {
+                        QmlImportSource::Module(name)
+                            if self.types.oracle.stands_in(&name.to_string())
+                                && !self.project.front.has_module(&name.to_string())
+                                && self.types.oracle.builds_part_of(&name.to_string()) =>
+                        {
+                            Some(stood_in.remove(&name.to_string()).unwrap_or_default())
+                        }
+                        _ => None,
+                    },
                 })
                 .collect(),
             pragmas: document

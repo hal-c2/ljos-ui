@@ -326,3 +326,42 @@ Feature: Checking files on a machine that has no Qt
         Main.qml:2:9: warning: module "QtLocation" is not part of Ljós: its types stand in as empty Items, and what only they have is left out [stand-in]
         2 files, 0 errors, 2 warnings
         """
+
+  Rule: Of a module Ljós builds part of, only a type that stands in is a warning, where it is written
+
+    Scenario: A file that uses only the types Ljós builds of such a module has nothing to report
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
+        import QtQuick3D
+        import QtQuick3D.Helpers
+        import QtQuick3D.AssetUtils
+        View3D {
+          environment: ExtendedSceneEnvironment { }
+          RuntimeLoader { }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        1 files, 0 errors, 0 warnings
+        """
+
+    Scenario: A type of such a module that stands in is told once, where it is first written
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
+        import QtQuick3D
+        import QtQuick3D.Helpers
+        View3D {
+          environment: ExtendedSceneEnvironment { }
+          SceneGizmo { }
+          SceneGizmo { }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        Main.qml:6:11: warning: `SceneGizmo` of module "QtQuick3D.Helpers" is not part of Ljós: it stands in as an empty Item, and what only it has is left out [stand-in]
+        1 files, 0 errors, 1 warnings
+        """
