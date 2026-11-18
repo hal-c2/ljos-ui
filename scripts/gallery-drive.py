@@ -20,13 +20,10 @@ into, and edited with the arrows, Shift and the arrows, cut, copy and paste, Bac
 Return and Tab (TYPING below). After each step the report has the field's value and, where a
 plain field would hold something else, what that would be: a validator, a mask or the app's own
 handling (Return adding a task) may be why, so it is a lead, not a verdict."""
-import base64, glob, json, os, re, shutil, signal, struct, subprocess, sys, time, urllib.error, urllib.request, zlib
+import base64, glob, json, os, re, shutil, signal, struct, subprocess, sys, tempfile, time, urllib.error, urllib.request, zlib
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TARGET = os.environ.get("CARGO_TARGET_DIR") or os.path.join(ROOT, "target")
-# The inspector writes its token below the directory the app runs in (ROOT), not below
-# CARGO_TARGET_DIR: target/ljos/mcp-<pid>.json.
-TOKENS = os.path.join(ROOT, "target", "ljos")
 CORPUS = "file://" + os.path.join(ROOT, "corpus", "qtdoc") + "/"
 SANDBOX = os.path.join(ROOT, "scripts", "cua-sandbox.sh")
 # The sandbox's config, data and state directories; cua-sandbox.sh makes them again, with the
@@ -300,16 +297,30 @@ def why_it_ended(d, p):
     return [l.replace(CORPUS, "") for l in own[:5]] + [ended]
 
 
+def token_dir():
+    """A directory of one app's own for its inspector's token (LJOS_MCP_DIR, below which it is
+    target/ljos/mcp-<pid>.json). Below the directory the app runs in, every app started there
+    writes its token (another drive's, one the user runs), and the first new one would be taken
+    for this app's."""
+    return tempfile.mkdtemp(prefix="ljos-drive-mcp.")
+
+
+def token(d):
+    found = glob.glob(os.path.join(d, "target", "ljos", "mcp-*.json"))
+    return found[0] if found else None
+
+
 def drive(out, eid):
     d = os.path.join(out, eid)
     os.makedirs(d, exist_ok=True)
-    before = set(glob.glob(TOKENS + "/mcp-*.json"))
+    mcp_dir = token_dir()
     # What the last run saved (Settings, LocalStorage) would start this one somewhere else.
     shutil.rmtree(XDG, ignore_errors=True)
     seed_pictures()
     log = open(os.path.join(d, "stderr.log"), "w")
     p = subprocess.Popen([SANDBOX, "exec", "mise", "run", "gallery:run", eid, "--mcp=inspect,input"],
-                         cwd=ROOT, stdout=log, stderr=log, start_new_session=True)
+                         cwd=ROOT, stdout=log, stderr=log, start_new_session=True,
+                         env=dict(os.environ, LJOS_MCP_DIR=mcp_dir))
     rep = open(os.path.join(d, "report.txt"), "w")
     said, clicks, typed, outcomes = [], 0, 0, {}
 
@@ -324,9 +335,8 @@ def drive(out, eid):
     path = None
     for _ in range(STARTUP * 2):
         time.sleep(0.5)
-        new = set(glob.glob(TOKENS + "/mcp-*.json")) - before
-        if new:
-            path = new.pop()
+        path = token(mcp_dir)
+        if path:
             break
         if p.poll() is not None:
             break
@@ -439,6 +449,7 @@ def drive(out, eid):
         if p.poll() is None:
             os.killpg(p.pid, signal.SIGTERM)
             time.sleep(1)
+        shutil.rmtree(mcp_dir, ignore_errors=True)
 
 
 def stderr_warnings(out, eid):

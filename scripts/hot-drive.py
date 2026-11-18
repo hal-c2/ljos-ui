@@ -287,10 +287,13 @@ def drive(out, e):
     gd.seed_pictures()
     log_path = os.path.join(d, "stderr.log")
     log = open(log_path, "w")
-    before = set(gd.glob.glob(TARGET + "/ljos/mcp-*.json"))
+    # The app's token goes below a directory of its own, not below where it runs (ROOT), where
+    # every app started there writes one.
+    mcp_dir = gd.token_dir()
     cmd = [SANDBOX, "exec", LJOS, "run", os.path.join(src, e["entry"]),
            "--project", src, "--example", eid, "--watch", "--mcp=inspect,input,eval"]
-    p = subprocess.Popen(cmd, cwd=ROOT, stdout=log, stderr=log, start_new_session=True)
+    p = subprocess.Popen(cmd, cwd=ROOT, stdout=log, stderr=log, start_new_session=True,
+                         env=dict(os.environ, LJOS_MCP_DIR=mcp_dir))
     rep = open(os.path.join(d, "report.txt"), "w")
 
     def w(*lines):
@@ -301,9 +304,8 @@ def drive(out, e):
     try:
         for _ in range(STARTUP * 2):
             time.sleep(0.5)
-            new = set(gd.glob.glob(TARGET + "/ljos/mcp-*.json")) - before
-            if new:
-                path = new.pop()
+            path = gd.token(mcp_dir)
+            if path:
                 break
             if p.poll() is not None:
                 break
@@ -362,6 +364,7 @@ def drive(out, e):
         if p.poll() is None:
             os.killpg(p.pid, 15)
             time.sleep(1)
+        shutil.rmtree(mcp_dir, ignore_errors=True)
 
 
 def watcher_says(said):
