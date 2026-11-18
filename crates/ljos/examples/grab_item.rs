@@ -6,9 +6,11 @@
 //! `card` and writes it to `DIR/card.png`, then asks for pictures of two
 //! items it destroys in the same turn, one as QML's `destroy()` does and
 //! one at once: each is called back with no picture. It prints when
-//! each ask was made and when its callback came, and fails when one
-//! does not come within two seconds. It stays idle for two seconds
-//! before the first ask and after the last callback, then quits.
+//! each ask was made and when its callback came. It fails when a
+//! callback does not come within two seconds, when `card` gives no
+//! picture or its file cannot be written, and when a destroyed item
+//! gives one. It stays idle for two seconds before the first ask and
+//! after the last callback, then quits.
 //!
 //! `cargo run -p ljos --example grab_item -- DIR` — opens a window: run
 //! it in the off-screen sandbox (`mise run desktop:cua:exec …`).
@@ -33,8 +35,9 @@ enum Ask {
     Finish,
 }
 
-/// What a callback came to, for the worker.
-type Heard = (&'static str, Option<(u32, u32)>);
+/// What a callback came to, for the worker: the size of the picture, if
+/// one came, or why it could not be kept.
+type Heard = (&'static str, Result<Option<(u32, u32)>, String>);
 
 fn main() -> ExitCode {
     let Some(out) = std::env::args().nth(1).map(PathBuf::from) else {
@@ -71,18 +74,23 @@ fn main() -> ExitCode {
             // The window is up and its first frames are drawn by then:
             // the application is idle when the first ask comes.
             std::thread::sleep(Duration::from_millis(2000));
-            for (name, ask) in [
-                ("card", Ask::Picture("card")),
-                ("doomed", Ask::Doomed("doomed", false)),
-                ("doomedNow", Ask::Doomed("doomedNow", true)),
+            for (name, ask, pictured) in [
+                ("card", Ask::Picture("card"), true),
+                ("doomed", Ask::Doomed("doomed", false), false),
+                ("doomedNow", Ask::Doomed("doomedNow", true), false),
             ] {
                 if ui.send(ask).is_err() {
                     let _ = failed_tx.send(format!("{name}: the application is gone"));
                     return;
                 }
                 let failed = match heard_rx.recv_timeout(Duration::from_secs(2)) {
-                    Ok((n, _)) if n == name => None,
-                    Ok((n, _)) => Some(format!("{name}: {n} was called back instead")),
+                    Ok((n, _)) if n != name => Some(format!("{name}: {n} was called back instead")),
+                    Ok((_, Err(e))) => Some(format!("{name}: {e}")),
+                    Ok((_, Ok(Some((w, h))))) if !pictured => {
+                        Some(format!("{name}: a destroyed item gave a {w}x{h} picture"))
+                    }
+                    Ok((_, Ok(None))) if pictured => Some(format!("{name}: no picture came")),
+                    Ok(_) => None,
                     Err(_) => Some(format!("{name}: no callback within 2 s")),
                 };
                 if let Some(f) = failed {
@@ -144,13 +152,14 @@ fn answer(
             start.elapsed().as_millis(),
             size.map_or_else(|| "no picture".to_owned(), |(w, h)| format!("{w}x{h}")),
         );
-        if let Some(p) = &picture
-            && let Err(e) = write_png(&file, p)
-        {
-            eprintln!("grab_item: {}: {e}", file.display());
-        }
-        let _ = heard.send((name, size));
+        let kept = match &picture {
+            Some(p) => write_png(&file, p).map_err(|e| format!("{}: {e}", file.display())),
+            None => Ok(()),
+        };
+        let _ = heard.send((name, kept.map(|()| size)));
     });
+    // A refused ask never calls back: the worker says so when its wait
+    // runs out, and this line says why.
     eprintln!(
         "[{:>6} ms] grab of {name}: asked ({})",
         start.elapsed().as_millis(),
