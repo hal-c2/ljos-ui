@@ -27,6 +27,7 @@ Item {
             flare.restart()
         } else {
             panel.refused = panel.car.moving ? t`Stop the car first: nothing opens while it moves.`
+                : panel.car.gear !== "P" ? t`Shift to P first: nothing opens out of park.`
                 : t`The car is locked. Unlock it to open anything.`
             refusal.restart()
         }
@@ -131,6 +132,7 @@ Item {
         stripTint: panel.theme.dark ? "#00e5ff" : "#00b8cc"
 
         // Not the part's own name: that is its button's.
+        aim: Car.nodeOfPart(panel.focus)
         aimName: t`Car model: ${panel.names}`
         help: t`The car. Arrow keys choose a part; Space opens or closes it.`
         onAimed: (node: string) => {

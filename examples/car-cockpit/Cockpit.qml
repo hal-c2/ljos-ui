@@ -60,7 +60,12 @@ Object {
         }
     }
 
+    // Leaving park closes what is open, so the car never drives off with
+    // a door, the frunk or the trunk up.
     function shift(to: Drive.Gear) {
+        if (to !== "P") {
+            car.closeAll()
+        }
         car.gear = to
         if (to === "P") {
             car.power = 0
@@ -88,10 +93,10 @@ Object {
         }
     }
 
-    // Opens or closes a part. A locked car, or one that is moving, keeps
-    // its doors shut: the panel says why instead.
+    // Opens or closes a part. A locked car, one out of park or one that
+    // is moving keeps its doors shut: the panel says why instead.
     function toggle(part: Car.Part): bool {
-        if (!car.isOpen(part) && (car.locked || car.moving)) {
+        if (!car.isOpen(part) && (car.locked || car.moving || car.gear !== "P")) {
             return false
         }
         switch (part) {

@@ -68,6 +68,18 @@ Feature: The car cockpit example
       Then the property "doorRight" of "car" is false
       And the property "refused" of "carPanel" is "Stop the car first: nothing opens while it moves."
 
+    Scenario: A car out of park keeps its doors shut and says why
+      When the user clicks the "button" "N"
+      And the user clicks the "button" "Left door"
+      Then the property "doorLeft" of "car" is false
+      And the property "refused" of "carPanel" is "Shift to P first: nothing opens out of park."
+
+    Scenario: Leaving park closes everything that is open
+      When the user clicks the "button" "Trunk"
+      And the user clicks the "button" "Frunk"
+      And the user clicks the "button" "R"
+      Then the property "openCount" of "car" is 0
+
   Rule: With reduced motion nothing on the car moves, and the change still shows
 
     Scenario: With reduced motion a door is open at once, and the camera stays where it is
@@ -89,6 +101,17 @@ Feature: The car cockpit example
       And the user clicks the "button" "Car"
       Then the accessibility tree has a "button" named "Car model: Left door"
       And the accessibility tree has a "button" named "Left door"
+
+    Scenario: Pressing the model works the part it is named after
+      When "Main.qml" is loaded
+      And the property "width" of "cockpit" is set to 400
+      And the property "height" of "cockpit" is set to 225
+      And the user clicks the "button" "Car"
+      And the user clicks the "button" "Trunk"
+      Then the accessibility tree has a "button" named "Car model: Trunk"
+      When an assistive technology asks the "button" named "Car model: Trunk" to press
+      Then the property "trunk" of "car" is false
+      And the property "doorLeft" of "car" is false
 
   Rule: The gear selector sets the gear, and the drive runs only in gear
 

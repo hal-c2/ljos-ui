@@ -14,8 +14,9 @@ mise run dev examples/car-cockpit/Main.qml
   the lane and the car ahead.
 - **Car.** The car in 3D, from `assets/car/` (a Blender script; see its
   README). Tap a part on the car, or its button at the side, to open or close
-  the doors, frunk, trunk or charge port. A locked or moving car keeps them
-  shut and says why. Arrow keys choose a part and Space opens it.
+  the doors, frunk, trunk or charge port. A car that is locked, out of park
+  or moving keeps them shut and says why, and shifting out of park closes
+  them. Arrow keys choose a part and Space opens it.
 - **Climate.** Both temperatures, linked or apart, the fan, seat heating,
   defrost, heating or cooling.
 - **Media.** Invented tracks, play, pause and skip, and a visualiser that runs

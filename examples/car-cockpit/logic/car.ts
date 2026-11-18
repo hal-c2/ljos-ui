@@ -36,3 +36,14 @@ export function partOfNode(name: string): Part | undefined {
         default: return undefined
     }
 }
+
+// The node a part's file is named by: the inverse of `partOfNode`.
+export function nodeOfPart(part: Part): string {
+    switch (part) {
+        case "doorLeft": return "door_left"
+        case "doorRight": return "door_right"
+        case "frunk": return "frunk"
+        case "trunk": return "trunk"
+        case "chargePort": return "charge_port"
+    }
+}

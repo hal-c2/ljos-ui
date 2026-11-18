@@ -36,11 +36,14 @@ View3D {
 
     // A tap on the car names the file node under it: "door_left", "body"…
     signal picked(string node)
-    // The keyboard's way round the car: arrows aim at a part, Space or
-    // Enter picks it.
+    // The keyboard's way round the car: arrows ask to aim at the next
+    // part, Space or Enter picks the one aimed at.
     signal aimed(string node)
     readonly property var openable: ["door_left", "door_right", "frunk", "trunk", "charge_port"]
-    property int cursor: 0
+    // The part the car is aimed at, set by whoever owns the focus. What
+    // the model is called and what pressing it does both read this, so
+    // they cannot disagree.
+    property string aim: "door_left"
     property string aimName: ""
     // What it is and how to use it, in the app's language.
     property string help: ""
@@ -49,15 +52,15 @@ View3D {
     Accessible.role: Accessible.Button
     Accessible.name: scene.aimName
     Accessible.description: scene.help
-    Accessible.onPressAction: scene.picked(scene.openable[scene.cursor])
+    Accessible.onPressAction: scene.picked(scene.aim)
     Keys.onPressed: (event) => {
         if (event.key === Qt.Key_Right || event.key === Qt.Key_Left) {
             const step = event.key === Qt.Key_Right ? 1 : scene.openable.length - 1
-            scene.cursor = (scene.cursor + step) % scene.openable.length
-            scene.aimed(scene.openable[scene.cursor])
+            const at = Math.max(0, scene.openable.indexOf(scene.aim))
+            scene.aimed(scene.openable[(at + step) % scene.openable.length])
             event.accepted = true
         } else if (event.key === Qt.Key_Space || event.key === Qt.Key_Return) {
-            scene.picked(scene.openable[scene.cursor])
+            scene.picked(scene.aim)
             event.accepted = true
         }
     }
