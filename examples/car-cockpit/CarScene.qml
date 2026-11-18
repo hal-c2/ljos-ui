@@ -83,7 +83,7 @@ View3D {
         glowStrength: 1.1
         glowIntensity: scene.dark ? 0.9 : 0.5
         glowBloom: 0.25
-        glowHDRMinimumValue: 1.2
+        glowHDRMinimumValue: 1.8
         glowQualityHigh: true
         glowUseBicubicUpscale: true
         glowLevel: ExtendedSceneEnvironment.GlowLevel.Two
