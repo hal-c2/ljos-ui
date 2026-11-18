@@ -130,16 +130,21 @@ impl Profile {
 
 /// `count` CPUs on distinct physical cores, from the highest-numbered core
 /// down, so SMT siblings never share the device's cores and the CPUs the
-/// desktop starts on first are left alone. Read from sysfs; `None` when it
-/// cannot be.
+/// desktop starts on first are left alone. Only CPUs the bench may run on
+/// count: a container is often given fewer than sysfs lists. Read from
+/// sysfs; `None` when it cannot be.
 #[must_use]
 pub fn distinct_cores(count: u32) -> Option<String> {
+    let allowed = crate::enforce::own_affinity();
     let mut by_core = std::collections::BTreeMap::new();
     for entry in std::fs::read_dir("/sys/devices/system/cpu").ok()?.flatten() {
         let name = entry.file_name().into_string().ok()?;
         let Some(n) = name.strip_prefix("cpu").and_then(|n| n.parse::<u32>().ok()) else {
             continue;
         };
+        if allowed.as_ref().is_some_and(|a| !a.contains(&n)) {
+            continue;
+        }
         let core = std::fs::read_to_string(entry.path().join("topology/core_id")).ok()?;
         let package =
             std::fs::read_to_string(entry.path().join("topology/physical_package_id")).ok()?;

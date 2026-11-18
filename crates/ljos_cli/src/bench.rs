@@ -10,7 +10,8 @@ use std::{
 use anyhow::Context;
 use clap::Args;
 use ljos_bench::{
-    App, Gesture, Manifest, Phases, Plan, Profile, Programs, Setup, profile, sway::Sway,
+    App, Gesture, Manifest, Phases, Plan, Profile, Programs, Setup, enforce::LimitBy, profile,
+    sway::Sway,
 };
 
 #[derive(Args)]
@@ -54,6 +55,18 @@ pub struct Bench {
     /// Where cgroup paths are rooted.
     #[arg(long, default_value = "/sys/fs/cgroup")]
     cgroup_root: PathBuf,
+    /// What may hold a profile's limits: `auto` takes the first of
+    /// `scope` (a systemd scope), `cgroup` (a cgroup the bench makes) and
+    /// `container` (the cgroup it already runs in, if that holds them at
+    /// or below the profile), and refuses when none does. `process`
+    /// (RLIMIT_DATA, CPU affinity and a stop-and-continue throttle) is
+    /// only ever used when named: it holds less, which the report lists.
+    #[arg(long, default_value = "auto", value_parser = LimitBy::parse)]
+    limit_by: LimitBy,
+    /// Where `cgroup` makes its cgroups, from the cgroup root; by default
+    /// the cgroup the bench runs in.
+    #[arg(long, value_name = "CGROUP")]
+    cgroup_parent: Option<PathBuf>,
     /// The `ljos` measured; this one by default.
     #[arg(long)]
     ljos: Option<PathBuf>,
@@ -140,6 +153,11 @@ pub struct Bench {
     /// measure without the bench.
     #[arg(long)]
     check_motion: bool,
+    /// Only check that each profile's limits can be held here, as a run
+    /// does before it measures, and say on stdout, as JSON, what holds
+    /// them: status 0 if they can be, 2 if not. Needs no applications.
+    #[arg(long)]
+    check_limits: bool,
 }
 
 /// `ljos bench-gate`: the gate an application passes into its scope by.
@@ -226,6 +244,9 @@ impl Bench {
             let now = read_report(&out.join("report.json"))?;
             return compare(base, &now, &out).map(|()| 0);
         }
+        if self.check_limits {
+            return self.check_limits();
+        }
         // The applications' bus, which they read the setting on.
         let bus = self
             .app_env
@@ -289,43 +310,10 @@ impl Bench {
                 return Ok(REFUSED);
             }
         }
-        let mut profiles = Vec::new();
-        for name in &self.profile {
-            profiles.push(match name.as_str() {
-                "desktop" => Profile::desktop(),
-                "pi-zero" => {
-                    let list = match &self.cpu_list {
-                        Some(l) => l.clone(),
-                        None => profile::distinct_cores(self.cpus).with_context(|| {
-                            format!(
-                                "this machine has fewer than {} cores; give --cpu-list",
-                                self.cpus
-                            )
-                        })?,
-                    };
-                    Profile::small_board(
-                        "pi-zero",
-                        self.memory_max,
-                        self.cpus,
-                        self.cpu_factor,
-                        list,
-                    )
-                }
-                other => anyhow::bail!("no profile {other:?}: desktop or pi-zero"),
-            });
-        }
+        let profiles = self.profiles()?;
         let secs = Duration::from_secs_f64;
         let out = absolute(&self.out)?;
-        let setup = Setup {
-            launcher: program(&self.launcher)?,
-            cgroup_root: absolute(&self.cgroup_root)?,
-            gate: me,
-            work: out.join("work"),
-            sway: self.sway.as_deref().map(Sway::new),
-            wayland: self.wayland.clone(),
-            startup_timeout: secs(self.startup_timeout),
-            isolation_timeout: secs(self.isolation_timeout),
-        };
+        let setup = self.setup(me, &out)?;
         let bisect = match (&self.bisect, self.bisect_range.as_slice()) {
             (Some(p), [lo, hi]) if lo < hi => Some((p.clone(), *lo, *hi)),
             (Some(_), _) => anyhow::bail!("--bisect-range is two MiB values, the smaller first"),
@@ -390,12 +378,80 @@ impl Bench {
                 }
                 Ok(0)
             }
-            Err(e @ ljos_bench::Error::Refused(_)) => {
+            Err(e @ (ljos_bench::Error::Refused(_) | ljos_bench::Error::Unheld(_))) => {
                 eprintln!("ljos bench: {e}");
                 Ok(REFUSED)
             }
             Err(e) => Err(e.into()),
         }
+    }
+
+    fn profiles(&self) -> anyhow::Result<Vec<Profile>> {
+        let mut profiles = Vec::new();
+        for name in &self.profile {
+            profiles.push(match name.as_str() {
+                "desktop" => Profile::desktop(),
+                "pi-zero" => {
+                    let list = match &self.cpu_list {
+                        Some(l) => l.clone(),
+                        None => profile::distinct_cores(self.cpus).with_context(|| {
+                            format!(
+                                "this machine has fewer than {} cores; give --cpu-list",
+                                self.cpus
+                            )
+                        })?,
+                    };
+                    Profile::small_board(
+                        "pi-zero",
+                        self.memory_max,
+                        self.cpus,
+                        self.cpu_factor,
+                        list,
+                    )
+                }
+                other => anyhow::bail!("no profile {other:?}: desktop or pi-zero"),
+            });
+        }
+        Ok(profiles)
+    }
+
+    fn setup(&self, gate: PathBuf, out: &Path) -> anyhow::Result<Setup> {
+        let secs = Duration::from_secs_f64;
+        Ok(Setup {
+            launcher: program(&self.launcher)?,
+            cgroup_root: absolute(&self.cgroup_root)?,
+            gate,
+            work: out.join("work"),
+            sway: self.sway.as_deref().map(Sway::new),
+            wayland: self.wayland.clone(),
+            startup_timeout: secs(self.startup_timeout),
+            isolation_timeout: secs(self.isolation_timeout),
+            limit_by: self.limit_by,
+            cgroup_parent: self.cgroup_parent.clone(),
+            chosen: std::sync::Mutex::default(),
+        })
+    }
+
+    /// `--check-limits`: each profile held by a probe that is never let
+    /// start, and what held it.
+    fn check_limits(&self) -> anyhow::Result<i32> {
+        let me = std::env::current_exe().context("finding this program")?;
+        let setup = self.setup(me, &absolute(&self.out)?)?;
+        let mut held = serde_json::Map::new();
+        for p in self.profiles()? {
+            match ljos_bench::measure::check_limits(&setup, &p) {
+                Ok(e) => {
+                    held.insert(p.name.clone(), serde_json::to_value(&e)?);
+                }
+                Err(e @ (ljos_bench::Error::Refused(_) | ljos_bench::Error::Unheld(_))) => {
+                    eprintln!("ljos bench: {e}");
+                    return Ok(REFUSED);
+                }
+                Err(e) => return Err(e.into()),
+            }
+        }
+        println!("{}", serde_json::to_string_pretty(&held)?);
+        Ok(0)
     }
 }
 

@@ -283,6 +283,8 @@ ljos bench [OPTIONS] [FILES]...
 - `--settle <S>` / `--idle <S>` / `--load <S>`: Durations in seconds for startup settle, idle measurement and synthetic gesture load (`--gesture click|drag|scroll`).
 - `--bisect`: Binary-search the lowest `memory.max` (within `--bisect-range`, default `8,512` MiB) that completes without an OOM kill.
 - `--out <DIR>`: Output directory for `report.json` and `report.md` (default: `target/bench`).
+- `--limit-by <auto|scope|cgroup|container|process>`: What holds a profile's limits where no systemd scope can be had, as in a container (default `auto`, which never takes `process`). See docs/BENCHMARKS.md.
+- `--check-limits`: Only check that each profile's limits can be held here and print what holds them; status 2 if they cannot be.
 
 ### Example
 
