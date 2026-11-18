@@ -11,8 +11,9 @@ Feature: A Loader gives up on its item only for scripts its item could set off a
   interrupted soon after, because loading again would only be interrupted again. That holds for
   a script that runs while the item is made, and for the item's own code. A short handler of an
   item that sets off long scripts of other objects after the item was made is not such a case:
-  a click on it sets them off, not loading it again, so the Loader loads its item again, until
-  such interrupts keep coming back on their own.
+  a click on it sets them off, not loading it again, so the Loader loads its item again however
+  often someone clicks. Only interrupts that come back with nobody acting on the application, the
+  item setting the scripts off again each time it is made, still make the Loader give up.
 
   Background:
     Given JavaScript is timed by a clock on which native work a script asks for takes 0 seconds
@@ -20,7 +21,7 @@ Feature: A Loader gives up on its item only for scripts its item could set off a
       """qml
       import QtQuick
       Item {
-        id: root; objectName: "root"
+        id: root; objectName: "root"; width: 200; height: 200
         property bool wanted: false
         property bool atOnce: false
         property bool slowRow: false
@@ -33,13 +34,12 @@ Feature: A Loader gives up on its item only for scripts its item could set off a
         Loader {
           id: loader; objectName: "loader"; active: root.wanted
           sourceComponent: Item {
-            objectName: "row"
+            objectName: "row"; width: 100; height: 100
+            Accessible.role: Accessible.Button; Accessible.name: "Row"
             Component.onCompleted: { root.made += 1; if (root.atOnce) root.work += 1 }
             Timer { interval: 1; running: root.timed; onTriggered: root.work += 1 }
-            function tap() {
-              if (root.slowRow) for (;;) { }
-              root.work += 1
-            }
+            TapHandler { onTapped: parent.tap() }
+            function tap() { if (root.slowRow) for (;;) { } root.work += 1 }
           }
         }
       }
@@ -47,9 +47,9 @@ Feature: A Loader gives up on its item only for scripts its item could set off a
 
   Scenario: An item whose handler sets off long scripts elsewhere is made again each time
     When the property "wanted" of "root" is set to true
-    And the method "tap" of "loader/row" is called
+    And the user clicks the "button" "Row"
     And 100 milliseconds pass
-    And the method "tap" of "loader/row" is called
+    And the user clicks the "button" "Row"
     And 100 milliseconds pass
     Then the property "status" of "loader" is 1
     And the object "loader/row" exists
@@ -58,12 +58,40 @@ Feature: A Loader gives up on its item only for scripts its item could set off a
     And the log has no warning matching "Loader: .*interrupted again"
     And the application has no fault
 
+  Scenario: An item clicked more times than an item may set the scripts off by itself is kept
+    When the property "wanted" of "root" is set to true
+    And the user clicks the "button" "Row"
+    And 100 milliseconds pass
+    And the user clicks the "button" "Row"
+    And 100 milliseconds pass
+    And the user clicks the "button" "Row"
+    And 100 milliseconds pass
+    And the user clicks the "button" "Row"
+    And 100 milliseconds pass
+    And the user clicks the "button" "Row"
+    And 100 milliseconds pass
+    And the user clicks the "button" "Row"
+    And 100 milliseconds pass
+    And the user clicks the "button" "Row"
+    And 100 milliseconds pass
+    And the user clicks the "button" "Row"
+    And 100 milliseconds pass
+    And the user clicks the "button" "Row"
+    And 100 milliseconds pass
+    And the user clicks the "button" "Row"
+    And 100 milliseconds pass
+    Then the property "status" of "loader" is 1
+    And the object "loader/row" exists
+    And the property "made" of "root" is 11
+    And the log has no warning matching "Loader: .*(interrupted again|times in a row)"
+    And the application has no fault
+
   Scenario: An item whose own handler is interrupted twice stays unloaded
     When the property "slowRow" of "root" is set to true
     And the property "wanted" of "root" is set to true
-    And the method "tap" of "loader/row" is called
+    And the user clicks the "button" "Row"
     And 100 milliseconds pass
-    And the method "tap" of "loader/row" is called
+    And the user clicks the "button" "Row"
     And 100 milliseconds pass
     Then the property "status" of "loader" is 3
     And the property "item" of "loader" is null

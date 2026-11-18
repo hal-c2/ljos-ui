@@ -43,6 +43,24 @@ bitflags::bitflags! {
 }
 
 /// What happened to a pointer.
+/// How many times someone acted on the application: pressed a button, a
+/// finger or a key, turned a wheel, typed through an input method, or
+/// asked for an action through an assistive technology. Moves are not
+/// counted: they are not asked for. A Loader tells by it a person setting
+/// work off again from its item repeating the work by itself.
+#[derive(Default)]
+struct Acted(std::cell::Cell<u64>);
+
+pub(crate) fn note_acted(engine: &Engine) {
+    let acted = engine.extension::<Acted>();
+    acted.0.set(acted.0.get() + 1);
+}
+
+/// See [`Acted`].
+pub(crate) fn times_acted(engine: &Engine) -> u64 {
+    engine.extension::<Acted>().0.get()
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PointerKind {
     Press,

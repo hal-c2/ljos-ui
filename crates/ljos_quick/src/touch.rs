@@ -154,6 +154,7 @@ impl QuickScene {
     }
 
     fn touch_begin(&mut self, engine: &Engine, ev: &TouchEvent) -> bool {
+        crate::input::note_acted(engine);
         let point = Point {
             id: ev.id,
             press: ev.pos,

@@ -3593,6 +3593,9 @@ impl QuickScene {
     /// a press that is not the pointer, such as an assistive technology's.
     pub(crate) fn deliver_pointer(&mut self, engine: &Engine, ev: &PointerEvent) -> bool {
         self.note_input();
+        if ev.kind == PointerKind::Press {
+            crate::input::note_acted(engine);
+        }
         // Who watches it is decided before delivery: a handler may hide
         // or move what the press came to.
         let route = self.watched_route(engine, ev);
@@ -3764,6 +3767,7 @@ impl QuickScene {
         buttons: MouseButtons,
     ) -> bool {
         self.note_input();
+        crate::input::note_acted(engine);
         let hits = self.hits(engine, ev.pos);
         let route = self.watched_wheel_route(engine, &hits);
         let taken = crate::wheel::deliver(engine, &hits, ev, buttons);

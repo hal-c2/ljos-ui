@@ -1647,6 +1647,7 @@ impl QuickScene {
         key: NodeKey,
         action: AccessibleAction,
     ) -> bool {
+        crate::input::note_acted(engine);
         if key.is_announcement() || self.a11y.tree.get(key).is_none_or(|data| data.disabled) {
             return false;
         }
