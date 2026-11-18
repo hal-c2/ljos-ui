@@ -7,7 +7,7 @@ use ljos_ir::*;
 use qml_front::{
     TypeOracle,
     names::{Global, Resolution, Target},
-    types::Found,
+    types::{Found, Origin},
 };
 use qml_syntax::Span;
 
@@ -677,6 +677,18 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
         };
         if let Some(Target::Type(found)) = &resolution.target {
             self.check_type_member(name, found, chain, offset);
+        }
+        // `H.SceneGizmo.Mode`: a type read through its module's qualifier
+        // that stands in is told where it is read, as one read bare is.
+        if let Some(Target::Namespace(_)) = &resolution.target
+            && let Some(ty) = chain.first().filter(|ty| is_key_name(ty))
+            && let Some(Found {
+                origin: Origin::StandIn(uri),
+                ..
+            }) = self.types.find(&[name, ty.as_str()])
+        {
+            let span = Span::new(offset, offset + (name.len() + 1 + ty.len()) as u32);
+            self.stood_in_at(&[name, ty.as_str()], &uri, span);
         }
         let base = resolution
             .target

@@ -29,7 +29,7 @@ pub mod color;
 /// Bumped whenever the serialised shape changes, or what the compiled
 /// functions ask of the engine, so a cache written by an older compiler is
 /// rebuilt instead of misread.
-pub const IR_VERSION: u32 = 16;
+pub const IR_VERSION: u32 = 17;
 
 macro_rules! index {
     ($(#[$doc:meta])* $name:ident) => {
@@ -194,14 +194,16 @@ impl CompiledFile {
     /// Reads what [`CompiledFile::to_bytes`] wrote, refusing another IR
     /// version rather than misreading it.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, Error> {
-        let file: Self = postcard::from_bytes(bytes)?;
-        if file.version != IR_VERSION {
+        // The version leads every layout, and another version's layout may
+        // not decode as this one's at all: it is read on its own first.
+        let (found, _) = postcard::take_from_bytes::<u32>(bytes)?;
+        if found != IR_VERSION {
             return Err(Error::Version {
-                found: file.version,
+                found,
                 expected: IR_VERSION,
             });
         }
-        Ok(file)
+        Ok(postcard::from_bytes(bytes)?)
     }
 }
 
@@ -224,6 +226,24 @@ pub struct Import {
     /// The runtime does not have the module, and its types stand in as
     /// empty Items: the file loads without it.
     pub stands_in: bool,
+    /// Of such a module the runtime builds part of, the types of it the
+    /// file names that stand in, each where it is first named: none, and
+    /// the file loses nothing of the module. `None` for a module none of
+    /// whose types the runtime builds, which the import itself tells.
+    pub stood_in: Option<Vec<StoodIn>>,
+}
+
+/// A type of a module the runtime builds part of that stands in as an
+/// empty Item where a file names it ([`Import::stood_in`]).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StoodIn {
+    pub name: String,
+    pub span: SourceSpan,
+    /// Whether the module is known to have the type. False when the file
+    /// imports several modules the runtime builds part of and none of
+    /// their tables has the name: it is filed under the one it resolved
+    /// through, and is told without naming a module.
+    pub known: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]

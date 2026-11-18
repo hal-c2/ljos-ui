@@ -1101,6 +1101,91 @@ Item {
 }
 
 #[test]
+fn what_stands_in_follows_a_reload() {
+    // `stood_in_modules` is what the design audit reads: a reload that
+    // takes the last stand-in out drops its module, one that puts it back
+    // lists it again.
+    let gizmo = r#"import QtQuick
+import QtQuick3D.Helpers
+Item {
+  id: root
+  objectName: "root"
+  SceneGizmo { }
+}
+"#;
+    let without = gizmo.replace("  SceneGizmo { }\n", "");
+    let mut r = rig(&[("Main", gizmo)]);
+    assert_eq!(r.h.engine.stood_in_modules(), ["QtQuick3D.Helpers"]);
+    r.edit("Main", &without).unwrap();
+    assert!(r.h.engine.stood_in_modules().is_empty());
+    r.edit("Main", gizmo).unwrap();
+    assert_eq!(r.h.engine.stood_in_modules(), ["QtQuick3D.Helpers"]);
+}
+
+#[test]
+fn a_failed_reload_takes_back_what_it_stood_in_for() {
+    // The attempt loads a file that uses a stand-in, then fails: the old
+    // tree goes on, and so does what the audit read before.
+    let main = r#"import QtQuick
+Item {
+  id: root
+  objectName: "root"
+}
+"#;
+    let mut r = rig(&[("Main", main)]);
+    assert!(r.h.engine.stood_in_modules().is_empty());
+    // Nothing gives the root its required property.
+    let broken = main
+        .replace(
+            "import QtQuick\n",
+            "import QtQuick\nimport QtQuick3D.Helpers\n",
+        )
+        .replace(
+            "  objectName: \"root\"\n",
+            "  objectName: \"root\"\n  required property string label\n  SceneGizmo { }\n",
+        );
+    assert!(matches!(
+        r.edit("Main", &broken),
+        Err(ReloadError::Failed(_))
+    ));
+    assert!(r.h.engine.stood_in_modules().is_empty());
+}
+
+#[test]
+fn a_library_type_that_is_a_stand_in_is_counted_while_it_stands() {
+    // The library file's only object is its root, which carries the
+    // location of the declaration that uses it.
+    let h = engine();
+    let mut project = ljos_compiler::Project::new(QtTypeOracle);
+    project.add(
+        "Lib/Gizmo",
+        "import QtQuick\nimport QtQuick3D.Helpers\nSceneGizmo { }\n",
+    );
+    project.add(
+        "Main",
+        "import QtQuick\nimport Kit\nItem {\n  Gizmo { objectName: \"gizmo\" }\n}\n",
+    );
+    project.add_type("Kit", "Gizmo", "Lib/Gizmo");
+    let compiled = |key: &str| {
+        let c = ljos_compiler::compile_file(&project, key).unwrap_or_else(|d| panic!("{d:?}"));
+        assert!(!c.has_errors(), "{key}: {:?}", c.diagnostics);
+        c.file
+    };
+    let mut library = MapSource::new();
+    library.insert("Lib/Gizmo", compiled("Lib/Gizmo"));
+    let mut app = MapSource::new();
+    app.insert("Main", compiled("Main"));
+    h.engine.add_component_library(library);
+    h.engine.set_component_source(app);
+    let root = h.engine.create_from_url("Main", None, Vec::new()).unwrap();
+    assert_eq!(h.engine.stood_in_modules(), ["QtQuick3D.Helpers"]);
+    let gizmo = h.find(root, "gizmo");
+    assert!(h.engine.destroy(gizmo));
+    h.engine.process_deferred_deletes();
+    assert!(h.engine.stood_in_modules().is_empty());
+}
+
+#[test]
 fn reloads_leave_no_script_types_behind() {
     let mut r = rig(&[("Main", USES_COUNTER), ("Counter", COUNTER_FILE)]);
     // The file that is edited has a script of its own, which a value

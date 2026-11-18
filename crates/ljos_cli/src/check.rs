@@ -296,16 +296,36 @@ impl Checked {
                         self.compiled_ahead(&name, &compiled.file);
                     }
                     let source = std::fs::read_to_string(dir.join(format!("{}.qml", file.key)));
-                    for uri in stood_in(&compiled.file.imports) {
-                        let (line, column) = source
-                            .as_deref()
-                            .map_or((1, 1), |source| import_at(source, uri));
-                        self.warnings += 1;
-                        self.diagnostics.push(format!(
-                            "{name}.qml:{line}:{column}: warning: module \"{uri}\" is not part of \
-                             Ljós: its types stand in as empty Items, and what only they have is \
-                             left out [stand-in]"
-                        ));
+                    for (uri, stood_in) in stood_in(&compiled.file.imports) {
+                        let Some(types) = stood_in else {
+                            let (line, column) = source
+                                .as_deref()
+                                .map_or((1, 1), |source| import_at(source, uri));
+                            self.warnings += 1;
+                            self.diagnostics.push(format!(
+                                "{name}.qml:{line}:{column}: warning: module \"{uri}\" is not \
+                                 part of Ljós: its types stand in as empty Items, and what only \
+                                 they have is left out [stand-in]"
+                            ));
+                            continue;
+                        };
+                        for ty in types {
+                            let (line, column) = (ty.span.line, ty.span.column);
+                            // Of several such modules none known to have it,
+                            // naming one would be a guess.
+                            let of = if ty.known {
+                                format!(" of module \"{uri}\"")
+                            } else {
+                                String::new()
+                            };
+                            self.warnings += 1;
+                            self.diagnostics.push(format!(
+                                "{name}.qml:{line}:{column}: warning: `{}`{of} is not part of \
+                                 Ljós: it stands in as an empty Item, and what only it has is \
+                                 left out [stand-in]",
+                                ty.name
+                            ));
+                        }
                     }
                     &compiled.diagnostics
                 }
@@ -534,15 +554,19 @@ fn same_member(line: &str, finding: &str) -> bool {
     }
 }
 
-/// The modules among `imports` whose types stand in as empty Items. The
-/// check says so where the compiler does not: the run says it once, in its
-/// log, and a file that checks clean would otherwise hide what it loses.
-fn stood_in(imports: &[ljos_ir::Import]) -> impl Iterator<Item = &str> {
+/// The modules among `imports` whose types stand in as empty Items, with
+/// the types that do of one the runtime builds part of
+/// ([`ljos_ir::Import::stood_in`]). The check says so where the compiler
+/// does not: the run says it once, in its log, and a file that checks
+/// clean would otherwise hide what it loses.
+fn stood_in(
+    imports: &[ljos_ir::Import],
+) -> impl Iterator<Item = (&str, Option<&[ljos_ir::StoodIn]>)> {
     imports
         .iter()
         .filter(|import| import.stands_in)
         .filter_map(|import| match &import.source {
-            ljos_ir::ImportSource::Module(uri) => Some(uri.as_str()),
+            ljos_ir::ImportSource::Module(uri) => Some((uri.as_str(), import.stood_in.as_deref())),
             ljos_ir::ImportSource::Path(_) => None,
         })
 }

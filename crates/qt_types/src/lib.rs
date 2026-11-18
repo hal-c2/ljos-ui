@@ -199,6 +199,33 @@ pub fn stands_in(uri: &str) -> bool {
     })
 }
 
+/// Of those modules, the ones Ljós builds part of: what a file uses of one
+/// may be all built (`RuntimeLoader` of `QtQuick3D.AssetUtils` is built in
+/// `QtQuick3D`), so the import says nothing of it, and only a type of it
+/// that stands in is told, where it is written.
+const PARTLY_BUILT: &[&str] = &["QtQuick3D.AssetUtils", "QtQuick3D.Helpers"];
+
+/// Whether `uri`, a module that [`stands_in`], is one Ljós builds part of.
+pub fn builds_part_of(uri: &str) -> bool {
+    PARTLY_BUILT.contains(&uri)
+}
+
+/// Types of those modules that Ljós builds under another module of its
+/// own, with that module: `Assets.RuntimeLoader` through
+/// `import QtQuick3D.AssetUtils as Assets` is Ljós's `RuntimeLoader` of
+/// `QtQuick3D`.
+const BUILT_ELSEWHERE: &[(&str, &str, &str)] =
+    &[("QtQuick3D.AssetUtils", "RuntimeLoader", "QtQuick3D")];
+
+/// Of a module Ljós builds part of, the module Ljós builds its type `name`
+/// in, when that is another.
+pub fn built_in(uri: &str, name: &str) -> Option<&'static str> {
+    BUILT_ELSEWHERE
+        .iter()
+        .find(|(module, ty, _)| *module == uri && *ty == name)
+        .map(|(_, _, home)| *home)
+}
+
 /// The types of those modules that are Items in Qt, placed in a window as
 /// any other: the rest (a 3D node, a material, a keyframe) is not, and
 /// keeps nothing of the Item it stands in as but its name, its children

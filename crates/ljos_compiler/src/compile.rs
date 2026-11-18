@@ -377,6 +377,10 @@ struct Compiler<'t, 'a, 'p, O: TypeOracle> {
     ljos_ui: bool,
     /// The TypeScript modules the file reaches, checked.
     modules: Vec<crate::CheckedModule>,
+    /// The names of a module the runtime builds part of that stand in,
+    /// with the module and where each is written, beside the objects
+    /// the tree has of them: a property's type, a type that attaches.
+    stood_in: Vec<(String, StoodIn)>,
 }
 
 impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
@@ -445,6 +449,7 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
             dialect: false,
             ljos_ui: false,
             modules: Vec::new(),
+            stood_in: Vec::new(),
         }
     }
 
@@ -610,7 +615,7 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                     if path == ["id"] {
                         continue;
                     }
-                    if self.stand_in_lacks(owner, &path) {
+                    if self.stand_in_lacks(owner, &path, binding.name.span) {
                         self.keep_objects(owner, &binding.value);
                         continue;
                     }
@@ -672,21 +677,27 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
     /// Whether `path` is written on a type that stands in for one of a
     /// module the runtime does not have ([`Origin::StandIn`]), and is what
     /// only the missing type has: left out, as the missing type is.
-    fn stand_in_lacks(&self, owner: usize, path: &[&str]) -> bool {
+    fn stand_in_lacks(&mut self, owner: usize, path: &[&str], span: Span) -> bool {
         let Some(first) = path.first() else {
             return false;
         };
-        if first.starts_with(|c: char| c.is_ascii_uppercase()) {
-            // What such a type attaches (`Type.member`, `Module.Type.member`).
-            return (1..path.len().min(3)).any(|n| {
-                matches!(
-                    self.types.find(&path[..n]),
-                    Some(Found {
-                        origin: Origin::StandIn(_),
-                        ..
-                    })
-                )
-            });
+        if path.len() >= 2 && first.starts_with(|c: char| c.is_ascii_uppercase()) {
+            // What such a type attaches (`Type.member`, `Module.Type.member`),
+            // the type cut as `slot` cuts it: a qualifier is never itself
+            // taken for a type that stands in.
+            let qualified = path.len() >= 3
+                && path[1].starts_with(|c: char| c.is_ascii_uppercase())
+                && self.types.namespace(first).is_some();
+            let n = if qualified { 2 } else { 1 };
+            let Some(Found {
+                origin: Origin::StandIn(uri),
+                ..
+            }) = self.types.find(&path[..n])
+            else {
+                return false;
+            };
+            self.stood_in_at(&path[..n], &uri, span);
+            return true;
         }
         let object = &self.tree.objects[owner];
         let stand_in = match (&object.origin, &object.kind) {
@@ -964,6 +975,12 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
         chain: &[String],
         offset: u32,
     ) {
+        // A script that reads a type that stands in (`SceneGizmo.Mode`)
+        // loses what it reads all the same: told where it is read.
+        if let Origin::StandIn(uri) = &found.origin {
+            let span = Span::new(offset, offset + name.len() as u32);
+            self.stood_in_at(&[name], &uri.clone(), span);
+        }
         let Kind::Builtin(ty) = found.kind else {
             return;
         };
@@ -1052,7 +1069,7 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
         let ty = if module_typed {
             "var".to_string()
         } else {
-            self.property_type_name(&type_name.name.parts)
+            self.property_type_name(&type_name.name.parts, type_name.name.span)
         };
         self.def_mut(at).properties.push(PropertyDecl {
             name: name.clone(),
@@ -1088,24 +1105,68 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
     /// that stands in for a type of a module the runtime does not have:
     /// then the `Item` it stands in as, so that the property holds such an
     /// object (`property View3D view: parent`).
-    fn property_type_name(&self, parts: &[&str]) -> String {
+    fn property_type_name(&mut self, parts: &[&str], span: Span) -> String {
         // A value type (`int`, `vector3d`) is no object type, though a
         // name nothing else has is taken for one of the missing module.
         let object_type = parts
             .last()
             .is_some_and(|name| name.starts_with(|c: char| c.is_ascii_uppercase()));
         if object_type
-            && matches!(
-                self.types.find(parts),
-                Some(Found {
-                    origin: Origin::StandIn(_),
-                    ..
-                })
-            )
+            && let Some(Found {
+                origin: Origin::StandIn(uri),
+                ..
+            }) = self.types.find(parts)
         {
+            self.stood_in_at(parts, &uri, span);
             return "Item".to_string();
         }
         parts.join(".")
+    }
+
+    /// Notes that the dotted name `parts`, written at `span`, stands in
+    /// for a type of `origin` ([`Origin::StandIn`]), when it is of a
+    /// module the runtime builds part of.
+    fn stood_in_at(&mut self, parts: &[&str], origin: &str, span: Span) {
+        if let Some(found) = self.stand_in_found(parts, origin, self.span(span)) {
+            self.stood_in.push(found);
+        }
+    }
+
+    fn stand_in_found(
+        &self,
+        parts: &[&str],
+        origin: &str,
+        span: SourceSpan,
+    ) -> Option<(String, StoodIn)> {
+        let (uri, known) = self.types.stand_in_of(parts, origin)?;
+        let name = parts.last().copied().unwrap_or_default().to_string();
+        Some((uri, StoodIn { name, span, known }))
+    }
+
+    /// Of each module the runtime builds part of, the types of it the
+    /// file names that stand in, each once, where it is first written.
+    fn stood_in(&self) -> HashMap<String, Vec<StoodIn>> {
+        let objects = self
+            .tree
+            .objects
+            .iter()
+            .filter_map(|object| match &object.origin {
+                Some(Origin::StandIn(uri)) => {
+                    let parts: Vec<&str> = object.name.split('.').collect();
+                    self.stand_in_found(&parts, uri, self.span(object.span))
+                }
+                _ => None,
+            });
+        let mut named: Vec<_> = objects.chain(self.stood_in.iter().cloned()).collect();
+        named.sort_by_key(|(_, ty)| (ty.span.line, ty.span.column));
+        let mut out: HashMap<String, Vec<StoodIn>> = HashMap::new();
+        for (uri, ty) in named {
+            let types = out.entry(uri).or_default();
+            if !types.iter().any(|t| t.name == ty.name) {
+                types.push(ty);
+            }
+        }
+        out
     }
 
     /// The object `id` names from the object `owner`, nearest context first.
@@ -2286,6 +2347,7 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
     }
 
     fn finish(mut self, document: &QmlDocument<'a>) -> Compiled {
+        let mut stood_in = self.stood_in();
         let scripts = self.scripts(document);
         let tree = self.tree;
         let mut inline = Vec::new();
@@ -2422,6 +2484,16 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                         QmlImportSource::Module(name) if self.types.oracle.stands_in(&name.to_string())
                             && !self.project.front.has_module(&name.to_string())
                     ),
+                    stood_in: match &import.source {
+                        QmlImportSource::Module(name)
+                            if self.types.oracle.stands_in(&name.to_string())
+                                && !self.project.front.has_module(&name.to_string())
+                                && self.types.oracle.builds_part_of(&name.to_string()) =>
+                        {
+                            Some(stood_in.remove(&name.to_string()).unwrap_or_default())
+                        }
+                        _ => None,
+                    },
                 })
                 .collect(),
             pragmas: document
