@@ -19,6 +19,7 @@ if [ -n "$check" ]; then
   exit
 fi
 log="$(from_asked "${DRAG_IN_LOG:-$(checkout_dir drag-in.log)}")"
+mkdir -p "$(dirname "$log")"
 cat >&2 <<'HOW'
 Drag into the window, then close it:
   left half:  takes anything with the action the source proposes
