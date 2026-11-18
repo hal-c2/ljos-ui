@@ -444,6 +444,12 @@ name = "media"
 filmcraft-codecs = { version = "0.1", "path" = "../../third_party/filmcraft/crates/codecs" }
 TOML
 filmcraft_used "a dependency with a quoted \"path\" key"
+# A name with a newline in it is still one manifest, and one with `=` is no
+# awk assignment.
+mv "$root/crates/media" "$root/crates/me"$'\n'"dia"
+filmcraft_used "a manifest under a directory whose name holds a newline"
+mv "$root/crates/me"$'\n'"dia" "$root/crates/media=on"
+filmcraft_used "a manifest under crates/media=on"
 rm -r "$root/crates" "$root/Cargo.toml"
 
 # --- Paths ---------------------------------------------------------------------

@@ -90,14 +90,15 @@ fi
 
 # --- Submodules -------------------------------------------------------------
 
-# The Cargo.toml files of this checkout: what git tracks or would add (a
-# submodule's own are not listed), else, outside git, what is on disk.
+# The Cargo.toml files of this checkout, each ended by a NUL: what git tracks
+# or would add (a submodule's own are not listed), else, outside git, what is
+# on disk. NUL-ended, a name comes whole and unquoted: git quotes one it
+# prints a line at a time (crates/média), and a newline would split it.
 manifests() {
   if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    # Unquoted: git quotes a name it prints one per line (crates/média).
-    git ls-files -z --cached --others --exclude-standard -- 'Cargo.toml' '*/Cargo.toml' | tr '\0' '\n'
+    git ls-files -z --cached --others --exclude-standard -- 'Cargo.toml' '*/Cargo.toml'
   else
-    find . \( -name target -o -name .git \) -prune -o -name Cargo.toml -print | sed 's|^\./||'
+    find . \( -name target -o -name .git \) -prune -o -name Cargo.toml -print0
   fi
 }
 
@@ -108,7 +109,16 @@ manifests() {
 # comments name nothing. Read as text, so it needs neither cargo nor the
 # submodule's files, which `cargo metadata` would.
 manifests_use() {
-  manifests | awk -v dir="$1" -v root="$ljos_root" '
+  local m files=()
+  # The manifests go to awk as operands, never as lines of text, so a name is
+  # read whole. `./` keeps awk from taking a name with `=` for an assignment.
+  # A tracked one deleted from the working tree is left out.
+  while IFS= read -r -d '' m; do
+    m="${m#./}"
+    if [ -f "$m" ]; then files+=("./$m"); fi
+  done < <(manifests)
+  [ ${#files[@]} -gt 0 ] || return 1
+  awk -v dir="$1" -v root="$ljos_root" '
     function normal(p,    n, i, k, part, out) {
       n = split(p, part, "/"); k = 0
       for (i = 1; i <= n; i++) {
@@ -141,28 +151,28 @@ manifests_use() {
       }
       return n
     }
-    {
-      m = $0
-      if (index(m, dir "/") == 1) next
-      members = 0
-      while ((getline line < m) > 0) {
-        sub(/#.*/, "", line)
-        if (members || line ~ /^[[:space:]]*members[[:space:]]*=/) {
-          members = (line !~ /\]/)
-          n = strings(line, s)
-          for (i = 1; i <= n; i++) if (under(m, s[i])) found = 1
-        }
-        # A key starts a line or follows `{`, `,` or a space, bare or quoted.
-        rest = " " line
-        while (match(rest, /[{,[:space:]](path|"path"|\047path\047)[[:space:]]*=[[:space:]]*("[^"]*"|\047[^\047]*\047)/)) {
-          v = substr(rest, RSTART, RLENGTH); sub(/^[^=]*=[[:space:]]*["\047]/, "", v); v = substr(v, 1, length(v) - 1)
-          if (under(m, v)) found = 1
-          rest = substr(rest, RSTART + RLENGTH)
-        }
-      }
-      close(m)
+    FNR == 1 {
+      m = FILENAME; sub(/^\.\//, "", m)
+      skip = (index(m, dir "/") == 1); members = 0
     }
-    END { exit found ? 0 : 1 }'
+    skip { next }
+    {
+      line = $0
+      sub(/#.*/, "", line)
+      if (members || line ~ /^[[:space:]]*members[[:space:]]*=/) {
+        members = (line !~ /\]/)
+        n = strings(line, s)
+        for (i = 1; i <= n; i++) if (under(m, s[i])) found = 1
+      }
+      # A key starts a line or follows `{`, `,` or a space, bare or quoted.
+      rest = " " line
+      while (match(rest, /[{,[:space:]](path|"path"|\047path\047)[[:space:]]*=[[:space:]]*("[^"]*"|\047[^\047]*\047)/)) {
+        v = substr(rest, RSTART, RLENGTH); sub(/^[^=]*=[[:space:]]*["\047]/, "", v); v = substr(v, 1, length(v) - 1)
+        if (under(m, v)) found = 1
+        rest = substr(rest, RSTART + RLENGTH)
+      }
+    }
+    END { exit found ? 0 : 1 }' "${files[@]}"
 }
 
 # A submodule by its path: found at the commit this checkout records, moved
