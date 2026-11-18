@@ -143,6 +143,30 @@ Feature: Starting the authoring server from a checkout of Ljós
       {"jsonrpc":"2.0","id":1,"result":{"serverInfo":{"name":"ljos"}}}
       """
 
+  # This cargo builds into a directory whose name holds a tab, which JSON writes as \t. Beside it
+  # is one named with a backslash and a "t", whose stale program answers otherwise.
+  Scenario: A build directory whose name holds a tab is where the server is started from
+    Given the project is a git checkout with the linked worktree "wt"
+    And the file "bin/cargo":
+      """sh
+      #!/bin/sh
+      root=$(cd "$(dirname "$0")/.." && pwd -P)
+      out="$CARGO_TARGET_DIR/$(printf 'tab\tbuilds')/debug"
+      stale="$CARGO_TARGET_DIR/tab\\tbuilds/debug"
+      mkdir -p "$out" "$stale"
+      cp "$root/server.sh" "$out/ljos"
+      printf '#!/bin/sh\necho stale\n' > "$stale/ljos"
+      chmod +x "$stale/ljos"
+      dir=$(printf '%s' "$CARGO_TARGET_DIR" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')
+      printf '%s\n' "{\"reason\":\"compiler-artifact\",\"executable\":\"$dir/tab\\tbuilds/debug/ljos\",\"fresh\":false}"
+      """
+    When the author runs "mise-tasks/mcp" in "wt"
+    Then the command exits with status 0
+    And the command's standard output is:
+      """json
+      {"jsonrpc":"2.0","id":1,"result":{"serverInfo":{"name":"ljos"}}}
+      """
+
   Scenario: A linked worktree builds with the cargo settings the main checkout keeps outside git, into the shared target all the same
     Given the project is a git checkout with the linked worktree "wt"
     And the file ".cargo/config.toml":

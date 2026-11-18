@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #MISE description="Start the ljos MCP authoring server on stdio for this repository (or the project given); it ends when its standard input closes"
 #MISE dir="{{config_root}}"
-#USAGE arg "[project]" default="." help="Project directory the server authors, from where mise was started (default: this repository)"
+#USAGE arg "[project]" help="Project directory the server authors, from where mise was started (default: this repository)"
 # .mcp.json runs this too, so an editor or agent gets the same server as
 # `mise run mcp`. It builds `ljos`, then becomes it. The server speaks
 # JSON-RPC on stdout, so everything else (this script's word on which way it
@@ -23,8 +23,10 @@ set -euo pipefail
 say() { echo "mcp: $*" >&2; }
 
 project="${usage_project:-${1:-}}"
+# Nothing given is this repository; anything given (`.` too) is from where
+# mise was started. .mcp.json's `.` is run in the root, so it is the root.
 case "$project" in
-  "" | .) project="$PWD" ;;
+  "") project="$PWD" ;;
   *) project="$(from_asked "$project")" ;;
 esac
 [ -d "$project" ] || die "mcp: no project directory $project"
@@ -93,11 +95,6 @@ cd "$checkout"
 status=0
 messages="$("${build[@]}" | tee >({ grep --line-buffered -v -e '^{"reason":' -e '^$' || true; } >&2))" || status=$?
 [ "$status" -eq 0 ] || die "mcp: the build of ljos failed"
-# The program's path is a JSON string: a quote, a backslash or a slash in it
-# comes escaped. Any other escape is a control character, which no path of a
-# build has; it is left, and the path is then no program.
-server="$(printf '%s\n' "$messages" |
-  sed -n -E 's/^\{"reason":"compiler-artifact".*"executable":"(([^"\\]|\\.)*)".*/\1/p' |
-  tail -n 1 | sed -E 's/\\(["\\/])/\1/g')"
+server="$(printf '%s\n' "$messages" | cargo_executable)"
 [ -n "$server" ] && [ -x "$server" ] || die "mcp: the build named no ljos program it made"
 exec "$server" mcp --project "$project"

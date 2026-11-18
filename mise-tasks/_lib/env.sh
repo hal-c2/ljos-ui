@@ -339,3 +339,51 @@ check_run() {
   sleep "${LJOS_CHECK_SECONDS:-2}" | "$ljos" run --headless --quit-with-stdin "$@"
 }
 
+
+# The program a cargo build made, from its --message-format=json messages on
+# standard input: the last compiler artifact with an executable. Cargo knows
+# where it put it (a target-dir from its config, a target triple's
+# directory), which a path made from target_dir does not.
+#
+# Its path is a JSON string, decoded with awk alone (this runs before anything
+# is built, so jq or python may not be there). A directory's name may hold a
+# quote, a backslash or a control character (a tab, say), all of which come
+# escaped. Cargo writes any other character as it is, so a \u escape above
+# \u007f is not one it makes: the path is then left empty, and no program.
+json_string() {
+  awk '
+    function hex(c) { return index("0123456789abcdef", tolower(c)) - 1 }
+    {
+      s = $0; out = ""
+      while ((i = index(s, "\\")) > 0) {
+        out = out substr(s, 1, i - 1); c = substr(s, i + 1, 1); s = substr(s, i + 2)
+        if (c == "\"" || c == "\\" || c == "/") out = out c
+        else if (c == "b") out = out "\b"
+        else if (c == "f") out = out "\f"
+        else if (c == "n") out = out "\n"
+        else if (c == "r") out = out "\r"
+        else if (c == "t") out = out "\t"
+        else if (c == "u" && substr(s, 1, 2) == "00" && hex(substr(s, 3, 1)) >= 0 && hex(substr(s, 3, 1)) < 8 && hex(substr(s, 4, 1)) >= 0) {
+          n = hex(substr(s, 3, 1)) * 16 + hex(substr(s, 4, 1))
+          if (n == 0) exit
+          out = out sprintf("%c", n); s = substr(s, 5)
+        } else exit
+      }
+      printf "%s", out s
+    }'
+}
+cargo_executable() {
+  sed -n -E 's/^\{"reason":"compiler-artifact".*"executable":"(([^"\\]|\\.)*)".*/\1/p' |
+    tail -n 1 | json_string
+}
+
+# Builds with cargo and prints the program the build made:
+#   built_program -p ljos_cli --bin ljos [--profile release]
+# The build's diagnostics go to stderr as cargo renders them.
+built_program() {
+  local messages program
+  messages="$(cargo build --quiet --message-format=json-render-diagnostics "$@")" || return 1
+  program="$(printf '%s\n' "$messages" | cargo_executable)"
+  [ -n "$program" ] && [ -x "$program" ] || die "cargo build $* named no program it made"
+  printf '%s\n' "$program"
+}

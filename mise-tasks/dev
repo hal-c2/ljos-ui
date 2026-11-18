@@ -31,8 +31,9 @@ if [ $# -gt 0 ] && [ "${1#-}" = "$1" ]; then
 fi
 [ -f "$file" ] || die "dev: no such file: $file"
 if [ -n "$check" ]; then
-  cargo build --quiet -p ljos_cli --bin ljos
-  check_run "$(target_dir)/debug/ljos" run --watch "$file" "$@"
+  # Without --watch, which would start a file that does not load with a
+  # placeholder for it and wait for a save that fixes it: a check fails.
+  check_run "$(built_program -p ljos_cli --bin ljos)" run "$file" "$@"
   exit
 fi
 exec cargo run --quiet -p ljos_cli --bin ljos -- run --watch "$file" "$@"

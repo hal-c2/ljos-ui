@@ -39,6 +39,13 @@ case "$file" in
     mkdir -p "$dir"
     entry="$dir/view.qml"
     url="file://$file"
+    # A check is told what the animation came to: LottieAnimation reports a
+    # file it cannot read as its status, not as a QML error. It is told at
+    # completion too, as the status may be Ready before a change is seen.
+    said=""
+    [ -z "$check" ] || said='function said() { console.log("lottie --check: " + ["Null", "Loading", "Ready", "Error"][status]) }
+        onStatusChanged: said()
+        Component.onCompleted: said()'
     cat > "$entry" <<EOF
 import QtQuick
 import Qt.labs.lottieqt
@@ -53,6 +60,7 @@ Rectangle {
         anchors.centerIn: parent
         source: "$url"
         loops: LottieAnimation.Infinite
+        $said
     }
 
     MouseArea {
@@ -84,8 +92,23 @@ if [ -n "$qt" ]; then
 fi
 
 if [ -n "$check" ]; then
-  cargo build --quiet -p ljos_cli --bin ljos
-  check_run "$target/debug/ljos" run "$entry" "$@"
+  ljos="$(built_program -p ljos_cli --bin ljos)"
+  if [ "$entry" = "$file" ]; then
+    check_run "$ljos" run "$entry" "$@"
+    exit
+  fi
+  # A .json passes once it is Ready within the check, and fails on Error or
+  # when it never gets there.
+  log="$dir/check.log"
+  status=0
+  check_run "$ljos" run "$entry" "$@" > "$log" 2>&1 || status=$?
+  cat "$log" >&2
+  [ "$status" -eq 0 ] || exit "$status"
+  if grep -q 'lottie --check: Error' "$log"; then
+    die "lottie --check: $(basename "$file") did not load (LottieAnimation's status is Error)"
+  fi
+  grep -q 'lottie --check: Ready' "$log" ||
+    die "lottie --check: $(basename "$file") was not Ready within ${LJOS_CHECK_SECONDS:-2} s"
   exit
 fi
 # Release by default: a debug build's frame times say nothing about how

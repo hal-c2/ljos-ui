@@ -12,7 +12,7 @@ cd "$ljos_root"
 # Read from the raw arguments, as dev does: mise's own parsing drops a `--`
 # that ljos run needs. --check and --release are this task's before it.
 check=
-profile=debug
+profile=dev
 args=()
 apps=
 for a in "$@"; do
@@ -30,8 +30,7 @@ set -- ${args[@]+"${args[@]}"}
 file="$(from_asked "$1")"
 shift
 [ -f "$file" ] || die "run: no such file: $file"
-cargo build --quiet -p ljos_cli --bin ljos --profile "$( [ "$profile" = debug ] && echo dev || echo release)"
-ljos="$(target_dir)/$profile/ljos"
+ljos="$(built_program -p ljos_cli --bin ljos --profile "$profile")"
 if [ -n "$check" ]; then
   check_run "$ljos" run "$file" "$@"
   exit
