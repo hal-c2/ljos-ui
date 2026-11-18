@@ -419,7 +419,8 @@ command_words() {
 # for it. cargo counts only as a command's program: where a command starts
 # (after a separator, a keyword such as if, or assignments), or as the
 # program such a wrapper runs. A wrapper takes only its own options and
-# their values (and timeout its duration), so the next word is the program:
+# their values (timeout its duration, taskset its mask or CPU list, chrt
+# its priority), so the next word is the program:
 # `exec "$prog" --note "cargo build"` runs $prog, and command -v cargo runs
 # nothing. command_words makes quoted text one word, so a message that names
 # a cargo command runs none. The text goes to grep as a here-string, not
@@ -441,6 +442,8 @@ cargo_problems() {
   via+="|timeout$s((-s|-k|--signal|--kill-after)$s$v|$o)*$v"
   via+="|stdbuf$s((-i|-o|-e)$s$v|$o)*"
   via+="|ionice$s((-c|-n|-p|-P|-u)$s$v|$o)*"
+  via+="|(taskset|chrt)$s($o)*$v"
+  via+="|xargs$s((-n|-I|-P|-L|-s|-d|-E|-a|--max-args|--replace|--max-procs|--max-lines|--max-chars|--delimiter|--eof|--arg-file)$s$v|$o)*"
   via+="|mise$s(exec|x)$s((-C|--cd|-E|--env|-j|--jobs)$s$v|$o|[^[:space:];&|@]+@[^[:space:];&|]+$s)*"
   via+="|\"?([^[:space:];&|\"]*/)?capped\"?$s($o)*))"
   if grep -Eq "${pre}${via}*cargo([[:space:]]|$)" <<<"$words"; then

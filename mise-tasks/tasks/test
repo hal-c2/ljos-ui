@@ -895,7 +895,9 @@ lints "command cargo across a continued line goes round env.sh's cargo" round "$
 # shellcheck disable=SC2016 # the task's own text, expanded when it runs
 for wrapped in 'timeout 60 cargo test' 'nice -n 10 cargo build' 'env X=1 cargo test' \
   '"$S/bin/capped" cargo build' '$S/bin/capped cargo build' 'command cargo test' \
-  'nohup cargo build' 'mise exec -- cargo build' 'if timeout 60 cargo test; then :; fi'; do
+  'nohup cargo build' 'mise exec -- cargo build' 'if timeout 60 cargo test; then :; fi' \
+  'xargs cargo build' 'xargs -n 1 cargo build' 'taskset -c 0 cargo build' 'taskset 0x1 cargo build' \
+  'chrt 1 cargo build' 'chrt -i 0 cargo build'; do
   lints "$wrapped, in a task that does not source env.sh, is refused" source "$wrapped"
   lints "$wrapped goes round env.sh's cargo" round "$env_line" "$wrapped"
 done
