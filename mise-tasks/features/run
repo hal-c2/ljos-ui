@@ -106,6 +106,10 @@ if [ -n "$desktop" ]; then
     export LJOS_BDD_DESKTOP="$target/features/desktop.env"
     trap 'scripts/cua-sandbox.sh stop' EXIT
   else
+    # env can fail after it started sway and its bus (a seat that never
+    # got its keyboard, say). This sandbox is this run's own, so what it
+    # started goes; the scenarios are skipped with env's word on why.
+    scripts/cua-sandbox.sh stop > /dev/null 2>&1 || true
     export LJOS_BDD_DESKTOP_SKIP="${why##*$'\n'}"
   fi
   "${runner[@]}" "${args[@]}"
