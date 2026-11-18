@@ -564,8 +564,15 @@ fi
 export GIT_CEILING_DIRECTORIES="$real"
 # The fixtures are made with the real git, which the guard above stands in
 # for: a bare clone and a submodule of a repository in $real, never of the
-# checkout. A step that fails leaves a fixture out, which the cases below say.
-quiet_git() { "${real_git:-git}" -c user.name=tasks -c user.email=tasks@example.invalid -c init.defaultBranch=main -c protocol.file.allow=always "$@" >/dev/null 2>&1 || true; }
+# checkout. A step that fails leaves a fixture out, which the cases below
+# say; the step and git's error are printed first, so the cause is there.
+# The developer's own git settings that could fail a step (signing) are off.
+quiet_git() {
+  local out
+  out="$("${real_git:-git}" -c user.name=tasks -c user.email=tasks@example.invalid -c init.defaultBranch=main \
+    -c protocol.file.allow=always -c commit.gpgSign=false -c tag.gpgSign=false "$@" 2>&1)" ||
+    printf 'fixture step failed: git %s\n%s\n' "$*" "$out" >&2
+}
 repo="$real/repo"
 mkdir "$repo"
 cp -R "$ljos_root/mise-tasks" "$repo/mise-tasks"
