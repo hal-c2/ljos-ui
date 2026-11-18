@@ -79,6 +79,9 @@ T.Control {
                     anchors.horizontalCenter: parent.horizontalCenter
                     spacing: control.spacing
                     layoutDirection: control.mirrored ? Qt.RightToLeft : Qt.LeftToRight
+                    // The direction is the control's own mirroring already: the row
+                    // mirrored again by what the control passes on would undo it.
+                    LayoutMirroring.enabled: false
 
                     Basic.Button {
                         objectName: "secondaryAction"

@@ -47,6 +47,9 @@ T.TabButton {
                 horizontalItemAlignment: Grid.AlignHCenter
                 verticalItemAlignment: Grid.AlignVCenter
                 layoutDirection: control.mirrored ? Qt.RightToLeft : Qt.LeftToRight
+                // The direction is the tab's own mirroring already: the grid
+                // mirrored again by what the tab passes on would undo it.
+                LayoutMirroring.enabled: false
 
                 Icon {
                     objectName: "glyph"

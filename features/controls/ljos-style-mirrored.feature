@@ -190,6 +190,86 @@ Feature: Ljós's own style, mirrored
         | CheckBox |
         | Switch   |
 
+  Rule: A row of buttons in a control is mirrored once
+
+    # A control's row of parts lays out from the right when the control is
+    # mirrored, whether it is mirrored by what it is in or by itself, and
+    # the buttons in the row are still mirrored as the control is.
+    @api-QtQuick.LayoutMirroring.enabled @api-QtQuick.LayoutMirroring.childrenInherit
+    Scenario Outline: A <control> mirrored <how> has its <first> <side> its <second>
+      Given the QML:
+        """qml
+        import QtQuick
+        import Ljos.Controls
+        import Ljos.Controls.Basic as LB
+        Item {
+          id: root; objectName: "root"
+          width: 400; height: 120
+          Item {
+            width: 400; height: 120
+            LayoutMirroring.enabled: <inherited>
+            LayoutMirroring.childrenInherit: true
+            <type> {
+              id: control; <own>
+              <parts>
+            }
+          }
+          function part(item, name) {
+            for (const child of item.children) {
+              if (child.objectName === name) return child
+              const found = part(child, name)
+              if (found) return found
+            }
+            return null
+          }
+          property var got: []
+          function measure() {
+            const at = (name) => part(control.contentItem, name).mapToItem(root, 0, 0).x
+            got = [at("<first>") < at("<second>"), control.mirrored]
+          }
+        }
+        """
+      When the method "measure" of "root" is called
+      Then the property "got" of "root" is <got>
+
+      Examples:
+        | control            | type           | parts                                            | how              | inherited | own                           | first  | second          | side     | got            |
+        | empty state        | EmptyState     | actionText: "New"; secondaryActionText: "Import" | by what it is in | true      |                               | action | secondaryAction | left of  | [true, true]   |
+        | empty state        | EmptyState     | actionText: "New"; secondaryActionText: "Import" | by itself        | false     | LayoutMirroring.enabled: true | action | secondaryAction | left of  | [true, true]   |
+        | empty state        | EmptyState     | actionText: "New"; secondaryActionText: "Import" | not at all       | false     |                               | action | secondaryAction | right of | [false, false] |
+        | Basic empty state  | LB.EmptyState  | actionText: "New"; secondaryActionText: "Import" | by what it is in | true      |                               | action | secondaryAction | left of  | [true, true]   |
+        | Basic empty state  | LB.EmptyState  | actionText: "New"; secondaryActionText: "Import" | by itself        | false     | LayoutMirroring.enabled: true | action | secondaryAction | left of  | [true, true]   |
+        | Basic empty state  | LB.EmptyState  | actionText: "New"; secondaryActionText: "Import" | not at all       | false     |                               | action | secondaryAction | right of | [false, false] |
+        | Basic split button | LB.SplitButton | text: "Run"                                      | by what it is in | true      |                               | more   | action          | left of  | [true, true]   |
+        | Basic split button | LB.SplitButton | text: "Run"                                      | by itself        | false     | LayoutMirroring.enabled: true | more   | action          | left of  | [true, true]   |
+        | Basic split button | LB.SplitButton | text: "Run"                                      | not at all       | false     |                               | more   | action          | right of | [false, false] |
+        | tab                | TabButton      | text: "Files"; iconName: "folder"                | by what it is in | true      |                               | label  | glyph           | left of  | [true, true]   |
+        | tab                | TabButton      | text: "Files"; iconName: "folder"                | by itself        | false     | LayoutMirroring.enabled: true | label  | glyph           | left of  | [true, true]   |
+        | tab                | TabButton      | text: "Files"; iconName: "folder"                | not at all       | false     |                               | label  | glyph           | right of | [false, false] |
+
+    @api-QtQuick.LayoutMirroring.enabled
+    Scenario Outline: The buttons of an empty state mirrored <how> are mirrored too
+      Given the QML:
+        """qml
+        import QtQuick
+        import Ljos.Controls
+        Item {
+          width: 400; height: 120
+          Item {
+            width: 400; height: 120
+            LayoutMirroring.enabled: <inherited>
+            LayoutMirroring.childrenInherit: true
+            EmptyState { <own> actionText: "New"; secondaryActionText: "Import" }
+          }
+        }
+        """
+      Then the property "mirrored" of "action" is <mirrored>
+
+      Examples:
+        | how              | inherited | own                            | mirrored |
+        | by what it is in | true      |                                | true     |
+        | by itself        | false     | LayoutMirroring.enabled: true; | false    |
+
   Rule: Mirrored, every control still passes the design audit
 
     Scenario: A mirrored window of the controls has nothing to report

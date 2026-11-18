@@ -149,6 +149,9 @@ T.Control {
                         visible: control.actionText.length > 0 || control.secondaryActionText.length > 0
                         spacing: Theme.spacing
                         layoutDirection: control.mirrored ? Qt.RightToLeft : Qt.LeftToRight
+                        // The direction is the control's own mirroring already: the row
+                        // mirrored again by what the control passes on would undo it.
+                        LayoutMirroring.enabled: false
 
                         Button {
                             objectName: "secondaryAction"

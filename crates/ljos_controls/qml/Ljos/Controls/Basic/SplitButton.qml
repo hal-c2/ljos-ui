@@ -48,6 +48,9 @@ T.Control {
         Row {
             spacing: control.spacing
             layoutDirection: control.mirrored ? Qt.RightToLeft : Qt.LeftToRight
+            // The direction is the control's own mirroring already: the row
+            // mirrored again by what the control passes on would undo it.
+            LayoutMirroring.enabled: false
 
             // The Basic style has no icons of its own; `iconName` is kept
             // so a file moves between the modules by its import alone, and
