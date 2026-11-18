@@ -326,3 +326,163 @@ Feature: Checking files on a machine that has no Qt
         Main.qml:2:9: warning: module "QtLocation" is not part of Ljós: its types stand in as empty Items, and what only they have is left out [stand-in]
         2 files, 0 errors, 2 warnings
         """
+
+  Rule: Of a module Ljós builds part of, only a type that stands in is a warning, where it is written
+
+    Scenario: A file that uses only the types Ljós builds of such a module has nothing to report
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
+        import QtQuick3D
+        import QtQuick3D.Helpers
+        import QtQuick3D.AssetUtils
+        View3D {
+          environment: ExtendedSceneEnvironment { }
+          RuntimeLoader { }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        1 files, 0 errors, 0 warnings
+        """
+
+    Scenario: A type of such a module that stands in is told once, where it is first written
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
+        import QtQuick3D
+        import QtQuick3D.Helpers
+        View3D {
+          environment: ExtendedSceneEnvironment { }
+          SceneGizmo { }
+          SceneGizmo { }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        Main.qml:6:11: warning: `SceneGizmo` of module "QtQuick3D.Helpers" is not part of Ljós: it stands in as an empty Item, and what only it has is left out [stand-in]
+        1 files, 0 errors, 1 warnings
+        """
+
+    Scenario: A property of such a type is told where its type is written
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
+        import QtQuick3D
+        import QtQuick3D.Helpers
+        Item {
+          property list<SceneGizmo> gizmos
+          property SceneGizmo gizmo
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        Main.qml:5:25: warning: `SceneGizmo` of module "QtQuick3D.Helpers" is not part of Ljós: it stands in as an empty Item, and what only it has is left out [stand-in]
+        1 files, 0 errors, 1 warnings
+        """
+
+    Scenario: A type of such a module reached through its qualifier is told of that module
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
+        import QtQuick3D
+        import QtQuick3D.Helpers as H
+        View3D {
+          H.ExtendedSceneEnvironment { }
+          H.SceneGizmo { }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        Main.qml:6:11: warning: `SceneGizmo` of module "QtQuick3D.Helpers" is not part of Ljós: it stands in as an empty Item, and what only it has is left out [stand-in]
+        1 files, 0 errors, 1 warnings
+        """
+
+    Scenario: What such a type attaches is told where it is written
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
+        import QtQuick3D
+        import QtQuick3D.Helpers
+        Item {
+          SceneGizmo.enabled: true
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        Main.qml:5:11: warning: `SceneGizmo` of module "QtQuick3D.Helpers" is not part of Ljós: it stands in as an empty Item, and what only it has is left out [stand-in]
+        1 files, 0 errors, 1 warnings
+        """
+
+    Scenario: A script that reads such a type is told where it reads it
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
+        import QtQuick3D
+        import QtQuick3D.Helpers
+        Item {
+          property var mode: SceneGizmo.Mode
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        Main.qml:5:30: warning: `SceneGizmo` of module "QtQuick3D.Helpers" is not part of Ljós: it stands in as an empty Item, and what only it has is left out [stand-in]
+        1 files, 0 errors, 1 warnings
+        """
+
+    Scenario: A script that reads such a type through its qualifier is told where it reads it
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
+        import QtQuick3D
+        import QtQuick3D.Helpers as H
+        Item {
+          property var mode: H.SceneGizmo.Mode
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        Main.qml:5:30: warning: `SceneGizmo` of module "QtQuick3D.Helpers" is not part of Ljós: it stands in as an empty Item, and what only it has is left out [stand-in]
+        1 files, 0 errors, 1 warnings
+        """
+
+    Scenario: A type that may be of a module Ljós has nothing of is told by that module's import
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
+        import QtQuick3D.Helpers
+        import QtGraphs
+        Item {
+          SceneGizmo { }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        Main.qml:3:9: warning: module "QtGraphs" is not part of Ljós: its types stand in as empty Items, and what only they have is left out [stand-in]
+        1 files, 0 errors, 1 warnings
+        """
+
+    Scenario: Of two such modules neither known to have the type, the warning names neither
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
+        import QtQuick3D.Helpers
+        import QtQuick3D.AssetUtils
+        Item {
+          SceneGizmo { }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        Main.qml:5:11: warning: `SceneGizmo` is not part of Ljós: it stands in as an empty Item, and what only it has is left out [stand-in]
+        1 files, 0 errors, 1 warnings
+        """

@@ -120,6 +120,55 @@ impl<'p, O: TypeOracle> Types<'p, O> {
         Self { file, ..*self }
     }
 
+    /// Of the dotted name `parts` that [`find`](Self::find) makes stand in
+    /// for a type of `origin`, the module the runtime builds part of that
+    /// it is told under, and whether that module is known to have it. None
+    /// when the name may be of a module the runtime builds nothing of,
+    /// whose import is told instead.
+    ///
+    /// `origin` is only the last such module the file imports: the name is
+    /// the one whose table has it, and of several the runtime builds part
+    /// of that none has it, it is filed under `origin`, unsure.
+    pub fn stand_in_of(&self, parts: &[&str], origin: &str) -> Option<(String, bool)> {
+        let summary = self.project.summary(self.file)?;
+        let (qualifier, name) = match parts {
+            [name] => (None, *name),
+            [qualifier, name] => (Some(*qualifier), *name),
+            _ => return None,
+        };
+        let modules: Vec<&str> = summary
+            .imports
+            .iter()
+            .filter(|import| import.alias.as_deref() == qualifier)
+            .filter_map(|import| match &import.source {
+                Source::Module(uri)
+                    if self.oracle.stands_in(uri) && !self.project.has_module(uri) =>
+                {
+                    Some(uri.as_str())
+                }
+                _ => None,
+            })
+            .collect();
+        if let Some(uri) = modules
+            .iter()
+            .rev()
+            .find(|uri| self.oracle.module_type(uri, name).is_some())
+        {
+            return self
+                .oracle
+                .builds_part_of(uri)
+                .then(|| ((*uri).to_string(), true));
+        }
+        if modules.iter().any(|uri| !self.oracle.builds_part_of(uri)) {
+            return None;
+        }
+        match modules.as_slice() {
+            [] => None,
+            [only] => Some(((*only).to_string(), true)),
+            _ => Some((origin.to_string(), false)),
+        }
+    }
+
     /// What the dotted name `parts` is as a type: `Item`, `C.Button`.
     pub fn find(&self, parts: &[&str]) -> Option<Found<O::Type>> {
         let summary = self.project.summary(self.file)?;
@@ -152,10 +201,18 @@ impl<'p, O: TypeOracle> Types<'p, O> {
                     if self.oracle.stands_in(uri) && !self.project.has_module(uri) =>
                 {
                     // Of a module the runtime has only part of, what it
-                    // has is itself.
-                    if let Some(ty) = self.oracle.module_type(uri, name)
-                        && self.oracle.is_built(ty)
-                    {
+                    // has is itself, here or in the module it builds it in.
+                    let built = self
+                        .oracle
+                        .module_type(uri, name)
+                        .filter(|ty| self.oracle.is_built(*ty))
+                        .or_else(|| {
+                            let home = self.oracle.built_in(uri, name)?;
+                            self.oracle
+                                .module_type(home, name)
+                                .filter(|ty| self.oracle.is_built(*ty))
+                        });
+                    if let Some(ty) = built {
                         let origin = match qualifier {
                             Some(_) => Origin::Namespace,
                             None => Origin::Module(uri.clone()),

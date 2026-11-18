@@ -338,6 +338,7 @@ fn sample() -> CompiledFile {
             alias: None,
             in_project: false,
             stands_in: false,
+            stood_in: None,
         }],
         pragmas: vec![Pragma {
             name: "ComponentBehavior".into(),
@@ -437,6 +438,19 @@ fn another_version_is_refused() {
     assert!(matches!(
         CompiledFile::from_bytes(&bytes),
         Err(Error::Version { .. })
+    ));
+}
+
+#[test]
+fn another_version_in_its_own_layout_is_refused_by_its_version() {
+    // A file of another version need not decode as this version's layout
+    // (a field added at the end of `Import`): what it is said to be is
+    // its version, not a decode error.
+    let bytes = postcard::to_allocvec(&(IR_VERSION - 1, "Main", [7u8; 3])).unwrap();
+    assert!(postcard::from_bytes::<CompiledFile>(&bytes).is_err());
+    assert!(matches!(
+        CompiledFile::from_bytes(&bytes),
+        Err(Error::Version { found, .. }) if found == IR_VERSION - 1
     ));
 }
 

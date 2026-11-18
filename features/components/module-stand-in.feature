@@ -22,7 +22,10 @@ Feature: The types of a Qt module Ljós does not have stand in as empty items
   left out. The rest of the application loads and runs around it. The
   log says once, for each such module, that it is not drawn. A timeline
   (QtQuick.Timeline), which Ljós has not built yet, is left out the same
-  way: the application shows where it starts.
+  way: the application shows where it starts. Of a module Ljós builds
+  part of (QtQuick3D.Helpers), the types it builds are themselves: the
+  log says nothing of the module, only of a type of it that stands in,
+  where it is written.
 
   Background:
     Given the file "Scene.qml":
@@ -142,3 +145,67 @@ Feature: The types of a Qt module Ljós does not have stand in as empty items
     Then the property "shownWidth" of "root" is 30
     And the property "nodeCount" of "root" is 2
     And the log has no warning matching "Unable to assign"
+
+  Scenario: A module Ljós builds part of says nothing when only what Ljós builds of it is used
+    Given the QML:
+      """qml
+      import QtQuick
+      import QtQuick3D
+      import QtQuick3D.Helpers
+      import QtQuick3D.AssetUtils
+      View3D {
+        width: 100; height: 100
+        environment: ExtendedSceneEnvironment { }
+        RuntimeLoader { objectName: "loader" }
+      }
+      """
+    Then the property "status" of "loader" is 0
+    And the log has no warning matching "not part of Ljós"
+
+  Scenario: A type of a module Ljós builds part of that stands in is told where it is written
+    Given the QML:
+      """qml
+      import QtQuick
+      import QtQuick3D
+      import QtQuick3D.Helpers
+      View3D {
+        width: 100; height: 100
+        environment: ExtendedSceneEnvironment { }
+        SceneGizmo { objectName: "gizmo" }
+        SceneGizmo { }
+      }
+      """
+    Then the property "objectName" of "gizmo" is "gizmo"
+    And the log has 1 warnings matching "type SceneGizmo of module .QtQuick3D.Helpers. is not part of Ljós"
+    And the log has a warning matching ":7:9: type SceneGizmo of module .QtQuick3D.Helpers. is not part of Ljós"
+    And the log has no warning matching "module .QtQuick3D.Helpers. is not part of Ljós: the types"
+
+  Scenario: What Ljós builds of such a module is itself through a qualified import
+    Given the QML:
+      """qml
+      import QtQuick
+      import QtQuick3D
+      import QtQuick3D.AssetUtils as Assets
+      View3D {
+        width: 100; height: 100
+        Assets.RuntimeLoader { objectName: "loader" }
+      }
+      """
+    Then the property "status" of "loader" is 0
+    And the log has no warning matching "not part of Ljós"
+
+  Scenario: A type that stands in is of the module that has it, not of the last one imported
+    Given the QML:
+      """qml
+      import QtQuick
+      import QtQuick3D
+      import QtQuick3D.Helpers
+      import QtGraphs
+      View3D {
+        width: 100; height: 100
+        SceneGizmo { objectName: "gizmo" }
+      }
+      """
+    Then the property "objectName" of "gizmo" is "gizmo"
+    And the log has a warning matching "module .QtGraphs. is not part of Ljós"
+    And the log has no warning matching "of module .QtGraphs. is not part of Ljós"

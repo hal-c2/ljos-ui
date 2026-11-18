@@ -321,6 +321,8 @@ struct SavedLoader {
     files: std::collections::HashMap<String, Rc<LoadedFile>>,
     metas: Vec<(Rc<LoadedFile>, MetaCache)>,
     overlay: Option<Overlay>,
+    /// What stood in before: a file the attempt loaded may add to it.
+    stood_in: std::collections::HashSet<String>,
 }
 
 /// The names of a replaced type's members, by index.
@@ -1301,6 +1303,7 @@ impl Engine {
                 .map(|f| (f.clone(), f.metas.borrow().clone()))
                 .collect(),
             overlay: previous,
+            stood_in: l.stood_in.clone(),
         };
         for f in &patch.files {
             l.files.remove(&f.file.file);
@@ -1340,6 +1343,7 @@ impl Engine {
             *file.metas.borrow_mut() = metas;
             file.unlink();
         }
+        l.stood_in = saved.stood_in;
         *self.inner.reload.overlay.borrow_mut() = saved.overlay;
         drop(l);
         self.singletons_sources_changed();

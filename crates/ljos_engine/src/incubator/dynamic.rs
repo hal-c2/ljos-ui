@@ -273,6 +273,7 @@ impl Engine {
                 alias: None,
                 in_project: false,
                 stands_in: false,
+                stood_in: None,
             }],
             pragmas: Vec::new(),
             components: vec![ljos_ir::ComponentDef {

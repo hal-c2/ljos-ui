@@ -593,10 +593,41 @@ pub(crate) struct LoaderState {
     /// What [`Engine::uses_module`] tracks: moved when `used_modules`
     /// changes. Made at the first read; until then nobody follows it.
     pub(crate) modules_node: Option<ljos_reactive::NodeId>,
-    /// The modules whose types stand in as empty Items that the log has
-    /// said so of, by the first part of their name (`QtGraphs`): once
-    /// each, however many files import them.
+    /// The modules whose types stand in as empty Items in the files the
+    /// source gives, by the first part of their name (`QtGraphs`): what
+    /// the design audit reads, so a new source starts it again.
     pub(crate) stood_in: HashSet<String>,
+    /// What stands in in the files of a library the program adds types
+    /// from ([`Engine::add_component_library`]), by the file's url: those
+    /// are loaded once and kept past a new source, and count for the
+    /// audit only while the scene has objects made of them.
+    pub(crate) library_stood_in: HashMap<String, Vec<String>>,
+    /// The roots made of those files, with the file's url. A component
+    /// file's root carries its user's location, so it is not found by
+    /// where the scene's objects are declared.
+    pub(crate) library_roots: Vec<(ObjectId, Atom)>,
+    /// How many of those were alive when the list was last swept.
+    pub(crate) library_roots_kept: usize,
+    /// What the log has said stands in: a module by the first part of its
+    /// name (`QtGraphs`), a type of one the runtime builds part of by its
+    /// module and name (`QtQuick3D.Helpers.Name`). Once each for the
+    /// engine, however many files or sources name them.
+    pub(crate) told_stood_in: HashSet<String>,
+}
+
+/// What stands in of an import: types of a module the runtime builds
+/// part of, or the module itself by its family (`QtGraphs`).
+enum StandIn<'i> {
+    Types(&'i str, &'i [ljos_ir::StoodIn]),
+    Module(&'i str, &'i str),
+}
+
+/// What a file has stand in, found as its imports are checked: the
+/// module put on record, what the log says it of once, and the saying.
+pub(crate) struct Stood {
+    module: String,
+    told: String,
+    message: String,
 }
 
 /// A binding that reads a path of properties from one parameter
@@ -863,6 +894,7 @@ impl Engine {
         l.source = Some(Rc::new(source));
         l.files.clear();
         l.used_modules.clear();
+        l.stood_in.clear();
         drop(l);
         self.singletons_sources_changed();
     }
@@ -1041,8 +1073,9 @@ impl Engine {
                 ljos_ir::IR_VERSION
             )));
         }
-        self.check_imports(&url, &ir)?;
+        let stood = self.check_imports(&url, &ir)?;
         let used = modules_of(&ir);
+        let tell = self.note_stood_in(&url, stood, false);
         let file = Rc::new(LoadedFile::new(key, url, ir, bytecode));
         file.epoch.set(self.inner.reload.epoch.get());
         let mut loader = self.inner.loader.borrow_mut();
@@ -1051,6 +1084,11 @@ impl Engine {
         let grew = loader.used_modules.len() != len;
         loader.files.insert(key.to_owned(), file.clone());
         drop(loader);
+        // The file and what stands in for it are on record before anyone
+        // hears of it: a listener may put another source in.
+        for message in tell {
+            self.warn(message);
+        }
         if grew {
             self.modules_changed();
         }
@@ -1082,15 +1120,24 @@ impl Engine {
     /// types stand in as empty Items, by the first part of their name
     /// (`QtGraphs`), sorted: what they would show is not in the scene.
     pub fn stood_in_modules(&self) -> Vec<String> {
-        let mut out: Vec<String> = self
-            .inner
-            .loader
-            .borrow()
-            .stood_in
+        let mut live = self.live_urls();
+        {
+            let store = self.inner.store.borrow();
+            let mut loader = self.inner.loader.borrow_mut();
+            loader
+                .library_roots
+                .retain(|(root, _)| store.objects.contains_key(*root));
+            live.extend(loader.library_roots.iter().map(|(_, url)| url.clone()));
+        }
+        let loader = self.inner.loader.borrow();
+        let library = loader
+            .library_stood_in
             .iter()
-            .cloned()
-            .collect();
+            .filter(|(url, _)| live.contains(url.as_str()))
+            .flat_map(|(_, modules)| modules);
+        let mut out: Vec<String> = loader.stood_in.iter().chain(library).cloned().collect();
         out.sort();
+        out.dedup();
         out
     }
 
@@ -1105,20 +1152,23 @@ impl Engine {
         }
     }
 
+    /// The files the scene has objects of, by url.
+    fn live_urls(&self) -> HashSet<Atom> {
+        let store = self.inner.store.borrow();
+        store
+            .objects
+            .values()
+            .filter_map(|h| Some(h.location()?.url))
+            .collect()
+    }
+
     /// After a reload, the modules are those of the files the objects that
     /// stand were declared in, as a fresh load of the new files loads
     /// them: a file edited or no longer used takes back what it used.
     /// The root of a component file carries its user's location, so the
     /// files of the instances that stand are counted too.
     pub(crate) fn recount_modules(&self) {
-        let urls: HashSet<Atom> = {
-            let store = self.inner.store.borrow();
-            store
-                .objects
-                .values()
-                .filter_map(|h| Some(h.location()?.url))
-                .collect()
-        };
+        let urls = self.live_urls();
         let keys: HashSet<String> = {
             let store = self.inner.store.borrow();
             self.inner
@@ -1134,13 +1184,24 @@ impl Engine {
                 .map(|i| i.file.key.clone())
                 .collect()
         };
-        let mut l = self.inner.loader.borrow_mut();
-        let now: HashSet<String> = l
+        let in_use: Vec<Rc<LoadedFile>> = self
+            .inner
+            .loader
+            .borrow()
             .files
             .values()
             .filter(|f| urls.contains(&f.url) || keys.contains(&f.key))
-            .flat_map(|f| modules_of(&f.ir))
+            .cloned()
             .collect();
+        let now: HashSet<String> = in_use.iter().flat_map(|f| modules_of(&f.ir)).collect();
+        // A reload may have replaced the last type of a module that stood
+        // in: the audit reads what stands in for the files in use now.
+        let stood_in: HashSet<String> = in_use
+            .iter()
+            .flat_map(|f| self.stood_in_by(&f.ir))
+            .collect();
+        let mut l = self.inner.loader.borrow_mut();
+        l.stood_in = stood_in;
         if now == l.used_modules {
             return;
         }
@@ -1173,41 +1234,148 @@ fn modules_of(ir: &CompiledFile) -> Vec<String> {
 impl Engine {
     /// Refuses a file that imports a module the engine does not have,
     /// unless the compiler made its types stand in as empty Items: then
-    /// the log says so, once for the module.
-    pub(crate) fn check_imports(&self, url: &str, ir: &CompiledFile) -> Result<(), EngineError> {
+    /// what stands in is given back, the module, or of one the runtime
+    /// builds part of, each type of it that stands in, where the file
+    /// first names it. It changes nothing: [`Engine::note_stood_in`] puts
+    /// that on record once the file is, so a file refused leaves nothing
+    /// behind, and the log is told only after both.
+    pub(crate) fn check_imports(
+        &self,
+        url: &str,
+        ir: &CompiledFile,
+    ) -> Result<Vec<Stood>, EngineError> {
         for import in &ir.imports {
-            let ImportSource::Module(uri) = &import.source else {
-                continue;
-            };
-            if import.in_project || self.has_module(uri) {
-                continue;
-            }
-            if !import.stands_in {
+            if let ImportSource::Module(uri) = &import.source
+                && !import.in_project
+                && import.stood_in.is_none()
+                && !import.stands_in
+                && !self.has_module(uri)
+            {
                 return Err(EngineError::Load(format!(
                     "{url}: module \"{uri}\" is not installed"
                 )));
             }
-            // `QtWebEngine.Controls` comes with `QtWebEngine`: one word for
-            // both. `QtQuick.Timeline` and `QtQuick3D.Helpers` are modules of
-            // their own all the same: Ljós has `QtQuick` and `QtQuick3D`.
-            let family = match uri.split_once('.') {
-                Some(("QtQuick" | "QtQuick3D", _)) | None => uri.as_str(),
-                Some((first, _)) => first,
-            };
-            if self
-                .inner
-                .loader
-                .borrow_mut()
-                .stood_in
-                .insert(family.to_owned())
-            {
-                self.warn(format!(
-                    "{url}: module \"{uri}\" is not part of Ljós: the types of {family} and the \
-                     modules below it are empty Items, and what only they have is left out"
-                ));
+        }
+        let mut stood = Vec::new();
+        for import in &ir.imports {
+            match self.stand_in_of(import) {
+                Some(StandIn::Types(uri, types)) => stood.extend(types.iter().map(|ty| {
+                    let of = if ty.known {
+                        format!(" of module \"{uri}\"")
+                    } else {
+                        String::new()
+                    };
+                    Stood {
+                        module: uri.to_owned(),
+                        told: format!("{uri}.{}", ty.name),
+                        message: format!(
+                            "{url}:{}:{}: type {}{of} is not part of Ljós: it is an empty \
+                             Item, and what only it has is left out",
+                            ty.span.line, ty.span.column, ty.name
+                        ),
+                    }
+                })),
+                Some(StandIn::Module(uri, family)) => stood.push(Stood {
+                    module: family.to_owned(),
+                    told: family.to_owned(),
+                    message: format!(
+                        "{url}: module \"{uri}\" is not part of Ljós: the types of {family} \
+                         and the modules below it are empty Items, and what only they have is \
+                         left out"
+                    ),
+                }),
+                None => {}
             }
         }
-        Ok(())
+        Ok(stood)
+    }
+
+    /// Puts on record what stands in for the file at `url`, once it is
+    /// loaded: for the source, or for the library file it is. What the
+    /// log has not said yet is given back, to be said after.
+    pub(crate) fn note_stood_in(&self, url: &str, stood: Vec<Stood>, library: bool) -> Vec<String> {
+        let mut loader = self.inner.loader.borrow_mut();
+        let mut tell = Vec::new();
+        for Stood {
+            module,
+            told,
+            message,
+        } in stood
+        {
+            if library {
+                let modules = loader.library_stood_in.entry(url.to_owned()).or_default();
+                if !modules.contains(&module) {
+                    modules.push(module);
+                }
+            } else {
+                loader.stood_in.insert(module);
+            }
+            if loader.told_stood_in.insert(told) {
+                tell.push(message);
+            }
+        }
+        tell
+    }
+
+    /// Notes `root`, made of the file at `url`, when that file is a
+    /// library file something of which stands in: the audit counts it
+    /// while the root lives.
+    pub(crate) fn note_library_root(&self, root: ObjectId, url: &Atom) {
+        let mut loader = self.inner.loader.borrow_mut();
+        if loader.library_stood_in.is_empty() || !loader.library_stood_in.contains_key(url.as_str())
+        {
+            return;
+        }
+        // Delegates come and go: the roots gone are let go of as the list
+        // doubles, not only when the audit reads it.
+        if loader.library_roots.len() >= loader.library_roots_kept.max(32) * 2
+            && let Ok(store) = self.inner.store.try_borrow()
+        {
+            loader
+                .library_roots
+                .retain(|(root, _)| store.objects.contains_key(*root));
+            loader.library_roots_kept = loader.library_roots.len();
+        }
+        loader.library_roots.push((root, url.clone()));
+    }
+
+    /// What of `import` stands in as empty Items, if anything does.
+    fn stand_in_of<'i>(&self, import: &'i ljos_ir::Import) -> Option<StandIn<'i>> {
+        let ImportSource::Module(uri) = &import.source else {
+            return None;
+        };
+        if import.in_project {
+            return None;
+        }
+        // Of a module the runtime builds part of, what the file names may
+        // all be built: only a type that stands in is told, even where the
+        // program registers types of the module.
+        if let Some(types) = &import.stood_in {
+            return (!types.is_empty()).then_some(StandIn::Types(uri, types));
+        }
+        if !import.stands_in || self.has_module(uri) {
+            return None;
+        }
+        // `QtWebEngine.Controls` comes with `QtWebEngine`: one word for
+        // both. `QtQuick.Timeline` and `QtQuick3D.Helpers` are modules of
+        // their own all the same: Ljós has `QtQuick` and `QtQuick3D`.
+        let family = match uri.split_once('.') {
+            Some(("QtQuick" | "QtQuick3D", _)) | None => uri.as_str(),
+            Some((first, _)) => first,
+        };
+        Some(StandIn::Module(uri, family))
+    }
+
+    /// The modules that stand in for the files `ir` of the source: what
+    /// [`Engine::stood_in_modules`] lists once a reload has replaced some.
+    fn stood_in_by(&self, ir: &CompiledFile) -> Vec<String> {
+        ir.imports
+            .iter()
+            .filter_map(|import| match self.stand_in_of(import)? {
+                StandIn::Types(uri, _) => Some(uri.to_owned()),
+                StandIn::Module(_, family) => Some(family.to_owned()),
+            })
+            .collect()
     }
 }
 
@@ -1433,6 +1601,89 @@ mod tests {
         );
         let debug = format!("{source:?}");
         assert!(debug.contains("failures: [\"c\", \"d\"]"), "{debug}");
+    }
+
+    /// A file that only `module` stands in for: the types it names are
+    /// told under the import when `named` is some.
+    fn standing_in(module: &str, named: Option<&str>) -> CompiledFile {
+        CompiledFile {
+            version: ljos_ir::IR_VERSION,
+            file: "Main".to_owned(),
+            source_hash: [0; 32],
+            imports: vec![ljos_ir::Import {
+                source: ImportSource::Module(module.to_owned()),
+                version: None,
+                alias: None,
+                in_project: false,
+                stands_in: true,
+                stood_in: named.map(|name| {
+                    vec![ljos_ir::StoodIn {
+                        name: name.to_owned(),
+                        span: ljos_ir::SourceSpan::default(),
+                        known: true,
+                    }]
+                }),
+            }],
+            pragmas: Vec::new(),
+            components: Vec::new(),
+            exprs: Vec::new(),
+            translations: Vec::new(),
+            js: ljos_ir::JsModule::default(),
+            invocable: Vec::new(),
+            scripts: Vec::new(),
+        }
+    }
+
+    /// Checks the file `ir` at `url` and puts what stands in on record,
+    /// as a load does: what the log would be told.
+    fn noted(engine: &Engine, url: &str, ir: &CompiledFile, library: bool) -> Vec<String> {
+        let stood = engine.check_imports(url, ir).unwrap();
+        engine.note_stood_in(url, stood, library)
+    }
+
+    #[test]
+    fn what_stands_in_in_a_library_outlasts_a_new_source() {
+        // A library file is loaded once and kept, so its imports are not
+        // checked again under the next source: what it stood in for stays
+        // on record, and counts while the scene has objects of the file.
+        let engine = Engine::new();
+        let library = standing_in("QtQuick3D.Helpers", Some("SceneGizmo"));
+        let app = standing_in("QtGraphs", None);
+        assert_eq!(noted(&engine, "lib:Gizmo", &library, true).len(), 1);
+        assert_eq!(noted(&engine, "app:Main", &app, false).len(), 1);
+        // No object of the library file is in the scene.
+        assert_eq!(engine.stood_in_modules(), ["QtGraphs"]);
+        engine.set_component_source(MapSource::new());
+        assert!(engine.stood_in_modules().is_empty());
+        assert_eq!(
+            engine.inner.loader.borrow().library_stood_in["lib:Gizmo"],
+            ["QtQuick3D.Helpers"]
+        );
+    }
+
+    #[test]
+    fn a_file_refused_leaves_nothing_on_record() {
+        // The stand-in import comes before the one that refuses the file:
+        // nothing of it is listed, and the next file is told all the same.
+        let engine = Engine::new();
+        let mut refused = standing_in("QtGraphs", None);
+        refused.imports.push(ljos_ir::Import {
+            source: ImportSource::Module("NotInstalled".to_owned()),
+            version: None,
+            alias: None,
+            in_project: false,
+            stands_in: false,
+            stood_in: None,
+        });
+        assert!(engine.check_imports("app:Refused", &refused).is_err());
+        assert!(engine.stood_in_modules().is_empty());
+        let told = noted(&engine, "app:Main", &standing_in("QtGraphs", None), false);
+        assert_eq!(told.len(), 1, "{told:?}");
+        assert!(told[0].contains("module \"QtGraphs\""), "{told:?}");
+        assert_eq!(engine.stood_in_modules(), ["QtGraphs"]);
+        // Once for the engine, however many files name it.
+        assert!(noted(&engine, "app:Other", &standing_in("QtGraphs", None), false).is_empty());
+        assert_eq!(engine.stood_in_modules(), ["QtGraphs"]);
     }
 
     #[test]

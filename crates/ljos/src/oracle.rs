@@ -724,6 +724,15 @@ impl TypeOracle for EngineOracle {
         QtTypeOracle.stands_in_as_item(name)
     }
 
+    fn builds_part_of(&self, uri: &str) -> bool {
+        // A module the program registers types of is built that far.
+        QtTypeOracle.builds_part_of(uri) || self.natives.iter().any(|n| n.module == uri)
+    }
+
+    fn built_in(&self, uri: &str, name: &str) -> Option<&str> {
+        QtTypeOracle.built_in(uri, name)
+    }
+
     fn is_built(&self, ty: EngineType) -> bool {
         match ty {
             EngineType::Qt(ty) => QtTypeOracle.is_built(ty),
