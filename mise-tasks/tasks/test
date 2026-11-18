@@ -960,6 +960,9 @@ fi
 # The stand-in cargo here makes prog anew (a new file, as a linker does) on
 # each build and says it was fresh only from build FRESH_FROM on: the builds
 # before that are another checkout's, sharing the target, building between.
+# A fresh build puts the checkout's own last program back, as cargo links it
+# again from its deps; right after build OTHER_AFTER another checkout's
+# program takes its place.
 pinfakes="$real/pinfakes"
 mkdir "$pinfakes"
 cat >"$pinfakes/cargo" <<'EOF_CARGO'
@@ -967,20 +970,30 @@ cat >"$pinfakes/cargo" <<'EOF_CARGO'
 n=$(( $(cat "$PIN_COUNT" 2>/dev/null || echo 0) + 1 ))
 echo "$n" >"$PIN_COUNT"
 fresh=false
-if [ "$n" -ge "$FRESH_FROM" ]; then fresh=true; else rm -f "$PIN_TARGET/prog"; echo "build $n" >"$PIN_TARGET/prog"; chmod +x "$PIN_TARGET/prog"; fi
+[ "$n" -ge "$FRESH_FROM" ] && fresh=true || echo "build $n" >"$PIN_TARGET/mine"
+rm -f "$PIN_TARGET/prog"
+cp "$PIN_TARGET/mine" "$PIN_TARGET/prog"
+if [ "$n" = "${OTHER_AFTER:-0}" ]; then rm -f "$PIN_TARGET/prog"; echo other >"$PIN_TARGET/prog"; fi
+chmod +x "$PIN_TARGET/prog"
 echo "Compiling prog (a line that is no message)"
 printf '{"reason":"compiler-artifact","executable":null,"fresh":%s}\n' "$fresh"
 printf '{"reason":"compiler-artifact","executable":"%s","fresh":%s}\n' "$PIN_TARGET/prog" "$fresh"
 printf '{"reason":"build-finished","success":true}\n'
 EOF_CARGO
 chmod +x "$pinfakes/cargo"
-# pinned <fresh from>: builds, the program pinned, what it holds.
+out="$(printf '%s\n' '{"reason":"compiler-artifact","executable":null,"fresh":true}' \
+  '{"reason":"compiler-artifact","executable":"/a\tb/say \"hi\"\\/prog","fresh":true}' \
+  '{"reason":"compiler-artifact","executable":"/a\nb/prog","fresh":true}' \
+  '{"reason":"build-finished","success":true}' | built_programs)"
+if [ "$out" = "$(printf '/a\tb/say "hi"\\/prog')" ]; then ok "built_programs decodes each program's path, and leaves out none and one with a newline"; else bad "built_programs gave: $out"; fi
+
+# pinned <fresh from> [other after]: builds, the program pinned, what it holds.
 pinned() {
   local dir="$real/pin.$1"
   mkdir -p "$dir/target"
   (
-    PATH="$pinfakes:$PATH" PIN_COUNT="$dir/count" PIN_TARGET="$dir/target" FRESH_FROM="$1"
-    export PATH PIN_COUNT PIN_TARGET FRESH_FROM
+    PATH="$pinfakes:$PATH" PIN_COUNT="$dir/count" PIN_TARGET="$dir/target" FRESH_FROM="$1" OTHER_AFTER="${2:-0}"
+    export PATH PIN_COUNT PIN_TARGET FRESH_FROM OTHER_AFTER
     out="$(pin_programs "$dir/bin" build --quiet 2>/dev/null)" || { echo failed; exit 0; }
     printf '%s builds, %s: %s\n' "$(cat "$dir/count")" "$out" "$(cat "$dir/bin/prog" 2>/dev/null)"
   )
@@ -989,6 +1002,9 @@ out="$(pinned 2)"
 if [ "$out" = "2 builds, prog $real/pin.2/bin/prog: build 1" ]; then ok "a build no other checkout came between is pinned after one more build that finds it fresh"; else bad "pin_programs with no build between: $out"; fi
 out="$(pinned 4)"
 if [ "$out" = "4 builds, prog $real/pin.4/bin/prog: build 3" ]; then ok "a build another checkout's came between is built again until it is the run's own"; else bad "pin_programs with builds between: $out"; fi
+rm -rf "$real/pin.2"
+out="$(pinned 2 1)"
+if [ "$out" = "3 builds, prog $real/pin.2/bin/prog: build 1" ]; then ok "a program another checkout's build put in place before it was pinned is pinned again from the build that finds it fresh"; else bad "pin_programs with another program in place of the build's: $out"; fi
 
 # --- Vulkan drivers --------------------------------------------------------------
 

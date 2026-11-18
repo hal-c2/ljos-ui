@@ -485,13 +485,18 @@ checkout_dir() {
 }
 
 # built_programs: from cargo's JSON messages on stdin, the path of every
-# program the build made, one per line. The path is a JSON string: a quote,
-# a backslash or a slash in it comes escaped. Any other escape is a control
-# character, which no path of a build has; it is left, and the path is then
-# no program.
+# program the build made, one per line, decoded as json_string does. A path
+# json_string leaves empty, or one with a newline in it, is no program.
 built_programs() {
-  sed -n -E 's/^\{"reason":"compiler-artifact".*"executable":"(([^"\\]|\\.)*)".*/\1/p' |
-    sed -E 's/\\(["\\/])/\1/g'
+  local exe nl='
+'
+  while IFS= read -r exe; do
+    exe="$(printf '%s\n' "$exe" | json_string)"
+    case "$exe" in "" | *"$nl"*) continue ;; esac
+    printf '%s\n' "$exe"
+  done <<EOF_BUILT
+$(sed -n -E 's/^\{"reason":"compiler-artifact".*"executable":"(([^"\\]|\\.)*)".*/\1/p')
+EOF_BUILT
 }
 
 # pin_build <cargo args…>: cargo with its JSON messages on stdout; any other
@@ -511,10 +516,13 @@ pin_build() {
 # file it was made to, as cargo and the linker put new files in place of old
 # ones (a <dir> on another drive than the target gets a copy). The links
 # are this build's only if no other build came between it and them: so
-# cargo builds again, and only when it finds every program fresh are they
-# kept; else they are made again from that build.
+# cargo builds again, and the links are kept only when that build finds
+# every program fresh and each one it leaves in the target holds what its
+# link does (a fresh build links this checkout's own program there again,
+# so another checkout's that came in before the links shows as a
+# difference). Else they are made again from that build.
 pin_programs() {
-  local into="$1" messages exe name pinned tries=0
+  local into="$1" messages exe pinned tries=0
   shift
   mkdir -p "$into"
   messages="$(pin_build "$@")" || return 1
@@ -522,15 +530,14 @@ pin_programs() {
     pinned=""
     while IFS= read -r exe; do
       [ -n "$exe" ] || continue
-      name="$(basename "$exe")"
-      ln -f "$exe" "$into/$name" 2>/dev/null || cp -p "$exe" "$into/$name" || return 1
-      pinned="$pinned$name $into/$name
+      ln -f "$exe" "$into/${exe##*/}" 2>/dev/null || cp -p "$exe" "$into/${exe##*/}" || return 1
+      pinned="$pinned${exe##*/} $into/${exe##*/}
 "
     done <<EOF_PROGRAMS
 $(printf '%s\n' "$messages" | built_programs)
 EOF_PROGRAMS
     messages="$(pin_build "$@")" || return 1
-    grep -q '^{"reason":"compiler-artifact".*"executable":".*"fresh":false' <<<"$messages" || break
+    pinned_as_built "$into" "$messages" && break
     tries=$((tries + 1))
     if [ "$tries" -ge 10 ]; then
       printf '%s\n' "${MISE_TASK_NAME:-this task}: other builds into $CARGO_TARGET_DIR kept coming between this build and its programs; build when they are done, or set CARGO_TARGET_DIR to a target of this checkout's own" >&2
@@ -538,6 +545,19 @@ EOF_PROGRAMS
     fi
   done
   printf '%s' "$pinned"
+}
+
+# pinned_as_built <dir> <messages>: whether the build of <messages> found
+# every program fresh and left each where it says, with the bytes of its
+# link in <dir> (cmp, as a copy is no hard link).
+pinned_as_built() {
+  local exe
+  ! grep -q '^{"reason":"compiler-artifact".*"executable":".*"fresh":false' <<<"$2" || return 1
+  while IFS= read -r exe; do
+    [ -z "$exe" ] || cmp -s "$exe" "$1/${exe##*/}" || return 1
+  done <<EOF_PROGRAMS
+$(printf '%s\n' "$2" | built_programs)
+EOF_PROGRAMS
 }
 
 # Off-screen Qt: no window opens, and a platform theme set for the desktop
