@@ -39,12 +39,14 @@ Rectangle {
         height: 34
 
         Neon {
+            id: leftSignal
             anchors.left: parent.left
             width: 34
             height: 34
             theme: cluster.theme
             tint: cluster.theme.green
-            opacity: cluster.blink && (cluster.car.hazard || cluster.car.signal === "left") ? 1 : 0.16
+            lit: cluster.blink && (cluster.car.hazard || cluster.car.signal === "left")
+            opacity: leftSignal.lit ? 1 : 0.16
             Icon {
                 anchors.fill: parent
                 glyph: "left"
@@ -53,12 +55,14 @@ Rectangle {
             }
         }
         Neon {
+            id: rightSignal
             anchors.right: parent.right
             width: 34
             height: 34
             theme: cluster.theme
             tint: cluster.theme.green
-            opacity: cluster.blink && (cluster.car.hazard || cluster.car.signal === "right") ? 1 : 0.16
+            lit: cluster.blink && (cluster.car.hazard || cluster.car.signal === "right")
+            opacity: rightSignal.lit ? 1 : 0.16
             Icon {
                 anchors.fill: parent
                 glyph: "right"

@@ -11,6 +11,8 @@ Item {
     property color tint: neon.theme.cyan
     // 0 to 1: how far the halo reaches.
     property real spread: 1
+    // A lamp that is off may still show, dimmed; it has no halo.
+    property bool lit: true
     default property alias content: lit.data
 
     Item {
@@ -27,7 +29,7 @@ Item {
         visible: neon.theme.bloom
         shadowEnabled: true
         shadowColor: neon.tint
-        shadowOpacity: neon.theme.glow
+        shadowOpacity: neon.lit ? neon.theme.glow : 0
         shadowBlur: neon.spread
         shadowHorizontalOffset: 0
         shadowVerticalOffset: 0
