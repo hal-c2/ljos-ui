@@ -4,7 +4,7 @@
 #   https://git-scm.com/docs/git-worktree
 #   https://git-scm.com/docs/git-rev-parse (--git-common-dir)
 #   https://doc.rust-lang.org/cargo/reference/environment-variables.html (CARGO_TARGET_DIR)
-#   https://doc.rust-lang.org/cargo/reference/config.html (--config)
+#   https://doc.rust-lang.org/cargo/reference/config.html (--config, include)
 # `mise-tasks/mcp` is Ljós's own launcher: Qt has nothing to compare it with.
 # The project is a checkout of its own, made a git repository with a linked worktree "wt" by the
 # step that says so. Nothing is compiled: "bin/cargo" stands in for cargo and "bin/mise" for mise
@@ -20,8 +20,8 @@ Feature: Starting the authoring server from a checkout of Ljós
   `.mcp.json` runs it for an editor or an agent, and so does `mise run mcp`.
   It builds the server first, then starts it. A linked worktree whose own
   cargo settings name no target builds into the target directory of the
-  main checkout (the `build.target-dir` its cargo settings name, else its
-  `target/`), so a new worktree does not make a build of its own; a
+  main checkout (the `build.target-dir` its cargo settings name, or a file
+  they include, else its `target/`), so a new worktree does not make a build of its own; a
   `build.target-dir` in the worktree's own settings is where it builds, and
   `CARGO_TARGET_DIR`, then `CARGO_BUILD_TARGET_DIR`, override them all.
   The build goes through the machine's build wrapper when
@@ -187,6 +187,36 @@ Feature: Starting the authoring server from a checkout of Ljós
       cargo build --quiet -p ljos_cli --bin ljos --message-format=json-render-diagnostics --target-dir ./elsewhere in ./wt
       """
     And the project has no "wt/target"
+
+  Scenario: A linked worktree builds into the target directory a file its main checkout's settings include names
+    Given the project is a git checkout with the linked worktree "wt"
+    And the file ".cargo/config.toml":
+      """toml
+      include = [{ path = "local.toml", optional = true }]
+      """
+    And the file ".cargo/local.toml":
+      """toml
+      [build]
+      target-dir = "elsewhere"
+      """
+    When the author runs "mise-tasks/mcp" in "wt"
+    Then the command exits with status 0
+    And the file "built.log" is:
+      """
+      cargo build --quiet -p ljos_cli --bin ljos --message-format=json-render-diagnostics --target-dir ./elsewhere in ./wt
+      """
+    And the project has no "wt/target"
+
+  Scenario: An include cargo would stop on stops the launcher before anything is built
+    Given the project is a git checkout with the linked worktree "wt"
+    And the file ".cargo/config.toml":
+      """toml
+      include = ["local.toml"]
+      """
+    When the author runs "mise-tasks/mcp" in "wt"
+    Then the command exits with status 1
+    And the command's output mentions "local.toml is not there" once
+    And the project has no "built.log"
 
   Scenario: The build goes through the build wrapper LJOS_BUILD_WRAPPER names
     Given the project is a git checkout with the linked worktree "wt"

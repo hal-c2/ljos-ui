@@ -49,15 +49,15 @@ if checkout="$(git rev-parse --show-toplevel 2>/dev/null)" && [ -n "$checkout" ]
 else
   checkout="$(pwd -P)"
 fi
-target="$(CARGO_TARGET_DIR="$ljos_asked_target_dir" target_dir "$checkout")" ||
-  die "mcp: cannot tell where cargo builds for $checkout (above)"
+target="$(CARGO_TARGET_DIR="$ljos_asked_target_dir" target_dir "$checkout")" || exit 1
 export CARGO_TARGET_DIR="$target"
 # The settings file config_args writes lives until the build is over, or
 # until this stops before it (exec runs no trap).
 settings="$(mktemp -d "${TMPDIR:-/tmp}/ljos-cargo.XXXXXX")"
 settings_gone() { rm -f "$settings/settings.toml" && rmdir "$settings" 2>/dev/null || true; }
 trap settings_gone EXIT
-config_args "$(cargo_config "$checkout")" "$settings"
+main_settings="$(cargo_config "$checkout")" || exit 1
+config_args "$main_settings" "$settings"
 # The build is put together here, for that checkout: env.sh's cargo adds the
 # script's own checkout's settings.
 unset -f cargo

@@ -865,6 +865,75 @@ rm "$real/wt/.cargo/config.toml"
 rmdir "$real/wt/.cargo"
 printf '[build]\njobs = 2\n' >"$repo/.cargo/config.toml"
 
+# Settings a file includes are its settings, as cargo 1.98.1 reads them
+# (checked against it): an array of paths ending in .toml, each a string or
+# a table {path, optional}, from the directory of the file that names it.
+# The included files merge first, each in the order listed, and the file's
+# own keys win; a relative path in one is from the directory that holds its
+# .cargo, as in any settings file.
+mkdir -p "$repo/.cargo/inc/deep"
+printf '[build]\ntarget-dir = "%s"\n' "$real/inc-a" >"$repo/.cargo/inc/a.toml"
+printf '[build]\ntarget-dir = "%s"\n' "$real/inc-b" >"$repo/.cargo/inc/b.toml"
+printf 'include = ["deep/d.toml"]\n' >"$repo/.cargo/inc/n.toml"
+printf '[build]\ntarget-dir = "rel"\n' >"$repo/.cargo/inc/deep/d.toml"
+settings_says "a target-dir an included file names is the one used" "$real/inc-a" 'include = ["inc/a.toml"]'
+settings_says "a later include's target-dir wins over an earlier one's" "$real/inc-b" "include = [ 'inc/a.toml', \"inc/b.toml\" ]"
+settings_says "the including file's own target-dir wins over its includes'" "$real/own" 'include = ["inc/b.toml"]' '[build]' "target-dir = \"$real/own\""
+settings_says "an include given as a table, over lines, is read, and a missing optional one is skipped" "$real/inc-a" 'include = [' '  { path = "inc/none.toml", optional = true },  # not there' "  { path = 'inc/a.toml', optional = false }," ']'
+settings_says "an included file's own include is from its directory, and its relative target-dir from the directory that holds its .cargo" "$repo/.cargo/inc/rel" 'include = ["inc/n.toml"]'
+settings_says "an include under another table is not cargo's include" "$repo/target" '[build]' 'include = ["inc/a.toml"]'
+# An include cargo stops on stops the task, in one line that names the file
+# and what is wrong; it never goes round a cycle.
+include_stops() {
+  local what="$1" want="$2" got
+  shift 2
+  printf '%s\n' "$@" >"$repo/.cargo/config.toml"
+  if got="$(where "$real/wt" 2>&1)"; then
+    bad "$what: target_dir gave '$got' for settings:" "$@"
+  elif [ "$(printf '%s\n' "$got" | wc -l | tr -d ' ')" = 1 ] && case "$got" in *"$repo/.cargo/"*"$want"*) true ;; *) false ;; esac; then
+    ok "$what"
+  else
+    bad "$what: target_dir said, not one line naming the file and '$want':" "$got"
+  fi
+}
+include_stops "an include given as a string stops the task, as cargo takes only an array" "not an array" 'include = "inc/a.toml"'
+include_stops "an include that is not there stops the task unless it is optional" "inc/none.toml is not there" 'include = ["inc/a.toml", "inc/none.toml"]'
+include_stops "an include not ending in .toml stops the task, as it stops cargo" "does not end with .toml" 'include = ["inc/a.txt"]'
+printf 'include = ["../config.toml"]\n' >"$repo/.cargo/inc/c.toml"
+include_stops "an include cycle stops the task rather than going round" "include cycle" 'include = ["inc/c.toml"]'
+printf 'include = ["deep/../c2.toml"]\n' >"$repo/.cargo/inc/c2.toml"
+include_stops "a file that includes itself by another path is a cycle" "include cycle" 'include = ["inc/c2.toml"]'
+# Cargo takes a file met twice in one file's includes as a cycle, even met
+# through two different files.
+printf 'include = ["a.toml"]\n' >"$repo/.cargo/inc/x.toml"
+printf 'include = ["a.toml"]\n' >"$repo/.cargo/inc/y.toml"
+include_stops "a file two includes both include is a cycle, as cargo says" "include cycle" 'include = ["inc/x.toml", "inc/y.toml"]'
+# A linked worktree is given the main checkout's settings with what they
+# include, merged as cargo merges them; an include cargo stops on stops the
+# task in one line there too, CARGO_TARGET_DIR set or not.
+mkdir -p "$repo/.cargo/inc/tools"
+printf '[build]\njobs = 4\nrustc-wrapper = "tools/w"\nrustflags = ["--cfg", "inc"]\n' >"$repo/.cargo/inc/k.toml"
+printf 'include = [{ path = "inc/k.toml" }]\n[build]\njobs = 2\nrustflags = ["--cfg", "own"]\n' >"$repo/.cargo/config.toml"
+want="build.jobs = 2|build.rustc-wrapper = \"$repo/.cargo/tools/w\"|build.rustflags = [\"--cfg\", \"inc\", \"--cfg\", \"own\"]|"
+out="$(given "$real/wt")"
+if [ "$out" = "$want" ]; then ok "a linked worktree gets what its main checkout's settings include, the including file's keys winning"; else bad "cargo in a worktree whose main settings include inc/k.toml was given:" "gave: $out" "not:  $want"; fi
+if python3 -I -c 'import tomllib' 2>/dev/null || python3 -I -c 'import tomli' 2>/dev/null; then
+  for case in 'include = ["inc/none.toml"]|is not there' 'include = ["inc/x.toml", "inc/y.toml"]|include cycle'; do
+    printf '%s\n' "${case%|*}" >"$repo/.cargo/config.toml"
+    if out="$( (unexported && CARGO_HOME="$real/cargo-home" cargo_config "$real/wt") 2>&1)"; then
+      bad "cargo_config went on with settings cargo stops on (${case%|*}): $out"
+    elif [ "$(printf '%s\n' "$out" | wc -l | tr -d ' ')" = 1 ] && case "$out" in *"${case#*|}"*) true ;; *) false ;; esac; then
+      ok "a main checkout's include cargo stops on (${case#*|}) stops a worktree's task in one line"
+    else
+      bad "cargo_config with settings that ${case#*|} said, not one line:" "$out"
+    fi
+  done
+else
+  echo "note  this python3 has no tomllib: a worktree's include that stops cargo is left out"
+fi
+rm -r "$repo/.cargo/inc"
+printf '[build]\njobs = 2\n' >"$repo/.cargo/config.toml"
+
 # Cargo reads settings in every directory above where it runs too, and in its
 # home, after the checkout's own.
 mkdir -p "$real/outer/.cargo" "$real/outer/plain" "$real/cargo-home"

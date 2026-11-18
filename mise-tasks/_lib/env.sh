@@ -131,15 +131,15 @@ sys.stdout.write(re.sub(r"\\(x[0-9A-Fa-f]{2}|u[0-9A-Fa-f]{4}|U[0-9A-Fa-f]{8}|.)"
 ' "$1"
 }
 
-# settings_target_dir <config.toml>: the build.target-dir a cargo settings
-# file names, from the directory that holds its .cargo as cargo reads it, or
-# nothing. A line-wise reading rather than a TOML parser, since macOS's
+# own_target_dir <config.toml>: the build.target-dir a cargo settings
+# file names itself (not through an include), from the directory that holds
+# its .cargo as cargo reads it, or nothing. A line-wise reading rather than a TOML parser, since macOS's
 # python3 has no tomllib: a [build] table's target-dir, a dotted
 # build.target-dir, or one in an inline `build = { … }`, with any part of the
 # key quoted either way; the last one wins. A basic ("…") string's escapes
 # are decoded as cargo decodes them, a literal ('…') one is taken as it is.
 # Multi-line strings are not read: no path needs one.
-settings_target_dir() {
+own_target_dir() {
   local file="$1" value
   [ -f "$file" ] || return 0
   value="$(awk '
@@ -188,15 +188,171 @@ settings_target_dir() {
   ' "$file")"
   # A target-dir that cannot be decoded stops here: taken as no setting, the
   # build would go to target/, the drive the setting moved it off.
-  case "$value" in
-    b:*\\*) value="$(toml_unescape "${value#b:}")" || return 1 ;;
-    *) value="${value#?:}" ;;
-  esac
+  value="$(toml_text "$value")" || {
+    printf '%s\n' "$(task_name): $file: its build.target-dir's escapes cannot be decoded (above), so where cargo builds cannot be told" >&2
+    return 1
+  }
   case "$value" in
     "") ;;
     /*) printf '%s\n' "$value" ;;
     *) printf '%s/%s\n' "$(dirname "$(dirname "$file")")" "$value" ;;
   esac
+}
+
+# settings_target_dir <config.toml>: the build.target-dir a cargo settings
+# file names with what it includes, or nothing: the last one in the order
+# settings_tree gives, so the file's own wins over its includes', and a
+# later include's over an earlier one's. Each is from the directory that
+# holds the .cargo of the file that names it.
+settings_target_dir() {
+  local tree file value found=""
+  [ -f "$1" ] || return 0
+  tree="$(settings_tree "$1")" || return 1
+  while IFS= read -r file; do
+    [ -n "$file" ] || continue
+    value="$(own_target_dir "$file")" || return 1
+    [ -z "$value" ] || found="$value"
+  done <<EOF_TREE
+$tree
+EOF_TREE
+  [ -z "$found" ] || printf '%s\n' "$found"
+}
+
+# settings_tree <config.toml> [files met already]: the file and those it
+# includes, one per line in the order cargo merges them (cargo_settings'
+# expand says how cargo 1.98.1 includes), or a line saying what stops cargo.
+settings_tree() {
+  local file="$1" seen="${2:-}" includes line item sub nl='
+'
+  # Files are met by where they are, so ../i/x.toml from i/x.toml is x.toml
+  # again, not a new file each time round.
+  seen="$seen$(physical "$(dirname "$file")")/${file##*/}$nl"
+  includes="$(settings_includes "$file")" || return 1
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    item="$(toml_text "${line#*	}")" || {
+      printf '%s\n' "$(task_name): $file: an include's escapes cannot be decoded (above)" >&2
+      return 1
+    }
+    case "$item" in
+      *.toml) ;;
+      *) printf '%s\n' "$(task_name): $file: its include $item does not end with .toml, which cargo asks of an include" >&2; return 1 ;;
+    esac
+    case "$item" in /*) ;; *) item="$(dirname "$file")/$item" ;; esac
+    case "$nl$seen" in
+      *"$nl$(physical "$(dirname "$item")" 2>/dev/null)/${item##*/}$nl"*) printf '%s\n' "$(task_name): $file: its include $item comes round again (an include cycle), which cargo refuses" >&2; return 1 ;;
+    esac
+    if [ ! -f "$item" ]; then
+      [ "${line%%	*}" = o ] && continue
+      printf '%s\n' "$(task_name): $file: its include $item is not there; cargo stops on it" >&2
+      return 1
+    fi
+    sub="$(settings_tree "$item" "$seen")" || return 1
+    printf '%s\n' "$sub"
+    while IFS= read -r line; do
+      seen="$seen$(physical "$(dirname "$line")")/${line##*/}$nl"
+    done <<EOF_SUB
+$sub
+EOF_SUB
+  done <<EOF_INCLUDES
+$includes
+EOF_INCLUDES
+  printf '%s\n' "$file"
+}
+
+# toml_text <b:text or l:text>: a string as own_target_dir's reading gives
+# it, a basic one's escapes decoded as cargo decodes them.
+toml_text() {
+  case "$1" in
+    b:*\\*) toml_unescape "${1#b:}" ;;
+    *) printf '%s' "${1#?:}" ;;
+  esac
+}
+
+# settings_includes <config.toml>: what a cargo settings file's top-level
+# include lists, one per line in its order: "r" (or "o" for an optional
+# one), a tab, then the path as own_target_dir's reading gives a string. An
+# include that is not an array of strings and tables {path, optional} stops
+# the task, as it stops cargo. Line-wise like own_target_dir; the array may
+# span lines.
+settings_includes() {
+  local out
+  out="$(awk '
+    # str: the string that starts at s[i], "b:" or "l:" then its text; at
+    # holds where its closing quote is.
+    function str(s, i,   q, j, c) {
+      q = substr(s, i, 1)
+      for (j = i + 1; j <= length(s); j++) {
+        c = substr(s, j, 1)
+        if (q == "\"" && c == "\\") { j++; continue }
+        if (c == q) break
+      }
+      at = j
+      return (q == "\"" ? "b:" : "l:") substr(s, i + 1, j - i - 1)
+    }
+    # closed: whether text holds a whole array, quotes and comments skipped.
+    function closed(text,   depth, q, i, c) {
+      depth = 0; q = ""
+      for (i = 1; i <= length(text); i++) {
+        c = substr(text, i, 1)
+        if (q != "") { if (q == "\"" && c == "\\") i++; else if (c == q) q = "" }
+        else if (c == "\"" || c == "'\''") q = c
+        else if (c == "#") { while (i <= length(text) && substr(text, i, 1) != "\n") i++ }
+        else if (c == "[" || c == "{") depth++
+        else if ((c == "]" || c == "}") && --depth == 0) return i
+      }
+      return 0
+    }
+    function bad() { print "!"; done = 1; exit }
+    # One element of the array: a string, or { path = "…", optional = … }.
+    function inline(t,   i, n, c, key, path, opt, w) {
+      n = length(t); path = ""; opt = "r"; key = ""
+      for (i = 2; i < n; i++) {
+        c = substr(t, i, 1)
+        if (c ~ /[ \t\n,]/) continue
+        if (key == "") {
+          if (c == "\"" || c == "'\''") { key = substr(str(t, i), 3); i = at; continue }
+          w = substr(t, i); match(w, /^[A-Za-z0-9_-]+/); if (RLENGTH <= 0) bad()
+          key = substr(w, 1, RLENGTH); i += RLENGTH - 1; continue
+        }
+        if (c == "=") continue
+        if (key == "path") { if (c != "\"" && c != "'\''") bad(); path = str(t, i); i = at }
+        else if (key == "optional") {
+          w = substr(t, i)
+          if (w ~ /^true/) { opt = "o"; i += 3 } else if (w ~ /^false/) i += 4; else bad()
+        } else bad()
+        key = ""
+      }
+      if (path == "") bad()
+      print opt "\t" path
+    }
+    { sub(/\r$/, "") }
+    !open && /^[ \t]*#/ { next }
+    !open && /^[ \t]*\[/ { table = 1; next }
+    !open && !table && match($0, /^[ \t]*("include"|'\''include'\''|include)[ \t]*=[ \t]*/) {
+      text = substr($0, RSTART + RLENGTH); open = 1
+      if (substr(text, 1, 1) != "[") bad()
+    }
+    open && !started { started = 1; if (!closed(text)) next }
+    open && started && !closed(text) { text = text "\n" $0; if (!closed(text)) next }
+    open {
+      end = closed(text); value = substr(text, 2, end - 2); n = length(value)
+      for (i = 1; i <= n; i++) {
+        c = substr(value, i, 1)
+        if (c ~ /[ \t\n,]/) continue
+        if (c == "#") { while (i <= n && substr(value, i, 1) != "\n") i++; continue }
+        if (c == "\"" || c == "'\''") { print "r\t" str(value, i); i = at; continue }
+        if (c != "{") bad()
+        j = closed(substr(value, i)); if (!j) bad()
+        inline(substr(value, i, j)); i += j - 1
+      }
+      done = 1; exit
+    }
+  ' "$1")"
+  case "$out" in
+    *'!'*) printf '%s\n' "$(task_name): $1: its include is not an array of paths and tables {path, optional}, as cargo takes it" >&2; return 1 ;;
+  esac
+  [ -z "$out" ] || printf '%s\n' "$out"
 }
 
 # settings_file <dir>: the settings file in <dir>/.cargo, which cargo takes
@@ -324,6 +480,7 @@ EOF_HERE
   case "$status" in
     3) why="reading them key by key takes Python 3.11's tomllib (or tomli), which $(python3 -V 2>&1) has not" ;;
     4) why="$out" ;;
+    5) printf '%s: %s\n' "$(task_name)" "$out" >&2; return 1 ;;
     127) why="reading them key by key takes python3, which is not on PATH" ;;
     *) why="python3 stopped with status $status reading them (above)" ;;
   esac
@@ -341,7 +498,8 @@ EOF_HERE
 
 # cargo_settings <n> <the worktree's own n files> <the main checkout's files,
 # farthest first>: cargo_config's lines. Status 3 without tomllib; 4, with
-# what failed as its output, when a file cannot be read. Nothing is printed
+# what failed as its output, when a file cannot be read; 5, likewise, on an
+# include cargo stops on. Nothing is printed
 # before every file is read, so a failure leaves no half.
 cargo_settings() {
   python3 -I - "$@" <<'EOF_SETTINGS'
@@ -367,8 +525,52 @@ def load(path):
         print("%s is not TOML cargo can read: %s" % (path, e))
     sys.exit(4)
 
-own = [load(f) for f in own]
-given = [(f, load(f)) for f in given]
+# An include cargo stops on stops the task too, in one line: given whole,
+# the files would only have cargo say it again after the task's note.
+def fail(what):
+    print(what)
+    sys.exit(5)
+
+# expand <file>: the file and what it includes, as cargo 1.98.1 reads them,
+# in the order they merge (a later one's value wins): each include in the
+# order listed, each with what it includes before it, then the file's own
+# keys. An include is an array of paths ending in .toml, each a string or a
+# table {path, optional}, from the directory of the file that names it;
+# a missing one stops cargo unless it is optional. Cargo takes a file met a
+# second time in one settings file's includes as a cycle, even one met
+# through two different files, so seen spans the whole tree.
+def expand(path, seen=None):
+    path = os.path.abspath(path)
+    seen = set() if seen is None else seen
+    seen.add(os.path.realpath(path))
+    table = load(path)
+    includes = table.pop("include", [])
+    if not isinstance(includes, list):
+        fail("%s: its include is not an array; cargo takes a list of strings or of tables {path, optional}" % path)
+    out = []
+    for item in includes:
+        optional = False
+        if isinstance(item, dict):
+            optional = item.get("optional", False)
+            item = item.get("path")
+            if not isinstance(optional, bool):
+                fail("%s: an include's optional is not true or false" % path)
+        if not isinstance(item, str):
+            fail("%s: an include is neither a path nor a table with a path, as cargo takes it" % path)
+        if not item.endswith(".toml"):
+            fail("%s: its include %s does not end with .toml, which cargo asks of an include" % (path, item))
+        target = os.path.abspath(os.path.join(os.path.dirname(path), item))
+        if os.path.realpath(target) in seen:
+            fail("%s: its include %s comes round again (an include cycle), which cargo refuses" % (path, item))
+        if not os.path.exists(target):
+            if optional:
+                continue
+            fail("%s: its include %s is not there (%s); cargo stops on it" % (path, item, target))
+        out += expand(target, seen)
+    return out + [(path, table)]
+
+own = [t for f in own for _, t in expand(f)]
+given = [g for f in given for g in expand(f)]
 
 # A setting's leaves, each with the table it is in: an [env] entry's value
 # and `relative` come apart, so the worktree can set one and not the other.
@@ -489,7 +691,7 @@ merged = {}
 for f, d in given:
     base = os.path.dirname(os.path.dirname(os.path.abspath(f)))
     for p, v, table in leaves(d):
-        if p == ("include",) or not theirs(p, v):
+        if not theirs(p, v):
             continue
         v = placed(p, v, table, base)
         for q in [q for q in merged if q != p and under(p, q)]:
@@ -559,9 +761,10 @@ EOF_SETTINGS
 # (mise-tasks/mcp).
 # shellcheck disable=SC2034 # read by mise-tasks/mcp
 ljos_asked_target_dir="${CARGO_TARGET_DIR-}"
-CARGO_TARGET_DIR="$(target_dir)" || die "$(task_name): cannot tell where cargo builds for $ljos_root (above)"
+# Each failure says what stops it, in one line of its own.
+CARGO_TARGET_DIR="$(target_dir)" || exit 1
 export CARGO_TARGET_DIR
-ljos_cargo_config="$(cargo_config)"
+ljos_cargo_config="$(cargo_config)" || exit 1
 
 # cargo, with the main checkout's settings in a worktree, from a settings
 # file of its own that is gone once cargo is. A task runs `cargo` (or
