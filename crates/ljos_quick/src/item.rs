@@ -1104,6 +1104,10 @@ struct WindowTypes(std::cell::RefCell<Vec<ljos_engine::MetaRef>>);
 /// windows: one that is not shown keeps its items from a grab. The window
 /// types live above this crate. A type is matched as itself, not by its
 /// name: a program's own component called `Window` is no window.
+///
+/// A crate that adds a window type not built on one already given calls
+/// this when it registers its types: an unregistered window is taken for
+/// a plain item, so its items are drawn even while it is hidden.
 pub fn register_window_type(engine: &Engine, meta: ljos_engine::MetaRef) {
     engine.extension::<WindowTypes>().0.borrow_mut().push(meta);
 }
