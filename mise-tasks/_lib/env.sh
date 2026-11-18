@@ -195,18 +195,19 @@ EOF_SETTINGS
   printf '%s\n' "$target"
 }
 
-# cargo_config [dir]: the main checkout's .cargo/config.toml, when <dir> is a
+# cargo_config [dir]: the main checkout's .cargo/config(.toml), when <dir> is a
 # linked worktree with none of its own. Cargo looks for its settings from
 # where it runs upwards, so a worktree made elsewhere would build without the
 # ones a main checkout keeps outside git (a compile cache, a cap on jobs,
 # incremental builds off), and the two would keep rebuilding each other's
 # crates in the target they share.
 cargo_config() {
-  local dir main
+  local dir main settings
   dir="$(physical "${1:-$ljos_root}")"
   main="$(main_checkout "$dir")"
-  if [ "$main" != "$dir" ] && [ -f "$main/.cargo/config.toml" ] && [ ! -f "$dir/.cargo/config.toml" ]; then
-    printf '%s\n' "$main/.cargo/config.toml"
+  settings="$(settings_file "$main")"
+  if [ "$main" != "$dir" ] && [ -n "$settings" ] && [ -z "$(settings_file "$dir")" ]; then
+    printf '%s\n' "$settings"
   fi
 }
 

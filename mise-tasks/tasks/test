@@ -626,6 +626,18 @@ out="$(cargo_config "$real/wt")"
 if [ "$out" = "$repo/.cargo/config.toml" ]; then ok "a linked worktree builds with its main checkout's .cargo/config.toml"; else bad "cargo_config gave '$out' for a linked worktree"; fi
 out="$(cargo_config "$repo")"
 if [ -z "$out" ]; then ok "the main checkout's own .cargo/config.toml is cargo's to find"; else bad "cargo_config gave '$out' for the main checkout"; fi
+# Settings kept in .cargo/config, the name without the extension, are the
+# same settings.
+mv "$repo/.cargo/config.toml" "$repo/.cargo/config"
+out="$(cargo_config "$real/wt")"
+if [ "$out" = "$repo/.cargo/config" ]; then ok "a linked worktree builds with its main checkout's .cargo/config"; else bad "cargo_config gave '$out' for a linked worktree whose main checkout keeps .cargo/config"; fi
+mv "$repo/.cargo/config" "$repo/.cargo/config.toml"
+mkdir "$real/wt/.cargo"
+printf '[build]\njobs = 3\n' >"$real/wt/.cargo/config"
+out="$(cargo_config "$real/wt")"
+if [ -z "$out" ]; then ok "a worktree's own .cargo/config is cargo's to find"; else bad "cargo_config gave '$out' for a worktree with a .cargo/config of its own"; fi
+rm "$real/wt/.cargo/config"
+rmdir "$real/wt/.cargo"
 
 # A target directory cargo's own settings name is the one used: put on a
 # drive with room there, it must not move back to target/.
