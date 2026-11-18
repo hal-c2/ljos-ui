@@ -248,6 +248,57 @@ Feature: Starting the authoring server from a checkout of Ljós
       {"jsonrpc":"2.0","id":1,"result":{"serverInfo":{"name":"ljos"}}}
       """
 
+  # .mcp.json runs `bash mise-tasks/mcp .` without mise. The editor or agent that runs it may have
+  # been started by a mise task of another project, and then hands down all of mise's variables:
+  # where that task was started, its name and its file. "project.sh" stands in for the server and
+  # says which directory it was given to author.
+  Scenario: Run outside mise, "." is the checkout it runs in
+    Given the file "project.sh":
+      """sh
+      #!/bin/sh
+      root=$(cd "$(dirname "$0")" && pwd -P)
+      echo "authoring .${3#"$root"}"
+      """
+    And the file "elsewhere/README":
+      """
+      Where a mise task of another project was started.
+      """
+    And the project is a git checkout with the linked worktree "wt"
+    And the author's environment has "LJOS_BIN" set to "{project}/project.sh"
+    And the author's environment has "MISE_ORIGINAL_CWD" set to "{project}/elsewhere"
+    And the author's environment has no "MISE_TASK_NAME"
+    And the author's environment has no "MISE_TASK_FILE"
+    When the author runs "mise-tasks/mcp ." in "wt"
+    Then the command exits with status 0
+    And the command's standard output is:
+      """
+      authoring ./wt
+      """
+
+  Scenario: Run outside mise by a program another project's mise task started, "." is still the checkout it runs in
+    Given the file "project.sh":
+      """sh
+      #!/bin/sh
+      root=$(cd "$(dirname "$0")" && pwd -P)
+      echo "authoring .${3#"$root"}"
+      """
+    And the file "elsewhere/mise-tasks/agents":
+      """sh
+      #!/bin/sh
+      echo "Another project's task, which started the agent."
+      """
+    And the project is a git checkout with the linked worktree "wt"
+    And the author's environment has "LJOS_BIN" set to "{project}/project.sh"
+    And the author's environment has "MISE_ORIGINAL_CWD" set to "{project}/elsewhere"
+    And the author's environment has "MISE_TASK_NAME" set to "agents"
+    And the author's environment has "MISE_TASK_FILE" set to "{project}/elsewhere/mise-tasks/agents"
+    When the author runs "mise-tasks/mcp ." in "wt"
+    Then the command exits with status 0
+    And the command's standard output is:
+      """
+      authoring ./wt
+      """
+
   Scenario: A server LJOS_BIN names is started without a build
     Given the project is a git checkout with the linked worktree "wt"
     And the author's environment has "LJOS_BIN" set to "{project}/server.sh"

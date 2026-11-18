@@ -28,12 +28,35 @@ physical() {
   (cd "$1" && pwd -P)
 }
 
-# A path a person typed, absolute from where they typed it: mise runs a task
-# in the repository's root, not where the person was. It need not exist yet.
+# Where the person was: mise runs a task in the repository's root and says
+# where it was started in MISE_ORIGINAL_CWD. A program started from a mise
+# task elsewhere (an editor or agent under another project's `mise run`)
+# hands all of mise's variables down, MISE_TASK_NAME too, to what it runs
+# without mise (.mcp.json's `bash mise-tasks/mcp .`). So it counts only when
+# the task mise runs is one of this checkout's: MISE_TASK_FILE is in its
+# mise-tasks/, which a task this one calls directly (features calls
+# features/run) shares.
+asked_in() {
+  local tasks file
+  if [ -n "${MISE_ORIGINAL_CWD:-}" ] && [ -n "${MISE_TASK_FILE:-}" ] &&
+    tasks="$(physical "$ljos_root/mise-tasks" 2>/dev/null)" &&
+    file="$(physical "$(dirname "$MISE_TASK_FILE")" 2>/dev/null)"; then
+    case "$file/" in
+      "$tasks"/*)
+        printf '%s\n' "$MISE_ORIGINAL_CWD"
+        return
+        ;;
+    esac
+  fi
+  printf '%s\n' "$PWD"
+}
+
+# A path a person typed, absolute from where they typed it (asked_in). It
+# need not exist yet.
 from_asked() {
   case "$1" in
     /*) printf '%s\n' "$1" ;;
-    *) printf '%s/%s\n' "${MISE_ORIGINAL_CWD:-$PWD}" "$1" ;;
+    *) printf '%s/%s\n' "$(asked_in)" "$1" ;;
   esac
 }
 

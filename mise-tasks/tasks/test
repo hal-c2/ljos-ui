@@ -354,8 +354,18 @@ case "$made" in
   *) ok "scratch under a TMPDIR with a trailing slash has no doubled slash" ;;
 esac
 
-out="$(MISE_ORIGINAL_CWD="$real/link" from_asked app.qml)"
+# from_asked under mise, and outside it with mise's variables handed down by
+# another project's task (an agent started by its `mise run`).
+mkdir -p "$real/other/mise-tasks"
+out="$(MISE_TASK_FILE="$ljos_root/mise-tasks/tasks/test" MISE_ORIGINAL_CWD="$real/link" from_asked app.qml)"
 if [ "$out" = "$real/link/app.qml" ]; then ok "from_asked reads a relative path from where it was typed"; else bad "from_asked gave $out"; fi
+out="$(
+  unset MISE_TASK_FILE MISE_TASK_NAME
+  MISE_ORIGINAL_CWD="$real/other" from_asked app.qml
+)"
+if [ "$out" = "$PWD/app.qml" ]; then ok "outside mise, from_asked reads a relative path from where it runs"; else bad "outside mise, with MISE_ORIGINAL_CWD handed down, from_asked gave $out"; fi
+out="$(MISE_TASK_NAME=agents MISE_TASK_FILE="$real/other/mise-tasks/agents" MISE_ORIGINAL_CWD="$real/other" from_asked app.qml)"
+if [ "$out" = "$PWD/app.qml" ]; then ok "another project's mise task, handed down, is not where a path was typed"; else bad "with another project's mise task handed down, from_asked gave $out"; fi
 out="$(CARGO_TARGET_DIR=build target_dir)"
 if [ "$out" = "$ljos_root/build" ]; then ok "a relative CARGO_TARGET_DIR is from the root"; else bad "target_dir gave $out for CARGO_TARGET_DIR=build"; fi
 
