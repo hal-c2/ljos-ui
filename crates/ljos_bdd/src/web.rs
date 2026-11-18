@@ -5,7 +5,11 @@
 //! with the scenario, ending every connection still open.
 //!
 //! The QML names it as `$SERVER`, which a scenario's files have replaced
-//! by `http://127.0.0.1:<port>` before they are loaded.
+//! by `http://127.0.0.1:<port>` before they are loaded. The port is one no
+//! server before it in the process had: the web engine is the process's,
+//! and what a page's origin was granted or refused stays with that origin
+//! until the process ends, so a scenario never meets an earlier one's
+//! answers.
 //!
 //! `/echo` answers any method with what it was sent, for a script that
 //! sends requests of its own (XMLHttpRequest): the method, the
@@ -19,7 +23,7 @@
 //! connection stays open, the page loading, until the server stops, so a
 //! scenario can replace a load that is still going.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::io::{BufRead as _, BufReader, Read as _, Write as _};
 use std::net::{Shutdown, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -187,12 +191,7 @@ impl WebServer {
     /// # Errors
     /// No port could be had.
     pub fn start() -> Result<Self, String> {
-        let listener = TcpListener::bind("127.0.0.1:0")
-            .map_err(|e| format!("the scenario's web server cannot listen: {e}"))?;
-        let port = listener
-            .local_addr()
-            .map_err(|e| format!("the scenario's web server has no address: {e}"))?
-            .port();
+        let (listener, port) = listen_on_a_new_port()?;
         let refusing = Refusing::bind()?;
         let refused = format!("http://127.0.0.1:{}/", refusing.port);
         let files = Files::default();
@@ -281,6 +280,29 @@ impl Drop for WebServer {
         {
             std::panic::resume_unwind(panic);
         }
+    }
+}
+
+/// Every port a server of this process has listened on.
+static HAD: Mutex<BTreeSet<u16>> = Mutex::new(BTreeSet::new());
+
+/// A loopback port no server before has had (see the module's docs). The
+/// system gives a port back soon after it is let go, so one had before is
+/// held until a new one comes, and is not given again meanwhile.
+fn listen_on_a_new_port() -> Result<(TcpListener, u16), String> {
+    let mut had = HAD.lock().unwrap_or_else(PoisonError::into_inner);
+    let mut held = Vec::new();
+    loop {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .map_err(|e| format!("the scenario's web server cannot listen: {e}"))?;
+        let port = listener
+            .local_addr()
+            .map_err(|e| format!("the scenario's web server has no address: {e}"))?
+            .port();
+        if had.insert(port) {
+            return Ok((listener, port));
+        }
+        held.push(listener);
     }
 }
 
@@ -511,6 +533,20 @@ mod tests {
         let mut reply = String::new();
         stream.read_to_string(&mut reply).unwrap();
         reply
+    }
+
+    #[test]
+    fn no_two_servers_of_a_process_have_the_same_origin() {
+        // The system hands a port let go back within a few hundred.
+        let mut had = std::collections::HashSet::new();
+        for _ in 0..1000 {
+            let server = WebServer::start().unwrap();
+            assert!(
+                had.insert(server.port),
+                "a server had port {} again",
+                server.port
+            );
+        }
     }
 
     #[test]

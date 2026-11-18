@@ -170,7 +170,7 @@ Objects are named by `objectName`; `a/b` finds `b` below `a`. Properties may be 
 | `Given a W by H Radiance image file "X.hdr" filled with R, G, B` | make a Radiance HDR picture of one linear radiance, each number at least 0 and as large as wanted (a light probe) |
 | `Given a W by H Radiance image file "X.hdr" with an upper half of R, G, B and a lower half of R, G, B` | the same, one radiance above the middle row and another from it down |
 | `Given a file "X.png" that is not an image` | make a file with that name and no image inside available |
-| `Given the web server serves a W by H image file "X.png" filled with "#rrggbb"` | the scenario's own web server (loopback) answers `$SERVER/X.png` with such an image; the QML writes `$SERVER` for its `http://127.0.0.1:<port>`, and a name nobody served is 404 Not Found |
+| `Given the web server serves a W by H image file "X.png" filled with "#rrggbb"` | the scenario's own web server (loopback) answers `$SERVER/X.png` with such an image; the QML writes `$SERVER` for its `http://127.0.0.1:<port>`, a port no scenario before it in the run had (a page's origin keeps its answers while the process runs), and a name nobody served is 404 Not Found |
 | `Given a W by H animated image file "X.gif" of frames "#rrggbb, #rrggbb" each shown for N milliseconds` | make an animated GIF, one colour a frame, repeating for ever (one colour: a still GIF) |
 | `Given the web server serves a W by H animated image file "X.gif" of frames "#rrggbb, #rrggbb" each shown for N milliseconds` | the same on the scenario's web server |
 | `Given the web server serves a file "X.png" that is not an image` | the same, with a file that is no image |
