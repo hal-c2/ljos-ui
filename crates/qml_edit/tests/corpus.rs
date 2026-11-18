@@ -114,8 +114,19 @@ fn round_trip(
     };
     if restored != source && matches!(there, Edit::MoveObject { .. }) {
         // Child indices do not say where among the bindings a child stood,
-        // so moving it back may also put it elsewhere among them: the same
-        // objects in the same order, and the same lines once formatted, empty ones aside.
+        // so moving it back may also put it elsewhere among them, even past
+        // an object a binding holds (`environment: …`): every object at the
+        // same path, so the children in the same order, and the same lines
+        // once formatted, empty ones aside.
+        let objects = |text: &str| {
+            let mut all: Vec<String> = objects(text)
+                .unwrap()
+                .into_iter()
+                .map(|(path, type_name)| format!("{path:?} {type_name}"))
+                .collect();
+            all.sort();
+            all
+        };
         let lines = |text: &str| {
             let mut lines: Vec<String> = qml_fmt::format(text)
                 .unwrap()
@@ -127,8 +138,7 @@ fn round_trip(
             lines
         };
         assert!(
-            objects(source).unwrap() == objects(&restored).unwrap()
-                && lines(source) == lines(&restored),
+            objects(source) == objects(&restored) && lines(source) == lines(&restored),
             "{where_}: {there:?} then {back:?} changed the document\n{restored}"
         );
         if qml_fmt::same_tree(source, &restored).is_ok() {
