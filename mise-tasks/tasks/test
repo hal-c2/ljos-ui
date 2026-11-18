@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#MISE description="Test what the tasks share (mise-tasks/_lib/env.sh) against stand-in tools: the Qt CI pins read from ci.yml alone, another Qt minor version found by qmake6, qtpaths or qml6 is a mismatch setup --check fails on, and paths hold under a TMPDIR with a trailing slash or a link"
+#MISE description="Test what the tasks share (mise-tasks/_lib/env.sh) against stand-in tools: the Qt CI pins read from ci.yml alone, another Qt minor version found by qmake6, qtpaths or qml6 is a mismatch setup --check fails on, paths hold under a TMPDIR with a trailing slash or a link, and NVIDIA's Vulkan driver is left out of tests only when its kernel driver is not loaded"
 set -euo pipefail
 # shellcheck source-path=SCRIPTDIR source=../_lib/env.sh
 . "$(dirname "$0")/../_lib/env.sh"
@@ -151,5 +151,35 @@ out="$(MISE_ORIGINAL_CWD="$real/link" from_asked app.qml)"
 if [ "$out" = "$real/link/app.qml" ]; then ok "from_asked reads a relative path from where it was typed"; else bad "from_asked gave $out"; fi
 out="$(CARGO_TARGET_DIR=build target_dir)"
 if [ "$out" = "$ljos_root/build" ]; then ok "a relative CARGO_TARGET_DIR is from the root"; else bad "target_dir gave $out for CARGO_TARGET_DIR=build"; fi
+
+# --- Vulkan drivers --------------------------------------------------------------
+
+mkdir -p "$real/icd" "$real/nvidia"
+: >"$real/icd/radeon_icd.json"
+# nvidia_left_out [VK_DRIVER_FILES]: what leave_out_absent_nvidia sets with no
+# NVIDIA kernel driver and the manifests in $real/icd.
+nvidia_left_out() {
+  (
+    unset VK_DRIVER_FILES VK_ICD_FILENAMES VK_ADD_DRIVER_FILES VK_LOADER_DRIVERS_SELECT VK_LOADER_DRIVERS_DISABLE
+    [ -z "${1:-}" ] || export VK_DRIVER_FILES="$1"
+    leave_out_absent_nvidia "$real/no-driver" "$real/icd"
+    printf '%s' "${VK_LOADER_DRIVERS_DISABLE-unset}"
+  )
+}
+if [ "$(uname -s)" = Linux ]; then
+  out="$(nvidia_left_out)"
+  if [ "$out" = unset ]; then ok "no NVIDIA manifest leaves the Vulkan loader as it is"; else bad "with no NVIDIA manifest, VK_LOADER_DRIVERS_DISABLE is $out"; fi
+  : >"$real/icd/nvidia_icd.json"
+  out="$(nvidia_left_out)"
+  if [ "$out" = '*nvidia*' ]; then ok "NVIDIA's manifest without its kernel driver is left out"; else bad "NVIDIA's manifest without its kernel driver: VK_LOADER_DRIVERS_DISABLE is $out"; fi
+  out="$(nvidia_left_out /x.json)"
+  if [ "$out" = unset ]; then ok "drivers the user chose stand"; else bad "with VK_DRIVER_FILES set, VK_LOADER_DRIVERS_DISABLE is $out"; fi
+  out="$(
+    unset VK_DRIVER_FILES VK_ICD_FILENAMES VK_ADD_DRIVER_FILES VK_LOADER_DRIVERS_SELECT VK_LOADER_DRIVERS_DISABLE
+    leave_out_absent_nvidia "$real/nvidia" "$real/icd"
+    printf '%s' "${VK_LOADER_DRIVERS_DISABLE-unset}"
+  )"
+  if [ "$out" = unset ]; then ok "NVIDIA's driver is kept when its kernel driver is loaded"; else bad "with the kernel driver loaded, VK_LOADER_DRIVERS_DISABLE is $out"; fi
+fi
 
 exit "$failed"

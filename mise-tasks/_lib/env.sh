@@ -245,6 +245,35 @@ need_pinned_rust() {
   [ -z "$why" ] || die "${MISE_TASK_NAME:-this task}: $why"
 }
 
+# The Vulkan loader starts every driver whose manifest it finds, NVIDIA's too
+# when only its user-space package is installed (no card, or its kernel driver
+# not loaded), and a test that makes a wgpu instance can crash in it. An app's
+# shell leaves that driver out (crates/ljos_shell/src/drivers.rs); this does
+# the same for a task's tests, through the variable the loader reads from
+# 1.3.234 on (an older one ignores it). Drivers the user chose stand.
+# leave_out_absent_nvidia [kernel driver path [manifest dir...]]: the
+# arguments are for tasks:test.
+leave_out_absent_nvidia() {
+  local loaded="${1:-/proc/driver/nvidia}" v d
+  [ "$(uname -s)" = Linux ] || return 0
+  [ ! -e "$loaded" ] || return 0
+  for v in VK_DRIVER_FILES VK_ICD_FILENAMES VK_ADD_DRIVER_FILES \
+    VK_LOADER_DRIVERS_SELECT VK_LOADER_DRIVERS_DISABLE; do
+    [ -z "${!v+set}" ] || return 0
+  done
+  if [ $# -gt 1 ]; then
+    shift
+  else
+    set -- /etc/vulkan/icd.d /usr/local/share/vulkan/icd.d /usr/share/vulkan/icd.d
+  fi
+  for d in "$@"; do
+    if ls "$d"/nvidia*.json >/dev/null 2>&1; then
+      export VK_LOADER_DRIVERS_DISABLE='*nvidia*'
+      return 0
+    fi
+  done
+}
+
 need_valgrind() {
   need valgrind "install Valgrind (Arch: pacman -S valgrind; Debian, Ubuntu: apt install valgrind; not on macOS)"
 }

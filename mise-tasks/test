@@ -3,6 +3,9 @@
 #MISE dir="{{config_root}}"
 #USAGE arg "[args]..." var=#true help="Arguments for cargo test: -p <crate> to test only that crate, --no-fail-fast, a test filter. mise takes the first --, so test-binary options go after -- --, as in -- -- --nocapture"
 set -euo pipefail
+# shellcheck source-path=SCRIPTDIR source=_lib/env.sh
+. "$(dirname "$0")/_lib/env.sh"
+leave_out_absent_nvidia
 # Narrowed when a crate is named; cargo would otherwise test the workspace
 # beside it.
 scope=(--workspace)
