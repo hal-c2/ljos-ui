@@ -706,6 +706,44 @@ Feature: Ljós's own style: tabs, cards, popovers, split buttons and empty state
       And the user clicks the "button" "New thread"
       Then the property "said" of "root" is "run menu new "
 
+    # Wider than it asks for, its two buttons are set against its start,
+    # and its menu opens against the chevron's far edge from there: the
+    # chevron's right edge, or its left one when mirrored.
+    # Both menus fit the 400-wide window, so neither is moved back inside it.
+    @api-QtQuick.LayoutMirroring.enabled
+    Scenario Outline: A Basic split button made wider, <how>, opens its menu against its chevron
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic as QB
+        import Ljos.Controls.Basic
+        Item {
+          id: root; objectName: "root"
+          width: 400; height: 300
+          LayoutMirroring.enabled: <mirrored>
+          LayoutMirroring.childrenInherit: true
+          SplitButton {
+            id: split; width: 400; text: "Run"
+            menu: QB.Menu { id: options; width: 120; QB.MenuItem { text: "Run all" } }
+          }
+          function part(i, name) { for (const k of i.children) { if (k.objectName === name) return k; const f = part(k, name); if (f) return f } return null }
+          property var got: []
+          function measure() {
+            const more = part(split.contentItem, "more"), at = more.mapToItem(split, 0, 0).x
+            got = [split.mirrored, Math.round(split.mirrored ? options.x - at : options.x + options.width - at - more.width)]
+          }
+        }
+        """
+      When the user clicks the "button" "More Run options"
+      And 200 milliseconds pass
+      And the method "measure" of "root" is called
+      Then the property "got" of "root" is [<mirrored>, 0]
+
+      Examples:
+        | how           | mirrored |
+        | left to right | false    |
+        | mirrored      | true     |
+
     Scenario: An error with no title says so in words, as Basic has no icons
       Given the QML:
         """qml
