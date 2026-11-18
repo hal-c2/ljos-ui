@@ -1,8 +1,8 @@
-//! The window's pixels.
+//! The window's pixels, and the pictures the host takes of an item.
 
-use cucumber::then;
+use cucumber::{then, when};
 
-use crate::backend::{Backend, BackendError};
+use crate::backend::{Backend, BackendError, HostGrab};
 use crate::world::LjosWorld;
 
 use super::StepResult;
@@ -255,6 +255,81 @@ fn window_pixel_not(w: &mut LjosWorld, x: u32, y: u32, colour: String) -> StepRe
         } else {
             Ok(())
         }
+    })
+}
+
+#[when(regex = r#"^the host asks for a picture of "([^"]+)"$"#)]
+fn host_asks_picture(w: &mut LjosWorld, object: String) -> StepResult {
+    w.each(|b| b.probes()?.host_grab(&object))
+}
+
+/// The host's picture, once a frame has drawn it; a failure says what
+/// came of it instead.
+fn host_picture(b: &mut dyn Backend) -> Result<(u32, u32, Vec<u8>), BackendError> {
+    match b.probes()?.host_grabbed()? {
+        HostGrab::Picture {
+            width,
+            height,
+            rgba,
+        } => Ok((width, height, rgba)),
+        other => Err(BackendError::Failed(format!(
+            "the host has no picture: {other:?}"
+        ))),
+    }
+}
+
+#[then(regex = r"^the host's picture is (\d+) by (\d+) pixels$")]
+fn host_picture_size(w: &mut LjosWorld, width: u32, height: u32) -> StepResult {
+    w.each(|b| match host_picture(b)? {
+        (w, h, _) if (w, h) == (width, height) => Ok(()),
+        (w, h, _) => Err(BackendError::Failed(format!(
+            "the host's picture is {w} by {h} pixels, not {width} by {height}"
+        ))),
+    })
+}
+
+/// The pixels are premultiplied, so each is already as it reads over
+/// black, as a window pixel is read.
+#[then(regex = r#"^the pixel at (\d+), (\d+) of the host's picture is "(#\w{6})"$"#)]
+fn host_picture_pixel(w: &mut LjosWorld, x: u32, y: u32, colour: String) -> StepResult {
+    let wanted = rgb(&colour)?;
+    w.each(|b| {
+        let (width, height, rgba) = host_picture(b)?;
+        if x >= width || y >= height {
+            return Err(BackendError::Failed(format!(
+                "{x}, {y} is outside the host's picture, which is {width} by {height}"
+            )));
+        }
+        let at = ((y * width + x) * 4) as usize;
+        let seen = [rgba[at], rgba[at + 1], rgba[at + 2]];
+        if seen == wanted {
+            Ok(())
+        } else {
+            Err(BackendError::Failed(format!(
+                "the pixel at {x}, {y} of the host's picture is #{:02x}{:02x}{:02x}, not {colour}",
+                seen[0], seen[1], seen[2]
+            )))
+        }
+    })
+}
+
+#[then(regex = r#"^the host is refused a picture because "(.*)"$"#)]
+fn host_picture_refused(w: &mut LjosWorld, why: String) -> StepResult {
+    w.each(|b| match b.probes()?.host_grabbed()? {
+        HostGrab::Refused(said) if said == why => Ok(()),
+        other => Err(BackendError::Failed(format!(
+            "the host's picture came to {other:?}, not a refusal because {why:?}"
+        ))),
+    })
+}
+
+#[then("the host is called back with no picture")]
+fn host_picture_empty(w: &mut LjosWorld) -> StepResult {
+    w.each(|b| match b.probes()?.host_grabbed()? {
+        HostGrab::Empty => Ok(()),
+        other => Err(BackendError::Failed(format!(
+            "the host's picture came to {other:?}, not an empty callback"
+        ))),
     })
 }
 
