@@ -494,11 +494,20 @@ shell_code() {
 # a blank or separator inside quotes becomes _, and a string that runs on
 # over lines is joined, so words in a message or a flag's value never start
 # a command. A command substitution inside double quotes is code again. An
-# inline comment is left out.
+# inline comment is left out, and so is a here-document's text, up to its
+# terminator: it is what a command reads, not commands (a `<<` inside
+# `$(( ))` is a shift).
 command_words() {
   awk '
     function neutral(c) { return c ~ /[ \t;&|()<>`{}]/ ? "_" : c }
-    BEGIN { n = 0; st[0] = "c"; buf = "" }
+    BEGIN { n = 0; st[0] = "c"; buf = ""; nh = 0; hi = 1 }
+    hi <= nh {
+      t = $0
+      if (hs[hi]) sub(/^\t+/, "", t)
+      if (t == hd[hi]) hi++
+      if (hi > nh) { nh = 0; hi = 1 }
+      next
+    }
     {
       s = $0; len = length(s); out = ""; i = 1
       while (i <= len) {
@@ -517,6 +526,22 @@ command_words() {
         }
         if (ch == "\\") { out = out "__"; i += 2; continue }
         if (ch == "#" && (i == 1 || substr(s, i - 1, 1) ~ /[ \t;&|(]/)) break
+        if (two == "<<" && substr(s, i + 2, 1) != "<" && !(top == "c" && n > 0 && dp[n] > 1)) {
+          j = i + 2; dash = 0; w = ""
+          if (substr(s, j, 1) == "-") { dash = 1; j++ }
+          while (substr(s, j, 1) ~ /[ \t]/) j++
+          q = substr(s, j, 1)
+          if (q == "\047" || q == "\"") {
+            k = index(substr(s, j + 1), q)
+            if (k > 0) { w = substr(s, j + 1, k - 1); j += k + 1 }
+          } else {
+            if (q == "\\") j++
+            if (substr(s, j, 1) ~ /[A-Za-z_]/) {
+              while (substr(s, j, 1) ~ /[A-Za-z0-9_]/) { w = w substr(s, j, 1); j++ }
+            }
+          }
+          if (w != "") { hd[++nh] = w; hs[nh] = dash; out = out "<<_"; i = j; continue }
+        }
         if (two == "$\047") { st[++n] = "a"; out = out two; i += 2; continue }
         if (ch == "\047") st[++n] = "s"
         else if (ch == "\"") st[++n] = "d"

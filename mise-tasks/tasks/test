@@ -972,6 +972,9 @@ lints "a message that names cargo runs none" none 'echo "run cargo"'
 lints "a message in single quotes after a separator runs none" none "printf '%s\n' 'built; cargo build'"
 lints "a message that runs on over lines runs none" none 'echo "first line' 'cargo build"'
 lints "an inline comment runs none" none ': built # ; cargo build'
+lints "a here-document's text runs none" none "cat <<'EOF'" 'cargo build' 'EOF'
+lints "an indented here-document's text runs none, and a cargo after its terminator is a cargo run" source 'cat <<-"END" | grep x' '	cargo run' '	END' 'cargo test'
+lints "a shift in arithmetic is no here-document" source 'x=$((1 << n))' 'cargo test'
 lints "cargo in a quoted command substitution is a cargo run" source 'x="$(timeout 60 cargo metadata)"'
 # A wrapper takes its own options, and the next word is its program.
 lints "exec of another program whose flag names cargo runs none" none 'exec "$prog" run --note "cargo build"'
