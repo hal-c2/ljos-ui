@@ -100,7 +100,7 @@ Feature: A mesh made from lists
         import QtQuick3D
         import QtQuick3D.Helpers
         Rectangle {
-          id: scene; objectName: "scene"; width: 200; height: 200; color: "black"
+          objectName: "textured"; width: 200; height: 200; color: "black"
           property real secondU: mesh.uv1s[1].x
           property real thirdV: mesh.uv1s[2].y
           View3D {
@@ -124,5 +124,5 @@ Feature: A mesh made from lists
       Then the pixel at 100, 110 of the window is within 2 of "#00ff00"
 
     Scenario: The second texture coordinates are kept
-      Then the property "secondU" of "scene" is 1
-      And the property "thirdV" of "scene" is 1
+      Then the property "secondU" of "textured" is 1
+      And the property "thirdV" of "textured" is 1
