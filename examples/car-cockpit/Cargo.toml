@@ -1,0 +1,14 @@
+[package]
+name = "ljos_example_car_cockpit"
+description = "An instrument cluster over an infotainment screen for an original car, in the Ljós dialect with strict TypeScript: a 3D car whose parts open, climate, media, a map drawn in code, and a drive that runs only in gear"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+
+[lints]
+workspace = true
