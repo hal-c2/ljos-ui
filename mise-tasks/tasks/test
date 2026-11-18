@@ -575,7 +575,7 @@ quiet_git -C "$real/bare.git" worktree add "$real/bw"
 quiet_git -C "$repo" submodule add "$real/bare.git" sub
 mkdir "$real/plain"
 # where <dir>: target_dir for <dir> with no CARGO_TARGET_DIR.
-where() { (unset CARGO_TARGET_DIR && target_dir "$1"); }
+where() { (unset CARGO_TARGET_DIR CARGO_BUILD_TARGET_DIR && target_dir "$1"); }
 
 if [ -d "$real/wt" ] && [ -d "$real/bw" ] && [ -d "$repo/sub" ]; then
   out="$(where "$real/wt")"
@@ -611,6 +611,30 @@ out="$(cargo_config "$real/wt")"
 if [ "$out" = "$repo/.cargo/config.toml" ]; then ok "a linked worktree builds with its main checkout's .cargo/config.toml"; else bad "cargo_config gave '$out' for a linked worktree"; fi
 out="$(cargo_config "$repo")"
 if [ -z "$out" ]; then ok "the main checkout's own .cargo/config.toml is cargo's to find"; else bad "cargo_config gave '$out' for the main checkout"; fi
+
+# A target directory cargo's own settings name is the one used: put on a
+# drive with room there, it must not move back to target/.
+printf '[build]\njobs = 2\ntarget-dir = "%s"\n' "$real/roomy-cfg" >"$repo/.cargo/config.toml"
+out="$(where "$real/wt")"
+if [ "$out" = "$real/roomy-cfg" ]; then ok "a linked worktree builds where its main checkout's .cargo/config.toml says"; else bad "target_dir gave $out for a worktree whose main config sets target-dir $real/roomy-cfg"; fi
+out="$(where "$repo")"
+if [ "$out" = "$real/roomy-cfg" ]; then ok "the main checkout builds where its .cargo/config.toml says"; else bad "target_dir gave $out for a main checkout whose config sets target-dir $real/roomy-cfg"; fi
+out="$(CARGO_TARGET_DIR="$real/shared" target_dir "$real/wt")"
+if [ "$out" = "$real/shared" ]; then ok "CARGO_TARGET_DIR wins over the target-dir cargo's settings name"; else bad "target_dir gave $out with CARGO_TARGET_DIR=$real/shared and a config target-dir"; fi
+out="$( (unset CARGO_TARGET_DIR && CARGO_BUILD_TARGET_DIR="$real/env" target_dir "$real/wt") )"
+if [ "$out" = "$real/env" ]; then ok "CARGO_BUILD_TARGET_DIR wins over the settings, as in cargo"; else bad "target_dir gave $out with CARGO_BUILD_TARGET_DIR=$real/env"; fi
+out="$( (unset CARGO_TARGET_DIR && CARGO_BUILD_TARGET_DIR=envrel target_dir "$real/wt") )"
+if [ "$out" = "$real/wt/envrel" ]; then ok "a relative CARGO_BUILD_TARGET_DIR is from the checkout it is asked for"; else bad "target_dir gave $out with CARGO_BUILD_TARGET_DIR=envrel"; fi
+printf '# where the builds go\nbuild.target-dir = '\''big'\''\n' >"$repo/.cargo/config.toml"
+out="$(where "$real/wt")"
+if [ "$out" = "$repo/big" ]; then ok "a relative target-dir in the settings is from the directory that holds .cargo, as in cargo"; else bad "target_dir gave $out for a main config with build.target-dir = 'big', not $repo/big"; fi
+mkdir "$real/wt/.cargo"
+printf '[build]\ntarget-dir = "own"\n' >"$real/wt/.cargo/config.toml"
+out="$(where "$real/wt")"
+if [ "$out" = "$real/wt/own" ]; then ok "a worktree with settings of its own builds where they say"; else bad "target_dir gave $out for a worktree whose own config sets target-dir own"; fi
+rm "$real/wt/.cargo/config.toml"
+rmdir "$real/wt/.cargo"
+printf '[build]\njobs = 2\n' >"$repo/.cargo/config.toml"
 
 # A cargo task and the MCP server, both run in the worktree, build into the
 # same place with the same settings. The stand-in cargo notes the target it

@@ -102,18 +102,59 @@ main_checkout() {
   printf '%s\n' "$dir"
 }
 
+# settings_target_dir <config.toml>: the build.target-dir a cargo settings
+# file names, from the directory that holds its .cargo as cargo reads it, or
+# nothing. A line-wise reading rather than a TOML parser, since macOS's
+# python3 has no tomllib: a [build] table's target-dir, or a dotted
+# build.target-dir, quoted either way; the last one wins.
+settings_target_dir() {
+  local file="$1" value
+  [ -f "$file" ] || return 0
+  value="$(awk '
+    { sub(/\r$/, "") }
+    /^[ \t]*\[/ { table = $0; sub(/^[ \t]*\[[ \t]*/, "", table); sub(/[ \t]*\].*$/, "", table); next }
+    {
+      line = $0
+      if (table == "build" && line ~ /^[ \t]*target-dir[ \t]*=/) { sub(/^[ \t]*target-dir[ \t]*=[ \t]*/, "", line) }
+      else if (table == "" && line ~ /^[ \t]*build\.target-dir[ \t]*=/) { sub(/^[ \t]*build\.target-dir[ \t]*=[ \t]*/, "", line) }
+      else next
+      q = substr(line, 1, 1)
+      if (q != "\"" && q != "'\''") next
+      rest = substr(line, 2); end = index(rest, q)
+      if (end > 0) found = substr(rest, 1, end - 1)
+    }
+    END { if (found != "") print found }
+  ' "$file")"
+  case "$value" in
+    "") ;;
+    /*) printf '%s\n' "$value" ;;
+    *) printf '%s/%s\n' "$(dirname "$(dirname "$file")")" "$value" ;;
+  esac
+}
+
 # target_dir [dir]: where cargo builds for the checkout at <dir> (this one by
-# default), the one place that is decided. CARGO_TARGET_DIR as an absolute
-# path (a relative one is from the checkout, where the tasks build), else the
-# main checkout's target/, so a linked worktree reuses the build that is there
-# rather than growing one of its own wherever the worktree was made. A target
-# that is a link (to a drive with room, say) is where it leads.
+# default), the one place that is decided, in cargo's own order:
+# CARGO_TARGET_DIR, then CARGO_BUILD_TARGET_DIR (a relative one of either is
+# from the checkout, where the tasks build), then a target-dir in the
+# checkout's .cargo/config.toml, or in the main checkout's when a linked
+# worktree has none, so a target put on a drive with room stays there. Else
+# the main checkout's target/, so a linked worktree reuses the build that is
+# there rather than growing one of its own wherever the worktree was made. A
+# target that is a link (to a drive with room, say) is where it leads.
 target_dir() {
-  local dir="${1:-$ljos_root}" target
-  case "${CARGO_TARGET_DIR:-}" in
-    "") target="$(main_checkout "$dir")/target" ;;
-    /*) target="$CARGO_TARGET_DIR" ;;
-    *) target="$dir/$CARGO_TARGET_DIR" ;;
+  local dir="${1:-$ljos_root}" asked="${CARGO_TARGET_DIR:-${CARGO_BUILD_TARGET_DIR:-}}" target main
+  case "$asked" in
+    "")
+      main="$(main_checkout "$dir")"
+      if [ -f "$dir/.cargo/config.toml" ]; then
+        target="$(settings_target_dir "$dir/.cargo/config.toml")"
+      else
+        target="$(settings_target_dir "$main/.cargo/config.toml")"
+      fi
+      if [ -z "$target" ]; then target="$main/target"; fi
+      ;;
+    /*) target="$asked" ;;
+    *) target="$dir/$asked" ;;
   esac
   if [ -d "$target" ]; then
     target="$(physical "$target")"
