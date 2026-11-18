@@ -9,7 +9,7 @@ if [ $# -eq 0 ]; then
   set -- "$root/crates/ljos_test/tests/qml/suite" -import "$root/crates/ljos_test/tests/qml/imports"
   # The suite saves a picture (`grabImage(...).save(name)`) into the current
   # directory, which must not be the checkout.
-  work="$(from_asked "${QTTEST_DIR:-$(target_dir)/qttest}")"
+  work="$(from_asked "${QTTEST_DIR:-$(checkout_dir qttest)}")"
   mkdir -p "$work"
   cd "$work"
 else
