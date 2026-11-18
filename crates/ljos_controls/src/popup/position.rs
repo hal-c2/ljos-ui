@@ -8,7 +8,7 @@
 use std::sync::OnceLock;
 
 use ljos_engine::{Engine, EngineError, ObjectId, PropIndex, QmlType, Value};
-use ljos_quick::{Item, is_item, scene_transform};
+use ljos_quick::{Item, is_item, map_from_scene, map_to_scene};
 use ljos_render::kurbo;
 
 use super::placement::{self, Axis};
@@ -80,18 +80,24 @@ pub(super) fn place(engine: &Engine, popup: ObjectId) -> Result<(), EngineError>
         num(engine, popup, Popup::WIDTH.index),
         num(engine, popup, Popup::HEIGHT.index),
     );
-    let to_scene = scene_transform(engine, parent);
+    // Exactly, perspective and all, as `mapToItem` and Qt map: a popover
+    // that measured its place with `mapToItem` is put there. Only the
+    // picture of an item in perspective is the render tree's affine fit.
+    let to_scene = |p: kurbo::Point| map_to_scene(engine, parent, p);
     let centre = object(engine, popup, center_in()).filter(|t| is_item(engine, *t));
     let flips = state.flips.get();
     // Where it was put, and where it would be on the other side of its
     // parent along each axis it flips on, in the overlay.
     let (pos, mirrored) = match centre {
         Some(t) => {
-            let middle = scene_transform(engine, t)
-                * kurbo::Point::new(
+            let middle = map_to_scene(
+                engine,
+                t,
+                kurbo::Point::new(
                     num(engine, t, Item::WIDTH.index) / 2.0,
                     num(engine, t, Item::HEIGHT.index) / 2.0,
-                );
+                ),
+            );
             let pos = kurbo::Point::new(middle.x - w / 2.0, middle.y - h / 2.0);
             (pos, (None, None))
         }
@@ -117,16 +123,16 @@ pub(super) fn place(engine: &Engine, popup: ObjectId) -> Result<(), EngineError>
                 state.requested.set((x, y));
             }
             let (x, y) = state.requested.get();
-            let pos = to_scene * kurbo::Point::new(x, y);
+            let pos = to_scene(kurbo::Point::new(x, y));
             // Mirrored around the middle of the parent, one axis at a
             // time: the other one stays as it was put.
             let beside = flips.horizontal.then(|| {
                 let other = num(engine, parent, Item::WIDTH.index) - x - w;
-                (to_scene * kurbo::Point::new(other, y)).x
+                to_scene(kurbo::Point::new(other, y)).x
             });
             let above = flips.vertical.then(|| {
                 let other = num(engine, parent, Item::HEIGHT.index) - y - h;
-                (to_scene * kurbo::Point::new(x, other)).y
+                to_scene(kurbo::Point::new(x, other)).y
             });
             (pos, (beside, above))
         }
@@ -153,7 +159,7 @@ pub(super) fn place(engine: &Engine, popup: ObjectId) -> Result<(), EngineError>
     engine.untrack(|| {
         set_computed(engine, item, Item::X.index, Value::Real(pos.x))?;
         set_computed(engine, item, Item::Y.index, Value::Real(pos.y))?;
-        let local = to_scene.inverse() * pos;
+        let local = map_from_scene(engine, parent, pos);
         state.placing.set(true);
         let wrote = set_derived(engine, popup, Popup::X.index, Value::Real(local.x))
             .and_then(|()| set_derived(engine, popup, Popup::Y.index, Value::Real(local.y)));

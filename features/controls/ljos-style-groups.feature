@@ -199,6 +199,107 @@ Feature: Ljós's own style: tabs, cards, popovers, split buttons and empty state
         | with margins            | 1     | 200 | 250 | 120    | 12      | above it, as 114 is left below its margins  | 0  | -124 |
         | with room below         | 1     | 200 | 20  | 100    | 0       | below it                                    | 0  | 24   |
 
+    # Its place is found again when a transform of an ancestor changes, as
+    # when the ancestor's position or scale does.
+    @api-QtQuick.Item.transform
+    Scenario: A popover follows its button when a transform of an ancestor moves it
+      Given the QML:
+        """qml
+        import Ljos.Ui
+        import Ljos.Controls
+        Item {
+          id: root; objectName: "root"
+          width: 400; height: 400
+          property real shift: 0
+          Item {
+            width: 400; height: 400
+            transform: Translate { y: root.shift }
+            Button {
+              y: 300; width: 60; height: 20; text: "Filter"
+              Popover { id: pop; objectName: "pop"; width: 100; height: 100 }
+            }
+          }
+          property real popY: pop.y
+        }
+        """
+      When the method "open" of "pop" is called
+      And 200 milliseconds pass
+      Then the property "visible" of "pop" is true
+      And the property "popY" of "root" is -104
+      When the property "shift" of "root" is set to -200
+      And 200 milliseconds pass
+      Then the property "popY" of "root" is 24
+
+    # An animator moves what is drawn alone: the scale reads 1 until it
+    # ends, as in Qt, and the room is measured where `mapToItem` says the
+    # button is. Told its end, the popover is placed again.
+    @api-QtQuick.ScaleAnimator
+    Scenario: A popover opened while an ancestor's ScaleAnimator runs is placed by the scale it reads, and again when the animator ends
+      Given the QML:
+        """qml
+        import QtQuick
+        import Ljos.Ui
+        import Ljos.Controls
+        Item {
+          id: root; objectName: "root"
+          width: 400; height: 400
+          Item {
+            id: grows
+            width: 200; height: 200; transformOrigin: Item.TopLeft
+            ScaleAnimator { id: grower; target: grows; from: 1; to: 2; duration: 1000 }
+            Button {
+              x: 10; y: 150; width: 60; height: 20; text: "Filter"
+              Popover { id: pop; objectName: "pop"; width: 100; height: 100; margins: 8 }
+            }
+          }
+          property real grown: grows.scale
+          property real popY: pop.y
+          function grow() { grower.start(); pop.open() }
+        }
+        """
+      When the method "grow" of "root" is called
+      And 200 milliseconds pass
+      Then the property "visible" of "pop" is true
+      And the property "grown" of "root" is 1
+      And the property "popY" of "root" is 24
+      When 1000 milliseconds pass
+      Then the property "grown" of "root" is 2
+      And the property "popY" of "root" is -52
+
+    # The room is measured where `mapToItem` says the button is, and the
+    # popover is put where its place maps to, perspective and all, as Qt
+    # puts a popup.
+    @api-QtQuick.Rotation.axis
+    Scenario: A popover under an ancestor turned in perspective is where its place maps to
+      Given the QML:
+        """qml
+        import QtQuick
+        import Ljos.Controls
+        Item {
+          id: root; objectName: "root"
+          width: 400; height: 400
+          Item {
+            x: 100; y: 100; width: 200; height: 200
+            transform: Rotation { angle: 50; axis { x: 0; y: 1; z: 0 } origin.x: 100; origin.y: 100 }
+            Button {
+              id: filter; x: 20; y: 20; width: 60; height: 20; text: "Filter"
+              Popover { id: pop; objectName: "pop"; width: 100; height: 60 }
+            }
+          }
+          property var got: []
+          function measure() {
+            const shown = pop.background.mapToItem(root, -pop.background.x, -pop.background.y)
+            const meant = filter.mapToItem(root, pop.x, pop.y)
+            got = [Math.round(shown.x - meant.x), Math.round(shown.y - meant.y)]
+          }
+        }
+        """
+      When the method "open" of "pop" is called
+      And 200 milliseconds pass
+      Then the property "visible" of "pop" is true
+      When the method "measure" of "root" is called
+      Then the property "got" of "root" is [0, 0]
+
     Scenario: A popover fades in on the overlay surface and closes at once
       Given the QML:
         """qml

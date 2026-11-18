@@ -49,6 +49,16 @@ T.Popup {
         let top = anchor
         while (top.parent) {
             void [top.x, top.y, top.width, top.height, top.scale, top.rotation, top.transformOrigin]
+            // Its transforms move it as well, each by its own properties.
+            // An engine may hold an item's one transform as itself, and no
+            // transform as nothing, rather than as a list.
+            const list = top.transform
+            const all = !list ? [] : list.length === undefined ? [list] : list
+            for (let i = 0; i < all.length; i++) {
+                const t = all[i]
+                void [t.x, t.y, t.angle, t.axis, t.origin, t.distanceToPlane, t.xScale, t.yScale,
+                      t.matrix, t.xFactor, t.yFactor, t.xAngle, t.yAngle]
+            }
             top = top.parent
         }
         const at = anchor.mapToItem(top, 0, 0, anchorWidth, anchorHeight)
