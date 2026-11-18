@@ -403,7 +403,7 @@ fn rebuild(e: &Engine, obj: ObjectId) {
         )
     });
     cells.host.set(content);
-    let (Some(content), Some(delegate)) = (content, delegate) else {
+    let Some(content) = content else {
         return;
     };
     if cells.watched.get() != Some(content) {
@@ -416,17 +416,38 @@ fn rebuild(e: &Engine, obj: ObjectId) {
             );
         }
     }
-    let Some((data, _)) = rows(e, obj, kind) else {
-        return;
+    // With no delegate, or no month to show, there are no days, and the
+    // content item asks for no room: binding it to the cells just destroyed
+    // would keep asking for the gaps between them.
+    let made = match delegate.and_then(|delegate| Some((delegate, rows(e, obj, kind)?.0))) {
+        Some((delegate, data)) => make_cells(e, obj, content, delegate, data),
+        None => Vec::new(),
     };
+    let items: Rc<[ObjectId]> = made.iter().map(|(item, _)| *item).collect();
+    *cells.made.borrow_mut() = made;
+    ask_for_room(e, obj, content, kind, items);
+    layout(e, obj);
+}
+
+/// One delegate item per cell, in the content item, each with its cell as
+/// its model.
+fn make_cells(
+    e: &Engine,
+    obj: ObjectId,
+    content: ObjectId,
+    delegate: ObjectId,
+    data: Vec<CalendarCell>,
+) -> Vec<(ObjectId, ObjectId)> {
     let mut made = Vec::new();
     for cell in data {
         let mut values = role_values(&cell);
         let ctx = match e.create_native_incomplete(cell, Some(obj)) {
             Ok(c) => c,
             Err(err) => {
+                // The cells made so far are handed back all the same, so the
+                // next rebuild destroys them instead of leaving them behind.
                 check(e, "delegate", Err(err));
-                return;
+                break;
             }
         };
         check(
@@ -447,10 +468,7 @@ fn rebuild(e: &Engine, obj: ObjectId) {
             Err(err) => check(e, "delegate", Err(err)),
         }
     }
-    let items: Rc<[ObjectId]> = made.iter().map(|(item, _)| *item).collect();
-    *cells.made.borrow_mut() = made;
-    ask_for_room(e, obj, content, kind, items);
-    layout(e, obj);
+    made
 }
 
 /// The content item asks for the room its cells ask for: the widest cell
@@ -461,6 +479,12 @@ fn rebuild(e: &Engine, obj: ObjectId) {
 /// not placed it yet) takes its size from this, and the content item's
 /// size from the control's: an implicit size written when the content
 /// item's size changed made that size depend on itself, a binding loop.
+///
+/// With no days there is nothing to put `spacing` between, so it asks for
+/// no room at all.
+// Qt 6.12: a MonthGrid with no delegate still asks for the five gaps between
+// its rows (30 tall at a spacing of 6); a DayOfWeekRow or a WeekNumberColumn
+// with none asks for nothing.
 fn ask_for_room(e: &Engine, obj: ObjectId, content: ObjectId, kind: Kind, items: Rc<[ObjectId]>) {
     let (cols, rows) = kind.shape();
     for (p, cell, n) in [
@@ -469,10 +493,12 @@ fn ask_for_room(e: &Engine, obj: ObjectId, content: ObjectId, kind: Kind, items:
     ] {
         let items = items.clone();
         let room = move |e: &Engine| {
+            let mut live = items.iter().filter(|item| e.is_alive(**item)).peekable();
+            if live.peek().is_none() {
+                return Value::Real(0.0);
+            }
             let spacing = num(e, obj, Control::SPACING.index);
-            let most = items
-                .iter()
-                .filter(|item| e.is_alive(**item))
+            let most = live
                 .map(|item| num(e, *item, cell.index))
                 .fold(0.0_f64, f64::max);
             Value::Real(n as f64 * most + spacing * (n - 1) as f64)
