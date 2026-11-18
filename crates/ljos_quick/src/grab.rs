@@ -111,10 +111,22 @@ fn result_named(engine: &Engine, url: &str) -> Option<ObjectId> {
     urls.iter().find(|(_, u)| *u == url).map(|(obj, _)| *obj)
 }
 
+/// What Rust is called back with: the picture, or `None` when none came.
+type HostDone = Box<dyn FnOnce(&Engine, Option<ImageHandle>)>;
+
+/// Who a grab's picture goes to.
+enum Done {
+    /// A script's callback, with an `ItemGrabResult`.
+    Script(Value),
+    /// Rust's, with the picture itself: no result is made for scripts to
+    /// own, as nothing in them holds it.
+    Host(HostDone),
+}
+
 /// A grab asked for and not yet taken.
 pub(crate) struct Grab {
     pub(crate) item: ObjectId,
-    callback: Value,
+    done: Done,
     /// The item's size when it was asked, rounded, in logical pixels.
     pub(crate) size: (f64, f64),
     /// The picture's size in logical pixels: `size` unless the caller gave
@@ -154,8 +166,10 @@ pub(crate) fn grab_to_image(
     if !engine.is_callable(&callback) {
         return refuse("'callback' is not a function");
     }
+    // Before the target is read: Qt refuses an item in no window whatever
+    // size it is asked for.
     if let Err(why) = in_shown_window(engine, item) {
-        return refuse(why);
+        return refuse(&why.to_string());
     }
     let target = match &target_size {
         Value::Undefined | Value::Null => None,
@@ -167,6 +181,50 @@ pub(crate) fn grab_to_image(
             ));
         }
     };
+    match ask(engine, item, target, Done::Script(callback)) {
+        Ok(()) => Ok(true),
+        Err(why) => refuse(&why.to_string()),
+    }
+}
+
+/// Why an item cannot give a grab, as Qt's warning says it. More reasons
+/// may come as the grab learns what Qt refuses.
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
+#[non_exhaustive]
+pub enum GrabRefused {
+    #[error("item is not attached to a window")]
+    NotInWindow,
+    #[error("item's window is not visible")]
+    WindowHidden,
+    #[error("item's width and/or height are less than 1: QSize({0}, {1})")]
+    TooSmall(f64, f64),
+}
+
+/// Takes a picture of `item` for Rust, as `Item.grabToImage` takes one for
+/// a script: the scene that shows the item draws it at its next frame,
+/// and `done` is called after that frame, between turns, with its pixels,
+/// as many to a logical pixel as the scene has. `done` gets `None` when
+/// the item leaves every shown window first, is destroyed first, or
+/// cannot be drawn: it is called once for every grab asked. A host that
+/// checks or keeps what an item shows (a test, a thumbnail) needs no
+/// script to ask.
+pub fn grab(
+    engine: &Engine,
+    item: ObjectId,
+    done: impl FnOnce(&Engine, Option<ImageHandle>) + 'static,
+) -> Result<(), GrabRefused> {
+    ask(engine, item, None, Done::Host(Box::new(done)))
+}
+
+/// Queues a grab of `item` at `target` (its own size when `None`) for
+/// its scene's next frame, or says why the item cannot give one.
+fn ask(
+    engine: &Engine,
+    item: ObjectId,
+    target: Option<(f64, f64)>,
+    done: Done,
+) -> Result<(), GrabRefused> {
+    in_shown_window(engine, item)?;
     let size = engine.untrack(|| {
         (
             engine
@@ -185,10 +243,7 @@ pub(crate) fn grab_to_image(
         .filter(|(w, h)| *w > 0.0 && *h > 0.0)
         .unwrap_or(size);
     if !(target.0 >= 1.0 && target.1 >= 1.0) {
-        return refuse(&format!(
-            "item's width and/or height are less than 1: QSize({}, {})",
-            target.0, target.1
-        ));
+        return Err(GrabRefused::TooSmall(target.0, target.1));
     }
     let grabs = engine.extension::<Grabs>();
     if !grabs.listening.replace(true) {
@@ -196,31 +251,41 @@ pub(crate) fn grab_to_image(
     }
     grabs.pending.borrow_mut().push(Grab {
         item,
-        callback,
+        done,
         size,
         target,
     });
     crate::scene::grab_wanted(engine, item);
-    Ok(true)
+    Ok(())
 }
 
-/// Whether `item` is in a window that is shown, or why not, as Qt's
-/// warning says it.
-fn in_shown_window(engine: &Engine, item: ObjectId) -> Result<(), &'static str> {
+/// Whether `item` is in a window that is shown, or why not.
+fn in_shown_window(engine: &Engine, item: ObjectId) -> Result<(), GrabRefused> {
     // A window is there while a scene shows it: one a host dropped, its
     // root kept, is in no window, and no frame will draw what it held.
     let window = engine.untrack(|| crate::layer::window_item(engine, item));
     if !crate::scene::shows_window(engine, window) {
-        return Err("item is not attached to a window");
+        return Err(GrabRefused::NotInWindow);
     }
-    // A Window that is not shown has `visibility` Hidden (0); a scene's
-    // plain root item has none.
-    if engine.find_property(window, "visibility").is_some()
-        && engine.untrack(|| engine.read_by_name(window, "visibility").to_number()) == 0.0
-    {
-        return Err("item's window is not visible");
-    }
-    Ok(())
+    // The item's window is the nearest Window it is in, which need not be
+    // the top of its tree: a Window declared inside an item hangs from
+    // that item. One not shown has `visibility` Hidden (0). Only a Window
+    // says so: any item may have a property of that name, a scene's plain
+    // root item is no Window, and neither is a program's own component
+    // that is called one.
+    engine.untrack(|| {
+        let mut at = Some(item);
+        while let Some(obj) = at {
+            if crate::item::is_window(engine, obj) {
+                if engine.read_by_name(obj, "visibility").to_number() == 0.0 {
+                    return Err(GrabRefused::WindowHidden);
+                }
+                break;
+            }
+            at = engine.visual_parent(obj);
+        }
+        Ok(())
+    })
 }
 
 /// The type of `item` its warnings name when it was declared in no file:
@@ -237,9 +302,9 @@ fn native_name(engine: &Engine, item: ObjectId) -> String {
 }
 
 /// Hands a scene the grabs of the items `shows` says it shows. A grab of
-/// an item that is gone is dropped. One whose item left every shown
-/// window after it was asked can never be drawn: its callback gets an
-/// empty result, as Qt's does.
+/// an item that is gone is let go (see [`let_go`]). One whose item left
+/// every shown window after it was asked can never be drawn: its
+/// callback gets an empty result, as Qt's does.
 pub(crate) fn take(engine: &Engine, shows: impl Fn(ObjectId) -> bool) -> Vec<Grab> {
     let grabs = engine.extension::<Grabs>();
     let mut pending = grabs.pending.borrow_mut();
@@ -249,9 +314,8 @@ pub(crate) fn take(engine: &Engine, shows: impl Fn(ObjectId) -> bool) -> Vec<Gra
     let mut taken = Vec::new();
     for grab in std::mem::take(&mut *pending) {
         if !engine.is_alive(grab.item) {
-            continue;
-        }
-        if in_shown_window(engine, grab.item).is_err() {
+            let_go(engine, grab);
+        } else if in_shown_window(engine, grab.item).is_err() {
             not_drawn(engine, grab);
         } else if shows(grab.item) {
             taken.push(grab);
@@ -278,7 +342,7 @@ pub(crate) fn waiting(engine: &Engine, shows: impl Fn(ObjectId) -> bool) -> bool
 /// that no scene shows now gets an empty result, as no frame of that
 /// scene comes to settle it. Its callback is queued, not run: the scene
 /// is going, and the host dropping it is in the middle of its own work.
-/// A grab of an item that is gone is dropped.
+/// A grab of an item that is gone is let go (see [`let_go`]).
 pub(crate) fn settle_unshown(engine: &Engine, showed: impl Fn(ObjectId) -> bool) {
     let settled: Vec<Grab> = {
         let grabs = engine.extension::<Grabs>();
@@ -295,7 +359,19 @@ pub(crate) fn settle_unshown(engine: &Engine, showed: impl Fn(ObjectId) -> bool)
     for grab in settled {
         if engine.is_alive(grab.item) {
             not_drawn(engine, grab);
+        } else {
+            let_go(engine, grab);
         }
+    }
+}
+
+/// The item of `grab` is gone. A script's grab is dropped: nothing in the
+/// scripts holds its result, and the item it was asked of is gone with
+/// its callback. Rust's still hears there is no picture, so a host that
+/// waits on it is not left waiting.
+fn let_go(engine: &Engine, grab: Grab) {
+    if matches!(grab.done, Done::Host(_)) {
+        not_drawn(engine, grab);
     }
 }
 
@@ -312,19 +388,28 @@ pub(crate) fn not_drawn(engine: &Engine, grab: Grab) {
 }
 
 /// A grab of an item the scene shows could not be drawn: says so, as the
-/// script waits for a picture that its callback is not given.
+/// one who asked waits for a picture it is not given. The warning names
+/// what asked: a script's `grabToImage` or Rust's [`grab`].
 pub(crate) fn failed(engine: &Engine, grab: Grab) {
     let at = engine.declared_at(grab.item).unwrap_or_default();
     let ty = engine.warning_type_name(grab.item, &native_name(engine, grab.item));
+    let asked = match grab.done {
+        Done::Script(_) => "grabToImage",
+        Done::Host(_) => "ljos::item::grab",
+    };
     engine.log(
         LogLevel::Warning,
         CATEGORY,
-        format!("{at}QML {ty}: grabToImage: the item could not be drawn"),
+        format!("{at}QML {ty}: {asked}: the item could not be drawn"),
     );
     not_drawn(engine, grab);
 }
 
 fn deliver(engine: &Engine, grab: Grab, picture: Option<ImageHandle>) {
+    let callback = match grab.done {
+        Done::Script(callback) => callback,
+        Done::Host(done) => return done(engine, picture),
+    };
     let grabs = engine.extension::<Grabs>();
     // An empty result names no picture.
     let mut url = String::new();
@@ -340,7 +425,14 @@ fn deliver(engine: &Engine, grab: Grab, picture: Option<ImageHandle>) {
                     CATEGORY,
                     format!("grabToImage: cannot encode the picture: {err}"),
                 );
-                return deliver(engine, grab, None);
+                return deliver(
+                    engine,
+                    Grab {
+                        done: Done::Script(callback),
+                        ..grab
+                    },
+                    None,
+                );
             }
         }
     }
@@ -368,7 +460,7 @@ fn deliver(engine: &Engine, grab: Grab, picture: Option<ImageHandle>) {
     }
     let _ = engine.emit_by_name(result, "ready", &[]);
     if engine.is_alive(result) {
-        let _ = engine.call_js(&grab.callback, &[Value::Object(result)]);
+        let _ = engine.call_js(&callback, &[Value::Object(result)]);
     }
 }
 

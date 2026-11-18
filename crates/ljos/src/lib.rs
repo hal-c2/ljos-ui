@@ -163,10 +163,10 @@ pub mod prelude {
         Atom, Color, ConnectionId, ContextId, Copied, Cx, Engine, EngineError, FollowedFiles,
         Handler, ItemModel, ItemTree, JsError, LogEntry, LogLevel, MetaRef, ModelChange,
         ModelListener, ModelListeners, ModelSignals, ObjectId, Point, Prop, PropIndex, PropertyMap,
-        QmlList, QmlListModel, QmlObject, QmlType, QmlValue, QtObject, Quaternion, Rect, RowKey,
-        ScopedEvent, ScopedSingleton, SignalIndex, Size, Timer, TreeChange, TreeListener,
-        TreeListeners, Url, Value, Vector3d, Version, WindowScope, invalid_model_index, list_model,
-        model_index, qml_impl, qml_singleton, tree_model,
+        QmlList, QmlListModel, QmlObject, QmlSingleton, QmlType, QmlValue, QtObject, Quaternion,
+        Rect, RowKey, ScopedEvent, ScopedSingleton, SignalIndex, SingletonScope, Size, Timer,
+        TreeChange, TreeListener, TreeListeners, Url, Value, Vector3d, Version, WindowScope,
+        invalid_model_index, list_model, model_index, qml_impl, qml_singleton, tree_model,
     };
     pub use ljos_platform::{
         BadgeService, ClipboardError, ClipboardImage, ClipboardMode, ClipboardService,
@@ -199,7 +199,11 @@ pub mod locale;
 #[cfg(feature = "mcp")]
 #[cfg(not(target_arch = "wasm32"))]
 pub mod mcp;
-#[cfg(any(feature = "dev-qml", feature = "build"))]
+#[cfg(any(
+    feature = "dev-qml",
+    feature = "build",
+    all(feature = "user-qml", feature = "shell")
+))]
 #[cfg(not(target_arch = "wasm32"))]
 mod oracle;
 /// Hot reload in a development build (the `dev` feature): what
@@ -287,7 +291,7 @@ pub mod input {
 #[cfg(not(target_arch = "wasm32"))]
 macro_rules! include_qml {
     ($name:literal) => {
-        $crate::MapSource::from_pack(::core::include_bytes!(::core::concat!(
+        $crate::MapSource::from_static_pack(::core::include_bytes!(::core::concat!(
             ::core::env!("OUT_DIR"),
             "/",
             $name
@@ -323,11 +327,19 @@ pub use ljos_engine::aot;
 #[doc(hidden)]
 #[cfg(not(target_arch = "wasm32"))]
 pub use ljos_engine;
+#[cfg(not(target_arch = "wasm32"))]
+pub use ljos_engine::log_to_stderr;
 #[doc(hidden)]
 #[cfg(not(target_arch = "wasm32"))]
 pub use ljos_engine::module;
 #[cfg(not(target_arch = "wasm32"))]
 pub use ljos_engine::{ComponentSource, Engine, MapSource, ObjectId};
+/// Waits until every line [`log_to_stderr`] queued so far is written, at
+/// most two seconds: what a host that opened the application with
+/// [`App::build`] and writes its log to stderr calls before it ends, so
+/// its last lines are not lost. [`App::run`] calls it itself.
+#[cfg(not(target_arch = "wasm32"))]
+pub use ljos_runtime::stderr::flush as flush_log_to_stderr;
 
 /// An Engine with the standard modules registered (QtQml, QtQuick,
 /// QtQuick.Controls, with `media` QtMultimedia, and what they pull in), ready for an application's
@@ -464,6 +476,13 @@ pub fn run_headless<M: Send + 'static>(
     ljos_shell::run_headless(config, setup)
 }
 
+/// A side stream (ARCHITECTURE.md §3.3): for a thread that feeds the UI
+/// many small items, made by [`Setup::batch`] and handled by
+/// [`Setup::on_batch`] a run at a time. Its [`BatchSender`] never blocks:
+/// a full stream gives way by its [`BatchPolicy`].
+#[cfg(feature = "shell")]
+#[cfg(not(target_arch = "wasm32"))]
+pub use ljos_runtime::{BatchPolicy, BatchSender, Drain, UiBatch};
 /// The thread-safe handle a worker thread posts messages to the
 /// Engine through: what [`Setup::handle`] hands out. Its `send`
 /// fails fast on a full inbox with a [`SendError`]; `send_blocking`
@@ -472,10 +491,15 @@ pub fn run_headless<M: Send + 'static>(
 /// newest message under each [`CoalesceKey`].
 #[cfg(feature = "shell")]
 #[cfg(not(target_arch = "wasm32"))]
-pub use ljos_runtime::{CoalesceKey, SendAsync, SendError, UiHandle};
+pub use ljos_runtime::{CoalesceKey, DrainBudget, SendAsync, SendError, UiHandle};
 #[cfg(feature = "shell")]
 #[cfg(not(target_arch = "wasm32"))]
 pub use ljos_shell::{ColorSpace, PainterError, Setup, SetupError, ShellConfig, ShellError};
+/// The files a shipped application's users change it with
+/// ([`App::user_qml`]), and what a fault of theirs is.
+#[cfg(all(feature = "user-qml", feature = "shell"))]
+#[cfg(not(target_arch = "wasm32"))]
+pub use {ljos_engine::ReloadFault, ljos_shell::UserQml};
 
 // On a page `ljos` is `ljos_web`: the same names, with no engine behind them.
 #[cfg(all(target_arch = "wasm32", feature = "web"))]

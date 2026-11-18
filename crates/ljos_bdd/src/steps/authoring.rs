@@ -7,6 +7,7 @@
 use cucumber::{given, then, when};
 use gherkin::Step;
 
+use crate::author::{Errors, Log};
 use crate::value;
 use crate::world::LjosWorld;
 
@@ -108,6 +109,38 @@ fn author_desktop_setting(
 fn author_runs(w: &mut LjosWorld, line: String) -> StepResult {
     let (author, files) = w.author_acts();
     author.run(files, &line)
+}
+
+// A task of the repository's `mise-tasks/`, run on the scenario's project
+// as a checkout of its own (features/tooling/mcp-build.feature).
+#[when(regex = r#"^the author runs "(mise-tasks/[^"]+)" in "([^"]+)"$"#)]
+fn author_runs_in(w: &mut LjosWorld, line: String, dir: String) -> StepResult {
+    let (author, files) = w.author_acts();
+    author.run_within(files, &line, &dir)
+}
+
+#[given(regex = r#"^the author's environment has "([^"]+)" set to "([^"]*)"$"#)]
+fn author_env_set(w: &mut LjosWorld, name: String, value: String) -> StepResult {
+    let (author, files) = w.author();
+    author.set_env(files, &name, Some(&value))
+}
+
+#[given(regex = r#"^the author's environment has no "([^"]+)"$"#)]
+fn author_env_unset(w: &mut LjosWorld, name: String) -> StepResult {
+    let (author, files) = w.author();
+    author.set_env(files, &name, None)
+}
+
+#[given(regex = r#"^the project is a git checkout with the linked worktree "([^"]+)"$"#)]
+fn project_git_checkout(w: &mut LjosWorld, worktree: String) -> StepResult {
+    let (author, files) = w.author();
+    author.git_checkout(files, &worktree)
+}
+
+#[then(regex = r#"^the project has no "([^"]+)"$"#)]
+fn project_has_none(w: &mut LjosWorld, name: String) -> StepResult {
+    let (author, files) = w.author();
+    author.has_none(files, &name)
 }
 
 // The application is left running, and the scenario's agent speaks to
@@ -310,6 +343,12 @@ fn command_prints(w: &mut LjosWorld, step: &Step) -> StepResult {
     w.author().0.ran()?.printed(&want)
 }
 
+#[then("the command's standard output is:")]
+fn command_standard_output(w: &mut LjosWorld, step: &Step) -> StepResult {
+    let want = author_doc(step)?;
+    w.author().0.ran()?.printed_alone(&want)
+}
+
 #[then(regex = r"^the command exits with status (\d+)$")]
 fn command_exits(w: &mut LjosWorld, status: i32) -> StepResult {
     w.author().0.ran()?.exited(status)
@@ -320,7 +359,70 @@ fn command_mentions(w: &mut LjosWorld, text: String) -> StepResult {
     w.author().0.ran()?.mentions(&unquoted(&text), true)
 }
 
+#[then(regex = r#"^the command's output mentions "(.*)" once$"#)]
+fn command_mentions_once(w: &mut LjosWorld, text: String) -> StepResult {
+    w.author().0.ran()?.mentions_once(&unquoted(&text))
+}
+
 #[then(regex = r#"^the command's output does not mention "(.*)"$"#)]
 fn command_mentions_not(w: &mut LjosWorld, text: String) -> StepResult {
     w.author().0.ran()?.mentions(&unquoted(&text), false)
+}
+
+// A packed application (features/tooling/packed-log.feature): the project
+// compiled into a pack and run by a program on the `ljos` facade.
+
+#[when("the packed application runs")]
+fn packed_runs(w: &mut LjosWorld) -> StepResult {
+    let (author, files) = w.author_acts();
+    author.run_packed(files, Log::Stderr, Errors::Read)
+}
+
+#[when(
+    regex = r"^the packed application runs with (its own log handler|a log handler set as it starts|its log kept|its errors never read|its errors read late|its errors closed)$"
+)]
+fn packed_runs_with(w: &mut LjosWorld, how: String) -> StepResult {
+    let (log, errors) = match how.as_str() {
+        "its own log handler" => (Log::Own, Errors::Read),
+        "a log handler set as it starts" => (Log::Setup, Errors::Read),
+        "its log kept" => (Log::Kept, Errors::Read),
+        "its errors never read" => (Log::Stderr, Errors::NeverRead),
+        "its errors read late" => (Log::Stderr, Errors::ReadLate),
+        _ => (Log::Stderr, Errors::Closed),
+    };
+    let (author, files) = w.author_acts();
+    author.run_packed(files, log, errors)
+}
+
+#[when("the author starts the packed application")]
+fn packed_starts(w: &mut LjosWorld) -> StepResult {
+    let (author, files) = w.author_acts();
+    author.start_packed(files)
+}
+
+#[then(
+    regex = r#"^the packed application's (errors|output) (mentions?|do not mention|does not mention) "(.*)"$"#
+)]
+fn packed_says(w: &mut LjosWorld, what: String, verb: String, text: String) -> StepResult {
+    let mentions = verb.starts_with("mention");
+    w.author()
+        .0
+        .packed_says(what == "output", &unquoted(&text), mentions)
+}
+
+#[then(regex = r"^the packed application ended within (\d+) seconds?$")]
+fn packed_ended_within(w: &mut LjosWorld, seconds: u64) -> StepResult {
+    w.author()
+        .0
+        .packed_took_at_most(std::time::Duration::from_secs(seconds))
+}
+
+#[then(regex = r"^the application has started (no|a) thread to write its errors$")]
+fn error_writer(w: &mut LjosWorld, which: String) -> StepResult {
+    w.author().0.has_error_writer(which == "a")
+}
+
+#[then("the application's errors are empty")]
+fn errors_empty(w: &mut LjosWorld) -> StepResult {
+    w.author().0.errors_empty()
 }

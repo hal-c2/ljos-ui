@@ -1676,7 +1676,7 @@ module Ljos.Ui
 		enum HAlignment AlignLeft=1 AlignRight=2 AlignHCenter=4 AlignJustify=8
 		enum VAlignment AlignTop=32 AlignBottom=64 AlignVCenter=128
 		enum TextElideMode ElideLeft=0 ElideRight=1 ElideMiddle=2 ElideNone=3
-		enum WrapMode NoWrap=0 WordWrap=1 WrapAnywhere=3 Wrap=4
+		enum WrapMode NoWrap=0 WordWrap=1 WrapAnywhere=3 WrapAtWordBoundaryOrAnywhere=4 Wrap=4
 		enum LineHeightMode ProportionalHeight=0 FixedHeight=1
 		enum RenderType QtRendering=0 NativeRendering=1 CurveRendering=2
 		enum RenderTypeQuality DefaultRenderTypeQuality=-1 LowRenderTypeQuality=26 NormalRenderTypeQuality=52 HighRenderTypeQuality=104 VeryHighRenderTypeQuality=208
@@ -5141,7 +5141,7 @@ module QtQuick
 		enum HAlignment AlignLeft=1 AlignRight=2 AlignHCenter=4 AlignJustify=8
 		enum VAlignment AlignTop=32 AlignBottom=64 AlignVCenter=128
 		enum TextElideMode ElideLeft=0 ElideRight=1 ElideMiddle=2 ElideNone=3
-		enum WrapMode NoWrap=0 WordWrap=1 WrapAnywhere=3 Wrap=4
+		enum WrapMode NoWrap=0 WordWrap=1 WrapAnywhere=3 WrapAtWordBoundaryOrAnywhere=4 Wrap=4
 		enum LineHeightMode ProportionalHeight=0 FixedHeight=1
 		enum RenderType QtRendering=0 NativeRendering=1 CurveRendering=2
 		enum RenderTypeQuality DefaultRenderTypeQuality=-1 LowRenderTypeQuality=26 NormalRenderTypeQuality=52 HighRenderTypeQuality=104 VeryHighRenderTypeQuality=208

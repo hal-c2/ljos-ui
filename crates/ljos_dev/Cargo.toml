@@ -41,6 +41,8 @@ ljos_design = { path = "../ljos_design" }
 ljos_design_qml = { path = "../ljos_design_qml" }
 ljos_engine = { path = "../ljos_engine" }
 ljos_ir = { path = "../ljos_ir" }
+# A compiled file's precompiled module, as the pack carries it.
+ljos_js = { path = "../ljos_js" }
 ljos_quick = { path = "../ljos_quick" }
 ljos_runtime = { path = "../ljos_runtime" }
 qml_front = { path = "../qml_front" }

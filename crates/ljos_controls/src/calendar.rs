@@ -16,8 +16,8 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use ljos_engine::{
-    Atom, Cx, Engine, EngineError, ItemModel, MetaRef, ModelChange, ModelListeners, ObjectId,
-    PropIndex, PropertyFlags, QmlObject, QmlType, Value, qml_impl,
+    Atom, Cx, Engine, EngineError, ItemModel, MetaRef, ModelChange, ModelListeners, NodeId,
+    ObjectId, PropIndex, PropertyFlags, QmlObject, QmlType, Value, qml_impl,
 };
 use ljos_i18n::LocaleInfo;
 use ljos_i18n::calendar::{NameWidth, civil_from_days, days_from_civil, iso_week_number};
@@ -27,6 +27,7 @@ use ljos_quick::{
 use ljos_render::kurbo;
 
 use crate::control::{Control, hover, is_left, takes_input};
+use crate::parts::declared_by_style;
 use crate::ticker;
 use crate::util::{check, num, object, warn};
 
@@ -231,9 +232,11 @@ pub(crate) struct Cells {
     kind: Cell<Kind>,
     /// Each cell's item, and the object that is its context.
     made: RefCell<Vec<(ObjectId, ObjectId)>>,
-    /// The content item the cells are in, and the one that is watched.
+    /// The content item the cells are in, and the one that is watched,
+    /// with the watches on its size.
     host: Cell<Option<ObjectId>>,
     watched: Cell<Option<ObjectId>>,
+    watches: RefCell<Vec<NodeId>>,
     /// A press is held, on this cell.
     held: Cell<bool>,
     current: Cell<Option<usize>>,
@@ -402,31 +405,75 @@ fn rebuild(e: &Engine, obj: ObjectId) {
             object(e, obj, kind.delegate()),
         )
     });
+    let content = content.filter(|c| takes_days(e, obj, *c));
     cells.host.set(content);
-    let (Some(content), Some(delegate)) = (content, delegate) else {
-        return;
-    };
-    if cells.watched.get() != Some(content) {
-        cells.watched.set(Some(content));
-        for p in [Item::WIDTH.index, Item::HEIGHT.index] {
-            check(
-                e,
-                "content",
-                e.watch(content, p, move |e, _| layout(e, obj)).map(|_| ()),
-            );
+    if cells.watched.get() != content {
+        cells.watched.set(content);
+        e.graph().dispose_all(&cells.watches.take());
+        let size = content
+            .into_iter()
+            .flat_map(|c| [(c, Item::WIDTH.index), (c, Item::HEIGHT.index)]);
+        for (c, p) in size {
+            match e.watch(c, p, move |e, _| layout(e, obj)) {
+                Ok(node) => cells.watches.borrow_mut().push(node),
+                Err(err) => check(e, "content", Err(err)),
+            }
         }
     }
-    let Some((data, _)) = rows(e, obj, kind) else {
+    let Some(content) = content else {
         return;
     };
+    // With no delegate, or no month to show, there are no days, and the
+    // content item asks for no room: binding it to the cells just destroyed
+    // would keep asking for the gaps between them.
+    let made = match delegate.and_then(|delegate| Some((delegate, rows(e, obj, kind)?.0))) {
+        Some((delegate, data)) => make_cells(e, obj, content, delegate, data),
+        None => Vec::new(),
+    };
+    let items: Rc<[ObjectId]> = made.iter().map(|(item, _)| *item).collect();
+    *cells.made.borrow_mut() = made;
+    ask_for_room(e, obj, content, kind, items);
+    layout(e, obj);
+}
+
+/// Whether the days go in `content`, the content item of `obj`: the one
+/// the style gives, a custom style's as well as a built-in one's. One
+/// written where the control itself is declared is the application's: no
+/// days are made in it, and it asks for the room the application says.
+///
+/// Which files are a custom style's is the compiler's to know, not the
+/// running program's, so a content item from any file other than the
+/// control's is taken to be the style's: that of a type the application
+/// derives from a styled month grid too, where qml6 makes none.
+fn takes_days(e: &Engine, obj: ObjectId, content: ObjectId) -> bool {
+    if declared_by_style(e, content) {
+        return true;
+    }
+    match e.document_url(content) {
+        Some(file) => e.document_url(obj).as_ref() != Some(&file),
+        None => false,
+    }
+}
+
+/// One delegate item per cell, in the content item, each with its cell as
+/// its model.
+fn make_cells(
+    e: &Engine,
+    obj: ObjectId,
+    content: ObjectId,
+    delegate: ObjectId,
+    data: Vec<CalendarCell>,
+) -> Vec<(ObjectId, ObjectId)> {
     let mut made = Vec::new();
     for cell in data {
         let mut values = role_values(&cell);
         let ctx = match e.create_native_incomplete(cell, Some(obj)) {
             Ok(c) => c,
             Err(err) => {
+                // The cells made so far are handed back all the same, so the
+                // next rebuild destroys them instead of leaving them behind.
                 check(e, "delegate", Err(err));
-                return;
+                break;
             }
         };
         check(
@@ -444,11 +491,50 @@ fn rebuild(e: &Engine, obj: ObjectId) {
         });
         match item {
             Ok(item) => made.push((item, ctx)),
-            Err(err) => check(e, "delegate", Err(err)),
+            Err(err) => {
+                // Nothing has the cell as its model now.
+                check(e, "delegate", Err(err));
+                e.destroy(ctx);
+            }
         }
     }
-    *cells.made.borrow_mut() = made;
-    layout(e, obj);
+    made
+}
+
+/// The content item asks for the room its cells ask for: the widest cell
+/// once per column and the tallest once per row, `spacing` apart.
+///
+/// It follows the cells' implicit sizes and the spacing, never the content
+/// item's own size. A control given no size (or one in a layout that has
+/// not placed it yet) takes its size from this, and the content item's
+/// size from the control's: an implicit size written when the content
+/// item's size changed made that size depend on itself, a binding loop.
+///
+/// With no days there is nothing to put `spacing` between, so it asks for
+/// no room at all.
+// Qt 6.12: a MonthGrid with no delegate still asks for the five gaps between
+// its rows (30 tall at a spacing of 6); a DayOfWeekRow or a WeekNumberColumn
+// with none asks for nothing.
+fn ask_for_room(e: &Engine, obj: ObjectId, content: ObjectId, kind: Kind, items: Rc<[ObjectId]>) {
+    let (cols, rows) = kind.shape();
+    for (p, cell, n) in [
+        (Item::IMPLICIT_WIDTH, Item::IMPLICIT_WIDTH, cols),
+        (Item::IMPLICIT_HEIGHT, Item::IMPLICIT_HEIGHT, rows),
+    ] {
+        let items = items.clone();
+        let room = move |e: &Engine| {
+            let mut live = items.iter().filter(|item| e.is_alive(**item)).peekable();
+            if live.peek().is_none() {
+                return Value::Real(0.0);
+            }
+            let spacing = num(e, obj, Control::SPACING.index);
+            let most = live
+                .map(|item| num(e, *item, cell.index))
+                .fold(0.0_f64, f64::max);
+            Value::Real(n as f64 * most + spacing * (n - 1) as f64)
+        };
+        check(e, "content", e.bind_computed(content, p.index, room));
+    }
 }
 
 /// A delegate that declares a role required follows its cell's.
@@ -496,8 +582,7 @@ fn refresh(e: &Engine, obj: ObjectId) {
     }
 }
 
-/// Spreads the cells over the content item, `spacing` apart, and tells the
-/// content item what size it would like from the cells'.
+/// Spreads the cells over the content item, `spacing` apart.
 fn layout(e: &Engine, obj: ObjectId) {
     let Some(cells) = cells_of(e, obj) else {
         return;
@@ -514,20 +599,13 @@ fn layout(e: &Engine, obj: ObjectId) {
             num(e, content, Item::HEIGHT.index),
         )
     });
-    let gaps_w = spacing * (cols - 1) as f64;
-    let gaps_h = spacing * (rows - 1) as f64;
-    let cell_w = ((w - gaps_w) / cols as f64).max(0.0);
-    let cell_h = ((h - gaps_h) / rows as f64).max(0.0);
-    let (mut max_w, mut max_h) = (0.0_f64, 0.0_f64);
+    let cell_w = ((w - spacing * (cols - 1) as f64) / cols as f64).max(0.0);
+    let cell_h = ((h - spacing * (rows - 1) as f64) / rows as f64).max(0.0);
     for (i, (item, _)) in cells.made.borrow().iter().enumerate() {
         if !e.is_alive(*item) {
             continue;
         }
         let (col, row) = (i % cols, i / cols);
-        e.untrack(|| {
-            max_w = max_w.max(num(e, *item, Item::IMPLICIT_WIDTH.index));
-            max_h = max_h.max(num(e, *item, Item::IMPLICIT_HEIGHT.index));
-        });
         for (p, v) in [
             (Item::X, col as f64 * (cell_w + spacing)),
             (Item::Y, row as f64 * (cell_h + spacing)),
@@ -536,12 +614,6 @@ fn layout(e: &Engine, obj: ObjectId) {
         ] {
             check(e, "cell", e.set(*item, p, v));
         }
-    }
-    for (p, v) in [
-        (Item::IMPLICIT_WIDTH, cols as f64 * max_w + gaps_w),
-        (Item::IMPLICIT_HEIGHT, rows as f64 * max_h + gaps_h),
-    ] {
-        check(e, "content", e.set(content, p, v));
     }
 }
 
@@ -580,7 +652,7 @@ fn start(e: &Engine, obj: ObjectId, kind: Kind) -> Result<(), EngineError> {
                 );
                 return;
             }
-            refresh(e, obj);
+            back_in_range(e, obj);
         })?;
         e.watch(obj, year, move |e, v| {
             let y = v.to_number();
@@ -595,10 +667,19 @@ fn start(e: &Engine, obj: ObjectId, kind: Kind) -> Result<(), EngineError> {
                 );
                 return;
             }
-            refresh(e, obj);
+            back_in_range(e, obj);
         })?;
     }
     Ok(())
+}
+
+/// A month and year in range are shown: the days are made again if a
+/// month or year out of range left none.
+fn back_in_range(e: &Engine, obj: ObjectId) {
+    if cells_of(e, obj).is_some_and(|c| c.made.borrow().is_empty()) {
+        rebuild(e, obj);
+    }
+    refresh(e, obj);
 }
 
 /// Today's month and year, for a control that was not given any.

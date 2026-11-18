@@ -3136,6 +3136,15 @@ impl Engine {
         node.is_some_and(|n| self.inner.graph.override_count(n) > 0)
     }
 
+    /// Whether something took `prop` over (a state, a `Binding`, a view
+    /// that sizes its page): an override, other than the holds that lay
+    /// the item out (`anchors`).
+    pub(crate) fn taken_over(&self, obj: ObjectId, prop: PropIndex) -> bool {
+        let (obj, prop) = self.redirect(obj, prop);
+        let node = self.node_if_any(obj, prop);
+        node.is_some_and(|n| self.inner.graph.has_override_but_holds(n))
+    }
+
     /// Pushes an override (`Binding {}`, `PropertyChanges`).
     pub fn push_override(
         &self,

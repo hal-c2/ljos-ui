@@ -40,10 +40,25 @@
 //! that component fails ([`crate::dev::OnError`] has the strict
 //! choice).
 //!
+//! What the application logs (`console.log`, `console.warn`, the
+//! engine's warnings) goes to stderr when it runs, one line each after
+//! its level (`debug: hello`, `warning: …`), as `ljos run` writes it
+//! and through the same writer ([`log_to_stderr`](crate::log_to_stderr)):
+//! from a thread of its own, started by the first line, so a stderr
+//! nobody reads never holds the application up and an application that
+//! logs nothing starts no thread. [`App::on_log`] sends it elsewhere and
+//! [`App::log_to_stderr`] keeps it in the Engine instead
+//! ([`Engine::take_log`]); a handler the application sets on the Engine
+//! itself, in a module or in [`App::run_with`]'s setup, replaces either.
+//! A headless [`App::build`] keeps the log in the Engine unless told
+//! otherwise, for the test that reads it; one told to write stderr
+//! calls [`flush_log_to_stderr`](crate::flush_log_to_stderr) before it
+//! ends, as [`App::run`] does itself.
+//!
 //! Neither the builder nor its parameters name an egui type; the
 //! shell's loop, and its 0 % CPU idle, stay the shell's business.
 
-use ljos_engine::{Engine, EngineError, MapSource, ObjectId, Value};
+use ljos_engine::{Engine, EngineError, LogEntry, MapSource, ObjectId, Value};
 
 /// Runs once on the Engine being built, before the root is made: a
 /// context property put in scope, or a window hook installed.
@@ -52,6 +67,27 @@ type BuildStep = Box<dyn FnOnce(&Engine)>;
 type Module = Box<dyn Fn(&Engine)>;
 /// Handles one message from a worker thread, on the Engine thread.
 type MessageHandler<M> = Box<dyn FnMut(&Engine, M) + 'static>;
+
+/// Where what the application logs goes, as [`App::on_log`] and
+/// [`App::log_to_stderr`] chose.
+enum Log {
+    /// Stderr, through [`crate::log_to_stderr`].
+    Stderr,
+    /// The application's own handler.
+    Handler(Box<dyn FnMut(&LogEntry)>),
+    /// Kept in the Engine, for [`Engine::take_log`].
+    Kept,
+}
+
+impl Log {
+    fn install(self, engine: &Engine) {
+        match self {
+            Log::Stderr => engine.set_log_handler(crate::log_to_stderr),
+            Log::Handler(handler) => engine.set_log_handler(handler),
+            Log::Kept => engine.clear_log_handler(),
+        }
+    }
+}
 
 #[cfg(feature = "dev-qml")]
 type DiagnosticsHandler = Box<dyn FnMut(&[crate::dev::Diagnostic])>;
@@ -85,12 +121,16 @@ pub struct App<M = ()> {
     dev: DevQml,
     #[cfg(feature = "mcp")]
     inspector: Option<crate::mcp::CapSet>,
+    #[cfg(all(feature = "user-qml", feature = "shell"))]
+    user_qml: Option<crate::UserQml>,
     modules: Vec<Module>,
     source: Option<MapSource>,
     root: Option<String>,
     context: Vec<BuildStep>,
     on_window: Vec<BuildStep>,
     on_message: Option<MessageHandler<M>>,
+    /// Unset: stderr when it runs, kept in the Engine when it is built.
+    log: Option<Log>,
 }
 
 impl<M> std::fmt::Debug for App<M> {
@@ -103,9 +143,19 @@ impl<M> std::fmt::Debug for App<M> {
             .field("root", &self.root)
             .field("context", &self.context.len())
             .field("on_window", &self.on_window.len())
-            .field("on_message", &self.on_message.is_some());
+            .field("on_message", &self.on_message.is_some())
+            .field(
+                "log",
+                &self.log.as_ref().map(|log| match log {
+                    Log::Stderr => "stderr",
+                    Log::Handler(_) => "handler",
+                    Log::Kept => "kept",
+                }),
+            );
         #[cfg(feature = "mcp")]
         d.field("inspector", &self.inspector.is_some());
+        #[cfg(all(feature = "user-qml", feature = "shell"))]
+        d.field("user_qml", &self.user_qml);
         d.finish_non_exhaustive()
     }
 }
@@ -125,12 +175,15 @@ impl App<()> {
             dev: DevQml::default(),
             #[cfg(feature = "mcp")]
             inspector: None,
+            #[cfg(all(feature = "user-qml", feature = "shell"))]
+            user_qml: None,
             modules: Vec::new(),
             source: None,
             root: None,
             context: Vec::new(),
             on_window: Vec::new(),
             on_message: None,
+            log: None,
         }
     }
 }
@@ -293,6 +346,39 @@ impl<M> App<M> {
     #[must_use]
     pub fn source(mut self, source: MapSource) -> Self {
         self.source = Some(source);
+        self
+    }
+
+    /// Lets the application's users change it while it runs (the
+    /// `user-qml` feature): the files of the directory `config` names are
+    /// laid over the [`source`](App::source) it was built with. A user's
+    /// file of a key replaces the application's, a new one adds a type a
+    /// `ShellLoader` or an import can name, and each save is applied with
+    /// the application's state kept. A file that does not compile leaves
+    /// the application as it was and is told
+    /// ([`UserQml::on_fault`](crate::UserQml::on_fault),
+    /// [`Engine::last_reload_error`]).
+    ///
+    /// Until the user has a file nothing is parsed or compiled. The
+    /// source must be a pack built with its sources
+    /// ([`build::Options::with_sources`](crate::build::Options::with_sources));
+    /// only the directory is read, and an address outside it (another
+    /// directory, the network) is refused and told.
+    ///
+    /// ```no_run
+    /// # fn run(pack: ljos::MapSource) -> Result<(), ljos::ShellError> {
+    /// // pack: ljos::include_qml!("qml.pack"), built with its sources
+    /// ljos::App::new("Shell")
+    ///     .source(pack)
+    ///     .user_qml(ljos::UserQml::dir("shell").on_fault(|f| eprintln!("{f}")))
+    ///     .root("Main")
+    ///     .run()
+    /// # }
+    /// ```
+    #[cfg(all(feature = "user-qml", feature = "shell"))]
+    #[must_use]
+    pub fn user_qml(mut self, config: crate::UserQml) -> Self {
+        self.user_qml = Some(config);
         self
     }
 
@@ -507,11 +593,14 @@ impl<M> App<M> {
             dev,
             #[cfg(feature = "mcp")]
             inspector,
+            #[cfg(all(feature = "user-qml", feature = "shell"))]
+            user_qml,
             modules,
             source,
             root,
             context,
             on_window,
+            log,
             ..
         } = self;
         App {
@@ -523,29 +612,81 @@ impl<M> App<M> {
             dev,
             #[cfg(feature = "mcp")]
             inspector,
+            #[cfg(all(feature = "user-qml", feature = "shell"))]
+            user_qml,
             modules,
             source,
             root,
             context,
             on_window,
             on_message: Some(Box::new(handler)),
+            log,
         }
+    }
+
+    /// Sends every entry the application logs (`console.log`,
+    /// `console.warn`, the engine's warnings) to `handler`, on the Engine
+    /// thread, instead of stderr: for an application that writes its log
+    /// somewhere of its own or shows it. One that wants stderr as well
+    /// calls [`log_to_stderr`](crate::log_to_stderr), the default
+    /// handler, from its own. [`build`](App::build) uses it too.
+    ///
+    /// The handler runs inside the script that logged: it should not
+    /// block. Of this and [`log_to_stderr`](App::log_to_stderr), the last
+    /// call wins; a handler the application sets on the Engine itself
+    /// ([`Engine::set_log_handler`], in a module or in
+    /// [`run_with`](App::run_with)'s setup) wins over both.
+    #[must_use]
+    pub fn on_log(mut self, handler: impl FnMut(&LogEntry) + 'static) -> Self {
+        self.log = Some(Log::Handler(Box::new(handler)));
+        self
+    }
+
+    /// Whether what the application logs goes to stderr, as it does by
+    /// default when it runs ([`run`](App::run)); a headless
+    /// [`build`](App::build) keeps it in the Engine unless this says
+    /// `true`. With `false` it is kept in the Engine, the last 1024
+    /// entries, for [`Engine::take_log`]: an application that logs
+    /// nothing anywhere, or reads its own log when it wants it.
+    ///
+    /// The lines are written from a thread of their own, after the call
+    /// that logged them returns. [`run`](App::run) waits for the last of
+    /// them before it returns; a host that opened the application with
+    /// [`build`](App::build) or [`build_engine`](App::build_engine) and
+    /// `true` here calls [`flush_log_to_stderr`](crate::flush_log_to_stderr)
+    /// before it ends, or the lines still queued then are lost.
+    ///
+    /// Of this and [`on_log`](App::on_log), the last call wins.
+    #[must_use]
+    pub fn log_to_stderr(mut self, writes: bool) -> Self {
+        self.log = Some(if writes { Log::Stderr } else { Log::Kept });
+        self
     }
 
     /// The Engine the application starts with, without a root: the
     /// standard modules, then this application's, then its
-    /// components and context state.
+    /// components and context state. What it logs is kept in it
+    /// ([`Engine::take_log`]) unless [`on_log`](App::on_log) or
+    /// [`log_to_stderr`](App::log_to_stderr) said otherwise; the host
+    /// of an Engine that writes stderr flushes it
+    /// ([`flush_log_to_stderr`](crate::flush_log_to_stderr)) before it
+    /// ends.
     pub fn build_engine(self) -> Engine {
         let Self {
             modules,
             source,
             context,
             on_window,
+            log,
             #[cfg(feature = "dev-qml")]
             dev,
             ..
         } = self;
         let engine = crate::engine();
+        // Before the modules: one that sets a handler of its own wins.
+        if let Some(log) = log {
+            log.install(&engine);
+        }
         #[cfg(feature = "dev-qml")]
         let source = Source {
             source,
@@ -687,12 +828,21 @@ impl<M> App<M> {
             context,
             on_window,
             mut on_message,
+            log,
             #[cfg(feature = "mcp")]
             inspector,
             #[cfg(feature = "dev-qml")]
             dev,
+            #[cfg(feature = "user-qml")]
+            user_qml,
             ..
         } = self;
+        // The user's files go over the application's in place of them.
+        #[cfg(feature = "user-qml")]
+        let (source, user_qml) = match user_qml {
+            Some(config) => (None, Some((source.unwrap_or_default(), config))),
+            None => (source, None),
+        };
         #[cfg(feature = "mcp")]
         let inspector = inspector_to_serve(inspector)?;
         #[cfg(not(feature = "mcp"))]
@@ -702,20 +852,32 @@ impl<M> App<M> {
         let config = shell_config
             .unwrap_or_else(|| crate::ShellConfig::new(title).with_size(size[0], size[1]));
         let setup = move |s: &mut crate::Setup<'_, M>| {
+            // First of all, so that what the inspector, the modules and
+            // the root log is written; a handler a module or `setup` sets
+            // on the Engine afterwards replaces this one.
+            log.unwrap_or(Log::Stderr).install(s.engine());
             // Before the root is made: what it logs and does is seen.
             #[cfg(feature = "mcp")]
             if let Some(inspector) = &inspector {
                 inspector.serve(s)?;
             }
             // The shell's Engine already holds the standard modules;
-            // `prepare` must not register them a second time, so it
-            // is the same function `build_engine` uses on its own.
+            // `install` must not register them a second time, so it
+            // is the first half of the `prepare` `build_engine` uses.
             #[cfg(feature = "dev-qml")]
             let source = Source {
                 source,
                 texts: dev.texts,
             };
-            prepare(s.engine(), modules, source, context, on_window);
+            install(s.engine(), modules, source);
+            // After the modules, whose types the user's files compile
+            // against; before the context, whose values may be objects
+            // of the user's types.
+            #[cfg(feature = "user-qml")]
+            if let Some((pack, config)) = user_qml {
+                s.user_qml(pack, config, crate::oracle::EngineOracle::from_engine);
+            }
+            put_context(s.engine(), context, on_window);
             #[cfg(all(feature = "dev", feature = "dev-qml"))]
             s.set_qml_dirs(dev.dirs);
             #[cfg(all(feature = "dev-qml", not(feature = "dev")))]
@@ -725,10 +887,14 @@ impl<M> App<M> {
             }
             setup(s)
         };
-        match launch {
+        let ran = match launch {
             Launch::Desktop => crate::run(config, setup),
             Launch::Headless => crate::run_headless(config, setup),
-        }
+        };
+        // The last lines logged are written before the program goes on
+        // to end, unless stderr does not take them.
+        ljos_runtime::stderr::flush();
+        ran
     }
 }
 
@@ -805,6 +971,12 @@ fn prepare(
     context: Vec<BuildStep>,
     on_window: Vec<BuildStep>,
 ) {
+    install(engine, modules, source);
+    put_context(engine, context, on_window);
+}
+
+/// The first half of [`prepare`]: the modules, then the components.
+fn install(engine: &Engine, modules: Vec<Module>, source: Source) {
     for module in modules {
         module(engine);
     }
@@ -824,6 +996,10 @@ fn prepare(
     if let Some(source) = source {
         engine.set_component_source(source);
     }
+}
+
+/// The second half of [`prepare`]: the context, then the window hooks.
+fn put_context(engine: &Engine, context: Vec<BuildStep>, on_window: Vec<BuildStep>) {
     for put in context {
         put(engine);
     }

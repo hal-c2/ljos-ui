@@ -60,10 +60,12 @@ mod probes;
 mod qttest;
 mod reload;
 mod scene;
+mod streams;
+mod user_qml;
 
 /// The text of every file of steps, in the order they are read: what the
 /// catalogue and `features:lint` read the step patterns from.
-pub const SOURCES: [&str; 15] = [
+pub const SOURCES: [&str; 17] = [
     include_str!("files.rs"),
     include_str!("scene.rs"),
     include_str!("input.rs"),
@@ -72,6 +74,7 @@ pub const SOURCES: [&str; 15] = [
     include_str!("platform.rs"),
     include_str!("application.rs"),
     include_str!("reload.rs"),
+    include_str!("user_qml.rs"),
     include_str!("pixels.rs"),
     include_str!("probes.rs"),
     include_str!("qttest.rs"),
@@ -79,6 +82,7 @@ pub const SOURCES: [&str; 15] = [
     include_str!("authoring.rs"),
     include_str!("design_audit.rs"),
     include_str!("lsp.rs"),
+    include_str!("streams.rs"),
 ];
 
 /// Every file of steps, one after the other.

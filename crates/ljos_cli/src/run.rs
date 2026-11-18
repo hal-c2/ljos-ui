@@ -20,7 +20,7 @@ use clap::Args;
 use ljos::dev::EngineOracle;
 use ljos_compiler::{Alias, Aliases};
 use ljos_design::theme::Theme;
-use ljos_engine::{Engine, LogEntry, LogLevel, TypeDump};
+use ljos_engine::{Engine, TypeDump};
 use ljos_mcp_core::{Cap, CapSet};
 use ljos_shell::{InspectorAccess, InspectorOptions, Report, Setup, SetupError, ShellConfig};
 
@@ -236,7 +236,9 @@ impl Tools {
                 .map(|c| c.to_string())
                 .collect::<Vec<_>>()
                 .join(",");
-            let at = setup.serve_inspector_as(options, access, print_log)?;
+            // The handler above writes the log already; the inspector
+            // only keeps it.
+            let at = setup.serve_inspector_as(options, access, |_| {})?;
             // Said loudly and apart from the line below: it is the one
             // thing in the start that can hand the application to others.
             if let Some(warning) = &at.warning {
@@ -470,21 +472,10 @@ pub fn describe(report: &Report) -> String {
 }
 
 /// What the application logs (`console.log`, the engine's warnings) goes
-/// to the terminal, as a developer expects of a run from one.
+/// to the terminal, as a developer expects of a run from one, and as an
+/// application on the facade writes it by default.
 fn log_to_stderr(engine: &Engine) {
-    engine.set_log_handler(print_log);
-}
-
-pub(crate) fn print_log(entry: &LogEntry) {
-    let level = match entry.level {
-        LogLevel::Debug => "debug",
-        LogLevel::Info => "info",
-        LogLevel::Warning => "warning",
-        LogLevel::Critical => "error",
-    };
-    // Not from this thread: a write to stderr can block, and this runs
-    // inside the script that logged.
-    crate::stderr::line(&format!("{level}: {}", entry.message));
+    engine.set_log_handler(ljos_engine::log_to_stderr);
 }
 
 /// The style `-style NAME`, `-style=NAME` or `--style NAME` among a
@@ -1256,6 +1247,10 @@ mod tests {
         }
         fn key(&self, url: &str) -> String {
             self.0.key(url)
+        }
+
+        fn refuse_step_up(&self, base: &str, rel: &str) -> Option<String> {
+            self.0.refuse_step_up(base, rel)
         }
     }
 

@@ -120,7 +120,7 @@ pub use error_boundary::{BoundaryFault, ErrorBoundary};
 pub use flickable::Flickable;
 pub use font_loader::{FontFamilies, FontLoader};
 pub use frame_times::{FrameTimes, Woke};
-pub use grab::{ItemGrabResult, grabbed_image};
+pub use grab::{GrabRefused, ItemGrabResult, grab, grabbed_image};
 pub use gradient::{Gradient, GradientPaint, GradientStop};
 pub use handlers::{
     DragAxis, DragHandler, HoverHandler, PinchGesture, PinchHandler, PinchPhase, PointHandler,
@@ -145,7 +145,7 @@ pub use input_method::{InputMethod, set_on_screen_keyboard};
 pub use item::{
     AnchorLine, AnchorProps, Anchors, Edge, Item, ItemLayer, WindowPosition, effective_margin,
     init_item, is_item, local_transform, map_from_scene, map_to_scene, register_backdrop,
-    register_window_position, scene_transform,
+    register_window_position, register_window_type, scene_transform,
 };
 pub use item_picture::{ItemPicture, PictureArea, item_picture};
 pub use layer::{

@@ -557,8 +557,8 @@ impl Engine {
                 }
             }
         }
-        self.close_creation(errors);
         if failed {
+            self.close_creation(errors);
             // What was added goes, and the full reload makes it and
             // tells what is wrong.
             for g in &grown {
@@ -572,6 +572,10 @@ impl Engine {
             self.reload_restore_loader(saved);
             return not_here("what is added cannot be made");
         }
+        // The added objects complete further on, and what their bindings
+        // say waits for that, as in a fresh load: a view takes its
+        // `initialItem` in as it completes.
+        self.pause_creation(errors);
         drop(saved);
         // A singleton of an edited file is the one it was, with the edit,
         // before anything reads it.
@@ -604,6 +608,18 @@ impl Engine {
                 tracing::warn!("a renamed property's object keeps its old names");
             }
         }
+        // The effects that lay out an object whose anchors change run as
+        // the batch ends, and learn from this that the text was edited.
+        *self.inner.reload.renewing.borrow_mut() = targets
+            .iter()
+            .filter(|t| {
+                t.names
+                    .iter()
+                    .chain(&t.fresh)
+                    .any(|n| n.starts_with("anchors."))
+            })
+            .map(|t| renew(&t.inst, &files, &mut memo).objects[t.obj])
+            .collect();
         self.batch(|| {
             for t in &targets {
                 let inst = renew(&t.inst, &files, &mut memo);
@@ -670,6 +686,7 @@ impl Engine {
                 self.in_place_set(&inst, id, od, name);
             }
         });
+        self.inner.reload.renewing.borrow_mut().clear();
         // A model whose elements were edited is taken to its new rows.
         for c in changed.iter().filter(|c| !c.models.is_empty()) {
             for inst in instances.iter().filter(|i| Rc::ptr_eq(&i.file, &c.old)) {
@@ -924,6 +941,7 @@ impl Engine {
         // The added objects complete as made objects do, and are known by
         // their places from now on.
         let mut tops: Vec<Rc<Instance>> = Vec::new();
+        self.resume_creation(errors);
         for g in &grown {
             self.in_place_complete(g);
             let mut top = g.old.clone();
@@ -935,6 +953,7 @@ impl Engine {
                 tops.push(top);
             }
         }
+        self.close_creation(errors);
         for top in &tops {
             self.reload_repath(top);
         }
@@ -1607,6 +1626,18 @@ impl Engine {
         for name in &t.fresh {
             self.untrack(|| self.in_place_unset(&t.inst, t.was, t.old, t.def, name, false))?;
         }
+        // What took an item in (a view its page, a view or a Loader what
+        // it makes, a control its part) sized and placed it as it was
+        // made, from the anchors it had then, and asks again when a fresh
+        // load makes it. A child its parent holds in the file is laid
+        // out by what it gives itself, in place.
+        if LAYING
+            .iter()
+            .any(|l| anchor_given(old, l) != anchor_given(t.def, l))
+            && !self.in_place_held_by_parent(&t.inst, c.old.ir.component(t.inst.comp), t.was)
+        {
+            return Err("an item something took in is anchored anew");
+        }
         let mut missing = Vec::new();
         for name in &t.names {
             if !gives(t.def, name) {
@@ -1633,8 +1664,10 @@ impl Engine {
             let target = target.at();
             // A member the file did not give may be held by what took it
             // over (a view sizes a page that has no size of its own),
-            // which decides again when the object is made again.
-            if !sets(old, name) && self.has_override(target.obj, target.prop) {
+            // which decides again when the object is made again. The
+            // anchors the file gave hold what they lay out, and decide
+            // again in place.
+            if !sets(old, name) && self.taken_over(target.obj, target.prop) {
                 return Err("an edited member is held by what took it over");
             }
             if given.is_some_and(|g| {
@@ -1695,6 +1728,24 @@ impl Engine {
             below = user.clone();
         }
         Ok(())
+    }
+
+    /// Whether object `j` of `inst` (`comp` as the old file writes it) is
+    /// a child its parent holds in the file, and stands in it as an item
+    /// there: not a page, a part, a delegate or a root, which what made
+    /// them took in.
+    fn in_place_held_by_parent(&self, inst: &Instance, comp: &ComponentDef, j: usize) -> bool {
+        let Some(p) = comp.objects[j].parent else {
+            return false;
+        };
+        let Ok(k) = u32::try_from(j) else {
+            return false;
+        };
+        let written = comp.objects[p.index()]
+            .children
+            .contains(&ObjectValue::Object(ObjIdx(k)));
+        let id = inst.objects[j];
+        written && self.untrack(|| self.visual_parent(id)) == Some(inst.objects[p.index()])
     }
 
     /// Where `od` writes the member `name` of `obj`: among its own, in a
@@ -1824,10 +1875,7 @@ impl Engine {
         od: &ObjectDef,
         gone: &dyn Fn(&str) -> bool,
     ) {
-        let given = |leaf: &str| {
-            held_in(od, &format!("anchors.{leaf}"))
-                .is_some_and(|(m, l)| m.bindings.iter().any(|b| b.name == l))
-        };
+        let given = |leaf: &str| anchor_given(od, leaf);
         let mut reset = Vec::new();
         for (sides, middle, pos, size) in [
             (["left", "right"], &["horizontalCenter"][..], "x", "width"),
@@ -2420,6 +2468,25 @@ fn names_an_object(file: &CompiledFile, name: &str) -> bool {
 
 /// The members of `od` the member `name` is written among, and its name
 /// there: `pixelSize` of the group `font`, `fillWidth` of `Layout`.
+/// Whether `od` gives the anchor line `anchors.<leaf>`.
+fn anchor_given(od: &ObjectDef, leaf: &str) -> bool {
+    held_in(od, &format!("anchors.{leaf}"))
+        .is_some_and(|(m, l)| m.bindings.iter().any(|b| b.name == l))
+}
+
+/// The anchor lines that lay an item out, as their margins do not.
+const LAYING: [&str; 9] = [
+    "left",
+    "right",
+    "top",
+    "bottom",
+    "horizontalCenter",
+    "verticalCenter",
+    "baseline",
+    "centerIn",
+    "fill",
+];
+
 fn held_in<'d, 'n>(od: &'d ObjectDef, name: &'n str) -> Option<(&'d Members, &'n str)> {
     let Some((path, leaf)) = name.rsplit_once('.') else {
         return Some((&od.members, name));

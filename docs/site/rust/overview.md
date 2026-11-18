@@ -13,7 +13,7 @@ After reading this page, you will understand how a Ljós application is structur
 
 Ljós is a toolkit for malleable software: apps that people and their agents can reshape while they run. Your Rust code holds the application's logic, data and services, and the interface on top of it is declarative QML scripted in TypeScript. Four things follow for a Rust application:
 
-- **Malleable.** Your app can let its users replace its interface. A `ShellLoader` shows their own `shell.qml` in place of your shell, your Rust code says where that file lives, and your shell comes back, with what broke and where, when theirs does not work ([Let users replace the shell](../start/your-own-shell.md)). Compiling the user's file on the device takes the compiler, which today is the `dev-qml` feature; an app that does not let its users change it embeds components compiled ahead of time and links no parser.
+- **Malleable.** Your app can let its users replace its interface. A `ShellLoader` shows their own `shell.qml` in place of your shell, your Rust code says where that file lives, and your shell comes back, with what broke and where, when theirs does not work ([Let users replace the shell](../start/your-own-shell.md)). Compiling the user's file on the device takes the compiler, which the `user-qml` feature links (`App::user_qml`); an app that does not let its users change it embeds components compiled ahead of time and links no parser.
 - **TypeScript first.** Handlers and bindings are typed TypeScript, checked before anything runs, and your native types describe their properties, signals and methods to the compiler, so a misspelt member is a check error rather than a surprise at run time.
 - **Observable.** `App::inspector` (the `mcp` feature) serves the same MCP inspector as `ljos run --mcp`, so `ljos observe` or a coding agent can read and drive your running app.
 - **Stable.** Background threads talk to the UI thread only through bounded messages, a fault stays inside the nearest `ErrorBoundary`, and an app at rest uses 0 % CPU.
@@ -77,7 +77,31 @@ fn main() {
 }
 ```
 
-A shipped application compiles its QML ahead of time in `build.rs` into a binary pack in `OUT_DIR` and embeds it with `ljos::include_qml!`. Because the QML is already lowered to intermediate representation (`ljos_ir`), the shipped binary links no QML parser or compiler. During development, you can enable the non-default `dev-qml` feature and use `App::qml_dir` (or `App::qml_dirs` for multiple import trees) to compile QML from disk at start-up.
+A shipped application compiles its QML ahead of time in `build.rs` into a binary pack in `OUT_DIR` and embeds it with `ljos::include_qml!`. Because the QML is already lowered to intermediate representation (`ljos_ir`), the shipped binary links no QML parser or compiler. An application its users change enables `user-qml` and names their directory with `App::user_qml`: it links the compiler, keeps the sources in the pack, and compiles only once the user has a file. During development, you can enable the non-default `dev-qml` feature and use `App::qml_dir` (or `App::qml_dirs` for multiple import trees) to compile QML from disk at start-up.
+
+### Where the log goes
+
+An application started with `App::run`, `App::run_headless` or their `_with` forms writes what it logs (`console.log`, `console.warn`, `console.error` and the runtime's own warnings) to stderr, one line per entry after its level, exactly as `ljos run` does:
+
+```text
+debug: hello 2
+warning: careful
+```
+
+A thread of its own writes these lines, so a terminal that scrolls slowly, a pipe nobody reads or a closed stderr never holds up the UI thread. That thread starts with the first line, so an application that logs nothing starts no thread. If stderr does not keep up for long enough to fill a 1 MiB queue, the lines that do not fit are dropped, and one line in their place says how many were lost. When the application ends, it waits up to two seconds for the remaining lines to be written.
+
+To handle the log yourself, pass a handler to `App::on_log`. Each `LogEntry` then goes to your handler, and nothing goes to stderr. `LogEntry::line` formats an entry as the stderr line above:
+
+```rust
+ljos::App::new("Hello")
+    .source(ljos::include_qml!("qml.pack"))
+    .root("Main")
+    .on_log(|entry| my_logger::info(&entry.line()))
+    .run()
+    .unwrap();
+```
+
+`App::log_to_stderr(false)` writes the log nowhere and keeps it in the Engine instead, where `Engine::take_log` reads the latest 1024 entries. Whichever of `on_log` and `log_to_stderr` you call last applies. A handler set with `Engine::set_log_handler` while the application starts, from a module's `register` or from the setup closure of `run_with`, replaces either one. `App::build` and `App::build_engine` keep the log in the Engine unless you call one of these methods, since you run that Engine yourself.
 
 ## The Engine and the UI thread
 

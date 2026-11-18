@@ -21,6 +21,16 @@
 //! A JS run cut short may not happen again (what it did before may have
 //! finished the work, or the data may have changed), so after one the Loader
 //! loads again by itself, once in [`SECOND_CHANCE`], and the log says so.
+//! That limit is for a run that loading again could cut short again: one
+//! while the item is made, or in the item's own code. A short handler of a
+//! made item whose dispatch was cut short in other objects' code (a click
+//! that sets off long work elsewhere) was set off by whatever ran the
+//! handler, not by the loading, so the Loader loads again each time. When
+//! the interrupted dispatch was not input someone gave (a press, a key, a
+//! wheel: [`crate::input::filed_acting`]) but a timer's or other work's,
+//! the item set the work off by itself, and [`ELSEWHERE_STREAK`] such
+//! interrupts in a row, each of an item the last one loaded again and soon
+//! after it, leave the Loader at `Loader.Error`.
 //! An exception in a handler is not such a fault: Qt logs it and keeps
 //! the item, and so does this. The work of making the item is charged to
 //! the Loader as its owner.
@@ -42,6 +52,14 @@ use crate::tree;
 /// How long after loading again for an interrupted script a Loader takes
 /// another such fault as final.
 const SECOND_CHANCE: Duration = Duration::from_secs(10);
+
+/// How many interrupts in a row of scripts an item set off elsewhere by
+/// itself (a timer of its own, not input someone gave it) a Loader takes,
+/// each within [`SECOND_CHANCE`] of the one before and of the item it
+/// loaded again. It loads again for the ones before; this one leaves it at
+/// `Loader.Error`. An item that sets the work off again each time it is
+/// made would chain them for good, however long the cut-off scripts ran.
+const ELSEWHERE_STREAK: u32 = 8;
 
 /// `Loader` (QtQuick).
 #[derive(Debug, QmlObject)]
@@ -127,6 +145,14 @@ struct Run {
     emptied_quietly: bool,
     /// When an interrupted script last made the Loader load again.
     second_chance: Option<Time>,
+    /// When a script an item set off elsewhere by itself was last
+    /// interrupted, how many were in a row, and the generation of the item
+    /// that loaded again for it: an item any other load made starts anew.
+    elsewhere: Option<(Time, u32, u64)>,
+    /// [`Engine::faults_reported`] when the item was last made: a fault
+    /// reported by then came from making it. `u64::MAX` while it is being
+    /// published.
+    made_through: u64,
 }
 
 #[qml_impl]
@@ -371,10 +397,19 @@ impl Boundary for LoaderBoundary {
     fn stop(&self, e: &Engine, me: ObjectId, report: &FaultReport) {
         let begun = with_run(e, me, |r| {
             // What a running job makes is not wanted any more.
+            let made_in = r.generation;
             r.generation += 1;
-            (r.job.take(), r.incubating.take())
+            let making = r.job.is_some() || report.seq <= r.made_through;
+            let again = if making || !report.stopped_outside(me) {
+                Again::Counted
+            } else if crate::input::filed_acting(e, report.seq) {
+                Again::Acted
+            } else {
+                Again::Elsewhere { made_in }
+            };
+            (r.job.take(), r.incubating.take(), again)
         });
-        let Some((job, half_made)) = begun else {
+        let Some((job, half_made, again)) = begun else {
             return;
         };
         if let Some(job) = job {
@@ -389,7 +424,7 @@ impl Boundary for LoaderBoundary {
         set(e, me, Loader::STATUS.index, loader_status::ERROR.into());
         set(e, me, Loader::PROGRESS.index, 1.0.into());
         if matches!(report.fault, Fault::JsInterrupted { .. }) {
-            load_again(e, me, report.at);
+            load_again(e, me, report.at, again);
         }
     }
 
@@ -404,9 +439,63 @@ impl Boundary for LoaderBoundary {
     }
 }
 
+/// Whether an interrupt counts toward a Loader's giving up on its item.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Again {
+    /// Loading again could be cut short again: the run was the item's own
+    /// code, or ran while the item was made.
+    Counted,
+    /// The item's handler set off other objects' code after it was made,
+    /// the interrupt stopped that, and the dispatch was input someone
+    /// gave: they set it off, and may well again.
+    Acted,
+    /// As [`Again::Acted`], for a dispatch no input was: the item set it
+    /// off by itself. `made_in` is the generation of the item.
+    Elsewhere { made_in: u64 },
+}
+
 /// After a script was interrupted at `at`: loads again unless that was just
 /// tried. The log has the fault already; this says what became of the item.
-fn load_again(e: &Engine, me: ObjectId, at: Time) {
+fn load_again(e: &Engine, me: ObjectId, at: Time, again: Again) {
+    let place = e.declared_at(me).unwrap_or_default();
+    if again != Again::Counted {
+        let streak = with_run(e, me, |r| match (again, r.elsewhere) {
+            (Again::Elsewhere { made_in }, Some((t, n, g)))
+                if g == made_in && at.saturating_since(t) < SECOND_CHANCE =>
+            {
+                n + 1
+            }
+            (Again::Elsewhere { .. }, _) => 1,
+            _ => 0,
+        });
+        match streak {
+            Some(n) if n < ELSEWHERE_STREAK => {
+                warn(
+                    e,
+                    format!(
+                        "{place}Loader: a script its item set off in another object was interrupted, loading again"
+                    ),
+                );
+                let before = with_run(e, me, |r| r.generation);
+                reload(e, me, true);
+                // A load asked for while the item was made (by a `loaded`
+                // handler) starts anew.
+                with_run(e, me, |r| {
+                    let mine = before.map(|g| g + 1);
+                    r.elsewhere =
+                        (n > 0 && mine == Some(r.generation)).then_some((at, n, r.generation));
+                });
+            }
+            Some(n) => warn(
+                e,
+                format!(
+                    "{place}Loader: scripts its item set off in other objects were interrupted {n} times in a row, so it stays at Loader.Error until it is told to load"
+                ),
+            ),
+            None => {}
+        }
+        return;
+    }
     let tried = with_run(e, me, |r| {
         let tried = r
             .second_chance
@@ -416,7 +505,6 @@ fn load_again(e: &Engine, me: ObjectId, at: Time) {
         }
         tried
     });
-    let place = e.declared_at(me).unwrap_or_default();
     match tried {
         Some(false) => {
             warn(
@@ -615,6 +703,8 @@ fn finish(e: &Engine, me: ObjectId, generation: u64, made: Result<ObjectId, Engi
     let emptied_quietly = with_run(e, me, |r| {
         r.job = None;
         r.incubating = None;
+        // What `loaded` or a change of `item` sets off is still making it.
+        r.made_through = u64::MAX;
         std::mem::take(&mut r.emptied_quietly)
     })
     .unwrap_or(false);
@@ -640,6 +730,9 @@ fn finish(e: &Engine, me: ObjectId, generation: u64, made: Result<ObjectId, Engi
             }
             set(e, me, Loader::PROGRESS.index, 1.0.into());
         }
+    }
+    if is_current(e, me, generation) {
+        with_run(e, me, |r| r.made_through = e.faults_reported());
     }
 }
 

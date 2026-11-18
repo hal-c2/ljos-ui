@@ -479,6 +479,7 @@ impl QuickScene {
     /// stay as the last event left them.
     pub fn key_event_from_text(&mut self, engine: &Engine, ev: &KeyEvent) -> bool {
         self.note_input();
+        let _acting = crate::input::Delivering::begin(engine);
         let Some(root) = self.root() else {
             return false;
         };
@@ -496,8 +497,10 @@ impl QuickScene {
 
     /// Tells the scene whether its window has the keyboard. Active focus
     /// follows: it leaves every item when the window is not active and
-    /// returns to the same item when it is again. A scene starts active.
+    /// returns to the same item when it is again. A scene starts active;
+    /// told before its root is shown, the root's window starts as told.
     pub fn set_window_active(&mut self, engine: &Engine, active: bool) {
+        self.window_active = active;
         let Some(root) = self.root() else {
             return;
         };

@@ -1,0 +1,21 @@
+[package]
+name = "ljos_example_user_shell"
+description = "A shipped application its users change while it runs: QML built ahead of time, a ShellLoader over the user's shell with the application's own as the fallback, and a text field whose text a save keeps"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+# What ships: no `dev`, `dev-qml` or `mcp`. The compiler `user-qml`
+# links runs only once the user has a file.
+ljos = { path = "../../crates/ljos", default-features = false, features = ["shell", "user-qml"] }
+
+[build-dependencies]
+# `user-qml` here packs the sources a user's file is compiled against.
+ljos = { path = "../../crates/ljos", default-features = false, features = ["build", "user-qml"] }
+
+[lints]
+workspace = true

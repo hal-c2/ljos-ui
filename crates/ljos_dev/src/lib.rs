@@ -38,6 +38,7 @@ pub mod overlay;
 pub mod reloader;
 pub mod text;
 pub mod top;
+pub mod user;
 pub mod watch;
 
 pub use debounce::{Debounce, FINISHED_QUIET, QUIET};
@@ -53,4 +54,5 @@ pub use qml_front::{QtTypeOracle, TypeOracle};
 pub use reloader::{Build, Reloader, ThemeChange, Touch, classify};
 pub use text::{ProjectTexts, text_compiler};
 pub use top::{FrameStats, Top, TopRow, TopView};
+pub use user::{UserQml, UserSession};
 pub use watch::{DevMsg, Follower, WatchError, Watcher};

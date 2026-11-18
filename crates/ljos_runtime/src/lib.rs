@@ -7,6 +7,7 @@
 //! | Module | Role | ARCHITECTURE.md |
 //! |---|---|---|
 //! | [`inbox`] | bounded, coalescing `UiInbox`/`UiHandle` | 3.3 |
+//! | [`batch`] | bounded side streams `UiBatch`/`BatchSender`, drained a run at a time | 3.3 |
 //! | [`time`] | `Time`, `Clock`, `SystemClock`, `VirtualClock` | 8.1 |
 //! | [`frame_scheduler`] | next wake time, timers, 0 % idle | 8.1 |
 //! | [`lane`], [`budget`], [`job`], [`scheduler`] | lanes, slices, jobs, `FrameReport` | 9.1 |
@@ -15,10 +16,13 @@
 //! | [`memory`] | `MemoryPressure`, `Evictable`, byte budgets, `ByteLru` | 8.5 |
 //! | [`observe`] | named mailboxes and their counters, for an observer | 3.4, 19.4 |
 //! | [`platform`] | points to pixels and the starting font, per platform | 7 |
+//! | [`stderr`] | stderr written off the UI thread, never waited for, started by the first line | 0 % idle, 3.3 |
 //!
 //! Nothing in this crate polls or sleeps: the only things that wake the UI
-//! thread are the shell's event loop and the inbox's wake hook.
+//! thread are the shell's event loop and the inbox's wake hook, which side
+//! streams share.
 
+pub mod batch;
 pub mod budget;
 pub mod fault;
 pub mod frame_scheduler;
@@ -30,9 +34,11 @@ pub mod observe;
 pub mod platform;
 pub mod pool;
 pub mod scheduler;
+pub mod stderr;
 pub mod supervisor;
 pub mod time;
 
+pub use batch::{BatchPolicy, BatchSender, Drain, UiBatch};
 pub use budget::{FrameBudget, SliceBudget};
 pub use fault::{Fault, JsErrorInfo};
 pub use frame_scheduler::{
@@ -48,7 +54,7 @@ pub use memory::{
     ByteLru, DeviceClass, Evictable, MemoryPressure, image_cache_budget, physical_memory,
     usable_memory, usable_memory_under,
 };
-pub use observe::{MailboxProbe, MailboxSample, ObserveGuard};
+pub use observe::{MailboxKind, MailboxProbe, MailboxSample, ObserveGuard};
 pub use platform::{Platform, pixels_to_points, points_to_pixels};
 pub use pool::{ComputePool, PoolFull};
 pub use scheduler::{FrameReport, Scheduler};

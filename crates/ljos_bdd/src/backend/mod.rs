@@ -70,6 +70,20 @@ pub struct LogEntry {
 /// the Ljós backend reads it straight off the scene's tree.
 pub use ljos_a11y::AccessibleNode as A11yNode;
 
+/// What a scenario sees of the files of an application's user
+/// (`user-qml`).
+#[derive(Debug, Clone, Default)]
+pub struct UserSeen {
+    /// The user's files are compiled and run.
+    pub active: bool,
+    /// A watch is kept.
+    pub watching: bool,
+    /// Saves applied.
+    pub reloads: u64,
+    /// What the application's fault handler was told.
+    pub told: Vec<String>,
+}
+
 /// Why a changed file was not applied.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ReloadFailure {
@@ -987,6 +1001,43 @@ pub trait Application: Backend {
         Err(BackendError::NotImplemented("a watch over files on disk"))
     }
 
+    /// The file `name` of the user's directory of an application its
+    /// users change (`user-qml`) is written with `text` (None: removed);
+    /// while the application runs, it takes what the save brings.
+    fn user_qml_file(&mut self, _name: &str, _text: Option<&str>) -> Result<()> {
+        Err(BackendError::NotImplemented("a user's directory"))
+    }
+
+    /// The user's file `name` is a link to a file outside the directory,
+    /// in place of what it was.
+    fn user_qml_link_out(&mut self, _name: &str) -> Result<()> {
+        Err(BackendError::NotImplemented("a user's directory"))
+    }
+
+    /// The user's directory is removed and made again at the same path,
+    /// both before the application hears of either.
+    fn user_qml_dir_made_again(&mut self) -> Result<()> {
+        Err(BackendError::NotImplemented("a user's directory"))
+    }
+
+    /// Runs `entry` of the given files built ahead into a pack that
+    /// carries their sources (`sources`; else none), with the user's
+    /// directory over them. `built_from`: files the build compiled from
+    /// other texts than the sources it carries.
+    fn run_with_user_qml(
+        &mut self,
+        _entry: &str,
+        _built_from: &[(String, String)],
+        _sources: bool,
+    ) -> Result<()> {
+        Err(BackendError::NotImplemented("a user's directory"))
+    }
+
+    /// What the application's user's files are doing.
+    fn user_qml_seen(&mut self) -> Result<UserSeen> {
+        Err(BackendError::NotImplemented("a user's directory"))
+    }
+
     /// As [`Application::open_window`], for an application that made the
     /// window's `Fixtures` `Document` itself, titled `title`, and gives it
     /// to the window.
@@ -1139,6 +1190,23 @@ pub trait Reload: Backend {
     }
 }
 
+/// What a picture the host asked of an item, with no script, came to.
+#[derive(Debug, Clone)]
+pub enum HostGrab {
+    /// No frame has drawn it yet.
+    Waiting,
+    /// The item could not give one; why, as the runtime says it.
+    Refused(String),
+    /// The host was called back with no picture.
+    Empty,
+    /// The pixels, premultiplied, row by row.
+    Picture {
+        width: u32,
+        height: u32,
+        rgba: Vec<u8>,
+    },
+}
+
 /// What the runtime can say of itself that a QML program cannot see:
 /// what it has scheduled, what it keeps, how much work it does.
 pub trait Probes: Backend {
@@ -1169,6 +1237,24 @@ pub trait Probes: Backend {
         Err(BackendError::Unsupported {
             backend: self.name(),
             what: "showing a first frame that waits for its pictures",
+        })
+    }
+
+    /// Asks for a picture of `object` for the host, as a program's own
+    /// Rust asks with no script: [`Probes::host_grabbed`] says what came
+    /// of it. Qt's C++ grab is not the oracle's to give a scenario.
+    fn host_grab(&mut self, _object: &str) -> Result<()> {
+        Err(BackendError::Unsupported {
+            backend: self.name(),
+            what: "a picture of an item taken for the host",
+        })
+    }
+
+    /// What the last [`Probes::host_grab`] came to.
+    fn host_grabbed(&mut self) -> Result<HostGrab> {
+        Err(BackendError::Unsupported {
+            backend: self.name(),
+            what: "a picture of an item taken for the host",
         })
     }
 

@@ -33,7 +33,8 @@ use serde_json::{Map, Number, Value, json};
 use super::fake_platform::{self, FakePlatform};
 use super::{
     A11yNode, Application, ApplicationFault, Assistive, Backend, BackendError, Environment, Files,
-    Input, LogEntry, LogLevel, Platform, PointerStep, Probes, QmlFile, Reload, Result, Tooling,
+    HostGrab, Input, LogEntry, LogLevel, Platform, PointerStep, Probes, QmlFile, Reload, Result,
+    Tooling,
 };
 
 mod aot;
@@ -48,6 +49,7 @@ mod platform;
 mod reload;
 mod text;
 mod top;
+mod user;
 
 /// The driver's file key. Not a valid QML type name for a scenario author
 /// to collide with by accident.
@@ -116,6 +118,8 @@ struct Live {
     reloads: Option<reload::Rig>,
     /// The watch over files on disk of a scenario that has one.
     disk: Option<disk::Disk>,
+    /// The user's directory of an application its users change.
+    user: Option<user::User>,
     /// The `top` overlay; hidden unless a scenario shows it.
     top: ljos_dev::Top,
     /// The files given run code compiled ahead of time.
@@ -142,6 +146,9 @@ pub struct LjosBackend {
     /// The report of the last design audit a step ran at a point of
     /// its own, for the steps that read it.
     audited: Option<Value>,
+    /// What the host's last grab of an item came to, written by its
+    /// callback.
+    host_grab: Option<Rc<RefCell<HostGrab>>>,
     /// Catalogues given before anything was loaded; the engine gets them
     /// when it is made.
     catalogs: Vec<ljos_i18n::Catalog>,
@@ -452,6 +459,7 @@ impl LjosBackend {
             drive: DriveState::default(),
             reloads: None,
             disk: None,
+            user: None,
             top: ljos_dev::Top::new(),
             ahead: false,
             lowered: false,
@@ -1643,6 +1651,31 @@ impl Application for LjosBackend {
         self.live()?.save_on_disk(name, text)
     }
 
+    fn user_qml_file(&mut self, name: &str, text: Option<&str>) -> Result<()> {
+        self.live()?.user_qml_file(name, text)
+    }
+
+    fn user_qml_link_out(&mut self, name: &str) -> Result<()> {
+        self.live()?.user_qml_link_out(name)
+    }
+
+    fn user_qml_dir_made_again(&mut self) -> Result<()> {
+        self.live()?.user_qml_dir_made_again()
+    }
+
+    fn run_with_user_qml(
+        &mut self,
+        entry: &str,
+        built_from: &[(String, String)],
+        sources: bool,
+    ) -> Result<()> {
+        self.live()?.run_with_user_qml(entry, built_from, sources)
+    }
+
+    fn user_qml_seen(&mut self) -> Result<super::UserSeen> {
+        self.live()?.user_qml_seen()
+    }
+
     fn open_window_given(&mut self, name: &str, title: &str) -> Result<()> {
         self.live()?.open_window_given(name, title)
     }
@@ -1825,6 +1858,36 @@ impl Probes for LjosBackend {
         ljos_quick::ImageStore::of(&live.engine)
             .wait_for_frame(&live.engine, Duration::from_secs(30));
         live.settle()
+    }
+
+    fn host_grab(&mut self, object: &str) -> Result<()> {
+        let live = self.live()?;
+        let item = live.find(object)?;
+        let slot = Rc::new(RefCell::new(HostGrab::Waiting));
+        let kept = slot.clone();
+        let asked = ljos_quick::grab(&live.engine, item, move |_, picture| {
+            *kept.borrow_mut() = match picture {
+                Some(p) => HostGrab::Picture {
+                    width: p.width(),
+                    height: p.height(),
+                    rgba: p.data().to_vec(),
+                },
+                None => HostGrab::Empty,
+            };
+        });
+        if let Err(why) = asked {
+            *slot.borrow_mut() = HostGrab::Refused(why.to_string());
+        }
+        self.host_grab = Some(slot);
+        Ok(())
+    }
+
+    fn host_grabbed(&mut self) -> Result<HostGrab> {
+        self.live()?.settle()?;
+        match &self.host_grab {
+            Some(slot) => Ok(slot.borrow().clone()),
+            None => Err(failed("the host has not asked for a picture of an item")),
+        }
     }
 
     fn kept_picture(&mut self, object: &str) -> Result<Option<(u32, u32)>> {

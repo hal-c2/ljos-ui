@@ -42,6 +42,68 @@ bitflags::bitflags! {
     }
 }
 
+/// The faults filed while input someone gave was delivered (a pointer, a
+/// finger, a key, a wheel, an input method, an assistive technology), as
+/// ranges of [`Engine::faults_reported`]: a fault in one came from what a
+/// person did, not from a timer or other work the application set off by
+/// itself. A Loader tells by it a person setting work off again from its
+/// item from the item repeating the work on its own. The last few ranges
+/// are kept, enough for the faults delivered after a pass's input.
+#[derive(Default)]
+struct Acting {
+    depth: std::cell::Cell<u32>,
+    /// [`Engine::faults_reported`] when the outermost delivery began.
+    from: std::cell::Cell<u64>,
+    filed: std::cell::RefCell<std::collections::VecDeque<(u64, u64)>>,
+}
+
+const ACTING_KEPT: usize = 16;
+
+/// Held while input is delivered; see [`Acting`]. Input delivered while
+/// other input is (a press an assistive technology makes) is the outer's.
+pub(crate) struct Delivering<'e>(&'e Engine);
+
+impl<'e> Delivering<'e> {
+    pub(crate) fn begin(engine: &'e Engine) -> Self {
+        let acting = engine.extension::<Acting>();
+        if acting.depth.get() == 0 {
+            acting.from.set(engine.faults_reported());
+        }
+        acting.depth.set(acting.depth.get() + 1);
+        Self(engine)
+    }
+}
+
+impl Drop for Delivering<'_> {
+    fn drop(&mut self) {
+        let acting = self.0.extension::<Acting>();
+        let depth = acting.depth.get().saturating_sub(1);
+        acting.depth.set(depth);
+        let (from, to) = (acting.from.get(), self.0.faults_reported());
+        if depth == 0 && to > from {
+            let mut filed = acting.filed.borrow_mut();
+            if filed.len() == ACTING_KEPT {
+                filed.pop_front();
+            }
+            filed.push_back((from, to));
+        }
+    }
+}
+
+/// Whether the fault numbered `seq` ([`ljos_engine::FaultReport::seq`])
+/// was filed while input someone gave was delivered.
+pub(crate) fn filed_acting(engine: &Engine, seq: u64) -> bool {
+    let acting = engine.extension::<Acting>();
+    if acting.depth.get() > 0 && seq > acting.from.get() {
+        return true;
+    }
+    acting
+        .filed
+        .borrow()
+        .iter()
+        .any(|&(from, to)| from < seq && seq <= to)
+}
+
 /// What happened to a pointer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PointerKind {

@@ -20,15 +20,21 @@
 #[cfg(feature = "dev")]
 mod dev;
 #[cfg(feature = "dev")]
-pub use ljos_dev::{Overlay, ReloadStats, Report};
+pub use ljos_dev::Overlay;
+#[cfg(feature = "user-qml")]
+pub use ljos_dev::{ReloadStats, Report};
 #[cfg(feature = "dev")]
 mod tools;
+#[cfg(feature = "user-qml")]
+mod user;
 /// The global allocator that lets the inspector tell what Rust code
 /// holds from what C libraries do.
 #[cfg(feature = "mcp")]
 pub use ljos_dev::mcp::CountingAlloc;
 #[cfg(feature = "dev")]
 pub use ljos_dev::{TopRow, TopView};
+#[cfg(feature = "user-qml")]
+pub use ljos_dev::{UserQml, UserSession};
 #[cfg(feature = "mcp")]
 pub use tools::{InspectorAccess, InspectorAddress, InspectorOptions};
 
@@ -69,6 +75,7 @@ mod screen_reader;
 mod settings;
 #[cfg(gl_painter)]
 mod software;
+mod streams;
 mod surface;
 mod system_fonts;
 #[cfg(all(test, target_os = "linux"))]
@@ -89,7 +96,9 @@ pub use color_space::ColorSpace;
 use ljos_egui::{QmlView, ViewError};
 use ljos_engine::{Color, Engine, ObjectId, TurnCause};
 use ljos_quick::TimerHook;
-use ljos_runtime::{Clock, DrainBudget, DrainReport, UiHandle, UiInbox};
+use ljos_runtime::{
+    BatchPolicy, BatchSender, Clock, Drain, DrainBudget, DrainReport, UiHandle, UiInbox,
+};
 
 /// Window and pipeline settings. A root that is a `Window` (or an
 /// `ApplicationWindow`) says its own title, size, limits and colour; what
@@ -254,11 +263,14 @@ pub struct Setup<'a, M> {
     clock: Arc<dyn Clock>,
     on_message: Option<MessageHandler<M>>,
     message_kinds: Option<fn(&M) -> &'static str>,
+    streams: streams::Streams,
     timer_hook: Option<TimerHook>,
     #[cfg(feature = "dev")]
     dev: dev::DevSetup,
     #[cfg(feature = "dev")]
     tools: tools::ToolSetup,
+    #[cfg(feature = "user-qml")]
+    user: user::UserSetup,
 }
 
 impl<M> Setup<'_, M> {
@@ -293,6 +305,53 @@ impl<M> Setup<'_, M> {
         self.on_message = Some(Box::new(f));
     }
 
+    /// Makes a side stream (ARCHITECTURE.md §3.3): a bounded queue of
+    /// `T` beside the application's inbox, for a thread that feeds the UI
+    /// many small items (folder events, a child process's output, the
+    /// deltas of a stream). It wakes the UI as the inbox does, and each
+    /// frame the items queued are handed to its [`Setup::on_batch`]
+    /// handler together, in one turn, after the inbox's messages and out
+    /// of the same [`ShellConfig::drain_budget`] count. `capacity` is
+    /// fixed; when full, `policy` says what gives way. Clone the sender
+    /// into the threads that feed it; it never blocks. An observer lists
+    /// the stream by `name`, as a mailbox of kind `batch`.
+    pub fn batch<T: Send + 'static>(
+        &mut self,
+        name: &'static str,
+        capacity: usize,
+        policy: BatchPolicy<T>,
+    ) -> BatchSender<T>
+    where
+        M: Send + 'static,
+    {
+        let (batch, sender) = self.handle.batch(name, capacity, policy);
+        self.streams.add(batch);
+        sender
+    }
+
+    /// Runs on the UI thread for the items `sender`'s stream queued, at
+    /// the start of a frame: one turn ([`Engine::turn`]) for the whole run,
+    /// in the order they were sent. Items the handler does not take from
+    /// the [`Drain`] are dropped. A stream without a handler drops its
+    /// items, with a warning.
+    ///
+    /// # Panics
+    ///
+    /// When `sender` was not made by this setup's [`Setup::batch`].
+    pub fn on_batch<T: Send + 'static>(
+        &mut self,
+        sender: &BatchSender<T>,
+        f: impl FnMut(&Engine, Drain<'_, T>) + 'static,
+    ) {
+        let Some(stream) = self.streams.find(sender) else {
+            panic!(
+                "Setup::on_batch: the stream {:?} was not made by this setup's Setup::batch",
+                sender.name()
+            );
+        };
+        stream.handler = Some(Box::new(f));
+    }
+
     /// Names each message's kind (its variant, never what it carries),
     /// for an observer of the `application` mailbox and for a turn that
     /// runs long: the warning then says which message it was.
@@ -321,6 +380,7 @@ impl<M> std::fmt::Debug for Setup<'_, M> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Setup")
             .field("on_message", &self.on_message.is_some())
+            .field("streams", &self.streams.len())
             .field("timer_hook", &self.timer_hook.is_some())
             .finish_non_exhaustive()
     }
@@ -336,6 +396,8 @@ pub struct ShellApp<M> {
     view: QmlView,
     inbox: UiInbox<M>,
     on_message: Option<MessageHandler<M>>,
+    /// The side streams the setup made, drained after the inbox.
+    streams: streams::Streams,
     budget: DrainBudget,
     background: egui::Color32,
     /// Whether [`ShellApp::show`] paints the background: not behind a
@@ -348,6 +410,9 @@ pub struct ShellApp<M> {
     /// The `top` overlay and the inspector of a development build.
     #[cfg(feature = "dev")]
     tools: tools::Tools,
+    /// The files of the application's user over its own.
+    #[cfg(feature = "user-qml")]
+    user: Option<user::User>,
 }
 
 impl<M> std::fmt::Debug for ShellApp<M> {
@@ -376,6 +441,9 @@ pub(crate) struct Hosting {
     pub(crate) wake: ljos_egui::Waker,
     /// What the host shows on, which `Qt.platform.pluginName` says.
     pub(crate) display: platform::Display,
+    /// The displays the host knows of, the primary one first; empty for a
+    /// host with none, whose windows have the offscreen platform's one.
+    pub(crate) screens: Vec<ljos_controls::ScreenSpec>,
 }
 
 impl<M: Send + 'static> ShellApp<M> {
@@ -430,6 +498,12 @@ impl<M: Send + 'static> ShellApp<M> {
                     ljos_controls::WindowSystem::of(&engine).set_host(move || windows());
                     changed
                 });
+                // Before `setup`, as in Qt: what a window reads of its
+                // screen as it is made (`Component.onCompleted` sizing it
+                // to the display) is the display it will be shown on.
+                if !h.screens.is_empty() {
+                    ljos_controls::WindowSystem::of(&engine).set_screens(&engine, &h.screens);
+                }
                 (h.tree, Some(h.wake), changed, Some(h.display))
             }
             None => (None, None, None, None),
@@ -483,6 +557,7 @@ impl<M: Send + 'static> ShellApp<M> {
             clock: Arc::clone(&clock),
             on_message: None,
             message_kinds: None,
+            streams: streams::Streams::default(),
             timer_hook: None,
             #[cfg(feature = "dev")]
             dev: dev::DevSetup::new(Arc::clone(&wake)),
@@ -491,16 +566,21 @@ impl<M: Send + 'static> ShellApp<M> {
                 let [r, g, b, _] = config.background.to_rgba8();
                 tools::ToolSetup::new(Arc::clone(&wake), [r, g, b])
             },
+            #[cfg(feature = "user-qml")]
+            user: user::UserSetup::new(Arc::clone(&wake)),
         };
         let root = setup(&mut s).map_err(ShellError::Setup)?;
         let Setup {
             on_message,
             message_kinds,
+            streams,
             timer_hook,
             #[cfg(feature = "dev")]
             dev,
             #[cfg(feature = "dev")]
             tools,
+            #[cfg(feature = "user-qml")]
+            user,
             ..
         } = s;
         // The application's own messages: their kinds are its business,
@@ -523,6 +603,7 @@ impl<M: Send + 'static> ShellApp<M> {
             view,
             inbox,
             on_message,
+            streams,
             budget: config.drain_budget,
             background: egui::Color32::from_rgba_unmultiplied(r, g, b, a),
             backdrop: true,
@@ -531,6 +612,8 @@ impl<M: Send + 'static> ShellApp<M> {
             dev: dev.finish(),
             #[cfg(feature = "dev")]
             tools: tools.finish(),
+            #[cfg(feature = "user-qml")]
+            user: user.finish(root),
         })
     }
 
@@ -555,20 +638,24 @@ impl<M: Send + 'static> ShellApp<M> {
         self.last_drain
     }
 
-    /// Pipeline step 1: deliver queued messages. The view's waker is held
-    /// because the pass that follows shows whatever the handlers changed.
+    /// Pipeline step 1: deliver queued messages, then each side stream's
+    /// run ([`Setup::batch`]), under one [`DrainBudget`]. The report adds
+    /// the streams' items to the inbox's messages. The view's waker is
+    /// held because the pass that follows shows whatever the handlers
+    /// changed.
     pub fn drain_inbox(&mut self) -> DrainReport {
         let Self {
             view,
             inbox,
             on_message,
+            streams,
             budget,
             ..
         } = self;
         let report = view.without_wake(|view| {
             let engine = Rc::clone(view.engine());
             let clock = Arc::clone(view.clock());
-            inbox.drain(*budget, &*clock, |m| {
+            let report = inbox.drain(*budget, &*clock, |m| {
                 if let Some(f) = on_message.as_mut() {
                     // One message, one turn: a handler that panics is a
                     // fault of the application, not the end of it, and
@@ -579,7 +666,16 @@ impl<M: Send + 'static> ShellApp<M> {
                     };
                     engine.turn_for(cause, None, || f(&engine, m));
                 }
-            })
+            });
+            if streams.len() == 0 {
+                return report;
+            }
+            let more = streams.drain(&engine, *budget, report.drained, &*clock);
+            DrainReport {
+                drained: report.drained + more.drained,
+                remaining: report.remaining + more.remaining,
+                elapsed: report.elapsed + more.elapsed,
+            }
         });
         self.last_drain = report;
         report
@@ -595,6 +691,8 @@ impl<M: Send + 'static> ShellApp<M> {
         #[cfg(feature = "dev")]
         self.begin_tools();
         self.drain_inbox();
+        #[cfg(feature = "user-qml")]
+        self.pump_user();
         #[cfg(feature = "dev")]
         self.pump_dev();
         #[cfg(feature = "dev")]
@@ -765,5 +863,49 @@ mod tests {
             "{saved} of {FREED} freed bytes given back"
         );
         drop(above);
+    }
+
+    /// The displays a host names reach the engine before the root is made:
+    /// a window that sizes itself to `Screen` as it is completed, as a
+    /// drop-down does, has the host's display and not the stand-in one.
+    #[cfg(feature = "dev")]
+    #[test]
+    fn a_window_completed_reads_the_display_the_host_names() {
+        use std::sync::Arc;
+
+        use ljos_controls::ScreenSpec;
+        use ljos_runtime::SystemClock;
+
+        let dir = tempfile::tempdir().unwrap();
+        let entry = dir.path().canonicalize().unwrap().join("Main.qml");
+        std::fs::write(
+            &entry,
+            "import QtQuick\nWindow {\n  objectName: \"w\"\n  property int made: -1\n  \
+             Component.onCompleted: { made = Screen.width; width = Screen.width }\n}\n",
+        )
+        .unwrap();
+        let hosting = super::Hosting {
+            tree: Some(egui::accesskit::TreeId::ROOT),
+            changed: Some(Box::new(|| {})),
+            wake: Arc::new(|_| {}),
+            display: super::platform::Display::Other,
+            screens: vec![ScreenSpec {
+                name: "wide".into(),
+                size: [1600.0, 1000.0],
+                ..ScreenSpec::default()
+            }],
+        };
+        let app = super::ShellApp::hosted(
+            &egui::Context::default(),
+            &super::ShellConfig::default(),
+            Arc::new(SystemClock::new()),
+            |setup: &mut super::Setup<'_, ()>| setup.watch(&entry),
+            hosting,
+        )
+        .unwrap();
+        let engine = app.engine();
+        let root = app.view().scene().root().unwrap();
+        assert_eq!(engine.read_by_name(root, "made").to_number(), 1600.0);
+        assert_eq!(engine.read_by_name(root, "width").to_number(), 1600.0);
     }
 }

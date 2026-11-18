@@ -53,7 +53,9 @@
 //! [`grabbed_image`], from the [`ItemGrabResult`] or from the `image` or
 //! `url` the script hands on, while the scripts keep the result. Its
 //! pixels are premultiplied, as every [`ImageHandle`]'s are
-//! ([`ImageHandle::pixel`]).
+//! ([`ImageHandle::pixel`]). Rust takes a picture of an item itself with
+//! [`grab`], with no script to ask: its callback gets the pixels after
+//! the frame that drew them.
 //!
 //! A `TextEdit` that colours its text takes a [`Highlighter`] instead:
 //! [`set_highlighter`]. What an editor then paints is read back with
@@ -131,6 +133,9 @@ pub use ljos_quick::{
 /// Runs with QtQuick's animations but belongs to QtQuick3D: the module
 /// crate that has QtQuick3D registers it.
 pub use ljos_quick::{FrameAnimation, QuaternionAnimation, frame_time_due, frames_only_while};
+/// A picture of an item taken for Rust at its scene's next frame, or why
+/// the item cannot give one.
+pub use ljos_quick::{GrabRefused, grab};
 pub use ljos_quick::{
     HoverMove, MouseButtons, PointerEvent, PointerId, PointerItem, PointerKind, PointerPortal,
     contains_point,

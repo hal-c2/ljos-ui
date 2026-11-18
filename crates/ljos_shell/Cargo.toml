@@ -148,9 +148,15 @@ quick3d = ["ljos_egui/quick3d", "ljos_render/offscreen3d", "dep:ljos_3d", "dep:w
 # `impl eframe::App for ShellApp`. `run` does not need it: the shell has
 # its own loop (tests/no_eframe.rs keeps eframe out of it).
 eframe = ["dep:eframe"]
+# A shipped application its users change while it runs:
+# `Setup::user_qml` lays the files of one directory over the application's
+# compiled QML and applies every save. Links the compiler (run only once
+# the user has a file), and no overlay, `top` or inspector.
+user-qml = ["dep:ljos_dev"]
 # Dev hot reload: `Setup::watch` compiles a directory of QML, watches it
-# and applies every save to the running application.
-dev = ["dep:ljos_dev"]
+# and applies every save to the running application, with the error
+# overlay and `top` drawn over it.
+dev = ["user-qml"]
 # The read-only MCP inspector an agent connects to (ARCHITECTURE.md §19.4):
 # `Setup::serve_inspector`. Off by default: without it the shell links no
 # MCP SDK and no HTTP server (tests/no_mcp.rs keeps it so).

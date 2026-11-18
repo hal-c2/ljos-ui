@@ -31,6 +31,8 @@ pub struct LjosWorld {
     /// Files the editor of a language server scenario has open before the
     /// session's own, each with the text it has not saved, if it changed it.
     editor: Vec<(String, Option<String>)>,
+    /// The side streams the scenario made and fed.
+    side_streams: crate::side_streams::SideStreams,
 }
 
 impl LjosWorld {
@@ -44,7 +46,12 @@ impl LjosWorld {
             web: None,
             refusals: Vec::new(),
             editor: Vec::new(),
+            side_streams: crate::side_streams::SideStreams::default(),
         }
+    }
+
+    pub fn side_streams(&mut self) -> &mut crate::side_streams::SideStreams {
+        &mut self.side_streams
     }
 
     pub fn set_refusals(&mut self, refusals: Vec<String>) {

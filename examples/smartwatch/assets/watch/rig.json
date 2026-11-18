@@ -1,0 +1,352 @@
+{
+  "name": "Vakt",
+  "generator": "build_watch.py (Blender, headless)",
+  "units": "metres",
+  "axes": {
+    "face": "+Z",
+    "twelve_oclock": "+Y",
+    "three_oclock": "+X",
+    "handedness": "right"
+  },
+  "origin": "the case's centre axis, at the case's middle depth",
+  "dimensions": {
+    "case_diameter": 0.046,
+    "case_facets": 24,
+    "thickness": 0.0106,
+    "lug_to_lug": 0.0512,
+    "strap_width": 0.022
+  },
+  "notes": [
+    "Each part file holds one node at its own origin; that origin is the pivot. Place the file under a node at `pivot` and move or turn that node as the part says.",
+    "screen.glb's UVs map the disc inscribed in the unit square: texture (0.5, 0.5) at the centre, the image's top edge at 12 o'clock (glTF V down). An app can instead draw its own disc from `screen`.",
+    "link.glb is one strap link with its hinge at the origin, reaching along +Y. A strap is a chain: link 0 at the strap's anchor, each next link at (0, pitch, 0) in the one before, each turned about its own X by rest_deg + flex * flex_deg. The bottom strap's anchor is turned 180 degrees about Z, so the same angles curl it back too.",
+    "The light strips are not in the part files, so the app can draw, tint and pulse them. They are in watch.glb only, with emissive materials that use KHR_materials_emissive_strength."
+  ],
+  "parts": [
+    {
+      "name": "case",
+      "file": "case.glb",
+      "node": "case",
+      "pivot": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "contents": "case shell, bezel and its ticks, lugs, spring bars, crown guards, caseback window",
+      "triangles": 3632
+    },
+    {
+      "name": "crown",
+      "file": "crown.glb",
+      "node": "crown",
+      "pivot": [
+        0.0226,
+        0.0,
+        -0.0003
+      ],
+      "spin_axis": [
+        1,
+        0,
+        0
+      ],
+      "animation": "crown_turn",
+      "triangles": 860
+    },
+    {
+      "name": "button",
+      "file": "button.glb",
+      "node": "button",
+      "pivot": [
+        0.0195,
+        -0.0113,
+        -0.0003
+      ],
+      "press_axis": [
+        -0.866,
+        0.5,
+        0.0
+      ],
+      "press_depth": 0.0006,
+      "angle_deg": -30.0,
+      "triangles": 20
+    },
+    {
+      "name": "glass",
+      "file": "glass.glb",
+      "node": "glass",
+      "pivot": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "radius": 0.01815,
+      "base_z": 0.00415,
+      "apex_z": 0.00495,
+      "triangles": 1824
+    },
+    {
+      "name": "screen",
+      "file": "screen.glb",
+      "node": "screen",
+      "pivot": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "triangles": 1056
+    },
+    {
+      "name": "link",
+      "file": "link.glb",
+      "node": "link",
+      "pivot": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "hinge_axis": [
+        1,
+        0,
+        0
+      ],
+      "triangles": 120
+    }
+  ],
+  "screen": {
+    "center": [
+      0.0,
+      0.0,
+      0.0034
+    ],
+    "radius": 0.0178,
+    "normal": [
+      0,
+      0,
+      1
+    ],
+    "up": [
+      0,
+      1,
+      0
+    ],
+    "uv": "disc inscribed in the unit square, image top at +Y"
+  },
+  "straps": {
+    "pitch": 0.0065,
+    "links_per_side": 7,
+    "rest_deg": -9.0,
+    "flex_deg": -11.0,
+    "hinge_axis": [
+      1,
+      0,
+      0
+    ],
+    "anchors": [
+      {
+        "name": "strap_top",
+        "position": [
+          0.0,
+          0.024,
+          -0.0012
+        ],
+        "rotation_deg": [
+          0,
+          0,
+          0
+        ]
+      },
+      {
+        "name": "strap_bottom",
+        "position": [
+          0.0,
+          -0.024,
+          -0.0012
+        ],
+        "rotation_deg": [
+          0,
+          0,
+          180
+        ]
+      }
+    ]
+  },
+  "light_strips": {
+    "rings": [
+      {
+        "name": "edge_ring",
+        "center": [
+          0.0,
+          0.0,
+          0.0043
+        ],
+        "normal": [
+          0,
+          0,
+          1
+        ],
+        "radius_inner": 0.02158,
+        "radius_outer": 0.02192,
+        "height": 0.00016,
+        "color": "#00e5ff",
+        "emissive_strength": 4.0,
+        "center_relative_to": "watch"
+      },
+      {
+        "name": "side_band",
+        "center": [
+          0.0,
+          0.0,
+          -0.0018
+        ],
+        "normal": [
+          0,
+          0,
+          1
+        ],
+        "radius_inner": 0.0219,
+        "radius_outer": 0.02245,
+        "height": 0.0007,
+        "color": "#00e5ff",
+        "emissive_strength": 4.0,
+        "center_relative_to": "watch"
+      },
+      {
+        "name": "crown_ring",
+        "center": [
+          0.0017,
+          0.0,
+          0.0
+        ],
+        "normal": [
+          1,
+          0,
+          0
+        ],
+        "radius_inner": 0.0023,
+        "radius_outer": 0.003,
+        "height": 0.00025,
+        "color": "#ff2bd6",
+        "emissive_strength": 4.0,
+        "center_relative_to": "crown"
+      }
+    ],
+    "boxes": [
+      {
+        "name": "lug_top_right",
+        "center": [
+          0.0148,
+          0.0196,
+          -0.0014
+        ],
+        "size": [
+          0.0001,
+          0.0064,
+          0.0003
+        ],
+        "color": "#00e5ff",
+        "emissive_strength": 4.0,
+        "center_relative_to": "watch"
+      },
+      {
+        "name": "lug_top_left",
+        "center": [
+          -0.0148,
+          0.0196,
+          -0.0014
+        ],
+        "size": [
+          0.0001,
+          0.0064,
+          0.0003
+        ],
+        "color": "#00e5ff",
+        "emissive_strength": 4.0,
+        "center_relative_to": "watch"
+      },
+      {
+        "name": "lug_bottom_right",
+        "center": [
+          0.0148,
+          -0.0196,
+          -0.0014
+        ],
+        "size": [
+          0.0001,
+          0.0064,
+          0.0003
+        ],
+        "color": "#00e5ff",
+        "emissive_strength": 4.0,
+        "center_relative_to": "watch"
+      },
+      {
+        "name": "lug_bottom_left",
+        "center": [
+          -0.0148,
+          -0.0196,
+          -0.0014
+        ],
+        "size": [
+          0.0001,
+          0.0064,
+          0.0003
+        ],
+        "color": "#00e5ff",
+        "emissive_strength": 4.0,
+        "center_relative_to": "watch"
+      }
+    ]
+  },
+  "animations": [
+    {
+      "name": "crown_turn",
+      "duration_s": 2.0,
+      "loop": true,
+      "nodes": [
+        "crown"
+      ]
+    },
+    {
+      "name": "strap_flex",
+      "duration_s": 1.0,
+      "loop": false,
+      "nodes": [
+        "link_top_0",
+        "link_top_1",
+        "link_top_2",
+        "link_top_3",
+        "link_top_4",
+        "link_top_5",
+        "link_top_6",
+        "link_bottom_0",
+        "link_bottom_1",
+        "link_bottom_2",
+        "link_bottom_3",
+        "link_bottom_4",
+        "link_bottom_5",
+        "link_bottom_6"
+      ]
+    },
+    {
+      "name": "turntable",
+      "duration_s": 8.0,
+      "loop": true,
+      "nodes": [
+        "vakt"
+      ],
+      "axis": [
+        0,
+        1,
+        0
+      ]
+    }
+  ],
+  "materials": {
+    "case": "graphite, metallic 0.3, roughness 0.34",
+    "bezel": "near-black, metallic 0.2, roughness 0.26",
+    "strap": "black rubber, roughness 0.62, graphite spine",
+    "glass": "clear, alpha 0.12, roughness 0.05",
+    "edge_light": "#00e5ff",
+    "accent": "#ff2bd6"
+  }
+}

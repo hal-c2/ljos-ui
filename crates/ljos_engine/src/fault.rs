@@ -92,7 +92,16 @@ pub struct FaultReport {
     pub(crate) boundaries: Vec<ObjectId>,
     /// A boundary reporting that it could not make its own content.
     pub(crate) target: Option<ObjectId>,
+    /// For an interrupted script: the object whose run the interrupt
+    /// stopped, when it was a run nested in `origin`'s dispatch (a handler
+    /// a write set off, a binding a read woke), and the boundaries around
+    /// it then, the nearest first. `None` when it stopped `origin`'s own run.
+    pub(crate) stopped: Option<Stopped>,
 }
+
+/// A run an interrupt stopped: its object and the boundaries around it,
+/// the nearest first.
+pub(crate) type Stopped = (ObjectId, Vec<ObjectId>);
 
 impl FaultReport {
     /// The kind as a name: `"JsException"`, `"JsInterrupted"`,
@@ -110,6 +119,16 @@ impl FaultReport {
             Fault::Startup(m) | Fault::Internal(m) => m.clone(),
             other => other.to_string(),
         }
+    }
+
+    /// Whether the run an interrupt stopped was code outside `boundary`'s
+    /// content that a dispatch begun inside it set off. The dispatch is
+    /// still the content's fault, as its own run was cut short too, but
+    /// the time went elsewhere.
+    pub fn stopped_outside(&self, boundary: ObjectId) -> bool {
+        self.stopped
+            .as_ref()
+            .is_some_and(|(_, around)| !around.contains(&boundary))
     }
 }
 
@@ -156,8 +175,17 @@ pub(crate) struct FaultState {
     delivering: Cell<bool>,
     application: RefCell<Option<FaultReport>>,
     history: RefCell<VecDeque<FaultReport>>,
+    /// What each [`Engine::noting_faults`] running has noted so far, the
+    /// outermost first.
+    noting: RefCell<Vec<Vec<FaultReport>>>,
     /// Faults reported so far.
     filed: Cell<u64>,
+    /// The innermost nested run an interrupt stopped in the dispatch that
+    /// unwinds now, with the boundaries around it as they were when it
+    /// stopped (a later handler of the same signal may destroy it before
+    /// the dispatch reports): `Some(None)` once one with no object of its
+    /// own has.
+    stopped: RefCell<Option<Option<Stopped>>>,
     handler: RefCell<Option<FaultHandler>>,
     /// Set by the JS bridge for the QML function it is about to call: an
     /// exception in it is the calling script's to catch.
@@ -259,6 +287,7 @@ impl Engine {
             seq: 0,
             origin_name: origin.and_then(|o| self.label_of(o)),
             taken_by: TakenBy::Waiting,
+            stopped: None,
         });
     }
 
@@ -280,6 +309,7 @@ impl Engine {
             seq: 0,
             origin_name: self.label_of(boundary),
             taken_by: TakenBy::Waiting,
+            stopped: None,
         });
     }
 
@@ -306,8 +336,10 @@ impl Engine {
 
     /// A failed JS run. An exception keeps the line Qt logs for it
     /// (`file:line: message`), followed by the QML functions it passed
-    /// through when there is more than the one that threw.
-    pub(crate) fn report_js_fault(&self, fault: &JsFault) {
+    /// through when there is more than the one that threw. `stopped` is
+    /// the nested run an interrupt stopped in the dispatch, as its
+    /// outermost run gave it back ([`Engine::swap_js_stopped`]).
+    pub(crate) fn report_js_fault(&self, fault: &JsFault, stopped: Option<Stopped>) {
         let state = &self.inner.faults;
         let origin = state.origin.get();
         match fault {
@@ -327,27 +359,30 @@ impl Engine {
                     text.push('\n');
                     text.push_str(trace);
                 }
-                self.warn(text);
                 let (declared, declared_line) = self.declared_place(origin);
-                self.file_fault(FaultReport {
-                    fault: Fault::JsException(JsErrorInfo {
-                        message: message.clone(),
-                        file: file.as_deref().map(Into::into),
-                        line: line.unwrap_or(0),
-                        column: 0,
-                        stack: trace,
-                    }),
-                    origin,
-                    file: file.clone().or(declared),
-                    line: line.unwrap_or(declared_line),
-                    stack: frames,
-                    at: self.now(),
-                    boundaries: self.boundaries_around(origin),
-                    target: None,
-                    seq: 0,
-                    origin_name: origin.and_then(|o| self.label_of(o)),
-                    taken_by: TakenBy::Waiting,
-                });
+                self.warn_and_file(
+                    text,
+                    FaultReport {
+                        fault: Fault::JsException(JsErrorInfo {
+                            message: message.clone(),
+                            file: file.as_deref().map(Into::into),
+                            line: line.unwrap_or(0),
+                            column: 0,
+                            stack: trace,
+                        }),
+                        origin,
+                        file: file.clone().or(declared),
+                        line: line.unwrap_or(declared_line),
+                        stack: frames,
+                        at: self.now(),
+                        boundaries: self.boundaries_around(origin),
+                        target: None,
+                        seq: 0,
+                        origin_name: origin.and_then(|o| self.label_of(o)),
+                        taken_by: TakenBy::Waiting,
+                        stopped: None,
+                    },
+                );
             }
             JsFault::Panic { message, .. } => {
                 self.report_fault(origin, Fault::Panic(message.clone().into()));
@@ -355,25 +390,68 @@ impl Engine {
             other => {
                 // The JS host's own words: they name what was running.
                 let (file, line) = self.declared_place(origin);
-                self.warn(other.to_string());
-                self.file_fault(FaultReport {
-                    fault: other.clone().into(),
-                    origin,
-                    file,
-                    line,
-                    stack: Vec::new(),
-                    at: self.now(),
-                    boundaries: self.boundaries_around(origin),
-                    target: None,
-                    seq: 0,
-                    origin_name: origin.and_then(|o| self.label_of(o)),
-                    taken_by: TakenBy::Waiting,
-                });
+                let stopped = stopped.filter(|_| matches!(other, JsFault::JsInterrupted { .. }));
+                self.warn_and_file(
+                    other.to_string(),
+                    FaultReport {
+                        fault: other.clone().into(),
+                        origin,
+                        file,
+                        line,
+                        stack: Vec::new(),
+                        at: self.now(),
+                        boundaries: self.boundaries_around(origin),
+                        target: None,
+                        seq: 0,
+                        origin_name: origin.and_then(|o| self.label_of(o)),
+                        taken_by: TakenBy::Waiting,
+                        stopped,
+                    },
+                );
             }
         }
     }
 
-    fn file_fault(&self, mut report: FaultReport) {
+    /// Logs `msg` and files `report`, or holds both while a binding runs
+    /// during a creation (delayed_errors.rs): a run that is fixed by a
+    /// later one is neither logged nor anybody's fault.
+    fn warn_and_file(&self, msg: String, report: FaultReport) {
+        if let Some((msg, report)) = self.hold_fault(msg, report) {
+            self.warn(msg);
+            self.file_fault(report);
+        }
+    }
+
+    /// Puts `with` in place of the run noted as stopped, giving back what
+    /// was noted. A dispatch begins with nothing and takes its own back
+    /// when it returns, restoring the one it began in: a dispatch made
+    /// while an interrupted one unwinds (an object it let go of, held
+    /// again) neither drops that one's nor lends it its own.
+    pub(crate) fn swap_js_stopped(&self, with: Option<Option<Stopped>>) -> Option<Option<Stopped>> {
+        self.inner.faults.stopped.replace(with)
+    }
+
+    /// A nested run came back interrupted. The first to come back so is
+    /// the run the interrupt stopped, and its object is the one running now.
+    pub(crate) fn note_js_stopped(&self) {
+        let state = &self.inner.faults;
+        if state.stopped.borrow().is_some() {
+            return;
+        }
+        let stopped = state
+            .origin
+            .get()
+            .map(|o| (o, self.boundaries_around(Some(o))));
+        *state.stopped.borrow_mut() = Some(stopped);
+    }
+
+    /// How many faults have been reported: a fault whose
+    /// [`FaultReport::seq`] is at most this was reported by now.
+    pub fn faults_reported(&self) -> u64 {
+        self.inner.faults.filed.get()
+    }
+
+    pub(crate) fn file_fault(&self, mut report: FaultReport) {
         let state = &self.inner.faults;
         state.filed.set(state.filed.get() + 1);
         report.seq = state.filed.get();
@@ -383,6 +461,9 @@ impl Engine {
         let logged = matches!(report.fault, Fault::JsException(_)) && report.boundaries.is_empty();
         if logged {
             report.taken_by = TakenBy::Log;
+        }
+        for noted in state.noting.borrow_mut().iter_mut() {
+            noted.push(report.clone());
         }
         {
             let mut history = state.history.borrow_mut();
@@ -534,6 +615,29 @@ impl Engine {
     /// One handler; a second call replaces it.
     pub fn set_fault_handler(&self, f: impl Fn(&Engine, &FaultReport) + 'static) {
         *self.inner.faults.handler.borrow_mut() = Some(Rc::new(f));
+    }
+
+    /// Runs `f` and gives every fault filed while it ran, the oldest
+    /// first, however many. What judges what `f` made by its faults asks
+    /// this, not [`Engine::faults`], which keeps only the latest.
+    pub fn noting_faults<R>(&self, f: impl FnOnce() -> R) -> (R, Vec<FaultReport>) {
+        struct Noting<'a>(&'a FaultState);
+        impl Drop for Noting<'_> {
+            fn drop(&mut self) {
+                self.0.noting.borrow_mut().pop();
+            }
+        }
+        let state = &self.inner.faults;
+        let depth = {
+            let mut noting = state.noting.borrow_mut();
+            noting.push(Vec::new());
+            noting.len()
+        };
+        let noting = Noting(state);
+        let r = f();
+        let noted = std::mem::take(&mut state.noting.borrow_mut()[depth - 1]);
+        drop(noting);
+        (r, noted)
     }
 
     /// The latest faults of every kind, the oldest first: at most 32,

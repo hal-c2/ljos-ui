@@ -34,7 +34,9 @@ mod render;
 mod run;
 mod script_cost;
 mod shaders;
-mod stderr;
+// The writer an application on the facade logs through too: one queue,
+// off the UI thread, never waited for.
+use ljos_runtime::stderr;
 mod stdout;
 mod test;
 mod types;

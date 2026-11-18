@@ -104,6 +104,13 @@ fn the_table_names_the_type_of_a_property_and_the_module_of_a_type() {
     let timer = qt.module_type("QtQuick", "Timer").unwrap();
     assert_eq!(qt.module(timer).as_deref(), Some("QtQml"));
     assert_eq!(qt.module(rectangle).as_deref(), Some("QtQuick"));
+    // What every file has is QtQml's in both tables: Qt's has it in a
+    // pseudo-module of its own, and a file's IR, the key of the code
+    // compiled ahead of time from it, would differ between the builds.
+    for name in ["Component", "Qt", "QtObject"] {
+        let ty = qt.module_type("QtQml", name).unwrap();
+        assert_eq!(qt.module(ty).as_deref(), Some("QtQml"), "{name}");
+    }
 }
 
 #[test]

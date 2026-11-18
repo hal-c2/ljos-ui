@@ -33,6 +33,7 @@ One directory per language or toolkit area, not per surface. Surfaces are tags.
 | `quick3d/` | `QtQuick3D`: `View3D` and the scene in it (nodes, models, cameras, lights, materials, the scene environment), how it is drawn among other items, and that a still scene costs nothing |
 | `blocks/` | the module `Ljos.Blocks`: a `Slot` and the `Contribution`s it shows, and a `ShellLoader` that falls back when a shell does not work |
 | `design/` | the module `Ljos.Design`: its colours, motion, spacing and type, and the transitions and behaviours made of them |
+| `examples/` | the applications of `examples/`, loaded as they ship and driven by their controls |
 | `parity/` | generated outlines (API ledger); never hand edited |
 
 ## Writing rules
@@ -155,8 +156,13 @@ Objects are named by `objectName`; `a/b` finds `b` below `a`. Properties may be 
 | `Given the QML:` + doc string | write the source as `Scenario.qml` and create it |
 | `Given the file "X.qml":` + doc string | make `X.qml` available; nothing is created yet. The name may be a path (`kit/Badge.qml`), and a file named `qmldir` (`kit/qmldir`) describes the module of its directory |
 | `Given the files of the module Ljos.Design` | make the files `ljos design export` writes available in `Ljos/Design`, so that `import Ljos.Design` finds the module in the scenario's directory on either backend |
+| `Given the files of the example "smartwatch"` | make every file of `examples/smartwatch` available at its own path below the scenario's directory: its QML, scripts and `qmldir` files to load, anything else (models, pictures) beside them; nothing is created yet, so a scenario then loads its `Main.qml` |
 | `Given the translation file "X.ts":` + doc string | make the translations of a Qt Linguist file (doc string labelled `xml`) available for the language its `language` attribute names; give it before the QML |
 | `Given the translation file "X.po":` + doc string | make the `t` messages of a PO catalogue (doc string labelled `po`) available for the language its `Language:` header names, or else its file name; Ljós only |
+| `Given the application starts with the controls style "Kit"` | the Controls style the application starts with, as `QT_QUICK_CONTROLS_STYLE` chooses it: a built-in style's name, or a module of the scenario's own that is a custom style (a directory with a `qmldir`, given by `Given the file`); give it before the QML |
+| `Given the application starts with "QT_QUICK_CONTROLS_FALLBACK_STYLE" set to "Material"` | a `QT_QUICK_CONTROLS_*` variable the application starts with; give it before the QML |
+| `Given the application starts with the controls configuration:` + doc string | the text of the `qtquickcontrols2.conf` file that `QT_QUICK_CONTROLS_CONF` names; give it before the QML |
+| `Given the application starts with "-style Kit" on its command line` | the style the application's command line chooses, which comes before the variable and the file; give it before the QML |
 | `Given an assistive technology is listening` | the accessibility tree is read from here on, so later steps see it follow each change |
 | `Given the application starts with the locale environment "LANG=en_US.UTF-8 LC_TIME=de_DE.UTF-8"` | the locale variables the application starts with (`LANG`, `LANGUAGE`, `LC_ALL`, `LC_MESSAGES`, `LC_NUMERIC`, `LC_TIME`, `LC_COLLATE`), each `NAME=value`, separated by spaces; the others are unset. Without it a scenario starts in `LANG=en_US.UTF-8`. Give it before the QML |
 | `Given the system setting "color scheme" is "dark"` | what the system says before the application starts: `"color scheme"` (`"light"`, `"dark"`), `"contrast"` (`"normal"`, `"high"`), `"reduced motion"` and `"screen reader"` (`true`, `false`), `"font scale"` (a number; `1` is the size the application was written for) (`@ljos-only`: the oracle cannot be given a system) |
@@ -170,7 +176,7 @@ Objects are named by `objectName`; `a/b` finds `b` below `a`. Properties may be 
 | `Given a W by H Radiance image file "X.hdr" filled with R, G, B` | make a Radiance HDR picture of one linear radiance, each number at least 0 and as large as wanted (a light probe) |
 | `Given a W by H Radiance image file "X.hdr" with an upper half of R, G, B and a lower half of R, G, B` | the same, one radiance above the middle row and another from it down |
 | `Given a file "X.png" that is not an image` | make a file with that name and no image inside available |
-| `Given the web server serves a W by H image file "X.png" filled with "#rrggbb"` | the scenario's own web server (loopback) answers `$SERVER/X.png` with such an image; the QML writes `$SERVER` for its `http://127.0.0.1:<port>`, and a name nobody served is 404 Not Found |
+| `Given the web server serves a W by H image file "X.png" filled with "#rrggbb"` | the scenario's own web server (loopback) answers `$SERVER/X.png` with such an image; the QML writes `$SERVER` for its `http://127.0.0.1:<port>`, a port no scenario before it in the run had (a page's origin keeps its answers while the process runs), and a name nobody served is 404 Not Found |
 | `Given a W by H animated image file "X.gif" of frames "#rrggbb, #rrggbb" each shown for N milliseconds` | make an animated GIF, one colour a frame, repeating for ever (one colour: a still GIF) |
 | `Given the web server serves a W by H animated image file "X.gif" of frames "#rrggbb, #rrggbb" each shown for N milliseconds` | the same on the scenario's web server |
 | `Given the web server serves a file "X.png" that is not an image` | the same, with a file that is no image |
@@ -336,6 +342,7 @@ setter tries to write `depth` and logs the error it gets.
 | `Then the reload error is in "X.qml" at line N` | where the mistake is (`@ljos-only`) |
 | `Then N reloads have happened` / `Then 1 reload has happened` | changes applied since the application started (`@ljos-only`) |
 | `Then the picture of "photo" is kept at 224 by 112 pixels` | the size in pixels of the picture kept for an Image, which may be smaller than the picture itself (`@ljos-only`: the oracle does not say what it keeps) |
+| `When the host asks for a picture of "src"` / `Then the host's picture is W by H pixels` / `Then the pixel at X, Y of the host's picture is "#rrggbb"` / `Then the host is refused a picture because "why"` / `Then the host is called back with no picture` | a picture of an item that the program's own Rust takes with no script (`ljos::item::grab`): a frame must run before it comes, so let time pass between asking and reading; its pixels read over black (`@ljos-only`: Qt's C++ grab is not the oracle's to give) |
 | `Then no picture is kept for "photo" yet` | no pixels are kept for an Image yet: they are still being decoded (`@ljos-only`) |
 | `Then the pointer shows the "SplitHCursor" cursor` | the `Qt.CursorShape` the pointer shows where it is (`@ljos-only`: the oracle runs off-screen, without a pointer) |
 | `Then the application sees "Ctrl+Shift" held` / `Then the application sees no modifier held` | the keyboard modifiers native code is told are held (`ljos::keys::keyboard_modifiers`), as the last key, pointer or wheel event said: `Shift`, `Ctrl`, `Alt`, `Meta` joined by `+` (`@ljos-only`: Qt gives QML no application-wide value) |
@@ -436,7 +443,7 @@ into the answer's structured content.
 
 An agent asks `ljos mcp` (ARCHITECTURE.md 19.3) through a real MCP client, or an author runs `ljos`
 in a terminal. There is no application: the files the scenario gives (`Given the file "X":`, with
-any name, written without the indent of its doc string; one whose name ends in `.sh` may be run) are
+any name, written without the indent of its doc string; one whose name ends in `.sh` or whose text starts with `#!` may be run) are
 a project in a directory of its own. Once the tools are connected, the agent's steps of the
 inspector above (`When the agent calls the tool …`, `When the agent reads the resource …`,
 `Then the answer's "/pointer" …`, `Then the agent is refused with …`, `Then the refusal mentions …`,
@@ -452,7 +459,10 @@ inspector above (`When the agent calls the tool …`, `When the agent reads the 
 | `Given the agent has called the tool "name" with:` + doc string | a call whose answer a later step builds on |
 | `When the agent lists the resources` | MCP `resources/list`; the answer is the URIs, one a line |
 | `When the agent asks for the prompt "name"` / `When the agent asks for the prompt "name" with:` + doc string | an MCP prompt, with the arguments in the doc string (labelled `json`) |
-| `When the author runs "ljos fmt --check ."` / `Given the author has run "…"` | the command line, run in the project's directory; it starts with `ljos` (or `ljos-fuzz`, the differential fuzzer) |
+| `When the author runs "ljos fmt --check ."` / `Given the author has run "…"` | the command line, run in the project's directory; it starts with `ljos` (or `ljos-fuzz`, the differential fuzzer), or with a task of this repository's `mise-tasks/`, which runs on the project as a checkout of its own: git finds no repository above it, and what it writes on its output is kept apart from its errors |
+| `When the author runs "mise-tasks/mcp" in "wt"` | a task of `mise-tasks/`, run in a directory of the project |
+| `Given the author's environment has "NAME" set to "value"` / `has no "NAME"` | a variable of the commands the author runs from then on, or one taken away; `{project}` in a value is the project's directory with no link in it, `{PATH}` the runner's own `PATH` |
+| `Given the project is a git checkout with the linked worktree "wt"` | the project made a git repository with its files committed, and `git worktree add` of a worktree inside it (excluded from the repository) on a branch of its own; the files given before it are in both, those given after it only in the main checkout, outside git |
 | `Given the author's desktop setting "org.freedesktop.appearance" "reduced-motion" is uint32 1` | what the settings portal of a session bus of the scenario's own says to the commands the author runs: `"text"`, `uint32 N`, `true` or `false`; without one their bus is not there, so the developer's desktop never reaches them |
 | `Then the answer's "/pointer" is:` + doc string | a text of the last answer, whole (a diff, a formatted file) |
 | `Then the prompt contains "text"` | part of the prompt's text |
@@ -460,13 +470,35 @@ inspector above (`When the agent calls the tool …`, `When the agent reads the 
 | `Then the agent is offered the prompts "a, b, c"` | the prompt list, in order |
 | `Then the authoring tools' instructions match "regex"` | what the server tells an agent when it connects |
 | `Then the file "X" is:` + doc string | the whole text of a file of the project, as it is now |
+| `Then the project has no "X"` | no file, directory or link at that path of the project |
 | `Then the JSON file "X" has "/pointer" equal to V` | a value of a JSON file of the project, written as JSON (`null`, `true`, `"text"`, a number) |
 | `Then the picture "X.png" is W by H pixels` | the size of a PNG of the project, as a command wrote it |
 | `Then the pictures "a.png" and "b.png" have the same pixels` | two PNGs of the project, as commands wrote them, are one picture: the same size and every pixel alike |
 | `Then a desktop with the system files under "root" keeps up to N MiB of decoded pictures` | the image budget (ARCHITECTURE §8.5) the files under a directory of the project give, read as `/`: `proc/meminfo`, `proc/self/cgroup` and `sys/fs/cgroup/…/memory.max`; or `a phone` (`@ljos-only`: Qt has no such budget) |
 | `Then the command prints:` + doc string | everything the command wrote to its output |
+| `Then the command's standard output is:` + doc string | what a task of `mise-tasks/` wrote to its output, without its errors |
 | `Then the command exits with status N` | |
 | `Then the command's output mentions "text"` / `does not mention "text"` | in what it wrote to its output or as errors |
+
+### A user's directory (`hot-reload/user-qml.feature`; all `@ljos-only`)
+
+A shipped application built ahead that lets its users change it (`App::user_qml`, the `ljos`
+feature `user-qml`). The scenario's files are the application's, built into a pack that carries
+their sources; the user's directory is a directory on the real disk. The steps come after the QML.
+
+| Step | Meaning |
+|---|---|
+| `Given the user's file "X":` + doc string | the user's directory has the file, before the application runs |
+| `Given the user's file "X" links to a file outside the user's directory` | the file is a link that leads out of the directory |
+| `When the application runs "Main.qml" built ahead, with the user's directory over it` | the scenario's files built ahead (`build::Options::with_sources`), run with the user's directory over them; the root is made of the entry in a window of its own |
+| `When the application runs "Main.qml" built ahead from an older "X.qml", with the user's directory over it:` + doc string | the same, with `X.qml` compiled from the doc string while the pack carries the scenario's text of it, as a build that was not redone after a change |
+| `When the user saves the file "X" as:` + doc string / `When the user removes the file "X"` | while the application runs; the step waits for what the save brings |
+| `When the user saves the file "X" as a link to a file outside the user's directory` | while the application runs, the file becomes a link that leads out of the directory; the step waits for what the save brings |
+| `When the user's directory is removed and made again` | the directory is removed and made again at its path before the application hears of either; the step waits for the wake |
+| `Then the user's files are compiled` / `are not compiled` | whether the compiler ran: it does once the user has a file |
+| `Then the user's directory is watched` | the application keeps a watch, on the directory or on the nearest one above it |
+| `Then N saves of the user's files have been applied` | the saves applied as reloads |
+| `Then the application was told of a fault matching "regex"` / `Then the application was told of no fault` | what the application's fault handler (`UserQml::on_fault`) heard |
 
 ### The `top` overlay (`tooling/top.feature`; all `@ljos-only`)
 
@@ -481,6 +513,24 @@ come after the QML. Showing it runs no frame: it is given the frames the applica
 | `Then the top overlay lists the lanes "a, b, c"` | the lanes of its rows, in order |
 | `Then the top overlay has charged "owner"` / `Then the top overlay has charged nobody` | an owner charged for scheduled work in any frame since it was shown: `application`, `inspector`, or a boundary by type and name (`Loader \"loader\"`) |
 | `Then the top overlay keeps no frame coming` | with it shown, the scene asks for no frame and for no wake |
+
+### Side streams (`runtime/batch_streams.feature`; all `@ljos-only`)
+
+A thread's side stream (ARCHITECTURE.md 3.3) fed from the step and handled as the UI thread handles
+it, one turn a step. The streams of a scenario share one wake, which counts how often it fired.
+Items are text; an item `key=value` is coalesced by its key, any other by all of it.
+
+| Step | Meaning |
+|---|---|
+| `Given a stream "name" of N items that keeps the newest per key` / `refuses the newest when full` / `evicts the oldest when full` | a stream of that capacity and policy |
+| `When N items are sent to the stream "name"` | the items `1` to `N` |
+| `When the stream "name" is sent "a, b=1, c"` | those items, in order; one the stream refuses is counted by it |
+| `When the UI thread handles the stream "name"` | one turn with everything it holds |
+| `When the UI thread handles at most N items of the stream "name"` | one turn under a budget of N items |
+| `Then the UI thread was woken N time(s)` | by the scenario's streams, so far |
+| `Then the stream "name" was handled in N turn(s)` (also `… of N items`) | the turns its handler ran, and the items they took in all |
+| `Then the stream "name" handed over "a, b"` | every item its handler was given, in order |
+| `Then the stream "name" holds N items` | queued, not handled yet |
 
 ### Planned (backlog scenarios may use them; not built yet)
 

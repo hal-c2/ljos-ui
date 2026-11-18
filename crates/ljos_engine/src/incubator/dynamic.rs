@@ -229,7 +229,7 @@ impl Engine {
         url: &str,
         owner: Option<ObjectId>,
     ) -> Result<ObjectId, EngineError> {
-        let full = join_url(base, url);
+        let full = self.join_from(base, url);
         let error = match self.file_template(&full) {
             Ok(template) => return self.make_component_object(owner, template),
             // The loader's words for a file that is not there.
@@ -525,10 +525,10 @@ impl Engine {
             ),
             (
                 "__ljos_resolvedUrl",
-                host(|_, a| {
+                host(|e, a| {
                     Ok(match (a.first(), a.get(1)) {
                         (Some(JsValue::String(base)), Some(JsValue::String(url))) => {
-                            JsValue::String(join_url(base, url))
+                            JsValue::String(e.join_from(base, url))
                         }
                         (_, Some(other)) => other.clone(),
                         _ => JsValue::Undefined,

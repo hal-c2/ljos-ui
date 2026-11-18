@@ -82,6 +82,8 @@ ljos_blocks = { path = "../ljos_blocks" }
 serde_json.workspace = true
 # A player reading a stream from a server of the test's own (`media_stream.rs`).
 ljos_platform = { path = "../ljos_platform", features = ["http"] }
+# The `grab_item` example writes the pictures it takes as PNG files.
+png.workspace = true
 # So the tests see the facade as an application with dev-qml does.
 ljos = { path = ".", features = ["dev-qml", "build", "render", "testing"] }
 
@@ -123,7 +125,8 @@ media-audio = ["media", "ljos_media/audio", "ljos_shell?/media-audio"]
 # installed, as in a Qt without QtWebEngine.
 webengine = ["dep:ljos_webengine", "ljos_webengine/cef", "ljos_shell?/webengine"]
 # Development only: `ljos::dev::compile_dir` and `App::qml_dir` compile a
-# directory of QML at start-up. Never in a shipped application.
+# directory of QML at start-up. Never in a shipped application: one its
+# users change has `user-qml`.
 dev-qml = ["dep:ljos_compiler", "dep:qml_front", "dep:ljos_ir", "dep:ljos_js"]
 # For an application's build script (`[build-dependencies]`):
 # `ljos::build::compile_dir_with_types` compiles its QML ahead of time,
@@ -147,11 +150,20 @@ gltf = ["ljos_render/gltf"]
 # Headless pictures (`ljos::render`): an application's UI drawn to a PNG
 # on a virtual clock, for screenshot tests and documentation.
 render = ["dep:ljos_drive"]
+# A shipped application its users change while it runs (ARCHITECTURE.md
+# §12.1): `App::user_qml` lays the files of one directory over the QML the
+# application was built with, and applies every save with its state kept.
+# Links the QML compiler, which runs only once the user has a file; no
+# overlay, `top`, inspector, MCP SDK or HTTP server. The build script's
+# `ljos` with it (beside `build`) packs the sources a user's file is
+# compiled against (`build::Options::with_sources`).
+user-qml = ["dep:ljos_compiler", "dep:qml_front", "ljos_shell?/user-qml"]
 # Development only: hot reload. `Setup::watch` and its kin compile the
 # application's QML, watch it and apply every save to the running
 # application (`ljos::reload`). Links the QML compiler; no inspector, MCP
-# SDK or HTTP server. A shipped application leaves it off.
-dev = ["shell", "ljos_shell/dev", "dep:ljos_dev"]
+# SDK or HTTP server. A shipped application leaves it off; one its users
+# change has `user-qml`, which this builds on.
+dev = ["shell", "user-qml", "ljos_shell/dev", "dep:ljos_dev"]
 # Development only: the MCP inspector an agent connects to
 # (ARCHITECTURE.md §19.4), served by `App::run` when `App::inspector`
 # or the `LJOS_MCP` environment variable asks for it (`ljos::mcp`).

@@ -54,8 +54,10 @@
 //!     .run()?;
 //! ```
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use ljos_compiler::sources::PackSources;
 use ljos_engine::{Engine, EngineError, MapSource, TypeDump, TypeDumpError};
 
 pub use crate::compile::{CompileError, EngineOracle, EngineType, NativeTypeError};
@@ -122,8 +124,7 @@ pub fn compile_dirs(
     register: impl Fn(&Engine),
     out: &Path,
 ) -> Result<(), BuildError> {
-    let (source, _) = registered_source(dirs, register)?;
-    write_pack(&source, out).map(drop)
+    Options::default().compile_dirs(dirs, register, out)
 }
 
 /// [`compile_dirs`], and the files' bindings and handlers compiled to
@@ -135,9 +136,7 @@ pub fn compile_dirs_to_rust(
     register: impl Fn(&Engine),
     out: &Path,
 ) -> Result<Vec<CompiledFile>, BuildError> {
-    let (source, oracle) = registered_source(dirs, register)?;
-    let pack = write_pack(&source, out)?;
-    write_rust(&pack, &oracle, &out.with_extension("rs"))
+    Options::default().compile_dirs_to_rust(dirs, register, out)
 }
 
 fn registered_source(
@@ -170,8 +169,7 @@ pub fn compile_dir_with_types(dir: &Path, types: &Path, out: &Path) -> Result<()
 /// warning, so that the application builds and its test can write the
 /// new file.
 pub fn compile_dirs_with_types(dirs: &[&Path], types: &Path, out: &Path) -> Result<(), BuildError> {
-    let (source, _) = typed_source(dirs, types)?;
-    write_pack(&source, out).map(drop)
+    Options::default().compile_dirs_with_types(dirs, types, out)
 }
 
 /// [`compile_dirs_with_types`], and the files' bindings and handlers
@@ -182,9 +180,169 @@ pub fn compile_dirs_with_types_to_rust(
     types: &Path,
     out: &Path,
 ) -> Result<Vec<CompiledFile>, BuildError> {
-    let (source, oracle) = typed_source(dirs, types)?;
-    let pack = write_pack(&source, out)?;
-    write_rust(&pack, &oracle, &out.with_extension("rs"))
+    Options::default().compile_dirs_with_types_to_rust(dirs, types, out)
+}
+
+/// How a pack is written: whether it carries the sources its files were
+/// compiled from, for a program whose users change it while it runs (the
+/// feature `user-qml`, ARCHITECTURE.md §12.1). Its methods are the
+/// module's functions.
+///
+/// ```no_run
+/// // build.rs
+/// # let out = std::path::Path::new("qml.pack");
+/// ljos::build::Options::new()
+///     .with_sources()
+///     .compile_dirs_with_types(&["qml".as_ref()], "ljostypes.json".as_ref(), out)
+///     .unwrap();
+/// ```
+#[derive(Debug, Clone)]
+pub struct Options {
+    sources: bool,
+}
+
+impl Default for Options {
+    /// Sources when the build's own `ljos` has `user-qml` on: a build
+    /// script that names the feature builds for a program that has it.
+    /// `dev` turns `user-qml` on too, and so does any other crate's
+    /// build-dependency on `ljos` with either feature in the same build,
+    /// as Cargo unifies them: a program that ships without its sources
+    /// says so with [`without_sources`](Self::without_sources), one that
+    /// ships with them with [`with_sources`](Self::with_sources).
+    fn default() -> Self {
+        Self {
+            sources: cfg!(feature = "user-qml"),
+        }
+    }
+}
+
+impl Options {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// The pack carries the text of every QML file, script, declaration
+    /// and `qmldir` it was compiled from, deflated, after its files: what
+    /// a user's file is compiled against. A program without `user-qml`
+    /// never reads them.
+    #[must_use]
+    pub fn with_sources(mut self) -> Self {
+        self.sources = true;
+        self
+    }
+
+    /// The pack carries its compiled files alone.
+    #[must_use]
+    pub fn without_sources(mut self) -> Self {
+        self.sources = false;
+        self
+    }
+
+    /// See [`compile_dirs`].
+    pub fn compile_dirs(
+        &self,
+        dirs: &[&Path],
+        register: impl Fn(&Engine),
+        out: &Path,
+    ) -> Result<(), BuildError> {
+        let (source, _) = registered_source(dirs, register)?;
+        self.write_pack(&source, dirs, out).map(drop)
+    }
+
+    /// See [`compile_dirs_to_rust`].
+    pub fn compile_dirs_to_rust(
+        &self,
+        dirs: &[&Path],
+        register: impl Fn(&Engine),
+        out: &Path,
+    ) -> Result<Vec<CompiledFile>, BuildError> {
+        let (source, oracle) = registered_source(dirs, register)?;
+        let pack = self.write_pack(&source, dirs, out)?;
+        write_rust(&pack, &oracle, &out.with_extension("rs"))
+    }
+
+    /// See [`compile_dirs_with_types`].
+    pub fn compile_dirs_with_types(
+        &self,
+        dirs: &[&Path],
+        types: &Path,
+        out: &Path,
+    ) -> Result<(), BuildError> {
+        let (source, _) = typed_source(dirs, types)?;
+        self.write_pack(&source, dirs, out).map(drop)
+    }
+
+    /// See [`compile_dirs_with_types_to_rust`].
+    pub fn compile_dirs_with_types_to_rust(
+        &self,
+        dirs: &[&Path],
+        types: &Path,
+        out: &Path,
+    ) -> Result<Vec<CompiledFile>, BuildError> {
+        let (source, oracle) = typed_source(dirs, types)?;
+        let pack = self.write_pack(&source, dirs, out)?;
+        write_rust(&pack, &oracle, &out.with_extension("rs"))
+    }
+
+    fn write_pack(
+        &self,
+        source: &MapSource,
+        dirs: &[&Path],
+        out: &Path,
+    ) -> Result<MapSource, BuildError> {
+        let trailer = if self.sources {
+            sources_of(dirs).encode(true)
+        } else {
+            Vec::new()
+        };
+        write_pack(source, &trailer, out)
+    }
+}
+
+/// The texts of the files under `dirs` a user's file may be compiled
+/// against, keyed from each directory's root as the compile keys them
+/// (the first directory's file of a path wins), with the style the
+/// compile chose.
+fn sources_of(dirs: &[&Path]) -> PackSources {
+    fn walk(root: &Path, dir: &Path, files: &mut BTreeMap<String, String>) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+                continue;
+            };
+            if path.is_dir() {
+                if !ljos_compiler::skipped_dir(name) {
+                    walk(root, &path, files);
+                }
+                continue;
+            }
+            if name.starts_with('.') || !PackSources::carries(name) {
+                continue;
+            }
+            let Ok(relative) = path.strip_prefix(root) else {
+                continue;
+            };
+            let key: Vec<&str> = relative.iter().filter_map(|p| p.to_str()).collect();
+            if let Ok(text) = std::fs::read_to_string(&path) {
+                files.entry(key.join("/")).or_insert(text);
+            }
+        }
+    }
+    let mut files = BTreeMap::new();
+    for dir in dirs {
+        walk(dir, dir, &mut files);
+    }
+    PackSources {
+        files,
+        style: ljos_compiler::controls_style(
+            |name| std::env::var(name).ok(),
+            |path| std::fs::read_to_string(path).ok(),
+        ),
+    }
 }
 
 fn typed_source(dirs: &[&Path], types: &Path) -> Result<(MapSource, EngineOracle), BuildError> {
@@ -241,8 +399,10 @@ fn typed_source(dirs: &[&Path], types: &Path) -> Result<(MapSource, EngineOracle
 /// Writes the pack and hands back the files as the program will read
 /// them from it: compiled code is matched to a file by the content of
 /// what the program loads.
-fn write_pack(source: &MapSource, out: &Path) -> Result<MapSource, BuildError> {
-    let pack = source.to_pack().map_err(BuildError::Pack)?;
+fn write_pack(source: &MapSource, trailer: &[u8], out: &Path) -> Result<MapSource, BuildError> {
+    let pack = source
+        .to_pack_with_trailer(trailer)
+        .map_err(BuildError::Pack)?;
     std::fs::write(out, &pack).map_err(|source| BuildError::Write {
         path: out.to_path_buf(),
         source,

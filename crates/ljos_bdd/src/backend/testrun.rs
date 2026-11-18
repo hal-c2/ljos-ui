@@ -18,7 +18,7 @@ use std::{
     path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::{
-        OnceLock,
+        Mutex, OnceLock,
         atomic::{AtomicU32, Ordering},
         mpsc,
     },
@@ -195,7 +195,7 @@ pub(crate) fn failed(what: impl std::fmt::Display) -> BackendError {
     BackendError::Failed(what.to_string())
 }
 
-fn workspace_root() -> PathBuf {
+pub(crate) fn workspace_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
@@ -216,26 +216,69 @@ pub(crate) fn fuzz_bin() -> Result<PathBuf> {
         .map_err(failed)
 }
 
+/// The example `name` of the workspace's `package`, as [`ljos_bin`] finds
+/// `ljos`: an application on the `ljos` facade, as one is shipped.
+pub(crate) fn example_bin(var: &str, package: &str, name: &str) -> Result<PathBuf> {
+    static BINS: Mutex<BTreeMap<String, std::result::Result<PathBuf, String>>> =
+        Mutex::new(BTreeMap::new());
+    let mut bins = BINS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    bins.entry(format!("{package} {name}"))
+        .or_insert_with(|| built(var, package, Built::Example, name))
+        .clone()
+        .map_err(failed)
+}
+
 /// The program `name` of the workspace's `package`, or the one `var` names.
 fn workspace_bin(var: &str, package: &str, name: &str) -> std::result::Result<PathBuf, String> {
+    built(var, package, Built::Bin, name)
+}
+
+/// What of a package [`build_command`] builds.
+#[derive(Clone, Copy)]
+enum Built {
+    Bin,
+    Example,
+}
+
+impl Built {
+    fn flag(self) -> &'static str {
+        match self {
+            Built::Bin => "--bin",
+            Built::Example => "--example",
+        }
+    }
+}
+
+fn built(
+    var: &str,
+    package: &str,
+    kind: Built,
+    name: &str,
+) -> std::result::Result<PathBuf, String> {
     if let Some(bin) = std::env::var_os(var) {
         return Ok(PathBuf::from(bin));
     }
     let root = workspace_root();
-    let built = build_command(package, name)
+    let built = build_command(package, kind, name)
         .current_dir(&root)
         .stdin(Stdio::null())
         .output()
         .map_err(|e| format!("cannot run cargo to build `{name}`: {e}"))?;
     if !built.status.success() {
         return Err(format!(
-            "`cargo build -p {package} --bin {name}` failed:\n{}",
+            "`cargo build -p {package} {} {name}` failed:\n{}",
+            kind.flag(),
             String::from_utf8_lossy(&built.stderr)
         ));
     }
     let target =
         std::env::var_os("CARGO_TARGET_DIR").map_or_else(|| root.join("target"), PathBuf::from);
-    Ok(target.join("debug").join(name))
+    Ok(match kind {
+        Built::Bin => target.join("debug").join(name),
+        Built::Example => target.join("debug").join("examples").join(name),
+    })
 }
 
 /// `cargo build` of the one program a step runs, without what cargo told
@@ -243,10 +286,10 @@ fn workspace_bin(var: &str, package: &str, name: &str) -> std::result::Result<Pa
 /// again when `CARGO_MANIFEST_DIR` changes (ring's does), and cargo then
 /// takes the test's value as a change: everything above it was built again
 /// here, and again by the next `cargo build` outside, minutes each time.
-fn build_command(package: &str, name: &str) -> Command {
+fn build_command(package: &str, kind: Built, name: &str) -> Command {
     let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
     let mut command = Command::new(cargo);
-    command.args(["build", "--quiet", "-p", package, "--bin", name]);
+    command.args(["build", "--quiet", "-p", package, kind.flag(), name]);
     for (key, _) in std::env::vars_os() {
         if key.to_str().is_some_and(told_of_the_test) {
             command.env_remove(key);
@@ -572,7 +615,7 @@ mod tests {
     #[test]
     fn the_build_of_a_program_is_not_told_the_test_s_package() {
         assert!(std::env::var_os("CARGO_MANIFEST_DIR").is_some());
-        let command = build_command("ljos_cli", "ljos");
+        let command = build_command("ljos_cli", Built::Bin, "ljos");
         let removed: Vec<_> = command
             .get_envs()
             .filter(|(_, value)| value.is_none())

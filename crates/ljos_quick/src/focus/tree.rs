@@ -39,8 +39,9 @@ pub(crate) enum ScopeKey {
 /// A tree that is shown in a window: the only place active focus exists.
 struct Win {
     root: ObjectId,
-    /// Whether the window has the keyboard. A window Ljós was told nothing
-    /// about has it, so a scene works before its host says anything.
+    /// Whether the window has the keyboard: what its scene was last told,
+    /// which is that it has, so a scene works before its host says
+    /// anything.
     active: bool,
     /// The items that read `activeFocus: true`, outermost first.
     chain: Vec<ObjectId>,
@@ -419,9 +420,9 @@ pub(crate) fn forget(engine: &Engine, obj: ObjectId) {
 
 // ------------------------------------------------------------------ windows
 
-/// Makes the tree under `root` a window: its focus item gets active
-/// focus. Idempotent.
-pub(crate) fn add_window(engine: &Engine, root: ObjectId) {
+/// Makes the tree under `root` a window, with the keyboard or without:
+/// with it, its focus item gets active focus. Idempotent.
+pub(crate) fn add_window(engine: &Engine, root: ObjectId, active: bool) {
     let t = tree(engine);
     if t.state.borrow().windows.iter().any(|w| w.root == root) {
         return;
@@ -429,13 +430,13 @@ pub(crate) fn add_window(engine: &Engine, root: ObjectId) {
     let g = engine.graph();
     let (Ok(focus_node), Ok(active_node)) = (
         g.property(g.root(), Value::Null),
-        g.property(g.root(), Value::Bool(true)),
+        g.property(g.root(), Value::Bool(active)),
     ) else {
         return;
     };
     t.state.borrow_mut().windows.push(Win {
         root,
-        active: true,
+        active,
         chain: Vec::new(),
         focus_node,
         active_node,

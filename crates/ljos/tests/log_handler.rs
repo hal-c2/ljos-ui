@@ -59,3 +59,85 @@ fn a_listener_hears_the_log_whatever_the_handler_is() {
     assert_eq!(*heard.borrow(), ["kept", "both"]);
     assert_eq!(*handled.borrow(), ["both", "gone"]);
 }
+
+const SAYS_HELLO: &str =
+    "import QtQuick\nItem {\n  Component.onCompleted: console.log(\"hello\", 2)\n}\n";
+
+/// An application of `Main` that says hello as it is made.
+fn says_hello() -> ljos::App {
+    let source = common::compile_main(&ljos::engine(), SAYS_HELLO);
+    ljos::App::new("Test").source(source).root("Main")
+}
+
+#[test]
+fn an_entry_s_line_is_its_level_and_its_message() {
+    let entry = |level| LogEntry {
+        level,
+        category: "qml".to_owned(),
+        message: "hello 2".to_owned(),
+    };
+    assert_eq!(entry(LogLevel::Debug).line(), "debug: hello 2");
+    assert_eq!(entry(LogLevel::Info).line(), "info: hello 2");
+    assert_eq!(entry(LogLevel::Warning).line(), "warning: hello 2");
+    assert_eq!(entry(LogLevel::Critical).line(), "error: hello 2");
+}
+
+#[test]
+fn a_built_application_keeps_its_log_unless_told_otherwise() {
+    let (engine, _) = says_hello().build().unwrap();
+    let kept: Vec<String> = engine.take_log().into_iter().map(|e| e.message).collect();
+    assert_eq!(kept, ["hello 2"]);
+
+    let (engine, _) = says_hello().log_to_stderr(false).build().unwrap();
+    assert_eq!(engine.take_log().len(), 1, "kept, as asked");
+}
+
+#[test]
+fn the_application_s_own_handler_hears_the_log() {
+    let heard: Rc<RefCell<Vec<String>>> = Rc::default();
+    let sink = Rc::clone(&heard);
+    let (engine, _) = says_hello()
+        .on_log(move |e| sink.borrow_mut().push(e.line()))
+        .build()
+        .unwrap();
+    assert_eq!(*heard.borrow(), ["debug: hello 2"]);
+    assert!(engine.take_log().is_empty(), "the handler took it");
+}
+
+#[test]
+fn of_on_log_and_log_to_stderr_the_last_call_wins() {
+    let heard: Rc<RefCell<Vec<String>>> = Rc::default();
+    let sink = Rc::clone(&heard);
+    let (engine, _) = says_hello()
+        .on_log(move |e| sink.borrow_mut().push(e.line()))
+        .log_to_stderr(false)
+        .build()
+        .unwrap();
+    assert!(heard.borrow().is_empty());
+    assert_eq!(engine.take_log().len(), 1);
+}
+
+#[test]
+fn a_handler_a_module_sets_wins_over_the_builder_s() {
+    let mine: Rc<RefCell<Vec<String>>> = Rc::default();
+    let module: Rc<RefCell<Vec<String>>> = Rc::default();
+    let (to_mine, to_module) = (Rc::clone(&mine), Rc::clone(&module));
+    let (_engine, _) = says_hello()
+        .on_log(move |e| to_mine.borrow_mut().push(e.line()))
+        .register(move |engine| {
+            let sink = Rc::clone(&to_module);
+            engine.set_log_handler(move |e| sink.borrow_mut().push(e.line()));
+        })
+        .build()
+        .unwrap();
+    assert!(mine.borrow().is_empty(), "{:?}", mine.borrow());
+    assert_eq!(*module.borrow(), ["debug: hello 2"]);
+}
+
+#[test]
+fn a_built_application_told_to_write_stderr_writes_it_and_flushes() {
+    let (engine, _) = says_hello().log_to_stderr(true).build().unwrap();
+    assert!(engine.take_log().is_empty(), "written, not kept");
+    // The host's last call: returns once the line is written.
+    ljos::flush_log_to_stderr();
+}

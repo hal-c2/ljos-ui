@@ -695,6 +695,37 @@ fn a_modal_layer_over_the_view_takes_the_keyboard_away() {
 }
 
 #[test]
+fn a_view_that_never_had_the_keyboard_says_nothing_of_losing_it() {
+    let s = scene();
+    // Heard from before the view shows the scene: a window shown on a
+    // desktop has no keyboard until the system gives it one, so its focus
+    // item never had active focus to lose.
+    let changes = Rc::new(Cell::new(0));
+    let c = Rc::clone(&changes);
+    s.engine
+        .connect_by_name(s.one, "activeFocusChanged", move |_, _| {
+            c.set(c.get() + 1);
+        })
+        .unwrap();
+    let around = Around {
+        field_before: true,
+        ..Around::default()
+    };
+    let mut h = harness(&s, KeyboardPolicy::WhenFocused, around);
+    h.run();
+    assert!(!h.state().view.has_keyboard());
+    assert!(!h.state().view.scene().is_window_active(&s.engine));
+    assert!(!flag(&s.engine, s.one, "activeFocus"));
+    assert_eq!(changes.get(), 0, "activeFocus changed and changed back");
+
+    // The keyboard comes: that is the first change.
+    h.get_by_role_and_label(Role::Button, "Two").click();
+    h.run();
+    assert!(h.state().view.has_keyboard());
+    assert_eq!(changes.get(), 1);
+}
+
+#[test]
 fn the_scene_s_window_is_active_while_the_viewport_has_the_focus() {
     let s = scene();
     let mut h = alone(&s);

@@ -3104,6 +3104,316 @@ Feature: What a reload changes
       When the property "anchors.margins" of "a" is set to 5
       Then the property "anchors.bottomMargin" of "a" is 5
 
+  Rule: An anchor no longer given leaves the item where a fresh load puts it
+
+    At run time an anchor taken away leaves the item where it stands, as
+    Qt does. A reload is an edit of the text, so the item stands where
+    the new text puts it, while what the user did meanwhile stays.
+
+    Background:
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"; width: 200; height: 100
+          Rectangle { objectName: "tag"; width: 20; height: 10; anchors.centerIn: parent }
+          Rectangle {
+            objectName: "box"; width: 10; height: 10
+            NumberAnimation on x { id: slide; running: false; from: 0; to: 100; duration: 1000 }
+          }
+          function go() { slide.start() }
+        }
+        """
+      When the method "go" of "root" is called
+      And 500 milliseconds pass
+      Then the property "x" of "tag" is 90
+      And the property "y" of "tag" is 45
+
+    Scenario: An item no longer centred stands at the place it gives itself
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"; width: 200; height: 100
+          Rectangle { objectName: "tag"; width: 20; height: 10 }
+          Rectangle {
+            objectName: "box"; width: 10; height: 10
+            NumberAnimation on x { id: slide; running: false; from: 0; to: 100; duration: 1000 }
+          }
+          function go() { slide.start() }
+        }
+        """
+      And a reload happens
+      Then the property "x" of "tag" is 0
+      And the property "y" of "tag" is 0
+      And the property "x" of "box" is at least 40
+
+    Scenario: An item centred before and anchored to an edge now stands at that edge
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"; width: 200; height: 100
+          Rectangle {
+            objectName: "tag"; width: 20; height: 10
+            anchors.top: parent.top; anchors.horizontalCenter: parent.horizontalCenter; anchors.margins: 12
+          }
+          Rectangle {
+            objectName: "box"; width: 10; height: 10
+            NumberAnimation on x { id: slide; running: false; from: 0; to: 100; duration: 1000 }
+          }
+          function go() { slide.start() }
+        }
+        """
+      And a reload happens
+      Then the property "x" of "tag" is 90
+      And the property "y" of "tag" is 12
+      And the property "x" of "box" is at least 40
+
+    Scenario: An edge and its margin no longer given leave the place the item gives itself
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"; width: 200; height: 100
+          Rectangle { objectName: "tag"; width: 20; height: 10; anchors.top: parent.top; anchors.topMargin: 30 }
+          Rectangle {
+            objectName: "box"; width: 10; height: 10
+            NumberAnimation on x { id: slide; running: false; from: 0; to: 100; duration: 1000 }
+          }
+          function go() { slide.start() }
+        }
+        """
+      And a reload happens
+      Then the property "y" of "tag" is 30
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"; width: 200; height: 100
+          Rectangle { objectName: "tag"; y: 7; width: 20; height: 10 }
+          Rectangle {
+            objectName: "box"; width: 10; height: 10
+            NumberAnimation on x { id: slide; running: false; from: 0; to: 100; duration: 1000 }
+          }
+          function go() { slide.start() }
+        }
+        """
+      And a reload happens
+      Then the property "y" of "tag" is 7
+      And the property "x" of "tag" is 0
+      And the property "x" of "box" is at least 40
+
+    Scenario: A place given to an item that an anchor still lays out is the anchor's
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"; width: 200; height: 100
+          Rectangle { objectName: "tag"; y: 7; width: 20; height: 10; anchors.top: parent.top; anchors.topMargin: 30 }
+          Rectangle {
+            objectName: "box"; width: 10; height: 10
+            NumberAnimation on x { id: slide; running: false; from: 0; to: 100; duration: 1000 }
+          }
+          function go() { slide.start() }
+        }
+        """
+      And a reload happens
+      Then the property "y" of "tag" is 30
+      And the property "x" of "tag" is 0
+      And the property "x" of "box" is at least 40
+
+    Scenario: An item no longer filling its parent has the size it gives itself
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"; width: 200; height: 100
+          Rectangle { objectName: "tag"; width: 20; height: 10; anchors.fill: parent }
+          Rectangle {
+            objectName: "box"; width: 10; height: 10
+            NumberAnimation on x { id: slide; running: false; from: 0; to: 100; duration: 1000 }
+          }
+          function go() { slide.start() }
+        }
+        """
+      And a reload happens
+      Then the property "width" of "tag" is 200
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"; width: 200; height: 100
+          Rectangle { objectName: "tag"; width: 20; height: 10; anchors.left: parent.left; anchors.leftMargin: 5 }
+          Rectangle {
+            objectName: "box"; width: 10; height: 10
+            NumberAnimation on x { id: slide; running: false; from: 0; to: 100; duration: 1000 }
+          }
+          function go() { slide.start() }
+        }
+        """
+      And a reload happens
+      Then the property "x" of "tag" is 5
+      And the property "y" of "tag" is 0
+      And the property "width" of "tag" is 20
+      And the property "height" of "tag" is 10
+      And the property "x" of "box" is at least 40
+
+  Rule: An item a view or a layout took in stands where a fresh load puts it when its anchors change
+
+    A view sizes and places what it takes in (a page, a delegate) as it is
+    made, from what the item gives then: a StackView sizes a page only when
+    the page's anchors do not. An edit of the item's anchors is asked of
+    the view again, as a fresh load asks it. A layout lays its children
+    out whenever they change.
+
+    Scenario: A page a StackView did not size while it was anchored is sized by it once the anchors are gone
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls
+        StackView {
+          objectName: "root"; width: 200; height: 100
+          property string place
+          function measure() { var t = currentItem; place = t.x + "," + t.y + "," + t.width + "," + t.height }
+          initialItem: Rectangle { objectName: "page"; anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top; height: 30 }
+        }
+        """
+      When the method "measure" of "root" is called
+      Then the property "place" of "root" is "0,0,200,30"
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        import QtQuick.Controls
+        StackView {
+          objectName: "root"; width: 200; height: 100
+          property string place
+          function measure() { var t = currentItem; place = t.x + "," + t.y + "," + t.width + "," + t.height }
+          initialItem: Rectangle { objectName: "page"; height: 30 }
+        }
+        """
+      And a reload happens
+      And the method "measure" of "root" is called
+      Then the property "place" of "root" is "0,0,200,30"
+      And there is no reload error
+
+    Scenario: A SwipeView's page no longer anchored keeps the view's place and size
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls
+        SwipeView {
+          objectName: "root"; width: 200; height: 100
+          property string place
+          function measure() { var t = itemAt(1); place = t.x + "," + t.y + "," + t.width + "," + t.height }
+          Rectangle { objectName: "first" }
+          Rectangle { objectName: "page"; anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top; anchors.bottom: parent.bottom }
+        }
+        """
+      When the method "measure" of "root" is called
+      Then the property "place" of "root" is "200,0,200,100"
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        import QtQuick.Controls
+        SwipeView {
+          objectName: "root"; width: 200; height: 100
+          property string place
+          function measure() { var t = itemAt(1); place = t.x + "," + t.y + "," + t.width + "," + t.height }
+          Rectangle { objectName: "first" }
+          Rectangle { objectName: "page" }
+        }
+        """
+      And a reload happens
+      And the method "measure" of "root" is called
+      Then the property "place" of "root" is "200,0,200,100"
+      And there is no reload error
+
+    Scenario: A size given to an anchored page the view holds stays the view's
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls
+        SwipeView {
+          objectName: "root"; width: 200; height: 100
+          property string place
+          function measure() { var t = itemAt(1); place = t.x + "," + t.y + "," + t.width + "," + t.height }
+          Rectangle { objectName: "first" }
+          Rectangle { objectName: "page"; anchors.left: parent.left; anchors.right: parent.right }
+        }
+        """
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        import QtQuick.Controls
+        SwipeView {
+          objectName: "root"; width: 200; height: 100
+          property string place
+          function measure() { var t = itemAt(1); place = t.x + "," + t.y + "," + t.width + "," + t.height }
+          Rectangle { objectName: "first" }
+          Rectangle { objectName: "page"; anchors.left: parent.left; anchors.right: parent.right; width: 50 }
+        }
+        """
+      And a reload happens
+      And the method "measure" of "root" is called
+      Then the property "place" of "root" is "200,0,200,100"
+      And there is no reload error
+
+    Scenario: A delegate no longer centred stands where its view puts it
+      Given the QML:
+        """qml
+        import QtQuick
+        ListView {
+          objectName: "root"; width: 200; height: 100; model: 3
+          property string place
+          function measure() { var t = itemAtIndex(1); place = t.x + "," + t.y + "," + t.width + "," + t.height }
+          delegate: Rectangle { height: 20; width: 50; anchors.horizontalCenter: parent.horizontalCenter }
+        }
+        """
+      When the method "measure" of "root" is called
+      Then the property "place" of "root" is "75,20,50,20"
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        ListView {
+          objectName: "root"; width: 200; height: 100; model: 3
+          property string place
+          function measure() { var t = itemAtIndex(1); place = t.x + "," + t.y + "," + t.width + "," + t.height }
+          delegate: Rectangle { height: 20; width: 50 }
+        }
+        """
+      And a reload happens
+      And the method "measure" of "root" is called
+      Then the property "place" of "root" is "0,20,50,20"
+      And there is no reload error
+
+    Scenario: A child of a layout no longer anchored stands where the layout puts it
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Layouts
+        ColumnLayout {
+          objectName: "root"; width: 200; height: 100; spacing: 0
+          Rectangle { Layout.preferredWidth: 30; Layout.preferredHeight: 20 }
+          Rectangle { objectName: "tag"; Layout.preferredWidth: 20; Layout.preferredHeight: 10; anchors.horizontalCenter: parent.horizontalCenter }
+        }
+        """
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        import QtQuick.Layouts
+        ColumnLayout {
+          objectName: "root"; width: 200; height: 100; spacing: 0
+          Rectangle { Layout.preferredWidth: 30; Layout.preferredHeight: 20 }
+          Rectangle { objectName: "tag"; Layout.preferredWidth: 20; Layout.preferredHeight: 10 }
+        }
+        """
+      And a reload happens
+      Then the property "x" of "tag" is 0
+      And the property "y" of "tag" is 79
+      And the property "width" of "tag" is 20
+      And there is no reload error
+
   Rule: An element added to a model, removed from it or moved in it is the model's own insert, remove or move
 
     A view keeps the delegates of the rows that stay, as when a script

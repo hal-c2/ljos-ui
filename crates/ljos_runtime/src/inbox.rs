@@ -47,7 +47,8 @@ use std::time::{Duration, Instant};
 
 use thiserror::Error;
 
-use crate::observe::{self, MailboxProbe, MailboxSample};
+use crate::batch::{self, BatchPolicy, BatchSender, UiBatch};
+use crate::observe::{self, MailboxKind, MailboxProbe, MailboxSample};
 use crate::time::Clock;
 
 /// Called from a sender's thread when the inbox goes from empty to non-empty.
@@ -154,6 +155,11 @@ struct Shared<M> {
     /// Mirrors `Queue::closed` for lock-free `is_closed`.
     closed: AtomicBool,
     wake: OnceLock<WakeHook>,
+    /// The live side streams made from a handle ([`UiHandle::batch`]),
+    /// which wake through `wake`: a hook installed late must wake those
+    /// that were sent to before it. A stream takes itself out when its
+    /// `UiBatch` is dropped, so this holds as many as are alive.
+    streams: Mutex<Vec<Weak<dyn batch::Queued>>>,
     /// Set by [`UiInbox::observe_as`].
     watch: OnceLock<Watch<M>>,
     counts: Counts,
@@ -185,6 +191,10 @@ impl Counts {
 impl<M> Shared<M> {
     fn lock(&self) -> MutexGuard<'_, Queue<M>> {
         self.queue.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn streams(&self) -> MutexGuard<'_, Vec<Weak<dyn batch::Queued>>> {
+        self.streams.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     fn fire_wake(&self) {
@@ -371,6 +381,49 @@ impl<M> UiHandle<M> {
     }
 }
 
+impl<M: Send + 'static> UiHandle<M> {
+    /// Makes a side stream ([`crate::batch`]) that wakes the UI thread as
+    /// this handle's inbox does: through its [`WakeHook`], the one it has
+    /// or the one it is given later. `name` is what an observer lists the
+    /// stream by, as a mailbox of kind `batch`, and what a turn that runs
+    /// long is named after. `capacity` (at least 1) is fixed; the ring is
+    /// allocated here, once.
+    ///
+    /// The [`UiBatch`] belongs to the UI thread, which drains it (the shell
+    /// does, with `Setup::batch`); the [`BatchSender`] goes to the threads
+    /// that feed it.
+    pub fn batch<T: Send + 'static>(
+        &self,
+        name: &'static str,
+        capacity: usize,
+        policy: BatchPolicy<T>,
+    ) -> (UiBatch<T>, BatchSender<T>) {
+        // Weak: a stream outliving its inbox must not keep the inbox's
+        // queue alive, and with the inbox gone there is no one to wake.
+        let inbox: Weak<Shared<M>> = Arc::downgrade(&self.shared);
+        let wake: WakeHook = Arc::new(move || {
+            if let Some(shared) = inbox.upgrade() {
+                shared.fire_wake();
+            }
+        });
+        let (mut batch, sender, queued) = batch::channel(name, capacity, policy, wake);
+        // The stream's address names its entry: the entry's `Weak` keeps
+        // the allocation, so no other stream can take that address while
+        // the entry is there.
+        let addr = queued.as_ptr() as *const () as usize;
+        self.shared.streams().push(queued);
+        let inbox = Arc::downgrade(&self.shared);
+        batch.on_drop(Box::new(move || {
+            if let Some(shared) = inbox.upgrade() {
+                shared
+                    .streams()
+                    .retain(|s| s.as_ptr() as *const () as usize != addr);
+            }
+        }));
+        (batch, sender)
+    }
+}
+
 /// The future of [`UiHandle::send_async`].
 #[must_use = "a future does nothing unless awaited"]
 pub struct SendAsync<'a, M> {
@@ -487,6 +540,7 @@ impl<M> UiInbox<M> {
             capacity: capacity.max(1),
             closed: AtomicBool::new(false),
             wake: OnceLock::new(),
+            streams: Mutex::new(Vec::new()),
             watch: OnceLock::new(),
             counts: Counts::default(),
         });
@@ -507,14 +561,30 @@ impl<M> UiInbox<M> {
 
     /// Installs the wake hook once, for shells that only get their repaint
     /// handle after the inbox exists. Returns the hook back if one is already
-    /// set. If messages are already queued the hook fires immediately, so a
-    /// message sent before installation is not stranded.
+    /// set. If messages are already queued, here or in a side stream made
+    /// from a handle ([`UiHandle::batch`]), the hook fires immediately (once),
+    /// so nothing sent before installation is stranded.
     pub fn set_wake(&self, wake: WakeHook) -> Result<(), WakeHook> {
         self.shared.wake.set(wake)?;
-        if !self.is_empty() {
+        if !self.is_empty() || self.a_stream_holds_items() {
             self.shared.fire_wake();
         }
         Ok(())
+    }
+
+    fn a_stream_holds_items(&self) -> bool {
+        // The registry lock is released before any stream's ring is
+        // locked: a sender holds its ring while a `Coalesce` key function
+        // runs, and a `UiBatch` dropped from there takes the registry
+        // lock to leave it. Holding both here, in the other order, could
+        // deadlock. Upgraded streams are dropped outside the lock too.
+        let live: Vec<_> = self
+            .shared
+            .streams()
+            .iter()
+            .filter_map(Weak::upgrade)
+            .collect();
+        live.iter().any(|s| s.holds_items())
     }
 
     /// Another sending handle.
@@ -643,12 +713,15 @@ impl<M: Send> MailboxProbe for Shared<M> {
         let c = &self.counts;
         Some(MailboxSample {
             name: watch.name,
+            kind: MailboxKind::Inbox,
             capacity: self.capacity,
             depth,
             oldest,
             sent: c.sent.load(Ordering::Relaxed),
             refused: c.refused.load(Ordering::Relaxed),
             replaced: c.replaced.load(Ordering::Relaxed),
+            // An inbox refuses rather than evicts.
+            evicted: 0,
             drained: c.drained.load(Ordering::Relaxed),
             // Besides the handles, the inbox and this sample hold one.
             senders: Arc::strong_count(&self).saturating_sub(2),
@@ -705,6 +778,47 @@ mod tests {
             out.push(m)
         });
         out
+    }
+
+    #[test]
+    fn the_stream_registry_holds_only_the_live_streams() {
+        let (inbox, tx) = UiInbox::<u32>::channel(4);
+        let registered = || inbox.shared.streams().len();
+        let mut kept = Vec::new();
+        // Senders that outlive their streams do not keep them listed.
+        let mut senders = Vec::new();
+        for i in 0..64 {
+            let (batch, sender) = tx.batch("test.registry", 4, crate::BatchPolicy::DropNewest);
+            sender.send(i).unwrap();
+            if i % 16 == 0 {
+                kept.push(batch);
+            }
+            senders.push(sender);
+        }
+        assert_eq!(registered(), 4);
+        kept.truncate(1);
+        assert_eq!(registered(), 1);
+        drop(kept);
+        assert_eq!(registered(), 0);
+        assert!(senders.iter().all(BatchSender::is_closed));
+    }
+
+    #[test]
+    fn a_stream_whose_item_panics_as_it_drops_still_leaves_the_registry() {
+        struct PanicsOnDrop;
+        impl Drop for PanicsOnDrop {
+            fn drop(&mut self) {
+                panic!("an item that panics as it drops");
+            }
+        }
+        let (inbox, tx) = UiInbox::<u32>::channel(4);
+        let (batch, sender) = tx.batch("test.panicking", 4, crate::BatchPolicy::DropNewest);
+        assert!(sender.send(PanicsOnDrop).is_ok());
+        assert_eq!(inbox.shared.streams().len(), 1);
+        let dropped = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drop(batch)));
+        assert!(dropped.is_err(), "the item's drop panics");
+        assert_eq!(inbox.shared.streams().len(), 0);
+        assert!(sender.is_closed());
     }
 
     #[test]

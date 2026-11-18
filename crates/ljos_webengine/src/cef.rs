@@ -215,30 +215,49 @@ const QUIET_TURNS: u32 = 30;
 
 static PUMP: OnceLock<Arc<Pump>> = OnceLock::new();
 
+/// On the Engine thread: its platform, and while the browser works, the
+/// answer it is promised. A harness waits for what is promised, as a user
+/// waits for a page, so a test's time passes once the browser has settled.
+/// A page whose scripts never stop never lets it settle, so the promise is
+/// busy work: waited on while a browser starts or loads, and after that
+/// for a while from when the view last told the browser something, and no
+/// longer. The third is that time (or when a page last loaded, or the
+/// engine came): work the browser asks for on its own account is waited
+/// on from then.
+type Awake = (
+    Option<std::rc::Rc<Platform>>,
+    Option<Reply>,
+    Option<Instant>,
+);
+
 thread_local! {
-    /// On the Engine thread: its platform, and while the browser works,
-    /// the answer it is promised. A harness waits for what is promised,
-    /// as a user waits for a page, so a test's time passes once the
-    /// browser has settled. A page whose scripts never stop never lets
-    /// it settle, so the promise is busy work: waited on while a browser
-    /// starts or loads, and after that for a while from when the view
-    /// last told the browser something, and no longer.
-    static AWAKE: RefCell<(Option<std::rc::Rc<Platform>>, Option<Reply>)> =
-        const { RefCell::new((None, None)) };
+    /// See [`Awake`].
+    static AWAKE: RefCell<Awake> = const { RefCell::new((None, None, None)) };
 }
 
 /// The browser has work: promised to the Engine thread, when this is it.
 /// `told`: the view told it something, so what follows is awaited afresh.
+/// Otherwise it is the browser's own work, awaited from when it was last
+/// told something: a browser that keeps asking for work of its own (an
+/// idle DevTools front end does, a few times a second) would otherwise
+/// settle and be promised again over and over, each time waited on anew,
+/// and a harness's wait would never end.
 fn hold_awake(told: bool) {
     let _ = AWAKE.try_with(|a| {
         let mut a = a.borrow_mut();
-        let (Some(platform), held) = &mut *a else {
+        let (Some(platform), held, told_at) = &mut *a else {
             return;
         };
+        if told {
+            *told_at = Some(Instant::now());
+        }
         match held {
             Some(reply) if told => platform.renew(reply),
             Some(_) => {}
-            None => *held = Some(platform.expect_busy("the web engine's work")),
+            None => {
+                let since = told_at.unwrap_or_else(Instant::now);
+                *held = Some(platform.expect_busy_since("the web engine's work", since));
+            }
         }
     });
 }
@@ -475,7 +494,7 @@ fn pump_into(e: &Engine) {
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
         .posted = false;
-    let _ = AWAKE.try_with(|a| *a.borrow_mut() = (Some(platform), None));
+    let _ = AWAKE.try_with(|a| *a.borrow_mut() = (Some(platform), None, Some(Instant::now())));
 }
 
 // --- start-up ---------------------------------------------------------------
@@ -665,20 +684,32 @@ fn ozone_platform(words: &[String]) -> Option<&'static str> {
     })
 }
 
-/// What a page cannot have when Chromium runs with no display, which it
-/// does with `--ozone-platform=headless` (the last such word wins). There
-/// it refuses a page its location and reading the clipboard by itself:
-/// the view is never asked, and even an answer kept from before is
-/// overruled. It asks about notifications, media and the rest as ever.
-fn headless_warning(words: &[String]) -> Option<String> {
-    let platform = words
+/// Whether Chromium runs with no display, as it does with
+/// `--ozone-platform=headless` (the last such word wins). There it refuses
+/// a page its location and reading the clipboard by itself unless the
+/// profile has an answer, so the view is asked first (see [`ASK_FIRST`])
+/// and its answer is the profile's.
+fn runs_headless(words: &[String]) -> bool {
+    words
         .iter()
         .rev()
-        .find_map(|w| w.strip_prefix("--ozone-platform="))?;
-    (platform == "headless").then(|| {
+        .find_map(|w| w.strip_prefix("--ozone-platform="))
+        == Some("headless")
+}
+
+/// Set once Chromium starts with no display ([`runs_headless`]): a file's
+/// page is then asked about by the view first as well, since Chromium
+/// asks nobody.
+static NO_DISPLAY: AtomicBool = AtomicBool::new(false);
+
+/// What a page cannot have when Chromium runs with no display. A profile
+/// keeps no answer for a page from a file, so Chromium refuses it even
+/// one the view granted.
+fn headless_warning(words: &[String]) -> Option<String> {
+    runs_headless(words).then(|| {
         "the web engine runs with no display (--ozone-platform=headless): Chromium refuses \
-         pages their location and reading the clipboard without asking the view; run it \
-         with a Wayland or X11 display for those"
+         a page from a file its location and reading the clipboard, even when the view \
+         grants them; run it with a Wayland or X11 display for those"
             .to_owned()
     })
 }
@@ -705,6 +736,7 @@ fn initialize_cef(e: &Engine, first: &ProfileSpec) -> Result<Global, String> {
     if let Some(platform) = ozone_platform(&words) {
         words.push(format!("--ozone-platform={platform}"));
     }
+    NO_DISPLAY.store(runs_headless(&words), Ordering::Relaxed);
     if let Some(why) = headless_warning(&words) {
         e.log(LogLevel::Warning, crate::CATEGORY, why);
     }
@@ -1058,8 +1090,14 @@ enum Pending {
     Boot,
     /// The blank page is out of the history.
     Forgot,
-    /// The page of this origin heard whether it may show notifications.
-    Heard(String),
+    /// The page of this origin heard whether it may do what it asked
+    /// for, a `WebEnginePermission.PermissionType`.
+    Heard(String, i32),
+    /// The page asked Chromium to read the clipboard as one with the
+    /// focus (see [`pass_to_chromium`]): it has Chromium's answer, and is
+    /// focused as it is again once no other such read waits
+    /// ([`Dev::focused`]); then as the one inside.
+    Focused(Box<Pending>),
     Ignore,
 }
 
@@ -1080,6 +1118,11 @@ struct Dev {
     adding: usize,
     /// The origin of every context scripts run in, in any frame.
     origins: HashMap<i64, String>,
+    /// Reads Chromium hears as from a page with the focus, not yet
+    /// answered. Focus emulation is one switch for the page, so it is on
+    /// from the first until the last has its answer: a page may read
+    /// twice at once, and each of its frames may.
+    focused: usize,
 }
 
 impl Dev {
@@ -1307,15 +1350,19 @@ enum Asked {
         /// The frame that asked; its document going refuses the question.
         frame: String,
     },
-    /// To show notifications, which CEF never asks about: the page's
-    /// `Notification.requestPermission` waits in the script of
-    /// [`NOTIFICATIONS`] until the view answers.
-    Notifications {
+    /// Asked by the page's script of [`ASK_FIRST`] before Chromium hears
+    /// of it: to show notifications, which CEF never asks about, or for
+    /// its location or to read the clipboard, which Chromium with no
+    /// display refuses unasked unless the profile has an answer. The
+    /// page's call waits there until the view answers.
+    Scripted {
         /// Where the page's script runs.
         context: i64,
         /// The question's number there.
         number: u64,
         origin: String,
+        /// The `WebEnginePermission.PermissionType`.
+        kind: i32,
     },
 }
 
@@ -1324,7 +1371,7 @@ impl Asked {
     fn key(&self) -> Option<(String, i32)> {
         match self {
             Asked::Prompt { origin, kind, .. } => Some((origin.clone(), *kind)),
-            Asked::Notifications { origin, .. } => Some((origin.clone(), NOTIFICATIONS_KIND)),
+            Asked::Scripted { origin, kind, .. } => Some((origin.clone(), *kind)),
             Asked::Media { .. } => None,
         }
     }
@@ -1345,10 +1392,10 @@ impl Asked {
                 origin: origin.clone(),
                 kind: *kind,
             },
-            Asked::Notifications { origin, .. } => Ev::Permission {
+            Asked::Scripted { origin, kind, .. } => Ev::Permission {
                 id,
                 origin: origin.clone(),
-                kind: NOTIFICATIONS_KIND,
+                kind: *kind,
             },
             Asked::Media { .. } => return,
         };
@@ -1389,21 +1436,24 @@ impl Asked {
                 callback, flags, ..
             } if allow => callback.cont(flags),
             Asked::Media { callback, .. } => callback.cancel(),
-            Asked::Notifications {
+            Asked::Scripted {
                 context,
                 number,
                 origin,
+                kind,
             } => {
-                // The profile keeps the answer, as it does one to a prompt.
-                // Chromium refuses a file's page notifications itself, and
-                // one allowed them anyway never hears back.
+                // The profile keeps the answer, as it does one to a prompt,
+                // and Chromium follows it without asking again. Chromium
+                // refuses a file's page notifications itself, and one
+                // allowed them anyway never hears back; with no display
+                // it refuses the rest too (see the binding).
                 let profile = if origin.starts_with("file:") {
                     None
                 } else {
                     shared.host().and_then(|h| h.request_context())
                 };
                 let written = give(&|| match profile {
-                    Some(_) => write_down(shared, &origin, NOTIFICATIONS_KIND),
+                    Some(_) => write_down(shared, &origin, kind),
                     None => Ok(()),
                 });
                 if let Some(profile) = profile {
@@ -1415,23 +1465,33 @@ impl Asked {
                         return;
                     }
                     let origin = cef_string(&origin);
-                    profile.set_content_setting(
-                        Some(&origin),
-                        Some(&origin),
-                        ContentSettingTypes::NOTIFICATIONS,
-                        if allow {
-                            ContentSettingValues::ALLOW
-                        } else {
-                            ContentSettingValues::BLOCK
-                        },
-                    );
+                    for setting in content_settings(kind) {
+                        profile.set_content_setting(
+                            Some(&origin),
+                            Some(&origin),
+                            *setting,
+                            if allow {
+                                ContentSettingValues::ALLOW
+                            } else {
+                                ContentSettingValues::BLOCK
+                            },
+                        );
+                    }
                 }
                 // The page asks Chromium now, which says what the view
                 // did; what the profile is not to keep goes once it has.
                 let then = if shared.keep == Keep::Always || origin.starts_with("file:") {
                     Pending::Ignore
                 } else {
-                    Pending::Heard(origin)
+                    Pending::Heard(origin, kind)
+                };
+                // Chromium reads the clipboard only for a page with the
+                // focus, which the view's question may have taken; the
+                // page had it when it asked (see the binding).
+                let then = if allow && kind == CLIPBOARD_READ_KIND {
+                    Pending::Focused(Box::new(then))
+                } else {
+                    then
                 };
                 pass_to_chromium(shared, context, number, then);
             }
@@ -1541,6 +1601,9 @@ fn write_down(shared: &Shared, origin: &str, kind: i32) -> std::io::Result<()> {
 fn append_journal(journal: &Path, origin: &str, kind: i32) -> std::io::Result<()> {
     use std::io::Write as _;
     let line = format!("{kind}\t{origin}\n");
+    if let Some(dir) = journal.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
     let mut file = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -1583,9 +1646,19 @@ fn forget_answer(context: &RequestContext, origin: &str, kind: i32) {
 }
 
 /// The page's question `number` in `context` goes on to Chromium; `then`
-/// is done once the page has Chromium's answer.
+/// is done once the page has Chromium's answer. A [`Pending::Focused`]
+/// one is heard by Chromium as from a page with the focus, which Chromium
+/// looks at as the page's call starts, before this call is answered.
 fn pass_to_chromium(shared: &Shared, context: i64, number: u64, then: Pending) {
-    let out = vec![Shared::lock(&shared.dev).call(
+    let mut dev = Shared::lock(&shared.dev);
+    let mut out = Vec::new();
+    if matches!(then, Pending::Focused(_)) {
+        dev.focused += 1;
+        if dev.focused == 1 {
+            out.push(focus_emulated(&mut dev, true));
+        }
+    }
+    out.push(dev.call(
         "Runtime.evaluate",
         json!({
             "expression": format!("globalThis.{ANSWERED}({number})"),
@@ -1593,26 +1666,39 @@ fn pass_to_chromium(shared: &Shared, context: i64, number: u64, then: Pending) {
             "awaitPromise": true,
         }),
         then,
-    )];
+    ));
+    drop(dev);
     shared.send_dev(out);
 }
 
-/// What a page's script calls to ask the view about notifications.
+/// Whether the page is taken to have the focus whatever it has.
+fn focus_emulated(dev: &mut Dev, on: bool) -> Vec<u8> {
+    dev.call(
+        "Emulation.setFocusEmulationEnabled",
+        json!({ "enabled": on }),
+        Pending::Ignore,
+    )
+}
+
+/// What a page's script calls to ask the view, with `kind:number`.
 const ASKING: &str = "__ljosPermission";
 /// What the view calls in the page's script when it answered.
 const ANSWERED: &str = "__ljosAnswered";
 
-/// Every document's `Notification.requestPermission`, which asks the view
-/// first while the page has no answer yet, with the question's number. The
-/// binding is looked for when the page asks: it may come to a new document
-/// after this script does. `EVERY_TIME` is whether the view is asked even
-/// then, as a profile that keeps no answer is: Chromium has the last one
-/// until the view's forgetting reaches it, which a page asking again at
-/// once comes before.
-const NOTIFICATIONS: &str = r#"((EVERY_TIME) => {
-  const N = globalThis.Notification;
-  if (!N || typeof N.requestPermission !== "function") return;
-  const ask = N.requestPermission.bind(N);
+/// Every document's way of asking for notifications, its location or to
+/// read the clipboard, which asks the view first while the page has no
+/// answer yet, with the `WebEnginePermission.PermissionType` and the
+/// question's number; the page's call goes on to Chromium once the view
+/// answered. Chromium with no display refuses a page its location and the
+/// clipboard without asking anyone, but follows an answer the profile has,
+/// so the view's answer is the profile's before Chromium hears of it, and
+/// a view is asked the same way with a display or without. The binding is
+/// looked for when the page asks: it may come to a new document after this
+/// script does. `EVERY_TIME` is whether the view is asked even then, as a
+/// profile that keeps no answer is: Chromium has the last one until the
+/// view's forgetting reaches it, which a page asking again at once comes
+/// before.
+const ASK_FIRST: &str = r#"((EVERY_TIME) => {
   const waiting = new Map();
   let next = 0;
   // Settles once the page has Chromium's answer.
@@ -1625,27 +1711,93 @@ const NOTIFICATIONS: &str = r#"((EVERY_TIME) => {
       return question.answer.then(() => true, () => false);
     }
   });
-  N.requestPermission = function requestPermission(callback) {
+  // `call` once the view has answered `kind`, if `unanswered` says the
+  // page has no answer yet; what `call` gives is what the page is given.
+  const first = (kind, unanswered, call) => {
     const asking = globalThis.__ljosPermission;
     const question = {};
-    const asked = (!EVERY_TIME && N.permission !== "default") || typeof asking !== "function"
+    let ask;
+    try { ask = EVERY_TIME || unanswered(); } catch { ask = true; }
+    const asked = typeof asking !== "function"
       ? Promise.resolve()
-      : new Promise(go => {
+      : Promise.resolve(ask).then(ask => ask && new Promise(go => {
           const number = ++next;
           question.go = go;
           waiting.set(number, question);
-          asking(String(number));
-        });
-    const answer = asked.then(() => ask());
+          asking(kind + ":" + number);
+        }));
+    const answer = asked.then(call);
     question.answer = answer;
-    if (typeof callback === "function") answer.then(callback);
     return answer;
   };
+  // Whether the page has no answer to `name` yet; one that cannot tell
+  // asks.
+  const prompting = name => () => {
+    const permissions = globalThis.navigator && navigator.permissions;
+    return permissions && typeof permissions.query === "function"
+      ? permissions.query({ name }).then(s => s.state === "prompt", () => true)
+      : true;
+  };
+
+  const N = globalThis.Notification;
+  if (N && typeof N.requestPermission === "function") {
+    const request = N.requestPermission.bind(N);
+    N.requestPermission = function requestPermission(callback) {
+      const answer = first(7, () => N.permission === "default", () => request());
+      if (typeof callback === "function") answer.then(callback);
+      return answer;
+    };
+  }
+
+  const G = globalThis.Geolocation && Geolocation.prototype;
+  if (G && typeof G.getCurrentPosition === "function" && typeof G.watchPosition === "function") {
+    const current = G.getCurrentPosition, watch = G.watchPosition, clear = G.clearWatch;
+    const location = prompting("geolocation");
+    // A call Chromium would refuse at once (no callback) is refused at once.
+    G.getCurrentPosition = function getCurrentPosition(...args) {
+      if (typeof args[0] !== "function") return current.apply(this, args);
+      first(8, location, () => { current.apply(this, args); });
+    };
+    // A watch is the page's own number, its Chromium one once asked.
+    const watches = new Map();
+    let watched = 0;
+    G.watchPosition = function watchPosition(...args) {
+      if (typeof args[0] !== "function") return watch.apply(this, args);
+      const id = ++watched;
+      watches.set(id, undefined);
+      first(8, location, () => { if (watches.has(id)) watches.set(id, watch.apply(this, args)); });
+      return id;
+    };
+    // The id is a Web IDL long, as Chromium's is: "1" is the watch 1.
+    G.clearWatch = function clearWatch(id) {
+      id = id | 0;
+      const real = watches.get(id);
+      watches.delete(id);
+      if (real !== undefined) clear.call(this, real);
+    };
+  }
+
+  // Chromium refuses a page without the focus the clipboard before
+  // asking anyone, and so does this; one with it keeps it for Chromium
+  // until the page hears (see `pass_to_chromium`).
+  const C = globalThis.Clipboard && Clipboard.prototype;
+  const focused = globalThis.Document && Document.prototype.hasFocus;
+  if (C) {
+    const clipboard = prompting("clipboard-read");
+    for (const name of ["read", "readText"]) {
+      const read = C[name];
+      if (typeof read !== "function") continue;
+      C[name] = { [name](...args) {
+        if (typeof focused === "function" && !focused.call(document)) return read.apply(this, args);
+        return first(9, clipboard, () => read.apply(this, args));
+      } }[name];
+    }
+  }
 })"#;
 
-/// [`NOTIFICATIONS`] for a profile that keeps answers as `keep` says.
-fn notifications_script(keep: Keep) -> String {
-    format!("{NOTIFICATIONS}({});", keep == Keep::Never)
+/// [`ASK_FIRST`] for a profile that keeps answers as `keep` says.
+fn ask_first_script(keep: Keep) -> String {
+    format!("{ASK_FIRST}({});", keep == Keep::Never)
 }
 
 /// The ids of the questions pages ask, unique in the process.
@@ -1906,7 +2058,7 @@ fn refuse_asked(shared: &Shared) {
                 told_work();
                 callback.cont(PermissionRequestResult::IGNORE);
             }
-            Asked::Notifications { .. } => {}
+            Asked::Scripted { .. } => {}
             a => a.answer(false, shared),
         }
     }
@@ -2977,7 +3129,15 @@ fn dev_result(shared: &Shared, id: i32, success: bool, result: Json) {
     let mut heard = None;
     {
         let mut dev = Shared::lock(&shared.dev);
-        match dev.pending.remove(&id) {
+        let mut pending = dev.pending.remove(&id);
+        if let Some(Pending::Focused(then)) = pending {
+            dev.focused = dev.focused.saturating_sub(1);
+            if dev.focused == 0 {
+                out.push(focus_emulated(&mut dev, false));
+            }
+            pending = Some(*then);
+        }
+        match pending {
             Some(Pending::Eval(script)) => answered.push((script, success)),
             Some(Pending::Isolated(world)) => {
                 let waiting = dev.waiting.remove(&world).unwrap_or_default();
@@ -3014,8 +3174,8 @@ fn dev_result(shared: &Shared, id: i32, success: bool, result: Json) {
             }
             // Asked again when the next page is in.
             Some(Pending::Forgot) => Shared::lock(&shared.boot).forgetting = false,
-            Some(Pending::Heard(origin)) => heard = Some(origin),
-            Some(Pending::Ignore) | None => {}
+            Some(Pending::Heard(origin, kind)) => heard = Some((origin, kind)),
+            Some(Pending::Ignore | Pending::Focused(_)) | None => {}
         }
     }
     for (script, success) in answered {
@@ -3025,8 +3185,8 @@ fn dev_result(shared: &Shared, id: i32, success: bool, result: Json) {
     if booted {
         shared.boot_step(|b| b.untold = b.untold.saturating_sub(1));
     }
-    if let Some(origin) = heard {
-        kept(shared, &origin, NOTIFICATIONS_KIND);
+    if let Some((origin, kind)) = heard {
+        kept(shared, &origin, kind);
     }
 }
 
@@ -3084,28 +3244,36 @@ fn dev_event(shared: &Shared, method: &str, params: &Json) {
                 dev.contexts.retain(|_, c| *c != gone);
                 dev.origins.remove(&gone);
                 drop(dev);
-                notifications_gone(shared, Some(gone));
+                scripted_gone(shared, Some(gone));
             }
         }
         "Runtime.executionContextsCleared" => {
             dev.contexts.clear();
             dev.origins.clear();
             drop(dev);
-            notifications_gone(shared, None);
+            scripted_gone(shared, None);
         }
         "Runtime.bindingCalled" if params["name"].as_str() == Some(ASKING) => {
             // Who asks is the context's origin, not what its script says.
             let context = params["executionContextId"].as_i64();
             let origin = context.and_then(|c| dev.origins.get(&c)).cloned();
             drop(dev);
-            let number = params["payload"]
-                .as_str()
-                .and_then(|p| p.parse::<u64>().ok());
+            let (kind, number) = asked_in_script(params["payload"].as_str().unwrap_or(""));
             let (Some(context), Some(number), Some(origin)) = (context, number, origin) else {
                 return;
             };
             // A page with no origin of its own (a sandboxed frame, data:)
-            // has nothing to be allowed: Chromium refuses it.
+            // has nothing to be allowed: Chromium refuses it. Nor is a
+            // file's page given an answer here to anything but
+            // notifications: a profile keeps none for a file's origin, so
+            // Chromium asks the view itself where it has a display. With
+            // none it asks nobody, so the view is asked here, and only a
+            // refusal reaches the page as the view meant it.
+            let asks_itself = origin.starts_with("file:") && !NO_DISPLAY.load(Ordering::Relaxed);
+            let Some(kind) = kind.filter(|k| *k == NOTIFICATIONS_KIND || !asks_itself) else {
+                pass_to_chromium(shared, context, number, Pending::Ignore);
+                return;
+            };
             if origin.is_empty() || origin == "null" {
                 pass_to_chromium(shared, context, number, Pending::Ignore);
                 return;
@@ -3113,10 +3281,11 @@ fn dev_event(shared: &Shared, method: &str, params: &Json) {
             // As a URL, the way a view is told an origin.
             let origin = format!("{origin}/");
             let id = QUESTIONS.fetch_add(1, Ordering::Relaxed);
-            Asked::Notifications {
+            Asked::Scripted {
                 context,
                 number,
                 origin,
+                kind,
             }
             .ask(shared, id);
         }
@@ -3155,15 +3324,26 @@ fn media_gone(shared: &Shared, only: Option<&str>) {
 
 /// `WebEnginePermission.Notifications`.
 const NOTIFICATIONS_KIND: i32 = 7;
+/// `WebEnginePermission.ClipboardReadWrite`.
+const CLIPBOARD_READ_KIND: i32 = 9;
 
-/// The questions about notifications asked where scripts ran in
-/// `context` (in any, with `None`) are no longer asked: the page went.
-fn notifications_gone(shared: &Shared, context: Option<i64>) {
+/// What [`ASK_FIRST`]'s script asks the view, `kind:number`: the
+/// `WebEnginePermission.PermissionType`, when it is one the script asks
+/// about, and the question's number.
+fn asked_in_script(payload: &str) -> (Option<i32>, Option<u64>) {
+    let (kind, number) = payload.split_once(':').unwrap_or(("", payload));
+    let kind = kind.parse::<i32>().ok().filter(|k| matches!(k, 7..=9));
+    (kind, number.parse::<u64>().ok())
+}
+
+/// The questions the page's script asked where scripts ran in `context`
+/// (in any, with `None`) are no longer asked: the page went.
+fn scripted_gone(shared: &Shared, context: Option<i64>) {
     let mut asked = Shared::lock(&shared.asked);
     let gone: Vec<u64> = asked
         .iter()
         .filter(|(_, a)| {
-            matches!(a, Asked::Notifications { context: c, .. } if context.is_none_or(|g| g == *c))
+            matches!(a, Asked::Scripted { context: c, .. } if context.is_none_or(|g| g == *c))
         })
         .map(|(id, _)| *id)
         .collect();
@@ -3494,7 +3674,7 @@ fn attach(shared: &Arc<Shared>, browser: ::cef::Browser, start: &Start, made: Ma
         ));
         out.push(dev.call(
             "Page.addScriptToEvaluateOnNewDocument",
-            json!({ "source": notifications_script(shared.keep) }),
+            json!({ "source": ask_first_script(shared.keep) }),
             Pending::Ignore,
         ));
         let p = &start.profile;
@@ -4047,7 +4227,7 @@ pub(crate) fn shutdown() -> bool {
             .unwrap_or_else(PoisonError::into_inner)
             .take();
     }
-    let _ = AWAKE.try_with(|a| *a.borrow_mut() = (None, None));
+    let _ = AWAKE.try_with(|a| *a.borrow_mut() = (None, None, None));
     let Global {
         contexts,
         this_run,
@@ -4134,9 +4314,20 @@ mod tests {
     use ljos_engine::ObjectId;
 
     #[test]
-    fn the_notifications_script_calls_the_names_the_view_uses() {
-        assert!(NOTIFICATIONS.contains(&format!("globalThis.{ASKING};")));
-        assert!(NOTIFICATIONS.contains(&format!("\"{ANSWERED}\"")));
+    fn the_asking_script_calls_the_names_the_view_uses() {
+        assert!(ASK_FIRST.contains(&format!("globalThis.{ASKING};")));
+        assert!(ASK_FIRST.contains(&format!("\"{ANSWERED}\"")));
+    }
+
+    #[test]
+    fn the_asking_script_says_what_it_asks_and_its_number() {
+        assert_eq!(asked_in_script("8:3"), (Some(8), Some(3)));
+        assert_eq!(asked_in_script("7:12"), (Some(7), Some(12)));
+        assert_eq!(asked_in_script("9:1"), (Some(9), Some(1)));
+        // Only what the script asks about; the page still goes on.
+        assert_eq!(asked_in_script("1:4"), (None, Some(4)));
+        assert_eq!(asked_in_script("5"), (None, Some(5)));
+        assert_eq!(asked_in_script("x"), (None, None));
     }
 
     #[test]
@@ -4242,8 +4433,25 @@ mod tests {
     #[test]
     fn a_journal_that_cannot_be_written_says_so() {
         let dir = tempfile::tempdir().expect("a directory");
-        let journal = dir.path().join("gone").join(FORGET_FILE);
+        let file = dir.path().join("a file");
+        std::fs::write(&file, "").expect("a file");
+        let journal = file.join(FORGET_FILE);
         assert!(append_journal(&journal, "https://a.example", 7).is_err());
+    }
+
+    // A profile's directory may not be there when the view answers: CEF
+    // may not have made it yet, or it was removed while the app ran. The
+    // journal is the web engine's own file, so the web engine makes its
+    // directory rather than lose the answer.
+    #[test]
+    fn a_journal_in_a_directory_not_there_yet_is_written() {
+        let dir = tempfile::tempdir().expect("a directory");
+        let journal = dir.path().join("not yet").join(FORGET_FILE);
+        append_journal(&journal, "https://a.example", 7).expect("written");
+        assert_eq!(
+            std::fs::read_to_string(&journal).expect("read"),
+            "7\thttps://a.example\n"
+        );
     }
 
     #[test]
@@ -4306,7 +4514,9 @@ mod tests {
         let warned = headless_warning(&words(&["ljos", "--ozone-platform=headless"]))
             .expect("a warning with no display");
         assert!(
-            warned.contains("location") && warned.contains("clipboard"),
+            warned.contains("from a file")
+                && warned.contains("location")
+                && warned.contains("clipboard"),
             "{warned}"
         );
         assert_eq!(
@@ -4335,9 +4545,9 @@ mod tests {
 
     #[test]
     fn a_profile_that_keeps_no_answer_has_the_view_asked_every_time() {
-        assert!(notifications_script(Keep::Never).ends_with("(true);"));
-        assert!(notifications_script(Keep::ThisRun).ends_with("(false);"));
-        assert!(notifications_script(Keep::Always).ends_with("(false);"));
+        assert!(ask_first_script(Keep::Never).ends_with("(true);"));
+        assert!(ask_first_script(Keep::ThisRun).ends_with("(false);"));
+        assert!(ask_first_script(Keep::Always).ends_with("(false);"));
     }
 
     #[test]
@@ -4492,5 +4702,42 @@ mod tests {
         // The view telling it more is waited on afresh.
         page.send_dev(Vec::new());
         assert!(busy_since(&platform).is_some_and(|since| since >= later));
+    }
+
+    /// What `finish` waits for the browser's latest promised work from.
+    fn newest_busy_since(platform: &Platform) -> Option<Instant> {
+        platform
+            .promises()
+            .iter()
+            .rev()
+            .find(|p| p.busy)
+            .map(|p| p.since)
+    }
+
+    #[test]
+    fn the_browsers_own_work_after_it_settled_is_waited_on_from_when_it_was_told() {
+        let engine = Engine::new();
+        pump_into(&engine);
+        let platform = Platform::of(&engine);
+        let held = || AWAKE.with(|a| a.borrow().1.is_some());
+        // The view tells the browser something, and the browser settles.
+        told_work();
+        let told = newest_busy_since(&platform).expect("the view's word promises busy work");
+        release_awake();
+        assert!(!held());
+        std::thread::sleep(Duration::from_millis(20));
+        let later = told + Duration::from_millis(20);
+        // The browser asks for work of its own, as an idle DevTools front
+        // end does a few times a second: promised again, but waited on
+        // from when it was told, not afresh.
+        want_work(0, false);
+        assert!(held());
+        assert_eq!(newest_busy_since(&platform), Some(told));
+        release_awake();
+        want_work(0, false);
+        assert_eq!(newest_busy_since(&platform), Some(told));
+        // The view telling it more is waited on afresh.
+        told_work();
+        assert!(newest_busy_since(&platform).is_some_and(|since| since >= later));
     }
 }

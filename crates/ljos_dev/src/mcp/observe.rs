@@ -16,7 +16,7 @@ use std::time::Instant;
 
 use ljos_engine::{Engine, ObjectId};
 use ljos_mcp_core::ToolReply;
-use ljos_runtime::observe::{self, MailboxSample};
+use ljos_runtime::observe::{self, MailboxKind, MailboxSample};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -48,8 +48,9 @@ pub enum ProcessKind {
     /// What the frame scheduler charged time to: the application, error
     /// boundaries, the inspector.
     Owner,
-    /// The bounded inboxes threads reach the UI thread through. Read
-    /// without the UI thread, so a stuck one still shows its inbox.
+    /// The bounded inboxes and side streams threads reach the UI thread
+    /// through. Read without the UI thread, so a stuck one still shows
+    /// its inbox.
     Mailbox,
     /// The supervision tree: the standard supervisors and every live
     /// boundary, under the one around it.
@@ -73,7 +74,7 @@ pub struct ProcessesArgs {
     #[serde(default)]
     pub kind: Option<ProcessKind>,
     /// List only the mailboxes of this name (`application`, `platform`,
-    /// `images`, `inspector`, `reload`).
+    /// `images`, `inspector`, `reload`, or a side stream's own name).
     #[serde(default)]
     pub mailbox: Option<String>,
     /// Name the kinds of this many front messages per mailbox (at most 20,
@@ -155,12 +156,14 @@ fn mailbox_rows(args: &ProcessesArgs) -> (Vec<Value>, String) {
         .map(|m| {
             let mut row = json!({
                 "name": m.name,
+                "kind": m.kind.as_str(),
                 "depth": m.depth,
                 "capacity": m.capacity,
                 "oldest_us": m.oldest.map(micros),
                 "sent": m.sent,
                 "refused": m.refused,
                 "replaced": m.replaced,
+                "evicted": m.evicted,
                 "drained": m.drained,
                 "senders": m.senders,
                 "waiting_senders": m.waiting,
@@ -174,11 +177,20 @@ fn mailbox_rows(args: &ProcessesArgs) -> (Vec<Value>, String) {
         .collect();
     let mut text = String::new();
     for m in &all {
+        let _ = write!(text, "mailbox {}", m.name);
+        if m.kind == MailboxKind::Batch {
+            text.push_str(" (batch)");
+        }
         let _ = write!(
             text,
-            "mailbox {}: {}/{} queued, sent {}, refused {}, replaced {}, drained {}, {} senders",
-            m.name, m.depth, m.capacity, m.sent, m.refused, m.replaced, m.drained, m.senders
+            ": {}/{} queued, sent {}, refused {}, replaced {}",
+            m.depth, m.capacity, m.sent, m.refused, m.replaced
         );
+        // Only a side stream evicts; an inbox's line stays as it was.
+        if m.kind == MailboxKind::Batch {
+            let _ = write!(text, ", evicted {}", m.evicted);
+        }
+        let _ = write!(text, ", drained {}, {} senders", m.drained, m.senders);
         if m.waiting > 0 {
             let _ = write!(text, " ({} waiting for room)", m.waiting);
         }
