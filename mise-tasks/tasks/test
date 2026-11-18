@@ -389,6 +389,11 @@ if [ "$out" = "$ljos_root/build" ]; then ok "a relative CARGO_TARGET_DIR is from
 suite="$real/suite"
 mkdir -p "$suite/part"
 printf 'Feature: outside\n  Scenario: one\n    Given a step\n  Scenario: two\n    Given a step\n' >"$suite/part/outside.feature"
+# The same suite below a directory whose name has a space (a TMPDIR of "task
+# scratch", say).
+spaced="$real/task scratch/suite"
+mkdir -p "$spaced/part"
+cp "$suite/part/outside.feature" "$spaced/part/outside.feature"
 cat >"$real/ledger" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -402,7 +407,10 @@ while [ $# -gt 0 ]; do
 done
 # The ledger's glob reads {a} as a; bash's braces need a comma.
 glob="$(printf '%s' "$glob" | sed -E 's/\{([^{},]*)\}/\1/g')"
-eval "files=($glob)"
+# Expanded as a pattern but never split into words, so a space stays in.
+IFS=
+# shellcheck disable=SC2206
+files=($glob)
 n=0
 [ ${#files[@]} -eq 0 ] || n=$(cat "${files[@]}" | grep -c 'Scenario:' || true)
 echo "ledger: $n scenarios"
@@ -410,7 +418,7 @@ echo "ledger: $n scenarios"
 SH
 chmod +x "$real/ledger"
 features_run() { LJOS_BDD_FEATURES_BIN="$real/ledger" bash mise-tasks/features/run "$@" 2>&1; }
-for given in "$suite" "$suite/part/outside.feature"; do
+for given in "$suite" "$suite/part/outside.feature" "$spaced" "$spaced/part/outside.feature"; do
   if out="$(features_run --input "$given")"; then
     case "$out" in
       *"ledger: 2 scenarios"*) ok "features:run --input ${given#"$real/"} outside features/ runs its scenarios" ;;
