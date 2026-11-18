@@ -69,12 +69,14 @@ rust_report() {
   fi
 }
 
+mise_rust=true
 if [ "$check" = true ]; then
   for tool in rust github:nextest-rs/nextest; do
     if at="$(mise where "$tool" 2>/dev/null)" && [ -d "$at" ]; then
       did "found mise's $tool ($at)"
     else
       lack "mise's $tool (mise.toml): mise run setup runs mise install"
+      [ "$tool" != rust ] || mise_rust=false
     fi
   done
 else
@@ -82,7 +84,9 @@ else
   mise install --yes
   did "mise's tools (mise.toml): Rust $(rust_pin version), cargo-nextest"
 fi
-rust_report
+# Without mise's Rust, asking rustc its version may go through mise's shim,
+# which installs it: --check says it is missing and asks nothing more.
+[ "$mise_rust" = false ] || rust_report
 
 # --- Submodules -------------------------------------------------------------
 
@@ -90,7 +94,8 @@ rust_report
 # submodule's own are not listed), else, outside git, what is on disk.
 manifests() {
   if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    git ls-files --cached --others --exclude-standard -- 'Cargo.toml' '*/Cargo.toml'
+    # Unquoted: git quotes a name it prints one per line (crates/média).
+    git ls-files -z --cached --others --exclude-standard -- 'Cargo.toml' '*/Cargo.toml' | tr '\0' '\n'
   else
     find . \( -name target -o -name .git \) -prune -o -name Cargo.toml -print | sed 's|^\./||'
   fi
@@ -147,10 +152,10 @@ manifests_use() {
           n = strings(line, s)
           for (i = 1; i <= n; i++) if (under(m, s[i])) found = 1
         }
-        # A key starts a line or follows `{`, `,` or a space.
+        # A key starts a line or follows `{`, `,` or a space, bare or quoted.
         rest = " " line
-        while (match(rest, /[{,[:space:]]path[[:space:]]*=[[:space:]]*("[^"]*"|\047[^\047]*\047)/)) {
-          v = substr(rest, RSTART, RLENGTH); sub(/^[^"\047]*["\047]/, "", v); v = substr(v, 1, length(v) - 1)
+        while (match(rest, /[{,[:space:]](path|"path"|\047path\047)[[:space:]]*=[[:space:]]*("[^"]*"|\047[^\047]*\047)/)) {
+          v = substr(rest, RSTART, RLENGTH); sub(/^[^=]*=[[:space:]]*["\047]/, "", v); v = substr(v, 1, length(v) - 1)
           if (under(m, v)) found = 1
           rest = substr(rest, RSTART + RLENGTH)
         }

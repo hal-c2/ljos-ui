@@ -245,7 +245,7 @@ cat >"$rust/mise" <<'SH'
 #!/bin/sh
 echo "$*" >>"$(dirname "$0")/mise.log"
 case "$1" in
-  where) dirname "$0" ;;
+  where) [ "$2" != rust ] || [ ! -f "$(dirname "$0")/no-rust" ] || exit 1; dirname "$0" ;;
   install) ;;
   *) exit 1 ;;
 esac
@@ -357,6 +357,24 @@ else
 fi
 pinned_rustc "$(rust_pin version)"
 
+# Without mise's Rust, --check asks no rustc: one reached through mise's shim
+# would install it.
+: >"$rust/no-rust"
+cp "$rust/rustc" "$rust/rustc.pinned"
+printf '#!/bin/sh\necho "$*" >>"%s"\necho "rustc %s (stand-in)"\n' "$rust/rustc.log" "$(rust_pin version)" >"$rust/rustc"
+rm -f "$rust/rustc.log"
+if out="$(with_setup --check --no-corpus 2>&1)"; then
+  bad "setup --check passed without mise's Rust" "$out"
+else
+  case "$out" in
+    *"setup is missing:"*"mise's rust (mise.toml): mise run setup runs mise install"*) ok "setup --check fails without mise's Rust, saying so" ;;
+    *) bad "setup --check failed, but not on mise's missing Rust" "$out" ;;
+  esac
+fi
+if [ -f "$rust/rustc.log" ]; then bad "setup --check asked rustc $(cat "$rust/rustc.log") without mise's Rust"; else ok "setup --check asks no rustc without mise's Rust"; fi
+mv "$rust/rustc.pinned" "$rust/rustc"
+rm "$rust/no-rust"
+
 # --- A submodule is needed when a manifest uses it -------------------------------
 
 stand_reset
@@ -400,6 +418,32 @@ else
     *) bad "setup --check failed, but not on the FilmCraft a manifest uses" "$out" ;;
   esac
 fi
+# filmcraft_used <what>: setup --check fails on the FilmCraft the manifests
+# under $root/crates use.
+filmcraft_used() {
+  if out="$(with_setup --check --no-corpus 2>&1)"; then
+    bad "setup --check passed though $1 uses the FilmCraft that is not there" "$out"
+  else
+    case "$out" in
+      *"setup is missing:"*"submodule third_party/filmcraft ("*) ok "setup --check sees the FilmCraft $1 uses" ;;
+      *) bad "setup --check failed, but not on the FilmCraft $1 uses" "$out" ;;
+    esac
+  fi
+}
+# The same in a directory git quotes the name of when it lists it.
+mv "$root/crates/media" "$root/crates/média"
+filmcraft_used "a manifest under crates/média"
+rm -r "$root/crates/média"
+# A quoted key is the same key.
+mkdir -p "$root/crates/media"
+cat >"$root/crates/media/Cargo.toml" <<'TOML'
+[package]
+name = "media"
+
+[dependencies]
+filmcraft-codecs = { version = "0.1", "path" = "../../third_party/filmcraft/crates/codecs" }
+TOML
+filmcraft_used "a dependency with a quoted \"path\" key"
 rm -r "$root/crates" "$root/Cargo.toml"
 
 # --- Paths ---------------------------------------------------------------------
