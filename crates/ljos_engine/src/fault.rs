@@ -336,11 +336,12 @@ impl Engine {
 
     /// A failed JS run. An exception keeps the line Qt logs for it
     /// (`file:line: message`), followed by the QML functions it passed
-    /// through when there is more than the one that threw.
-    pub(crate) fn report_js_fault(&self, fault: &JsFault) {
+    /// through when there is more than the one that threw. `stopped` is
+    /// the nested run an interrupt stopped in the dispatch, as its
+    /// outermost run gave it back ([`Engine::swap_js_stopped`]).
+    pub(crate) fn report_js_fault(&self, fault: &JsFault, stopped: Option<Stopped>) {
         let state = &self.inner.faults;
         let origin = state.origin.get();
-        let stopped = state.stopped.take();
         match fault {
             JsFault::JsException {
                 message,
@@ -389,9 +390,7 @@ impl Engine {
             other => {
                 // The JS host's own words: they name what was running.
                 let (file, line) = self.declared_place(origin);
-                let stopped = stopped
-                    .flatten()
-                    .filter(|_| matches!(other, JsFault::JsInterrupted { .. }));
+                let stopped = stopped.filter(|_| matches!(other, JsFault::JsInterrupted { .. }));
                 self.warn_and_file(
                     other.to_string(),
                     FaultReport {
@@ -423,9 +422,13 @@ impl Engine {
         }
     }
 
-    /// A dispatch into JS begins: no run of it has been stopped yet.
-    pub(crate) fn forget_js_stopped(&self) {
-        self.inner.faults.stopped.take();
+    /// Puts `with` in place of the run noted as stopped, giving back what
+    /// was noted. A dispatch begins with nothing and takes its own back
+    /// when it returns, restoring the one it began in: a dispatch made
+    /// while an interrupted one unwinds (an object it let go of, held
+    /// again) neither drops that one's nor lends it its own.
+    pub(crate) fn swap_js_stopped(&self, with: Option<Option<Stopped>>) -> Option<Option<Stopped>> {
+        self.inner.faults.stopped.replace(with)
     }
 
     /// A nested run came back interrupted. The first to come back so is

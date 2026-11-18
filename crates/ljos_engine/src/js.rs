@@ -1419,13 +1419,14 @@ impl Engine {
                 return None;
             }
         };
-        match self.enter_js(&js, label, what, f) {
+        let (r, stopped) = self.enter_js(&js, label, what, f);
+        match r {
             Ok(v) => Some(v),
             // Nested in a dispatch that is now over: the dispatch is the
             // fault, and is reported when it unwinds.
             Err(JsFault::JsInterrupted { .. }) if js.host.interrupted() => None,
             Err(fault) => {
-                self.report_js_fault(&fault);
+                self.report_js_fault(&fault, stopped);
                 None
             }
         }
@@ -1433,6 +1434,8 @@ impl Engine {
 
     /// One run of JS, outermost or nested, noting which run an interrupt
     /// stopped for the dispatch's fault ([`FaultReport::stopped_outside`]).
+    /// An outermost run gives back the one noted in it; a nested run gives
+    /// `None`, as its dispatch reports the interrupt.
     ///
     /// [`FaultReport::stopped_outside`]: crate::FaultReport::stopped_outside
     fn enter_js<R>(
@@ -1441,15 +1444,14 @@ impl Engine {
         label: &str,
         what: impl FnOnce() -> String,
         f: impl for<'js> FnOnce(&Scope<'js>) -> rquickjs::Result<R>,
-    ) -> Result<R, JsFault> {
-        if !js.host.in_run() {
-            self.forget_js_stopped();
-        }
+    ) -> (Result<R, JsFault>, Option<crate::fault::Stopped>) {
+        let began_in = (!js.host.in_run()).then(|| self.swap_js_stopped(None));
         let r = js.host.enter_naming(label, what, js.slice(), f);
         if matches!(r, Err(JsFault::JsInterrupted { .. })) && js.host.interrupted() {
             self.note_js_stopped();
         }
-        r
+        let stopped = began_in.and_then(|b| self.swap_js_stopped(b).flatten());
+        (r, stopped)
     }
 
     /// Whether promise jobs (a `then` callback, the rest of an `async`
@@ -1472,11 +1474,12 @@ impl Engine {
         if !js.host.has_pending_jobs() {
             return;
         }
-        self.forget_js_stopped();
+        let began_in = self.swap_js_stopped(None);
         let until = std::time::Instant::now() + js.slice().hard;
         let pumped = js.host.pump_jobs(until);
+        let mut stopped = self.swap_js_stopped(began_in).flatten();
         for fault in &pumped.faults {
-            self.report_js_fault(fault);
+            self.report_js_fault(fault, stopped.take());
         }
     }
 
@@ -1496,6 +1499,7 @@ impl Engine {
             .js()
             .map_err(|e| crate::JsError::Failed(e.to_string()))?;
         self.enter_js(&js, label, String::new, f)
+            .0
             .map_err(|fault| match fault {
                 JsFault::JsException {
                     message,

@@ -761,7 +761,7 @@ impl LoadedFile {
             None => js.host.load_module(&name, &self.ir.js.source),
         }
         .map_err(|e| {
-            engine.report_js_fault(&e);
+            engine.report_js_fault(&e, None);
             EngineError::js(e)
         })?;
         js.lines.borrow_mut().add(&handle.name, &self.url, &self.ir);
@@ -771,7 +771,7 @@ impl LoadedFile {
             js.host
                 .call(at, &[JsValue::String(self.url.to_string())])
                 .map_err(|e| {
-                    engine.report_js_fault(&e);
+                    engine.report_js_fault(&e, None);
                     EngineError::js(e)
                 })?;
         }
