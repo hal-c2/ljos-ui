@@ -187,8 +187,10 @@ pub(crate) fn grab_to_image(
     }
 }
 
-/// Why an item cannot give a grab, as Qt's warning says it.
+/// Why an item cannot give a grab, as Qt's warning says it. More reasons
+/// may come as the grab learns what Qt refuses.
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
+#[non_exhaustive]
 pub enum GrabRefused {
     #[error("item is not attached to a window")]
     NotInWindow,
@@ -202,9 +204,10 @@ pub enum GrabRefused {
 /// a script: the scene that shows the item draws it at its next frame,
 /// and `done` is called after that frame, between turns, with its pixels,
 /// as many to a logical pixel as the scene has. `done` gets `None` when
-/// the item leaves every shown window first, or cannot be drawn; it is
-/// not called when the item is destroyed first. A host that checks or
-/// keeps what an item shows (a test, a thumbnail) needs no script to ask.
+/// the item leaves every shown window first, is destroyed first, or
+/// cannot be drawn: it is called once for every grab asked. A host that
+/// checks or keeps what an item shows (a test, a thumbnail) needs no
+/// script to ask.
 pub fn grab(
     engine: &Engine,
     item: ObjectId,
@@ -264,14 +267,23 @@ fn in_shown_window(engine: &Engine, item: ObjectId) -> Result<(), GrabRefused> {
     if !crate::scene::shows_window(engine, window) {
         return Err(GrabRefused::NotInWindow);
     }
-    // A Window that is not shown has `visibility` Hidden (0); a scene's
-    // plain root item has none.
-    if engine.find_property(window, "visibility").is_some()
-        && engine.untrack(|| engine.read_by_name(window, "visibility").to_number()) == 0.0
-    {
-        return Err(GrabRefused::WindowHidden);
-    }
-    Ok(())
+    // The item's window is the nearest Window it is in, which need not be
+    // the top of its tree: a Window declared inside an item hangs from
+    // that item. One not shown has `visibility` Hidden (0); a scene's
+    // plain root item has no `visibility`.
+    engine.untrack(|| {
+        let mut at = Some(item);
+        while let Some(obj) = at {
+            if engine.find_property(obj, "visibility").is_some() {
+                if engine.read_by_name(obj, "visibility").to_number() == 0.0 {
+                    return Err(GrabRefused::WindowHidden);
+                }
+                break;
+            }
+            at = engine.visual_parent(obj);
+        }
+        Ok(())
+    })
 }
 
 /// The type of `item` its warnings name when it was declared in no file:
@@ -288,9 +300,9 @@ fn native_name(engine: &Engine, item: ObjectId) -> String {
 }
 
 /// Hands a scene the grabs of the items `shows` says it shows. A grab of
-/// an item that is gone is dropped. One whose item left every shown
-/// window after it was asked can never be drawn: its callback gets an
-/// empty result, as Qt's does.
+/// an item that is gone is let go (see [`let_go`]). One whose item left
+/// every shown window after it was asked can never be drawn: its
+/// callback gets an empty result, as Qt's does.
 pub(crate) fn take(engine: &Engine, shows: impl Fn(ObjectId) -> bool) -> Vec<Grab> {
     let grabs = engine.extension::<Grabs>();
     let mut pending = grabs.pending.borrow_mut();
@@ -300,9 +312,8 @@ pub(crate) fn take(engine: &Engine, shows: impl Fn(ObjectId) -> bool) -> Vec<Gra
     let mut taken = Vec::new();
     for grab in std::mem::take(&mut *pending) {
         if !engine.is_alive(grab.item) {
-            continue;
-        }
-        if in_shown_window(engine, grab.item).is_err() {
+            let_go(engine, grab);
+        } else if in_shown_window(engine, grab.item).is_err() {
             not_drawn(engine, grab);
         } else if shows(grab.item) {
             taken.push(grab);
@@ -329,7 +340,7 @@ pub(crate) fn waiting(engine: &Engine, shows: impl Fn(ObjectId) -> bool) -> bool
 /// that no scene shows now gets an empty result, as no frame of that
 /// scene comes to settle it. Its callback is queued, not run: the scene
 /// is going, and the host dropping it is in the middle of its own work.
-/// A grab of an item that is gone is dropped.
+/// A grab of an item that is gone is let go (see [`let_go`]).
 pub(crate) fn settle_unshown(engine: &Engine, showed: impl Fn(ObjectId) -> bool) {
     let settled: Vec<Grab> = {
         let grabs = engine.extension::<Grabs>();
@@ -346,7 +357,19 @@ pub(crate) fn settle_unshown(engine: &Engine, showed: impl Fn(ObjectId) -> bool)
     for grab in settled {
         if engine.is_alive(grab.item) {
             not_drawn(engine, grab);
+        } else {
+            let_go(engine, grab);
         }
+    }
+}
+
+/// The item of `grab` is gone. A script's grab is dropped: nothing in the
+/// scripts holds its result, and the item it was asked of is gone with
+/// its callback. Rust's still hears there is no picture, so a host that
+/// waits on it is not left waiting.
+fn let_go(engine: &Engine, grab: Grab) {
+    if matches!(grab.done, Done::Host(_)) {
+        not_drawn(engine, grab);
     }
 }
 
@@ -363,14 +386,19 @@ pub(crate) fn not_drawn(engine: &Engine, grab: Grab) {
 }
 
 /// A grab of an item the scene shows could not be drawn: says so, as the
-/// script waits for a picture that its callback is not given.
+/// one who asked waits for a picture it is not given. The warning names
+/// what asked: a script's `grabToImage` or Rust's [`grab`].
 pub(crate) fn failed(engine: &Engine, grab: Grab) {
     let at = engine.declared_at(grab.item).unwrap_or_default();
     let ty = engine.warning_type_name(grab.item, &native_name(engine, grab.item));
+    let asked = match grab.done {
+        Done::Script(_) => "grabToImage",
+        Done::Host(_) => "ljos::item::grab",
+    };
     engine.log(
         LogLevel::Warning,
         CATEGORY,
-        format!("{at}QML {ty}: grabToImage: the item could not be drawn"),
+        format!("{at}QML {ty}: {asked}: the item could not be drawn"),
     );
     not_drawn(engine, grab);
 }
