@@ -505,6 +505,38 @@ Feature: A view answers what a page asks permission for
     And the property "asked" of "view" is 1
     And the log has 1 info matching "asked for notifications, and the view is not asked: the view allowed it before"
 
+  # A srcdoc frame's address is about:srcdoc, whose origin is "null"; its
+  # document has its page's origin, and that is the one the log names.
+  @ljos-only @api-QtWebEngine.WebEngineView.permissionRequested
+  Scenario: The log names the origin a srcdoc frame has from its page
+    Given the web server serves the text file "framed.html":
+      """
+      <!doctype html>
+      <html><head><title>waiting</title></head><body><script>
+      Notification.requestPermission().then(() => {
+        const frame = document.createElement("iframe");
+        frame.srcdoc = "<script>Notification.requestPermission()"
+          + ".then(answer => parent.document.title = 'framed ' + answer)<" + "/script>";
+        document.body.append(frame);
+      })
+      </script></body></html>
+      """
+    And the QML:
+      """qml
+      import QtQuick
+      import QtWebEngine
+      WebEngineView {
+        id: view; objectName: "view"
+        width: 200; height: 100
+        url: "$SERVER/framed.html"
+        onPermissionRequested: permission => permission.grant()
+      }
+      """
+    When 2 seconds pass
+    Then the property "title" of "view" is "framed granted"
+    And the log has 1 info matching "^WebEngineView: .http://127\.0\.0\.1:[0-9]+. asked for notifications, and the view is not asked: the page had an answer already"
+    And the log has no info matching "null. asked for"
+
   # A profile whose policy is AskEveryTime keeps no answer: each view is
   # asked, and remembers what it was told for every page it shows. One
   # that stores answers is asked once, by the first view.
