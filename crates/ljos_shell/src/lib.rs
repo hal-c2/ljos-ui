@@ -441,6 +441,9 @@ pub(crate) struct Hosting {
     pub(crate) wake: ljos_egui::Waker,
     /// What the host shows on, which `Qt.platform.pluginName` says.
     pub(crate) display: platform::Display,
+    /// The displays the host knows of, the primary one first; empty for a
+    /// host with none, whose windows have the offscreen platform's one.
+    pub(crate) screens: Vec<ljos_controls::ScreenSpec>,
 }
 
 impl<M: Send + 'static> ShellApp<M> {
@@ -495,6 +498,12 @@ impl<M: Send + 'static> ShellApp<M> {
                     ljos_controls::WindowSystem::of(&engine).set_host(move || windows());
                     changed
                 });
+                // Before `setup`, as in Qt: what a window reads of its
+                // screen as it is made (`Component.onCompleted` sizing it
+                // to the display) is the display it will be shown on.
+                if !h.screens.is_empty() {
+                    ljos_controls::WindowSystem::of(&engine).set_screens(&engine, &h.screens);
+                }
                 (h.tree, Some(h.wake), changed, Some(h.display))
             }
             None => (None, None, None, None),
@@ -854,5 +863,49 @@ mod tests {
             "{saved} of {FREED} freed bytes given back"
         );
         drop(above);
+    }
+
+    /// The displays a host names reach the engine before the root is made:
+    /// a window that sizes itself to `Screen` as it is completed, as a
+    /// drop-down does, has the host's display and not the stand-in one.
+    #[cfg(feature = "dev")]
+    #[test]
+    fn a_window_completed_reads_the_display_the_host_names() {
+        use std::sync::Arc;
+
+        use ljos_controls::ScreenSpec;
+        use ljos_runtime::SystemClock;
+
+        let dir = tempfile::tempdir().unwrap();
+        let entry = dir.path().canonicalize().unwrap().join("Main.qml");
+        std::fs::write(
+            &entry,
+            "import QtQuick\nWindow {\n  objectName: \"w\"\n  property int made: -1\n  \
+             Component.onCompleted: { made = Screen.width; width = Screen.width }\n}\n",
+        )
+        .unwrap();
+        let hosting = super::Hosting {
+            tree: Some(egui::accesskit::TreeId::ROOT),
+            changed: Some(Box::new(|| {})),
+            wake: Arc::new(|_| {}),
+            display: super::platform::Display::Other,
+            screens: vec![ScreenSpec {
+                name: "wide".into(),
+                size: [1600.0, 1000.0],
+                ..ScreenSpec::default()
+            }],
+        };
+        let app = super::ShellApp::hosted(
+            &egui::Context::default(),
+            &super::ShellConfig::default(),
+            Arc::new(SystemClock::new()),
+            |setup: &mut super::Setup<'_, ()>| setup.watch(&entry),
+            hosting,
+        )
+        .unwrap();
+        let engine = app.engine();
+        let root = app.view().scene().root().unwrap();
+        assert_eq!(engine.read_by_name(root, "made").to_number(), 1600.0);
+        assert_eq!(engine.read_by_name(root, "width").to_number(), 1600.0);
     }
 }

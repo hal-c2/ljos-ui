@@ -115,6 +115,7 @@ pub(crate) fn run<M: Send + 'static>(
             })
         },
         display: Display::None,
+        screens: Vec::new(),
     };
     #[cfg_attr(not(feature = "mcp"), allow(unused_mut))]
     let mut app = ShellApp::hosted(&ctx, &config, Arc::new(SystemClock::new()), setup, hosting)?;

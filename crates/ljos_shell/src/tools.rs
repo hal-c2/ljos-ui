@@ -759,6 +759,7 @@ mod tests {
                 changed: Some(Box::new(|| {})),
                 wake: Arc::new(|_| {}),
                 display: crate::platform::Display::Other,
+                screens: Vec::new(),
             };
             ShellApp::hosted(
                 &ctx,
