@@ -216,7 +216,13 @@ impl Runtime {
             },
             Ty {
                 name: "Font",
-                properties: vec![p("pixelSize", "int"), p("bold", "bool")],
+                properties: vec![
+                    p("pixelSize", "int"),
+                    p("bold", "bool"),
+                    // As Qt's table writes them: a map and a list of anything.
+                    p("features", "QVariantMap"),
+                    p("fallbacks", "QVariantList"),
+                ],
                 ..Ty::default()
             },
             Ty {

@@ -53,7 +53,7 @@ pub enum Written {
 
 /// Names of QML (and of the C++ classes Qt's table calls them by) that are a
 /// TypeScript primitive.
-const PRIMITIVES: &[(&str, &str)] = &[
+pub(crate) const PRIMITIVES: &[(&str, &str)] = &[
     ("bool", "boolean"),
     ("boolean", "boolean"),
     ("int", "number"),
@@ -87,7 +87,7 @@ const PRIMITIVES: &[(&str, &str)] = &[
 ];
 
 /// Names that are a date, which the dialect leaves out.
-const DATES: &[&str] = &["date", "QDateTime", "QDate", "QTime"];
+pub(crate) const DATES: &[&str] = &["date", "QDateTime", "QDate", "QTime"];
 
 /// Words a declaration cannot be named: a key of an enum so named is
 /// reached through its enum only.
