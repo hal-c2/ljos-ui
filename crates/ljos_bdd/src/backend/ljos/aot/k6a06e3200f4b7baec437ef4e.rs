@@ -3,14 +3,14 @@ use ljos_engine::aot as rt;
 pub static FILE: rt::File = rt::File {
     name: "Scenario",
     content: [
-        255, 179, 54, 244, 8, 250, 248, 143, 219, 57, 149, 66, 238, 113, 187, 129, 79, 96, 193,
-        126, 8, 20, 2, 186, 178, 113, 74, 230, 31, 114, 215, 212,
+        106, 6, 227, 32, 15, 75, 123, 174, 196, 55, 239, 78, 224, 251, 79, 98, 92, 159, 25, 136,
+        100, 62, 194, 70, 53, 221, 5, 21, 199, 14, 99, 44,
     ],
     context: "",
     texts: &[],
     props: &[rt::PropSite {
-        name: "shown",
-        kind: rt::Kind::Bool,
+        name: "count",
+        kind: rt::Kind::Number,
         write: false,
     }],
     signals: &[],
@@ -18,9 +18,10 @@ pub static FILE: rt::File = rt::File {
     exprs: &[Some(e0)],
 };
 
-// Scenario:8:21
+// Scenario:5:31
 fn e0(f: &rt::Frame<'_>) -> Result<rt::Value, rt::Stop> {
     let o0 = f.object(0, 0)?;
     let p0 = f.prop(o0, 0)?;
-    return Ok(rt::Value::Bool(f.bool(o0, p0)?));
+    let () = ();
+    return Ok(rt::Value::Real((f.num(o0, p0)? / 2.0_f64)));
 }
