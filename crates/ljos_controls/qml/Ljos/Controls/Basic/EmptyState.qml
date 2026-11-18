@@ -29,56 +29,71 @@ T.Control {
     padding: 12
     spacing: 6
 
+    // The text keeps to the width the control is given; what it asks for
+    // is still its text's width up to `maximumTextWidth` (EmptyState.qml
+    // of Ljos.Controls says why).
     contentItem: Component {
-        Column {
-            spacing: control.spacing
+        Item {
+            implicitWidth: Math.max(title.text.length > 0 ? Math.min(title.implicitWidth, control.maximumTextWidth) : 0,
+                                    description.text.length > 0 ? Math.min(description.implicitWidth, control.maximumTextWidth) : 0,
+                                    control.actionText.length > 0 || control.secondaryActionText.length > 0 ? actions.implicitWidth : 0)
+            implicitHeight: column.implicitHeight
 
-            Basic.Label {
-                objectName: "title"
-                visible: text.length > 0
-                anchors.horizontalCenter: parent.horizontalCenter
-                width: Math.min(implicitWidth, control.maximumTextWidth)
-                text: control.status === "loading" ? qsTr("Loading…")
-                      : control.title.length > 0 ? control.title
-                      : control.status === "error" ? qsTr("Something went wrong") : ""
-                font.pixelSize: control.font.pixelSize + 4
-                font.bold: true
-                horizontalAlignment: Text.AlignHCenter
-                elide: Text.ElideRight
-                Accessible.role: Accessible.Heading
-            }
-
-            Basic.Label {
-                objectName: "description"
-                visible: text.length > 0
-                anchors.horizontalCenter: parent.horizontalCenter
-                width: Math.min(implicitWidth, control.maximumTextWidth)
-                text: control.description
-                horizontalAlignment: Text.AlignHCenter
-                wrapMode: Text.Wrap
-                maximumLineCount: 2
-                elide: Text.ElideRight
-            }
-
-            Row {
-                visible: control.actionText.length > 0 || control.secondaryActionText.length > 0
-                anchors.horizontalCenter: parent.horizontalCenter
+            Column {
+                id: column
+                width: parent.width
                 spacing: control.spacing
-                layoutDirection: control.mirrored ? Qt.RightToLeft : Qt.LeftToRight
 
-                Basic.Button {
-                    objectName: "secondaryAction"
-                    visible: control.secondaryActionText.length > 0
-                    text: control.secondaryActionText
-                    onClicked: control.secondaryActionTriggered()
+                Basic.Label {
+                    id: title
+                    objectName: "title"
+                    visible: text.length > 0
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    width: Math.min(implicitWidth, control.maximumTextWidth, column.width)
+                    text: control.status === "loading" ? qsTr("Loading…")
+                          : control.title.length > 0 ? control.title
+                          : control.status === "error" ? qsTr("Something went wrong") : ""
+                    font.pixelSize: control.font.pixelSize + 4
+                    font.bold: true
+                    horizontalAlignment: Text.AlignHCenter
+                    elide: Text.ElideRight
+                    Accessible.role: Accessible.Heading
                 }
 
-                Basic.Button {
-                    objectName: "action"
-                    visible: control.actionText.length > 0
-                    highlighted: true
-                    text: control.actionText
-                    onClicked: control.actionTriggered()
+                Basic.Label {
+                    id: description
+                    objectName: "description"
+                    visible: text.length > 0
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    width: Math.min(implicitWidth, control.maximumTextWidth, column.width)
+                    text: control.description
+                    horizontalAlignment: Text.AlignHCenter
+                    wrapMode: Text.Wrap
+                    maximumLineCount: 2
+                    elide: Text.ElideRight
+                }
+
+                Row {
+                    id: actions
+                    visible: control.actionText.length > 0 || control.secondaryActionText.length > 0
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    spacing: control.spacing
+                    layoutDirection: control.mirrored ? Qt.RightToLeft : Qt.LeftToRight
+
+                    Basic.Button {
+                        objectName: "secondaryAction"
+                        visible: control.secondaryActionText.length > 0
+                        text: control.secondaryActionText
+                        onClicked: control.secondaryActionTriggered()
+                    }
+
+                    Basic.Button {
+                        objectName: "action"
+                        visible: control.actionText.length > 0
+                        highlighted: true
+                        text: control.actionText
+                        onClicked: control.actionTriggered()
+                    }
                 }
             }
         }

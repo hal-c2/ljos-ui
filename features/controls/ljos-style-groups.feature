@@ -342,6 +342,47 @@ Feature: Ljós's own style: tabs, cards, popovers, split buttons and empty state
       And the user clicks the "button" "Import"
       Then the property "said" of "root" is "new import "
 
+    @api-QtQuick.Controls.Control.availableWidth @api-QtQuick.Item.implicitWidth
+    Scenario Outline: The text of an empty state <how> <fits>
+      Given the QML:
+        """qml
+        import QtQuick
+        import <module>
+        Item {
+          id: root; objectName: "root"
+          width: 480; height: 320
+          EmptyState {
+            id: empty; objectName: "empty"; <width>
+            title: "A title that is a good deal wider than two hundred pixels"
+            description: "A description that is a good deal wider than two hundred pixels, and wraps"
+          }
+          function part(item, name) {
+            for (const child of item.children) {
+              if (child.objectName === name) return child
+              const found = part(child, name)
+              if (found) return found
+            }
+            return null
+          }
+          property var got: []
+          function measure() {
+            got = [part(empty.contentItem, "title").width - empty.availableWidth,
+                   part(empty.contentItem, "description").width - empty.availableWidth,
+                   empty.implicitWidth]
+          }
+        }
+        """
+      When the method "measure" of "root" is called
+      Then the property "got" of "root" is <got>
+
+      # 360 is the width an empty state's text is kept to; Basic pads it by 12.
+      Examples:
+        | module               | how                         | width       | fits                                                  | got           |
+        | Ljos.Controls        | narrower than its text      | width: 200  | is as wide as it, and it asks for its text's width     | [0, 0, 360]   |
+        | Ljos.Controls        | as wide as it asks          |             | is as wide as it asks                                  | [0, 0, 360]   |
+        | Ljos.Controls.Basic  | of Basic narrower than its text | width: 200 | is as wide as it, and it asks for its text's width  | [0, 0, 384]   |
+        | Ljos.Controls.Basic  | of Basic as wide as it asks |             | is as wide as it asks                                  | [0, 0, 384]   |
+
     Scenario: An error shows a warning, in the warning colour
       Given the QML:
         """qml
