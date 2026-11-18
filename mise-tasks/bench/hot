@@ -45,7 +45,9 @@ bin="$target/dist/ljos"
 
 rm -rf "${out:?}"
 mkdir -p "$out/runs"
-"$root/scripts/bench-manifest.sh" "$out" ${ids[@]+"${ids[@]}"}
+# The examples the gallery rendered and the controls gallery:drive clicked,
+# in this checkout's corner of the target.
+GALLERY_DIR="${GALLERY_DIR:-$(checkout_dir gallery)}" "$root/scripts/bench-manifest.sh" "$out" ${ids[@]+"${ids[@]}"}
 
 sandbox="$("$root/scripts/cua-sandbox.sh" env)"
 value() { sed -n "s/^$1=//p" <<< "$sandbox"; }
