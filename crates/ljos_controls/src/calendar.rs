@@ -447,8 +447,38 @@ fn rebuild(e: &Engine, obj: ObjectId) {
             Err(err) => check(e, "delegate", Err(err)),
         }
     }
+    let items: Rc<[ObjectId]> = made.iter().map(|(item, _)| *item).collect();
     *cells.made.borrow_mut() = made;
+    ask_for_room(e, obj, content, kind, items);
     layout(e, obj);
+}
+
+/// The content item asks for the room its cells ask for: the widest cell
+/// once per column and the tallest once per row, `spacing` apart.
+///
+/// It follows the cells' implicit sizes and the spacing, never the content
+/// item's own size. A control given no size (or one in a layout that has
+/// not placed it yet) takes its size from this, and the content item's
+/// size from the control's: an implicit size written when the content
+/// item's size changed made that size depend on itself, a binding loop.
+fn ask_for_room(e: &Engine, obj: ObjectId, content: ObjectId, kind: Kind, items: Rc<[ObjectId]>) {
+    let (cols, rows) = kind.shape();
+    for (p, cell, n) in [
+        (Item::IMPLICIT_WIDTH, Item::IMPLICIT_WIDTH, cols),
+        (Item::IMPLICIT_HEIGHT, Item::IMPLICIT_HEIGHT, rows),
+    ] {
+        let items = items.clone();
+        let room = move |e: &Engine| {
+            let spacing = num(e, obj, Control::SPACING.index);
+            let most = items
+                .iter()
+                .filter(|item| e.is_alive(**item))
+                .map(|item| num(e, *item, cell.index))
+                .fold(0.0_f64, f64::max);
+            Value::Real(n as f64 * most + spacing * (n - 1) as f64)
+        };
+        check(e, "content", e.bind_computed(content, p.index, room));
+    }
 }
 
 /// A delegate that declares a role required follows its cell's.
@@ -496,8 +526,7 @@ fn refresh(e: &Engine, obj: ObjectId) {
     }
 }
 
-/// Spreads the cells over the content item, `spacing` apart, and tells the
-/// content item what size it would like from the cells'.
+/// Spreads the cells over the content item, `spacing` apart.
 fn layout(e: &Engine, obj: ObjectId) {
     let Some(cells) = cells_of(e, obj) else {
         return;
@@ -514,20 +543,13 @@ fn layout(e: &Engine, obj: ObjectId) {
             num(e, content, Item::HEIGHT.index),
         )
     });
-    let gaps_w = spacing * (cols - 1) as f64;
-    let gaps_h = spacing * (rows - 1) as f64;
-    let cell_w = ((w - gaps_w) / cols as f64).max(0.0);
-    let cell_h = ((h - gaps_h) / rows as f64).max(0.0);
-    let (mut max_w, mut max_h) = (0.0_f64, 0.0_f64);
+    let cell_w = ((w - spacing * (cols - 1) as f64) / cols as f64).max(0.0);
+    let cell_h = ((h - spacing * (rows - 1) as f64) / rows as f64).max(0.0);
     for (i, (item, _)) in cells.made.borrow().iter().enumerate() {
         if !e.is_alive(*item) {
             continue;
         }
         let (col, row) = (i % cols, i / cols);
-        e.untrack(|| {
-            max_w = max_w.max(num(e, *item, Item::IMPLICIT_WIDTH.index));
-            max_h = max_h.max(num(e, *item, Item::IMPLICIT_HEIGHT.index));
-        });
         for (p, v) in [
             (Item::X, col as f64 * (cell_w + spacing)),
             (Item::Y, row as f64 * (cell_h + spacing)),
@@ -536,12 +558,6 @@ fn layout(e: &Engine, obj: ObjectId) {
         ] {
             check(e, "cell", e.set(*item, p, v));
         }
-    }
-    for (p, v) in [
-        (Item::IMPLICIT_WIDTH, cols as f64 * max_w + gaps_w),
-        (Item::IMPLICIT_HEIGHT, rows as f64 * max_h + gaps_h),
-    ] {
-        check(e, "content", e.set(content, p, v));
     }
 }
 
