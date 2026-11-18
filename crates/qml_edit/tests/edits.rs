@@ -229,6 +229,67 @@ fn moving_a_child_back_gives_the_file_back() {
 }
 
 #[test]
+fn a_child_moved_out_of_an_object_and_back_stands_on_its_own_line_again() {
+    // Moving the only child out leaves `Behavior on width {}`. A one-line
+    // child that stood on a line of its own goes back on one, not inside
+    // the braces, so that the move back gives the file back.
+    let source = "Item {\n    Behavior on width {\n        NumberAnimation { duration: 250 }\n    }\n    Item {}\n}\n";
+    let moved = apply(
+        source,
+        &Edit::MoveObject {
+            object: root().child(0).child(0),
+            parent: root(),
+            index: 2,
+        },
+    )
+    .unwrap()
+    .text;
+    assert_eq!(
+        moved,
+        "Item {\n    Behavior on width {}\n    Item {}\n    NumberAnimation { duration: 250 }\n}\n"
+    );
+    let back = apply(
+        &moved,
+        &Edit::MoveObject {
+            object: root().child(2),
+            parent: root().child(0),
+            index: 0,
+        },
+    )
+    .unwrap()
+    .text;
+    assert_eq!(back, source);
+}
+
+#[test]
+fn a_child_moved_back_under_bindings_that_share_a_line_leaves_them_on_it() {
+    // Opening the object up would put `y` and `width` on lines of their
+    // own; the child goes on the line under them instead, where it was.
+    let source = "Item {\n    Bar {\n        y: 80; width: 10\n        Button {\n            text: \"a\"\n        }\n    }\n}\n";
+    let moved = apply(
+        source,
+        &Edit::MoveObject {
+            object: root().child(0).child(0),
+            parent: root(),
+            index: 1,
+        },
+    )
+    .unwrap()
+    .text;
+    let back = apply(
+        &moved,
+        &Edit::MoveObject {
+            object: root().child(1),
+            parent: root().child(0),
+            index: 0,
+        },
+    )
+    .unwrap()
+    .text;
+    assert_eq!(back, source);
+}
+
+#[test]
 fn crlf_files_stay_crlf() {
     let source = PAGE.replace('\n', "\r\n");
     let out = apply(
