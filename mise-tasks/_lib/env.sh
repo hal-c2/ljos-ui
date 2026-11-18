@@ -264,7 +264,7 @@ cargo_config() {
   [ "$main" != "$dir" ] || return 0
   here="$(settings_files "$dir")"
   while IFS= read -r file; do
-    if [ -z "$file" ] || printf '%s\n' "$here" | grep -qxF "$file"; then continue; fi
+    if [ -z "$file" ] || grep -qxF "$file" <<<"$here"; then continue; fi
     given="$file${given:+
 $given}"
   done <<EOF_MAIN
@@ -367,36 +367,41 @@ shell_code() {
 # for tasks:smoke to list, or nothing. A task's cargo builds where
 # target_dir says, with the main checkout's settings in a worktree, only
 # through env.sh's cargo: a task that runs cargo sources env.sh, and never
-# goes round its cargo with exec or command. A script of the checkout's
-# scripts/ (under <root>, this checkout by default) that the task names and
-# that runs cargo runs it for the task: env.sh's CARGO_TARGET_DIR is what
-# puts that build in the shared target, so the task sources env.sh for it.
-# cargo counts only where a command starts (after a separator, a keyword
-# such as if, or assignments), so a message that names a cargo command runs
-# none.
+# goes round its cargo. exec, command and a program that runs another
+# (timeout, nice, env, capped, mise exec, …) run the cargo program, not
+# env.sh's cargo, so each of those counts as both. A script of the
+# checkout's scripts/ (under <root>, this checkout by default) that the task
+# names and that runs cargo runs it for the task: env.sh's CARGO_TARGET_DIR
+# is what puts that build in the shared target, so the task sources env.sh
+# for it. cargo counts only where a command starts (after a separator, a
+# keyword such as if, assignments, or such a program and its arguments), so
+# a message that names a cargo command runs none. The text goes to grep as
+# a here-string, not down a pipe: under pipefail, grep -q stopping early
+# fails a long task's printf on the closed pipe, and the match with it.
 cargo_problems() {
-  local code pre runs="" script
+  local code pre via runs="" script
   code="$(shell_code "$1")"
   pre='(^|[;&|({`])[[:space:]]*((then|do|else|elif|if|while|until|!|time)[[:space:]]+)*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*'
-  if printf '%s\n' "$code" | grep -Eq "${pre}((exec|command)[[:space:]]+)?cargo([[:space:]]|$)"; then
+  via='((exec|command|builtin|env|nice|nohup|timeout|stdbuf|ionice|chrt|taskset|setsid|xargs|mise|"?([^[:space:];&|"]*/)?capped"?)([[:space:]]+[^[:space:];&|]+)*[[:space:]]+)'
+  if grep -Eq "${pre}${via}*cargo([[:space:]]|$)" <<<"$code"; then
     runs=1
   else
     while IFS= read -r script; do
       case "$script" in *.py | *.qml) continue ;; esac
       [ -f "${2:-$ljos_root}/$script" ] || continue
-      if shell_code "${2:-$ljos_root}/$script" | grep -Eq "${pre}((exec|command)[[:space:]]+)?cargo([[:space:]]|$)"; then
+      if grep -Eq "${pre}${via}*cargo([[:space:]]|$)" <<<"$(shell_code "${2:-$ljos_root}/$script")"; then
         runs=1
         break
       fi
     done <<EOF_SCRIPTS
-$(printf '%s\n' "$code" | grep -oE 'scripts/[A-Za-z0-9_.-]+' | sort -u)
+$(grep -oE 'scripts/[A-Za-z0-9_.-]+' <<<"$code" | sort -u)
 EOF_SCRIPTS
   fi
   [ -n "$runs" ] || return 0
-  printf '%s\n' "$code" | grep -Eq '^[[:space:]]*(\.|source)[[:space:]].*_lib/env\.sh"?[[:space:]]*$' ||
+  grep -Eq '^[[:space:]]*(\.|source)[[:space:]].*_lib/env\.sh"?[[:space:]]*$' <<<"$code" ||
     printf ' runs cargo without sourcing _lib/env.sh, so it builds into a worktree'"'"'s own target/;'
-  printf '%s\n' "$code" | grep -Eq "${pre}(exec|command)[[:space:]]+cargo([[:space:]]|$)" &&
-    printf ' exec cargo or command cargo goes round env.sh'"'"'s cargo (run cargo);'
+  grep -Eq "${pre}${via}+cargo([[:space:]]|$)" <<<"$code" &&
+    printf ' exec cargo, command cargo or a program that runs cargo (timeout, nice, env, capped) goes round env.sh'"'"'s cargo (run cargo);'
   return 0
 }
 
@@ -462,7 +467,7 @@ pin_programs() {
 $(printf '%s\n' "$messages" | built_programs)
 EOF_PROGRAMS
     messages="$(pin_build "$@")" || return 1
-    printf '%s\n' "$messages" | grep -q '^{"reason":"compiler-artifact".*"executable":".*"fresh":false' || break
+    grep -q '^{"reason":"compiler-artifact".*"executable":".*"fresh":false' <<<"$messages" || break
     tries=$((tries + 1))
     if [ "$tries" -ge 10 ]; then
       printf '%s\n' "${MISE_TASK_NAME:-this task}: other builds into $CARGO_TARGET_DIR kept coming between this build and its programs; build when they are done, or set CARGO_TARGET_DIR to a target of this checkout's own" >&2

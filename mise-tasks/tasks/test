@@ -891,6 +891,21 @@ lints "a commented-out source of env.sh does not count" source "# $env_line" 'ca
 lints "exec cargo goes round env.sh's cargo" round "$env_line" 'exec cargo test'
 # shellcheck disable=SC1003 # the backslash ends the task's line
 lints "command cargo across a continued line goes round env.sh's cargo" round "$env_line" 'command \' '  cargo test'
+# A program that runs another runs the cargo program, not env.sh's cargo.
+# shellcheck disable=SC2016 # the task's own text, expanded when it runs
+for wrapped in 'timeout 60 cargo test' 'nice -n 10 cargo build' 'env X=1 cargo test' \
+  '"$S/bin/capped" cargo build' '$S/bin/capped cargo build' 'command cargo test' \
+  'nohup cargo build' 'mise exec -- cargo build' 'if timeout 60 cargo test; then :; fi'; do
+  lints "$wrapped, in a task that does not source env.sh, is refused" source "$wrapped"
+  lints "$wrapped goes round env.sh's cargo" round "$env_line" "$wrapped"
+done
+lints "a message that names a wrapped cargo runs none" none 'echo "run timeout 60 cargo test"'
+# Longer than a pipe holds: a lint that pipes the task to grep -q sees the
+# match fail under pipefail once grep stops reading.
+long=()
+for _ in $(seq 20000); do long+=(': filler line for a task longer than a pipe holds'); done
+lints "a long task that sources env.sh and runs cargo is taken" none "$env_line" 'cargo test' "${long[@]}"
+lints "a long task that runs exec cargo goes round env.sh's cargo" round "$env_line" 'exec cargo test' "${long[@]}"
 # A task's scripts run with its environment, so a script's cargo builds
 # where the task's settings say: the task sources env.sh for it.
 mkdir "$real/lint/scripts"

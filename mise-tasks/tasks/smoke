@@ -131,24 +131,26 @@ problem() {
 }
 # What macOS's bash 3.2 and BSD tools lack, each with what to write instead.
 # Comment lines are left out, so a comment may name what it avoids.
+# Each check reads a here-string, as a pipe into grep -q fails under
+# pipefail once grep stops reading a long task.
 bash32() {
   local f="$1" code
   code="$(grep -v '^[[:space:]]*#' "$f" || true)"
-  printf '%s\n' "$code" | grep -Eq '(^|[;&|[:space:](])(mapfile|readarray)[[:space:]]' &&
+  grep -Eq '(^|[;&|[:space:](])(mapfile|readarray)[[:space:]]' <<<"$code" &&
     printf ' mapfile/readarray (bash 4: read in a while loop);'
-  printf '%s\n' "$code" | grep -Eq '(declare|local|typeset) -[a-zA-Z]*A' &&
+  grep -Eq '(declare|local|typeset) -[a-zA-Z]*A' <<<"$code" &&
     printf ' an associative array (bash 4: a case function);'
-  printf '%s\n' "$code" | grep -Eq '\$\{[A-Za-z_][A-Za-z_0-9]*(\^|,)' &&
+  grep -Eq '\$\{[A-Za-z_][A-Za-z_0-9]*(\^|,)' <<<"$code" &&
     printf ' ${var^}/${var,} (bash 4: tr);'
-  printf '%s\n' "$code" | grep -Eq 'shopt -s globstar|\$\{[A-Za-z_][A-Za-z_0-9]*@[QEPAaUuLK]\}' &&
+  grep -Eq 'shopt -s globstar|\$\{[A-Za-z_][A-Za-z_0-9]*@[QEPAaUuLK]\}' <<<"$code" &&
     printf ' globstar or ${var@…} (bash 4: find);'
-  printf '%s\n' "$code" | grep -Eq '(^|[;&|[:space:](])(realpath|readlink -f)[[:space:]]' &&
+  grep -Eq '(^|[;&|[:space:](])(realpath|readlink -f)[[:space:]]' <<<"$code" &&
     printf ' realpath/readlink -f (not on macOS: physical in _lib/env.sh);'
-  printf '%s\n' "$code" | grep -Eq '(^|[;&|[:space:](])sed -i' &&
+  grep -Eq '(^|[;&|[:space:](])sed -i' <<<"$code" &&
     printf ' sed -i (BSD and GNU differ: write to a file and mv it);'
-  printf '%s\n' "$code" | grep -Eq '(^|[;&|[:space:](])stat -c' &&
+  grep -Eq '(^|[;&|[:space:](])stat -c' <<<"$code" &&
     printf ' stat -c (GNU only: wc -c, or ls);'
-  printf '%s\n' "$code" | grep -Eq '(^|[;&|[:space:](])env -C' &&
+  grep -Eq '(^|[;&|[:space:](])env -C' <<<"$code" &&
     printf ' env -C (GNU only: cd in a subshell);'
   return 0
 }
@@ -173,7 +175,7 @@ for f in $(find mise-tasks -type f | sort); do
     mise-tasks/_lib/*) ;;
     *)
       grep -q '^#MISE ' "$f" || continue
-      printf '%s\n' "$listed" | grep -qxF "$root/$f" ||
+      grep -qxF "$root/$f" <<<"$listed" ||
         problems="$problems mise does not list it (is it executable?);"
       grep -q '^#MISE description=' "$f" || problems="$problems no #MISE description;"
       grep -q '^set -euo pipefail' "$f" || problems="$problems no 'set -euo pipefail';"
