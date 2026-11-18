@@ -97,27 +97,6 @@ View3D {
         return Qt.vector3d(c.r * k, c.g * k, c.b * k)
     }
 
-    DragHandler {
-        id: drag
-        target: null
-        enabled: scene.interactive
-        property real yaw0: 0
-        property real pitch0: 0
-        onActiveChanged: {
-            if (active) {
-                yaw0 = scene.dragYaw
-                pitch0 = scene.dragPitch
-            }
-        }
-        onTranslationChanged: {
-            if (!active)
-                return
-            scene.dragYaw = yaw0 + translation.x * 0.45
-            const p = pitch0 + translation.y * 0.3
-            scene.dragPitch = Math.max(-70 - scene.pitch, Math.min(70 - scene.pitch, p))
-        }
-    }
-
     environment: ExtendedSceneEnvironment {
         // Whatever is behind the view shows round the watch.
         backgroundMode: SceneEnvironment.Transparent
@@ -138,6 +117,27 @@ View3D {
         glowLevel: ExtendedSceneEnvironment.GlowLevel.One
             | ExtendedSceneEnvironment.GlowLevel.Two
             | ExtendedSceneEnvironment.GlowLevel.Three
+    }
+
+    DragHandler {
+        id: drag
+        target: null
+        enabled: scene.interactive
+        property real yaw0: 0
+        property real pitch0: 0
+        onActiveChanged: {
+            if (active) {
+                yaw0 = scene.dragYaw
+                pitch0 = scene.dragPitch
+            }
+        }
+        onTranslationChanged: {
+            if (!active)
+                return
+            scene.dragYaw = yaw0 + translation.x * 0.45
+            const p = pitch0 + translation.y * 0.3
+            scene.dragPitch = Math.max(-70 - scene.pitch, Math.min(70 - scene.pitch, p))
+        }
     }
 
     PerspectiveCamera {
