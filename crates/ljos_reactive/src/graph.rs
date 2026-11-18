@@ -1899,11 +1899,11 @@ impl<V: Clone + 'static> Graph<V> {
         for &n in taken {
             if let Some(node) = i.nodes.get_mut(n)
                 && node.read_stamp == stamp
+                // Still held through a read it keeps. That takes an outer
+                // run adopted as reading the node while this one held it,
+                // which hid this one: only then is the scan made.
+                && !(i.hidden.iter().any(|h| h.node == n && h.stamp == stamp) && kept.contains(&n))
             {
-                // A run records a node once while it holds the node's
-                // stamp: it records a read only when the stamp is not its
-                // own, and a nested run that took it gives it back.
-                debug_assert!(!kept.contains(&n), "a run read a node it holds twice");
                 // The run this one hid is named again, as when this one
                 // ends. Else no run: stamp 0, and the next read records it
                 // again. A stamp an adopted reader took stays its.
