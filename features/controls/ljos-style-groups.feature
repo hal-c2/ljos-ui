@@ -370,6 +370,35 @@ Feature: Ljós's own style: tabs, cards, popovers, split buttons and empty state
       When the method "measure" of "root" is called
       Then the property "got" of "root" is [0, 0, 0, 0]
 
+    # A perspective that sends the button's line x = -1 to infinity draws
+    # the 19-wide button 95 wide, so the popover goes 4 beyond, at the
+    # button's 99, and both are 20 in from the window's corner, inside the
+    # popover's margins. The window's point a pixel further on is on that
+    # horizon and maps back to no point of the button's, but the popover is
+    # not put there: its place is kept.
+    Scenario: A popover beside a parent in perspective is put at its place though a pixel on is past the horizon
+      Given the QML:
+        """qml
+        import QtQuick
+        import Ljos.Controls
+        Item {
+          width: 400; height: 400
+          Item {
+            x: 20; y: 20
+            transform: Matrix4x4 { matrix: Qt.matrix4x4(100, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 1) }
+            Button {
+              width: 19; height: 20; text: "F"
+              Popover { objectName: "pop"; edge: Qt.RightEdge; width: 100; height: 60 }
+            }
+          }
+        }
+        """
+      When the method "open" of "pop" is called
+      And 200 milliseconds pass
+      Then the property "visible" of "pop" is true
+      And the property "x" of "pop" is 99
+      And the property "y" of "pop" is 0
+
     # Scaled to nothing, the parent has no point of its own where the
     # popover is: each of them is drawn at the one point it is shrunk to.
     # The popover keeps its parent's corner rather than take the window's
