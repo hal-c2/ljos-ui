@@ -114,6 +114,13 @@ impl RootSwaps {
         presents.iter().find(|(h, _)| *h == holder).map(|(_, w)| *w)
     }
 
+    /// The root that stands for `window`, if one does: the root of the
+    /// application still, though a host shows `window` in its place.
+    pub fn holder_of(&self, window: ObjectId) -> Option<ObjectId> {
+        let presents = self.presents.borrow();
+        presents.iter().find(|(_, w)| *w == window).map(|(h, _)| *h)
+    }
+
     /// `holder` stands for `window` from now on (None: for nothing, and
     /// it is shown itself). Where a host shows the holder, or the window
     /// it stood for, the host shows what it stands for now before the

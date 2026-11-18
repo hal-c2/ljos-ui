@@ -482,9 +482,15 @@ fn pointer_label(engine: &Engine, obj: ObjectId) -> String {
 /// `#objectName` or an `id=` is looked for when the outline has no such
 /// node (an item with no role, or one that is not shown).
 pub(crate) fn all_objects(engine: &Engine, scene: &QuickScene) -> Vec<ObjectId> {
-    scene
-        .root()
-        .map_or_else(Vec::new, |root| objects_below(engine, root))
+    scene.root().map_or_else(Vec::new, |root| {
+        // A window shown for the root that stands for it is held by that
+        // root, which the window's tree does not reach: the root and what
+        // it holds are the application's objects too.
+        let top = ljos_quick::roots::RootSwaps::of(engine)
+            .holder_of(root)
+            .unwrap_or(root);
+        objects_below(engine, top)
+    })
 }
 
 fn objects_below(engine: &Engine, root: ObjectId) -> Vec<ObjectId> {
