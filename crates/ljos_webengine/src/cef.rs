@@ -1601,6 +1601,9 @@ fn write_down(shared: &Shared, origin: &str, kind: i32) -> std::io::Result<()> {
 fn append_journal(journal: &Path, origin: &str, kind: i32) -> std::io::Result<()> {
     use std::io::Write as _;
     let line = format!("{kind}\t{origin}\n");
+    if let Some(dir) = journal.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
     let mut file = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -4430,8 +4433,25 @@ mod tests {
     #[test]
     fn a_journal_that_cannot_be_written_says_so() {
         let dir = tempfile::tempdir().expect("a directory");
-        let journal = dir.path().join("gone").join(FORGET_FILE);
+        let file = dir.path().join("a file");
+        std::fs::write(&file, "").expect("a file");
+        let journal = file.join(FORGET_FILE);
         assert!(append_journal(&journal, "https://a.example", 7).is_err());
+    }
+
+    // A profile's directory may not be there when the view answers: CEF
+    // may not have made it yet, or it was removed while the app ran. The
+    // journal is the web engine's own file, so the web engine makes its
+    // directory rather than lose the answer.
+    #[test]
+    fn a_journal_in_a_directory_not_there_yet_is_written() {
+        let dir = tempfile::tempdir().expect("a directory");
+        let journal = dir.path().join("not yet").join(FORGET_FILE);
+        append_journal(&journal, "https://a.example", 7).expect("written");
+        assert_eq!(
+            std::fs::read_to_string(&journal).expect("read"),
+            "7\thttps://a.example\n"
+        );
     }
 
     #[test]
