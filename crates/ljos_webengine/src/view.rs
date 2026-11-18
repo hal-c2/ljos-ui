@@ -1134,6 +1134,7 @@ pub(crate) fn apply(e: &Engine, me: ObjectId, event: Event) {
             }
         }
         Event::DesktopMedia { id, audio } => ask_desktop_media(e, me, id, audio),
+        Event::Note(note) => e.log(LogLevel::Info, crate::CATEGORY, note),
     }
 }
 
