@@ -1895,13 +1895,16 @@ impl<V: Clone + 'static> Graph<V> {
         let stamp = f.stamp;
         // Out and back in, not copied: the frames are looked at meanwhile.
         let mut reads = std::mem::take(&mut f.reads);
-        for &n in &reads[at..] {
+        let (kept, taken) = reads.split_at(at);
+        for &n in taken {
             if let Some(node) = i.nodes.get_mut(n)
                 && node.read_stamp == stamp
+                && !kept.contains(&n)
             {
                 // The run this one hid is named again, as when this one
                 // ends. Else no run: stamp 0, and the next read records it
-                // again. A stamp an adopted reader took stays its.
+                // again. A stamp an adopted reader took stays its, and one
+                // this run still holds through a read it keeps stays too.
                 node.read_stamp = 0;
                 if let Some(k) = i.hidden.iter().rposition(|h| {
                     h.node == n && h.by == stamp && running(&i.frames, h.stamp).is_some()
@@ -1913,7 +1916,6 @@ impl<V: Clone + 'static> Graph<V> {
         }
         // Hidden no more: this run no longer holds what it gave back.
         if !i.hidden.is_empty() {
-            let (kept, taken) = reads.split_at(at);
             i.hidden
                 .retain(|h| h.stamp != stamp || !taken.contains(&h.node) || kept.contains(&h.node));
         }
@@ -4226,8 +4228,8 @@ fn push_holders(
 /// still going has `old`, it holds `n` and is hidden while `by` does.
 fn hide(hidden: &mut SmallVec<[Hidden; 4]>, frames: &[Frame], n: NodeId, old: u64, by: u64) {
     if old != by
-        && !hidden.iter().any(|h| h.node == n && h.stamp == old)
         && running(frames, old).is_some()
+        && !hidden.iter().any(|h| h.node == n && h.stamp == old)
     {
         hidden.push(Hidden {
             node: n,

@@ -1342,6 +1342,41 @@ fn an_effect_adopted_as_reading_by_a_nested_run_that_takes_its_own_read_back_sti
 }
 
 #[test]
+fn an_effect_hears_of_a_change_a_nested_run_makes_after_taking_its_read_back() {
+    // The nested effect reads what the first effect read, takes that read
+    // back and, still going, changes it: the first effect, named again as
+    // its reader, runs again and sees the change.
+    let g = Graph::new();
+    let gate = g.property(g.root(), 0).unwrap();
+    let src = g.property(g.root(), 0).unwrap();
+    let out = g.property(g.root(), 0).unwrap();
+    let seen = Rc::new(Cell::new(-1));
+    let s = seen.clone();
+    g.effect(g.root(), move |g| {
+        if g.get(gate) != 0 {
+            s.set(g.get(src));
+            g.set(out, 1);
+        }
+    })
+    .unwrap();
+    let nested = Rc::new(Cell::new(0));
+    let k = nested.clone();
+    g.effect(g.root(), move |g| {
+        if g.get(out) != 0 {
+            let at = g.reads_len().unwrap();
+            g.get(src);
+            let mut gone: Vec<NodeId> = Vec::new();
+            g.take_reads_since(at, &mut gone);
+            g.set(src, 7);
+            k.set(k.get() + 1);
+        }
+    })
+    .unwrap();
+    g.set(gate, 1);
+    assert_eq!((seen.get(), nested.get()), (7, 1));
+}
+
+#[test]
 fn only_an_assigned_value_holds_what_a_write_would_write() {
     let g = Graph::new();
     let a = g.property(g.root(), 1).unwrap();
