@@ -1758,12 +1758,18 @@ fn plain(written: &str) -> &str {
 fn primitive(written: &str) -> Option<Ty> {
     Some(match written {
         "bool" | "boolean" => Ty::BOOLEAN,
-        "int" | "real" | "double" | "number" | "qreal" | "float" => Ty::NUMBER,
+        "int" | "uint" | "real" | "double" | "number" | "qreal" | "float" | "qint64"
+        | "qlonglong" | "quint64" | "short" | "ushort" | "uchar" => Ty::NUMBER,
         "string" | "QString" | "url" | "QUrl" => Ty::STRING,
         "color" | "QColor" => Ty::COLOR,
-        "var" | "variant" | "unknown" | "QVariant" | "QJSValue" => Ty::UNKNOWN,
+        // A QVariantMap is written as an object and a QVariantList as an
+        // array, and what they hold is anything. dts.rs declares them
+        // `unknown`, and the checker says what the declarations say, so a
+        // member read off one (`font.features.tnum`) is let by in both.
+        "var" | "variant" | "unknown" | "QVariant" | "QJSValue" | "QVariantMap"
+        | "QVariantList" => Ty::UNKNOWN,
         // DECISION: TYPES.md has no `date`: what holds one is let by.
-        "date" | "QDateTime" => Ty::ERROR,
+        "date" | "QDateTime" | "QDate" | "QTime" => Ty::ERROR,
         _ => return None,
     })
 }
@@ -1860,5 +1866,21 @@ export const s: number = match (v) { when let k and if (v is let m): k + m; defa
                 (10, 66, "h".to_string(), arm.to_string()),
             ]
         );
+    }
+
+    /// Every name dts.rs declares as a primitive or a date is one here too:
+    /// a name only dts.rs has falls through to a named type nothing can be
+    /// given, which only a build with Qt's table writes.
+    #[test]
+    fn the_checker_knows_every_primitive_the_declarations_do() {
+        let missing: Vec<&str> = crate::ts::dts::PRIMITIVES
+            .iter()
+            .map(|(qml, _)| *qml)
+            .chain(crate::ts::dts::DATES.iter().copied())
+            // `QObject` is a type of the table, and `void` only a return.
+            .filter(|qml| !matches!(*qml, "QObject" | "void"))
+            .filter(|qml| primitive(qml).is_none())
+            .collect();
+        assert_eq!(missing, Vec::<&str>::new());
     }
 }

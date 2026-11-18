@@ -4,7 +4,8 @@
 #   https://doc.qt.io/qt-6/qml-qtquick-text.html#font.styleName-prop
 #   https://doc.qt.io/qt-6/qml-qtquick-text.html#font.kerning-prop
 #   https://doc.qt.io/qt-6/qml-qtquick-text.html#font.overline-prop
-# Verified on Qt 6.11.2 (qml6, offscreen).
+#   https://doc.qt.io/qt-6/qml-qtquick-text.html#font.features-prop
+# Verified on Qt 6.11.2 (qml6, offscreen); font.features on Qt 6.12.0.
 
 @qt-parity
 Feature: Text style and the rest of the font
@@ -48,3 +49,17 @@ Feature: Text style and the rest of the font
     And the property "font.overline" of "t" is true
     And the property "font.contextFontMerging" of "t" is true
     And the property "font.preferTypoLineMetrics" of "t" is true
+
+  Scenario: The font's features are given as an object of feature tags
+    Qt's table says `font.features` is a QVariantMap. An object is what a
+    QVariantMap is written as, so it compiles with Qt's table as without it.
+    Given the QML:
+      """qml
+      import QtQuick
+      Text {
+        objectName: "t"
+        text: "10:08"
+        font.features: { "tnum": 1 }
+      }
+      """
+    Then the property "font.features.tnum" of "t" is 1
