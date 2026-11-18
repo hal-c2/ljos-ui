@@ -432,6 +432,54 @@ Feature: Ljós's own style: tabs, cards, popovers, split buttons and empty state
         | with its gap   | 4   |
         | with no gap    | 0   |
 
+    # Scaled close to nothing, the parent still has a point of its own where
+    # the popover goes, far out in its own terms, as its pixels are so
+    # small: the popover is drawn its gap below the speck the button is
+    # drawn as, inside the window. Scaled so far that its transforms have no
+    # inverse, it is as if scaled to nothing: the popover keeps its parent's
+    # corner, which is drawn at that speck. The answers are where it is
+    # drawn against the button, and whether it is drawn inside the window.
+    @api-QtQuick.Item.scale
+    Scenario Outline: A popover with gap <gap> under an ancestor scaled to <scale> is drawn by the speck it is shrunk to
+      Given the QML:
+        """qml
+        import QtQuick
+        import Ljos.Controls
+        Item {
+          id: root; objectName: "root"
+          width: 400; height: 400
+          Item {
+            x: 100; y: 100; width: 200; height: 200; scale: <scale>
+            Button {
+              id: filter; width: 60; height: 20; text: "Filter"
+              Popover { id: pop; objectName: "pop"; width: 100; height: 100; gap: <gap> }
+            }
+          }
+          property var got: []
+          function measure() {
+            const shown = pop.background.mapToItem(root, -pop.background.x, -pop.background.y)
+            const box = filter.mapToItem(root, 0, 0, filter.width, filter.height)
+            got = [Math.round(shown.x - box.x), Math.round(shown.y - box.y - box.height),
+                   shown.x >= 0 && shown.y >= 0 && shown.x + pop.width <= root.width
+                   && shown.y + pop.height <= root.height]
+          }
+        }
+        """
+      When the method "open" of "pop" is called
+      And 200 milliseconds pass
+      Then the property "visible" of "pop" is true
+      When the method "measure" of "root" is called
+      Then the property "got" of "root" is <got>
+
+      Examples:
+        | scale | gap | got            |
+        | 0.001 | 4   | [0, 4, true]   |
+        | 0.001 | 0   | [0, 0, true]   |
+        | 1e-7  | 4   | [0, 4, true]   |
+        | 1e-7  | 0   | [0, 0, true]   |
+        | 1e-9  | 4   | [0, 0, true]   |
+        | 1e-9  | 0   | [0, 0, true]   |
+
     # A popup placed by its `x` and `y` keeps them there, as no point of the
     # parent's is where it is drawn.
     @api-QtQuick.Controls.Popup.x
