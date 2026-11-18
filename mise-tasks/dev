@@ -36,4 +36,4 @@ if [ -n "$check" ]; then
   check_run "$(built_program -p ljos_cli --bin ljos)" run "$file" "$@"
   exit
 fi
-exec cargo run --quiet -p ljos_cli --bin ljos -- run --watch "$file" "$@"
+cargo run --quiet -p ljos_cli --bin ljos -- run --watch "$file" "$@"

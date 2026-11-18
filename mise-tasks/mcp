@@ -7,12 +7,12 @@
 # JSON-RPC on stdout, so everything else (this script's word on which way it
 # built, the build's own output) goes to stderr.
 #
-# Where the build goes: CARGO_TARGET_DIR, else the main checkout's target/
-# (a linked worktree shares it rather than growing a build of its own), else
-# ./target. LJOS_BIN names a server built already and skips the build.
-# LJOS_BUILD_WRAPPER names a program the build runs through (one that queues
-# builds machine-wide, say); it wraps the build only, never the server, which
-# runs for the whole session.
+# Where the build goes is target_dir's (mise-tasks/_lib/env.sh), as for every
+# task: CARGO_TARGET_DIR, else the main checkout's target/ (a linked worktree
+# shares it rather than growing a build of its own). LJOS_BIN names a server
+# built already and skips the build. LJOS_BUILD_WRAPPER names a program the
+# build runs through (one that queues builds machine-wide, say); it wraps the
+# build only, never the server, which runs for the whole session.
 #
 # The checkout is the one this runs in (mise runs it in the root), not the one
 # the script came from.
@@ -38,38 +38,28 @@ if [ -n "${LJOS_BIN:-}" ]; then
   exec "$LJOS_BIN" mcp --project "$project"
 fi
 
-# The checkout this runs in, and the main checkout of its repository. The
-# common dir of a linked worktree is the main checkout's .git; of a bare
-# repository or a submodule it is something else, and the checkout keeps its
-# own target.
+# The checkout this runs in, which need not be the one this script came from:
+# its build goes where target_dir says for it (CARGO_TARGET_DIR as asked, not
+# as env.sh resolved it for the script's own checkout), with the main
+# checkout's cargo settings when it is a worktree with none of its own.
 if checkout="$(git rev-parse --show-toplevel 2>/dev/null)" && [ -n "$checkout" ]; then
   checkout="$(physical "$checkout")"
-  main="$checkout"
-  common="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
-  if [ -n "$common" ] && [ "$(basename "$common")" = .git ]; then
-    main="$(physical "$(dirname "$common")")"
-  fi
 else
   checkout="$(pwd -P)"
-  main="$checkout"
 fi
-
-target="${CARGO_TARGET_DIR:-$main/target}"
-# A target that is a link (to a drive with room, say) is where it leads.
-if [ -d "$target" ]; then
-  target="$(physical "$target")"
-fi
+target="$(CARGO_TARGET_DIR="$ljos_asked_target_dir" target_dir "$checkout")"
 export CARGO_TARGET_DIR="$target"
+config="$(cargo_config "$checkout")"
+# The build is put together here, for that checkout: env.sh's cargo adds the
+# script's own checkout's settings.
+unset -f cargo
 
 # --target-dir as well as CARGO_TARGET_DIR: a build.target-dir in a --config
 # file would outrank the variable. Cargo's messages name the program it made.
 build=(cargo build --quiet -p ljos_cli --bin ljos
   --message-format=json-render-diagnostics --target-dir "$target")
-# The main checkout's cargo settings (a compiler cache, a cap on jobs) are
-# often kept outside git; a linked worktree builds with them too.
-if [ "$main" != "$checkout" ] && [ -f "$main/.cargo/config.toml" ] &&
-  [ ! -f "$checkout/.cargo/config.toml" ]; then
-  build+=(--config "$main/.cargo/config.toml")
+if [ -n "$config" ]; then
+  build+=(--config "$config")
 fi
 # The toolchain is the one the checkout pins, not whichever cargo is first
 # on PATH.

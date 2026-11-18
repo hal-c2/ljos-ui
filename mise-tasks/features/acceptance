@@ -29,6 +29,4 @@ if [ ! -f "$dir/PIN" ] || [ ! -f "$dir/steps/Cargo.toml" ]; then
 fi
 # Same versions as the repository's own build; the copy is not committed.
 [ -f "$dir/steps/Cargo.lock" ] || cp "$root/Cargo.lock" "$dir/steps/Cargo.lock"
-CARGO_TARGET_DIR="$(target_dir)"
-export CARGO_TARGET_DIR
-exec cargo run --quiet --manifest-path "$dir/steps/Cargo.toml" -- --suite "$dir" "$@"
+cargo run --quiet --manifest-path "$dir/steps/Cargo.toml" -- --suite "$dir" "$@"

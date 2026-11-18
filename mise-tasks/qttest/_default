@@ -16,4 +16,4 @@ else
   # Paths given are from where mise was started.
   cd "$(asked_in)"
 fi
-exec cargo run --quiet -p ljos_cli --bin ljos --manifest-path "$root/Cargo.toml" -- test "$@"
+cargo run --quiet -p ljos_cli --bin ljos --manifest-path "$root/Cargo.toml" -- test "$@"

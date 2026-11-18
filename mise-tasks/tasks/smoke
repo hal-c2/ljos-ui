@@ -152,6 +152,23 @@ bash32() {
     printf ' env -C (GNU only: cd in a subshell);'
   return 0
 }
+# A task's cargo builds where target_dir says, with the main checkout's
+# settings in a worktree, only through env.sh's cargo: a task that runs cargo
+# sources env.sh, and never goes round its cargo. mise-tasks/mcp builds for
+# the checkout it runs in, not its own, so it puts its build together itself.
+builds() {
+  local f="$1" code
+  case "$f" in
+    mise-tasks/_lib/* | mise-tasks/mcp) return 0 ;;
+  esac
+  code="$(grep -v '^[[:space:]]*#' "$f" || true)"
+  printf '%s\n' "$code" | grep -Eq '(^|[;&|[:space:](])cargo[[:space:]]' || return 0
+  grep -q '_lib/env.sh"$' "$f" ||
+    printf ' runs cargo without sourcing _lib/env.sh, so it builds into a worktree'"'"'s own target/;'
+  printf '%s\n' "$code" | grep -Eq '(exec|command)[[:space:]]+cargo[[:space:]]' &&
+    printf ' exec cargo or command cargo goes round env.sh'"'"'s cargo (run cargo);'
+  return 0
+}
 listed="$(printf '%s\n' "$tasks" | cut -f2)"
 for f in $(find mise-tasks -type f | sort); do
   problems=""
@@ -174,8 +191,11 @@ for f in $(find mise-tasks -type f | sort); do
   if command -v shellcheck >/dev/null 2>&1 && ! shellcheck -x -S warning "$f" >/dev/null 2>&1; then
     problems="$problems shellcheck -S warning fails (run: shellcheck -x -S warning $f);"
   fi
-  # This file spells out what bash32 looks for, so only it is left out.
-  [ "$f" = mise-tasks/tasks/smoke ] || problems="$problems$(bash32 "$f")"
+  # This file spells out what bash32 and builds look for, so only it is
+  # left out.
+  if [ "$f" != mise-tasks/tasks/smoke ]; then
+    problems="$problems$(bash32 "$f")$(builds "$f")"
+  fi
   [ -z "$problems" ] || problem "$f" "$problems"
 done
 if ! command -v shellcheck >/dev/null 2>&1; then
@@ -186,6 +206,15 @@ if [ -z "$lint" ]; then
   record "(static)" lint ok 0
 else
   record "(static)" lint FAIL 0
+fi
+# An editor or agent starts the ljos server from .mcp.json in every new
+# worktree; started any way but mise-tasks/mcp, it would build there.
+why="$(mcp_json_problem .mcp.json)"
+if [ -z "$why" ]; then
+  record "(.mcp.json)" lint ok 0
+else
+  echo "tasks:smoke: $why" >&2
+  record "(.mcp.json)" lint FAIL 0
 fi
 
 # Off-screen: a smoke run never opens a window, and Qt's platform theme

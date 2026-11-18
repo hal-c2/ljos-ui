@@ -5,4 +5,4 @@ set -euo pipefail
 # shellcheck source-path=SCRIPTDIR source=../_lib/env.sh
 . "$(dirname "$0")/../_lib/env.sh"
 cd "$ljos_root"
-exec cargo build --quiet -p ljos_cli -p qml_compare
+cargo build --quiet -p ljos_cli -p qml_compare

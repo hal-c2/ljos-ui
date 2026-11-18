@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#MISE description="Test what the tasks share (mise-tasks/_lib/env.sh) against stand-in tools: the Qt CI pins read from ci.yml alone, another Qt minor version found by qmake6, qtpaths or qml6 is a mismatch setup notes and exits 0 on (it fails only on what is missing, a rustc that is not mise.toml's say), paths hold under a TMPDIR with a trailing slash or a link, and NVIDIA's Vulkan driver is left out of tests only when its kernel driver is not loaded"
+#MISE description="Test what the tasks share (mise-tasks/_lib/env.sh) against stand-in tools: the Qt CI pins read from ci.yml alone, another Qt minor version found by qmake6, qtpaths or qml6 is a mismatch setup notes and exits 0 on (it fails only on what is missing, a rustc that is not mise.toml's say), paths hold under a TMPDIR with a trailing slash or a link, a linked worktree builds into its main checkout's target/ with its settings as the MCP server does, .mcp.json starts that server through mise-tasks/mcp, and NVIDIA's Vulkan driver is left out of tests only when its kernel driver is not loaded"
 set -euo pipefail
 # What the caller's shell says is not what is tested: a workflow to read the
 # pin from, setup's flags as mise hands them over, a git repository to work in.
@@ -555,6 +555,132 @@ elif [ "$out" = "features:run: --input $suite/missing is no file or directory" ]
 else
   bad "features:run --input of a missing path failed, but not with the one line" "$out"
 fi
+
+# --- Where builds go -------------------------------------------------------------
+
+# A repository of the tasks alone, with a linked worktree "wt", a bare clone
+# with a worktree "bw", and a submodule "sub". Git looks no higher than
+# $real, so the checkout this runs in is never what answers.
+export GIT_CEILING_DIRECTORIES="$real"
+quiet_git() { git -c user.name=tasks -c user.email=tasks@example.invalid -c init.defaultBranch=main -c protocol.file.allow=always "$@" >/dev/null 2>&1; }
+repo="$real/repo"
+mkdir "$repo"
+cp -R "$ljos_root/mise-tasks" "$repo/mise-tasks"
+quiet_git -C "$repo" init
+quiet_git -C "$repo" add -A
+quiet_git -C "$repo" commit -q -m fixture
+quiet_git -C "$repo" worktree add "$real/wt"
+quiet_git clone --bare "$repo" "$real/bare.git"
+quiet_git -C "$real/bare.git" worktree add "$real/bw"
+quiet_git -C "$repo" submodule add "$real/bare.git" sub
+mkdir "$real/plain"
+# where <dir>: target_dir for <dir> with no CARGO_TARGET_DIR.
+where() { (unset CARGO_TARGET_DIR && target_dir "$1"); }
+
+if [ -d "$real/wt" ] && [ -d "$real/bw" ] && [ -d "$repo/sub" ]; then
+  out="$(where "$real/wt")"
+  if [ "$out" = "$repo/target" ]; then ok "a linked worktree builds into its main checkout's target/"; else bad "target_dir gave $out for a linked worktree, not $repo/target"; fi
+  out="$(where "$repo")"
+  if [ "$out" = "$repo/target" ]; then ok "the main checkout builds into its own target/"; else bad "target_dir gave $out for the main checkout"; fi
+  out="$(where "$real/bw")"
+  if [ "$out" = "$real/bw/target" ]; then ok "a bare repository's worktree keeps its own target/"; else bad "target_dir gave $out for a bare repository's worktree"; fi
+  out="$(where "$repo/sub")"
+  if [ "$out" = "$repo/sub/target" ]; then ok "a submodule keeps its own target/"; else bad "target_dir gave $out for a submodule"; fi
+
+  mkdir "$real/roomy"
+  ln -s "$real/roomy" "$repo/target"
+  out="$(where "$real/wt")"
+  if [ "$out" = "$real/roomy" ]; then ok "a main checkout's target/ that is a link is followed"; else bad "target_dir gave $out for a worktree whose main target/ links to $real/roomy"; fi
+  rm "$repo/target"
+
+  out="$(CARGO_TARGET_DIR="$real/shared" target_dir "$real/wt")"
+  if [ "$out" = "$real/shared" ]; then ok "CARGO_TARGET_DIR wins over the main checkout's target/"; else bad "target_dir gave $out in a worktree with CARGO_TARGET_DIR=$real/shared"; fi
+  out="$(CARGO_TARGET_DIR=build target_dir "$real/wt")"
+  if [ "$out" = "$real/wt/build" ]; then ok "a relative CARGO_TARGET_DIR is from the checkout it is asked for"; else bad "target_dir gave $out in a worktree with CARGO_TARGET_DIR=build"; fi
+else
+  bad "the fixture repository with its worktrees and submodule was not made (git $(git --version 2>&1))"
+fi
+out="$(where "$real/plain")"
+if [ "$out" = "$real/plain/target" ]; then ok "a directory that is no git checkout builds into its own target/"; else bad "target_dir gave $out outside git"; fi
+
+# The main checkout's machine-local cargo settings, which a worktree has no
+# copy of.
+mkdir "$repo/.cargo"
+printf '[build]\njobs = 2\n' >"$repo/.cargo/config.toml"
+out="$(cargo_config "$real/wt")"
+if [ "$out" = "$repo/.cargo/config.toml" ]; then ok "a linked worktree builds with its main checkout's .cargo/config.toml"; else bad "cargo_config gave '$out' for a linked worktree"; fi
+out="$(cargo_config "$repo")"
+if [ -z "$out" ]; then ok "the main checkout's own .cargo/config.toml is cargo's to find"; else bad "cargo_config gave '$out' for the main checkout"; fi
+
+# A cargo task and the MCP server, both run in the worktree, build into the
+# same place with the same settings. The stand-in cargo notes the target it
+# would build into (--target-dir, else a build.target-dir --config, else
+# CARGO_TARGET_DIR, else ./target as cargo's own) and the config file it
+# was given, and makes a server there.
+fakes="$real/fakes"
+mkdir "$fakes"
+cat >"$fakes/cargo" <<'EOF_CARGO'
+#!/bin/sh
+target="${CARGO_TARGET_DIR:-$PWD/target}" config=none
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --target-dir) target="$2"; shift ;;
+    --config)
+      case "$2" in
+        build.target-dir=*) target="${2#build.target-dir=\"}"; target="${target%\"}" ;;
+        *) config="$2" ;;
+      esac
+      shift
+      ;;
+  esac
+  shift
+done
+echo "$target $config" >>"$FAKE_LOG"
+mkdir -p "$target/debug"
+printf '#!/bin/sh\necho "{}"\n' >"$target/debug/ljos"
+chmod +x "$target/debug/ljos"
+printf '{"reason":"compiler-artifact","executable":"%s"}\n' "$target/debug/ljos"
+EOF_CARGO
+chmod +x "$fakes/cargo"
+# in_worktree <task>: the task, run from the worktree's copy of the tasks as
+# mise would (in the worktree's root), with the stand-in cargo; prints what
+# it noted.
+in_worktree() {
+  : >"$real/built.log"
+  (
+    cd "$real/wt"
+    unset CARGO_TARGET_DIR LJOS_BIN LJOS_BUILD_WRAPPER CARGO_BUILD_TARGET
+    FAKE_LOG="$real/built.log" PATH="$fakes:$PATH" bash "mise-tasks/$1" </dev/null >/dev/null 2>&1
+  ) || echo "failed"
+  cat "$real/built.log"
+}
+if [ -d "$real/wt" ]; then
+  task="$(in_worktree types)"
+  mcp="$(in_worktree mcp)"
+  if [ "$task" = "$repo/target $repo/.cargo/config.toml" ] && [ "$task" = "$mcp" ]; then
+    ok "a cargo task and the MCP server agree in a worktree: $repo/target, with its main checkout's settings"
+  else
+    bad "in a worktree, a cargo task and the MCP server built differently" "types: $task" "mcp:   $mcp"
+  fi
+  if [ ! -e "$real/wt/target" ]; then ok "nothing was built in the worktree's own target/"; else bad "the worktree has a target/ of its own"; fi
+fi
+
+# --- .mcp.json starts the server the way the tasks build ---------------------------
+
+if [ -z "$(mcp_json_problem .mcp.json)" ]; then ok "this repository's .mcp.json starts its ljos server through mise-tasks/mcp"; else bad "this repository's .mcp.json:" "$(mcp_json_problem .mcp.json)"; fi
+printf '%s\n' '{"mcpServers":{"ljos":{"command":"cargo","args":["run","--quiet","-p","ljos_cli","--","mcp","--project","."]}}}' >"$real/old.json"
+out="$(mcp_json_problem "$real/old.json")"
+case "$out" in
+  *"cargo run"*"mise-tasks/mcp"*) ok "an .mcp.json whose ljos server is a bare cargo run is refused, with the fix" ;;
+  *) bad "an .mcp.json whose ljos server is a bare cargo run was not refused with the fix" "$out" ;;
+esac
+printf '%s\n' '{"mcpServers":{"ljos":{"command":"mise","args":["run","mcp"]}}}' >"$real/mise.json"
+if [ -z "$(mcp_json_problem "$real/mise.json")" ]; then ok "an .mcp.json that starts its ljos server with mise run mcp is taken"; else bad "an .mcp.json running mise run mcp was refused" "$(mcp_json_problem "$real/mise.json")"; fi
+printf '%s\n' '{"mcpServers":{}}' >"$real/none.json"
+case "$(mcp_json_problem "$real/none.json")" in
+  *"no ljos server"*) ok "an .mcp.json with no ljos server is refused" ;;
+  *) bad "an .mcp.json with no ljos server was not refused" ;;
+esac
 
 # --- Vulkan drivers --------------------------------------------------------------
 

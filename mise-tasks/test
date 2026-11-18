@@ -15,4 +15,4 @@ for arg in "$@"; do
     --) break ;;
   esac
 done
-exec cargo test ${scope[@]+"${scope[@]}"} "$@"
+cargo test ${scope[@]+"${scope[@]}"} "$@"

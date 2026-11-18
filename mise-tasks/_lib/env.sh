@@ -82,14 +82,113 @@ from_asked() {
   esac
 }
 
-# CARGO_TARGET_DIR as an absolute path (a relative one is from the root, where
-# the tasks build), else the checkout's target/.
+# --- Where cargo builds ----------------------------------------------------------
+
+# The main checkout of the repository whose top <dir> is. A linked worktree's
+# common git dir is its main checkout's .git; a bare repository's or a
+# submodule's is something else, and such a checkout, like one that is no
+# git checkout or is only a directory inside one, is its own main checkout.
+main_checkout() {
+  local dir top common
+  dir="$(physical "$1")"
+  top="$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null || true)"
+  if [ -n "$top" ] && [ -d "$top" ] && [ "$(physical "$top")" = "$dir" ]; then
+    common="$(git -C "$dir" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+    if [ -n "$common" ] && [ "$(basename "$common")" = .git ] && [ -d "$(dirname "$common")" ]; then
+      physical "$(dirname "$common")"
+      return 0
+    fi
+  fi
+  printf '%s\n' "$dir"
+}
+
+# target_dir [dir]: where cargo builds for the checkout at <dir> (this one by
+# default), the one place that is decided. CARGO_TARGET_DIR as an absolute
+# path (a relative one is from the checkout, where the tasks build), else the
+# main checkout's target/, so a linked worktree reuses the build that is there
+# rather than growing one of its own wherever the worktree was made. A target
+# that is a link (to a drive with room, say) is where it leads.
 target_dir() {
+  local dir="${1:-$ljos_root}" target
   case "${CARGO_TARGET_DIR:-}" in
-    "") printf '%s\n' "$ljos_root/target" ;;
-    /*) printf '%s\n' "$CARGO_TARGET_DIR" ;;
-    *) printf '%s\n' "$ljos_root/$CARGO_TARGET_DIR" ;;
+    "") target="$(main_checkout "$dir")/target" ;;
+    /*) target="$CARGO_TARGET_DIR" ;;
+    *) target="$dir/$CARGO_TARGET_DIR" ;;
   esac
+  if [ -d "$target" ]; then
+    target="$(physical "$target")"
+  fi
+  printf '%s\n' "$target"
+}
+
+# cargo_config [dir]: the main checkout's .cargo/config.toml, when <dir> is a
+# linked worktree with none of its own. Cargo looks for its settings from
+# where it runs upwards, so a worktree made elsewhere would build without the
+# ones a main checkout keeps outside git (a compile cache, a cap on jobs,
+# incremental builds off), and the two would keep rebuilding each other's
+# crates in the target they share.
+cargo_config() {
+  local dir main
+  dir="$(physical "${1:-$ljos_root}")"
+  main="$(main_checkout "$dir")"
+  if [ "$main" != "$dir" ] && [ -f "$main/.cargo/config.toml" ] && [ ! -f "$dir/.cargo/config.toml" ]; then
+    printf '%s\n' "$main/.cargo/config.toml"
+  fi
+}
+
+# Every task builds where target_dir says, and so does every cargo its cargo
+# starts (ljos_bdd's builds of ljos, say), through the variable. What was
+# asked for before that is kept for a task that builds another checkout
+# (mise-tasks/mcp).
+# shellcheck disable=SC2034 # read by mise-tasks/mcp
+ljos_asked_target_dir="${CARGO_TARGET_DIR-}"
+CARGO_TARGET_DIR="$(target_dir)"
+export CARGO_TARGET_DIR
+ljos_cargo_config="$(cargo_config)"
+
+# cargo, with the main checkout's settings in a worktree. --config outranks
+# CARGO_TARGET_DIR, so a target-dir in that file would win over it: the
+# target is given again after it, as a TOML string. A task runs `cargo`, never
+# `exec cargo` or `command cargo`, which would go round this (tasks:smoke
+# holds every task to that).
+cargo() {
+  local t
+  if [ -n "$ljos_cargo_config" ]; then
+    t="${CARGO_TARGET_DIR//\\/\\\\}"
+    t="${t//\"/\\\"}"
+    command cargo --config "$ljos_cargo_config" --config "build.target-dir=\"$t\"" "$@"
+  else
+    command cargo "$@"
+  fi
+}
+
+# Empty when .mcp.json (<file>) starts its ljos server through mise-tasks/mcp,
+# which builds where target_dir says; otherwise what is wrong, with the fix.
+# A bare `cargo run` there builds into the worktree's own target/ every time
+# an editor or agent starts in a new worktree.
+mcp_json_problem() {
+  need_python3
+  python3 -I - "$1" <<'EOF_MCP'
+import json, sys
+path = sys.argv[1]
+fix = 'start it with "command": "bash", "args": ["mise-tasks/mcp", "."] (or mise run mcp), which builds where the tasks do'
+def problem(what):
+    print("%s: %s" % (what, fix))
+    sys.exit(0)
+try:
+    server = json.load(open(path)).get("mcpServers", {}).get("ljos")
+except (OSError, ValueError, AttributeError) as e:
+    problem("%s cannot be read (%s)" % (path, e))
+if not isinstance(server, dict):
+    problem("%s has no ljos server" % path)
+run = [str(server.get("command", ""))] + [str(a) for a in server.get("args", [])]
+launcher = ("mise-tasks/mcp", "./mise-tasks/mcp")
+if not (run[0] in launcher
+        or (run[0] in ("bash", "sh") and len(run) > 1 and run[1] in launcher)
+        or (run[0] == "mise" and run[1:3] == ["run", "mcp"])):
+    problem("%s's ljos server runs `%s`, not mise-tasks/mcp, so in a linked worktree it builds into that worktree's own target/"
+            % (path, " ".join(run)))
+EOF_MCP
 }
 
 # Off-screen Qt: no window opens, and a platform theme set for the desktop

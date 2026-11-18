@@ -5,5 +5,7 @@
 #USAGE flag "--module <uri>" var=#true help="Also generate this module, besides the default list; may repeat"
 #USAGE flag "--out <file>" help="Where to write (default crates/qt_types/src/types.txt)"
 set -euo pipefail
+# shellcheck source-path=SCRIPTDIR source=_lib/env.sh
+. "$(dirname "$0")/_lib/env.sh"
 # The table is derived from Qt's install, so it stays on this machine (D1).
-exec cargo run --quiet -p qmltypes -- "$@"
+cargo run --quiet -p qmltypes -- "$@"

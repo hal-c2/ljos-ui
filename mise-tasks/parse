@@ -22,4 +22,4 @@ else
   done
   set -- "${paths[@]}"
 fi
-exec cargo run --quiet --release -p qml_syntax --bin qml-parse -- "$@"
+cargo run --quiet --release -p qml_syntax --bin qml-parse -- "$@"
