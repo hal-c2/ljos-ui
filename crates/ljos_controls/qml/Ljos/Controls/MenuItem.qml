@@ -62,12 +62,19 @@ T.MenuItem {
                                              || control.text.split("&").join("").length > 0
             readonly property bool showsIcon: hasIcon && (control.display !== T.AbstractButton.TextOnly || !hasLabel)
             readonly property bool showsText: hasLabel && (control.display !== T.AbstractButton.IconOnly || !hasIcon)
+            // Which part is shown, from what it shows rather than from
+            // `visible`: under a hidden parent nothing is visible, and the
+            // row still asks for the room it takes once shown.
+            readonly property bool glyphShown: control.iconName.length > 0 && showsIcon
+            readonly property bool pictureShown: control.iconName.length === 0 && showsIcon && picture.implicitWidth > 0
+            readonly property bool keysShown: control.shortcut.length > 0 && control.subMenu === null
+            readonly property bool moreShown: control.subMenu !== null
             // The style's own icon, else the row's or its action's.
-            readonly property Item mark: glyph.visible ? glyph : picture.visible ? picture : null
+            readonly property Item mark: glyphShown ? glyph : pictureShown ? picture : null
             readonly property real gutter: mark || control.iconSpace
                                            ? iconSize + control.spacing : 0
-            readonly property real end: (keys.visible ? keys.implicitWidth + control.spacing : 0)
-                                        + (more.visible ? more.width + control.spacing : 0)
+            readonly property real end: (keysShown ? keys.implicitWidth + control.spacing : 0)
+                                        + (moreShown ? more.width + control.spacing : 0)
                                         + (control.checkable ? Theme.iconSize + control.spacing : 0)
             readonly property real iconSize: Theme.iconSize
             implicitWidth: gutter + (showsText ? label.implicitWidth : 0) + end
@@ -81,7 +88,7 @@ T.MenuItem {
             Icon {
                 id: glyph
                 objectName: "glyph"
-                visible: control.iconName.length > 0 && parent.showsIcon
+                visible: parent.glyphShown
                 x: control.mirrored ? parent.width - width : 0
                 y: (parent.height - height) / 2
                 name: control.iconName
@@ -92,7 +99,7 @@ T.MenuItem {
             IconLabel {
                 id: picture
                 objectName: "picture"
-                visible: control.iconName.length === 0 && parent.showsIcon && implicitWidth > 0
+                visible: parent.pictureShown
                 x: control.mirrored ? parent.width - parent.iconSize + (parent.iconSize - width) / 2
                                     : (parent.iconSize - width) / 2
                 y: (parent.height - height) / 2
@@ -122,7 +129,7 @@ T.MenuItem {
             Text {
                 id: keys
                 objectName: "keys"
-                visible: control.shortcut.length > 0 && control.subMenu === null
+                visible: parent.keysShown
                 readonly property real checkSpace: control.checkable ? Theme.iconSize + control.spacing : 0
                 x: control.mirrored ? checkSpace : parent.width - width - checkSpace
                 height: parent.height
@@ -136,7 +143,7 @@ T.MenuItem {
             Icon {
                 id: more
                 objectName: "more"
-                visible: control.subMenu !== null
+                visible: parent.moreShown
                 // Past the check's room, as the shortcut is: the menu's
                 // delegate draws its submenus' rows too, checked or not.
                 readonly property real checkSpace: control.checkable ? Theme.iconSize + control.spacing : 0

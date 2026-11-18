@@ -32,7 +32,9 @@ use ljos_engine::{
 };
 use ljos_quick::enums::{align, elide};
 use ljos_quick::text_input::text_format;
-use ljos_quick::{Image, ImageBase, Item, Text, register_image_tint, set_parent_item};
+use ljos_quick::{
+    Image, ImageBase, Item, Text, image_status, register_image_tint, set_parent_item,
+};
 
 use crate::button::{AbstractButton, Icon, display, icon_giver};
 use crate::util::{check, flag, is_a, mnemonic_underlined, num, set_computed, without_mnemonic};
@@ -343,10 +345,18 @@ fn show(engine: &Engine, label: ObjectId, made: &Made) -> Result<(), EngineError
         }
         let source = Value::Url(Atom::from(icon.source.as_str()));
         set_computed(engine, image, ImageBase::SOURCE.index, source)?;
-        let natural = (
-            num(engine, image, Item::IMPLICIT_WIDTH.index),
-            num(engine, image, Item::IMPLICIT_HEIGHT.index),
-        );
+        // While a new picture loads, the image keeps the old one's size
+        // but draws nothing: the label asks for no room for it until it is
+        // there, so a button falls back to its text meanwhile.
+        let ready = num(engine, image, ImageBase::STATUS.index) as i32 == image_status::READY;
+        let natural = if ready {
+            (
+                num(engine, image, Item::IMPLICIT_WIDTH.index),
+                num(engine, image, Item::IMPLICIT_HEIGHT.index),
+            )
+        } else {
+            (0.0, 0.0)
+        };
         icon_size = fitted(natural, icon.limit);
     }
     let mut text_size = (0.0, 0.0);

@@ -110,6 +110,40 @@ Feature: Ljós's own style: the icon and the text of a button and a menu row
       And the property "contentItem.gutter" of "save" is 24
       And the property "contentItem.gutter" of "quit" is 24
 
+  Rule: A menu row draws the picture it or its action is given, whatever its display
+
+    # The row's picture is an IconLabel told no icon of its own: a label
+    # shows its button's icon, or the icon of the action that button
+    # follows, in whatever it was not told, so the row sees the picture's
+    # size and shows it.
+    @api-QtQuick.Controls.AbstractButton.icon.source
+    Scenario: A menu row shows its picture or its action's, beside its text or alone
+      Given a 16 by 16 image file "red.png" filled with "#ff0000"
+      And the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.impl
+        import QtQuick.Templates as T
+        import Ljos.Controls
+        Item {
+          id: root; objectName: "root"
+          width: 480; height: 60
+          MenuItem { width: 120; text: "Open"; icon.source: "red.png" }
+          MenuItem { x: 120; width: 120; text: "Open"; icon.source: "red.png"; display: IconLabel.IconOnly }
+          MenuItem { x: 240; width: 120; action: T.Action { text: "Save"; icon.source: "red.png" } }
+          MenuItem { x: 360; width: 120; display: IconLabel.IconOnly; action: T.Action { text: "Save"; icon.source: "red.png" } }
+          function part(c, name) { for (const k of c.contentItem.children) if (k.objectName === name) return k; return null }
+          property var got: []
+          // Whether each shows its picture, how large it was made, and whether it shows its text.
+          function measure() {
+            got = Array.from(root.children).map((c) => [part(c, "picture").visible, part(c, "picture").implicitWidth,
+                                                         part(c, "label").visible])
+          }
+        }
+        """
+      When the method "measure" of "root" is called
+      Then the property "got" of "root" is [[true, 16, true], [true, 16, false], [true, 16, true], [true, 16, false]]
+
   Rule: A menu keeps the icons' column only for the icons it shows
 
     Background:
@@ -259,6 +293,87 @@ Feature: Ljós's own style: the icon and the text of a button and a menu row
       And the method "measure" of "root" is called
       Then the property "got" of "root" is [16, 16, 16, 16, 16]
 
+  Rule: A button, a tab or a menu row shows its text while its next picture loads
+
+    # While a new picture loads, the image draws nothing of the old one,
+    # though it keeps its size: a control shown as its icon has nothing to
+    # show then, so it shows its text until the new picture is there. A
+    # data: URL loads later, as a file from afar does.
+    @api-QtQuick.Controls.AbstractButton.icon.source
+    Scenario: A control shown as its icon shows its text until its next picture is there
+      Given a 16 by 16 image file "red.png" filled with "#ff0000"
+      And the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.impl
+        import Ljos.Controls
+        Item {
+          id: root; objectName: "root"
+          width: 400; height: 60
+          Button { text: "Save"; icon.source: "red.png"; display: IconLabel.IconOnly }
+          TabButton { x: 100; text: "Files"; icon.source: "red.png"; display: IconLabel.IconOnly }
+          MenuItem { x: 200; width: 120; text: "Open"; icon.source: "red.png"; display: IconLabel.IconOnly }
+          function part(i, name) { for (const k of i.children) { if (k.objectName === name) return k; const f = part(k, name); if (f) return f } return null }
+          function swap() { for (const c of root.children) c.icon.source = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAFUlEQVR42mNgYPhPIhrVMKph2GoAAJLb/wHQPqPSAAAAAElFTkSuQmCC" }
+          property var got: []
+          // Whether each shows its text.
+          function measure() { got = Array.from(root.children).map((c) => part(c.contentItem, "label").visible) }
+        }
+        """
+      When the method "measure" of "root" is called
+      Then the property "got" of "root" is [false, false, false]
+      When the method "swap" of "root" is called
+      And the method "measure" of "root" is called
+      Then the property "got" of "root" is [true, true, true]
+      When 300 milliseconds pass
+      And the method "measure" of "root" is called
+      Then the property "got" of "root" is [false, false, false]
+
+  Rule: A button, a tab or a menu row asks for the same room hidden as shown
+
+    # What a control asks for follows what it shows, not whether it is
+    # seen: a caller can measure one before showing it, and one hidden
+    # keeps its size. Each answer is the change from what it asked for
+    # before its parent was shown or hidden.
+    @api-QtQuick.Item.implicitWidth
+    Scenario Outline: A control asks for the same room once its parent is <now>
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.impl
+        import Ljos.Controls
+        Item {
+          id: root; objectName: "root"
+          width: 480; height: 160
+          property bool shown: <shown>
+          Item {
+            visible: root.shown
+            Button { id: large; iconSize: 64; iconName: "plus"; text: "Save"; display: IconLabel.IconOnly }
+            Button { id: more; x: 80; iconName: "plus"; text: "Save"; chevron: true }
+            Button { id: under; x: 200; iconName: "plus"; text: "Save"; display: IconLabel.TextUnderIcon }
+            MenuItem { id: row; y: 80; iconName: "folder"; text: "Open"; shortcut: "Ctrl+O" }
+            TabButton { id: tab; x: 280; y: 80; iconName: "folder"; text: "Files"; display: IconLabel.TextUnderIcon }
+          }
+          function sizes() {
+            return [large.implicitHeight, more.implicitWidth, under.implicitHeight, under.topPadding,
+                    row.implicitWidth, row.contentItem.gutter, tab.implicitHeight, tab.verticalPadding]
+          }
+          property var kept: []
+          function keep() { kept = sizes() }
+          property var got: []
+          function measure() { got = sizes().map((v, i) => v - kept[i]) }
+        }
+        """
+      When the method "keep" of "root" is called
+      And the property "shown" of "root" is set to <then>
+      And the method "measure" of "root" is called
+      Then the property "got" of "root" is [0, 0, 0, 0, 0, 0, 0, 0]
+
+      Examples:
+        | now    | shown | then  |
+        | hidden | true  | false |
+        | shown  | false | true  |
+
   Rule: A button shown under its icon has the two in its middle
 
     # The last answer is how far the middle of the block, from the top of
@@ -336,8 +451,9 @@ Feature: Ljós's own style: the icon and the text of a button and a menu row
 
   Rule: A button or tab given its own content has the padding its display asks for
 
-    # Only the style's own content says whether it draws the icon over the
-    # text. Content a caller gives says nothing, so the display decides.
+    # The style's own content says whether it draws the icon over the
+    # text. Content a caller gives that says nothing leaves it to the
+    # display.
     @api-QtQuick.Controls.AbstractButton.display
     Scenario: A button or tab given its own content and shown under its icon keeps half a spacing above and below
       Given the QML:
@@ -356,6 +472,32 @@ Feature: Ljós's own style: the icon and the text of a button and a menu row
       And the property "bottomPadding" of "under" is 4
       And the property "verticalPadding" of "tabUnder" is 4
       And the property "topPadding" of "beside" is 0
+
+    # Content may say what it draws with `iconOverText`, as the style's
+    # own does; what it says wins over the display.
+    @api-QtQuick.Controls.AbstractButton.display
+    Scenario: A button or tab given its own content that says whether it draws the icon over the text has the padding for that
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.impl
+        import Ljos.Controls
+        Item {
+          width: 400; height: 100
+          Button { objectName: "over"; text: "Save"; contentItem: Text { property bool iconOverText: true; text: "Save" } }
+          Button { objectName: "beside"; x: 100; text: "Save"; display: IconLabel.TextUnderIcon
+                   contentItem: Text { property bool iconOverText: false; text: "Save" } }
+          TabButton { objectName: "tabOver"; x: 200; text: "Files"; contentItem: Text { property bool iconOverText: true; text: "Files" } }
+          TabButton { objectName: "tabBeside"; x: 300; text: "Files"; display: IconLabel.TextUnderIcon
+                      contentItem: Text { property bool iconOverText: false; text: "Files" } }
+        }
+        """
+      Then the property "topPadding" of "over" is 4
+      And the property "bottomPadding" of "over" is 4
+      And the property "topPadding" of "beside" is 0
+      And the property "bottomPadding" of "beside" is 0
+      And the property "verticalPadding" of "tabOver" is 4
+      And the property "verticalPadding" of "tabBeside" is 0
 
   Rule: A button that shows its icon alone has it in its middle, as tall as it is drawn
 
@@ -552,6 +694,28 @@ Feature: Ljós's own style: the icon and the text of a button and a menu row
       Then the property "got" of "root" is [[true, false, 12], [true, false, 12], [false, true, 0]]
       And the property "implicitContentWidth" of "pictured" is 12
 
+    # The style's icon size is the tab's default: a tab given its own
+    # `icon.width` and `icon.height` has its picture made at them.
+    @api-QtQuick.Controls.AbstractButton.icon.width
+    Scenario: A tab given its icon's size has its picture made no larger than that
+      Given a 16 by 16 image file "red.png" filled with "#ff0000"
+      And the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.impl
+        import Ljos.Controls
+        Item {
+          width: 300; height: 60
+          TabButton { objectName: "sized"; text: "Files"; icon.source: "red.png"; icon.width: 16; icon.height: 16; display: IconLabel.IconOnly }
+          TabButton { objectName: "plain"; x: 100; text: "Files"; icon.source: "red.png"; display: IconLabel.IconOnly }
+          TabButton { objectName: "narrow"; x: 200; text: "Files"; icon.source: "red.png"; icon.width: 8; display: IconLabel.IconOnly }
+        }
+        """
+      Then the property "implicitContentWidth" of "sized" is 16
+      And the property "implicitContentHeight" of "sized" is 16
+      And the property "implicitContentWidth" of "plain" is 12
+      And the property "implicitContentWidth" of "narrow" is 8
+
     # An IconLabel draws its picture in `icon.color` where one is given and
     # in its `color` where none is, so the tab's ink tints the picture.
     @api-QtQuick.Controls.AbstractButton.icon.color
@@ -564,13 +728,13 @@ Feature: Ljós's own style: the icon and the text of a button and a menu row
         import Ljos.Controls
         Rectangle {
           width: 120; height: 60; color: "#ffffff"
-          Component.onCompleted: { Theme.canvas = "#ffffff"; Theme.text = "#0066cc" }
+          Component.onCompleted: { Theme.canvas = "#ffffff"; Theme.text = "#0066cc"; Theme.textMuted = "#008800" }
           TabButton { x: 10; y: 10; width: 40; height: 40; checked: true; icon.source: "red.png"; display: IconLabel.IconOnly }
           TabButton { x: 60; y: 10; width: 40; height: 40; icon.source: "red.png"; display: IconLabel.IconOnly }
         }
         """
       Then the pixel at 30, 30 of the window is "#0066cc"
-      And the pixel at 80, 30 of the window is not "#ff0000"
+      And the pixel at 80, 30 of the window is "#008800"
 
   Rule: The text is drawn as its mnemonic says, and the keys read it as written
 

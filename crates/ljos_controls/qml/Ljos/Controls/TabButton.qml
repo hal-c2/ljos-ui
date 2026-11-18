@@ -31,12 +31,17 @@ T.TabButton {
     // One line is centred in the strip's height; the icon over the text is
     // taller, so the tab grows to it and keeps half a spacing above and below.
     // With only one of the two shown it is one line, whatever the display.
-    // Content a caller gives does not say what it draws, so for it the
-    // display decides.
+    // Content says whether it draws the icon over the text with
+    // `iconOverText`, as the style's own does; for content a caller gives
+    // that does not say, the display decides.
     verticalPadding: (contentItem && contentItem.iconOverText !== undefined
                       ? contentItem.iconOverText === true
                       : display === T.AbstractButton.TextUnderIcon) ? Theme.spacing / 2 : 0
     spacing: Theme.spacingSmall
+    // The picture is made no larger than the style's icons unless the tab
+    // is given its own size.
+    icon.width: Theme.iconSizeSmall
+    icon.height: Theme.iconSizeSmall
     hoverEnabled: true
     font.pixelSize: Theme.fontSizeSmall
     opacity: enabled ? 1 : 0.64
@@ -47,8 +52,15 @@ T.TabButton {
             readonly property bool hasIcon: control.iconName.length > 0 || picture.implicitWidth > 0
             readonly property bool showsIcon: control.display !== T.AbstractButton.TextOnly
                                               || control.text.length === 0
+            // Which part is shown, from what it shows rather than from
+            // `visible`: under a hidden parent nothing is visible, and the
+            // tab still asks for the room it takes once shown.
+            readonly property bool glyphShown: control.iconName.length > 0 && showsIcon
+            readonly property bool pictureShown: control.iconName.length === 0 && showsIcon && picture.implicitWidth > 0
+            readonly property bool textShown: control.text.length > 0
+                                              && (control.display !== T.AbstractButton.IconOnly || !hasIcon)
             // The icon over the text, both shown, as the grid lays them out.
-            readonly property bool iconOverText: (glyph.visible || picture.visible) && label.visible
+            readonly property bool iconOverText: (glyphShown || pictureShown) && textShown
                                                  && control.display === T.AbstractButton.TextUnderIcon
             implicitWidth: row.implicitWidth
             implicitHeight: row.implicitHeight
@@ -59,7 +71,7 @@ T.TabButton {
                 anchors.centerIn: parent
                 // Two only when both are shown: a grid keeps the spacing
                 // after a lone part in a first column of two.
-                columns: (glyph.visible || picture.visible) && label.visible && !content.iconOverText ? 2 : 1
+                columns: (content.glyphShown || content.pictureShown) && content.textShown && !content.iconOverText ? 2 : 1
                 columnSpacing: control.spacing
                 rowSpacing: control.spacing
                 horizontalItemAlignment: Grid.AlignHCenter
@@ -72,7 +84,7 @@ T.TabButton {
                 Icon {
                     id: glyph
                     objectName: "glyph"
-                    visible: control.iconName.length > 0 && content.showsIcon
+                    visible: content.glyphShown
                     name: control.iconName
                     size: Theme.iconSizeSmall
                     color: control.ink
@@ -83,17 +95,14 @@ T.TabButton {
                 IconLabel {
                     id: picture
                     objectName: "picture"
-                    visible: control.iconName.length === 0 && content.showsIcon && implicitWidth > 0
-                    icon.width: Theme.iconSizeSmall
-                    icon.height: Theme.iconSizeSmall
+                    visible: content.pictureShown
                     color: control.ink
                 }
 
                 Text {
                     id: label
                     objectName: "label"
-                    visible: control.text.length > 0
-                             && (control.display !== T.AbstractButton.IconOnly || !content.hasIcon)
+                    visible: content.textShown
                     // As wide as the heavier text, so a tab keeps its
                     // width as it becomes current and the strip stays put.
                     width: Math.max(implicitWidth, Math.ceil(heavy.advanceWidth))

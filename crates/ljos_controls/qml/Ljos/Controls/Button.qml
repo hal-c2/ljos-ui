@@ -48,9 +48,10 @@ T.Button {
     // text is taller than that, so the button grows to it and keeps half a
     // spacing above and below, as it keeps a spacing beside its text. With
     // only one of the two shown it is one line, whatever the display.
-    // Content a caller gives does not say what it draws, so for it the
-    // display decides. Each edge on its own, so a button given one keeps
-    // the other.
+    // Content says whether it draws the icon over the text with
+    // `iconOverText`, as the style's own does; for content a caller gives
+    // that does not say, the display decides. Each edge on its own, so a
+    // button given one keeps the other.
     topPadding: (contentItem && contentItem.iconOverText !== undefined
                  ? contentItem.iconOverText === true
                  : display === T.AbstractButton.TextUnderIcon) ? Theme.spacing / 2 : 0
@@ -84,13 +85,18 @@ T.Button {
             readonly property bool under: control.display === T.AbstractButton.TextUnderIcon
             // The icon over the text, both shown: taller than one line.
             readonly property bool iconOverText: under && showsIcon && showsText
+            // Which part is shown, from what it shows rather than from
+            // `visible`: under a hidden parent nothing is visible, and the
+            // button still asks for the room it takes once shown.
+            readonly property bool glyphShown: control.iconName.length > 0 && showsIcon
+            readonly property bool pictureShown: control.iconName.length === 0 && showsIcon && picture.implicitWidth > 0
             // What is drawn at the start, or over the text: the style's own
             // icon, else the button's or its action's.
-            readonly property Item mark: glyph.visible ? glyph : picture.visible ? picture : null
+            readonly property Item mark: glyphShown ? glyph : pictureShown ? picture : null
             readonly property real textWidth: showsText ? label.implicitWidth : 0
             readonly property real textHeight: showsText ? label.implicitHeight : 0
             readonly property real start: mark && !under ? mark.width + (showsText ? control.spacing : 0) : 0
-            readonly property real end: more.visible ? control.spacing + more.width : 0
+            readonly property real end: control.chevron ? control.spacing + more.width : 0
             // Under, the mark and the text are one block in the middle.
             readonly property real top: mark && under ? mark.height + (showsText ? control.spacing : 0) : 0
             readonly property real stacked: top + textHeight
@@ -106,7 +112,7 @@ T.Button {
             Icon {
                 id: glyph
                 objectName: "glyph"
-                visible: control.iconName.length > 0 && parent.showsIcon
+                visible: parent.glyphShown
                 x: parent.under || !parent.showsText
                    ? (control.mirrored ? parent.end : 0) + (parent.width - parent.end - width) / 2
                    : control.mirrored ? parent.width - width : 0
@@ -122,7 +128,7 @@ T.Button {
             IconLabel {
                 id: picture
                 objectName: "picture"
-                visible: control.iconName.length === 0 && parent.showsIcon && implicitWidth > 0
+                visible: parent.pictureShown
                 x: parent.under || !parent.showsText
                    ? (control.mirrored ? parent.end : 0) + (parent.width - parent.end - width) / 2
                    : control.mirrored ? parent.width - width : 0
@@ -162,7 +168,7 @@ T.Button {
                 mirrored: control.mirrored
                 // Left is the start: a mirrored label sets it at the right.
                 // Under its mark, or with nothing beside it, it is centred.
-                alignment: (parent.under || !parent.mark && !more.visible ? Qt.AlignHCenter : Qt.AlignLeft)
+                alignment: (parent.under || !parent.mark && !control.chevron ? Qt.AlignHCenter : Qt.AlignLeft)
                            | Qt.AlignVCenter
             }
 
