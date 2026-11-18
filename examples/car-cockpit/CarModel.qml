@@ -35,47 +35,47 @@ Node {
     }
 
     Node {
-        position: Qt.vector3d(0.34, 1.245, -0.135)
+        position: Qt.vector3d(0.355, 1.205, -0.135)
         eulerRotation.z: 70 * model.doorLeft
         RuntimeLoader {
             source: "assets/car/door_left.glb"
         }
         Strip {
-            position: Qt.vector3d(0.6281, -0.465, 0)
+            position: Qt.vector3d(0.6415, -0.645, 0)
             size: Qt.vector3d(0.012, 0.014, 0.97)
             tint: model.stripTint
             level: model.strips
         }
     }
     Node {
-        position: Qt.vector3d(-0.34, 1.245, -0.135)
+        position: Qt.vector3d(-0.355, 1.205, -0.135)
         eulerRotation.z: -70 * model.doorRight
         RuntimeLoader {
             source: "assets/car/door_right.glb"
         }
         Strip {
-            position: Qt.vector3d(-0.6281, -0.465, 0)
+            position: Qt.vector3d(-0.6415, -0.645, 0)
             size: Qt.vector3d(0.012, 0.014, 0.97)
             tint: model.stripTint
             level: model.strips
         }
     }
     Node {
-        position: Qt.vector3d(0, 0.9101, 0.92)
+        position: Qt.vector3d(0, 0.8583, 0.92)
         eulerRotation.x: -55 * model.frunk
         RuntimeLoader {
             source: "assets/car/frunk.glb"
         }
     }
     Node {
-        position: Qt.vector3d(0, 1.2088, -0.8)
+        position: Qt.vector3d(0, 1.1465, -0.8)
         eulerRotation.x: 60 * model.trunk
         RuntimeLoader {
             source: "assets/car/trunk.glb"
         }
     }
     Node {
-        position: Qt.vector3d(0.9388, 0.7852, -1.95)
+        position: Qt.vector3d(1.005, 0.7734, -1.95)
         eulerRotation.y: -95 * model.chargePort
         RuntimeLoader {
             source: "assets/car/charge_port.glb"
@@ -123,25 +123,25 @@ Node {
     }
 
     Strip {
-        position: Qt.vector3d(0, 0.43, 2.304)
-        size: Qt.vector3d(1.56, 0.03, 0.012)
+        position: Qt.vector3d(0, 0.37, 2.304)
+        size: Qt.vector3d(1.6, 0.035, 0.012)
         tint: model.stripTint
         level: model.strips
     }
     Strip {
-        position: Qt.vector3d(0, 0.8, -2.304)
-        size: Qt.vector3d(1.64, 0.04, 0.012)
+        position: Qt.vector3d(0, 0.79, -2.304)
+        size: Qt.vector3d(1.74, 0.045, 0.012)
         tint: model.tailTint
         level: model.strips
     }
     Strip {
-        position: Qt.vector3d(0.932, 0.3, 0)
+        position: Qt.vector3d(0.9552, 0.3, 0)
         size: Qt.vector3d(0.012, 0.022, 1.7)
         tint: model.stripTint
         level: model.strips
     }
     Strip {
-        position: Qt.vector3d(-0.932, 0.3, 0)
+        position: Qt.vector3d(-0.9552, 0.3, 0)
         size: Qt.vector3d(0.012, 0.022, 1.7)
         tint: model.stripTint
         level: model.strips

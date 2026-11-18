@@ -11,17 +11,17 @@
   "origin": "on the ground, centred between the axles",
   "dimensions": {
     "length": 4.62,
-    "width": 1.95,
-    "height": 1.25,
+    "width": 2.085,
+    "height": 1.215,
     "wheelbase": 2.8,
     "bounds_min": [
-      -0.975,
+      -1.0425,
       0.0,
       -2.3
     ],
     "bounds_max": [
-      0.975,
-      1.25,
+      1.0425,
+      1.2153,
       2.32
     ]
   },
@@ -41,15 +41,15 @@
         0.0,
         0.0
       ],
-      "triangles": 7180
+      "triangles": 15052
     },
     {
       "name": "door_left",
       "file": "door_left.glb",
       "node": "door_left",
       "pivot": [
-        0.34,
-        1.245,
+        0.355,
+        1.205,
         -0.135
       ],
       "axis": [
@@ -59,15 +59,15 @@
       ],
       "open_angle_deg": 70.0,
       "animation": "door_left_open",
-      "triangles": 352
+      "triangles": 1362
     },
     {
       "name": "door_right",
       "file": "door_right.glb",
       "node": "door_right",
       "pivot": [
-        -0.34,
-        1.245,
+        -0.355,
+        1.205,
         -0.135
       ],
       "axis": [
@@ -77,7 +77,7 @@
       ],
       "open_angle_deg": -70.0,
       "animation": "door_right_open",
-      "triangles": 352
+      "triangles": 1362
     },
     {
       "name": "frunk",
@@ -85,7 +85,7 @@
       "node": "frunk",
       "pivot": [
         0.0,
-        0.9101,
+        0.8583,
         0.92
       ],
       "axis": [
@@ -95,7 +95,7 @@
       ],
       "open_angle_deg": -55.0,
       "animation": "frunk_open",
-      "triangles": 228
+      "triangles": 1264
     },
     {
       "name": "trunk",
@@ -103,7 +103,7 @@
       "node": "trunk",
       "pivot": [
         0.0,
-        1.2088,
+        1.1465,
         -0.8
       ],
       "axis": [
@@ -113,15 +113,15 @@
       ],
       "open_angle_deg": 60.0,
       "animation": "trunk_open",
-      "triangles": 360
+      "triangles": 1564
     },
     {
       "name": "charge_port",
       "file": "charge_port.glb",
       "node": "charge_port",
       "pivot": [
-        0.9388,
-        0.7852,
+        1.005,
+        0.7734,
         -1.95
       ],
       "axis": [
@@ -131,7 +131,7 @@
       ],
       "open_angle_deg": -95.0,
       "animation": "charge_port_open",
-      "triangles": 108
+      "triangles": 156
     }
   ],
   "wheel": {
@@ -215,13 +215,13 @@
       "group": "front",
       "center": [
         0.0,
-        0.43,
+        0.37,
         2.304
       ],
       "center_relative_to": "car",
       "size": [
-        1.56,
-        0.03,
+        1.6,
+        0.035,
         0.012
       ],
       "color": "#00e5ff",
@@ -232,13 +232,13 @@
       "group": "rear",
       "center": [
         0.0,
-        0.8,
+        0.79,
         -2.304
       ],
       "center_relative_to": "car",
       "size": [
-        1.64,
-        0.04,
+        1.74,
+        0.045,
         0.012
       ],
       "color": "#ff0d59",
@@ -248,7 +248,7 @@
       "name": "strip_side_left",
       "group": "side",
       "center": [
-        0.932,
+        0.9552,
         0.3,
         0.0
       ],
@@ -265,7 +265,7 @@
       "name": "strip_side_right",
       "group": "side",
       "center": [
-        -0.932,
+        -0.9552,
         0.3,
         0.0
       ],
@@ -282,8 +282,8 @@
       "name": "strip_door_left",
       "group": "door_left",
       "center": [
-        0.6281,
-        -0.465,
+        0.6415,
+        -0.645,
         0.0
       ],
       "center_relative_to": "door_left",
@@ -299,8 +299,8 @@
       "name": "strip_door_right",
       "group": "door_right",
       "center": [
-        -0.6281,
-        -0.465,
+        -0.6415,
+        -0.645,
         0.0
       ],
       "center_relative_to": "door_right",
@@ -367,8 +367,9 @@
     }
   ],
   "materials": {
-    "paint": "graphite satin, metallic 0.35, roughness 0.38",
-    "glass": "black glass, roughness 0.18",
+    "paint": "candy violet #4a1f8c, metallic 0.5, roughness 0.3",
+    "glass": "gloss black canopy, roughness 0.12",
+    "trim": "gloss black lower body, nose and tail, roughness 0.32",
     "neon_front_side": "#00e5ff",
     "neon_rear": "#ff0d59"
   }

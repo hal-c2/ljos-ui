@@ -64,6 +64,8 @@ SHELL = 0.02
 NEON_CYAN = "#00e5ff"
 NEON_MAGENTA = "#ff0d59"
 NEON_STRENGTH = 4.0
+# Candy violet paint (sRGB), metallic, under a black canopy and lower body.
+PAINT = "#4a1f8c"
 
 OPEN_DEG = {
     "door_left": 70.0,
@@ -74,39 +76,80 @@ OPEN_DEG = {
 }
 
 # Body cross-sections. Each key row is a station along the car (Blender y)
-# and a half profile from the bottom centre round the left side to the top
-# centre, as (x, z) points:
+# and the feature points of a half profile from the bottom centre round the
+# left side to the top centre, as (x, z) points:
 #   P0 bottom centre, P1 underbody edge, P2 sill bottom, P3 sill top,
-#   P4 lower side, P5 shoulder crease, P6 beltline, P7 roof edge,
-#   P8 roof (gull-wing hinge line), P9 top centre.
-# Between keys every point moves linearly, which keeps the wedge's panels
-# flat and its creases crisp.
+#   P4 lower side (top of the black lower body), P5 shoulder crease,
+#   P6 beltline, P7 canopy edge, P8 roof (gull-wing hinge line),
+#   P9 top centre.
+# Along the car every feature point follows a monotone cubic through the
+# keys, so the body flows instead of breaking into flat facets. Across it,
+# the points are joined by gentle curves (SEGMENTS), and the feature points
+# stay as crisp creases.
 KEYS = [
-    (-2.30, [(0, 0.20), (0.78, 0.20), (0.84, 0.23), (0.86, 0.28), (0.87, 0.38),
-             (0.86, 0.48), (0.78, 0.535), (0.54, 0.555), (0.27, 0.56), (0, 0.56)]),
-    (-2.05, [(0, 0.16), (0.86, 0.16), (0.92, 0.22), (0.94, 0.32), (0.965, 0.50),
-             (0.95, 0.68), (0.86, 0.715), (0.58, 0.735), (0.29, 0.745), (0, 0.75)]),
-    (-0.85, [(0, 0.16), (0.88, 0.16), (0.92, 0.24), (0.935, 0.36), (0.97, 0.58),
-             (0.955, 0.82), (0.86, 0.87), (0.60, 0.90), (0.31, 0.915), (0, 0.92)]),
-    (-0.05, [(0, 0.16), (0.88, 0.16), (0.92, 0.24), (0.935, 0.36), (0.97, 0.58),
-             (0.955, 0.83), (0.84, 0.90), (0.66, 1.18), (0.34, 1.245), (0, 1.25)]),
-    (0.75, [(0, 0.16), (0.88, 0.16), (0.92, 0.24), (0.94, 0.36), (0.975, 0.58),
-            (0.965, 0.85), (0.86, 0.91), (0.64, 1.16), (0.33, 1.22), (0, 1.225)]),
-    (1.55, [(0, 0.17), (0.88, 0.17), (0.92, 0.25), (0.94, 0.37), (0.975, 0.60),
-            (0.965, 0.87), (0.88, 0.92), (0.62, 0.95), (0.32, 0.96), (0, 0.965)]),
-    (2.30, [(0, 0.26), (0.80, 0.26), (0.85, 0.31), (0.88, 0.39), (0.91, 0.56),
-            (0.915, 0.84), (0.86, 0.90), (0.60, 0.92), (0.30, 0.925), (0, 0.93)]),
+    (-2.30, [(0, 0.24), (0.72, 0.24), (0.78, 0.255), (0.81, 0.28), (0.83, 0.31),
+             (0.835, 0.405), (0.78, 0.44), (0.55, 0.452), (0.28, 0.456), (0, 0.457)]),
+    (-2.20, [(0, 0.19), (0.83, 0.19), (0.89, 0.215), (0.92, 0.26), (0.935, 0.31),
+             (0.94, 0.49), (0.875, 0.55), (0.60, 0.565), (0.30, 0.571), (0, 0.573)]),
+    (-1.95, [(0, 0.155), (0.86, 0.155), (0.92, 0.20), (0.945, 0.27), (0.96, 0.34),
+             (0.968, 0.63), (0.89, 0.70), (0.60, 0.68), (0.30, 0.683), (0, 0.685)]),
+    (-1.40, [(0, 0.15), (0.87, 0.15), (0.925, 0.21), (0.95, 0.29), (0.975, 0.37),
+             (0.99, 0.765), (0.89, 0.83), (0.60, 0.78), (0.30, 0.772), (0, 0.772)]),
+    (-0.85, [(0, 0.15), (0.88, 0.15), (0.925, 0.22), (0.945, 0.30), (0.958, 0.38),
+             (0.95, 0.79), (0.85, 0.845), (0.62, 0.865), (0.31, 0.876), (0, 0.878)]),
+    (-0.45, [(0, 0.15), (0.88, 0.15), (0.925, 0.22), (0.94, 0.30), (0.95, 0.38),
+             (0.935, 0.80), (0.83, 0.86), (0.67, 1.055), (0.35, 1.13), (0, 1.14)]),
+    (-0.05, [(0, 0.15), (0.88, 0.15), (0.925, 0.22), (0.94, 0.30), (0.948, 0.38),
+             (0.932, 0.81), (0.825, 0.875), (0.665, 1.135), (0.355, 1.205), (0, 1.215)]),
+    (0.45, [(0, 0.15), (0.88, 0.15), (0.925, 0.22), (0.945, 0.30), (0.958, 0.38),
+            (0.95, 0.83), (0.845, 0.89), (0.665, 1.115), (0.35, 1.185), (0, 1.195)]),
+    (0.75, [(0, 0.15), (0.88, 0.15), (0.93, 0.22), (0.95, 0.30), (0.972, 0.38),
+            (0.975, 0.85), (0.875, 0.905), (0.66, 1.08), (0.345, 1.145), (0, 1.155)]),
+    (1.40, [(0, 0.155), (0.88, 0.155), (0.945, 0.22), (0.975, 0.30), (1.005, 0.39),
+            (1.02, 0.89), (0.915, 0.965), (0.64, 0.985), (0.33, 1.012), (0, 1.018)]),
+    (1.95, [(0, 0.20), (0.87, 0.20), (0.925, 0.26), (0.955, 0.34), (0.975, 0.44),
+            (0.985, 0.885), (0.895, 0.93), (0.62, 0.935), (0.315, 0.944), (0, 0.946)]),
+    (2.20, [(0, 0.32), (0.83, 0.32), (0.88, 0.37), (0.91, 0.43), (0.935, 0.51),
+            (0.95, 0.865), (0.875, 0.905), (0.61, 0.92), (0.31, 0.927), (0, 0.929)]),
+    (2.30, [(0, 0.44), (0.78, 0.44), (0.83, 0.47), (0.86, 0.51), (0.88, 0.56),
+            (0.90, 0.85), (0.845, 0.885), (0.60, 0.898), (0.30, 0.903), (0, 0.905)]),
 ]
 
-# Stations: every key plus every panel boundary.
-STATIONS = sorted({k[0] for k in KEYS} | {
-    -1.95, -0.92, -0.45, 0.72, 0.80, 1.95, 2.12, 2.20,
-})
+# How each pair of neighbouring feature points is joined, by face row (the
+# rows are numbered after P4b, the middle of P4-P5, is inserted):
+# (bulge, pieces). The bulge pushes the middle of the curve outwards by that
+# fraction of the chord; "crown" keeps the roof and floor level at the
+# centre line.
+SEGMENTS = [
+    ("crown", 1),   # 0 underbody
+    (0.18, 2),      # 1 underbody edge
+    (0.0, 1),       # 2 sill face
+    (-0.04, 2),     # 3 black lower body, drawn in a little
+    (0.07, 3),      # 4 lower flank (first half of the P4-P5 curve)
+    (0.07, 3),      # 5 upper flank (second half)
+    (0.16, 3),      # 6 shoulder
+    ("spline", 4),  # 7 canopy side, or the hood and deck beside the centre
+    ("spline", 3),  # 8 roof edge
+    ("spline", 3),  # 9 roof
+]
+# Rows 7 to 9 are one smooth curve (a Catmull-Rom spline) from the beltline
+# through P7 and P8 to a level crown: a bulge per row would raise a hump on
+# every row of the flat hood.
 
-# Half-profile indices after P4b (midpoint of P4 and P5) is inserted.
+# Panel boundaries are always stations, so every panel ends on a ring.
+BOUNDS = [-1.95, -0.92, -0.45, 0.72, 0.80, 1.95, 2.12, 2.20]
+STATIONS = sorted(set(BOUNDS) | {
+    -2.30, -2.26, -2.20, -2.13, -2.06,
+    *[round(-1.85 + 0.13 * i, 3) for i in range(30) if -1.85 + 0.13 * i < 2.10],
+    2.25, 2.30,
+})
+# Drop stations that would leave a sliver next to a panel boundary.
+STATIONS = [s for s in STATIONS
+            if s in BOUNDS or all(abs(s - b) > 0.035 for b in BOUNDS)]
+
+# Feature-point indices after P4b is inserted.
 I_P3, I_P4B, I_P5, I_P8, I_P9 = 3, 5, 6, 9, 10
-HALF = 11
-RING = HALF + HALF - 2  # the centre points are shared by both halves
+FEATURES = 11
 
 # Material slots shared by every body-side object.
 M_PAINT, M_GLASS, M_TRIM, M_INTERIOR = 0, 1, 2, 3
@@ -115,25 +158,111 @@ PARTS = ["body", "door_left", "door_right", "frunk", "trunk", "charge_port"]
 P_BODY, P_DOOR_L, P_DOOR_R, P_FRUNK, P_TRUNK, P_PORT = range(6)
 
 
-def profile(y):
-    """Half profile at station y: HALF (x, z) points."""
-    for (y0, a), (y1, b) in zip(KEYS, KEYS[1:]):
-        if y0 <= y <= y1:
-            t = (y - y0) / (y1 - y0)
-            pts = [(a[i][0] + (b[i][0] - a[i][0]) * t,
-                    a[i][1] + (b[i][1] - a[i][1]) * t) for i in range(10)]
-            break
-    else:
-        raise ValueError(y)
+def pchip(xs, ys, x):
+    """Monotone cubic (Fritsch-Carlson) through (xs, ys) at x: smooth, and
+    never overshoots a key, so the body has no ripples between stations."""
+    n = len(xs)
+    h = [xs[i + 1] - xs[i] for i in range(n - 1)]
+    d = [(ys[i + 1] - ys[i]) / h[i] for i in range(n - 1)]
+    m = [d[0]] + [0.0] * (n - 2) + [d[-1]]
+    for i in range(1, n - 1):
+        if d[i - 1] * d[i] > 0:
+            w1, w2 = 2 * h[i] + h[i - 1], h[i] + 2 * h[i - 1]
+            m[i] = (w1 + w2) / (w1 / d[i - 1] + w2 / d[i])
+    for i in range(n - 1):
+        if xs[i] <= x <= xs[i + 1]:
+            t = (x - xs[i]) / h[i]
+            t2, t3 = t * t, t * t * t
+            return ((2 * t3 - 3 * t2 + 1) * ys[i] + (t3 - 2 * t2 + t) * h[i] * m[i]
+                    + (-2 * t3 + 3 * t2) * ys[i + 1] + (t3 - t2) * h[i] * m[i + 1])
+    raise ValueError(x)
+
+
+def bezier(a, c, b, t):
+    u = 1 - t
+    return (u * u * a[0] + 2 * u * t * c[0] + t * t * b[0],
+            u * u * a[1] + 2 * u * t * c[1] + t * t * b[1])
+
+
+def control(a, b, bulge):
+    """The quadratic Bezier control point joining a to b."""
+    if bulge == "crown":
+        # Level where the curve meets the centre line (b, or a for the floor).
+        return (a[0] * 0.55, b[1]) if b[0] == 0 else (b[0] * 0.55, a[1])
+    mx, mz = (a[0] + b[0]) / 2, (a[1] + b[1]) / 2
+    dx, dz = b[0] - a[0], b[1] - a[1]
+    # Outward normal of the chord (the profile runs anticlockwise).
+    return (mx + dz * bulge * 2, mz - dx * bulge * 2)
+
+
+def features(y):
+    """The FEATURES feature points of the half profile at station y."""
+    ys = [k[0] for k in KEYS]
+    pts = [(pchip(ys, [k[1][i][0] for k in KEYS], y),
+            pchip(ys, [k[1][i][1] for k in KEYS], y)) for i in range(10)]
+    # P4b is the middle of the curved flank from P4 to P5.
     p4, p5 = pts[4], pts[5]
-    p4b = ((p4[0] + p5[0]) / 2, (p4[1] + p5[1]) / 2)
+    p4b = bezier(p4, control(p4, p5, SEGMENTS[4][0]), p5, 0.5)
     return pts[:5] + [p4b] + pts[5:]
 
 
+def profile(y):
+    """The full half profile at y: a list of (x, z) points and, for each
+    edge between neighbours, the face row it belongs to."""
+    f = features(y)
+    pts, rows = [f[0]], []
+    for row in range(FEATURES - 1):
+        bulge, pieces = SEGMENTS[row]
+        a, b = f[row], f[row + 1]
+        if row in (4, 5):
+            # Both halves lie on the one P4-P5 curve.
+            p4, p5 = f[4], f[6]
+            c = control(p4, p5, bulge)
+            t0 = 0.0 if row == 4 else 0.5
+            for k in range(1, pieces + 1):
+                pts.append(bezier(p4, c, p5, t0 + 0.5 * k / pieces))
+                rows.append(row)
+            continue
+        if bulge == "spline":
+            for k in range(1, pieces + 1):
+                pts.append(spline(f, row, k / pieces))
+                rows.append(row)
+            continue
+        c = control(a, b, bulge)
+        for k in range(1, pieces + 1):
+            pts.append(bezier(a, c, b, k / pieces))
+            rows.append(row)
+    return pts, rows
+
+
+def spline(f, row, t):
+    """The point t of the way along feature row 7, 8 or 9 (P6 to P9)."""
+    run = f[7:11] + [(-f[9][0], f[9][1])]  # P6..P9, then P8 mirrored
+    i = row - 7
+
+    def tangent(j):
+        if j == 0:
+            return (run[1][0] - run[0][0], run[1][1] - run[0][1])
+        return ((run[j + 1][0] - run[j - 1][0]) / 2, (run[j + 1][1] - run[j - 1][1]) / 2)
+
+    a, b = run[i], run[i + 1]
+    ma, mb = tangent(i), tangent(i + 1)
+    t2, t3 = t * t, t * t * t
+    h00, h10, h01, h11 = 2 * t3 - 3 * t2 + 1, t3 - 2 * t2 + t, -2 * t3 + 3 * t2, t3 - t2
+    return (h00 * a[0] + h10 * ma[0] + h01 * b[0] + h11 * mb[0],
+            h00 * a[1] + h10 * ma[1] + h01 * b[1] + h11 * mb[1])
+
+
+HALF = len(profile(0.0)[0])
+RING = HALF + HALF - 2  # the centre points are shared by both halves
+
+
 def side_x(y, z):
-    """x of the left side surface at station y and height z (sill to beltline)."""
-    pts = profile(y)
-    for a, b in zip(pts[2:8], pts[3:9]):
+    """x of the left side surface at station y and height z (sill to canopy)."""
+    pts, _ = profile(y)
+    lo = sum(SEGMENTS[r][1] for r in range(2))      # P2
+    hi = sum(SEGMENTS[r][1] for r in range(8))      # P7
+    for a, b in zip(pts[lo:hi], pts[lo + 1:hi + 1]):
         if a[1] <= z <= b[1]:
             t = (z - a[1]) / (b[1] - a[1])
             return a[0] + (b[0] - a[0]) * t
@@ -157,11 +286,12 @@ def part_of(row, left, ym):
 
 
 def material_of(row, ym):
-    if row <= 2:
+    # Gloss black below P4, all round: sills, the lower doors, the bumpers.
+    if row <= 3:
         return M_TRIM
-    if row in (7, 8) and inside(ym, (-0.85, 1.55)) and not inside(ym, (0.72, 0.80)):
-        return M_GLASS
-    if row == 9 and (inside(ym, (-0.85, -0.05)) or inside(ym, (0.80, 1.55))):
+    # One black glass canopy from the windscreen over the roof to the
+    # fastback.
+    if row >= 7 and inside(ym, (-0.85, 1.55)):
         return M_GLASS
     return M_PAINT
 
@@ -206,12 +336,12 @@ def make_material(name, color, metallic=0.0, roughness=0.5, emission=None,
 
 def materials():
     return {
-        "paint": make_material("svala_paint", (0.15, 0.16, 0.19), 0.35, 0.38),
-        "glass": make_material("svala_glass", (0.006, 0.007, 0.009), 0.0, 0.18),
-        "trim": make_material("svala_trim", (0.012, 0.012, 0.014), 0.0, 0.6),
+        "paint": make_material("svala_paint", hex_rgb(PAINT), 0.5, 0.3),
+        "glass": make_material("svala_glass", (0.004, 0.004, 0.007), 0.0, 0.12),
+        "trim": make_material("svala_trim", (0.008, 0.008, 0.011), 0.0, 0.32),
         "interior": make_material("svala_interior", (0.025, 0.026, 0.03), 0.0, 0.75),
         "tyre": make_material("svala_tyre", (0.018, 0.018, 0.018), 0.0, 0.85),
-        "rim": make_material("svala_rim", (0.2, 0.21, 0.23), 0.6, 0.32),
+        "rim": make_material("svala_rim", (0.035, 0.035, 0.045), 0.6, 0.3),
         "brake": make_material("svala_brake", (0.30, 0.30, 0.31), 1.0, 0.4),
         "neon_cyan": make_material("svala_neon_cyan", hex_rgb(NEON_CYAN), 0.0, 0.3,
                                    hex_rgb(NEON_CYAN), NEON_STRENGTH),
@@ -267,8 +397,9 @@ def build_loft():
     part = bm.faces.layers.int.new("part")
     src = bm.faces.layers.int.new("src")
     rings = []
+    _, rows = profile(STATIONS[0])
     for y in STATIONS:
-        half = profile(y)
+        half, _ = profile(y)
         pts = [(x, y, z) for x, z in half]
         pts += [(-half[i][0], y, half[i][1]) for i in range(HALF - 2, 0, -1)]
         rings.append([bm.verts.new(p) for p in pts])
@@ -278,16 +409,22 @@ def build_loft():
         for k in range(RING):
             k2 = (k + 1) % RING
             left = k < HALF - 1
-            row = k if left else RING - 1 - k
+            row = rows[k] if left else rows[RING - 1 - k]
             f = bm.faces.new((a[k], a[k2], b[k2], b[k]))
             f[part] = part_of(row, left, ym)
             f[src] = 1
             f.material_index = material_of(row, ym)
+    # The nose and the tail are gloss black faces for the light bars.
     for ring in (rings[0], list(reversed(rings[-1]))):
         f = bm.faces.new(ring)
         f[part] = P_BODY
         f[src] = 1
-        f.material_index = M_PAINT
+        f.material_index = M_TRIM
+        for e in f.edges:
+            e.smooth = False
+        # Fan it from its middle: a long, almost straight edge of many
+        # points makes the exporter's triangles spill over the panel above.
+        bmesh.ops.poke(bm, faces=[f])
     bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
     return mesh_from_bm("loft", bm)
 
@@ -362,8 +499,10 @@ def finish_panel(obj, bevel=0.006):
     bev.angle_limit = math.radians(25)
     bev.width = bevel
     bev.segments = 2
-    wn = obj.modifiers.new("normals", "WEIGHTED_NORMAL")
-    wn.keep_sharp = True
+    # The bevel's own hardened normals keep the curved panels smooth right
+    # up to their edges; area-weighted normals let the big nose and tail
+    # faces ripple the shading of the panels next to them.
+    bev.harden_normals = True
     apply_modifiers(obj)
     drop_attribute(obj.data, "part")
     drop_attribute(obj.data, "src")
@@ -391,9 +530,9 @@ def add_details(obj):
     add_box(bm, (0, -0.05, 0.36), (0.22, 1.00, 0.20), M_INTERIOR)  # console
     add_box(bm, (0.38, -0.30, 0.80), (0.34, 0.04, 0.12), M_TRIM,
             Matrix.Rotation(math.radians(20), 4, "X"))  # yoke
-    add_box(bm, (0, -2.22, 0.17), (1.60, 0.20, 0.025), M_TRIM)  # splitter
-    for x in (-0.54, -0.27, 0.0, 0.27, 0.54):  # diffuser fins
-        add_box(bm, (x, 2.14, 0.235), (0.015, 0.32, 0.05), M_TRIM)
+    add_box(bm, (0, -2.22, 0.20), (1.66, 0.20, 0.02), M_TRIM)  # splitter
+    for x in (-0.60, -0.40, -0.20, 0.0, 0.20, 0.40, 0.60):  # diffuser fins
+        add_box(bm, (x, 2.13, 0.345), (0.012, 0.18, 0.07), M_TRIM)
     bm.to_mesh(obj.data)
     bm.free()
 
@@ -493,9 +632,10 @@ def strip_specs(pivots):
     """Light strips as boxes in Blender axes: name, centre, size, colour, group."""
     cyan, magenta = NEON_CYAN, NEON_MAGENTA
     specs = []
-    specs.append(("strip_front", (0.0, -2.30 - 0.004, 0.43), (1.56, 0.012, 0.03),
+    # Full-width light bars across the black nose and tail.
+    specs.append(("strip_front", (0.0, -2.30 - 0.004, 0.37), (1.60, 0.012, 0.035),
                   cyan, "front"))
-    specs.append(("strip_rear", (0.0, 2.30 + 0.004, 0.80), (1.64, 0.012, 0.04),
+    specs.append(("strip_rear", (0.0, 2.30 + 0.004, 0.79), (1.74, 0.012, 0.045),
                   magenta, "rear"))
     ys = [i / 20 * 1.7 - 0.85 for i in range(21)]
     sx = max(side_x(y, 0.30) for y in ys) + 0.002
@@ -503,7 +643,7 @@ def strip_specs(pivots):
         specs.append((name, (sign * sx, 0.0, 0.30), (0.012, 1.70, 0.022), cyan, "side"))
     y0, y1 = DOOR_Y[0] + 0.10, DOOR_Y[1] - 0.10
     ys = [y0 + (y1 - y0) * i / 20 for i in range(21)]
-    dz = 0.78
+    dz = 0.56  # below the shoulder, so the wider flank, not the sky, is behind it
     dx = max(side_x(y, dz) for y in ys) + 0.002
     for name, sign, door in (("strip_door_left", 1, "door_left"),
                              ("strip_door_right", -1, "door_right")):
@@ -596,17 +736,17 @@ def build():
     loft = new_object("loft", build_loft(), body_mats)
     cut_arches(loft)
 
-    hinge = profile(-0.05)[I_P8]
+    hinge = features(-0.05)[I_P8]
     door_mid = (DOOR_Y[0] + DOOR_Y[1]) / 2
-    port_pts = profile(PORT_Y[0])
+    port_pts = features(PORT_Y[0])
     port_z = (port_pts[I_P4B][1] + port_pts[I_P5][1]) / 2
     port_x = side_x(PORT_Y[0], port_z)
     pivots = {
         "body": Vector((0, 0, 0)),
         "door_left": Vector((hinge[0], door_mid, hinge[1])),
         "door_right": Vector((-hinge[0], door_mid, hinge[1])),
-        "frunk": Vector((0, FRUNK_Y[1], profile(FRUNK_Y[1])[I_P9][1])),
-        "trunk": Vector((0, TRUNK_Y[0], profile(TRUNK_Y[0])[I_P9][1])),
+        "frunk": Vector((0, FRUNK_Y[1], features(FRUNK_Y[1])[I_P9][1])),
+        "trunk": Vector((0, TRUNK_Y[0], features(TRUNK_Y[0])[I_P9][1])),
         "charge_port": Vector((port_x, PORT_Y[0], port_z)),
     }
 
@@ -796,8 +936,9 @@ def write_rig(objs, pivots, wheels, strips):
         ] + [{"name": "wheels_spin", "duration_s": SPIN_FRAMES / FPS, "loop": True,
               "nodes": list(wheels)}],
         "materials": {
-            "paint": "graphite satin, metallic 0.35, roughness 0.38",
-            "glass": "black glass, roughness 0.18",
+            "paint": f"candy violet {PAINT}, metallic 0.5, roughness 0.3",
+            "glass": "gloss black canopy, roughness 0.12",
+            "trim": "gloss black lower body, nose and tail, roughness 0.32",
             "neon_front_side": NEON_CYAN,
             "neon_rear": NEON_MAGENTA,
         },
