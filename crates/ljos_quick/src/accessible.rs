@@ -1594,6 +1594,7 @@ impl QuickScene {
     /// `TapHandler`). Returns whether something took it; a disabled node,
     /// or one whose role is not pressed, takes nothing.
     pub fn accessible_press(&mut self, engine: &Engine, key: NodeKey, now: Time) -> bool {
+        let _acting = crate::input::Delivering::begin(engine);
         let Some(data) = self.a11y.tree.get(key) else {
             return false;
         };
@@ -1647,7 +1648,7 @@ impl QuickScene {
         key: NodeKey,
         action: AccessibleAction,
     ) -> bool {
-        crate::input::note_acted(engine);
+        let _acting = crate::input::Delivering::begin(engine);
         if key.is_announcement() || self.a11y.tree.get(key).is_none_or(|data| data.disabled) {
             return false;
         }

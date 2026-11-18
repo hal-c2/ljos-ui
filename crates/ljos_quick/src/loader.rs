@@ -25,9 +25,9 @@
 //! while the item is made, or in the item's own code. A short handler of a
 //! made item whose dispatch was cut short in other objects' code (a click
 //! that sets off long work elsewhere) was set off by whatever ran the
-//! handler, not by the loading, so the Loader loads again each time. Only
-//! when nobody acted on the application between making the item and the
-//! interrupt (a press, a key, a wheel: [`crate::input::times_acted`]) did
+//! handler, not by the loading, so the Loader loads again each time. When
+//! the interrupted dispatch was not input someone gave (a press, a key, a
+//! wheel: [`crate::input::filed_acting`]) but a timer's or other work's,
 //! the item set the work off by itself, and [`ELSEWHERE_STREAK`] such
 //! interrupts in a row, each of an item the last one loaded again and soon
 //! after it, leave the Loader at `Loader.Error`.
@@ -54,7 +54,7 @@ use crate::tree;
 const SECOND_CHANCE: Duration = Duration::from_secs(10);
 
 /// How many interrupts of scripts an item set off elsewhere by itself (a
-/// timer of its own, nobody acting on the application since it was made),
+/// timer of its own, not input someone gave it),
 /// each within [`SECOND_CHANCE`] of the one before and of the item it
 /// loaded again, a Loader loads again for: an item that sets the work off
 /// again each time it is made would chain them for good, however long the
@@ -149,8 +149,6 @@ struct Run {
     /// interrupted, how many were in a row, and the generation of the item
     /// that loaded again for it: an item any other load made starts anew.
     elsewhere: Option<(Time, u32, u64)>,
-    /// [`crate::input::times_acted`] when the item was last made.
-    acted_through: u64,
     /// [`Engine::faults_reported`] when the item was last made: a fault
     /// reported by then came from making it. `u64::MAX` while it is being
     /// published.
@@ -404,7 +402,7 @@ impl Boundary for LoaderBoundary {
             let making = r.job.is_some() || report.seq <= r.made_through;
             let again = if making || !report.stopped_outside(me) {
                 Again::Counted
-            } else if crate::input::times_acted(e) != r.acted_through {
+            } else if crate::input::filed_acting(e, report.seq) {
                 Again::Acted
             } else {
                 Again::Elsewhere { made_in }
@@ -448,11 +446,11 @@ enum Again {
     /// code, or ran while the item was made.
     Counted,
     /// The item's handler set off other objects' code after it was made,
-    /// the interrupt stopped that, and someone acted on the application
-    /// since: they set it off, and may well again.
+    /// the interrupt stopped that, and the dispatch was input someone
+    /// gave: they set it off, and may well again.
     Acted,
-    /// As [`Again::Acted`], with nobody acting: the item set it off by
-    /// itself. `made_in` is the generation of the item.
+    /// As [`Again::Acted`], for a dispatch no input was: the item set it
+    /// off by itself. `made_in` is the generation of the item.
     Elsewhere { made_in: u64 },
 }
 
@@ -478,9 +476,14 @@ fn load_again(e: &Engine, me: ObjectId, at: Time, again: Again) {
                         "{place}Loader: a script its item set off in another object was interrupted, loading again"
                     ),
                 );
+                let before = with_run(e, me, |r| r.generation);
                 reload(e, me, true);
+                // A load asked for while the item was made (by a `loaded`
+                // handler) starts anew.
                 with_run(e, me, |r| {
-                    r.elsewhere = (n > 0).then_some((at, n, r.generation));
+                    let mine = before.map(|g| g + 1);
+                    r.elsewhere =
+                        (n > 0 && mine == Some(r.generation)).then_some((at, n, r.generation));
                 });
             }
             Some(n) => warn(
@@ -729,10 +732,7 @@ fn finish(e: &Engine, me: ObjectId, generation: u64, made: Result<ObjectId, Engi
         }
     }
     if is_current(e, me, generation) {
-        with_run(e, me, |r| {
-            r.made_through = e.faults_reported();
-            r.acted_through = crate::input::times_acted(e);
-        });
+        with_run(e, me, |r| r.made_through = e.faults_reported());
     }
 }
 

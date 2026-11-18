@@ -479,9 +479,7 @@ impl QuickScene {
     /// stay as the last event left them.
     pub fn key_event_from_text(&mut self, engine: &Engine, ev: &KeyEvent) -> bool {
         self.note_input();
-        if ev.kind == KeyKind::Press {
-            crate::input::note_acted(engine);
-        }
+        let _acting = crate::input::Delivering::begin(engine);
         let Some(root) = self.root() else {
             return false;
         };
