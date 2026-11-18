@@ -261,18 +261,20 @@ fn fs_glow(in: VsOut) -> @location(0) vec4<f32> {
         let k = clamp(g, vec3<f32>(0.0), vec3<f32>(1.0));
         rgb = max(c.rgb, s + k - s * k);
     } else if mode == 2u {
+        // Only the brightening half of the soft-light curve, towards the
+        // colour's square root: its darkening half squares a colour under
+        // a dark layer, and no glow at all is the darkest layer there is.
         let s = clamp(c.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
         let k = clamp(g, vec3<f32>(0.0), vec3<f32>(1.0));
-        let soft = select(
-            s + (2.0 * k - vec3<f32>(1.0)) * (sqrt(s) - s),
-            s - (vec3<f32>(1.0) - 2.0 * k) * s * (vec3<f32>(1.0) - s),
-            k <= vec3<f32>(0.5));
-        rgb = c.rgb - s + soft;
+        rgb = c.rgb + k * (sqrt(s) - s);
     } else if mode == 3u {
         rgb = g;
     }
-    // Glow lights what was not drawn too.
-    let alpha = max(c.a, clamp(max(g.r, max(g.g, g.b)), 0.0, 1.0));
+    // Glow lights what was not drawn too, by as much light as it added
+    // there: covering a seen-through pixel without lighting it would show
+    // dark against what is behind the view.
+    let lit = select(max(rgb - c.rgb, vec3<f32>(0.0)), g, mode == 3u);
+    let alpha = max(c.a, clamp(max(lit.r, max(lit.g, lit.b)), 0.0, 1.0));
     return vec4<f32>(rgb, alpha);
 }
 
