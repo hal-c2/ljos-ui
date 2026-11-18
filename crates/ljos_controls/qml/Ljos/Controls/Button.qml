@@ -46,10 +46,11 @@ T.Button {
     padding: control.checkable ? Theme.spacing + 4 : Theme.spacing
     // One line is centred in the background's height. The icon over the
     // text is taller than that, so the button grows to it and keeps half a
-    // spacing above and below, as it keeps a spacing beside its text.
+    // spacing above and below, as it keeps a spacing beside its text. With
+    // only one of the two shown it is one line, whatever the display.
     // Each edge on its own, so a button given one keeps the other.
-    topPadding: display === T.AbstractButton.TextUnderIcon ? Theme.spacing / 2 : 0
-    bottomPadding: display === T.AbstractButton.TextUnderIcon ? Theme.spacing / 2 : 0
+    topPadding: contentItem && contentItem.iconOverText === true ? Theme.spacing / 2 : 0
+    bottomPadding: contentItem && contentItem.iconOverText === true ? Theme.spacing / 2 : 0
     spacing: Theme.spacing
     hoverEnabled: true
     font.pixelSize: Theme.fontSize
@@ -75,6 +76,8 @@ T.Button {
             readonly property bool showsIcon: hasIcon && (control.display !== T.AbstractButton.TextOnly || !hasLabel)
             readonly property bool showsText: hasLabel && (control.display !== T.AbstractButton.IconOnly || !hasIcon)
             readonly property bool under: control.display === T.AbstractButton.TextUnderIcon
+            // The icon over the text, both shown: taller than one line.
+            readonly property bool iconOverText: under && showsIcon && showsText
             // What is drawn at the start, or over the text: the style's own
             // icon, else the button's or its action's.
             readonly property Item mark: glyph.visible ? glyph : picture.visible ? picture : null

@@ -294,6 +294,26 @@ Feature: Ljós's own style: the icon and the text of a button and a menu row
       When the method "measure" of "root" is called
       Then the property "got" of "root" is [0, 0, true, 0, 8, 0]
 
+    # The padding is for the icon over the text: with only one of the two
+    # shown, the button is one line, as beside its text.
+    @api-QtQuick.Controls.Control.topPadding
+    Scenario: A button shown under its icon with only its text or only its icon has no padding above or below
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.impl
+        import Ljos.Controls
+        Item {
+          width: 200; height: 100
+          Button { objectName: "underText"; text: "Save"; display: IconLabel.TextUnderIcon }
+          Button { objectName: "underIcon"; x: 80; iconName: "plus"; display: IconLabel.TextUnderIcon }
+        }
+        """
+      Then the property "topPadding" of "underText" is 0
+      And the property "bottomPadding" of "underText" is 0
+      And the property "topPadding" of "underIcon" is 0
+      And the property "bottomPadding" of "underIcon" is 0
+
   Rule: A button given the padding of one edge keeps the other's
 
     # Beside its icon a button has no padding above or below; under it,
@@ -430,13 +450,15 @@ Feature: Ljós's own style: the icon and the text of a button and a menu row
         import QtQuick.Controls.impl
         import Ljos.Controls
         Item {
-          id: root; objectName: "root"; width: 560; height: 60
+          id: root; objectName: "root"; width: 640; height: 60
           TabButton { objectName: "tabIconOnly"; text: "Files"; iconName: "folder"; display: IconLabel.IconOnly }
           TabButton { objectName: "tabTextOnly"; x: 60; text: "Files"; iconName: "folder"; display: IconLabel.TextOnly }
           TabButton { objectName: "tabPlain"; x: 160; text: "Files" }
           TabButton { objectName: "tabNoIcon"; x: 260; text: "Files"; display: IconLabel.IconOnly }
           TabButton { objectName: "tabNoText"; x: 360; iconName: "folder"; display: IconLabel.TextOnly }
           TabButton { objectName: "tabUnder"; x: 420; text: "Files"; iconName: "folder"; display: IconLabel.TextUnderIcon }
+          TabButton { objectName: "tabUnderText"; x: 480; text: "Files"; display: IconLabel.TextUnderIcon }
+          TabButton { objectName: "tabUnderIcon"; x: 560; iconName: "folder"; display: IconLabel.TextUnderIcon }
           function part(i, name) { for (const k of i.children) { if (k.objectName === name) return k; const f = part(k, name); if (f) return f } return null }
           function middle(c, i) { return Math.round(i.mapToItem(c, 0, 0).x + i.width / 2) }
           property var got: []
@@ -466,6 +488,13 @@ Feature: Ljós's own style: the icon and the text of a button and a menu row
         | tabNoIcon   | as its icon    | its text, as it has no icon                                                     | [[false, true], 0, 0] |
         | tabNoText   | as its text    | its icon, as it has no text                                                     | [[true, false], 0, 0] |
         | tabUnder    | under its icon | the icon over the text, in the tab's middle, and half a spacing above and below | [true, 0, 0, 8]       |
+
+    # The padding is for the icon over the text: with only one of the two
+    # shown, the tab is one line, as beside its text.
+    @api-QtQuick.Controls.Control.verticalPadding
+    Scenario: A tab shown under its icon with only its text or only its icon has no padding above or below
+      Then the property "verticalPadding" of "tabUnderText" is 0
+      And the property "verticalPadding" of "tabUnderIcon" is 0
 
   Rule: A tab shows the picture it or its action is given, as a button does
 

@@ -30,7 +30,8 @@ T.TabButton {
     horizontalPadding: Theme.spacing
     // One line is centred in the strip's height; the icon over the text is
     // taller, so the tab grows to it and keeps half a spacing above and below.
-    verticalPadding: display === T.AbstractButton.TextUnderIcon ? Theme.spacing / 2 : 0
+    // With only one of the two shown it is one line, whatever the display.
+    verticalPadding: contentItem && contentItem.iconOverText === true ? Theme.spacing / 2 : 0
     spacing: Theme.spacingSmall
     hoverEnabled: true
     font.pixelSize: Theme.fontSizeSmall
@@ -42,6 +43,9 @@ T.TabButton {
             readonly property bool hasIcon: control.iconName.length > 0 || picture.implicitWidth > 0
             readonly property bool showsIcon: control.display !== T.AbstractButton.TextOnly
                                               || control.text.length === 0
+            // The icon over the text, both shown, as the grid lays them out.
+            readonly property bool iconOverText: (glyph.visible || picture.visible) && label.visible
+                                                 && control.display === T.AbstractButton.TextUnderIcon
             implicitWidth: row.implicitWidth
             implicitHeight: row.implicitHeight
 
@@ -51,7 +55,7 @@ T.TabButton {
                 anchors.centerIn: parent
                 // Two only when both are shown: a grid keeps the spacing
                 // after a lone part in a first column of two.
-                columns: (glyph.visible || picture.visible) && label.visible && control.display !== T.AbstractButton.TextUnderIcon ? 2 : 1
+                columns: (glyph.visible || picture.visible) && label.visible && !content.iconOverText ? 2 : 1
                 columnSpacing: control.spacing
                 rowSpacing: control.spacing
                 horizontalItemAlignment: Grid.AlignHCenter
