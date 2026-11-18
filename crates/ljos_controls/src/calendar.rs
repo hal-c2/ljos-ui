@@ -405,10 +405,7 @@ fn rebuild(e: &Engine, obj: ObjectId) {
             object(e, obj, kind.delegate()),
         )
     });
-    // The days go in the content item the style made. One the application
-    // gives is the application's: no days are made in it, and it asks for
-    // the room the application says.
-    let content = content.filter(|c| declared_by_style(e, *c));
+    let content = content.filter(|c| takes_days(e, obj, *c));
     cells.host.set(content);
     if cells.watched.get() != content {
         cells.watched.set(content);
@@ -437,6 +434,25 @@ fn rebuild(e: &Engine, obj: ObjectId) {
     *cells.made.borrow_mut() = made;
     ask_for_room(e, obj, content, kind, items);
     layout(e, obj);
+}
+
+/// Whether the days go in `content`, the content item of `obj`: the one
+/// the style gives, a custom style's as well as a built-in one's. One
+/// written where the control itself is declared is the application's: no
+/// days are made in it, and it asks for the room the application says.
+///
+/// Which files are a custom style's is the compiler's to know, not the
+/// running program's, so a content item from any file other than the
+/// control's is taken to be the style's: that of a type the application
+/// derives from a styled month grid too, where qml6 makes none.
+fn takes_days(e: &Engine, obj: ObjectId, content: ObjectId) -> bool {
+    if declared_by_style(e, content) {
+        return true;
+    }
+    match e.document_url(content) {
+        Some(file) => e.document_url(obj).as_ref() != Some(&file),
+        None => false,
+    }
 }
 
 /// One delegate item per cell, in the content item, each with its cell as
