@@ -121,7 +121,9 @@ Item {
         y: view.height - 170
         bloom: view.theme.bloom
         dark: view.theme.dark
-        stripTint: view.theme.cyan
+        // The car page's tints: the light theme's cyan is too dark to clear
+        // the glow threshold.
+        stripTint: view.theme.dark ? "#00e5ff" : "#00b8cc"
         tailTint: view.theme.magenta
         sway: -view.drift * 0.08
         Accessible.role: Accessible.Graphic
