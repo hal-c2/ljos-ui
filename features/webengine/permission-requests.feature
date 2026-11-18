@@ -174,6 +174,52 @@ Feature: A view answers what a page asks permission for
     And the property "activeFocus" of "answer" is true
     And the property "title" of "view" is "read copied"
 
+  # Focus emulation is one switch for the page: a read that has its
+  # answer leaves it on while another one still waits for Chromium's.
+  @ljos-only @api-QtWebEngine.WebEngineView.permissionRequested @api-QtWebEngine.WebEnginePermission.grant
+  Scenario: A page granted two clipboard reads at once after the focus left it reads both
+    Given the web server serves the text file "paste.html":
+      """
+      <!doctype html>
+      <html><head><title>waiting</title></head>
+      <body style="margin:0"><div style="height:100px; background:#00ff00" onclick="
+        navigator.clipboard.writeText('copied')
+          .then(() => Promise.all([navigator.clipboard.readText(), navigator.clipboard.readText()]))
+          .then(texts => document.title = 'read ' + texts.join(' '), error => document.title = error.name)"></div>
+      </body></html>
+      """
+    And the QML:
+      """qml
+      import QtQuick
+      import QtWebEngine
+      Item {
+        width: 200; height: 140
+        WebEngineView {
+          id: view; objectName: "view"
+          width: 200; height: 100
+          focus: true
+          property int asked: 0
+          property var kept: []
+          url: "$SERVER/paste.html"
+          onPermissionRequested: permission => {
+            asked++
+            kept = kept.concat([permission])
+            answer.forceActiveFocus()
+            later.restart()
+          }
+        }
+        TextInput { id: answer; objectName: "answer"; y: 100; width: 200; height: 40 }
+        Timer { id: later; interval: 500; onTriggered: view.kept.forEach(permission => permission.grant()) }
+      }
+      """
+    When 2 seconds pass
+    And the user presses the pointer at 100, 50
+    And the user releases the pointer at 100, 50
+    And 2 seconds pass
+    Then the property "asked" of "view" is 2
+    And the property "activeFocus" of "answer" is true
+    And the property "title" of "view" is "read copied copied"
+
   @api-QtWebEngine.WebEngineView.permissionRequested @api-QtWebEngine.WebEnginePermission.grant
   Scenario: A page from a web server is asked for its location
     Given the web server serves the text file "where.html":
@@ -226,6 +272,37 @@ Feature: A view answers what a page asks permission for
     When 3 seconds pass
     Then the property "title" of "view" is "error 1"
     And the property "asked" of "view" is 1
+
+  # A watch the page clears before the view answers never starts: the
+  # page hears nothing, whatever the answer. A page that keeps the id in
+  # the DOM clears it by its text, which is the same watch.
+  @api-QtWebEngine.WebEngineView.permissionRequested @api-QtWebEngine.WebEnginePermission.deny
+  Scenario: A page that clears its watch before the view answers hears nothing
+    Given the web server serves the text file "cleared.html":
+      """
+      <!doctype html>
+      <html><head><title>waiting</title></head><body><script>
+      const heard = what => () => document.title = what
+      const first = navigator.geolocation.watchPosition(heard("first found"), heard("first refused"))
+      const second = navigator.geolocation.watchPosition(heard("second found"), heard("second refused"))
+      navigator.geolocation.clearWatch(first)
+      navigator.geolocation.clearWatch(String(second))
+      document.title = "cleared"
+      </script></body></html>
+      """
+    And the QML:
+      """qml
+      import QtQuick
+      import QtWebEngine
+      WebEngineView {
+        id: view; objectName: "view"
+        width: 200; height: 100
+        url: "$SERVER/cleared.html"
+        onPermissionRequested: permission => permission.deny()
+      }
+      """
+    When 3 seconds pass
+    Then the property "title" of "view" is "cleared"
 
   # As with the clipboard granted, the off-screen Qt oracle never shows
   # this page, so it cannot say what the page heard.
@@ -414,14 +491,16 @@ Feature: A view answers what a page asks permission for
       WebEngineView {
         id: view; objectName: "view"
         width: 200; height: 100
-        property bool fromServer: false
+        property string asked: "nobody"
         url: "$SERVER/notify.html"
-        onPermissionRequested: permission => { fromServer = permission.origin.toString() === "$SERVER/"
+        onPermissionRequested: permission => {
+          const origin = permission.origin.toString()
+          asked = origin === "$SERVER/" ? "its origin" : origin
           permission.grant() }
       }
       """
     When 2 seconds pass
-    Then the property "fromServer" of "view" is true
+    Then the property "asked" of "view" is "its origin"
     And the property "title" of "view" is "granted"
 
   @api-QtWebEngine.WebEnginePermission.origin

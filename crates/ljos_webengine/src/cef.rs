@@ -1095,7 +1095,8 @@ enum Pending {
     Heard(String, i32),
     /// The page asked Chromium to read the clipboard as one with the
     /// focus (see [`pass_to_chromium`]): it has Chromium's answer, and is
-    /// focused as it is again; then as the one inside.
+    /// focused as it is again once no other such read waits
+    /// ([`Dev::focused`]); then as the one inside.
     Focused(Box<Pending>),
     Ignore,
 }
@@ -1117,6 +1118,11 @@ struct Dev {
     adding: usize,
     /// The origin of every context scripts run in, in any frame.
     origins: HashMap<i64, String>,
+    /// Reads Chromium hears as from a page with the focus, not yet
+    /// answered. Focus emulation is one switch for the page, so it is on
+    /// from the first until the last has its answer: a page may read
+    /// twice at once, and each of its frames may.
+    focused: usize,
 }
 
 impl Dev {
@@ -1644,7 +1650,10 @@ fn pass_to_chromium(shared: &Shared, context: i64, number: u64, then: Pending) {
     let mut dev = Shared::lock(&shared.dev);
     let mut out = Vec::new();
     if matches!(then, Pending::Focused(_)) {
-        out.push(focus_emulated(&mut dev, true));
+        dev.focused += 1;
+        if dev.focused == 1 {
+            out.push(focus_emulated(&mut dev, true));
+        }
     }
     out.push(dev.call(
         "Runtime.evaluate",
@@ -1756,7 +1765,9 @@ const ASK_FIRST: &str = r#"((EVERY_TIME) => {
       first(8, location, () => { if (watches.has(id)) watches.set(id, watch.apply(this, args)); });
       return id;
     };
+    // The id is a Web IDL long, as Chromium's is: "1" is the watch 1.
     G.clearWatch = function clearWatch(id) {
+      id = id | 0;
       const real = watches.get(id);
       watches.delete(id);
       if (real !== undefined) clear.call(this, real);
@@ -3117,7 +3128,10 @@ fn dev_result(shared: &Shared, id: i32, success: bool, result: Json) {
         let mut dev = Shared::lock(&shared.dev);
         let mut pending = dev.pending.remove(&id);
         if let Some(Pending::Focused(then)) = pending {
-            out.push(focus_emulated(&mut dev, false));
+            dev.focused = dev.focused.saturating_sub(1);
+            if dev.focused == 0 {
+                out.push(focus_emulated(&mut dev, false));
+            }
             pending = Some(*then);
         }
         match pending {
