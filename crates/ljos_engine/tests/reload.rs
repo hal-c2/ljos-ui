@@ -1156,17 +1156,27 @@ fn a_library_type_that_is_a_stand_in_is_counted_while_it_stands() {
     // The library file's only object is its root, which carries the
     // location of the declaration that uses it.
     let h = engine();
-    h.engine.add_component_library(support::compile(&[(
+    let mut project = ljos_compiler::Project::new(QtTypeOracle);
+    project.add(
         "Lib/Gizmo",
         "import QtQuick\nimport QtQuick3D.Helpers\nSceneGizmo { }\n",
-    )]));
-    h.engine
-        .register_qml_type("QtQuick", ljos_engine::Version::new(2, 0), "Lib/Gizmo")
-        .unwrap();
-    h.files(&[(
+    );
+    project.add(
         "Main",
-        "import QtQuick\nItem {\n  Gizmo { objectName: \"gizmo\" }\n}\n",
-    )]);
+        "import QtQuick\nimport Kit\nItem {\n  Gizmo { objectName: \"gizmo\" }\n}\n",
+    );
+    project.add_type("Kit", "Gizmo", "Lib/Gizmo");
+    let compiled = |key: &str| {
+        let c = ljos_compiler::compile_file(&project, key).unwrap_or_else(|d| panic!("{d:?}"));
+        assert!(!c.has_errors(), "{key}: {:?}", c.diagnostics);
+        c.file
+    };
+    let mut library = MapSource::new();
+    library.insert("Lib/Gizmo", compiled("Lib/Gizmo"));
+    let mut app = MapSource::new();
+    app.insert("Main", compiled("Main"));
+    h.engine.add_component_library(library);
+    h.engine.set_component_source(app);
     let root = h.engine.create_from_url("Main", None, Vec::new()).unwrap();
     assert_eq!(h.engine.stood_in_modules(), ["QtQuick3D.Helpers"]);
     let gizmo = h.find(root, "gizmo");
