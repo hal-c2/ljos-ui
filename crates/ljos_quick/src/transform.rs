@@ -78,8 +78,12 @@ impl Projective {
         Projective(m)
     }
 
-    /// Where `p` goes; `None` for a point the map sends to infinity or
-    /// behind the viewer.
+    /// Where `p` goes; `None` only for a point the map sends to infinity
+    /// (`w` is 0). A point behind the viewer (`w` below 0) is mapped as
+    /// the matrix says, signed, so the inverse brings it back: placing
+    /// reads it through this map and drawing writes it through the same
+    /// one, and the two agree. The picture's fit (`fit`) keeps such
+    /// points out on its own.
     pub fn apply(&self, p: Point) -> Option<Point> {
         let m = &self.0;
         let w = m[2][0] * p.x + m[2][1] * p.y + m[2][2];
@@ -728,6 +732,17 @@ mod tests {
         let back = m.inverse().unwrap();
         let p = Point::new(12.0, 34.0);
         close(back.apply(m.apply(p).unwrap()).unwrap(), 12.0, 34.0);
+    }
+
+    #[test]
+    fn a_point_behind_the_viewer_is_mapped_signed_and_back() {
+        // `w` is 1 - x / 100: 0 at x = 100, below 0 past it.
+        let m = Projective([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [-0.01, 0.0, 1.0]]);
+        assert_eq!(m.apply(Point::new(100.0, 5.0)), None);
+        let p = Point::new(200.0, 5.0);
+        let q = m.apply(p).expect("a point behind the viewer is mapped");
+        close(q, -200.0, -5.0);
+        close(m.inverse().unwrap().apply(q).unwrap(), 200.0, 5.0);
     }
 
     #[test]

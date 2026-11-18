@@ -1022,9 +1022,12 @@ pub fn map_to_scene(engine: &Engine, obj: ObjectId, p: kurbo::Point) -> kurbo::P
 /// Where `p`, in the scene's coordinates, lies in the item's, mapped
 /// exactly: the inverse of [`map_to_scene`]. `None` where there is no
 /// inverse, as under an ancestor scaled to 0, or where the inverse sends
-/// `p` to infinity or behind the viewer. `mapFromItem(null, p)` gives `p`
-/// back there instead; a caller that writes the result as the item's own
-/// coordinates must not take a scene point for one.
+/// `p` to infinity. A point behind the viewer is mapped signed, as
+/// [`Projective::apply`](crate::transform::Projective::apply) maps it, so
+/// [`map_to_scene`] takes the answer back to `p`: a popup placed through
+/// this is drawn where it was placed. `mapFromItem(null, p)` gives `p`
+/// back where there is no answer; a caller that writes the result as the
+/// item's own coordinates must not take a scene point for one.
 pub fn map_from_scene(engine: &Engine, obj: ObjectId, p: kurbo::Point) -> Option<kurbo::Point> {
     crate::transform::scene_map(engine, obj).inverse()?.apply(p)
 }
