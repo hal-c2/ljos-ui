@@ -35,8 +35,16 @@ fi
 case "$file" in
   *.qml) entry="$file" ;;
   *)
-    dir="$target/lottie"
-    mkdir -p "$dir"
+    if [ -n "$check" ]; then
+      # Each check reads its own viewer and log, so two at once cannot report
+      # each other's status.
+      mkdir -p "$target"
+      dir="$(mktemp -d "$target/lottie-check.XXXXXX")"
+      trap 'rm -rf "$dir"' EXIT
+    else
+      dir="$target/lottie"
+      mkdir -p "$dir"
+    fi
     entry="$dir/view.qml"
     url="file://$file"
     # A check is told what the animation came to: LottieAnimation reports a
