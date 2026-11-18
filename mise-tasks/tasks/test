@@ -1213,29 +1213,88 @@ fi
 
 # --- A long run keeps the programs it built ----------------------------------------
 
-# The stand-in cargo here makes prog anew (a new file, as a linker does) on
-# each build and says it was fresh only from build FRESH_FROM on: the builds
-# before that are another checkout's, sharing the target, building between.
-# A fresh build puts the checkout's own last program back, as cargo links it
-# again from its deps; right after build OTHER_AFTER another checkout's
-# program takes its place. With SAME set, a build that is not fresh makes the
-# same program each time, as one whose build script watches a file that is
-# not there does (qt_types' types.txt in a worktree that never ran setup).
+# Where a build keeps its intermediate files is cargo's to say (build_dir
+# asks it), in its own order: CARGO_BUILD_BUILD_DIR, then the settings (a
+# linked worktree's main checkout's too), then the target directory, with
+# its templates expanded. Asked of the real cargo, as only it says what it
+# does; the developer's RUSTUP_* stay, so it is the pinned one.
+# bdir <dir> [VAR=value…]: build_dir for the workspace at <dir>, whose
+# target is <dir>/tgt.
+bdir() {
+  local dir="$1" toolchain="${RUSTUP_TOOLCHAIN-}" rustup_home="${RUSTUP_HOME-}" a
+  shift
+  (
+    unexported
+    [ -z "$toolchain" ] || export RUSTUP_TOOLCHAIN="$toolchain"
+    [ -z "$rustup_home" ] || export RUSTUP_HOME="$rustup_home"
+    export CARGO_HOME="$real/cargo-home" CARGO_TARGET_DIR="$dir/tgt"
+    for a in "$@"; do export "${a?}"; done
+    cd "$dir" && ljos_root="$dir" && ljos_cargo_config="$(cargo_config "$dir")" && build_dir
+  )
+}
+if command cargo -V >/dev/null 2>&1 && [ -d "$real/wt" ]; then
+  printf '[workspace]\n' >"$real/wt/Cargo.toml"
+  printf '[workspace]\n' >"$repo/Cargo.toml"
+  printf '[build]\njobs = 2\n' >"$repo/.cargo/config.toml"
+  out="$(bdir "$real/wt" 2>&1)" || true
+  if [ "$out" = "$real/wt/tgt" ]; then ok "a build keeps its intermediate files in the target directory when nothing names a build directory"; else bad "build_dir gave '$out' with no build-dir set, not $real/wt/tgt"; fi
+  printf '[build]\nbuild-dir = "bd"\n' >"$repo/.cargo/config.toml"
+  out="$(bdir "$real/wt" 2>&1)" || true
+  if [ "$out" = "$repo/bd" ]; then ok "a linked worktree keeps its intermediate files in the build directory its main checkout's settings name"; else bad "build_dir gave '$out' for a worktree whose main settings say build-dir = \"bd\", not $repo/bd"; fi
+  out="$(bdir "$real/wt" CARGO_BUILD_BUILD_DIR="$real/env-bd" 2>&1)" || true
+  if [ "$out" = "$real/env-bd" ]; then ok "CARGO_BUILD_BUILD_DIR wins over the build directory the settings name, as in cargo"; else bad "build_dir gave '$out' with CARGO_BUILD_BUILD_DIR=$real/env-bd"; fi
+  printf '[build]\nbuild-dir = "{workspace-root}/bd"\n' >"$repo/.cargo/config.toml"
+  out="$(bdir "$real/wt" 2>&1)" || true
+  if [ "$out" = "$real/wt/bd" ]; then ok "{workspace-root} in a main checkout's build-dir is the worktree's workspace, as cargo expands it there"; else bad "build_dir gave '$out' for build-dir = \"{workspace-root}/bd\", not $real/wt/bd"; fi
+  printf '[build]\nbuild-dir = "{cargo-cache-home}/bd"\n' >"$repo/.cargo/config.toml"
+  out="$(bdir "$real/wt" 2>&1)" || true
+  if [ "$out" = "$real/cargo-home/bd" ]; then ok "{cargo-cache-home} in a build-dir is cargo's home, as cargo expands it"; else bad "build_dir gave '$out' for build-dir = \"{cargo-cache-home}/bd\", not $real/cargo-home/bd"; fi
+  mkdir "$repo/.cargo/inc"
+  printf '[build]\nbuild-dir = "%s"\n' "$real/inc-bd" >"$repo/.cargo/inc/bd.toml"
+  printf 'include = ["inc/bd.toml"]\n' >"$repo/.cargo/config.toml"
+  out="$(bdir "$real/wt" 2>&1)" || true
+  if [ "$out" = "$real/inc-bd" ]; then ok "a build-dir a main checkout's settings include is the worktree's"; else bad "build_dir gave '$out' for a build-dir in an included file, not $real/inc-bd"; fi
+  rm -r "$repo/.cargo/inc"
+  rm "$real/wt/Cargo.toml" "$repo/Cargo.toml"
+  printf '[build]\njobs = 2\n' >"$repo/.cargo/config.toml"
+else
+  echo "note  no cargo runs here: where a build keeps its intermediate files is left out"
+fi
+# Given as whole files (no tomllib), the main checkout's settings would
+# outrank CARGO_BUILD_BUILD_DIR, so it is given after them as well.
+mkdir -p "$real/wt/.cargo"
+out="$( (unexported && CARGO_TARGET_DIR="$real/shared" CARGO_BUILD_BUILD_DIR="$real/bd" && export CARGO_TARGET_DIR CARGO_BUILD_BUILD_DIR && PATH="$nopy:$PATH" && d="$(mktemp -d)" && config_args "$(CARGO_HOME="$real/cargo-home" cargo_config "$real/wt" 2>/dev/null)" "$d" && shown "$d") )"
+want="$repo/.cargo/config.toml|build.target-dir=\"$real/shared\"|build.build-dir=\"$real/bd\"|"
+if [ "$out" = "$want" ]; then ok "without tomllib, CARGO_BUILD_BUILD_DIR still wins over the main checkout's whole files"; else bad "without tomllib, with CARGO_BUILD_BUILD_DIR set, cargo in a worktree was given:" "gave: $out" "not:  $want"; fi
+rmdir "$real/wt/.cargo"
+
+# pin_programs builds with the build directory cargo says (asked once, with
+# the target the task builds into) and puts the programs in a target of the
+# pin directory's own, so another checkout's build, which writes its
+# programs to the shared target, never reaches them. The stand-in cargo
+# answers metadata with PIN_BUILD_DIR as the build directory, and on a
+# build makes prog anew (a new file, as a linker does) in the target it is
+# given, saying with what; right after, another checkout's build puts its
+# own prog in the shared target, PIN_SHARED.
 pinfakes="$real/pinfakes"
 mkdir "$pinfakes"
 cat >"$pinfakes/cargo" <<'EOF_CARGO'
 #!/bin/sh
+case "$1" in
+  metadata)
+    printf '{"packages":[],"target_directory":"%s","build_directory":"%s","version":1}\n' "$CARGO_TARGET_DIR" "$PIN_BUILD_DIR"
+    exit 0 ;;
+esac
 n=$(( $(cat "$PIN_COUNT" 2>/dev/null || echo 0) + 1 ))
 echo "$n" >"$PIN_COUNT"
-fresh=false
-[ "$n" -ge "$FRESH_FROM" ] && fresh=true || echo "build ${SAME:-$n}" >"$PIN_TARGET/mine"
-rm -f "$PIN_TARGET/prog"
-cp "$PIN_TARGET/mine" "$PIN_TARGET/prog"
-if [ "$n" = "${OTHER_AFTER:-0}" ]; then rm -f "$PIN_TARGET/prog"; echo other >"$PIN_TARGET/prog"; fi
-chmod +x "$PIN_TARGET/prog"
+mkdir -p "$CARGO_TARGET_DIR/debug" "$PIN_SHARED/debug"
+rm -f "$CARGO_TARGET_DIR/debug/prog"
+echo "build $n, build dir ${CARGO_BUILD_BUILD_DIR:-none}, target $CARGO_TARGET_DIR" >"$CARGO_TARGET_DIR/debug/prog"
+chmod +x "$CARGO_TARGET_DIR/debug/prog"
+echo other >"$PIN_SHARED/debug/prog"
 echo "Compiling prog (a line that is no message)"
-printf '{"reason":"compiler-artifact","executable":null,"fresh":%s}\n' "$fresh"
-printf '{"reason":"compiler-artifact","executable":"%s","fresh":%s}\n' "$PIN_TARGET/prog" "$fresh"
+printf '{"reason":"compiler-artifact","executable":null,"fresh":false}\n'
+printf '{"reason":"compiler-artifact","executable":"%s","fresh":false}\n' "$CARGO_TARGET_DIR/debug/prog"
 printf '{"reason":"build-finished","success":true}\n'
 EOF_CARGO
 chmod +x "$pinfakes/cargo"
@@ -1244,27 +1303,45 @@ out="$(printf '%s\n' '{"reason":"compiler-artifact","executable":null,"fresh":tr
   '{"reason":"compiler-artifact","executable":"/a\nb/prog","fresh":true}' \
   '{"reason":"build-finished","success":true}' | built_programs)"
 if [ "$out" = "$(printf '/a\tb/say "hi"\\/prog')" ]; then ok "built_programs decodes each program's path, and leaves out none and one with a newline"; else bad "built_programs gave: $out"; fi
+dir="$real/pin"
+out="$(
+  PATH="$pinfakes:$PATH" PIN_COUNT="$dir/count" PIN_BUILD_DIR="$dir/build" PIN_SHARED="$dir/shared" CARGO_TARGET_DIR="$dir/shared"
+  export PATH PIN_COUNT PIN_BUILD_DIR PIN_SHARED CARGO_TARGET_DIR
+  ljos_cargo_config=""
+  out="$(pin_programs "$dir/bin" build --quiet 2>/dev/null)" || { echo failed; exit 0; }
+  printf '%s builds, %s: %s\n' "$(cat "$dir/count")" "$out" "$(cat "$dir/bin/prog" 2>/dev/null)"
+)"
+want="1 builds, prog $dir/bin/prog: build 1, build dir $dir/build, target $dir/bin/.target"
+if [ "$out" = "$want" ]; then ok "a run's programs are built once, with the build directory cargo says, into a target of the run's own that another checkout's build does not reach"; else bad "pin_programs gave:" "gave: $out" "not:  $want"; fi
 
-# pinned <fresh from> [other after]: builds, the program pinned, what it holds.
-pinned() {
-  local dir="$real/pin.$1"
-  mkdir -p "$dir/target"
-  (
-    PATH="$pinfakes:$PATH" PIN_COUNT="$dir/count" PIN_TARGET="$dir/target" FRESH_FROM="$1" OTHER_AFTER="${2:-0}"
-    export PATH PIN_COUNT PIN_TARGET FRESH_FROM OTHER_AFTER
-    out="$(pin_programs "$dir/bin" build --quiet 2>/dev/null)" || { echo failed; exit 0; }
-    printf '%s builds, %s: %s\n' "$(cat "$dir/count")" "$out" "$(cat "$dir/bin/prog" 2>/dev/null)"
-  )
-}
-out="$(pinned 2)"
-if [ "$out" = "2 builds, prog $real/pin.2/bin/prog: build 1" ]; then ok "a build no other checkout came between is pinned after one more build that finds it fresh"; else bad "pin_programs with no build between: $out"; fi
-out="$(pinned 4)"
-if [ "$out" = "4 builds, prog $real/pin.4/bin/prog: build 3" ]; then ok "a build another checkout's came between is built again until it is the run's own"; else bad "pin_programs with builds between: $out"; fi
-rm -rf "$real/pin.2"
-out="$(pinned 2 1)"
-if [ "$out" = "3 builds, prog $real/pin.2/bin/prog: build 1" ]; then ok "a program another checkout's build put in place before it was pinned is pinned again from the build that finds it fresh"; else bad "pin_programs with another program in place of the build's: $out"; fi
-out="$(SAME=again pinned 99)"
-if [ "$out" = "2 builds, prog $real/pin.99/bin/prog: build again" ]; then ok "a build that is never fresh but makes the same program is pinned after one more build"; else bad "pin_programs with builds never fresh that make the same program: $out"; fi
+# With the real cargo: a program built already in the shared target is
+# pinned from the same build (cargo finds it fresh in the build directory
+# and copies it to the run's target), not built again.
+if command cargo -V >/dev/null 2>&1; then
+  pinws="$real/pinws"
+  mkdir -p "$pinws/src"
+  printf '[package]\nname = "pinws"\nversion = "0.1.0"\nedition = "2021"\n\n[workspace]\n' >"$pinws/Cargo.toml"
+  printf 'fn main() { println!("pinned"); }\n' >"$pinws/src/main.rs"
+  out="$(
+    toolchain="${RUSTUP_TOOLCHAIN-}" rustup_home="${RUSTUP_HOME-}"
+    unexported
+    [ -z "$toolchain" ] || export RUSTUP_TOOLCHAIN="$toolchain"
+    [ -z "$rustup_home" ] || export RUSTUP_HOME="$rustup_home"
+    export CARGO_HOME="$real/cargo-home" CARGO_TARGET_DIR="$pinws/shared"
+    cd "$pinws" && ljos_root="$pinws" && ljos_cargo_config="" || exit 1
+    command cargo build --quiet --offline 2>&1 || exit 1
+    built="$(ls "$pinws"/shared/debug/deps/pinws-* | grep -v '\.d$')"
+    before="$(ls -i "$built" | awk '{ print $1 }')"
+    programs="$(pin_programs "$pinws/bin" build --quiet --offline 2>&1)" || { echo "failed: $programs"; exit 0; }
+    after="$(ls -i "$built" | awk '{ print $1 }')"
+    pinned="$(ls -i "$(pinned_program pinws "$programs")" | awk '{ print $1 }')"
+    printf '%s|%s|%s\n' "$([ "$before" = "$after" ] && echo same build || echo built again)" \
+      "$([ "$pinned" = "$after" ] && echo the build\'s program || echo another file)" "$("$pinws/bin/pinws")"
+  )"
+  if [ "$out" = "same build|the build's program|pinned" ]; then ok "with cargo, a run pins the program the shared build directory holds, without building it again"; else bad "pin_programs with the real cargo: $out"; fi
+else
+  echo "note  no cargo runs here: pinning from the real cargo's build directory is left out"
+fi
 
 programs="$(printf '%s\n' "ljos-x $real/a b/bin/ljos-x" "ljos $real/a b/bin/ljos" "qml-compare $real/a b/bin/qml-compare")"
 out="$(pinned_program ljos "$programs")|$(pinned_program qml-compare "$programs")|$(pinned_program qml "$programs")"

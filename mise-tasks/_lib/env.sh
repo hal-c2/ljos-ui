@@ -720,8 +720,8 @@ toml_string() {
 # sets instead go into <dir>/settings.toml, a new file in a directory only
 # the user can read, never into the arguments, where any user of the machine
 # can read them (an [env] token, say). Whole files are given as they are,
-# with the target CARGO_TARGET_DIR names after them, as they would
-# outrank it.
+# with the target CARGO_TARGET_DIR names and the build directory
+# CARGO_BUILD_BUILD_DIR names after them, as they would outrank those.
 config_args() {
   local line names name value overridden exported nl=$'\n' tab=$'\t' settings="" whole=""
   config_args=()
@@ -748,10 +748,12 @@ config_args() {
 $1
 EOF_SETTINGS
   if [ -n "$settings" ]; then config_args+=(--config "$settings"); fi
+  [ -n "$whole" ] || return 0
   case "$exported" in
-    *"${nl}CARGO_TARGET_DIR$nl"*)
-      if [ -n "$whole" ]; then config_args+=(--config "build.target-dir=$(toml_string "$CARGO_TARGET_DIR")"); fi
-      ;;
+    *"${nl}CARGO_TARGET_DIR$nl"*) config_args+=(--config "build.target-dir=$(toml_string "$CARGO_TARGET_DIR")") ;;
+  esac
+  case "$exported" in
+    *"${nl}CARGO_BUILD_BUILD_DIR$nl"*) config_args+=(--config "build.build-dir=$(toml_string "$CARGO_BUILD_BUILD_DIR")") ;;
   esac
 }
 
@@ -1031,44 +1033,54 @@ pin_build() {
   printf '%s\n' "$out" | grep '^{"reason":' || true
 }
 
+# build_dir: where cargo keeps the intermediate files of this checkout's
+# build (build.build-dir), as cargo itself decides it for a build run here:
+# CARGO_BUILD_BUILD_DIR, then the settings (with a linked worktree's main
+# checkout's, as `cargo` gives them), then the target directory; its
+# {workspace-root}, {cargo-cache-home} and {workspace-path-hash} expanded
+# by cargo. Asking cargo keeps its order, which a reading of the settings
+# here would have to copy.
+build_dir() {
+  local out dir
+  out="$(cargo metadata --no-deps --format-version 1 --offline --manifest-path "$ljos_root/Cargo.toml")" || {
+    printf '%s\n' "$(task_name): cargo could not say where this checkout's build directory is (above)" >&2
+    return 1
+  }
+  dir="$(printf '%s\n' "$out" | sed -n -E 's/.*"build_directory":"(([^"\\]|\\.)*)".*/\1/p' | json_string)"
+  [ -n "$dir" ] || dir="$(printf '%s\n' "$out" | sed -n -E 's/.*"target_directory":"(([^"\\]|\\.)*)".*/\1/p' | json_string)"
+  [ -n "$dir" ] || {
+    printf '%s\n' "$(task_name): cargo metadata named no build directory" >&2
+    return 1
+  }
+  printf '%s\n' "$dir"
+}
+
 # pin_programs <dir> <cargo args…>: builds, gives the run its own link to
 # every program the build made, in <dir>, and prints "<name> <path>" for
 # each. A target directory may be shared (a linked worktree's is its main
 # checkout's), and another checkout's build while a long run goes on would
-# put that checkout's programs where the run's were. A hard link keeps the
-# file it was made to, as cargo and the linker put new files in place of old
-# ones (a <dir> on another drive than the target gets a copy). The links
-# are this build's only if no other build came between it and them: so
-# cargo builds again, and the links are kept only when each program that
-# build leaves in the target holds what its link does (a build, fresh or
-# not, links this checkout's own program there again, so another
-# checkout's that came in before the links shows as a difference). Else
-# they are made again from that build. Whether it was fresh is not asked: a
-# package whose build script watches a file that is not there is never
-# fresh, and makes the same program each time.
+# put that checkout's programs where the run's were. So the build keeps its
+# intermediate files in the build directory it always uses (build_dir:
+# nothing is built again) and puts its programs in a target of <dir>'s own,
+# <dir>/.target, which no other checkout's build writes to. Cargo holds the
+# build directory's lock from the compile to the programs' copies, so no
+# other build comes between them. A hard link keeps the file it was made to,
+# as cargo and the linker put new files in place of old ones (a <dir> on
+# another drive than the target gets a copy).
 pin_programs() {
-  local into="$1" messages exe pinned tries=0
+  local into="$1" build messages exe pinned=""
   shift
   mkdir -p "$into"
-  messages="$(pin_build "$@")" || return 1
-  while :; do
-    pinned=""
-    while IFS= read -r exe; do
-      [ -n "$exe" ] || continue
-      ln -f "$exe" "$into/${exe##*/}" 2>/dev/null || cp -p "$exe" "$into/${exe##*/}" || return 1
-      pinned="$pinned${exe##*/} $into/${exe##*/}
+  build="$(build_dir)" || return 1
+  messages="$(CARGO_BUILD_BUILD_DIR="$build" CARGO_TARGET_DIR="$into/.target" pin_build "$@")" || return 1
+  while IFS= read -r exe; do
+    [ -n "$exe" ] || continue
+    ln -f "$exe" "$into/${exe##*/}" 2>/dev/null || cp -p "$exe" "$into/${exe##*/}" || return 1
+    pinned="$pinned${exe##*/} $into/${exe##*/}
 "
-    done <<EOF_PROGRAMS
+  done <<EOF_PROGRAMS
 $(printf '%s\n' "$messages" | built_programs)
 EOF_PROGRAMS
-    messages="$(pin_build "$@")" || return 1
-    pinned_as_built "$into" "$messages" && break
-    tries=$((tries + 1))
-    if [ "$tries" -ge 10 ]; then
-      printf '%s\n' "$(task_name): the programs each build left in $CARGO_TARGET_DIR kept changing: other builds kept coming between this build and its programs, or the build makes different bytes each time; build when they are done, or set CARGO_TARGET_DIR to a target of this checkout's own" >&2
-      return 1
-    fi
-  done
   printf '%s' "$pinned"
 }
 
@@ -1079,18 +1091,6 @@ pinned_program() {
   while IFS= read -r line; do
     case "$line" in "$1 "*) printf '%s\n' "${line#"$1 "}"; return 0 ;; esac
   done <<<"$2"
-}
-
-# pinned_as_built <dir> <messages>: whether the build of <messages> left
-# each program where it says with the bytes of its link in <dir> (cmp, as a
-# copy is no hard link).
-pinned_as_built() {
-  local exe
-  while IFS= read -r exe; do
-    [ -z "$exe" ] || cmp -s "$exe" "$1/${exe##*/}" || return 1
-  done <<EOF_PROGRAMS
-$(printf '%s\n' "$2" | built_programs)
-EOF_PROGRAMS
 }
 
 # Off-screen Qt: no window opens, and a platform theme set for the desktop
