@@ -245,47 +245,180 @@ EOF_SETTINGS
   printf '%s\n' "$target"
 }
 
-# cargo_config [dir]: the settings files to give cargo with --config, one
-# per line, when <dir> is a linked worktree. Cargo looks for its settings
-# from where it runs upwards, so a worktree made elsewhere would build
-# without the ones its main checkout keeps outside git (a compile cache, a
-# cap on jobs, incremental builds off, in the checkout's .cargo or a
-# directory above it), and the two would keep rebuilding each other's crates
-# in the target they share. So: every file cargo reads for the main checkout
-# that it does not read in the worktree, the farthest first, as a later
-# --config binds more. A worktree with settings of its own gets them again
-# last, so its keys still win over its main checkout's (an array in them,
-# such as rustflags, then comes twice). Nothing for a main checkout, whose
-# settings cargo finds itself.
+# cargo_config [dir]: what cargo is given with --config when <dir> is a
+# linked worktree, one setting per line: the variables that set it instead,
+# a tab, then the setting as KEY=VALUE. Cargo looks for its settings from
+# where it runs upwards, so a worktree made elsewhere would build without
+# the ones its main checkout keeps outside git (a compile cache, a cap on
+# jobs, incremental builds off, in the checkout's .cargo or a directory
+# above it), and the two would keep rebuilding each other's crates in the
+# target they share. So every file cargo reads for the main checkout that it
+# does not read in the worktree is given, the farthest first, as a later
+# --config binds more; but key by key, not as files:
+# - a key the worktree's own settings set is theirs alone, as if cargo had
+#   found both files there (given as a file again, the worktree's own
+#   arrays, such as rustflags, would come twice);
+# - a --config outranks the environment, so config_args leaves a key out
+#   while a variable that sets it is set (CARGO_BUILD_JOBS, say, or
+#   CARGO_TARGET_DIR, which env.sh sets): the environment wins, as in plain
+#   cargo. An array is kept, as cargo adds the environment's to the files'
+#   (RUSTFLAGS, which replaces every rustflags, leaves rustflags out);
+# - a path the file names relative to it is made whole, as a KEY=VALUE path
+#   is from where cargo runs.
+# Reading TOML takes Python 3.11's tomllib (or tomli); without it the
+# worktree builds with its own settings only, and the task says so.
+# Nothing for a main checkout, whose settings cargo finds itself.
 cargo_config() {
-  local dir main here file given=""
+  local dir main here mains file n=0 status=0 given=() own=()
   dir="$(physical "${1:-$ljos_root}")"
   main="$(main_checkout "$dir")"
   [ "$main" != "$dir" ] || return 0
   here="$(settings_files "$dir")"
+  mains="$(settings_files "$main")"
   while IFS= read -r file; do
     if [ -z "$file" ] || grep -qxF "$file" <<<"$here"; then continue; fi
-    given="$file${given:+
-$given}"
+    given=("$file" ${given[@]+"${given[@]}"})
   done <<EOF_MAIN
-$(settings_files "$main")
+$mains
 EOF_MAIN
-  [ -n "$given" ] || return 0
-  printf '%s\n' "$given"
-  file="$(settings_file "$dir")"
-  if [ -n "$file" ]; then printf '%s\n' "$file"; fi
+  [ ${#given[@]} -gt 0 ] || return 0
+  while IFS= read -r file; do
+    if [ -z "$file" ] || grep -qxF "$file" <<<"$mains"; then continue; fi
+    own+=("$file")
+    n=$((n + 1))
+  done <<EOF_HERE
+$here
+EOF_HERE
+  if command -v python3 >/dev/null 2>&1; then
+    python3 -I - "$n" ${own[@]+"${own[@]}"} "${given[@]}" <<'EOF_SETTINGS' || status=$?
+import json, os, re, sys
+try:
+    import tomllib
+except ImportError:
+    try:
+        import tomli as tomllib
+    except ImportError:
+        sys.exit(3)
+
+n = int(sys.argv[1])
+own, given = sys.argv[2:2 + n], sys.argv[2 + n:]
+
+def load(path):
+    try:
+        with open(path, "rb") as f:
+            return tomllib.load(f)
+    except (OSError, ValueError) as e:
+        print("%s cannot be read (%s); cargo will say more" % (path, e), file=sys.stderr)
+        return {}
+
+# A setting's leaves, each with the table it is in: --config takes no
+# inline table, so an [env] entry's value and `relative` come apart.
+def leaves(table, path=()):
+    for k, v in table.items():
+        p = path + (k,)
+        if isinstance(v, dict):
+            yield from leaves(v, p)
+        else:
+            yield p, v, table
+
+# The variables that set a key in place of the files: cargo's own name for
+# it, for a value that is not an array (an array takes the variable's words
+# as well), and the older names cargo still reads.
+OTHER = {
+    ("build", "rustc"): ["RUSTC"],
+    ("build", "rustc-wrapper"): ["RUSTC_WRAPPER"],
+    ("build", "rustc-workspace-wrapper"): ["RUSTC_WORKSPACE_WRAPPER"],
+    ("build", "rustdoc"): ["RUSTDOC"],
+    ("build", "target-dir"): ["CARGO_TARGET_DIR"],
+    ("build", "incremental"): ["CARGO_INCREMENTAL"],
+    ("build", "rustflags"): ["RUSTFLAGS", "CARGO_ENCODED_RUSTFLAGS"],
+    ("build", "rustdocflags"): ["RUSTDOCFLAGS", "CARGO_ENCODED_RUSTDOCFLAGS"],
+    ("http", "proxy"): ["HTTPS_PROXY", "https_proxy", "http_proxy"],
+}
+NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
+def variables(p, v):
+    names = list(OTHER.get(p, []))
+    if not isinstance(v, list):
+        names.insert(0, "CARGO_" + "_".join(k.upper().replace("-", "_").replace(".", "_") for k in p))
+    return [name for name in names if NAME.match(name)]
+
+# Paths relative to the directory that holds .cargo: a directory always, a
+# program only when it has a slash (else PATH finds it).
+DIRS = {"target-dir", "dep-info-basedir"}
+PROGRAMS = {"rustc", "rustc-wrapper", "rustc-workspace-wrapper", "rustdoc", "linker"}
+def whole(base, s):
+    return s if os.path.isabs(s) else os.path.join(base, s)
+def placed(p, v, table, base):
+    last = p[-1]
+    if isinstance(v, str) and (last in DIRS or last in PROGRAMS and "/" in v):
+        return whole(base, v)
+    if last == "runner" and isinstance(v, str):
+        words = v.split()
+        if words and "/" in words[0]:
+            return " ".join([whole(base, words[0])] + words[1:])
+    if last == "runner" and isinstance(v, list) and v and isinstance(v[0], str) and "/" in v[0]:
+        return [whole(base, v[0])] + v[1:]
+    if p == ("paths",) and isinstance(v, list):
+        return [whole(base, x) if isinstance(x, str) else x for x in v]
+    if len(p) == 3 and p[0] == "env" and last == "value" and table.get("relative") is True and isinstance(v, str):
+        return whole(base, v)
+    return v
+
+BARE = re.compile(r"[A-Za-z0-9_-]+\Z")
+def key(p):
+    return ".".join(k if BARE.match(k) else string(k) for k in p)
+def string(s):
+    # A TOML basic string: JSON's escapes are TOML's, and DEL is escaped too.
+    return json.dumps(s, ensure_ascii=False).replace("\x7f", "\\u007F")
+def value(v):
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, (int, float)):
+        return repr(v)
+    if isinstance(v, list):
+        return "[" + ", ".join(value(x) for x in v) + "]"
+    if isinstance(v, dict):
+        return "{" + ", ".join("%s = %s" % (key((k,)), value(x)) for k, x in v.items()) + "}"
+    return string(str(v))
+
+mine = [p for f in own for p, _, _ in leaves(load(f))]
+def theirs(p):
+    return not any(q[:len(p)] == p or p[:len(q)] == q for q in mine)
+for f in given:
+    base = os.path.dirname(os.path.dirname(os.path.abspath(f)))
+    for p, v, table in leaves(load(f)):
+        if p == ("include",) or not theirs(p):
+            continue
+        print("%s\t%s=%s" % (" ".join(variables(p, v)), key(p), value(placed(p, v, table, base))))
+EOF_SETTINGS
+  else
+    status=3
+  fi
+  if [ "$status" -ne 0 ]; then
+    printf '%s: this worktree builds without its main checkout'\''s cargo settings (%s): reading them takes Python 3.11 or later\n' \
+      "$(task_name)" "$(printf '%s ' "${given[@]}")" >&2
+  fi
 }
 
-# config_args <files>: a --config for each line of <files>, in order, into
-# the array config_args.
+# config_args <cargo_config output>: a --config for each of its settings that
+# no variable set now sets instead, in order, into the array config_args.
 config_args() {
-  local file
+  local line names name value overridden tab=$'\t'
   config_args=()
-  while IFS= read -r file; do
-    if [ -n "$file" ]; then config_args+=(--config "$file"); fi
-  done <<EOF_FILES
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    names="${line%%"$tab"*}"
+    value="${line#*"$tab"}"
+    overridden=
+    for name in $names; do
+      case "$name" in "" | [0-9]* | *[!A-Za-z0-9_]*) continue ;; esac
+      eval "overridden=\${$name+x}"
+      [ -z "$overridden" ] || break
+    done
+    [ -n "$overridden" ] || config_args+=(--config "$value")
+  done <<EOF_SETTINGS
 $1
-EOF_FILES
+EOF_SETTINGS
 }
 
 # Every task builds where target_dir says, and so does every cargo its cargo
@@ -298,26 +431,13 @@ CARGO_TARGET_DIR="$(target_dir)"
 export CARGO_TARGET_DIR
 ljos_cargo_config="$(cargo_config)"
 
-# cargo, with the main checkout's settings in a worktree. --config outranks
-# CARGO_TARGET_DIR, so a target-dir in those files would win over it: the
-# target is given again after it, as a TOML string: a backslash, a quote, a
-# tab, a newline and a carriage return in it come escaped (another control
-# character, which no target's path has, is left). A task runs `cargo`,
-# never `exec cargo` or `command cargo`, which would go round this
+# cargo, with the main checkout's settings in a worktree. A task runs
+# `cargo`, never `exec cargo` or `command cargo`, which would go round this
 # (tasks:smoke holds every task to that).
 cargo() {
-  local t config_args
-  if [ -n "$ljos_cargo_config" ]; then
-    config_args "$ljos_cargo_config"
-    t="${CARGO_TARGET_DIR//\\/\\\\}"
-    t="${t//\"/\\\"}"
-    t="${t//$'\t'/\\t}"
-    t="${t//$'\n'/\\n}"
-    t="${t//$'\r'/\\r}"
-    command cargo "${config_args[@]}" --config "build.target-dir=\"$t\"" "$@"
-  else
-    command cargo "$@"
-  fi
+  local config_args
+  config_args "$ljos_cargo_config"
+  command cargo ${config_args[@]+"${config_args[@]}"} "$@"
 }
 
 # Empty when .mcp.json (<file>) starts its ljos server through mise-tasks/mcp,

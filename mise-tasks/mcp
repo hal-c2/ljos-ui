@@ -56,8 +56,10 @@ config_args "$(cargo_config "$checkout")"
 # script's own checkout's settings.
 unset -f cargo
 
-# --target-dir as well as CARGO_TARGET_DIR: a build.target-dir in a --config
-# file would outrank the variable. Cargo's messages name the program it made.
+# --target-dir as well as CARGO_TARGET_DIR, for a build wrapper that clears
+# the environment (config_args leaves the main checkout's build.target-dir
+# out only while the variable is set). Cargo's messages name the program it
+# made.
 build=(cargo build --quiet -p ljos_cli --bin ljos
   --message-format=json-render-diagnostics --target-dir "$target"
   ${config_args[@]+"${config_args[@]}"})
