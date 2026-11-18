@@ -91,7 +91,12 @@ fn main() -> ExitCode {
                     }
                     Ok((_, Ok(None))) if pictured => Some(format!("{name}: no picture came")),
                     Ok(_) => None,
-                    Err(_) => Some(format!("{name}: no callback within 2 s")),
+                    Err(mpsc::RecvTimeoutError::Timeout) => {
+                        Some(format!("{name}: no callback within 2 s"))
+                    }
+                    Err(mpsc::RecvTimeoutError::Disconnected) => {
+                        Some(format!("{name}: the application is gone"))
+                    }
                 };
                 if let Some(f) = failed {
                     let _ = failed_tx.send(f);
@@ -110,7 +115,9 @@ fn main() -> ExitCode {
         eprintln!("grab_item: {e}");
         return ExitCode::FAILURE;
     }
-    let failed: Vec<String> = failed_rx.try_iter().collect();
+    // The window may close while the worker still waits to ask: reading
+    // until the worker drops its sender waits for what it has to report.
+    let failed: Vec<String> = failed_rx.iter().collect();
     for f in &failed {
         eprintln!("grab_item: {f}");
     }
