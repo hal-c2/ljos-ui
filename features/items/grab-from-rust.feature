@@ -16,10 +16,16 @@ Feature: A picture of an item taken for the program's own Rust
   a host waiting on one is never left waiting.
 
   Background:
-    Given the QML:
+    Given the file "Window.qml":
+      """qml
+      import QtQuick
+      Item { width: 40; height: 40; property int visibility: 0 }
+      """
+    And the QML:
       """qml
       import QtQuick
       import QtQuick.Window
+      import "." as Own
       Rectangle {
         id: root; objectName: "root"
         width: 120; height: 40; color: "#00ff00"
@@ -38,6 +44,7 @@ Feature: A picture of an item taken for the program's own Rust
           visible: false; width: 40; height: 40
           Item { objectName: "unseen"; width: 10; height: 10 }
         }
+        Own.Window { Item { objectName: "mine"; width: 10; height: 10 } }
         function leave() { leaving.parent = null }
       }
       """
@@ -70,6 +77,11 @@ Feature: A picture of an item taken for the program's own Rust
 
   Scenario: An item's own property called visibility does not hide its window
     When the host asks for a picture of "own"
+    And 200 milliseconds pass
+    Then the host's picture is 10 by 10 pixels
+
+  Scenario: An item in a component of the program's own called Window gives a picture
+    When the host asks for a picture of "mine"
     And 200 milliseconds pass
     Then the host's picture is 10 by 10 pixels
 

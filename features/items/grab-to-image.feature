@@ -135,6 +135,51 @@ Feature: A picture of an item's pixels
       And the property "called" of "root" is false
       And the log has a warning matching "QML Rectangle: grabToImage: item is not attached to a window"
 
+  Rule: Only a window that is not shown keeps its items from a grab
+
+    Background:
+      Given the file "Window.qml":
+        """qml
+        import QtQuick
+        Item { width: 40; height: 40; property int visibility: 0 }
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        import "." as Own
+        Rectangle {
+          id: root; objectName: "root"
+          width: 120; height: 40
+          property var asked: "not yet"
+          property var got: "not yet"
+          Own.Window {
+            Rectangle { id: mine; width: 10; height: 10; color: "#ff0000" }
+          }
+          Window {
+            visible: false; width: 40; height: 40
+            Rectangle { id: unseen; width: 10; height: 10 }
+          }
+          function grabMine() { asked = mine.grabToImage(r => got = "" + r.url != "") }
+          function grabUnseen() { asked = unseen.grabToImage(r => got = true) }
+        }
+        """
+
+    @api-QtQuick.Item.grabToImage
+    Scenario: An item in a component of the program's own called Window is drawn
+      When the method "grabMine" of "root" is called
+      And 200 milliseconds pass
+      Then the property "asked" of "root" is true
+      And the property "got" of "root" is true
+      And the log has no warnings
+
+    @api-QtQuick.Item.grabToImage
+    Scenario: An item of a window that is not shown is refused
+      When the method "grabUnseen" of "root" is called
+      And 200 milliseconds pass
+      Then the property "asked" of "root" is false
+      And the property "got" of "root" is "not yet"
+      And the log has a warning matching "QML Rectangle: grabToImage: item's window is not visible"
+
   Rule: An item that leaves its window before the frame has an empty picture
 
     Background:

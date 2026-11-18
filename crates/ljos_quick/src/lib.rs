@@ -145,7 +145,7 @@ pub use input_method::{InputMethod, set_on_screen_keyboard};
 pub use item::{
     AnchorLine, AnchorProps, Anchors, Edge, Item, ItemLayer, WindowPosition, effective_margin,
     init_item, is_item, local_transform, map_to_scene, register_backdrop, register_window_position,
-    scene_transform,
+    register_window_type, scene_transform,
 };
 pub use item_picture::{ItemPicture, PictureArea, item_picture};
 pub use layer::{

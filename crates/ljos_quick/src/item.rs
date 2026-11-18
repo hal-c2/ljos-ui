@@ -1097,6 +1097,30 @@ pub(crate) fn is_backdrop(engine: &Engine, obj: ObjectId) -> bool {
         .any(|m| meta.inherits(m))
 }
 
+#[derive(Default)]
+struct WindowTypes(std::cell::RefCell<Vec<ljos_engine::MetaRef>>);
+
+/// Says the items of type `meta`, and of the types built on it, are
+/// windows: one that is not shown keeps its items from a grab. The window
+/// types live above this crate. A type is matched as itself, not by its
+/// name: a program's own component called `Window` is no window.
+pub fn register_window_type(engine: &Engine, meta: ljos_engine::MetaRef) {
+    engine.extension::<WindowTypes>().0.borrow_mut().push(meta);
+}
+
+/// Whether `obj` is of a type [`register_window_type`] was given.
+pub(crate) fn is_window(engine: &Engine, obj: ObjectId) -> bool {
+    let Some(meta) = engine.meta_of(obj) else {
+        return false;
+    };
+    engine
+        .extension::<WindowTypes>()
+        .0
+        .borrow()
+        .iter()
+        .any(|m| meta.inherits(m))
+}
+
 /// Where the window an item is shown in is on the desktop, as a
 /// [`WindowPosition`] hook gives it.
 pub type WindowPosition = fn(&Engine, ObjectId) -> Option<Point>;
