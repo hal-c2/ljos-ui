@@ -116,6 +116,7 @@ impl QuickScene {
     /// event tells them: the moves count as one step of a pinch. Returns
     /// whether something took them.
     pub fn touch_event(&mut self, engine: &Engine, events: &[TouchEvent]) -> bool {
+        let _acting = crate::input::Delivering::begin(engine);
         let mut handled = false;
         let mut moved: Option<(TouchEvent, bool)> = None;
         for ev in events {

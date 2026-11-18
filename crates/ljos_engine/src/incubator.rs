@@ -2608,13 +2608,16 @@ impl Engine {
                     // What JavaScript would have thrown, to the place its
                     // exceptions go: a boundary that asks for exceptions
                     // is told of this one as well (fault.rs).
-                    self.report_js_fault(&ljos_js::JsFault::JsException {
-                        message: format!("TypeError: Cannot read property '{name}' of {what}"),
-                        stack: String::new(),
-                        file: Some(inst.url().to_string()),
-                        line: Some(b.span.line),
-                        thrown: None,
-                    });
+                    self.report_js_fault(
+                        &ljos_js::JsFault::JsException {
+                            message: format!("TypeError: Cannot read property '{name}' of {what}"),
+                            stack: String::new(),
+                            file: Some(inst.url().to_string()),
+                            line: Some(b.span.line),
+                            thrown: None,
+                        },
+                        None,
+                    );
                     return Some(None);
                 }
                 _ => return None,
