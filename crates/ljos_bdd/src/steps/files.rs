@@ -75,7 +75,10 @@ fn example_files(
 ) -> Result<(), String> {
     let entries = std::fs::read_dir(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     let mut paths: Vec<_> = entries
-        .map(|e| e.map(|e| e.path()).map_err(|e| format!("{}: {e}", dir.display())))
+        .map(|e| {
+            e.map(|e| e.path())
+                .map_err(|e| format!("{}: {e}", dir.display()))
+        })
         .collect::<Result<_, _>>()?;
     paths.sort();
     for path in paths {
