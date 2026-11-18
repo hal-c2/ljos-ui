@@ -451,8 +451,10 @@ while [ $# -gt 0 ]; do
     *) shift ;;
   esac
 done
-# The ledger's glob reads {a} as a; bash's braces need a comma.
-glob="$(printf '%s' "$glob" | sed -E 's/\{([^{},]*)\}/\1/g')"
+# The ledger's glob reads {a} as a; bash's braces need a comma ([,] is one
+# character, not a comma between two).
+glob="$(printf '%s' "$glob" | sed -E 's/\{(([^][{},]|\[[^]]*\])*)\}/\1/g')"
+[ -z "${LEDGER_PID:-}" ] || echo $$ >"$LEDGER_PID"
 # Expanded as a pattern but never split into words, so a space stays in.
 IFS=
 # shellcheck disable=SC2206
@@ -474,6 +476,28 @@ for given in "$suite" "$suite/part/outside.feature" "$spaced" "$spaced/part/outs
     bad "features:run --input ${given#"$real/"} outside features/ failed" "$out"
   fi
 done
+# A class in the glob is matched as the ledger matches it, and a file's name
+# with a pattern character in it (a comma) names that file alone.
+mkdir -p "$real/classes/part" "$real/commas"
+cp "$suite/part/outside.feature" "$real/classes/part/case1.feature"
+cp "$suite/part/outside.feature" "$real/classes/part/case3.feature"
+cp "$suite/part/outside.feature" "$real/commas/a,b.feature"
+for given in "$real/classes/**/case[12].feature" "$real/commas/a,b.feature"; do
+  if out="$(features_run --input "$given")"; then
+    case "$out" in
+      *"ledger: 2 scenarios"*) ok "features:run --input ${given#"$real/"} runs the 2 scenarios of the one file it names" ;;
+      *) bad "features:run --input ${given#"$real/"} passed, but not with 2 scenarios" "$out" ;;
+    esac
+  else
+    bad "features:run --input ${given#"$real/"} failed" "$out"
+  fi
+done
+# With no sandbox to stop, the ledger is the task's own process, so a
+# signal sent to the task reaches it.
+LEDGER_PID="$real/ledger.pid" LJOS_BDD_FEATURES_BIN="$real/ledger" bash mise-tasks/features/run --input "$suite" >/dev/null 2>&1 &
+task=$!
+wait "$task" || true
+if [ "$(cat "$real/ledger.pid" 2>/dev/null)" = "$task" ]; then ok "features:run runs the ledger in its own process"; else bad "features:run ran the ledger as $(cat "$real/ledger.pid" 2>/dev/null), not in its own process $task"; fi
 if out="$(features_run --input "$suite/missing")"; then
   bad "features:run --input of a missing path passed" "$out"
 elif [ "$out" = "features:run: --input $suite/missing is no file or directory" ]; then

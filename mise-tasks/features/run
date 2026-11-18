@@ -64,12 +64,17 @@ done
 # {a,b} glob; one outside it cannot be joined with them. Compared as
 # physical paths, as a symbolic link may lead to the checkout.
 root="$(pwd -P)"
+# A file's name as a pattern that matches only it: each pattern character
+# in a class of its own ([,] is a comma), as the ledger's glob reads one.
+glob_quote() {
+  printf '%s' "$1" | sed 's/[][*?{},]/[&]/g'
+}
 asked="$input"
 if [ -n "$input" ]; then
   if [ -d "$input" ]; then
     input="$(physical "$input")/**/*.feature"
   elif [ -f "$input" ]; then
-    input="$(physical "$(dirname "$input")")/{$(basename "$input")}"
+    input="$(physical "$(dirname "$input")")/{$(glob_quote "$(basename "$input")")}"
   elif [ "${input%%[*?{[]*}" = "$input" ]; then
     die "features:run: --input $asked is no file or directory"
   else
@@ -132,11 +137,14 @@ if [ -n "${LJOS_BDD_FEATURES_BIN:-}" ]; then
   bin="$(from_asked "$LJOS_BDD_FEATURES_BIN")"
   [ -x "$bin" ] || die "LJOS_BDD_FEATURES_BIN is $LJOS_BDD_FEATURES_BIN, which is not a program"
 fi
+# It takes the shell it runs in: run it in a subshell where there is
+# something to stop after it.
 run_ledger() {
   if [ -n "$bin" ]; then
-    (cd "$ljos_root/crates/ljos_bdd" && exec "$bin" "$@")
+    cd "$ljos_root/crates/ljos_bdd"
+    exec "$bin" "$@"
   else
-    cargo test --quiet -p ljos_bdd ${features[@]+"${features[@]}"} --test features -- "$@"
+    exec cargo test --quiet -p ljos_bdd ${features[@]+"${features[@]}"} --test features -- "$@"
   fi
 }
 if [ -n "$cef" ]; then
@@ -149,11 +157,21 @@ fi
 
 # The files the ledger reads, from the same --input it is given: the glob
 # as a regular expression over the paths of the feature files (** is any
-# directories, or none; * and ? stay within one; {a,b} is either). Listed
+# directories, or none; * and ? stay within one; [..] is a class, [!..] its
+# complement; {a,b} is either). Listed
 # with find, not globstar, which macOS's bash 3.2 lacks, and matched as
 # whole paths, so a directory's name may hold a space.
 glob_regex() {
-  awk '{
+  awk '
+  # Where the class opened at i closes; 0 if it does not. A ] first in the
+  # class, after any !, is one of its characters.
+  function class_end(s, i,    j) {
+    j = i + 1
+    if (substr(s, j, 1) == "!" || substr(s, j, 1) == "^") j++
+    for (j++; j <= length(s); j++) if (substr(s, j, 1) == "]") return j
+    return 0
+  }
+  {
     s = $0; out = ""; depth = 0
     for (i = 1; i <= length(s); i++) {
       c = substr(s, i, 1)
@@ -161,6 +179,11 @@ glob_regex() {
       else if (c == "*" && substr(s, i + 1, 1) == "*") { out = out ".*"; i++ }
       else if (c == "*") out = out "[^/]*"
       else if (c == "?") out = out "[^/]"
+      else if (c == "[" && (j = class_end(s, i)) > 0) {
+        body = substr(s, i + 1, j - i - 1)
+        if (substr(body, 1, 1) == "!") body = "^" substr(body, 2)
+        out = out "[" body "]"; i = j
+      }
       else if (c == "{") { out = out "("; depth++ }
       else if (c == "}" && depth > 0) { out = out ")"; depth-- }
       else if (c == "," && depth > 0) out = out "|"
@@ -215,8 +238,11 @@ if [ -n "$desktop" ]; then
     scripts/cua-sandbox.sh stop > /dev/null 2>&1 || true
     export LJOS_BDD_DESKTOP_SKIP="${why##*$'\n'}"
   fi
-  run_ledger ${args[@]+"${args[@]}"}
+  # A subshell, so that this shell lives to run the trap that stops the sandbox.
+  (run_ledger ${args[@]+"${args[@]}"})
 else
   export LJOS_BDD_DESKTOP_SKIP=
+  # Nothing to stop after it: the ledger takes this task's process, so a
+  # signal sent to the task reaches the ledger.
   run_ledger ${args[@]+"${args[@]}"}
 fi
