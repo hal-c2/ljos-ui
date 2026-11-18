@@ -436,6 +436,23 @@ Feature: Checking files on a machine that has no Qt
         1 files, 0 errors, 1 warnings
         """
 
+    Scenario: A script that reads such a type through its qualifier is told where it reads it
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
+        import QtQuick3D
+        import QtQuick3D.Helpers as H
+        Item {
+          property var mode: H.SceneGizmo.Mode
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        Main.qml:5:30: warning: `SceneGizmo` of module "QtQuick3D.Helpers" is not part of Ljós: it stands in as an empty Item, and what only it has is left out [stand-in]
+        1 files, 0 errors, 1 warnings
+        """
+
     Scenario: A type that may be of a module Ljós has nothing of is told by that module's import
       Given the file "Main.qml":
         """qml

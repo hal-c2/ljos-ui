@@ -232,7 +232,8 @@ impl Engine {
                 ljos_ir::IR_VERSION
             )));
         }
-        self.check_imports(&url, &ir, true)?;
+        let stood = self.check_imports(&url, &ir)?;
+        let tell = self.note_stood_in(&url, stood, true);
         let file = Rc::new(LoadedFile::new(key, url, ir, source.bytecode(key)));
         self.inner
             .loader
@@ -240,6 +241,11 @@ impl Engine {
             .qml_types
             .files
             .insert(key.to_owned(), file.clone());
+        // On record before anyone hears of it: a listener may put another
+        // source in.
+        for message in tell {
+            self.warn(message);
+        }
         Ok(Some(file))
     }
 }

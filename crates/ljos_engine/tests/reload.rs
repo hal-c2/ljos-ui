@@ -1101,6 +1101,28 @@ Item {
 }
 
 #[test]
+fn what_stands_in_follows_a_reload() {
+    // `stood_in_modules` is what the design audit reads: a reload that
+    // takes the last stand-in out drops its module, one that puts it back
+    // lists it again.
+    let gizmo = r#"import QtQuick
+import QtQuick3D.Helpers
+Item {
+  id: root
+  objectName: "root"
+  SceneGizmo { }
+}
+"#;
+    let without = gizmo.replace("  SceneGizmo { }\n", "");
+    let mut r = rig(&[("Main", gizmo)]);
+    assert_eq!(r.h.engine.stood_in_modules(), ["QtQuick3D.Helpers"]);
+    r.edit("Main", &without).unwrap();
+    assert!(r.h.engine.stood_in_modules().is_empty());
+    r.edit("Main", gizmo).unwrap();
+    assert_eq!(r.h.engine.stood_in_modules(), ["QtQuick3D.Helpers"]);
+}
+
+#[test]
 fn reloads_leave_no_script_types_behind() {
     let mut r = rig(&[("Main", USES_COUNTER), ("Counter", COUNTER_FILE)]);
     // The file that is edited has a script of its own, which a value
