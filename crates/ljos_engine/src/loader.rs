@@ -608,6 +608,13 @@ pub(crate) struct LoaderState {
     pub(crate) told_stood_in: HashSet<String>,
 }
 
+/// What stands in of an import: types of a module the runtime builds
+/// part of, or the module itself by its family (`QtGraphs`).
+enum StandIn<'i> {
+    Types(&'i str, &'i [ljos_ir::StoodIn]),
+    Module(&'i str, &'i str),
+}
+
 impl LoaderState {
     /// Notes that `name` stands in, for the source or, from a library
     /// file, for the engine.
@@ -1156,13 +1163,24 @@ impl Engine {
                 .map(|i| i.file.key.clone())
                 .collect()
         };
-        let mut l = self.inner.loader.borrow_mut();
-        let now: HashSet<String> = l
+        let in_use: Vec<Rc<LoadedFile>> = self
+            .inner
+            .loader
+            .borrow()
             .files
             .values()
             .filter(|f| urls.contains(&f.url) || keys.contains(&f.key))
-            .flat_map(|f| modules_of(&f.ir))
+            .cloned()
             .collect();
+        let now: HashSet<String> = in_use.iter().flat_map(|f| modules_of(&f.ir)).collect();
+        // A reload may have replaced the last type of a module that stood
+        // in: the audit reads what stands in for the files in use now.
+        let stood_in: HashSet<String> = in_use
+            .iter()
+            .flat_map(|f| self.stood_in_by(&f.ir))
+            .collect();
+        let mut l = self.inner.loader.borrow_mut();
+        l.stood_in = stood_in;
         if now == l.used_modules {
             return;
         }
@@ -1199,7 +1217,8 @@ impl Engine {
     /// part of, once for each type of it that stands in, where a file
     /// first names it.
     /// `library` is a file of a library the program adds types from,
-    /// which is kept past a new source.
+    /// which is kept past a new source. A file refused leaves nothing on
+    /// record, so a file that loads later is told all the same.
     pub(crate) fn check_imports(
         &self,
         url: &str,
@@ -1207,46 +1226,78 @@ impl Engine {
         library: bool,
     ) -> Result<(), EngineError> {
         for import in &ir.imports {
-            let ImportSource::Module(uri) = &import.source else {
-                continue;
-            };
-            if import.in_project {
-                continue;
-            }
-            // Of a module the runtime builds part of, what the file names
-            // may all be built: only a type that stands in is told, even
-            // where the program registers types of the module.
-            if let Some(types) = &import.stood_in {
-                self.tell_stood_in(url, uri, types, library);
-                continue;
-            }
-            if self.has_module(uri) {
-                continue;
-            }
-            if !import.stands_in {
+            if let ImportSource::Module(uri) = &import.source
+                && !import.in_project
+                && import.stood_in.is_none()
+                && !import.stands_in
+                && !self.has_module(uri)
+            {
                 return Err(EngineError::Load(format!(
                     "{url}: module \"{uri}\" is not installed"
                 )));
             }
-            // `QtWebEngine.Controls` comes with `QtWebEngine`: one word for
-            // both. `QtQuick.Timeline` and `QtQuick3D.Helpers` are modules of
-            // their own all the same: Ljós has `QtQuick` and `QtQuick3D`.
-            let family = match uri.split_once('.') {
-                Some(("QtQuick" | "QtQuick3D", _)) | None => uri.as_str(),
-                Some((first, _)) => first,
-            };
-            let mut loader = self.inner.loader.borrow_mut();
-            loader.stands_in(family, library);
-            let told = loader.told_stood_in.insert(family.to_owned());
-            drop(loader);
-            if told {
-                self.warn(format!(
-                    "{url}: module \"{uri}\" is not part of Ljós: the types of {family} and the \
-                     modules below it are empty Items, and what only they have is left out"
-                ));
+        }
+        for import in &ir.imports {
+            match self.stand_in_of(import) {
+                Some(StandIn::Types(uri, types)) => {
+                    self.tell_stood_in(url, uri, types, library);
+                }
+                Some(StandIn::Module(uri, family)) => {
+                    let mut loader = self.inner.loader.borrow_mut();
+                    loader.stands_in(family, library);
+                    let told = loader.told_stood_in.insert(family.to_owned());
+                    drop(loader);
+                    if told {
+                        self.warn(format!(
+                            "{url}: module \"{uri}\" is not part of Ljós: the types of {family} \
+                             and the modules below it are empty Items, and what only they have is \
+                             left out"
+                        ));
+                    }
+                }
+                None => {}
             }
         }
         Ok(())
+    }
+
+    /// What of `import` stands in as empty Items, if anything does.
+    fn stand_in_of<'i>(&self, import: &'i ljos_ir::Import) -> Option<StandIn<'i>> {
+        let ImportSource::Module(uri) = &import.source else {
+            return None;
+        };
+        if import.in_project {
+            return None;
+        }
+        // Of a module the runtime builds part of, what the file names may
+        // all be built: only a type that stands in is told, even where the
+        // program registers types of the module.
+        if let Some(types) = &import.stood_in {
+            return (!types.is_empty()).then_some(StandIn::Types(uri, types));
+        }
+        if !import.stands_in || self.has_module(uri) {
+            return None;
+        }
+        // `QtWebEngine.Controls` comes with `QtWebEngine`: one word for
+        // both. `QtQuick.Timeline` and `QtQuick3D.Helpers` are modules of
+        // their own all the same: Ljós has `QtQuick` and `QtQuick3D`.
+        let family = match uri.split_once('.') {
+            Some(("QtQuick" | "QtQuick3D", _)) | None => uri.as_str(),
+            Some((first, _)) => first,
+        };
+        Some(StandIn::Module(uri, family))
+    }
+
+    /// The modules that stand in for the files `ir` of the source: what
+    /// [`Engine::stood_in_modules`] lists once a reload has replaced some.
+    fn stood_in_by(&self, ir: &CompiledFile) -> Vec<String> {
+        ir.imports
+            .iter()
+            .filter_map(|import| match self.stand_in_of(import)? {
+                StandIn::Types(uri, _) => Some(uri.to_owned()),
+                StandIn::Module(_, family) => Some(family.to_owned()),
+            })
+            .collect()
     }
 
     /// Says of each type of the module `uri` that stands in that it does,

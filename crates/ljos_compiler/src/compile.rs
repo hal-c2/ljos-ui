@@ -681,16 +681,19 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
         let Some(first) = path.first() else {
             return false;
         };
-        if first.starts_with(|c: char| c.is_ascii_uppercase()) {
-            // What such a type attaches (`Type.member`, `Module.Type.member`).
-            let attached = (1..path.len().min(3)).find_map(|n| match self.types.find(&path[..n]) {
-                Some(Found {
-                    origin: Origin::StandIn(uri),
-                    ..
-                }) => Some((n, uri)),
-                _ => None,
-            });
-            let Some((n, uri)) = attached else {
+        if path.len() >= 2 && first.starts_with(|c: char| c.is_ascii_uppercase()) {
+            // What such a type attaches (`Type.member`, `Module.Type.member`),
+            // the type cut as `slot` cuts it: a qualifier is never itself
+            // taken for a type that stands in.
+            let qualified = path.len() >= 3
+                && path[1].starts_with(|c: char| c.is_ascii_uppercase())
+                && self.types.namespace(first).is_some();
+            let n = if qualified { 2 } else { 1 };
+            let Some(Found {
+                origin: Origin::StandIn(uri),
+                ..
+            }) = self.types.find(&path[..n])
+            else {
                 return false;
             };
             self.stood_in_at(&path[..n], &uri, span);

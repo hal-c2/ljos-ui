@@ -194,14 +194,16 @@ impl CompiledFile {
     /// Reads what [`CompiledFile::to_bytes`] wrote, refusing another IR
     /// version rather than misreading it.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, Error> {
-        let file: Self = postcard::from_bytes(bytes)?;
-        if file.version != IR_VERSION {
+        // The version leads every layout, and another version's layout may
+        // not decode as this one's at all: it is read on its own first.
+        let (found, _) = postcard::take_from_bytes::<u32>(bytes)?;
+        if found != IR_VERSION {
             return Err(Error::Version {
-                found: file.version,
+                found,
                 expected: IR_VERSION,
             });
         }
-        Ok(file)
+        Ok(postcard::from_bytes(bytes)?)
     }
 }
 
