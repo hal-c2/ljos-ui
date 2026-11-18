@@ -193,6 +193,10 @@ fi
 unset WAYLAND_DISPLAY DISPLAY SWAYSOCK HYPRLAND_INSTANCE_SIGNATURE QT_QPA_PLATFORMTHEME
 scratch="$(mktemp -d "$(physical "${TMPDIR:-/tmp}")/ljos-smoke.XXXXXX")"
 trap 'rm -rf "$scratch"' EXIT
+# The desktop sandbox a row starts or stops is the smoke run's own: the
+# sandbox is told apart by its home (scripts/cua-sandbox.sh keys its runtime
+# directory by it), so one someone drives from this checkout is left alone.
+export LJOS_CUA_HOME="$scratch/cua"
 
 found_only=""
 while IFS='|' read -r task mode args why; do

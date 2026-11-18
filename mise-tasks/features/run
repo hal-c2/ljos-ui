@@ -18,6 +18,7 @@ target="$(target_dir)"
 # Everything else is passed through (-t, -n, --backlog).
 args=()
 globs=()
+input=
 while [ $# -gt 0 ]; do
   case "$1" in
     --backend)
@@ -25,11 +26,18 @@ while [ $# -gt 0 ]; do
       export LJOS_BDD_BACKEND="$2"
       shift 2
       ;;
-    -t | --tags | -n | --name | --input | -i)
+    -t | --tags | -n | --name)
       [ $# -ge 2 ] || die "features:run: $1 needs a value"
       args+=("$1" "$2")
       shift 2
       ;;
+    --input | -i)
+      # A relative glob is from where mise was started, as every path here.
+      [ $# -ge 2 ] || die "features:run: $1 needs a glob"
+      input="$(from_asked "$2")"
+      shift 2
+      ;;
+    --input=*) input="$(from_asked "${1#--input=}")"; shift ;;
     -*)
       args+=("$1")
       shift
@@ -50,13 +58,40 @@ while [ $# -gt 0 ]; do
       ;;
   esac
 done
+# The ledger matches its one --input as a glob, and a path with no pattern
+# in it is matched by nothing: a file or directory given as --input becomes
+# a glob, as a path does. One under features/ joins the paths in the one
+# {a,b} glob; one outside it cannot be joined with them. Compared as
+# physical paths, as a symbolic link may lead to the checkout.
+root="$(pwd -P)"
+asked="$input"
+if [ -n "$input" ]; then
+  if [ -d "$input" ]; then
+    input="$(physical "$input")/**/*.feature"
+  elif [ -f "$input" ]; then
+    input="$(physical "$(dirname "$input")")/{$(basename "$input")}"
+  else
+    # A pattern: the directory before its first pattern character.
+    lead="${input%%[*?{[]*}"
+    lead="${lead%/*}"
+    [ -z "$lead" ] || ! [ -d "$lead" ] || input="$(physical "$lead")${input#"$lead"}"
+  fi
+  case "$input" in
+    "$root/features/"*)
+      globs+=("${input#"$root/features/"}")
+      input=
+      ;;
+    *) [ ${#globs[@]} -eq 0 ] || die "features:run: --input $asked is outside features/, so it cannot join the paths in the one --input the ledger takes" ;;
+  esac
+fi
 # Always in braces: a path without a pattern in it is matched by nothing.
 if [ ${#globs[@]} -gt 0 ]; then
-  args+=(--input "$PWD/features/{$(
+  input="$root/features/{$(
     IFS=,
     echo "${globs[*]}"
-  )}")
+  )}"
 fi
+[ -z "$input" ] || args+=(--input "$input")
 
 # Qt runs off-screen; a desktop platform theme (gtk3, qt6ct) would still
 # reach for a display.
@@ -110,28 +145,40 @@ if [ -n "$cef" ]; then
   scripts/strip-cef-runtime.sh "$target/debug"
 fi
 
-# The files the globs pick, as cucumber reads them: dir/**/name.feature is
-# name.feature in dir or any directory below it. Listed with find, not
-# globstar, which macOS's bash 3.2 lacks.
-selected() {
-  local g d
-  if [ ${#globs[@]} -eq 0 ]; then
-    find features -name '*.feature'
-    return 0
-  fi
-  for g in "${globs[@]}"; do
-    case "$g" in
-      *'/**/'*)
-        # The directory part may itself be a pattern (*/bindings).
-        # shellcheck disable=SC2086 # it is meant to expand
-        for d in features/${g%%/\*\**}; do
-          if [ -d "$d" ]; then find "$d" -name "${g##*/}"; fi
-        done
-        ;;
-      *) if [ -f "features/$g" ]; then printf '%s\n' "features/$g"; fi ;;
-    esac
-  done
+# The files the ledger reads, from the same --input it is given: the glob
+# as a regular expression over the paths of the feature files (** is any
+# directories, or none; * and ? stay within one; {a,b} is either). Listed
+# with find, not globstar, which macOS's bash 3.2 lacks, and matched as
+# whole paths, so a directory's name may hold a space.
+glob_regex() {
+  awk '{
+    s = $0; out = ""; depth = 0
+    for (i = 1; i <= length(s); i++) {
+      c = substr(s, i, 1)
+      if (c == "*" && substr(s, i + 1, 2) == "*/") { out = out "(.*/)?"; i += 2 }
+      else if (c == "*" && substr(s, i + 1, 1) == "*") { out = out ".*"; i++ }
+      else if (c == "*") out = out "[^/]*"
+      else if (c == "?") out = out "[^/]"
+      else if (c == "{") { out = out "("; depth++ }
+      else if (c == "}" && depth > 0) { out = out ")"; depth-- }
+      else if (c == "," && depth > 0) out = out "|"
+      else if (index("\\.^$+()|[]", c) > 0) out = out "\\" c
+      else out = out c
+    }
+    print "^" out "$"
+  }' <<<"$1"
 }
+selected() {
+  if [ -z "$input" ]; then
+    find features -name '*.feature'
+  else
+    find "$root/features" -name '*.feature' | grep -E "$(glob_regex "$input")" || true
+  fi
+}
+# A selection that names no feature file would pass with 0 scenarios run.
+if [ -n "$input" ] && [ -z "$(selected)" ]; then
+  die "features:run: no feature file matches ${asked:-the paths given} (--input $input)"
+fi
 desktop=
 if [ "${LJOS_BDD_BACKEND:-ljos}" != qt ]; then
   while IFS= read -r f; do

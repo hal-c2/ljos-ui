@@ -23,6 +23,9 @@ cargo build --quiet -p ljos_fuzz --profile "$profile"
 dir="$profile"
 [ "$profile" != dev ] || dir=debug
 
+# A relative FUZZ_OUT is from the checkout's root, not from where mise was
+# started: ljos-fuzz empties it first, so it must not land on a directory of
+# someone's own by being typed elsewhere.
 exec "$target/$dir/ljos-fuzz" --qml "$qml" \
   --known "$ljos_root/crates/ljos_fuzz/known" \
-  --out "$(from_asked "${FUZZ_OUT:-$target/fuzz/out}")" --work "$target/fuzz/work" "$@"
+  --out "${FUZZ_OUT:-$target/fuzz/out}" --work "$target/fuzz/work" "$@"

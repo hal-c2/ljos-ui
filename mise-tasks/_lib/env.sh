@@ -299,6 +299,20 @@ need_timeout() {
   need timeout "install GNU coreutils' timeout (macOS: brew install coreutils, which names it gtimeout: put its gnubin first on PATH)"
 }
 
+# The qml6 a bench measures: the last --qml6 among its options, else QML6,
+# else qml6. The preflight, the report's note and the runs all use it.
+bench_qml6() {
+  local qml="${QML6:-qml6}"
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --qml6) qml="${2:-}"; shift ;;
+      --qml6=*) qml="${1#--qml6=}" ;;
+    esac
+    shift
+  done
+  printf '%s\n' "$qml"
+}
+
 # Whether ljos bench's options leave Qt in (it is, unless --runtime names
 # runtimes without qt).
 bench_has_qt() {
