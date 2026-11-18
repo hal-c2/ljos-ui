@@ -119,13 +119,49 @@ if [ -z "$out" ]; then ok "no Qt found is no mismatch"; else bad "no Qt found wa
 
 # --- setup notes another Qt, and fails only on what is missing -------------------
 
+# setup runs on a copy of the tasks, in a directory that is no git checkout
+# (so its submodules are skipped, never fetched), with stand-ins for mise,
+# rustup and rustc that say mise.toml's Rust is all there. Nothing is
+# installed or fetched, and what this machine has or lacks (CI's docs job has
+# no Rust) is not what answers.
+root="$real/root"
+rust="$real/rust"
+mkdir -p "$root/.github/workflows" "$rust"
+cp -R mise-tasks "$root/mise-tasks"
+cp mise.toml "$root/mise.toml"
+cp .github/workflows/ci.yml "$root/.github/workflows/ci.yml"
+rust_pin components | tr ' ' '\n' >"$rust/components"
+rust_pin targets | tr ' ' '\n' >"$rust/targets"
+cat >"$rust/rustup" <<'EOF'
+#!/bin/sh
+case "$1 $2 $3" in
+  "component list --installed") cat "$(dirname "$0")/components" ;;
+  "target list --installed") cat "$(dirname "$0")/targets" ;;
+  *) exit 1 ;;
+esac
+EOF
+cat >"$rust/mise" <<'EOF'
+#!/bin/sh
+case "$1" in
+  where) dirname "$0" ;;
+  install) ;;
+  *) exit 1 ;;
+esac
+EOF
+pinned_rustc() { printf '#!/bin/sh\necho "rustc %s (stand-in)"\n' "$1" >"$rust/rustc"; }
+pinned_rustc "$(rust_pin version)"
+chmod +x "$rust/rustup" "$rust/mise" "$rust/rustc"
+with_setup() {
+  GIT_CEILING_DIRECTORIES="$real" PATH="$rust:$stands:$PATH" bash "$root/mise-tasks/setup" "$@"
+}
+
 # The corpus and Qt's type table are left out: CI's smoke job has neither, and
 # a full setup would otherwise make the table from this machine's Qt.
 for args in "--check --no-corpus" "--no-corpus --no-types"; do
   stand_reset
   stand qmake6 6.12.3
   # shellcheck disable=SC2086 # the flags are words
-  if out="$(with_stands bash mise-tasks/setup $args 2>&1)"; then
+  if out="$(with_setup $args 2>&1)"; then
     case "$out" in
       *"setup notes:"*"found Qt 6.12.3: qmake6 ($stands/qmake6)"*"CI pins Qt $got (.github/workflows/ci.yml)"*"for CI's results, install Qt $got as CI does (pip install aqtinstall && aqt install-qt "*)
         case "$out" in
@@ -142,7 +178,11 @@ done
 
 stand_reset
 stand qmake6 "${got%.*}.0"
-out="$(with_stands bash mise-tasks/setup --check --no-corpus 2>&1 || true)"
+if out="$(with_setup --check --no-corpus 2>&1)"; then
+  :
+else
+  bad "setup --check failed with Qt ${got%.*}.0 and everything else there" "$out"
+fi
 case "$out" in
   *"setup notes:"*) bad "setup --check noted CI's own Qt ${got%.*}.0" "$out" ;;
   *) ok "setup --check notes nothing for Qt ${got%.*}.0" ;;
@@ -150,17 +190,16 @@ esac
 
 # A rustc that is not mise.toml's is truly missing: --check fails on it.
 stand_reset
-printf '#!/bin/sh\necho "rustc 1.50.0 (stand-in)"\n' >"$stands/rustc"
-chmod +x "$stands/rustc"
-if out="$(with_stands bash mise-tasks/setup --check --no-corpus 2>&1)"; then
+pinned_rustc 1.50.0
+if out="$(with_setup --check --no-corpus 2>&1)"; then
   bad "setup --check passed with rustc 1.50.0" "$out"
 else
   case "$out" in
-    *"setup is missing:"*"Rust: the rustc tasks build with ($stands/rustc) is rustc 1.50.0"*) ok "setup --check fails on a rustc that is not mise.toml's, saying so under what is missing" ;;
+    *"setup is missing:"*"Rust: the rustc tasks build with ($rust/rustc) is rustc 1.50.0"*) ok "setup --check fails on a rustc that is not mise.toml's, saying so under what is missing" ;;
     *) bad "setup --check failed, but not on the rustc" "$out" ;;
   esac
 fi
-rm "$stands/rustc"
+pinned_rustc "$(rust_pin version)"
 
 # --- Paths ---------------------------------------------------------------------
 
