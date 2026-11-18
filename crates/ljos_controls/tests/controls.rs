@@ -984,3 +984,34 @@ fn a_field_whose_height_follows_a_new_font_is_painted_once() {
         two - one
     );
 }
+
+/// A delegate that cannot be made, here for a required property no cell
+/// has, leaves nothing behind: the cell each day would have had as its
+/// model goes with it.
+#[test]
+fn a_calendar_whose_delegate_cannot_be_made_leaves_no_cells_behind() {
+    let e = engine();
+    let root = load(
+        &e,
+        r#"
+import QtQuick
+import QtQuick.Controls.Basic
+Item {
+    property bool first: true
+    Component { id: a; Item { required property string label } }
+    Component { id: b; Item { required property string label } }
+    MonthGrid { month: Calendar.February; year: 2024; delegate: first ? a : b }
+    DayOfWeekRow { delegate: first ? a : b }
+}
+"#,
+    );
+    let mut counts = Vec::new();
+    for i in 0..6 {
+        e.write_by_name(root, "first", Value::Bool(i % 2 == 1))
+            .unwrap();
+        e.process_deferred_deletes();
+        counts.push(e.object_count());
+    }
+    assert_eq!(counts[5], counts[1], "{counts:?}");
+    e.take_log();
+}
