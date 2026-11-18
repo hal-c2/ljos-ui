@@ -49,9 +49,15 @@ if checkout="$(git rev-parse --show-toplevel 2>/dev/null)" && [ -n "$checkout" ]
 else
   checkout="$(pwd -P)"
 fi
-target="$(CARGO_TARGET_DIR="$ljos_asked_target_dir" target_dir "$checkout")"
+target="$(CARGO_TARGET_DIR="$ljos_asked_target_dir" target_dir "$checkout")" ||
+  die "mcp: cannot tell where cargo builds for $checkout (above)"
 export CARGO_TARGET_DIR="$target"
-config_args "$(cargo_config "$checkout")"
+# The settings file config_args writes lives until the build is over, or
+# until this stops before it (exec runs no trap).
+settings="$(mktemp -d "${TMPDIR:-/tmp}/ljos-cargo.XXXXXX")"
+settings_gone() { rm -f "$settings/settings.toml" && rmdir "$settings" 2>/dev/null || true; }
+trap settings_gone EXIT
+config_args "$(cargo_config "$checkout")" "$settings"
 # The build is put together here, for that checkout: env.sh's cargo adds the
 # script's own checkout's settings.
 unset -f cargo
@@ -86,6 +92,7 @@ cd "$checkout"
 # stderr is a pipe more often than a terminal).
 status=0
 messages="$("${build[@]}" | tee >({ grep --line-buffered -v -e '^{"reason":' -e '^$' || true; } >&2))" || status=$?
+settings_gone
 [ "$status" -eq 0 ] || die "mcp: the build of ljos failed"
 server="$(printf '%s\n' "$messages" | cargo_executable)"
 [ -n "$server" ] && [ -x "$server" ] || die "mcp: the build named no ljos program it made"

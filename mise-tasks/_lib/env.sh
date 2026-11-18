@@ -143,7 +143,22 @@ settings_target_dir() {
   local file="$1" value
   [ -f "$file" ] || return 0
   value="$(awk '
-    function bare(s) { gsub(/["'\'' \t]/, "", s); return s }
+    # A key as cargo reads it: blanks outside quotes left out, a quoted
+    # part kept as it is (["build "] is not [build]), and a dot inside
+    # quotes part of the name, not a separator.
+    function bare(s,   out, i, c, q) {
+      out = ""; q = ""
+      for (i = 1; i <= length(s); i++) {
+        c = substr(s, i, 1)
+        if (q != "") {
+          if (c == q) q = ""
+          else if (q == "\"" && c == "\\") { out = out c substr(s, i + 1, 1); i++ }
+          else out = out (c == "." ? "\034" : c)
+        } else if (c == "\"" || c == "'\''") q = c
+        else if (c != " " && c != "\t") out = out c
+      }
+      return out
+    }
     # The string at the start of s: "b:" or "l:" and what is between its quotes.
     function string(s,   q, i, c) {
       q = substr(s, 1, 1)
@@ -171,8 +186,10 @@ settings_target_dir() {
     }
     END { if (length(found) > 2) print found }
   ' "$file")"
+  # A target-dir that cannot be decoded stops here: taken as no setting, the
+  # build would go to target/, the drive the setting moved it off.
   case "$value" in
-    b:*\\*) value="$(toml_unescape "${value#b:}")" ;;
+    b:*\\*) value="$(toml_unescape "${value#b:}")" || return 1 ;;
     *) value="${value#?:}" ;;
   esac
   case "$value" in
@@ -227,7 +244,7 @@ target_dir() {
       main="$(main_checkout "$dir")"
       local file
       while IFS= read -r file; do
-        target="$(settings_target_dir "$file")"
+        target="$(settings_target_dir "$file")" || return 1
         if [ -n "$target" ]; then break; fi
       done <<EOF_SETTINGS
 $(settings_file "$dir")
@@ -245,31 +262,37 @@ EOF_SETTINGS
   printf '%s\n' "$target"
 }
 
-# cargo_config [dir]: what cargo is given with --config when <dir> is a
-# linked worktree, one setting per line: the variables that set it instead,
-# a tab, then the setting as KEY=VALUE. Cargo looks for its settings from
-# where it runs upwards, so a worktree made elsewhere would build without
-# the ones its main checkout keeps outside git (a compile cache, a cap on
-# jobs, incremental builds off, in the checkout's .cargo or a directory
-# above it), and the two would keep rebuilding each other's crates in the
-# target they share. So every file cargo reads for the main checkout that it
-# does not read in the worktree is given, the farthest first, as a later
-# --config binds more; but key by key, not as files:
-# - a key the worktree's own settings set is theirs alone, as if cargo had
-#   found both files there (given as a file again, the worktree's own
-#   arrays, such as rustflags, would come twice);
+# cargo_config [dir]: the main checkout's cargo settings that <dir> builds
+# with when it is a linked worktree, one per line, for config_args. Cargo
+# looks for its settings from where it runs upwards, so a worktree made
+# elsewhere would build without the ones its main checkout keeps outside git
+# (a compile cache, a cap on jobs, incremental builds off, in the checkout's
+# .cargo or a directory above it), and the two would keep rebuilding each
+# other's crates in the target they share. So every file cargo reads for the
+# main checkout that it does not read in the worktree is given, merged as
+# cargo merges them (the nearest file's value wins, arrays are joined, the
+# farthest first), key by key rather than as files:
+# - a key the worktree's own settings set is theirs, as if cargo had found
+#   both files there (given as a file again, the worktree's own arrays, such
+#   as rustflags, would come twice). An array both set is joined, as cargo
+#   joins it, the main checkout's after the worktree's: a --config ranks
+#   above the files;
 # - a --config outranks the environment, so config_args leaves a key out
-#   while a variable that sets it is set (CARGO_BUILD_JOBS, say, or
+#   while an exported variable sets it (CARGO_BUILD_JOBS, say, or
 #   CARGO_TARGET_DIR, which env.sh sets): the environment wins, as in plain
 #   cargo. An array is kept, as cargo adds the environment's to the files'
 #   (RUSTFLAGS, which replaces every rustflags, leaves rustflags out);
-# - a path the file names relative to it is made whole, as a KEY=VALUE path
-#   is from where cargo runs.
-# Reading TOML takes Python 3.11's tomllib (or tomli); without it the
-# worktree builds with its own settings only, and the task says so.
-# Nothing for a main checkout, whose settings cargo finds itself.
+# - a path the file names relative to it is made whole, as the settings
+#   reach cargo from a file of their own somewhere else.
+# A line is the variables that set its key instead, a tab, then the setting
+# as a TOML line. Reading TOML takes Python 3.11's tomllib (or tomli);
+# without it (macOS's python3 is 3.9), or when a file cannot be read, the
+# files are given whole ("@file", a tab, the file), the farthest first, then
+# the worktree's own again so that they still win, and the task says why
+# and what that costs. Nothing for a main checkout, whose settings cargo
+# finds itself.
 cargo_config() {
-  local dir main here mains file n=0 status=0 given=() own=()
+  local dir main here mains file out why n=0 status=0 given=() own=() i
   dir="$(physical "${1:-$ljos_root}")"
   main="$(main_checkout "$dir")"
   [ "$main" != "$dir" ] || return 0
@@ -290,7 +313,38 @@ EOF_MAIN
 $here
 EOF_HERE
   if command -v python3 >/dev/null 2>&1; then
-    python3 -I - "$n" ${own[@]+"${own[@]}"} "${given[@]}" <<'EOF_SETTINGS' || status=$?
+    out="$(cargo_settings "$n" ${own[@]+"${own[@]}"} "${given[@]}")" || status=$?
+  else
+    status=127
+  fi
+  if [ "$status" -eq 0 ]; then
+    [ -z "$out" ] || printf '%s\n' "$out"
+    return 0
+  fi
+  case "$status" in
+    3) why="reading them key by key takes Python 3.11's tomllib (or tomli), which $(python3 -V 2>&1) has not" ;;
+    4) why="$out" ;;
+    127) why="reading them key by key takes python3, which is not on PATH" ;;
+    *) why="python3 stopped with status $status reading them (above)" ;;
+  esac
+  printf '%s: %s; so the main checkout'\''s cargo settings (%s) are given as whole files, and this worktree'\''s own after them: an exported CARGO_* variable may be outranked by them, and an array both set comes more than once\n' \
+    "$(task_name)" "$why" "$(printf '%s ' "${given[@]}" | sed 's/ $//')" >&2
+  for file in "${given[@]}"; do
+    printf '@file\t%s\n' "$file"
+  done
+  i=$n
+  while [ "$i" -gt 0 ]; do
+    i=$((i - 1))
+    printf '@file\t%s\n' "${own[$i]}"
+  done
+}
+
+# cargo_settings <n> <the worktree's own n files> <the main checkout's files,
+# farthest first>: cargo_config's lines. Status 3 without tomllib; 4, with
+# what failed as its output, when a file cannot be read. Nothing is printed
+# before every file is read, so a failure leaves no half.
+cargo_settings() {
+  python3 -I - "$@" <<'EOF_SETTINGS'
 import json, os, re, sys
 try:
     import tomllib
@@ -307,12 +361,17 @@ def load(path):
     try:
         with open(path, "rb") as f:
             return tomllib.load(f)
-    except (OSError, ValueError) as e:
-        print("%s cannot be read (%s); cargo will say more" % (path, e), file=sys.stderr)
-        return {}
+    except OSError as e:
+        print("%s cannot be read: %s" % (path, e.strerror or e))
+    except ValueError as e:
+        print("%s is not TOML cargo can read: %s" % (path, e))
+    sys.exit(4)
 
-# A setting's leaves, each with the table it is in: --config takes no
-# inline table, so an [env] entry's value and `relative` come apart.
+own = [load(f) for f in own]
+given = [(f, load(f)) for f in given]
+
+# A setting's leaves, each with the table it is in: an [env] entry's value
+# and `relative` come apart, so the worktree can set one and not the other.
 def leaves(table, path=()):
     for k, v in table.items():
         p = path + (k,)
@@ -342,25 +401,54 @@ def variables(p, v):
         names.insert(0, "CARGO_" + "_".join(k.upper().replace("-", "_").replace(".", "_") for k in p))
     return [name for name in names if NAME.match(name)]
 
-# Paths relative to the directory that holds .cargo: a directory always, a
-# program only when it has a slash (else PATH finds it).
-DIRS = {"target-dir", "dep-info-basedir"}
-PROGRAMS = {"rustc", "rustc-wrapper", "rustc-workspace-wrapper", "rustdoc", "linker"}
+# What cargo takes as a path relative to the directory that holds .cargo: a
+# directory or file always (a build-dir that starts with a {template} is
+# cargo's to place), a program only when it has a slash (else PATH finds
+# it), and a command's program, its first word, the same.
+def kind(p):
+    if p in (("build", "target-dir"), ("build", "build-dir"), ("build", "dep-info-basedir"),
+             ("install", "root"), ("http", "cainfo")):
+        return "path"
+    if len(p) == 3 and p[0] == "source" and p[2] in ("directory", "local-registry"):
+        return "path"
+    if len(p) == 4 and p[0] == "patch" and p[3] == "path":
+        return "path"
+    if p in (("build", "rustc"), ("build", "rustc-wrapper"), ("build", "rustc-workspace-wrapper"),
+             ("build", "rustdoc")) or (p[0] in ("target", "host") and p[-1] == "linker"):
+        return "program"
+    if (p[0] in ("target", "host") and p[-1] == "runner") or p == ("doc", "browser") or \
+            (p[0] in ("registry", "registries") and p[-1] == "credential-provider"):
+        return "command"
+    if p == ("registry", "global-credential-providers"):
+        return "commands"
+    if p == ("paths",):
+        return "paths"
+    return None
+
 def whole(base, s):
     return s if os.path.isabs(s) else os.path.join(base, s)
-def placed(p, v, table, base):
-    last = p[-1]
-    if isinstance(v, str) and (last in DIRS or last in PROGRAMS and "/" in v):
-        return whole(base, v)
-    if last == "runner" and isinstance(v, str):
+def program(base, s):
+    return whole(base, s) if "/" in s else s
+def command(base, v):
+    if isinstance(v, str):
         words = v.split()
-        if words and "/" in words[0]:
-            return " ".join([whole(base, words[0])] + words[1:])
-    if last == "runner" and isinstance(v, list) and v and isinstance(v[0], str) and "/" in v[0]:
-        return [whole(base, v[0])] + v[1:]
-    if p == ("paths",) and isinstance(v, list):
+        return " ".join([program(base, words[0])] + words[1:]) if words else v
+    if isinstance(v, list) and v and isinstance(v[0], str):
+        return [program(base, v[0])] + v[1:]
+    return v
+def placed(p, v, table, base):
+    k = kind(p)
+    if k == "path" and isinstance(v, str) and not v.startswith("{"):
+        return whole(base, v)
+    if k == "program" and isinstance(v, str):
+        return program(base, v)
+    if k == "command":
+        return command(base, v)
+    if k == "commands" and isinstance(v, list):
+        return [command(base, x) for x in v]
+    if k == "paths" and isinstance(v, list):
         return [whole(base, x) if isinstance(x, str) else x for x in v]
-    if len(p) == 3 and p[0] == "env" and last == "value" and table.get("relative") is True and isinstance(v, str):
+    if len(p) == 3 and p[0] == "env" and p[2] == "value" and table.get("relative") is True and isinstance(v, str):
         return whole(base, v)
     return v
 
@@ -381,44 +469,88 @@ def value(v):
         return "{" + ", ".join("%s = %s" % (key((k,)), value(x)) for k, x in v.items()) + "}"
     return string(str(v))
 
-mine = [p for f in own for p, _, _ in leaves(load(f))]
-def theirs(p):
-    return not any(q[:len(p)] == p or p[:len(q)] == q for q in mine)
-for f in given:
+def under(p, q):
+    return p[:len(q)] == q or q[:len(p)] == p
+
+# The worktree's own keys are its own, but an array both set is joined, as
+# cargo joins the arrays of every file it reads.
+mine = {p: v for d in own for p, v, _ in leaves(d)}
+def theirs(p, v):
+    for q, w in mine.items():
+        if q == p:
+            return isinstance(v, list) and isinstance(w, list)
+        if under(p, q):
+            return False
+    return True
+
+# One file's worth: a nearer file's value replaces a farther one's (and a
+# table or value it puts in the place of one), arrays are joined.
+merged = {}
+for f, d in given:
     base = os.path.dirname(os.path.dirname(os.path.abspath(f)))
-    for p, v, table in leaves(load(f)):
-        if p == ("include",) or not theirs(p):
+    for p, v, table in leaves(d):
+        if p == ("include",) or not theirs(p, v):
             continue
-        print("%s\t%s=%s" % (" ".join(variables(p, v)), key(p), value(placed(p, v, table, base))))
+        v = placed(p, v, table, base)
+        for q in [q for q in merged if q != p and under(p, q)]:
+            del merged[q]
+        if isinstance(v, list) and isinstance(merged.get(p), list):
+            v = merged[p] + v
+        merged[p] = v
+for p, v in merged.items():
+    print("%s\t%s = %s" % (" ".join(variables(p, v)), key(p), value(v)))
 EOF_SETTINGS
-  else
-    status=3
-  fi
-  if [ "$status" -ne 0 ]; then
-    printf '%s: this worktree builds without its main checkout'\''s cargo settings (%s): reading them takes Python 3.11 or later\n' \
-      "$(task_name)" "$(printf '%s ' "${given[@]}")" >&2
-  fi
 }
 
-# config_args <cargo_config output>: a --config for each of its settings that
-# no variable set now sets instead, in order, into the array config_args.
+# toml_string <text>: <text> as a TOML basic string.
+toml_string() {
+  local t="$1"
+  t="${t//\\/\\\\}"
+  t="${t//\"/\\\"}"
+  t="${t//$'\t'/\\t}"
+  t="${t//$'\n'/\\n}"
+  t="${t//$'\r'/\\r}"
+  printf '"%s"' "$t"
+}
+
+# config_args <cargo_config output> <dir>: the --config arguments for its
+# settings, into the array config_args. The settings no exported variable
+# sets instead go into <dir>/settings.toml, a new file in a directory only
+# the user can read, never into the arguments, where any user of the machine
+# can read them (an [env] token, say). Whole files are given as they are,
+# with the target CARGO_TARGET_DIR names after them, as they would
+# outrank it.
 config_args() {
-  local line names name value overridden tab=$'\t'
+  local line names name value overridden exported nl=$'\n' tab=$'\t' settings="" whole=""
   config_args=()
+  # Only an exported variable reaches cargo (one given to this call as
+  # `VAR=1 cargo` is exported to it).
+  exported="$nl$(compgen -e)$nl"
   while IFS= read -r line; do
     [ -n "$line" ] || continue
     names="${line%%"$tab"*}"
     value="${line#*"$tab"}"
+    if [ "$names" = "@file" ]; then
+      config_args+=(--config "$value")
+      whole=1
+      continue
+    fi
     overridden=
     for name in $names; do
-      case "$name" in "" | [0-9]* | *[!A-Za-z0-9_]*) continue ;; esac
-      eval "overridden=\${$name+x}"
-      [ -z "$overridden" ] || break
+      case "$exported" in *"$nl$name$nl"*) overridden=1 && break ;; esac
     done
-    [ -n "$overridden" ] || config_args+=(--config "$value")
+    [ -z "$overridden" ] || continue
+    settings="$2/settings.toml"
+    printf '%s\n' "$value" >>"$settings"
   done <<EOF_SETTINGS
 $1
 EOF_SETTINGS
+  if [ -n "$settings" ]; then config_args+=(--config "$settings"); fi
+  case "$exported" in
+    *"${nl}CARGO_TARGET_DIR$nl"*)
+      if [ -n "$whole" ]; then config_args+=(--config "build.target-dir=$(toml_string "$CARGO_TARGET_DIR")"); fi
+      ;;
+  esac
 }
 
 # Every task builds where target_dir says, and so does every cargo its cargo
@@ -427,17 +559,26 @@ EOF_SETTINGS
 # (mise-tasks/mcp).
 # shellcheck disable=SC2034 # read by mise-tasks/mcp
 ljos_asked_target_dir="${CARGO_TARGET_DIR-}"
-CARGO_TARGET_DIR="$(target_dir)"
+CARGO_TARGET_DIR="$(target_dir)" || die "$(task_name): cannot tell where cargo builds for $ljos_root (above)"
 export CARGO_TARGET_DIR
 ljos_cargo_config="$(cargo_config)"
 
-# cargo, with the main checkout's settings in a worktree. A task runs
-# `cargo`, never `exec cargo` or `command cargo`, which would go round this
-# (tasks:smoke holds every task to that).
+# cargo, with the main checkout's settings in a worktree, from a settings
+# file of its own that is gone once cargo is. A task runs `cargo`, never
+# `exec cargo` or `command cargo`, which would go round this (tasks:smoke
+# holds every task to that).
 cargo() {
-  local config_args
-  config_args "$ljos_cargo_config"
-  command cargo ${config_args[@]+"${config_args[@]}"} "$@"
+  local config_args settings status=0
+  if [ -z "$ljos_cargo_config" ]; then
+    command cargo "$@"
+    return
+  fi
+  settings="$(mktemp -d "${TMPDIR:-/tmp}/ljos-cargo.XXXXXX")" || return
+  config_args "$ljos_cargo_config" "$settings"
+  command cargo ${config_args[@]+"${config_args[@]}"} "$@" || status=$?
+  rm -f "$settings/settings.toml"
+  rmdir "$settings"
+  return "$status"
 }
 
 # Empty when .mcp.json (<file>) starts its ljos server through mise-tasks/mcp,
