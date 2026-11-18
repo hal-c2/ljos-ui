@@ -24,8 +24,7 @@ Feature: A Loader gives up on its item only for scripts its item could set off a
         id: root; objectName: "root"; width: 200; height: 200
         property bool wanted: false
         property bool atOnce: false
-        property bool slowRow: false
-        property bool timed: false
+        property bool slowRow: false; property bool timed: false
         property int work: 0; property int step: 0
         property int made: 0; property int gap: 1
         onWorkChanged: { for (let k = 1; k <= 30; k++) step = k }
@@ -34,7 +33,8 @@ Feature: A Loader gives up on its item only for scripts its item could set off a
           id: loader; objectName: "loader"; active: root.wanted
           sourceComponent: Item {
             objectName: "row"; width: 100; height: 100
-            Accessible.role: Accessible.Button; Accessible.name: "Row"
+            Accessible.role: Accessible.Button; Accessible.name: "Row"; Accessible.focusable: true
+            onActiveFocusChanged: if (activeFocus) tap()
             Component.onCompleted: { root.made += 1; if (root.atOnce) root.work += 1 }
             Timer { interval: root.gap; running: root.timed; onTriggered: root.work += 1 }
             TapHandler { onTapped: parent.tap() }
@@ -84,6 +84,32 @@ Feature: A Loader gives up on its item only for scripts its item could set off a
     Then the property "status" of "loader" is 1
     And the object "loader/row" exists
     And the property "made" of "root" is 11
+    And the log has no warning matching "Loader: .*(interrupted again|times in a row)"
+    And the application has no fault
+
+  Scenario: An item an assistive technology focuses more times than an item may set the scripts off by itself is kept
+    When the property "wanted" of "root" is set to true
+    And an assistive technology focuses the "button" named "Row"
+    And 100 milliseconds pass
+    And an assistive technology focuses the "button" named "Row"
+    And 100 milliseconds pass
+    And an assistive technology focuses the "button" named "Row"
+    And 100 milliseconds pass
+    And an assistive technology focuses the "button" named "Row"
+    And 100 milliseconds pass
+    And an assistive technology focuses the "button" named "Row"
+    And 100 milliseconds pass
+    And an assistive technology focuses the "button" named "Row"
+    And 100 milliseconds pass
+    And an assistive technology focuses the "button" named "Row"
+    And 100 milliseconds pass
+    And an assistive technology focuses the "button" named "Row"
+    And 100 milliseconds pass
+    And an assistive technology focuses the "button" named "Row"
+    And 100 milliseconds pass
+    Then the property "status" of "loader" is 1
+    And the object "loader/row" exists
+    And the property "made" of "root" is 10
     And the log has no warning matching "Loader: .*(interrupted again|times in a row)"
     And the application has no fault
 
