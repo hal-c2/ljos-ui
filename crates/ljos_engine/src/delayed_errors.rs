@@ -162,7 +162,7 @@ impl Engine {
     /// tree by its faults, as a loader that falls back does: a binding
     /// that throws while the tree is made may recover before the creation
     /// around it is complete. A fault filed at once, as a handler's
-    /// exception is, is not in the range: it was told when it was raised.
+    /// exception is, is not among them: it was told when it was raised.
     pub fn after_creation_told(&self, f: impl FnOnce(&Engine, &[FaultReport]) + 'static) {
         let outermost = self.inner.delayed.open.borrow().first().copied();
         match outermost {
