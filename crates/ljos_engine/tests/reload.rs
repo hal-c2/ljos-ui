@@ -1123,6 +1123,59 @@ Item {
 }
 
 #[test]
+fn a_failed_reload_takes_back_what_it_stood_in_for() {
+    // The attempt loads a file that uses a stand-in, then fails: the old
+    // tree goes on, and so does what the audit read before.
+    let main = r#"import QtQuick
+Item {
+  id: root
+  objectName: "root"
+}
+"#;
+    let mut r = rig(&[("Main", main)]);
+    assert!(r.h.engine.stood_in_modules().is_empty());
+    // Nothing gives the root its required property.
+    let broken = main
+        .replace(
+            "import QtQuick\n",
+            "import QtQuick\nimport QtQuick3D.Helpers\n",
+        )
+        .replace(
+            "  objectName: \"root\"\n",
+            "  objectName: \"root\"\n  required property string label\n  SceneGizmo { }\n",
+        );
+    assert!(matches!(
+        r.edit("Main", &broken),
+        Err(ReloadError::Failed(_))
+    ));
+    assert!(r.h.engine.stood_in_modules().is_empty());
+}
+
+#[test]
+fn a_library_type_that_is_a_stand_in_is_counted_while_it_stands() {
+    // The library file's only object is its root, which carries the
+    // location of the declaration that uses it.
+    let h = engine();
+    h.engine.add_component_library(support::compile(&[(
+        "Lib/Gizmo",
+        "import QtQuick\nimport QtQuick3D.Helpers\nSceneGizmo { }\n",
+    )]));
+    h.engine
+        .register_qml_type("QtQuick", ljos_engine::Version::new(2, 0), "Lib/Gizmo")
+        .unwrap();
+    h.files(&[(
+        "Main",
+        "import QtQuick\nItem {\n  Gizmo { objectName: \"gizmo\" }\n}\n",
+    )]);
+    let root = h.engine.create_from_url("Main", None, Vec::new()).unwrap();
+    assert_eq!(h.engine.stood_in_modules(), ["QtQuick3D.Helpers"]);
+    let gizmo = h.find(root, "gizmo");
+    assert!(h.engine.destroy(gizmo));
+    h.engine.process_deferred_deletes();
+    assert!(h.engine.stood_in_modules().is_empty());
+}
+
+#[test]
 fn reloads_leave_no_script_types_behind() {
     let mut r = rig(&[("Main", USES_COUNTER), ("Counter", COUNTER_FILE)]);
     // The file that is edited has a script of its own, which a value

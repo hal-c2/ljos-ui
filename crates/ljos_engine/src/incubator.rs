@@ -869,6 +869,7 @@ impl Engine {
             }
             if let Some(&root) = inst.objects.first() {
                 self.set_context_root(f.ctx, root);
+                self.note_library_root(root, &inst.file.url);
             }
             f.closing = Some((inst, 0));
             return Ok(None);

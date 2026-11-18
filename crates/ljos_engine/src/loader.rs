@@ -602,6 +602,12 @@ pub(crate) struct LoaderState {
     /// are loaded once and kept past a new source, and count for the
     /// audit only while the scene has objects made of them.
     pub(crate) library_stood_in: HashMap<String, Vec<String>>,
+    /// The roots made of those files, with the file's url. A component
+    /// file's root carries its user's location, so it is not found by
+    /// where the scene's objects are declared.
+    pub(crate) library_roots: Vec<(ObjectId, Atom)>,
+    /// How many of those were alive when the list was last swept.
+    pub(crate) library_roots_kept: usize,
     /// What the log has said stands in: a module by the first part of its
     /// name (`QtGraphs`), a type of one the runtime builds part of by its
     /// module and name (`QtQuick3D.Helpers.Name`). Once each for the
@@ -1114,7 +1120,15 @@ impl Engine {
     /// types stand in as empty Items, by the first part of their name
     /// (`QtGraphs`), sorted: what they would show is not in the scene.
     pub fn stood_in_modules(&self) -> Vec<String> {
-        let live = self.live_urls();
+        let mut live = self.live_urls();
+        {
+            let store = self.inner.store.borrow();
+            let mut loader = self.inner.loader.borrow_mut();
+            loader
+                .library_roots
+                .retain(|(root, _)| store.objects.contains_key(*root));
+            live.extend(loader.library_roots.iter().map(|(_, url)| url.clone()));
+        }
         let loader = self.inner.loader.borrow();
         let library = loader
             .library_stood_in
@@ -1138,11 +1152,6 @@ impl Engine {
         }
     }
 
-    /// After a reload, the modules are those of the files the objects that
-    /// stand were declared in, as a fresh load of the new files loads
-    /// them: a file edited or no longer used takes back what it used.
-    /// The root of a component file carries its user's location, so the
-    /// files of the instances that stand are counted too.
     /// The files the scene has objects of, by url.
     fn live_urls(&self) -> HashSet<Atom> {
         let store = self.inner.store.borrow();
@@ -1153,6 +1162,11 @@ impl Engine {
             .collect()
     }
 
+    /// After a reload, the modules are those of the files the objects that
+    /// stand were declared in, as a fresh load of the new files loads
+    /// them: a file edited or no longer used takes back what it used.
+    /// The root of a component file carries its user's location, so the
+    /// files of the instances that stand are counted too.
     pub(crate) fn recount_modules(&self) {
         let urls = self.live_urls();
         let keys: HashSet<String> = {
@@ -1301,6 +1315,28 @@ impl Engine {
             }
         }
         tell
+    }
+
+    /// Notes `root`, made of the file at `url`, when that file is a
+    /// library file something of which stands in: the audit counts it
+    /// while the root lives.
+    pub(crate) fn note_library_root(&self, root: ObjectId, url: &Atom) {
+        let mut loader = self.inner.loader.borrow_mut();
+        if loader.library_stood_in.is_empty() || !loader.library_stood_in.contains_key(url.as_str())
+        {
+            return;
+        }
+        // Delegates come and go: the roots gone are let go of as the list
+        // doubles, not only when the audit reads it.
+        if loader.library_roots.len() >= loader.library_roots_kept.max(32) * 2
+            && let Ok(store) = self.inner.store.try_borrow()
+        {
+            loader
+                .library_roots
+                .retain(|(root, _)| store.objects.contains_key(*root));
+            loader.library_roots_kept = loader.library_roots.len();
+        }
+        loader.library_roots.push((root, url.clone()));
     }
 
     /// What of `import` stands in as empty Items, if anything does.
