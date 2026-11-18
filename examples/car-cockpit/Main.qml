@@ -90,6 +90,7 @@ Rectangle {
                 anchors.bottom: dock.top
 
                 NavPanel {
+                    objectName: "navPanel"
                     anchors.fill: parent
                     visible: car.page === "nav"
                     theme: theme

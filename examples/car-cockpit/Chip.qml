@@ -43,8 +43,8 @@ Item {
         anchors.fill: parent
         radius: 16
         fill: chip.active ? chip.theme.selected : chip.theme.raised
-        border.color: chip.activeFocus ? chip.theme.text : chip.theme.line
-        border.width: chip.activeFocus ? 2 : 1
+        border.color: chip.theme.line
+        border.width: 1
         Behavior on fill {
             ColorAnimation {
                 duration: 100
@@ -73,6 +73,18 @@ Item {
             border.color: chip.tint
             border.width: 2
         }
+    }
+
+    // The keyboard's ring, outside the chip and above the glow, so a chip
+    // that is on shows focus too.
+    Rectangle {
+        anchors.fill: parent
+        anchors.margins: -4
+        radius: 20
+        fill: "transparent"
+        border.color: chip.theme.text
+        border.width: 2
+        visible: chip.activeFocus
     }
 
     Item {

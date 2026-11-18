@@ -136,3 +136,20 @@ export function nextTurn(fraction: number): Turn {
 export function metresTo(turn: Turn, fraction: number): number {
     return Math.max(0, Math.round(((turn.at - fraction) * length() * 4.2) / 10) * 10)
 }
+
+// A short way, as the driver's units count it: metres, or feet up to a
+// tenth of a mile and tenths of a mile beyond.
+export interface Short {
+    readonly amount: number
+    readonly unit: "m" | "ft" | "mi"
+}
+
+export function shortDistance(metres: number, miles: boolean): Short {
+    if (!miles) {
+        return { amount: metres, unit: "m" }
+    }
+    const feet = metres * 3.28084
+    return feet < 528
+        ? { amount: Math.round(feet / 10) * 10, unit: "ft" }
+        : { amount: Math.round((metres / 1609.344) * 10) / 10, unit: "mi" }
+}

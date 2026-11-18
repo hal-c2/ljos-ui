@@ -44,7 +44,9 @@ Object {
         const target = Drive.targetSpeed(car.gear, car.current)
         // A car closes most of the gap in a second, not all of it.
         const next = Math.abs(target - car.speed) < 1 ? target : car.speed + (target - car.speed) * 0.55
-        car.power = car.gear === "P" ? 0 : Drive.power(car.speed, next)
+        // A car that has come to rest draws nothing, whatever the last
+        // second's braking won back: the clock may stop on this tick.
+        car.power = car.gear === "P" || next === 0 ? 0 : Drive.power(car.speed, next)
         const km = Drive.distance(next, 1)
         car.odometer = car.odometer + km
         car.charge = Math.max(0.05, car.charge - (km * Drive.rangeCost(next)) / 520)

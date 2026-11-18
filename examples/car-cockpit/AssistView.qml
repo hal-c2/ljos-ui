@@ -168,6 +168,7 @@ Item {
     Item {
         id: hint
         readonly property Nav.Turn turn: Nav.nextTurn(view.car.travelled)
+        readonly property Nav.Short ahead: Nav.shortDistance(Nav.metresTo(hint.turn, view.car.travelled), view.car.miles)
         anchors.right: parent.right
         anchors.top: parent.top
         anchors.topMargin: 8
@@ -187,7 +188,7 @@ Item {
             anchors.leftMargin: 10
             anchors.right: parent.right
             y: 8
-            text: t`${Nav.metresTo(hint.turn, view.car.travelled)} m`
+            text: t`${hint.ahead.amount} ${hint.ahead.unit}`
             color: view.theme.text
             font.size: 18
             font.weight: Font.DemiBold

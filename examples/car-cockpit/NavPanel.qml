@@ -16,6 +16,8 @@ Item {
 
     readonly property Nav.Fix fix: Nav.fixAt(panel.car.travelled)
     readonly property Nav.Turn turn: Nav.nextTurn(panel.car.travelled)
+    // How far the turn is, in the driver's units.
+    readonly property Nav.Short ahead: Nav.shortDistance(Nav.metresTo(panel.turn, panel.car.travelled), panel.car.miles)
     // The map fills the panel's width; the panel shows a band of it that
     // follows the car, so the car stays in sight on a wide, short screen.
     readonly property real fit: panel.width / 1000
@@ -171,7 +173,7 @@ Item {
         border.color: panel.theme.line
         border.width: 1
         Accessible.role: Accessible.StaticText
-        Accessible.name: t`In ${Nav.metresTo(panel.turn, panel.car.travelled)} metres, ${panel.turn.kind} onto ${panel.turn.street}`
+        Accessible.name: t`In ${panel.ahead.amount} ${panel.ahead.unit === "m" ? "metres" : panel.ahead.unit === "ft" ? "feet" : "miles"}, ${panel.turn.kind} onto ${panel.turn.street}`
         Neon {
             x: 20
             y: 24
@@ -191,7 +193,7 @@ Item {
             x: 104
             y: 20
             width: card.width - 120
-            text: t`${Nav.metresTo(panel.turn, panel.car.travelled)} m`
+            text: t`${panel.ahead.amount} ${panel.ahead.unit}`
             color: panel.theme.text
             font.size: 32
             font.weight: Font.DemiBold

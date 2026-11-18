@@ -149,6 +149,15 @@ Feature: The car cockpit example
       When 3 seconds pass
       Then the property "speed" of "car" is 0
 
+    Scenario: A car that coasts to rest in neutral draws no power
+      When the user clicks the "button" "R"
+      And the property "speed" of "car" is set to 6
+      And the user clicks the "button" "N"
+      And 5 seconds pass
+      Then the property "speed" of "car" is 0
+      And the property "running" of "drive" is false
+      And the property "power" of "car" is 0
+
   Rule: The player plays, pauses and skips
 
     Background:
@@ -173,7 +182,18 @@ Feature: The car cockpit example
 
     Scenario: Before the first track comes the last
       When the user clicks the "button" "Previous track"
-      Then the property "track" of "car" is at least 1
+      Then the property "track" of "car" is 5
+
+  Rule: Distances follow the units the driver chose
+
+    Scenario: In miles the next turn is counted in feet or miles, not metres
+      When "Main.qml" is loaded
+      And the property "width" of "cockpit" is set to 400
+      And the property "height" of "cockpit" is set to 225
+      Then the property "ahead.unit" of "navPanel" is "m"
+      When the user clicks the "button" "Settings"
+      And the user clicks the "button" "Miles"
+      Then the property "ahead.unit" of "navPanel" is not "m"
 
   Rule: Settings change the look and the glow
 
