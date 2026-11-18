@@ -334,6 +334,29 @@ Feature: Ljós's own style: the icon and the text of a button and a menu row
       Then the property "bottomPadding" of "beside" is 0
       And the property "bottomPadding" of "under" is 4
 
+  Rule: A button or tab given its own content has the padding its display asks for
+
+    # Only the style's own content says whether it draws the icon over the
+    # text. Content a caller gives says nothing, so the display decides.
+    @api-QtQuick.Controls.AbstractButton.display
+    Scenario: A button or tab given its own content and shown under its icon keeps half a spacing above and below
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.impl
+        import Ljos.Controls
+        Item {
+          width: 300; height: 100
+          Button { objectName: "under"; text: "Save"; display: IconLabel.TextUnderIcon; contentItem: Text { text: "Save" } }
+          TabButton { objectName: "tabUnder"; x: 100; text: "Files"; display: IconLabel.TextUnderIcon; contentItem: Text { text: "Files" } }
+          Button { objectName: "beside"; x: 200; text: "Save"; contentItem: Text { text: "Save" } }
+        }
+        """
+      Then the property "topPadding" of "under" is 4
+      And the property "bottomPadding" of "under" is 4
+      And the property "verticalPadding" of "tabUnder" is 4
+      And the property "topPadding" of "beside" is 0
+
   Rule: A button that shows its icon alone has it in its middle, as tall as it is drawn
 
     # Wider than it asks for, the icon is in the middle of the button, in

@@ -48,9 +48,15 @@ T.Button {
     // text is taller than that, so the button grows to it and keeps half a
     // spacing above and below, as it keeps a spacing beside its text. With
     // only one of the two shown it is one line, whatever the display.
-    // Each edge on its own, so a button given one keeps the other.
-    topPadding: contentItem && contentItem.iconOverText === true ? Theme.spacing / 2 : 0
-    bottomPadding: contentItem && contentItem.iconOverText === true ? Theme.spacing / 2 : 0
+    // Content a caller gives does not say what it draws, so for it the
+    // display decides. Each edge on its own, so a button given one keeps
+    // the other.
+    topPadding: (contentItem && contentItem.iconOverText !== undefined
+                 ? contentItem.iconOverText === true
+                 : display === T.AbstractButton.TextUnderIcon) ? Theme.spacing / 2 : 0
+    bottomPadding: (contentItem && contentItem.iconOverText !== undefined
+                    ? contentItem.iconOverText === true
+                    : display === T.AbstractButton.TextUnderIcon) ? Theme.spacing / 2 : 0
     spacing: Theme.spacing
     hoverEnabled: true
     font.pixelSize: Theme.fontSize

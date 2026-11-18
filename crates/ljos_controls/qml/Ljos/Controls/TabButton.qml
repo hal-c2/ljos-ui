@@ -31,7 +31,11 @@ T.TabButton {
     // One line is centred in the strip's height; the icon over the text is
     // taller, so the tab grows to it and keeps half a spacing above and below.
     // With only one of the two shown it is one line, whatever the display.
-    verticalPadding: contentItem && contentItem.iconOverText === true ? Theme.spacing / 2 : 0
+    // Content a caller gives does not say what it draws, so for it the
+    // display decides.
+    verticalPadding: (contentItem && contentItem.iconOverText !== undefined
+                      ? contentItem.iconOverText === true
+                      : display === T.AbstractButton.TextUnderIcon) ? Theme.spacing / 2 : 0
     spacing: Theme.spacingSmall
     hoverEnabled: true
     font.pixelSize: Theme.fontSizeSmall
