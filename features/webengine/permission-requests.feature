@@ -128,6 +128,52 @@ Feature: A view answers what a page asks permission for
     Then the property "asked" of "view" is 9
     And the property "title" of "view" is "read copied"
 
+  # Asking takes the focus away from the page, as a question the view
+  # shows does when the user answers it. The page had the focus when it
+  # asked, so what it was allowed still reads the clipboard.
+  @ljos-only @api-QtWebEngine.WebEngineView.permissionRequested @api-QtWebEngine.WebEnginePermission.grant
+  Scenario: A page granted the clipboard after the focus left it still reads it
+    Given the web server serves the text file "paste.html":
+      """
+      <!doctype html>
+      <html><head><title>waiting</title></head>
+      <body style="margin:0"><div style="height:100px; background:#00ff00" onclick="
+        navigator.clipboard.writeText('copied').then(() => navigator.clipboard.readText())
+          .then(text => document.title = 'read ' + text, error => document.title = error.name)"></div>
+      </body></html>
+      """
+    And the QML:
+      """qml
+      import QtQuick
+      import QtWebEngine
+      Item {
+        width: 200; height: 140
+        WebEngineView {
+          id: view; objectName: "view"
+          width: 200; height: 100
+          focus: true
+          property int asked: -1
+          property var kept: null
+          url: "$SERVER/paste.html"
+          onPermissionRequested: permission => {
+            asked = permission.permissionType
+            kept = permission
+            answer.forceActiveFocus()
+            later.start()
+          }
+        }
+        TextInput { id: answer; objectName: "answer"; y: 100; width: 200; height: 40 }
+        Timer { id: later; interval: 500; onTriggered: view.kept.grant() }
+      }
+      """
+    When 2 seconds pass
+    And the user presses the pointer at 100, 50
+    And the user releases the pointer at 100, 50
+    And 2 seconds pass
+    Then the property "asked" of "view" is 9
+    And the property "activeFocus" of "answer" is true
+    And the property "title" of "view" is "read copied"
+
   @api-QtWebEngine.WebEngineView.permissionRequested @api-QtWebEngine.WebEnginePermission.grant
   Scenario: A page from a web server is asked for its location
     Given the web server serves the text file "where.html":
@@ -152,6 +198,66 @@ Feature: A view answers what a page asks permission for
       """
     When 3 seconds pass
     Then the property "asked" of "view" is 8
+
+  # A page that watches where it is asks as one asking where it is once
+  # does, and hears the view's answer through its watch.
+  @api-QtWebEngine.WebEngineView.permissionRequested @api-QtWebEngine.WebEnginePermission.deny
+  Scenario: A page watching its location is asked and hears the answer
+    Given the web server serves the text file "watch.html":
+      """
+      <!doctype html>
+      <html><head><title>waiting</title></head><body><script>
+      navigator.geolocation.watchPosition(() => document.title = "found",
+        error => document.title = "error " + error.code)
+      </script></body></html>
+      """
+    And the QML:
+      """qml
+      import QtQuick
+      import QtWebEngine
+      WebEngineView {
+        id: view; objectName: "view"
+        width: 200; height: 100
+        property int asked: 0
+        url: "$SERVER/watch.html"
+        onPermissionRequested: permission => { asked++; permission.deny() }
+      }
+      """
+    When 3 seconds pass
+    Then the property "title" of "view" is "error 1"
+    And the property "asked" of "view" is 1
+
+  # As with the clipboard granted, the off-screen Qt oracle never shows
+  # this page, so it cannot say what the page heard.
+  @ljos-only @api-QtWebEngine.WebEngineView.permissionRequested @api-QtWebEngine.WebEnginePermission.deny
+  Scenario: A page refused the clipboard hears it was refused
+    Given the web server serves the text file "paste.html":
+      """
+      <!doctype html>
+      <html><head><title>waiting</title></head>
+      <body style="margin:0"><div style="height:100px; background:#00ff00" onclick="
+        navigator.clipboard.readText().then(text => document.title = 'read ' + text, error => document.title = error.name)"></div>
+      </body></html>
+      """
+    And the QML:
+      """qml
+      import QtQuick
+      import QtWebEngine
+      WebEngineView {
+        id: view; objectName: "view"
+        width: 200; height: 100
+        focus: true
+        property int asked: -1
+        url: "$SERVER/paste.html"
+        onPermissionRequested: permission => { asked = permission.permissionType; permission.deny() }
+      }
+      """
+    When 2 seconds pass
+    And the user presses the pointer at 100, 50
+    And the user releases the pointer at 100, 50
+    And 2 seconds pass
+    Then the property "asked" of "view" is 9
+    And the property "title" of "view" is "NotAllowedError"
 
   # A view that goes leaves its question unanswered, not refused: the
   # next view of the same page is asked again, however many went before.

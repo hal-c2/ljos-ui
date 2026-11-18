@@ -52,6 +52,10 @@ if [ -n "${LJOS_BDD_CARGO_FEATURES:-}" ]; then
     *,webengine,*)
       cef=1
       export CEF_PATH="${CEF_PATH:-${CARGO_TARGET_DIR:-$PWD/target}/cef}"
+      # @chromium runs headless (features/README.md), as on a machine with
+      # no display: on a desktop Chromium would take the desktop's display
+      # and pass what such a machine fails.
+      export LJOS_WEBENGINE_CHROMIUM_FLAGS="${LJOS_WEBENGINE_CHROMIUM_FLAGS---ozone-platform=headless}"
       cargo build --quiet -p ljos_webengine --features cef --bin ljos-webengine-helper ;;
   esac
 fi
