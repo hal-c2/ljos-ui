@@ -31,7 +31,7 @@ Ljós is a general-purpose Rust UI toolkit for malleable software: apps that peo
 | Lint the ledger | `mise run features:lint` |
 | External suite, and the acceptance mechanism's own test | `mise run features:acceptance <suite>`, `mise run features:acceptance-test` |
 | QML tests (`tst_*.qml`), and against Qt's qmltestrunner | `mise run qttest [files…]`, `mise run qttest:parity` |
-| qtdoc gallery | `mise run gallery` (after `mise run gallery:reference`; it runs `gallery:build`) |
+| qtdoc gallery | `mise run gallery` (after `mise run gallery:reference`; it builds what `gallery:build` does) |
 | Run one corpus example; fetch its assets | `mise run gallery:run <id>` (no id lists them), `mise run gallery:assets [id…]` |
 | Click through corpus examples off-screen, list what each click did and logged | `mise run gallery:drive [id…]` |
 | Edit corpus examples while they run off-screen, list what each save kept | `mise run gallery:hot <id…>` |
@@ -53,6 +53,6 @@ Ljós is a general-purpose Rust UI toolkit for malleable software: apps that peo
 ## Conventions
 
 - Rust 1.98.1, edition 2024, resolver 3. Versions are pinned in `[workspace.dependencies]`.
-- `mise-tasks/` are bash scripts with `#MISE` headers and `set -euo pipefail`. A task that runs cargo sources `mise-tasks/_lib/env.sh` and runs `cargo` (never `exec cargo`): `target_dir` there is the one place the target directory is decided. That is cargo's own order: `CARGO_TARGET_DIR`, else `CARGO_BUILD_TARGET_DIR`, else the first `build.target-dir` in the settings cargo reads (the checkout's `.cargo/config.toml`, those above it, cargo's home), else `target/`. A linked worktree takes its main checkout's settings and `target/` after its own. So a new worktree, and the MCP server its `.mcp.json` starts, reuse the main checkout's build.
+- `mise-tasks/` are bash scripts with `#MISE` headers and `set -euo pipefail`. A task that runs cargo, itself or through a script under `scripts/`, sources `mise-tasks/_lib/env.sh` and runs `cargo` (never `exec cargo`): `target_dir` there is the one place the target directory is decided. That is cargo's own order: `CARGO_TARGET_DIR`, else `CARGO_BUILD_TARGET_DIR`, else the first `build.target-dir` in the settings cargo reads (the checkout's `.cargo/config`, else its `.cargo/config.toml`, those above it, cargo's home), else `target/`. A linked worktree whose own settings name no target takes its main checkout's, and is given the main checkout's settings, then its own again. So a new worktree, and the MCP server its `.mcp.json` starts (through `mise-tasks/mcp`; `tasks:smoke` checks that), reuse the main checkout's build. A task writes its reports and sandboxes under `checkout_dir <name>`, so a worktree's runs keep to their own corner of the shared target, and a long run that execs programs it built takes them from `pin_programs`.
 - Use `thiserror` in libraries and `anyhow` only in binaries.
 - Comments explain why, not what.
