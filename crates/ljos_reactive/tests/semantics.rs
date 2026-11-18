@@ -5,7 +5,7 @@ use std::rc::Rc;
 
 use ljos_reactive::{
     Diagnostic, Graph, NodeId, NodeState, Options, OverrideValue, Provenance, ReactiveError,
-    RestoreMode, WriteKind,
+    Reader, RestoreMode, WriteKind,
 };
 
 type Log<T> = Rc<RefCell<Vec<T>>>;
@@ -1165,6 +1165,135 @@ fn an_effect_hears_of_a_change_to_what_it_read_before_a_nested_run_took_its_read
     .unwrap();
     g.set(gate, 1);
     assert_eq!(seen.get(), 7);
+}
+
+#[test]
+fn an_effect_hears_of_a_change_to_what_it_read_before_a_nested_run_took_its_read_back_and_read_again()
+ {
+    // As above, and after taking its read back the nested binding reads a
+    // binding of `src`: `src` names that binding's run, which ends before
+    // it, and the first effect still holds what it read.
+    let g = Graph::new();
+    let gate = g.property(g.root(), 0).unwrap();
+    let src = g.property(g.root(), 0).unwrap();
+    let out = g.property(g.root(), 0).unwrap();
+    let inner = g.binding(g.root(), 0, move |g| g.get(src)).unwrap();
+    let aside = g
+        .binding(g.root(), 0, move |g| {
+            let at = g.reads_len().unwrap();
+            let v = g.get(src);
+            let mut gone: Vec<NodeId> = Vec::new();
+            g.take_reads_since(at, &mut gone);
+            g.get(inner);
+            v
+        })
+        .unwrap();
+    let seen = Rc::new(Cell::new(-1));
+    let s = seen.clone();
+    g.effect(g.root(), move |g| {
+        if g.get(gate) != 0 {
+            s.set(g.get(src));
+            g.get(aside);
+            g.set(out, 1);
+        }
+    })
+    .unwrap();
+    g.effect(g.root(), move |g| {
+        if g.get(gate) != 0 {
+            g.set(src, 7);
+        }
+    })
+    .unwrap();
+    g.set(gate, 1);
+    assert_eq!(seen.get(), 7);
+}
+
+#[test]
+fn an_effect_hears_of_a_change_to_what_it_was_adopted_as_reading_beside_a_nested_run() {
+    // A node made for what two runs read, one nested in the other, adopts
+    // both from inside a third: the nested reader is the last, and the
+    // first effect still runs again when the node changes.
+    let g = Graph::new();
+    let gate = g.property(g.root(), 0).unwrap();
+    let n = g.property(g.root(), 0).unwrap();
+    let out = g.property(g.root(), 0).unwrap();
+    let readers: Rc<RefCell<Vec<Reader>>> = Rc::default();
+    let r = readers.clone();
+    let adopt = g
+        .binding(g.root(), 0, move |g| {
+            let rs: Vec<Reader> = r.borrow_mut().drain(..).collect();
+            g.adopt_readers(n, rs);
+            0
+        })
+        .unwrap();
+    let r = readers.clone();
+    let mid = g
+        .binding(g.root(), 0, move |g| {
+            r.borrow_mut().extend(g.reader());
+            g.get(adopt)
+        })
+        .unwrap();
+    let runs = Rc::new(Cell::new(0));
+    let (k, r) = (runs.clone(), readers.clone());
+    g.effect(g.root(), move |g| {
+        if g.get(gate) != 0 {
+            r.borrow_mut().extend(g.reader());
+            g.get(mid);
+            g.set(out, 1);
+            k.set(k.get() + 1);
+        }
+    })
+    .unwrap();
+    g.effect(g.root(), move |g| {
+        if g.get(gate) != 0 {
+            g.set(n, 7);
+        }
+    })
+    .unwrap();
+    g.set(gate, 1);
+    assert_eq!(runs.get(), 2);
+}
+
+#[test]
+fn effects_hear_of_a_change_to_what_they_were_adopted_as_reading_inner_first_untracked() {
+    // As above, but the nested effect adopts both readers itself, inside
+    // `untrack`, its own first: the first effect is the last reader, and
+    // the nested one, still going when the node changes, runs again too.
+    let g = Graph::new();
+    let gate = g.property(g.root(), 0).unwrap();
+    let n = g.property(g.root(), 0).unwrap();
+    let out = g.property(g.root(), 0).unwrap();
+    let out2 = g.property(g.root(), 0).unwrap();
+    let readers: Rc<RefCell<Vec<Reader>>> = Rc::default();
+    let (outer, nested) = (Rc::new(Cell::new(0)), Rc::new(Cell::new(0)));
+    let (k, r) = (outer.clone(), readers.clone());
+    g.effect(g.root(), move |g| {
+        if g.get(gate) != 0 {
+            r.borrow_mut().extend(g.reader());
+            g.set(out, 1);
+            k.set(k.get() + 1);
+        }
+    })
+    .unwrap();
+    let (k, r) = (nested.clone(), readers.clone());
+    g.effect(g.root(), move |g| {
+        if g.get(out) != 0 {
+            r.borrow_mut().extend(g.reader());
+            let rs: Vec<Reader> = r.borrow_mut().drain(..).rev().collect();
+            g.untrack(|| g.adopt_readers(n, rs));
+            g.set(out2, 1);
+            k.set(k.get() + 1);
+        }
+    })
+    .unwrap();
+    g.effect(g.root(), move |g| {
+        if g.get(out2) != 0 {
+            g.set(n, 7);
+        }
+    })
+    .unwrap();
+    g.set(gate, 1);
+    assert_eq!((outer.get(), nested.get()), (2, 2));
 }
 
 #[test]
