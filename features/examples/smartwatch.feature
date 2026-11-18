@@ -201,7 +201,9 @@ Feature: The smartwatch example
       And the user turns the wheel 4 notches up at 227, 227
       And the user clicks the "button" "Start timer"
       Then the property "timerState" of "watch" is "running"
-      When 61 seconds pass
+      When 55 seconds pass
+      Then the property "timerState" of "watch" is "running"
+      When 6 seconds pass
       Then the property "timerState" of "watch" is "ringing"
 
     Scenario: The stopwatch counts, keeps laps, and stops
@@ -337,3 +339,10 @@ Feature: The smartwatch example
       And 4 seconds pass
       Then the property "spin" of "showcase" is at least 8
       And the property "spin" of "showcase" is at most 16
+
+  Rule: On the 3D model nobody can touch the watch, so it stays awake
+
+    Scenario: Left alone, the 3D watch keeps its lit face
+      When "Showcase.qml" is loaded
+      And 16 seconds pass
+      Then the property "ambient" of "watch" is false

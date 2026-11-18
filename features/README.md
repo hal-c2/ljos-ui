@@ -156,7 +156,7 @@ Objects are named by `objectName`; `a/b` finds `b` below `a`. Properties may be 
 | `Given the QML:` + doc string | write the source as `Scenario.qml` and create it |
 | `Given the file "X.qml":` + doc string | make `X.qml` available; nothing is created yet. The name may be a path (`kit/Badge.qml`), and a file named `qmldir` (`kit/qmldir`) describes the module of its directory |
 | `Given the files of the module Ljos.Design` | make the files `ljos design export` writes available in `Ljos/Design`, so that `import Ljos.Design` finds the module in the scenario's directory on either backend |
-| `Given the files of the example "car-cockpit"` | make every file of `examples/car-cockpit` available at its own path below the scenario's directory: its QML, scripts and `qmldir` files to load, anything else (models, pictures) beside them; nothing is created yet, so a scenario then loads its `Main.qml` |
+| `Given the files of the example "smartwatch"` | make every file of `examples/smartwatch` available at its own path below the scenario's directory: its QML, scripts and `qmldir` files to load, anything else (models, pictures) beside them; nothing is created yet, so a scenario then loads its `Main.qml` |
 | `Given the translation file "X.ts":` + doc string | make the translations of a Qt Linguist file (doc string labelled `xml`) available for the language its `language` attribute names; give it before the QML |
 | `Given the translation file "X.po":` + doc string | make the `t` messages of a PO catalogue (doc string labelled `po`) available for the language its `Language:` header names, or else its file name; Ljós only |
 | `Given an assistive technology is listening` | the accessibility tree is read from here on, so later steps see it follow each change |

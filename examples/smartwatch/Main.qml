@@ -28,6 +28,9 @@ Rectangle {
     readonly property real corner: display.round ? display.width / 2 : 96
     // Asleep with always on off: the screen is off.
     readonly property bool dark: watch.ambient && !watch.alwaysOn
+    // Whether, left alone, the watch sleeps. A watch shown off where nobody
+    // can touch it, as on the 3D model, stays awake.
+    property bool sleeps: true
 
     Theme {
         id: theme
@@ -68,13 +71,14 @@ Rectangle {
         id: idle
         objectName: "idle"
         interval: 15000
-        running: true
+        running: display.sleeps
         onTriggered: watch.sleep()
     }
     Connections {
         target: watch
         function onTouched() {
-            idle.restart()
+            if (display.sleeps)
+                idle.restart()
         }
     }
     // A countdown wakes the watch once, at its end.

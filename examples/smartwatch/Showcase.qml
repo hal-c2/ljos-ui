@@ -55,11 +55,13 @@ Rectangle {
     }
 
     // The watch's software at its round screen's size. It draws only into
-    // the screen's texture; it is not shown flat as well.
+    // the screen's texture; it is not shown flat as well. Nobody can touch
+    // it here, so it never sleeps to its dim face.
     Main {
         id: screen
         width: 454
         height: 454
         visible: false
+        sleeps: false
     }
 }
