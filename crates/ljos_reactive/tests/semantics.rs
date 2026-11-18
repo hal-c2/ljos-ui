@@ -1068,6 +1068,106 @@ fn an_effect_hears_of_a_change_its_own_write_ran_after_it_first_read() {
 }
 
 #[test]
+fn an_effect_hears_of_a_change_to_what_it_read_before_a_nested_run_read_it() {
+    // As above, but after the first effect reads `src`, a binding it reads
+    // reads `src` too and is done before the write: `src` names that
+    // binding's run as its last reader, not the first effect's, which
+    // still runs again.
+    let g = Graph::new();
+    let gate = g.property(g.root(), 0).unwrap();
+    let src = g.property(g.root(), 0).unwrap();
+    let out = g.property(g.root(), 0).unwrap();
+    let also = g.binding(g.root(), 0, move |g| g.get(src)).unwrap();
+    let seen = Rc::new(Cell::new(-1));
+    let s = seen.clone();
+    g.effect(g.root(), move |g| {
+        if g.get(gate) != 0 {
+            s.set(g.get(src));
+            g.get(also);
+            g.set(out, 1);
+        }
+    })
+    .unwrap();
+    g.effect(g.root(), move |g| {
+        if g.get(gate) != 0 {
+            g.set(src, 7);
+        }
+    })
+    .unwrap();
+    g.set(gate, 1);
+    assert_eq!(seen.get(), 7);
+}
+
+#[test]
+fn an_effect_hears_of_a_change_through_a_binding_a_nested_run_read_after_it() {
+    // As above, through a binding of `src`: the change reaches the effect
+    // as a check, from that binding, which names the nested binding's run
+    // as its last reader.
+    let g = Graph::new();
+    let gate = g.property(g.root(), 0).unwrap();
+    let src = g.property(g.root(), 0).unwrap();
+    let out = g.property(g.root(), 0).unwrap();
+    let b = g.binding(g.root(), 0, move |g| g.get(src)).unwrap();
+    let also = g.binding(g.root(), 0, move |g| g.get(b)).unwrap();
+    let seen = Rc::new(Cell::new(-1));
+    let s = seen.clone();
+    g.effect(g.root(), move |g| {
+        if g.get(gate) != 0 {
+            s.set(g.get(b));
+            g.get(also);
+            g.set(out, 1);
+        }
+    })
+    .unwrap();
+    g.effect(g.root(), move |g| {
+        if g.get(gate) != 0 {
+            g.set(src, 7);
+        }
+    })
+    .unwrap();
+    g.set(gate, 1);
+    assert_eq!(seen.get(), 7);
+}
+
+#[test]
+fn an_effect_hears_of_a_change_to_what_it_read_before_a_nested_run_took_its_read_back() {
+    // As above, but the nested binding reads `src` and takes the read back:
+    // `src` names no run as its last reader, and the first effect still
+    // holds what it read.
+    let g = Graph::new();
+    let gate = g.property(g.root(), 0).unwrap();
+    let src = g.property(g.root(), 0).unwrap();
+    let out = g.property(g.root(), 0).unwrap();
+    let aside = g
+        .binding(g.root(), 0, move |g| {
+            let at = g.reads_len().unwrap();
+            let v = g.get(src);
+            let mut gone: Vec<NodeId> = Vec::new();
+            g.take_reads_since(at, &mut gone);
+            v
+        })
+        .unwrap();
+    let seen = Rc::new(Cell::new(-1));
+    let s = seen.clone();
+    g.effect(g.root(), move |g| {
+        if g.get(gate) != 0 {
+            s.set(g.get(src));
+            g.get(aside);
+            g.set(out, 1);
+        }
+    })
+    .unwrap();
+    g.effect(g.root(), move |g| {
+        if g.get(gate) != 0 {
+            g.set(src, 7);
+        }
+    })
+    .unwrap();
+    g.set(gate, 1);
+    assert_eq!(seen.get(), 7);
+}
+
+#[test]
 fn only_an_assigned_value_holds_what_a_write_would_write() {
     let g = Graph::new();
     let a = g.property(g.root(), 1).unwrap();
