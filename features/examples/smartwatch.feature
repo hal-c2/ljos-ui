@@ -201,9 +201,9 @@ Feature: The smartwatch example
       And the user turns the wheel 4 notches up at 227, 227
       And the user clicks the "button" "Start timer"
       Then the property "timerState" of "watch" is "running"
-      When 55 seconds pass
+      When 59 seconds pass
       Then the property "timerState" of "watch" is "running"
-      When 6 seconds pass
+      When 2 seconds pass
       Then the property "timerState" of "watch" is "ringing"
 
     Scenario: The stopwatch counts, keeps laps, and stops
