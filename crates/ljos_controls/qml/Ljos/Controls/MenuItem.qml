@@ -1,7 +1,10 @@
 // Ljós's own style (docs/DIALECT.md §4.16): a row of a menu, with an
 // optional icon (`iconName`, one of the style's own, wins over
 // `icon.source` and its action's), the shortcut that runs it muted at the end, and a
-// chevron where it opens a submenu.
+// chevron where it opens a submenu. `display` shows the icon alone or the
+// text alone (AbstractButton.IconOnly, TextOnly); a row keeps its icon in
+// the icons' column, so TextUnderIcon draws it beside the text, as by
+// default.
 import QtQuick
 import QtQuick.Controls.impl
 import QtQuick.Templates as T
@@ -50,6 +53,8 @@ T.MenuItem {
 
     contentItem: Component {
         Item {
+            readonly property bool showsIcon: control.display !== T.AbstractButton.TextOnly
+            readonly property bool showsText: control.display !== T.AbstractButton.IconOnly
             // The style's own icon, else the row's or its action's.
             readonly property Item mark: glyph.visible ? glyph : picture.visible ? picture : null
             readonly property real gutter: mark || control.iconSpace
@@ -58,7 +63,7 @@ T.MenuItem {
                                         + (more.visible ? more.width + control.spacing : 0)
                                         + (control.checkable ? Theme.iconSize + control.spacing : 0)
             readonly property real iconSize: Theme.iconSize
-            implicitWidth: gutter + label.implicitWidth + end
+            implicitWidth: gutter + (showsText ? label.implicitWidth : 0) + end
             implicitHeight: Math.max(label.implicitHeight, Theme.iconSize)
 
             // Mirroring moves anchors only: the icon's column is at the
@@ -67,7 +72,7 @@ T.MenuItem {
             Icon {
                 id: glyph
                 objectName: "glyph"
-                visible: control.iconName.length > 0
+                visible: control.iconName.length > 0 && parent.showsIcon
                 x: control.mirrored ? parent.width - width : 0
                 y: (parent.height - height) / 2
                 name: control.iconName
@@ -78,7 +83,7 @@ T.MenuItem {
             IconLabel {
                 id: picture
                 objectName: "picture"
-                visible: !glyph.visible && implicitWidth > 0
+                visible: control.iconName.length === 0 && parent.showsIcon && implicitWidth > 0
                 x: control.mirrored ? parent.width - parent.iconSize + (parent.iconSize - width) / 2
                                     : (parent.iconSize - width) / 2
                 y: (parent.height - height) / 2
@@ -91,6 +96,7 @@ T.MenuItem {
             IconLabel {
                 id: label
                 objectName: "label"
+                visible: parent.showsText
                 x: control.mirrored ? parent.end : parent.gutter
                 width: parent.width - parent.gutter - parent.end
                 height: parent.height

@@ -110,6 +110,113 @@ Feature: Ljós's own style: the icon and the text of a button and a menu row
       And the property "contentItem.gutter" of "save" is 24
       And the property "contentItem.gutter" of "quit" is 24
 
+  Rule: A button, a menu row and a tab show what their display asks for
+
+    Background:
+      Given a 16 by 16 image file "red.png" filled with "#ff0000"
+      And the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.impl
+        import Ljos.Controls
+        Item {
+          id: root; objectName: "root"
+          width: 480; height: 160
+          Button { id: plain; text: "Save" }
+          Button { id: beside; x: 80; text: "Save"; iconName: "plus" }
+          Button { id: iconOnly; x: 160; text: "Save"; iconName: "plus"; display: IconLabel.IconOnly }
+          Button { id: textOnly; x: 240; text: "Save"; iconName: "plus"; display: IconLabel.TextOnly }
+          Button { id: under; x: 320; text: "Save"; iconName: "plus"; display: IconLabel.TextUnderIcon }
+          Button { id: pictureTextOnly; x: 400; text: "Save"; icon.source: "red.png"; display: IconLabel.TextOnly }
+          MenuItem { id: rowIconOnly; y: 60; width: 120; text: "Open"; iconName: "folder"; display: IconLabel.IconOnly }
+          MenuItem { id: rowTextOnly; x: 120; y: 60; width: 120; text: "Open"; iconName: "folder"; display: IconLabel.TextOnly }
+          TabButton { id: tabIconOnly; x: 240; y: 60; text: "Files"; iconName: "folder"; display: IconLabel.IconOnly }
+          TabButton { id: tabTextOnly; x: 300; y: 60; text: "Files"; iconName: "folder"; display: IconLabel.TextOnly }
+          TabButton { id: tabUnder; x: 360; y: 60; text: "Files"; iconName: "folder"; display: IconLabel.TextUnderIcon }
+          function part(item, name) {
+            for (const child of item.children) {
+              if (child.objectName === name) return child
+              const found = part(child, name)
+              if (found) return found
+            }
+            return null
+          }
+          function shows(control) {
+            const glyph = part(control.contentItem, "glyph")
+            const picture = part(control.contentItem, "picture")
+            return [(glyph !== null && glyph.visible) || (picture !== null && picture.visible),
+                    part(control.contentItem, "label").visible]
+          }
+          // The middle of a part, across its control, and whether the icon is over the text.
+          function middle(control, name) {
+            const item = part(control.contentItem, name)
+            return Math.round(item.mapToItem(control, 0, 0).x + item.width / 2)
+          }
+          function over(control) {
+            const glyph = part(control.contentItem, "glyph")
+            return glyph.mapToItem(control, 0, 0).y + glyph.height <= part(control.contentItem, "label").mapToItem(control, 0, 0).y
+          }
+          property var got: []
+          function measure(which) {
+            const text = part(plain.contentItem, "label").implicitWidth
+            got = which === "beside" ? [beside.implicitContentWidth - text, shows(beside)]
+                : which === "iconOnly" ? [iconOnly.implicitContentWidth, shows(iconOnly)]
+                : which === "textOnly" ? [textOnly.implicitContentWidth - text, shows(textOnly)]
+                : which === "pictureTextOnly" ? [pictureTextOnly.implicitContentWidth - text, shows(pictureTextOnly)]
+                : which === "under" ? [under.implicitContentWidth - text,
+                                       under.implicitContentHeight - (16 + under.spacing + part(under.contentItem, "label").implicitHeight),
+                                       over(under), middle(under, "glyph") - middle(under, "label"),
+                                       under.implicitHeight - under.implicitContentHeight]
+                : which === "rowIconOnly" ? [rowIconOnly.contentItem.gutter, shows(rowIconOnly)]
+                : which === "rowTextOnly" ? [rowTextOnly.contentItem.gutter, shows(rowTextOnly)]
+                : which === "tabIconOnly" ? shows(tabIconOnly)
+                : which === "tabTextOnly" ? shows(tabTextOnly)
+                : [over(tabUnder), middle(tabUnder, "glyph") - middle(tabUnder, "label"),
+                   middle(tabUnder, "label") - Math.round(tabUnder.width / 2),
+                   tabUnder.implicitHeight - tabUnder.implicitContentHeight]
+          }
+        }
+        """
+
+    # Each answer is set against what a button with the same text and no
+    # icon asks for, so that no font's widths are written here.
+    @api-QtQuick.Controls.AbstractButton.display
+    Scenario Outline: A <control> shown <how> asks for the room of <what>
+      When the method "measure" of "root" is called with "<control>"
+      Then the property "got" of "root" is <got>
+
+      Examples:
+        | control         | how             | what                                       | got                        |
+        | beside          | beside its text | its icon, the spacing and its text         | [24, [true, true]]         |
+        | iconOnly        | as its icon     | its icon alone                             | [16, [true, false]]        |
+        | textOnly        | as its text     | its text alone                             | [0, [false, true]]         |
+        | pictureTextOnly | as its text     | its text alone, though given a picture     | [0, [false, true]]         |
+        | under           | under its icon  | the wider of the two, the icon over the text in the middle, and half a spacing above and below | [0, 0, true, 0, 8] |
+
+    # A row keeps its icons in the column the menu keeps for them, so the
+    # text under the icon is drawn beside it; out of a menu, a row with no
+    # icon shown keeps no column.
+    @api-QtQuick.Controls.AbstractButton.display
+    Scenario Outline: A menu row shown <how> shows <what>
+      When the method "measure" of "root" is called with "<control>"
+      Then the property "got" of "root" is <got>
+
+      Examples:
+        | control     | how         | what                     | got                 |
+        | rowIconOnly | as its icon | its icon in the column   | [24, [true, false]] |
+        | rowTextOnly | as its text | its text, and no column  | [0, [false, true]]  |
+
+    @api-QtQuick.Controls.AbstractButton.display
+    Scenario Outline: A tab shown <how> shows <what>
+      When the method "measure" of "root" is called with "<control>"
+      Then the property "got" of "root" is <got>
+
+      Examples:
+        | control     | how            | what                                     | got               |
+        | tabIconOnly | as its icon    | its icon alone                           | [true, false]     |
+        | tabTextOnly | as its text    | its text alone                           | [false, true]     |
+        | tabUnder    | under its icon | the icon over the text, in the tab's middle, and half a spacing above and below | [true, 0, 0, 8] |
+
   Rule: The text is drawn as its mnemonic says, and the keys read it as written
 
     Scenario: A button's "&" before a letter and its "&&" are not drawn

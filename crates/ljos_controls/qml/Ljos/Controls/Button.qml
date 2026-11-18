@@ -3,7 +3,9 @@
 // on its ground until the pointer is over it; `chevron` says it opens
 // something. Its icon (`icon.source`, or its action's) is drawn before
 // the text in the text's colour; `iconName`, one of the style's own
-// icons, wins over it. A checked button
+// icons, wins over it. `display` shows the icon alone, the text alone or
+// the icon over the text instead (T.AbstractButton.IconOnly, TextOnly,
+// TextUnderIcon). A checked button
 // has a ring inside its edge, so its state is not its colour alone.
 import QtQuick
 import QtQuick.Controls.impl
@@ -42,8 +44,11 @@ T.Button {
     // A checkable one keeps room for the ring a check draws inside its
     // edge, whether checked or not, so checking it does not resize it.
     padding: control.checkable ? Theme.spacing + 4 : Theme.spacing
-    topPadding: 0
-    bottomPadding: 0
+    // One line is centred in the background's height. The icon over the
+    // text is taller than that, so the button grows to it and keeps half a
+    // spacing above and below, as it keeps a spacing beside its text.
+    topPadding: display === T.AbstractButton.TextUnderIcon ? Theme.spacing / 2 : 0
+    bottomPadding: topPadding
     spacing: Theme.spacing
     hoverEnabled: true
     font.pixelSize: Theme.fontSize
@@ -56,22 +61,37 @@ T.Button {
 
     contentItem: Component {
         Item {
-            // What is drawn at the start: the style's own icon, else the
-            // button's or its action's.
+            // What `display` lets it show: the icon alone, the text alone,
+            // or both, the icon over the text or, by default, before it.
+            readonly property bool showsIcon: control.display !== T.AbstractButton.TextOnly
+            readonly property bool showsText: control.display !== T.AbstractButton.IconOnly
+            readonly property bool under: control.display === T.AbstractButton.TextUnderIcon
+            readonly property bool hasText: showsText && control.text.length > 0
+            // What is drawn at the start, or over the text: the style's own
+            // icon, else the button's or its action's.
             readonly property Item mark: glyph.visible ? glyph : picture.visible ? picture : null
-            readonly property real start: mark ? mark.width + (label.text.length > 0 ? control.spacing : 0) : 0
+            readonly property real textWidth: showsText ? label.implicitWidth : 0
+            readonly property real textHeight: hasText ? label.implicitHeight : 0
+            readonly property real start: mark && !under ? mark.width + (hasText ? control.spacing : 0) : 0
             readonly property real end: more.visible ? control.spacing + more.width : 0
-            implicitWidth: start + label.implicitWidth + end
-            implicitHeight: Math.max(label.implicitHeight, control.iconSize)
+            // Under, the mark and the text are one block in the middle.
+            readonly property real top: mark && under ? mark.height + (hasText ? control.spacing : 0) : 0
+            readonly property real stacked: top + textHeight
+            implicitWidth: (under ? Math.max(mark ? mark.width : 0, textWidth) : start + textWidth) + end
+            implicitHeight: under ? stacked
+                                  : Math.max(showsText ? label.implicitHeight : 0,
+                                             showsIcon ? control.iconSize : 0)
 
             // Mirroring moves anchors only, so each part is placed for
-            // either direction.
+            // either direction. Under the text, the mark is in the middle of
+            // what the chevron leaves.
             Icon {
                 id: glyph
                 objectName: "glyph"
-                visible: control.iconName.length > 0
-                x: control.mirrored ? parent.width - width : 0
-                y: (parent.height - height) / 2
+                visible: control.iconName.length > 0 && parent.showsIcon
+                x: parent.under ? (control.mirrored ? parent.end : 0) + (parent.width - parent.end - width) / 2
+                                : control.mirrored ? parent.width - width : 0
+                y: parent.under ? (parent.height - parent.stacked) / 2 : (parent.height - height) / 2
                 name: control.iconName
                 size: control.iconSize
                 color: control.ink
@@ -83,9 +103,10 @@ T.Button {
             IconLabel {
                 id: picture
                 objectName: "picture"
-                visible: !glyph.visible && implicitWidth > 0
-                x: control.mirrored ? parent.width - width : 0
-                y: (parent.height - height) / 2
+                visible: control.iconName.length === 0 && parent.showsIcon && implicitWidth > 0
+                x: parent.under ? (control.mirrored ? parent.end : 0) + (parent.width - parent.end - width) / 2
+                                : control.mirrored ? parent.width - width : 0
+                y: parent.under ? (parent.height - parent.stacked) / 2 : (parent.height - height) / 2
                 color: control.ink
             }
 
@@ -96,9 +117,11 @@ T.Button {
             IconLabel {
                 id: label
                 objectName: "label"
+                visible: parent.showsText
                 x: control.mirrored ? parent.end : parent.start
+                y: parent.under ? (parent.height - parent.stacked) / 2 + parent.top : 0
                 width: parent.width - parent.start - parent.end
-                height: parent.height
+                height: parent.under ? parent.textHeight : parent.height
                 icon.name: ""
                 icon.source: ""
                 text: control.text
@@ -106,7 +129,8 @@ T.Button {
                 color: control.ink
                 mirrored: control.mirrored
                 // Left is the start: a mirrored label sets it at the right.
-                alignment: (!parent.mark && !more.visible ? Qt.AlignHCenter : Qt.AlignLeft)
+                // Under its mark, or with nothing beside it, it is centred.
+                alignment: (parent.under || !parent.mark && !more.visible ? Qt.AlignHCenter : Qt.AlignLeft)
                            | Qt.AlignVCenter
             }
 

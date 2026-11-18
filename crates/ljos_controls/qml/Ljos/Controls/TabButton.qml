@@ -3,7 +3,8 @@
 // raised, and its text is heavier and in the text's colour; the others are
 // muted, and the pointer over one lifts it a little. The weight is what
 // says which is current to a reader who cannot tell the colours apart. `iconName`, one of the style's own
-// icons, is drawn before the text.
+// icons, is drawn before the text, or over it, alone, or not at all as
+// `display` says (AbstractButton.TextUnderIcon, IconOnly, TextOnly).
 import QtQuick
 import QtQuick.Templates as T
 import Ljos.Design
@@ -23,7 +24,9 @@ T.TabButton {
                              implicitContentHeight + topPadding + bottomPadding)
 
     horizontalPadding: Theme.spacing
-    verticalPadding: 0
+    // One line is centred in the strip's height; the icon over the text is
+    // taller, so the tab grows to it and keeps half a spacing above and below.
+    verticalPadding: display === T.AbstractButton.TextUnderIcon ? Theme.spacing / 2 : 0
     spacing: Theme.spacingSmall
     hoverEnabled: true
     font.pixelSize: Theme.fontSizeSmall
@@ -34,16 +37,20 @@ T.TabButton {
             implicitWidth: row.implicitWidth
             implicitHeight: row.implicitHeight
 
-            Row {
+            // One row, or the icon over the text in one column.
+            Grid {
                 id: row
                 anchors.centerIn: parent
-                spacing: control.spacing
+                columns: control.display === T.AbstractButton.TextUnderIcon ? 1 : 2
+                columnSpacing: control.spacing
+                rowSpacing: control.spacing
+                horizontalItemAlignment: Grid.AlignHCenter
+                verticalItemAlignment: Grid.AlignVCenter
                 layoutDirection: control.mirrored ? Qt.RightToLeft : Qt.LeftToRight
 
                 Icon {
                     objectName: "glyph"
-                    visible: control.iconName.length > 0
-                    anchors.verticalCenter: parent.verticalCenter
+                    visible: control.iconName.length > 0 && control.display !== T.AbstractButton.TextOnly
                     name: control.iconName
                     size: Theme.iconSizeSmall
                     color: control.ink
@@ -51,7 +58,7 @@ T.TabButton {
 
                 Text {
                     objectName: "label"
-                    anchors.verticalCenter: parent.verticalCenter
+                    visible: control.display !== T.AbstractButton.IconOnly
                     // As wide as the heavier text, so a tab keeps its
                     // width as it becomes current and the strip stays put.
                     width: Math.max(implicitWidth, Math.ceil(heavy.advanceWidth))
