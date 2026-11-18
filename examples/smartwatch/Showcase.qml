@@ -25,7 +25,18 @@ Rectangle {
     // Seconds for one turn of the turntable.
     readonly property real turnSeconds: Motion.reduced ? 120 : 24
     property real spin: 0
+    // A running animation keeps the duration it started with, and the
+    // system's answer about reduced motion can come after the turntable
+    // has started: a new speed starts the turn again from where the watch
+    // is, so it neither jumps nor keeps the old speed.
+    onTurnSecondsChanged: {
+        const at: number = showcase.spin % 360
+        turntable.from = at
+        turntable.to = at + 360
+        turntable.restart()
+    }
     NumberAnimation on spin {
+        id: turntable
         from: 0
         to: 360
         duration: showcase.turnSeconds * 1000

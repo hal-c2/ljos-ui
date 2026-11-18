@@ -124,7 +124,8 @@ Rectangle {
         visible: watch.ambient && !display.dark
     }
 
-    // Asleep, a tap anywhere wakes the watch.
+    // Asleep, a touch anywhere wakes the watch: the press itself, so a hold
+    // or the start of a swipe wakes it as a tap does.
     Item {
         anchors.fill: parent
         visible: watch.ambient
@@ -132,7 +133,10 @@ Rectangle {
         Accessible.name: t`Wake`
         Accessible.onPressAction: watch.touch()
         Tap {
-            onTapped: watch.touch()
+            onPressedChanged: {
+                if (pressed)
+                    watch.touch()
+            }
         }
     }
 

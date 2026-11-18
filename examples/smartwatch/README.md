@@ -48,6 +48,8 @@ Left alone for fifteen seconds, the watch sleeps:
 - **With always on:** it shows the always-on face. This face is dim outlines with no second hand, and it drifts a few pixels every minute against burn-in.
 - **With always on off:** the screen goes dark.
 
+Asleep, any touch wakes it: a tap, a hold, or the start of a swipe.
+
 Asleep, the only thing that runs is the clock, which wakes once at the start of each minute. Awake, the same rule holds:
 
 - A second hand ticks only while it is on screen.
@@ -60,7 +62,7 @@ A running workout, stopwatch or track counts from the time it started, never fro
 
 - **Dark only:** the screen is OLED, so black is off.
 - **Neon is kept for what matters:** only the lit ring, the hands and the highlighted control glow. *Glow* in quick settings turns the bloom off.
-- **Reduced motion:** a screen does not slide in: it is in place at once and fades in, as Ljós does with every movement. The heart beats with its glow instead of its size, and the 3D watch turns five times slower. Nothing that tells you something changed is lost.
+- **Reduced motion:** a screen does not slide in: it is in place at once and fades in, as Ljós does with every movement. The heart beats with its glow instead of its size, and the 3D watch turns five times slower, even when it is asked for while the watch is already turning. Nothing that tells you something changed is lost.
 - **Contrast:** `ljos audit Main.qml --touch` finds no contrast errors at either size.
 
 ## The files

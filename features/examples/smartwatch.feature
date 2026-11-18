@@ -278,6 +278,11 @@ Feature: The smartwatch example
       Then the property "ambient" of "watch" is false
       And the property "page" of "watch" is "face"
 
+    Scenario: A swipe on the always-on face wakes the watch as a tap does
+      When 16 seconds pass
+      And the user drags from 227, 380 to 227, 120
+      Then the property "ambient" of "watch" is false
+
     Scenario: With always on switched off the screen goes dark instead
       When the property "alwaysOn" of "watch" is set to false
       And 16 seconds pass
@@ -317,3 +322,18 @@ Feature: The smartwatch example
       And the property "shift" of "pages" is at most 0.95
       When 1 second passes
       Then the property "shift" of "pages" is 1
+
+  Rule: With reduced motion the 3D watch turns five times slower, even when it is asked for while the watch turns
+
+    Scenario: The turntable turns once in 24 seconds
+      When "Showcase.qml" is loaded
+      And 4 seconds pass
+      Then the property "spin" of "showcase" is at least 50
+      And the property "spin" of "showcase" is at most 70
+
+    Scenario: Asked for while the watch turns, reduced motion slows the turntable from there
+      When "Showcase.qml" is loaded
+      And the system setting "reduced motion" changes to true
+      And 4 seconds pass
+      Then the property "spin" of "showcase" is at least 8
+      And the property "spin" of "showcase" is at most 16
