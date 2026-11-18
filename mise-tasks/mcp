@@ -81,9 +81,10 @@ cd "$checkout"
 # The build's stdout is read here, never passed on: its JSON messages say
 # where the program is (under a target triple when a build target is set).
 # Its other lines (a wrapper's word on a busy queue, say) go to stderr as they
-# come, not once the build is over.
+# come, not once the build is over (grep flushes each line, as the reader of
+# stderr is a pipe more often than a terminal).
 status=0
-messages="$("${build[@]}" | tee >({ grep -v -e '^{"reason":' -e '^$' || true; } >&2))" || status=$?
+messages="$("${build[@]}" | tee >({ grep --line-buffered -v -e '^{"reason":' -e '^$' || true; } >&2))" || status=$?
 [ "$status" -eq 0 ] || die "the build of ljos failed"
 # The program's path is a JSON string: a quote, a backslash or a slash in it
 # comes escaped. Any other escape is a control character, which no path of a
