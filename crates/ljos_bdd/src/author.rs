@@ -63,8 +63,12 @@ pub fn text_of(doc: &str) -> String {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Ran {
     pub status: i32,
-    /// Its output and its errors, in the order they were written.
+    /// Its output and its errors, in the order they were written; a
+    /// repository task's errors come first, then its output.
     pub output: String,
+    /// Its output alone, kept for a repository task, whose output a
+    /// program reads.
+    pub stdout: Option<String>,
 }
 
 impl Ran {
@@ -75,6 +79,23 @@ impl Ran {
             Ok(())
         } else {
             Err(format!("the command printed:\n{}", self.output))
+        }
+    }
+
+    /// # Errors
+    /// The command wrote something else to its output, or its output was
+    /// not kept apart from its errors.
+    pub fn printed_alone(&self, want: &str) -> Result<(), String> {
+        let stdout = self.stdout.as_deref().ok_or_else(|| {
+            "only a repository task's output is kept apart from its errors".to_owned()
+        })?;
+        if same_text(stdout, want) {
+            Ok(())
+        } else {
+            Err(format!(
+                "the command wrote to its output:\n{stdout}\nand in all:\n{}",
+                self.output
+            ))
         }
     }
 
@@ -408,6 +429,9 @@ struct Rig {
     ran: Option<Ran>,
     /// What the author's desktop says to the commands they run.
     settings: desktop::Settings,
+    /// Variables set (or, with `None`, taken away) for the commands the
+    /// author runs, as the scenario gave them.
+    env: BTreeMap<String, Option<String>>,
     /// The application the author started and left running.
     app: Option<App>,
     /// A program of the scenario's and the application it started.
@@ -478,6 +502,7 @@ impl Rig {
             seen: Seen::default(),
             ran: None,
             settings: desktop::Settings::new(),
+            env: BTreeMap::new(),
             app: None,
             family: None,
             packed: None,
@@ -509,9 +534,9 @@ impl Rig {
             }
             let mut text = text_of(source);
             text.push('\n');
-            fs::write(&path, text).map_err(failed)?;
+            fs::write(&path, &text).map_err(failed)?;
             #[cfg(unix)]
-            if name.ends_with(".sh") {
+            if name.ends_with(".sh") || text.starts_with("#!") {
                 use std::os::unix::fs::PermissionsExt;
                 fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).map_err(failed)?;
             }
@@ -629,18 +654,29 @@ impl Rig {
 
     /// `line` as a command run in the project, with the scenario's
     /// desktop when it set something, which the command must keep.
-    fn command(&self, line: &str) -> Result<(Command, Option<desktop::Desktop>), String> {
+    fn command(
+        &self,
+        line: &str,
+        within: Option<&str>,
+    ) -> Result<(Command, Option<desktop::Desktop>), String> {
         let mut words = line.split_whitespace();
-        let bin = match words.next() {
-            Some("ljos") => testrun::ljos_bin(),
-            Some("ljos-fuzz") => testrun::fuzz_bin(),
+        let first = words.next().unwrap_or_default();
+        let task = first.starts_with("mise-tasks/");
+        let bin = match first {
+            "ljos" => testrun::ljos_bin(),
+            "ljos-fuzz" => testrun::fuzz_bin(),
+            _ if task => Ok(repository_task(first)?),
             _ => {
                 return Err(format!(
-                    "the author runs `ljos` or `ljos-fuzz` and nothing else, not {line:?}"
+                    "the author runs `ljos`, `ljos-fuzz` or a task of mise-tasks/ and nothing else, not {line:?}"
                 ));
             }
         }
         .map_err(|e| e.to_string())?;
+        let cwd = match within {
+            Some(dir) => self.path(dir)?,
+            None => self.dir.path().to_path_buf(),
+        };
         // The command meets the scenario's desktop and not the developer's:
         // a bus with a portal when the scenario set something, else a bus
         // that is not there, as on a machine without a desktop. Nor is
@@ -666,16 +702,132 @@ impl Rig {
         let mut command = Command::new(bin);
         command
             .args(words)
-            .current_dir(self.dir.path())
+            .current_dir(cwd)
             .env("DBUS_SESSION_BUS_ADDRESS", bus)
             .env_remove("WAYLAND_DISPLAY")
             .env_remove("DISPLAY")
             .stdin(Stdio::null());
+        if task {
+            // A task asks git about the checkout it runs in.
+            self.git_alone(&mut command)?;
+        }
+        let project = self.physical_dir()?;
+        for (key, value) in &self.env {
+            match value {
+                Some(value) => {
+                    let value = value
+                        .replace("{project}", &project)
+                        .replace("{PATH}", &std::env::var("PATH").unwrap_or_default());
+                    command.env(key, value)
+                }
+                None => command.env_remove(key),
+            };
+        }
         Ok((command, desktop))
     }
 
+    /// git, run by `command`, finds no repository but the project's: none
+    /// above it, which the temporary directory may be in, and not the one
+    /// the runner was started from, whose object store too may be named in
+    /// the environment.
+    fn git_alone(&self, command: &mut Command) -> Result<(), String> {
+        let dir = fs::canonicalize(self.dir.path())
+            .map_err(|e| format!("cannot find the project's directory: {e}"))?;
+        command
+            .env("GIT_CEILING_DIRECTORIES", dir.parent().unwrap_or(&dir))
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
+            .env_remove("GIT_COMMON_DIR")
+            .env_remove("GIT_INDEX_FILE")
+            .env_remove("GIT_OBJECT_DIRECTORY")
+            .env_remove("GIT_ALTERNATE_OBJECT_DIRECTORIES");
+        Ok(())
+    }
+
+    /// The project's directory with no link in it, as `pwd -P` says it.
+    fn physical_dir(&self) -> Result<String, String> {
+        let dir = fs::canonicalize(self.dir.path())
+            .map_err(|e| format!("cannot find the project's directory: {e}"))?;
+        dir.into_os_string()
+            .into_string()
+            .map_err(|dir| format!("the project's directory {dir:?} is not UTF-8"))
+    }
+
+    fn run_in(&mut self, line: &str, within: Option<&str>) -> Result<(), String> {
+        if !line.starts_with("mise-tasks/") {
+            if within.is_some() {
+                return Err("only a task of mise-tasks/ runs in a directory of the project".into());
+            }
+            return self.run(line);
+        }
+        let (mut command, _desktop) = self.command(line, within)?;
+        let out = command
+            .output()
+            .map_err(|e| format!("cannot start `{line}`: {e}"))?;
+        let status = out
+            .status
+            .code()
+            .ok_or_else(|| format!("`{line}` was killed"))?;
+        let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+        self.ran = Some(Ran {
+            status,
+            output: format!("{}{stdout}", String::from_utf8_lossy(&out.stderr)),
+            stdout: Some(stdout),
+        });
+        Ok(())
+    }
+
+    /// Makes the project a git repository with everything in it committed,
+    /// and `worktree` a worktree of it linked to it, on a branch of its own.
+    fn git_checkout(&mut self, worktree: &str) -> Result<(), String> {
+        let path = self.path(worktree)?;
+        let git = |args: &[&str]| -> Result<(), String> {
+            let mut git = Command::new("git");
+            self.git_alone(&mut git)?;
+            let out = git
+                .args([
+                    "-c",
+                    "user.name=Ljos",
+                    "-c",
+                    "user.email=ljos@localhost",
+                    "-c",
+                    "init.defaultBranch=main",
+                    "-c",
+                    "commit.gpgsign=false",
+                    // The developer's own hooks are not the scenario's.
+                    "-c",
+                    "core.hooksPath=/dev/null",
+                ])
+                .args(args)
+                .current_dir(self.dir.path())
+                .stdin(Stdio::null())
+                .output()
+                .map_err(|e| format!("cannot run git: {e}"))?;
+            if out.status.success() {
+                Ok(())
+            } else {
+                Err(format!(
+                    "git {} failed: {}",
+                    args.join(" "),
+                    String::from_utf8_lossy(&out.stderr)
+                ))
+            }
+        };
+        git(&["init", "-q"])?;
+        // The worktree is inside the project, and is not a file of it.
+        fs::write(
+            self.dir.path().join(".git/info/exclude"),
+            format!("/{worktree}/\n"),
+        )
+        .map_err(|e| format!("cannot exclude the worktree: {e}"))?;
+        git(&["add", "-A"])?;
+        git(&["commit", "-q", "-m", "The scenario's project"])?;
+        let path = path.to_string_lossy().into_owned();
+        git(&["worktree", "add", "-q", "-b", worktree, &path])
+    }
+
     fn run(&mut self, line: &str) -> Result<(), String> {
-        let (command, _desktop) = self.command(line)?;
+        let (command, _desktop) = self.command(line, None)?;
         // One pipe for the output and the errors keeps them in the order
         // they were written, which is what a terminal shows.
         let mut sh = Command::new("sh");
@@ -700,6 +852,7 @@ impl Rig {
         self.ran = Some(Ran {
             status,
             output: String::from_utf8_lossy(&out.stdout).into_owned(),
+            stdout: None,
         });
         Ok(())
     }
@@ -710,7 +863,7 @@ impl Rig {
         // One application at a time, and one agent: those before go first.
         self.server = None;
         self.app = None;
-        let (mut command, desktop) = self.command(line)?;
+        let (mut command, desktop) = self.command(line, None)?;
         let mut child = Reaped::spawn(command.stdout(Stdio::null()).stderr(Stdio::piped()))
             .map_err(|e| format!("cannot start `{line}`: {e}"))?;
         let stderr = child
@@ -769,7 +922,7 @@ impl Rig {
     }
 
     fn start_under_program(&mut self, line: &str) -> Result<(), String> {
-        let (command, _desktop) = self.command(line)?;
+        let (command, _desktop) = self.command(line, None)?;
         // In the background a shell gives its child `/dev/null` for input,
         // so there is no pipe here to close when the shell dies.
         let mut sh = Command::new("sh");
@@ -834,6 +987,15 @@ impl Rig {
             "the author has started no application; use `When the author starts`".to_owned()
         })
     }
+}
+
+/// A task of this repository's `mise-tasks/`, run as the checkout has it.
+fn repository_task(word: &str) -> Result<PathBuf, String> {
+    let path = testrun::workspace_root().join(word);
+    if word.contains("..") || !path.is_file() {
+        return Err(format!("the repository has no task {word:?}"));
+    }
+    Ok(path)
 }
 
 #[cfg(unix)]
@@ -1023,7 +1185,57 @@ impl Slot {
     /// # Errors
     /// The line is not an `ljos` command, or the program cannot be run.
     pub fn run(&mut self, files: &Files, line: &str) -> Result<(), String> {
-        self.rig(files)?.run(line)
+        self.rig(files)?.run_in(line, None)
+    }
+
+    /// Runs a task of the repository's `mise-tasks/` in a directory of the
+    /// project, with its output kept apart from its errors.
+    ///
+    /// # Errors
+    /// The line is not such a task, the directory is not the project's, or
+    /// the task cannot be run.
+    pub fn run_within(&mut self, files: &Files, line: &str, dir: &str) -> Result<(), String> {
+        self.rig(files)?.run_in(line, Some(dir))
+    }
+
+    /// Makes the project a git checkout with a worktree linked to it.
+    ///
+    /// # Errors
+    /// git cannot be run, or fails.
+    pub fn git_checkout(&mut self, files: &Files, worktree: &str) -> Result<(), String> {
+        self.rig(files)?.git_checkout(worktree)
+    }
+
+    /// Sets a variable for the commands the author runs from now on, or
+    /// with `None` takes it away. `{project}` in a value is the project's
+    /// directory and `{PATH}` the runner's own `PATH`.
+    ///
+    /// # Errors
+    /// The project cannot be made.
+    pub fn set_env(
+        &mut self,
+        files: &Files,
+        name: &str,
+        value: Option<&str>,
+    ) -> Result<(), String> {
+        self.rig(files)?
+            .env
+            .insert(name.to_owned(), value.map(str::to_owned));
+        Ok(())
+    }
+
+    /// Whether nothing, no file, directory or link, is at `name` in the
+    /// project.
+    ///
+    /// # Errors
+    /// Something is there.
+    pub fn has_none(&mut self, files: &Files, name: &str) -> Result<(), String> {
+        let path = self.rig(files)?.path(name)?;
+        match fs::symlink_metadata(&path) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(format!("cannot look for {name:?}: {e}")),
+            Ok(_) => Err(format!("the project has {name:?}")),
+        }
     }
 
     /// Starts `ljos …` in the project and leaves it running, and connects

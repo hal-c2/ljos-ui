@@ -29,7 +29,7 @@ Ljós is a general-purpose Rust UI toolkit for malleable software: apps that peo
 | Run one corpus example | `mise run gallery:run <id>` (no id lists them) |
 | Click through corpus examples off-screen, list what each click did and logged | `mise run gallery:drive [id…]` |
 | Build / run with QtWebEngine (CEF, fetched once into `$CEF_PATH`, default `<target>/cef`) | `mise run webengine:build`, `mise run webengine:run <file.qml>` |
-| MCP authoring server | `mise run mcp` (also configured in `.mcp.json`) |
+| MCP authoring server | `mise run mcp` (what `.mcp.json` runs; builds into the main checkout's target, through `LJOS_BUILD_WRAPPER` when set; `LJOS_BIN` skips the build) |
 | Run an app off-screen (headless sway, own bus, cua-driver) | `mise run desktop:cua <file.qml> [args]`, `desktop:cua:exec <command…>`, `desktop:cua:call <tool> [json]`, `desktop:cua:stop` |
 | Every task and its arguments | `mise tasks`, `mise run <task> --help` |
 

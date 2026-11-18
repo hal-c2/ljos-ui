@@ -1,5 +1,96 @@
 #!/usr/bin/env bash
 #MISE description="Start the ljos MCP authoring server on stdio for this repository"
 #USAGE arg "[project]" default="." help="Project directory the server authors"
+# .mcp.json runs this too, so an editor or agent gets the same server as
+# `mise run mcp`. It builds `ljos`, then becomes it. The server speaks
+# JSON-RPC on stdout, so everything else (this script's word on which way it
+# built, the build's own output) goes to stderr.
+#
+# Where the build goes: CARGO_TARGET_DIR, else the main checkout's target/
+# (a linked worktree shares it rather than growing a build of its own), else
+# ./target. LJOS_BIN names a server built already and skips the build.
+# LJOS_BUILD_WRAPPER names a program the build runs through (one that queues
+# builds machine-wide, say); it wraps the build only, never the server, which
+# runs for the whole session.
 set -euo pipefail
-exec cargo run --quiet -p ljos_cli -- mcp --project "${usage_project:-${1:-.}}"
+
+say() { echo "mcp: $*" >&2; }
+die() {
+  say "$*"
+  exit 1
+}
+
+project="${usage_project:-${1:-.}}"
+project=$(cd "$project" && pwd -P) || die "no project directory ${usage_project:-${1:-.}}"
+
+if [ -n "${LJOS_BIN:-}" ]; then
+  [ -x "$LJOS_BIN" ] || die "LJOS_BIN is $LJOS_BIN, which is not a program"
+  say "starting $LJOS_BIN, built already (LJOS_BIN)"
+  exec "$LJOS_BIN" mcp --project "$project"
+fi
+
+# The checkout this runs in, and the main checkout of its repository. The
+# common dir of a linked worktree is the main checkout's .git; of a bare
+# repository or a submodule it is something else, and the checkout keeps its
+# own target.
+if checkout=$(git rev-parse --show-toplevel 2>/dev/null) && [ -n "$checkout" ]; then
+  checkout=$(cd "$checkout" && pwd -P)
+  main=$checkout
+  common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)
+  if [ -n "$common" ] && [ "$(basename "$common")" = .git ]; then
+    main=$(cd "$(dirname "$common")" && pwd -P)
+  fi
+else
+  checkout=$(pwd -P)
+  main=$checkout
+fi
+
+target="${CARGO_TARGET_DIR:-$main/target}"
+# A target that is a link (to a drive with room, say) is where it leads.
+if [ -d "$target" ]; then
+  target=$(cd "$target" && pwd -P)
+fi
+export CARGO_TARGET_DIR="$target"
+
+# --target-dir as well as CARGO_TARGET_DIR: a build.target-dir in a --config
+# file would outrank the variable. Cargo's messages name the program it made.
+build=(cargo build --quiet -p ljos_cli --bin ljos
+  --message-format=json-render-diagnostics --target-dir "$target")
+# The main checkout's cargo settings (a compiler cache, a cap on jobs) are
+# often kept outside git; a linked worktree builds with them too.
+if [ "$main" != "$checkout" ] && [ -f "$main/.cargo/config.toml" ] &&
+  [ ! -f "$checkout/.cargo/config.toml" ]; then
+  build+=(--config "$main/.cargo/config.toml")
+fi
+# The toolchain is the one the checkout pins, not whichever cargo is first
+# on PATH.
+if [ -f "$checkout/mise.toml" ] && command -v mise >/dev/null 2>&1; then
+  build=(mise exec -- "${build[@]}")
+fi
+
+if [ -n "${LJOS_BUILD_WRAPPER:-}" ]; then
+  command -v "$LJOS_BUILD_WRAPPER" >/dev/null 2>&1 ||
+    die "LJOS_BUILD_WRAPPER is $LJOS_BUILD_WRAPPER, which is not a program; unset it to build with cargo alone"
+  say "building ljos through $LJOS_BUILD_WRAPPER into $target"
+  build=("$LJOS_BUILD_WRAPPER" "${build[@]}")
+else
+  say "building ljos with cargo alone into $target; LJOS_BUILD_WRAPPER names a build wrapper to go through instead"
+fi
+
+cd "$checkout"
+# The build's stdout is read here, never passed on: its JSON messages say
+# where the program is (under a target triple when a build target is set).
+# Its other lines (a wrapper's word on a busy queue, say) go to stderr as they
+# come, not once the build is over (grep flushes each line, as the reader of
+# stderr is a pipe more often than a terminal).
+status=0
+messages="$("${build[@]}" | tee >({ grep --line-buffered -v -e '^{"reason":' -e '^$' || true; } >&2))" || status=$?
+[ "$status" -eq 0 ] || die "the build of ljos failed"
+# The program's path is a JSON string: a quote, a backslash or a slash in it
+# comes escaped. Any other escape is a control character, which no path of a
+# build has; it is left, and the path is then no program.
+server="$(printf '%s\n' "$messages" |
+  sed -n -E 's/^\{"reason":"compiler-artifact".*"executable":"(([^"\\]|\\.)*)".*/\1/p' |
+  tail -n 1 | sed -E 's/\\(["\\/])/\1/g')"
+[ -n "$server" ] && [ -x "$server" ] || die "the build named no ljos program it made"
+exec "$server" mcp --project "$project"

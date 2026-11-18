@@ -195,7 +195,7 @@ pub(crate) fn failed(what: impl std::fmt::Display) -> BackendError {
     BackendError::Failed(what.to_string())
 }
 
-fn workspace_root() -> PathBuf {
+pub(crate) fn workspace_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 

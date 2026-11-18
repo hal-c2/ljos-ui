@@ -1,8 +1,8 @@
 {
   "mcpServers": {
     "ljos": {
-      "command": "cargo",
-      "args": ["run", "--quiet", "-p", "ljos_cli", "--", "mcp", "--project", "."]
+      "command": "bash",
+      "args": ["mise-tasks/mcp", "."]
     }
   }
 }
