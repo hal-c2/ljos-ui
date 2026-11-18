@@ -10863,8 +10863,8 @@ module QtQuick3D.Helpers
 		prop normals QtQml.var named
 		prop tangents QtQml.var named
 		prop binormals QtQml.var named
-		prop uv0 QtQml.var named
-		prop uv1 QtQml.var named
+		prop uv0s QtQml.var named
+		prop uv1s QtQml.var named
 		prop colors QtQml.var named
 		prop indexes QtQml.var named
 		prop primitiveMode PrimitiveMode

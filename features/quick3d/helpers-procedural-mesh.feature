@@ -1,6 +1,7 @@
 # Sources:
 #   https://doc.qt.io/qt-6/qml-qtquick3d-helpers-proceduralmesh.html
 #   https://doc.qt.io/qt-6/qml-qtquick3d-helpers-proceduralmeshsubset.html
+#   https://doc.qt.io/qt-6/qml-qtquick3d-texture.html
 # Not yet verified on Qt: QtQuick3D is not installed beside qml6 on the
 # reference machine. The expectations come from the documentation.
 
@@ -86,3 +87,40 @@ Feature: A mesh made from lists
         """
       Then the pixel at 55, 110 of the window is "#ff0000"
       And the pixel at 145, 110 of the window is "#0000ff"
+
+  Rule: uv0s are the texture coordinates, uv1s are kept
+
+    # The texture's left half is red and its right half green, so a mesh
+    # whose every vertex is at u 0.75 is green wherever its v falls.
+    Background:
+      Given a 64 by 64 image file "halves.png" of quadrants "#ff0000, #00ff00, #ff0000, #00ff00"
+      And the QML:
+        """qml
+        import QtQuick
+        import QtQuick3D
+        import QtQuick3D.Helpers
+        Rectangle {
+          id: scene; objectName: "scene"; width: 200; height: 200; color: "black"
+          property int second: mesh.uv1s.length
+          View3D {
+            anchors.fill: parent
+            OrthographicCamera { z: 300 }
+            Model {
+              geometry: ProceduralMesh {
+                id: mesh
+                positions: [Qt.vector3d(-40, -40, 0), Qt.vector3d(40, -40, 0), Qt.vector3d(0, 40, 0)]
+                uv0s: [Qt.vector2d(0.75, 0.25), Qt.vector2d(0.75, 0.5), Qt.vector2d(0.75, 0.75)]
+                uv1s: [Qt.vector2d(0, 0), Qt.vector2d(1, 0), Qt.vector2d(0, 1)]
+              }
+              materials: DefaultMaterial { lighting: DefaultMaterial.NoLighting; cullMode: DefaultMaterial.NoCulling
+                diffuseMap: Texture { source: "halves.png" } }
+            }
+          }
+        }
+        """
+
+    Scenario: A mesh given uv0s is textured where they point
+      Then the pixel at 100, 110 of the window is within 2 of "#00ff00"
+
+    Scenario: The second texture coordinates are kept
+      Then the property "second" of "scene" is 3
