@@ -876,6 +876,13 @@ for args in null '"mise-tasks/mcp"' '{"a":1}'; do
     *) bad "an .mcp.json whose ljos server's args are $args was not refused" "$(mcp_json_problem "$real/args.json" 2>&1)" ;;
   esac
 done
+for server in '"command":"bash","args":["mise-tasks/mcp",null]' '"command":"bash","args":["mise-tasks/mcp",1]' '"command":["bash"],"args":["mise-tasks/mcp","."]'; do
+  printf '{"mcpServers":{"ljos":{%s}}}\n' "$server" >"$real/args.json"
+  case "$(refused "$real/args.json")" in
+    *"not a string"*) ok "an .mcp.json whose ljos server is $server is refused: a command and its args are strings" ;;
+    *) bad "an .mcp.json whose ljos server is $server was not refused" "$(mcp_json_problem "$real/args.json" 2>&1)" ;;
+  esac
+done
 
 # --- A task runs cargo through env.sh ----------------------------------------------
 

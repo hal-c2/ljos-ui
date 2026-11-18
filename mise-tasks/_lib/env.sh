@@ -342,7 +342,9 @@ if not isinstance(server, dict):
 args = server.get("args", [])
 if not isinstance(args, list):
     problem("%s's ljos server has args that are not a list (%s)" % (path, json.dumps(args)))
-run = [str(server.get("command", ""))] + [str(a) for a in args]
+run = [server.get("command", "")] + args
+if not all(isinstance(a, str) for a in run):
+    problem("%s's ljos server has a command or args that are not a string (%s)" % (path, json.dumps(run)))
 launcher = ("mise-tasks/mcp", "./mise-tasks/mcp")
 # The task is a bash script: sh, which may be dash, would stop at its first
 # bash-only line.
