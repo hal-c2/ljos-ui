@@ -760,9 +760,10 @@ fn resize(
     w: &mut Watch<'_>,
 ) -> (u32, Vec<u64>) {
     let set = |w: i32, h: i32| {
-        sway.command(&format!(
-            "[pid={pid}] resize set width {w} px height {h} px"
-        ))
+        sway.command(
+            &format!("[pid={pid}] resize set width {w} px height {h} px"),
+            None,
+        )
     };
     let start = Instant::now();
     let mut steps = 0;
@@ -850,13 +851,13 @@ fn time_resize_answer(
     w: &mut Watch<'_>,
     deadline: Instant,
 ) -> Option<Instant> {
-    let (x, y, width, height) = sway.window_rect(pid).ok().flatten()?;
+    let (x, y, width, height) = sway.window_rect(pid, None).ok().flatten()?;
     let resize = |w: i32| format!("[pid={pid}] resize set width {w} px height {height} px");
     let strip = (x + width + 8, y + height / 4, 16, (height / 2).max(1));
     let at = wayland::first_change(display, strip, deadline, || {
-        let _ = sway.command(&resize(width + 64));
+        let _ = sway.command(&resize(width + 64), None);
     });
-    let _ = sway.command(&resize(width));
+    let _ = sway.command(&resize(width), None);
     w.sample();
     at.ok().flatten().filter(|_| w.exited.is_none())
 }
@@ -1078,7 +1079,7 @@ fn run_once(
         };
         out.settled = Some(memory(&w));
         let rect = match (&setup.sway, shown) {
-            (Some(sway), Some(_)) => sway.window_rect(pid).ok().flatten(),
+            (Some(sway), Some(_)) => sway.window_rect(pid, None).ok().flatten(),
             _ => None,
         };
         if !phases.idle.is_zero() {

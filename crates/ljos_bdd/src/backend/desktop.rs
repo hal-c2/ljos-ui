@@ -601,6 +601,12 @@ impl DesktopBackend {
         let token = dir.join(format!("target/ljos/mcp-{pid}.json"));
         let sway = Sway::new(&sandbox.path("SWAYSOCK")?);
         let deadline = Instant::now() + STARTUP;
+        let no_window = || {
+            BackendError::Failed(format!(
+                "ljos run showed no window in {} s",
+                STARTUP.as_secs()
+            ))
+        };
         let rect = loop {
             if let Some(status) = app.try_wait()? {
                 let log = std::fs::read_to_string(
@@ -612,16 +618,13 @@ impl DesktopBackend {
                 )));
             }
             if token.is_file()
-                && let Some(rect) = sway.window_rect(pid)?
+                && let Some(rect) = in_time(sway.window_rect(pid, Some(deadline)), no_window)?
                 && rect.2 > 0
             {
                 break rect;
             }
             if Instant::now() > deadline {
-                return Err(BackendError::Failed(format!(
-                    "ljos run showed no window in {} s",
-                    STARTUP.as_secs()
-                )));
+                return Err(no_window());
             }
             std::thread::sleep(Duration::from_millis(50));
         };
@@ -769,7 +772,13 @@ impl DesktopBackend {
         let pid = other.id();
         let sway = self.sway()?;
         let deadline = Instant::now() + STARTUP;
-        while sway.window_rect(pid)?.is_none_or(|r| r.2 == 0) {
+        let no_window = || {
+            BackendError::Failed(format!(
+                "the other client showed no window in {} s",
+                STARTUP.as_secs()
+            ))
+        };
+        while in_time(sway.window_rect(pid, Some(deadline)), no_window)?.is_none_or(|r| r.2 == 0) {
             if let Some(status) = other.try_wait()? {
                 let said = std::fs::read_to_string(&log).unwrap_or_default();
                 return Err(BackendError::Failed(format!(
@@ -777,10 +786,7 @@ impl DesktopBackend {
                 )));
             }
             if Instant::now() > deadline {
-                return Err(BackendError::Failed(format!(
-                    "the other client showed no window in {} s",
-                    STARTUP.as_secs()
-                )));
+                return Err(no_window());
             }
             std::thread::sleep(Duration::from_millis(50));
         }
@@ -824,6 +830,15 @@ impl DesktopBackend {
 
 fn not_yet(what: &'static str) -> BackendError {
     BackendError::NotImplemented(what)
+}
+
+/// A compositor's answer that did not come by its deadline is the step's
+/// own `late` failure, not an I/O error.
+fn in_time<T>(answer: std::io::Result<T>, late: impl FnOnce() -> BackendError) -> Result<T> {
+    match answer {
+        Err(e) if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => Err(late()),
+        other => Ok(other?),
+    }
 }
 
 impl Backend for DesktopBackend {
@@ -1049,12 +1064,10 @@ impl Input for DesktopBackend {
             self.other_client()?
         };
         let sway = self.sway()?;
-        let told = sway.command(&format!("[pid={target}] focus"))?;
-        if told[0]["success"] != Value::Bool(true) {
-            return Err(BackendError::Failed(format!(
-                "sway would not focus the window of pid {target}: {told}"
-            )));
-        }
+        // One deadline from the command on: a compositor that stops
+        // answering fails the step at it, whether it is the command's reply
+        // or the focus after it that does not come, as one that answers with
+        // another focus does.
         let deadline = Instant::now() + SEEN;
         let late = || {
             BackendError::Failed(format!(
@@ -1062,20 +1075,18 @@ impl Input for DesktopBackend {
                 SEEN.as_secs()
             ))
         };
-        loop {
-            // A compositor that stops answering fails the step at its
-            // deadline too, not only one that answers with another focus.
-            let left = deadline.saturating_duration_since(Instant::now());
-            if left.is_zero() {
+        let told = in_time(
+            sway.command(&format!("[pid={target}] focus"), Some(deadline)),
+            late,
+        )?;
+        if told[0]["success"] != Value::Bool(true) {
+            return Err(BackendError::Failed(format!(
+                "sway would not focus the window of pid {target}: {told}"
+            )));
+        }
+        while in_time(sway.focused(Some(deadline)), late)? != Some(target) {
+            if Instant::now() >= deadline {
                 return Err(late());
-            }
-            match sway.focused(left) {
-                Ok(focused) if focused == Some(target) => break,
-                Ok(_) => {}
-                Err(e) if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {
-                    return Err(late());
-                }
-                Err(e) => return Err(e.into()),
             }
             std::thread::sleep(Duration::from_millis(20));
         }
