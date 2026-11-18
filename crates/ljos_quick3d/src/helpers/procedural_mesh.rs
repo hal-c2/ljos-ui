@@ -52,10 +52,11 @@ pub struct ProceduralMesh {
     tangents: Vec<Vector3d>,
     #[qml(notify)]
     binormals: Vec<Vector3d>,
+    // Qt 6.11: the texture coordinate lists are named `uv0s` and `uv1s`.
     #[qml(notify, change = changed::<ProceduralMesh>)]
-    uv0: Vec<Vector2d>,
+    uv0s: Vec<Vector2d>,
     #[qml(notify)]
-    uv1: Vec<Vector2d>,
+    uv1s: Vec<Vector2d>,
     #[qml(notify)]
     colors: Vec<Color>,
     #[qml(notify, change = changed::<ProceduralMesh>)]
@@ -75,8 +76,8 @@ impl Default for ProceduralMesh {
             normals: Vec::new(),
             tangents: Vec::new(),
             binormals: Vec::new(),
-            uv0: Vec::new(),
-            uv1: Vec::new(),
+            uv0s: Vec::new(),
+            uv1s: Vec::new(),
             colors: Vec::new(),
             indexes: Vec::new(),
             primitive_mode: TRIANGLES,
@@ -99,7 +100,7 @@ impl Generated for ProceduralMesh {
     fn built(cx: &Cx) -> Option<Built> {
         let positions: Vec<Vector3d> = cx.get(ProceduralMesh::POSITIONS).ok()?;
         let normals: Vec<Vector3d> = cx.get(ProceduralMesh::NORMALS).ok()?;
-        let uvs: Vec<Vector2d> = cx.get(ProceduralMesh::UV0).ok()?;
+        let uvs: Vec<Vector2d> = cx.get(ProceduralMesh::UV0S).ok()?;
         let indexes: Vec<i32> = cx.get(ProceduralMesh::INDEXES).ok()?;
         let mode: i32 = cx.get(ProceduralMesh::PRIMITIVE_MODE).ok()?;
         let mut built = assemble(&positions, &normals, &uvs, &indexes, mode);
