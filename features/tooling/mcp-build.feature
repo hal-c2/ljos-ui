@@ -77,6 +77,7 @@ Feature: Starting the authoring server from a checkout of Ljós
     And the author's environment has "PATH" set to "{project}/bin:{PATH}"
     And the author's environment has no "CARGO_TARGET_DIR"
     And the author's environment has no "CARGO_BUILD_TARGET_DIR"
+    And the author's environment has "CARGO_HOME" set to "{project}/cargo-home"
     And the author's environment has no "LJOS_BUILD_WRAPPER"
     And the author's environment has no "LJOS_BIN"
     And the author's environment has no "CARGO_BUILD_TARGET"
