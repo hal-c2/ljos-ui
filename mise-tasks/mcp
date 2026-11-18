@@ -85,7 +85,11 @@ cd "$checkout"
 status=0
 messages="$("${build[@]}" | tee >({ grep -v -e '^{"reason":' -e '^$' || true; } >&2))" || status=$?
 [ "$status" -eq 0 ] || die "the build of ljos failed"
+# The program's path is a JSON string: a quote, a backslash or a slash in it
+# comes escaped. Any other escape is a control character, which no path of a
+# build has; it is left, and the path is then no program.
 server="$(printf '%s\n' "$messages" |
-  sed -n 's/^{"reason":"compiler-artifact".*"executable":"\([^"]*\)".*/\1/p' | tail -n 1)"
+  sed -n -E 's/^\{"reason":"compiler-artifact".*"executable":"(([^"\\]|\\.)*)".*/\1/p' |
+  tail -n 1 | sed -E 's/\\(["\\/])/\1/g')"
 [ -n "$server" ] && [ -x "$server" ] || die "the build named no ljos program it made"
 exec "$server" mcp --project "$project"

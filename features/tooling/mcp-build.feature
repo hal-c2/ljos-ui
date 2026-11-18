@@ -10,7 +10,7 @@
 # step that says so. Nothing is compiled: "bin/cargo" stands in for cargo and "bin/mise" for mise
 # (first on the PATH the author's commands see), and each notes in "built.log" what it was asked
 # to do. The stand-in cargo puts "server.sh" where the server would be built (under the build
-# target CARGO_BUILD_TARGET names, if any), says where in a message as cargo does, and the copy
+# target CARGO_BUILD_TARGET names, if any), says where in a JSON message as cargo does, and the copy
 # answers as the server would. "build-wrapper.sh" stands in for a machine's build wrapper: it notes that the
 # build went through it, says something on its output as a real one may, and runs the build.
 
@@ -38,14 +38,15 @@ Feature: Starting the authoring server from a checkout of Ljós
       #!/bin/sh
       root=$(cd "$(dirname "$0")/.." && pwd -P)
       here=$(pwd -P)
-      echo "cargo $* in .${here#"$root"}" | sed "s|$root|.|g" >> "$root/built.log"
-      [ "$CARGO_TARGET_DIR" = "$(echo "$*" | sed 's/.*--target-dir \([^ ]*\).*/\1/')" ] ||
+      printf '%s\n' "cargo $* in .${here#"$root"}" | sed "s|$root|.|g" >> "$root/built.log"
+      [ "$CARGO_TARGET_DIR" = "$(printf '%s\n' "$*" | sed 's/.*--target-dir \([^ ]*\).*/\1/')" ] ||
         echo "CARGO_TARGET_DIR is not the --target-dir" >> "$root/built.log"
       out="$CARGO_TARGET_DIR${CARGO_BUILD_TARGET:+/$CARGO_BUILD_TARGET}/debug"
       mkdir -p "$out"
       cp "$root/server.sh" "$out/ljos"
       echo "   Compiling ljos_cli"
-      echo "{\"reason\":\"compiler-artifact\",\"executable\":\"$out/ljos\",\"fresh\":false}"
+      exe=$(printf '%s' "$out/ljos" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')
+      printf '%s\n' "{\"reason\":\"compiler-artifact\",\"executable\":\"$exe\",\"fresh\":false}"
       echo '{"reason":"build-finished","success":true}'
       echo "    Finished" >&2
       """
@@ -126,6 +127,20 @@ Feature: Starting the authoring server from a checkout of Ljós
     And the file "built.log" is:
       """
       cargo build --quiet -p ljos_cli --bin ljos --message-format=json-render-diagnostics --target-dir ./shared in ./wt
+      """
+
+  Scenario: A target directory whose name JSON escapes is where the server is started from
+    Given the project is a git checkout with the linked worktree "wt"
+    And the author's environment has "CARGO_TARGET_DIR" set to "{project}/shared\builds"
+    When the author runs "mise-tasks/mcp" in "wt"
+    Then the command exits with status 0
+    And the file "built.log" is:
+      """
+      cargo build --quiet -p ljos_cli --bin ljos --message-format=json-render-diagnostics --target-dir ./shared\builds in ./wt
+      """
+    And the command's standard output is:
+      """json
+      {"jsonrpc":"2.0","id":1,"result":{"serverInfo":{"name":"ljos"}}}
       """
 
   Scenario: A linked worktree builds with the cargo settings the main checkout keeps outside git, into the shared target all the same
