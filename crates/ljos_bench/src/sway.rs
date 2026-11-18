@@ -11,7 +11,7 @@ use std::{
     path::{Path, PathBuf},
     sync::mpsc::{Receiver, channel},
     thread,
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use serde_json::Value;
@@ -137,11 +137,16 @@ impl Sway {
     }
 
     /// The process whose window has the focus, if a client's window has it.
+    /// The answer is waited for `within` at most (none when it is zero).
     ///
     /// # Errors
-    /// The compositor cannot be reached.
-    pub fn focused(&self) -> std::io::Result<Option<u32>> {
+    /// The compositor cannot be reached, or does not answer in time
+    /// (`WouldBlock` or `TimedOut`).
+    pub fn focused(&self, within: Duration) -> std::io::Result<Option<u32>> {
         let mut stream = self.connect()?;
+        if !within.is_zero() {
+            stream.set_read_timeout(Some(within))?;
+        }
         send(&mut stream, GET_TREE, "")?;
         let (_, tree) = receive(&mut stream)?;
         Ok(focused(&tree))

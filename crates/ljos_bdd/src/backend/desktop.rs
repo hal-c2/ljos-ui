@@ -20,7 +20,7 @@
 //! `cua-sandbox.sh env` prints them.
 
 use std::collections::{BTreeMap, VecDeque};
-use std::io::{BufRead as _, BufReader, Write as _};
+use std::io::{BufRead as _, BufReader, ErrorKind, Write as _};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::{Arc, Mutex};
@@ -434,8 +434,9 @@ pub struct DesktopBackend {
     /// The application is a client of the sandbox's XWayland.
     x11: bool,
     /// Another client of the compositor, with a window that takes the
-    /// focus from the application's.
-    other: Option<Reaped>,
+    /// focus from the application's, and the directory of its file, kept
+    /// apart from the scenario's (which may have a file of that name).
+    other: Option<(Reaped, tempfile::TempDir)>,
     /// The scenario took the seat's keyboard away, and it is given back
     /// when the scenario ends.
     keyboard_off: bool,
@@ -462,8 +463,8 @@ fn sandbox_keyboard(sandbox: &Sandbox, on: bool) -> Result<()> {
     let script = crate::runner::workspace_root().join("scripts/cua-sandbox.sh");
     let told = Command::new(&script)
         .args(["keyboard", if on { "on" } else { "off" }])
-        .stdin(Stdio::null())
         .env("LJOS_CUA_HOME", sandbox.path("LJOS_CUA_HOME")?)
+        .stdin(Stdio::null())
         .output()?;
     if told.status.success() {
         Ok(())
@@ -737,10 +738,15 @@ impl DesktopBackend {
     /// The process of another client of the compositor with a window up,
     /// started the first time one is wanted.
     fn other_client(&mut self) -> Result<u32> {
-        if let Some(other) = &self.other {
+        if let Some((other, _)) = &self.other {
             return Ok(other.id());
         }
-        let dir = self.dir()?.to_owned();
+        let features = crate::runner::target_dir().join("features");
+        std::fs::create_dir_all(&features)?;
+        let own = tempfile::Builder::new()
+            .prefix("desktop-other-")
+            .tempdir_in(features)?;
+        let dir = own.path().to_owned();
         std::fs::write(dir.join("other-client.qml"), OTHER_CLIENT)?;
         let sandbox = self
             .sandbox
@@ -778,7 +784,7 @@ impl DesktopBackend {
             }
             std::thread::sleep(Duration::from_millis(50));
         }
-        self.other = Some(other);
+        self.other = Some((other, own));
         Ok(pid)
     }
 
@@ -1050,12 +1056,26 @@ impl Input for DesktopBackend {
             )));
         }
         let deadline = Instant::now() + SEEN;
-        while sway.focused()? != Some(target) {
-            if Instant::now() > deadline {
-                return Err(BackendError::Failed(format!(
-                    "sway did not move the focus to the window of pid {target} in {} s",
-                    SEEN.as_secs()
-                )));
+        let late = || {
+            BackendError::Failed(format!(
+                "sway did not move the focus to the window of pid {target} in {} s",
+                SEEN.as_secs()
+            ))
+        };
+        loop {
+            // A compositor that stops answering fails the step at its
+            // deadline too, not only one that answers with another focus.
+            let left = deadline.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                return Err(late());
+            }
+            match sway.focused(left) {
+                Ok(focused) if focused == Some(target) => break,
+                Ok(_) => {}
+                Err(e) if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {
+                    return Err(late());
+                }
+                Err(e) => return Err(e.into()),
             }
             std::thread::sleep(Duration::from_millis(20));
         }
@@ -1077,6 +1097,10 @@ impl Input for DesktopBackend {
                     .into(),
             ));
         }
+        let sandbox = match &self.sandbox {
+            Some(s) => s,
+            None => self.sandbox.insert(Sandbox::from_env()?),
+        };
         // `keyboard off` can fail after it has taken the keyboard away, so
         // the keyboard is given back whenever it was asked to go.
         if !present {
@@ -1097,10 +1121,6 @@ impl Files for DesktopBackend {
 }
 
 impl Probes for DesktopBackend {
-        let sandbox = match &self.sandbox {
-            Some(s) => s,
-            None => self.sandbox.insert(Sandbox::from_env()?),
-        };
     fn draw_on_processor(&mut self) -> Result<()> {
         self.env.push(("LJOS_PAINTER".to_owned(), "cpu".to_owned()));
         Ok(())
