@@ -278,9 +278,10 @@ fn fs_glow(in: VsOut) -> @location(0) vec4<f32> {
     }
     // Glow covers a seen-through pixel by as much light as it added there:
     // covering it without lighting it would show dark against what is
-    // behind the view.
+    // behind the view. Replace adds nothing to the scene's light, so it
+    // covers as far as the scene or the glow does, whichever is more.
     let added = clamp(max(lit.r, max(lit.g, lit.b)), 0.0, 1.0);
-    let alpha = c.a + added * (1.0 - c.a);
+    let alpha = select(c.a + added * (1.0 - c.a), max(c.a, added), mode == 3u);
     return vec4<f32>(rgb, alpha);
 }
 
