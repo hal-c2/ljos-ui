@@ -42,6 +42,58 @@ fn the_design_module(w: &mut LjosWorld) -> StepResult {
     Ok(())
 }
 
+// An application of `examples/`, every file of it at its own path: its
+// QML and scripts as files to load, anything else (models, pictures) as
+// files beside them. A scenario then loads its `Main.qml`, so what it
+// says holds for the example as it ships.
+#[given(regex = r#"^the files of the example "([^"/.]+)"$"#)]
+fn the_example(w: &mut LjosWorld, id: String) -> StepResult {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../examples")
+        .join(&id);
+    let mut found = Vec::new();
+    example_files(&root, &root, &mut found)?;
+    if found.is_empty() {
+        return Err(format!("{} has no files", root.display()));
+    }
+    for (name, bytes) in found {
+        let is_source = name.ends_with(".qml") || name.ends_with(".ts") || name.ends_with("qmldir");
+        if is_source {
+            let text = String::from_utf8(bytes).map_err(|e| format!("{name}: {e}"))?;
+            w.stage(&name, &text);
+        } else {
+            w.each(|b| b.files()?.resource(&name, &bytes))?;
+        }
+    }
+    Ok(())
+}
+
+fn example_files(
+    root: &std::path::Path,
+    dir: &std::path::Path,
+    found: &mut Vec<(String, Vec<u8>)>,
+) -> Result<(), String> {
+    let entries = std::fs::read_dir(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let mut paths: Vec<_> = entries
+        .map(|e| e.map(|e| e.path()).map_err(|e| format!("{}: {e}", dir.display())))
+        .collect::<Result<_, _>>()?;
+    paths.sort();
+    for path in paths {
+        if path.is_dir() {
+            example_files(root, &path, found)?;
+        } else {
+            let name = path
+                .strip_prefix(root)
+                .map_err(|e| format!("{}: {e}", path.display()))?
+                .to_string_lossy()
+                .replace('\\', "/");
+            let bytes = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+            found.push((name, bytes));
+        }
+    }
+    Ok(())
+}
+
 // A Qt Linguist file, as a translator hands it over. Its `language`
 // attribute says which language it is for.
 #[given(regex = r#"^the translation file "([^"]+\.ts)":$"#)]
