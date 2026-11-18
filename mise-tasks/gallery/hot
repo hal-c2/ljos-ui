@@ -11,8 +11,9 @@ need_corpus
 target="$(target_dir)"
 # A sandbox of its own (GALLERY_CUA_HOME), so stopping it at the end leaves
 # alone one someone drives with desktop:cua.
-export LJOS_CUA_HOME="${GALLERY_CUA_HOME:-$target/cua-gallery-hot}"
-out="${GALLERY_DIR:-$target/gallery}/hot"
+LJOS_CUA_HOME="${GALLERY_CUA_HOME:-$(checkout_dir cua-gallery-hot)}"
+export LJOS_CUA_HOME
+out="${GALLERY_DIR:-$(checkout_dir gallery)}/hot"
 
 [ $# -gt 0 ] || { echo "usage: mise run gallery:hot <id>… (mise run gallery:run lists the ids)" >&2; exit 1; }
 

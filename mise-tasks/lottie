@@ -35,15 +35,15 @@ fi
 case "$file" in
   *.qml) entry="$file" ;;
   *)
+    corner="$(checkout_dir lottie)"
+    mkdir -p "$corner"
     if [ -n "$check" ]; then
       # Each check reads its own viewer and log, so two at once cannot report
       # each other's status.
-      mkdir -p "$target"
-      dir="$(mktemp -d "$target/lottie-check.XXXXXX")"
+      dir="$(mktemp -d "$corner/check.XXXXXX")"
       trap 'rm -rf "$dir"' EXIT
     else
-      dir="$target/lottie"
-      mkdir -p "$dir"
+      dir="$corner"
     fi
     entry="$dir/view.qml"
     url="file://$file"

@@ -23,7 +23,7 @@ set -euo pipefail
 root="$ljos_root"
 target="$(target_dir)"
 # Absolute: the probe runs each scene where the bench ran it.
-out="$(from_asked "${BENCH_DIR:-$target/bench3d}")"
+out="$(from_asked "${BENCH_DIR:-$(checkout_dir bench3d)}")"
 mkdir -p "$out"
 out="$(physical "$out")"
 need_python3

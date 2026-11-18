@@ -4,4 +4,7 @@
 #USAGE arg "<file>" help="QML file to run (ljos run <file>)"
 #USAGE arg "[args]..." var=#true help="Arguments for ljos run after the file"
 set -euo pipefail
+# The sandbox builds ljos where the tasks do, and has a home per checkout.
+# shellcheck source-path=SCRIPTDIR source=../../_lib/env.sh
+. "$(dirname "$0")/../../_lib/env.sh"
 exec scripts/cua-sandbox.sh start "$@"

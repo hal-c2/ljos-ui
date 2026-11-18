@@ -18,7 +18,7 @@ if [ -n "$check" ]; then
   check_run "$target/debug/ljos" run scripts/drag-in-probe.qml ${args[@]+"${args[@]}"}
   exit
 fi
-log="$(from_asked "${DRAG_IN_LOG:-$target/drag-in.log}")"
+log="$(from_asked "${DRAG_IN_LOG:-$(checkout_dir drag-in.log)}")"
 cat >&2 <<'HOW'
 Drag into the window, then close it:
   left half:  takes anything with the action the source proposes

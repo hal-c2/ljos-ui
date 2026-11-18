@@ -12,7 +12,7 @@ set -euo pipefail
 . "$(dirname "$0")/../_lib/env.sh"
 root="$ljos_root"
 target="$(target_dir)"
-out="${BENCH_DIR:-$target/bench}"
+out="${BENCH_DIR:-$(checkout_dir bench)}"
 
 read -r -a defaults <<< "${BENCH_DEFAULTS---warm-up --repeat 3 --bisect pi-zero}"
 ids=()

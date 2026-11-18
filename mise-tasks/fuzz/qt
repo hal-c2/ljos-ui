@@ -28,4 +28,4 @@ dir="$profile"
 # someone's own by being typed elsewhere.
 exec "$target/$dir/ljos-fuzz" --qml "$qml" \
   --known "$ljos_root/crates/ljos_fuzz/known" \
-  --out "${FUZZ_OUT:-$target/fuzz/out}" --work "$target/fuzz/work" "$@"
+  --out "${FUZZ_OUT:-$(checkout_dir fuzz/out)}" --work "$(checkout_dir fuzz/work)" "$@"

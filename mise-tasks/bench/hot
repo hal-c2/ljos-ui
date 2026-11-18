@@ -16,7 +16,7 @@ set -euo pipefail
 . "$(dirname "$0")/../_lib/env.sh"
 root="$ljos_root"
 target="$(target_dir)"
-out="$target/bench-hot"
+out="$(checkout_dir bench-hot)"
 secs="${BENCH_HOT_SECONDS:-15}"
 order="$root/crates/ljos_cli/link/hot.txt"
 

@@ -219,18 +219,24 @@ if [ "${LJOS_BDD_BACKEND:-ljos}" != qt ]; then
   done < <(selected)
 fi
 if [ -n "$desktop" ]; then
-  export LJOS_CUA_HOME="$target/cua-features"
-  mkdir -p "$target/features"
-  if why=$(scripts/cua-sandbox.sh env 2>&1 >"$target/features/desktop.env"); then
+  LJOS_CUA_HOME="$(checkout_dir cua-features)"
+  export LJOS_CUA_HOME
+  work="$(checkout_dir features)"
+  mkdir -p "$work"
+  if why=$(scripts/cua-sandbox.sh env 2>&1 >"$work/desktop.env"); then
     # Set before the build, so a build that fails stops the sandbox env started too.
     trap 'scripts/cua-sandbox.sh stop' EXIT
     # Built once here, outside the test, which then runs this one: a build
-    # from inside it would be told the test's package (see testrun.rs).
+    # from inside it would be told the test's package (see testrun.rs). The
+    # run keeps its own link to it, as another checkout may build into the
+    # same target while the ledger runs (pin_programs).
     if [ -z "${LJOS_BIN:-}" ]; then
-      cargo build --quiet -p ljos_cli --bin ljos
-      export LJOS_BIN="$target/debug/ljos"
+      programs="$(pin_programs "$work/bin" build --quiet -p ljos_cli --bin ljos)" || die "features: ljos did not build"
+      LJOS_BIN="$(printf '%s\n' "$programs" | awk '$1 == "ljos" { print $2 }')"
+      [ -n "$LJOS_BIN" ] || die "features: the build made no ljos"
+      export LJOS_BIN
     fi
-    export LJOS_BDD_DESKTOP="$target/features/desktop.env"
+    export LJOS_BDD_DESKTOP="$work/desktop.env"
   else
     # env can fail after it started sway and its bus (a seat that never
     # got its keyboard, say). This sandbox is this run's own, so what it

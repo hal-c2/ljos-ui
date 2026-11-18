@@ -10,7 +10,7 @@ cd "$ljos_root"
 # (Qt 5's is the one on PATH on some systems); NO_QT=1 measures Ljós only.
 target="$(target_dir)"
 ljos="$(from_asked "${LJOS:-$target/release/ljos}")"
-out="$(from_asked "${OUT:-$target/bench-js}")"
+out="$(from_asked "${OUT:-$(checkout_dir bench-js)}")"
 need_valgrind
 need_timeout
 [ -x "$ljos" ] || die "bench:js measures a release ljos, and $ljos is not one: cargo build --release -p ljos_cli, or set LJOS"
