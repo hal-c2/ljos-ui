@@ -7,8 +7,8 @@
 Feature: A custom style's calendar
   A month grid of a custom style has its days made in the content item
   the style gives it, as a built-in style's has. A content item the
-  application gives one is still the application's: no days are made in
-  it, and it asks for the room the application says.
+  application gives one where it declares it is still the application's:
+  no days are made in it, and it asks for the room the application says.
 
   Background:
     Given the file "Kit/qmldir":
@@ -25,8 +25,14 @@ Feature: A custom style's calendar
         implicitHeight: implicitContentHeight
         spacing: 6
         property string madeBy: "Kit"
-        contentItem: Item {}
+        contentItem: Item { objectName: "kitContent" }
       }
+      """
+    And the file "MyGrid.qml":
+      """qml
+      import QtQuick
+      import QtQuick.Controls
+      MonthGrid { contentItem: Item { implicitWidth: 50; implicitHeight: 40 } }
       """
     And the application starts with the controls style "Kit"
     And the QML:
@@ -38,9 +44,12 @@ Feature: A custom style's calendar
                                     implicitWidth: 20; implicitHeight: 10 } }
         Component { id: mine; Item { required property int index; objectName: "o" + index
                                      implicitWidth: 20; implicitHeight: 10 } }
+        Component { id: wrap; Item { required property int index; objectName: "w" + index
+                                     implicitWidth: 20; implicitHeight: 10 } }
         MonthGrid { objectName: "grid"; month: Calendar.February; year: 2024; delegate: day }
         MonthGrid { objectName: "own"; y: 100; month: Calendar.February; year: 2024; delegate: mine
                     contentItem: Item { implicitWidth: 50; implicitHeight: 40 } }
+        MyGrid { objectName: "wrapped"; y: 200; month: Calendar.February; year: 2024; delegate: wrap }
       }
       """
 
@@ -52,6 +61,7 @@ Feature: A custom style's calendar
   Scenario: The days are made in a custom style's content item
     When 100 milliseconds pass
     Then the property "madeBy" of "grid" is "Kit"
+    And the property "children.length" of "kitContent" is 42
     And the object "k41" exists
     And the property "width" of "grid" is 176
     And the property "height" of "grid" is 90
@@ -60,6 +70,19 @@ Feature: A custom style's calendar
   Scenario: No days are made in a content item the application gives a custom style's month grid
     When 100 milliseconds pass
     Then the property "madeBy" of "own" is "Kit"
+    And the property "contentItem.children.length" of "own" is 0
     And the object "o0" does not exist
     And the property "width" of "own" is 50
     And the property "height" of "own" is 40
+
+  # The running program does not know which files are a custom style's; the
+  # compiler does. A content item from a file other than the one the control
+  # is declared in is taken to be the style's, so an application's own type
+  # derived from a styled month grid has days made in its content item too.
+  # qml6 makes none there: the wrapped grid is 50x40, with no children.
+  @qt-diverges
+  Scenario: The days are made in the content item of an application's own month grid type
+    When 100 milliseconds pass
+    Then the property "contentItem.children.length" of "wrapped" is 42
+    And the property "width" of "wrapped" is 176
+    And the property "height" of "wrapped" is 90
