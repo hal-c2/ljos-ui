@@ -770,7 +770,8 @@ exported_by() {
     cat "$real/note.err"
   )
 }
-note="tasks:test: the main checkout's cargo settings profile.fast.inherits target.\"cfg(unix)\".runner registry.token net.ssh.known-hosts reach cargo only through a task's cargo: no variable can carry them, so a cargo that a program runs by itself builds without them"
+# The note starts with the task's name, as mise runs it (tasks:test, ci:test).
+note="$(task_name): the main checkout's cargo settings profile.fast.inherits target.\"cfg(unix)\".runner registry.token net.ssh.known-hosts reach cargo only through a task's cargo: no variable can carry them, so a cargo that a program runs by itself builds without them"
 want="CARGO_BUILD_JOBS=2|CARGO_BUILD_RUSTFLAGS=--cfg main|CARGO_PROFILE_DEV_OPT_LEVEL=1|CARGO_ALIAS_B2=build -v|CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=cc|$note"
 out="$(exported_by "$real/wt" "")"
 if [ "$out" = "$want" ]; then ok "a linked worktree's main checkout's settings are exported for a cargo a program runs, and the task names those none can carry"; else bad "export_settings in a linked worktree:" "gave: $out" "not:  $want"; fi
@@ -782,8 +783,8 @@ if [ -z "$out" ]; then ok "a main checkout exports nothing: every cargo there fi
 # The developer's variables win: one that sets a key (or replaces an array,
 # as RUSTFLAGS does) leaves it unexported, and an [env] entry is the
 # developer's unless forced.
-out="$(exported_by "$real/wt" env CARGO_BUILD_JOBS=1 RUSTFLAGS=-g SEEN=mine FORCED=mine | sed 's/tasks:test: .*//')"
-want="CARGO_PROFILE_DEV_OPT_LEVEL=1|CARGO_ALIAS_B2=build -v|FORCED=theirs|CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=cc|"
+out="$(exported_by "$real/wt" env CARGO_BUILD_JOBS=1 RUSTFLAGS=-g SEEN=mine FORCED=mine)"
+want="CARGO_PROFILE_DEV_OPT_LEVEL=1|CARGO_ALIAS_B2=build -v|FORCED=theirs|CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=cc|$note"
 if [ "$out" = "$want" ]; then ok "a variable the developer exported wins over the main checkout's setting, and a forced [env] entry over the developer's"; else bad "export_settings with the developer's variables:" "gave: $out" "not:  $want"; fi
 # A task's cargo is then given only the rest, so no array comes twice; and
 # a task started by a task says nothing again.
@@ -1469,6 +1470,27 @@ if [ -d "$real/wt" ]; then
   ) )"
   want="mcp --project $real/wt|2|--cfg main|yes"
   if [ "$out" = "$want" ]; then ok "the MCP server gets the settings of its project's main checkout for the cargo it runs"; else bad "the MCP server was given:" "gave: $out" "not:  $want"; fi
+  # What a task in the linked worktree exported is its main checkout's: a
+  # task it starts for another checkout (the MCP server for the main
+  # checkout, any task of the main checkout's) drops it, but keeps what the
+  # developer set again since.
+  from_worktree() {
+    (
+      unexported
+      unset LJOS_UNEXPORTED_NOTED LJOS_SETTINGS_EXPORTED SEEN
+      export CARGO_HOME="$real/cargo-home" LJOS_BIN="$real/envserver"
+      export_settings "$(cargo_config "$real/wt")" env 2>/dev/null
+      [ -z "${1-}" ] || export "${1?}"
+      bash "$ljos_root/mise-tasks/mcp" "$repo" 2>/dev/null
+      bash -c '. "$1/mise-tasks/_lib/env.sh" && printf "%s|%s|%s\n" "${CARGO_BUILD_JOBS-}" "${CARGO_BUILD_RUSTFLAGS-}" "${SEEN-}"' task "$ljos_root" 2>/dev/null
+    )
+  }
+  out="$(from_worktree | tr '\n' '#')"
+  want="mcp --project $repo|||#||#"
+  if [ "$out" = "$want" ]; then ok "a task in a linked worktree that starts the MCP server or a task for another checkout passes it none of its main checkout's settings"; else bad "started from a linked worktree's task, another checkout's MCP server and task got:" "gave: $out" "not:  $want"; fi
+  out="$(from_worktree CARGO_BUILD_JOBS=7 | tr '\n' '#')"
+  want="mcp --project $repo|7||#7||#"
+  if [ "$out" = "$want" ]; then ok "a variable the developer set again after a task exported it is the developer's, and is kept"; else bad "with CARGO_BUILD_JOBS=7 set after the export, another checkout's MCP server and task got:" "gave: $out" "not:  $want"; fi
   printf '[build]\njobs = 2\n' >"$repo/.cargo/config.toml"
 fi
 

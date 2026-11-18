@@ -835,6 +835,31 @@ EOF_SETTINGS
   esac
 }
 
+# unexport_settings: what export_settings exported, here or in a task that
+# started this one, gone again. export_settings notes each variable it sets
+# in LJOS_SETTINGS_EXPORTED, as NAME=value lines, and exports the list with
+# them: a task started by a task inherits both, and its checkout may be
+# another one, whose main checkout's settings these are not (mise-tasks/mcp
+# for another project, `mise -C <other checkout> run`). Left alone they would
+# read as the developer's, keep that checkout's own settings out and outrank
+# its files. A variable whose value is no longer the noted one was set again
+# since, by the developer, and is kept.
+unexport_settings() {
+  local line name
+  while IFS= read -r line; do
+    name="${line%%=*}"
+    case "$name" in "" | [0-9]* | *[!A-Za-z0-9_]*) continue ;; esac
+    if [ "${!name+set}" = set ] && [ "${!name}" = "${line#*=}" ]; then
+      unset "$name"
+    fi
+  done <<EOF_EXPORTED
+${LJOS_SETTINGS_EXPORTED-}
+EOF_EXPORTED
+  unset LJOS_SETTINGS_EXPORTED
+  ljos_settings_exported=""
+}
+unexport_settings
+
 # Every task builds where target_dir says, and so does every cargo its cargo
 # starts (ljos_bdd's builds of ljos, say), through the variable. What was
 # asked for before that is kept for a task that builds another checkout
@@ -855,8 +880,10 @@ ljos_cargo_config="$(cargo_config)" || exit 1
 # well, for a program that runs cargo by itself and was not started by cargo,
 # which gives them to whatever it starts (mise-tasks/mcp's server); a forced
 # one replaces the user's, as cargo's does. The variables are named in
-# ljos_settings_exported. What no variable can carry (cargo_settings says
-# which) reaches only a task's cargo, which the task says once.
+# ljos_settings_exported, and noted with their values in
+# LJOS_SETTINGS_EXPORTED for unexport_settings. What no variable can carry
+# (cargo_settings says which) reaches only a task's cargo, which the task
+# says once.
 ljos_settings_exported=""
 export_settings() {
   local line names rest kind name value blocked n exported nl=$'\n' tab=$'\t'
@@ -894,20 +921,12 @@ export_settings() {
     [ -z "$blocked" ] || continue
     export "$name=$value"
     ljos_settings_exported="${ljos_settings_exported:+$ljos_settings_exported }$name"
+    export LJOS_SETTINGS_EXPORTED="${LJOS_SETTINGS_EXPORTED:+$LJOS_SETTINGS_EXPORTED$nl}$name=$value"
   done <<EOF_SETTINGS
 $1
 EOF_SETTINGS
 }
 
-# unexport_settings: what export_settings exported, gone again, for a task
-# that builds another checkout than its own (mise-tasks/mcp).
-unexport_settings() {
-  local name
-  for name in $ljos_settings_exported; do
-    unset "$name"
-  done
-  ljos_settings_exported=""
-}
 export_settings "$ljos_cargo_config"
 
 # cargo, with the main checkout's settings in a worktree, from a settings
