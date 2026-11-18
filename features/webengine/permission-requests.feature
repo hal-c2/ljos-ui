@@ -406,13 +406,15 @@ Feature: A view answers what a page asks permission for
         id: view; objectName: "view"
         width: 200; height: 100
         property var kept: null
+        property int asked: 0
         url: "$SERVER/notify.html"
-        onPermissionRequested: permission => kept = permission
+        onPermissionRequested: permission => { asked++; kept = permission }
         Timer { interval: 1500; running: true; onTriggered: view.kept.grant() }
       }
       """
     When 1 second passes
     Then the log has no info matching "the view is not asked"
+    And the property "asked" of "view" is 1
     And the property "title" of "view" is "waiting"
     When 2 seconds pass
     Then the property "title" of "view" is "granted"
