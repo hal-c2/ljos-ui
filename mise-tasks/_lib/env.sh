@@ -564,9 +564,9 @@ export CARGO_TARGET_DIR
 ljos_cargo_config="$(cargo_config)"
 
 # cargo, with the main checkout's settings in a worktree, from a settings
-# file of its own that is gone once cargo is. A task runs `cargo`, never
-# `exec cargo` or `command cargo`, which would go round this (tasks:smoke
-# holds every task to that).
+# file of its own that is gone once cargo is. A task runs `cargo` (or
+# `exec_cargo`), never `exec cargo` or `command cargo`, which would go round
+# this (tasks:smoke holds every task to that).
 cargo() {
   local config_args settings status=0
   if [ -z "$ljos_cargo_config" ]; then
@@ -579,6 +579,33 @@ cargo() {
   rm -f "$settings/settings.toml"
   rmdir "$settings"
   return "$status"
+}
+
+# exec_cargo <args…>: cargo in place of this shell, as `exec cargo` would run
+# it (a signal sent to the task reaches cargo), with the settings `cargo`
+# gives. No shell is left to remove the settings file after cargo, so it is
+# opened on descriptor 9 and removed first, and cargo reads it as
+# /dev/fd/9. Where opening /dev/fd/9 is not opening the file again (macOS
+# has no /proc, and gives a copy of the descriptor that shares its offset
+# with whatever read it before), the file stays in its directory, which only
+# its user can read, under TMPDIR.
+exec_cargo() {
+  local config_args settings i
+  if [ -z "$ljos_cargo_config" ]; then
+    exec cargo "$@"
+  fi
+  settings="$(mktemp -d "${TMPDIR:-/tmp}/ljos-cargo.XXXXXX")" || exit
+  config_args "$ljos_cargo_config" "$settings"
+  if [ -f "$settings/settings.toml" ] && [ -d /proc/self/fd ]; then
+    exec 9<"$settings/settings.toml" || exit
+    for i in "${!config_args[@]}"; do
+      [ "${config_args[$i]}" != "$settings/settings.toml" ] || config_args[i]=/dev/fd/9
+    done
+    rm -f "$settings/settings.toml"
+  fi
+  rmdir "$settings" 2>/dev/null || true
+  # exec runs the program, never this file's cargo function.
+  exec cargo ${config_args[@]+"${config_args[@]}"} "$@"
 }
 
 # Empty when .mcp.json (<file>) starts its ljos server through mise-tasks/mcp,
@@ -757,7 +784,7 @@ EOF_SCRIPTS
   grep -Eq '^[[:space:]]*(\.|source)[[:space:]].*_lib/env\.sh"?[[:space:]]*$' <<<"$code" ||
     printf ' runs cargo without sourcing _lib/env.sh, so it builds into a worktree'"'"'s own target/;'
   grep -Eq "${pre}${via}+cargo([[:space:]]|$)" <<<"$words" &&
-    printf ' exec cargo, command cargo or a program that runs cargo (timeout, nice, env, capped) goes round env.sh'"'"'s cargo (run cargo);'
+    printf ' exec cargo, command cargo or a program that runs cargo (timeout, nice, env, capped) goes round env.sh'"'"'s cargo (run cargo, or exec_cargo where cargo takes the task'"'"'s process);'
   return 0
 }
 

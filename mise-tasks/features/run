@@ -144,7 +144,7 @@ run_ledger() {
     cd "$ljos_root/crates/ljos_bdd"
     exec "$bin" "$@"
   else
-    exec cargo test --quiet -p ljos_bdd ${features[@]+"${features[@]}"} --test features -- "$@"
+    exec_cargo test --quiet -p ljos_bdd ${features[@]+"${features[@]}"} --test features -- "$@"
   fi
 }
 if [ -n "$cef" ]; then

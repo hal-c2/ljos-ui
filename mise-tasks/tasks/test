@@ -930,6 +930,11 @@ for a in "$@"; do
       while IFS= read -r line; do printf '%s;' "$line"; done <"$a"
       printf '}%s|' "$(ls -ld "$(dirname "$a")" | cut -c1-10)"
       ;;
+    /dev/fd/*)
+      printf '{'
+      while IFS= read -r line; do printf '%s;' "$line"; done <"$a"
+      printf '}fd|'
+      ;;
     *) printf '%s|' "$a" ;;
   esac
 done
@@ -940,6 +945,18 @@ mkdir "$real/argtmp"
 out="$( (unset CARGO_BUILD_JOBS CARGO_BUILD_TARGET_DIR && ljos_cargo_config="$settings" && TMPDIR="$real/argtmp" PATH="$argfakes:$PATH" cargo build) )"
 if [ "$out" = "--config|{build.jobs = 2;}drwx------|build|" ]; then ok "in a worktree, cargo gets its main checkout's settings in a file only its user can read, but the target CARGO_TARGET_DIR names"; else bad "cargo in a worktree gave: $out"; fi
 if [ -z "$(ls -A "$real/argtmp")" ]; then ok "the settings file is gone once cargo is"; else bad "cargo left behind: $(ls -A "$real/argtmp")"; fi
+# exec_cargo: cargo takes the shell's process, and nothing is left behind.
+out="$( (unset CARGO_BUILD_JOBS CARGO_BUILD_TARGET_DIR && ljos_cargo_config="$settings" && TMPDIR="$real/argtmp" PATH="$argfakes:$PATH" exec_cargo build; echo "still here|") )"
+if [ -d /proc/self/fd ]; then
+  want="--config|{build.jobs = 2;}fd|build|"
+  if [ "$out" = "$want" ]; then ok "exec_cargo runs cargo in the shell's place with the main checkout's settings, read from a descriptor"; else bad "exec_cargo gave: $out" "not:  $want"; fi
+  if [ -z "$(ls -A "$real/argtmp")" ]; then ok "exec_cargo leaves no settings file behind"; else bad "exec_cargo left behind: $(ls -A "$real/argtmp")"; fi
+else
+  case "$out" in
+    "--config|{build.jobs = 2;}drwx------|build|") ok "exec_cargo runs cargo in the shell's place with the main checkout's settings, in a file only its user can read" ;;
+    *) bad "exec_cargo gave: $out" ;;
+  esac
+fi
 out="$( (unset CARGO_BUILD_TARGET_DIR && ljos_cargo_config="$settings" && CARGO_BUILD_JOBS=1 && export CARGO_BUILD_JOBS && PATH="$argfakes:$PATH" cargo build) )"
 if [ "$out" = "build|" ]; then ok "a variable set after env.sh was read still wins over the main checkout's settings"; else bad "cargo given CARGO_BUILD_JOBS=1 after env.sh was read gave: $out"; fi
 out="$( (unset CARGO_BUILD_JOBS CARGO_BUILD_TARGET_DIR && ljos_cargo_config="$settings" && CARGO_BUILD_JOBS=1 PATH="$argfakes:$PATH" cargo build) )"
@@ -1055,6 +1072,7 @@ lints "cargo in a condition or a command substitution is a cargo run" source 'if
 lints "cargo after an assignment is a cargo run" source 'x="$(RUSTFLAGS=-g cargo metadata)"'
 lints "a commented-out source of env.sh does not count" source "# $env_line" 'cargo test'
 lints "exec cargo goes round env.sh's cargo" round "$env_line" 'exec cargo test'
+lints "exec_cargo is env.sh's cargo in the task's process" none "$env_line" 'exec_cargo test'
 # shellcheck disable=SC1003 # the backslash ends the task's line
 lints "command cargo across a continued line goes round env.sh's cargo" round "$env_line" 'command \' '  cargo test'
 # A program that runs another runs the cargo program, not env.sh's cargo.
