@@ -1,13 +1,10 @@
-// The car in 3D. The parts are separate files from assets/car (made by
-// build_car.py); each sits under a Node at the pivot rig.json gives and
-// opens by turning that node about rig.json's axis. The light strips are
-// emissive boxes, so the scene's glow blooms them and nothing else.
+// The car in 3D on a plinth, from a camera that orbits it. The car itself
+// is CarModel.qml.
 //
 // This file stays in the QtQuick3D vocabulary: Ljós runs it as it is.
 import QtQuick
 import QtQuick3D
 import QtQuick3D.Helpers
-import QtQuick3D.AssetUtils
 
 View3D {
     id: scene
@@ -159,125 +156,16 @@ View3D {
         }
     }
 
-    Node {
-        id: car
-        scale: Qt.vector3d(scene.m, scene.m, scene.m)
-
-        RuntimeLoader {
-            source: "assets/car/body.glb"
-        }
-
-        Node {
-            position: Qt.vector3d(0.34, 1.245, -0.135)
-            eulerRotation.z: 70 * scene.doorLeft
-            RuntimeLoader {
-                source: "assets/car/door_left.glb"
-            }
-            Strip {
-                position: Qt.vector3d(0.6281, -0.465, 0)
-                size: Qt.vector3d(0.012, 0.014, 0.97)
-                tint: scene.stripTint
-                level: scene.strips
-            }
-        }
-        Node {
-            position: Qt.vector3d(-0.34, 1.245, -0.135)
-            eulerRotation.z: -70 * scene.doorRight
-            RuntimeLoader {
-                source: "assets/car/door_right.glb"
-            }
-            Strip {
-                position: Qt.vector3d(-0.6281, -0.465, 0)
-                size: Qt.vector3d(0.012, 0.014, 0.97)
-                tint: scene.stripTint
-                level: scene.strips
-            }
-        }
-        Node {
-            position: Qt.vector3d(0, 0.9101, 0.92)
-            eulerRotation.x: -55 * scene.frunk
-            RuntimeLoader {
-                source: "assets/car/frunk.glb"
-            }
-        }
-        Node {
-            position: Qt.vector3d(0, 1.2088, -0.8)
-            eulerRotation.x: 60 * scene.trunk
-            RuntimeLoader {
-                source: "assets/car/trunk.glb"
-            }
-        }
-        Node {
-            position: Qt.vector3d(0.9388, 0.7852, -1.95)
-            eulerRotation.y: -95 * scene.chargePort
-            RuntimeLoader {
-                source: "assets/car/charge_port.glb"
-            }
-        }
-
-        // The wheels: the left ones as the file has them, the right ones
-        // turned round, so they roll the other way about their own axis.
-        Node {
-            position: Qt.vector3d(0.83, 0.37, 1.4)
-            eulerRotation.y: scene.steer
-            Node {
-                eulerRotation.x: scene.roll
-                RuntimeLoader {
-                    source: "assets/car/wheel.glb"
-                }
-            }
-        }
-        Node {
-            position: Qt.vector3d(-0.83, 0.37, 1.4)
-            eulerRotation.y: 180 + scene.steer
-            Node {
-                eulerRotation.x: -scene.roll
-                RuntimeLoader {
-                    source: "assets/car/wheel.glb"
-                }
-            }
-        }
-        Node {
-            position: Qt.vector3d(0.83, 0.37, -1.4)
-            eulerRotation.x: scene.roll
-            RuntimeLoader {
-                source: "assets/car/wheel.glb"
-            }
-        }
-        Node {
-            position: Qt.vector3d(-0.83, 0.37, -1.4)
-            eulerRotation.y: 180
-            Node {
-                eulerRotation.x: -scene.roll
-                RuntimeLoader {
-                    source: "assets/car/wheel.glb"
-                }
-            }
-        }
-
-        Strip {
-            position: Qt.vector3d(0, 0.43, 2.304)
-            size: Qt.vector3d(1.56, 0.03, 0.012)
-            tint: scene.stripTint
-            level: scene.strips
-        }
-        Strip {
-            position: Qt.vector3d(0, 0.8, -2.304)
-            size: Qt.vector3d(1.64, 0.04, 0.012)
-            tint: scene.tailTint
-            level: scene.strips
-        }
-        Strip {
-            position: Qt.vector3d(0.932, 0.3, 0)
-            size: Qt.vector3d(0.012, 0.022, 1.7)
-            tint: scene.stripTint
-            level: scene.strips
-        }
-        Strip {
-            position: Qt.vector3d(-0.932, 0.3, 0)
-            size: Qt.vector3d(0.012, 0.022, 1.7)
-            tint: scene.stripTint
-            level: scene.strips
-        }
+    CarModel {
+        doorLeft: scene.doorLeft
+        doorRight: scene.doorRight
+        frunk: scene.frunk
+        trunk: scene.trunk
+        chargePort: scene.chargePort
+        roll: scene.roll
+        steer: scene.steer
+        stripTint: scene.stripTint
+        tailTint: scene.tailTint
+        strips: scene.strips
     }
 }
