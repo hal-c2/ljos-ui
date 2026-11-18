@@ -214,14 +214,7 @@ Feature: Ljós's own style, mirrored
               <parts>
             }
           }
-          function part(item, name) {
-            for (const child of item.children) {
-              if (child.objectName === name) return child
-              const found = part(child, name)
-              if (found) return found
-            }
-            return null
-          }
+          function part(i, name) { for (const k of i.children) { if (k.objectName === name) return k; const f = part(k, name); if (f) return f } return null }
           property var got: []
           function measure() {
             const at = (name) => part(control.contentItem, name).mapToItem(root, 0, 0).x
