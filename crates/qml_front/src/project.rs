@@ -12,7 +12,7 @@ use oxc_ast_visit::Visit;
 use qml_syntax::{
     Allocator,
     ast::*,
-    js::{Expression, IdentifierReference},
+    js::{Expression, Function, IdentifierReference, TSType, TSTypeName},
 };
 
 use crate::{Code, Error, oracle::TypeOracle};
@@ -113,7 +113,7 @@ pub struct Shape {
     pub properties: HashMap<String, Declaration>,
     /// A signal's parameter names.
     pub signals: HashMap<String, Vec<String>>,
-    pub functions: HashSet<String>,
+    pub functions: HashMap<String, FunctionShape>,
     /// The properties whoever makes the object has to set, the inherited ones
     /// the component asks for (`required name`) among them.
     pub required: Vec<String>,
@@ -143,6 +143,113 @@ pub struct EnumKey {
     /// The number written (`Dark = 5`), or one more than the key before it
     /// (0 for the first).
     pub value: i64,
+}
+
+/// A `function` declaration, as far as a caller cares: the types it is
+/// written with, so a call from another file is checked as one from its
+/// own.
+#[derive(Debug, Clone, Default)]
+pub struct FunctionShape {
+    pub params: Vec<ParamShape>,
+    /// Whether it ends in `...rest`.
+    pub rest: bool,
+    pub returns: Written,
+}
+
+#[derive(Debug, Clone)]
+pub struct ParamShape {
+    pub name: String,
+    pub written: Written,
+    /// `n?: int`, or `n = 0`: a call may leave it out.
+    pub optional: bool,
+}
+
+impl FunctionShape {
+    /// Whether it says any type: one that says none is JavaScript's, and
+    /// takes and gives what it is handed.
+    pub fn is_typed(&self) -> bool {
+        !matches!(self.returns, Written::Missing)
+            || self
+                .params
+                .iter()
+                .any(|param| !matches!(param.written, Written::Missing))
+    }
+}
+
+/// A type written on a function, as a name the file it is in resolves.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub enum Written {
+    /// Nothing is written.
+    #[default]
+    Missing,
+    /// `int`, `string`, `void`, `Item`, `Text.HAlignment`; `string[]` for
+    /// an array of one.
+    Name(String),
+    /// A type a name does not say (a union, a record, a generic): the
+    /// summary does not carry it.
+    Other,
+}
+
+impl Written {
+    fn of(ty: &TSType<'_>) -> Self {
+        Self::name(ty).map_or(Self::Other, Self::Name)
+    }
+
+    fn name(ty: &TSType<'_>) -> Option<String> {
+        Some(match ty {
+            TSType::TSStringKeyword(_) => "string".into(),
+            TSType::TSNumberKeyword(_) => "number".into(),
+            TSType::TSBooleanKeyword(_) => "boolean".into(),
+            TSType::TSVoidKeyword(_) => "void".into(),
+            TSType::TSUndefinedKeyword(_) => "undefined".into(),
+            TSType::TSUnknownKeyword(_) => "unknown".into(),
+            TSType::TSNeverKeyword(_) => "never".into(),
+            TSType::TSArrayType(array) => format!("{}[]", Self::name(&array.element_type)?),
+            TSType::TSParenthesizedType(inner) => Self::name(&inner.type_annotation)?,
+            TSType::TSTypeReference(reference) if reference.type_arguments.is_none() => {
+                type_name(&reference.type_name)?
+            }
+            _ => return None,
+        })
+    }
+}
+
+fn type_name(name: &TSTypeName<'_>) -> Option<String> {
+    match name {
+        TSTypeName::IdentifierReference(id) => Some(id.name.to_string()),
+        TSTypeName::QualifiedName(qualified) => Some(format!(
+            "{}.{}",
+            type_name(&qualified.left)?,
+            qualified.right.name
+        )),
+        _ => None,
+    }
+}
+
+fn function_shape(function: &Function<'_>) -> FunctionShape {
+    let written = |annotation: Option<&qml_syntax::js::TSTypeAnnotation<'_>>| {
+        annotation.map_or(Written::Missing, |annotation| {
+            Written::of(&annotation.type_annotation)
+        })
+    };
+    FunctionShape {
+        params: function
+            .params
+            .items
+            .iter()
+            .map(|param| ParamShape {
+                name: param
+                    .pattern
+                    .get_identifier_name()
+                    .map(|name| name.to_string())
+                    .unwrap_or_default(),
+                written: written(param.type_annotation.as_deref()),
+                optional: param.optional || param.initializer.is_some(),
+            })
+            .collect(),
+        rest: function.params.rest.is_some(),
+        returns: written(function.return_type.as_deref()),
+    }
 }
 
 /// A `property` declaration, as far as an instance cares.
@@ -419,7 +526,7 @@ impl Project {
                 .properties
                 .keys()
                 .chain(shape.signals.keys())
-                .chain(&shape.functions)
+                .chain(shape.functions.keys())
                 .map(String::as_str);
             has.extend(declared.filter(|name| !oracle.is_member_name(name)));
         }
@@ -487,7 +594,7 @@ fn shape(summary: &mut Summary, inline: Option<&str>, root: &QmlObject<'_>) {
             .collect(),
         properties: HashMap::new(),
         signals: HashMap::new(),
-        functions: HashSet::new(),
+        functions: HashMap::new(),
         required: Vec::new(),
         has_default: false,
         default_component: None,
@@ -554,7 +661,9 @@ fn shape(summary: &mut Summary, inline: Option<&str>, root: &QmlObject<'_>) {
             }
             QmlMember::Function(function) => {
                 if let Some(id) = &function.id {
-                    shape.functions.insert(id.name.to_string());
+                    shape
+                        .functions
+                        .insert(id.name.to_string(), function_shape(function));
                 }
             }
             QmlMember::Enum(declaration) => {

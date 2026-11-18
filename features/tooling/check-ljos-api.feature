@@ -187,6 +187,35 @@ Feature: Checking the scripts of a file written in Ljós's API
         ljos: 3 errors
         """
 
+    Scenario: A function of another component gives and takes the types it declares
+      Given the file "Helper.qml":
+        """qml
+        import Ljos.Ui
+        Item {
+          function label(n: int): string { return `#${n}` }
+          function size(of: string[]): int { return of.length }
+          function said() { }
+        }
+        """
+      And the file "Main.qml":
+        """qml
+        import Ljos.Ui
+        Item {
+          Helper { id: helper }
+          property real count: helper.size(["a"])
+          Text { text: helper.label(3) + " items" }
+          Text { text: helper.label("3") + helper.said() }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        Main.qml:6:37: error: `n` is a number; this gives it a string [ts-assign-type]
+        Main.qml:6:44: error: `+` needs numbers or a string, and this is an unknown value [ts-assign-type]
+        2 files, 2 errors, 0 warnings
+        ljos: 2 errors
+        """
+
     Scenario: Arrays, arrows, templates and object literals are typed
       Given the file "Gauge.qml":
         """qml

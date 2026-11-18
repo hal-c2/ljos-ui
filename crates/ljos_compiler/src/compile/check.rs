@@ -639,8 +639,12 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
                         let ty = self.signal_ty(params);
                         return Some(Own { ty, written: None });
                     }
-                    if shape.functions.contains(name) {
-                        let ty = self.loose();
+                    if let Some(function) = shape.functions.get(name) {
+                        let ty = if function.is_typed() {
+                            self.component_function(function, &types)
+                        } else {
+                            self.loose()
+                        };
                         return Some(Own { ty, written: None });
                     }
                     if let Some(property) = name.strip_suffix("Changed")
@@ -655,6 +659,74 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
             }
         }
         None
+    }
+
+    /// A typed function another component declares, its types read in
+    /// the words of the file it is in, as a call in that file reads them.
+    ///
+    /// DECISION: a type the summary does not carry (a union, a record, a
+    /// generic) is let by: it is written, so the function is typed, and
+    /// only the file it is in knows it.
+    fn component_function(
+        &mut self,
+        function: &qml_front::project::FunctionShape,
+        types: &Types<'_, O>,
+    ) -> Ty {
+        let params = function
+            .params
+            .iter()
+            .map(|p| {
+                let ty = self.declared(&p.written, Ty::ERROR, types);
+                Param {
+                    name: p.name.as_str().into(),
+                    ty: if p.optional {
+                        self.arena.or(ty, Ty::UNDEFINED)
+                    } else {
+                        ty
+                    },
+                    optional: p.optional,
+                    written: None,
+                }
+            })
+            .collect::<Vec<_>>();
+        // What gives no type written gives `unknown`, as a method the type
+        // table names without one does (TYPES.md).
+        let ret = self.declared(&function.returns, Ty::UNKNOWN, types);
+        self.arena.function(Sig {
+            params: params.into_boxed_slice(),
+            rest: function.rest.then_some(Ty::ERROR),
+            ret,
+            guard: None,
+        })
+    }
+
+    /// The type `written` names in the file of `types`; `missing` where
+    /// nothing is written.
+    fn declared(
+        &mut self,
+        written: &qml_front::project::Written,
+        missing: Ty,
+        types: &Types<'_, O>,
+    ) -> Ty {
+        use qml_front::project::Written;
+        match written {
+            Written::Missing => missing,
+            Written::Other => Ty::ERROR,
+            Written::Name(name) => self.named(name, types),
+        }
+    }
+
+    fn named(&mut self, name: &str, types: &Types<'_, O>) -> Ty {
+        if let Some(elem) = name.strip_suffix("[]") {
+            let elem = self.named(elem, types);
+            return self.arena.array(elem, false);
+        }
+        match name {
+            "void" => Ty::VOID,
+            "undefined" => Ty::UNDEFINED,
+            "never" => Ty::NEVER,
+            _ => self.written(name, false, types),
+        }
     }
 
     /// What `name` is on an object of the type the oracle has.
