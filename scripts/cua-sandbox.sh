@@ -184,42 +184,60 @@ EOF
   load_sandbox
 }
 
-# The compositor's Wayland and IPC sockets, in $wayland and $sock.
+# The compositor's Wayland and IPC sockets, in $wayland and $sock. Sway names its IPC socket
+# by its pid, and one that died left its socket behind, so the socket is the running sway's.
 sockets() {
+  local pid
+  pid=$(pid_of sway) || die "the sandbox is not running: mise run desktop:cua"
   for wayland in "$run"/wayland-*; do
     [[ -S $wayland ]] && break
   done
-  for sock in "$run"/sway-ipc.*.sock; do
-    [[ -S $sock ]] && break
-  done
+  sock="$run/sway-ipc.$(id -u).$pid.sock"
   [[ -S $wayland && -S $sock ]] || die "the sandbox's sway has no sockets in $run"
 }
 
-# The seat has a keyboard: bit 2 of its capabilities (wl_seat's capability enum).
+# The seat has a keyboard: bit 2 of its capabilities (wl_seat's capability enum). 0 it has,
+# 1 it has none, 2 sway did not say, which is neither.
 seat_has_keyboard() {
-  local wayland sock caps
+  local wayland sock seats caps
   sockets
-  caps=$(swaymsg -s "$sock" -t get_seats -r | sed -n 's/.*"capabilities": *\([0-9]*\).*/\1/p' | head -n 1)
-  (((${caps:-0} & 2) != 0))
+  seats=$(swaymsg -s "$sock" -t get_seats -r) || return 2
+  caps=$(sed -n 's/.*"capabilities": *\([0-9]*\).*/\1/p' <<< "$seats" | head -n 1)
+  [[ $caps =~ ^[0-9]+$ ]] || return 2
+  (((caps & 2) != 0))
 }
-seat_has_no_keyboard() { ! seat_has_keyboard; }
+seat_has_no_keyboard() {
+  local status=0
+  seat_has_keyboard || status=$?
+  ((status == 1))
+}
 keyboard_up() {
   pid_of keyboard > /dev/null || die "the seat's keyboard ended: $(< "$home/keyboard.log")"
   seat_has_keyboard
 }
 
 start_keyboard() {
-  pid_of keyboard > /dev/null && return
   # Taken away (keyboard off), it stays away when start, exec or call bring the rest up.
   [[ -e $home/keyboard.off ]] && return
-  local wayland sock
-  sockets
-  # The client finds the compositor by its socket, as any Wayland client does; the sandbox's
-  # environment leaves Wayland out for the X11 apps it starts.
-  "${sandbox_env[@]}" WAYLAND_DISPLAY="$wayland" setsid python3 -I "$root/scripts/seat-keyboard.py" \
-    > "$home/keyboard.log" 2>&1 < /dev/null &
-  track $! keyboard
-  wait_for 20 "the seat's keyboard (see $home/keyboard.log)" keyboard_up
+  if ! pid_of keyboard > /dev/null; then
+    local wayland sock
+    sockets
+    # The client finds the compositor by its socket, as any Wayland client does; the sandbox's
+    # environment leaves Wayland out for the X11 apps it starts.
+    "${sandbox_env[@]}" WAYLAND_DISPLAY="$wayland" setsid python3 -I "$root/scripts/seat-keyboard.py" \
+      > "$home/keyboard.log" 2>&1 < /dev/null &
+    track $! keyboard
+  fi
+  # A helper still running from an earlier start may not have reached the seat yet, so the
+  # seat is asked either way; one that never does is stopped, and the next start replaces it.
+  local deadline=$((SECONDS + 20))
+  until keyboard_up; do
+    if ((SECONDS >= deadline)); then
+      stop_one keyboard
+      die "timed out waiting for the seat's keyboard (see $home/keyboard.log)"
+    fi
+    sleep 0.2
+  done
 }
 
 keyboard() {
