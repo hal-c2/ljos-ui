@@ -537,6 +537,35 @@ Feature: Dates, times and numbers written and read the way a locale does
         | ({}), "1"                            | Invalid arguments |
         | undefined, "2"                       | Invalid arguments |
 
+    @api-QtQml.Number.fromLocaleString @api-QtQml.Number.toLocaleString
+    Scenario Outline: A locale named by something other than a text is the C locale
+      Only no argument at all, or undefined, is the application's locale; null, a number or an
+      empty name is C, and reads and writes as C does.
+
+      Given the application starts with the locale environment "LANG=de_DE.UTF-8"
+      And the QML:
+        """qml
+        import QtQuick
+        Item {
+          objectName: "root"
+          readonly property var locale: Qt.locale(<argument>)
+          property string name: locale.name
+          property string read: String(Number.fromLocaleString(locale, "1.000"))
+          property string written: Number(1234.5).toLocaleString(locale, "f", 1)
+        }
+        """
+      Then the property "name" of "root" is "<name>"
+      And the property "read" of "root" is "<read>"
+      And the property "written" of "root" is "<written>"
+
+      Examples:
+        | argument  | name  | read | written |
+        | null      | C     | 1    | 1234.5  |
+        | ""        | C     | 1    | 1234.5  |
+        | 5         | C     | 1    | 1234.5  |
+        | undefined | de_DE | 1000 | 1.234,5 |
+        |           | de_DE | 1000 | 1.234,5 |
+
     @api-QtQml.Number.toLocaleCurrencyString
     Scenario: Without a locale a currency amount is a plain number
       Given the QML:

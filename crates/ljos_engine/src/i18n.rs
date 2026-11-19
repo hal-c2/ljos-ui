@@ -872,6 +872,9 @@ pub(crate) const PRELUDE: &str = r##"
 
   define(Qt, "locale", function locale(name) {
     if (arguments.length > 1) throw new Error("Too many arguments");
+    // Only a missing name, or undefined, is the application's locale and
+    // follows it; null or a number names no locale, which is C in qml6.
+    if (name !== undefined && typeof name !== "string") name = "C";
     const o = hostLocale(name);
     const width = (format) => format === undefined ? LONG : format;
     define(o, "dayName", (d, f) => localeName(name, false, d, width(f), false));
