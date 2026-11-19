@@ -39,6 +39,11 @@ Feature: A shipped application its users change while it runs
       import QtQuick
       Rectangle { property string by: "the application"; width: 10; height: 10 }
       """
+    And the file "Second.qml":
+      """qml
+      import QtQuick
+      Item { objectName: "second"; Card { objectName: "second-card" } }
+      """
     And the QML:
       """qml
       import QtQuick
@@ -636,3 +641,64 @@ Feature: A shipped application its users change while it runs
       Then the object "loader/default-shell" exists
       And the object "outside" does not exist
       And the application was told of a fault matching "Shell\.qml: a link that leads out"
+
+  Rule: A window the application opens beside the first follows the user's files
+
+    A save patched in place, a user's file removed among them, reaches every
+    object made of the file, in whichever window. A change no patch in place
+    can make, such as a member added, makes the roots again; an application
+    that makes a root of its files for a window it opens beside the first
+    asks a reload to make that one again too (`Engine::remake_on_reload`),
+    so no window is left on what was replaced.
+
+    Scenario: A save no patch can make is made again in every window
+      Given the user's file "Card.qml":
+        """qml
+        import QtQuick
+        Rectangle { property string by: "the user"; width: 30; height: 10 }
+        """
+      When the application runs "Main.qml" built ahead, with the user's directory over it
+      And the file "Second.qml" is opened in a window of its own
+      And the user saves the file "Card.qml" as:
+        """qml
+        import QtQuick
+        Rectangle { signal remade; property string by: "the user, again"; width: 30; height: 10 }
+        """
+      Then the property "by" of "card" is "the user, again"
+      And the property "by" of "second-card" is "the user, again"
+      And there is no reload error
+      And the application was told of no fault
+
+    Scenario: A user's file removed gives way to the application's in every window
+      Given the user's file "Card.qml":
+        """qml
+        import QtQuick
+        Rectangle { property string by: "the user"; width: 30; height: 10 }
+        """
+      When the application runs "Main.qml" built ahead, with the user's directory over it
+      And the file "Second.qml" is opened in a window of its own
+      Then the property "by" of "second-card" is "the user"
+      When the user removes the file "Card.qml"
+      Then the property "by" of "card" is "the application"
+      And the property "by" of "second-card" is "the application"
+      And the property "width" of "second-card" is 10
+      And there is no reload error
+      And the application was told of no fault
+
+    Scenario: A save is applied in every window with what each holds kept
+      Given the user's file "Card.qml":
+        """qml
+        import QtQuick
+        Rectangle { property string by: "the user"; width: 30; height: 10 }
+        """
+      When the application runs "Main.qml" built ahead, with the user's directory over it
+      And the file "Second.qml" is opened in a window of its own
+      And the user saves the file "Card.qml" as:
+        """qml
+        import QtQuick
+        Rectangle { property string by: "the user, again"; width: 30; height: 10 }
+        """
+      Then the property "by" of "card" is "the user, again"
+      And the property "by" of "second-card" is "the user, again"
+      And 1 save of the user's files has been applied
+      And there is no reload error
