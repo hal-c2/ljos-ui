@@ -38,6 +38,8 @@ struct PollFd {
 const POLLIN: c_ushort = 0x1;
 const RTLD_NOW: c_int = 0x2;
 const RTLD_NOLOAD: c_int = 0x4;
+/// `G_PRIORITY_DEFAULT`, the priority glib keeps a context's wakeup at.
+const PRIORITY_DEFAULT: c_int = 0;
 
 unsafe extern "C" {
     fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void;
@@ -203,6 +205,11 @@ impl Glib {
     /// does), so beside a source ready by every check the next try would
     /// find the wakeup ready already, every time. A source a try's check
     /// finds ready stays ready to glib, and the first turn dispatches it.
+    ///
+    /// The tries query and check at the default priority or one less
+    /// urgent, never more: glib keeps its wakeup at the default priority,
+    /// and a query at a more urgent one (a high-priority source ready since
+    /// the last try's check, which prepare then reports) leaves it out.
     fn wakeup_of(&mut self, context: Context) -> Option<c_int> {
         let f = self.fns;
         for _ in 0..4 {
@@ -212,6 +219,7 @@ impl Glib {
             // buffer glib and poll write is as long as they are told.
             let found = unsafe {
                 (f.prepare)(context, &mut priority);
+                let priority = priority.max(PRIORITY_DEFAULT);
                 self.query(context, priority, &mut timeout);
                 #[cfg(test)]
                 if let Some(hook) = tests::AFTER_QUERY.take() {
@@ -885,12 +893,26 @@ mod tests {
     /// dispatches it.
     #[test]
     fn the_wakeup_is_found_beside_a_source_ready_all_along() {
-        static DISPATCHED: AtomicUsize = AtomicUsize::new(0);
+        found_beside_a_ready_source(PRIORITY_DEFAULT);
+    }
+
+    /// So it is beside a high-priority source ready all along, which
+    /// prepare reports from the second try on: glib's wakeup, at the
+    /// default priority, is still queried.
+    #[test]
+    fn the_wakeup_is_found_beside_a_high_priority_source_ready_all_along() {
+        found_beside_a_ready_source(-100);
+    }
+
+    fn found_beside_a_ready_source(priority: c_int) {
+        thread_local! {
+            static DISPATCHED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+        }
         unsafe extern "C" fn always(_: Source) -> c_int {
             1
         }
         unsafe extern "C" fn kept(_: Source, _: *mut c_void, _: *mut c_void) -> c_int {
-            DISPATCHED.fetch_add(1, Ordering::SeqCst);
+            DISPATCHED.set(DISPATCHED.get() + 1);
             1
         }
         let (ready, other) = UnixStream::pair().unwrap();
@@ -901,8 +923,11 @@ mod tests {
             let new: unsafe extern "C" fn() -> Context = sym(c"g_main_context_new").unwrap();
             let attach: unsafe extern "C" fn(Source, Context) -> u32 =
                 sym(c"g_source_attach").unwrap();
+            let set_priority: unsafe extern "C" fn(Source, c_int) =
+                sym(c"g_source_set_priority").unwrap();
             let context = new();
             let (source, _) = fd_source(ready.as_raw_fd(), always, Some(kept));
+            set_priority(source, priority);
             attach(source, context);
             context
         };
@@ -918,13 +943,13 @@ mod tests {
         assert_eq!(others.len(), 1, "descriptors {:?}", glib.fds);
         assert_eq!(glib.wakeups, vec![Some(others[0])]);
         assert_eq!(
-            DISPATCHED.load(Ordering::SeqCst),
+            DISPATCHED.get(),
             0,
             "a source was dispatched while the wakeup was looked for"
         );
         glib.turn();
         assert!(
-            DISPATCHED.load(Ordering::SeqCst) > 0,
+            DISPATCHED.get() > 0,
             "the first turn did not dispatch the source ready by its check"
         );
         drop((ready, other));
