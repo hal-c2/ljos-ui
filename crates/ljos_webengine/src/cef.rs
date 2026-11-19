@@ -759,6 +759,29 @@ fn headless_warning(words: &[String]) -> Option<String> {
     })
 }
 
+/// The switch that keeps Chromium out of the login keychain, when the
+/// engine runs on macOS and the switches given leave it out.
+///
+/// Chromium on macOS reads the key that encrypts a profile's cookies from
+/// a keychain item named "Chromium Safe Storage" as it starts, and macOS
+/// asks the person for their login password before it hands the item to
+/// a program it has not been told to trust. A web view in a Ljós
+/// application keeps no passwords or card numbers, and that item is one
+/// every CEF program shares rather than the application's own, so the
+/// prompt asks the person to trust the wrong thing, for nothing they
+/// stored. With a mock keychain Chromium encrypts cookies on disk with a
+/// fixed key instead, so they are kept from other users by the profile
+/// directory's permissions, as on Linux with no keyring; cookies a
+/// profile wrote under the keychain's key are not read back.
+fn keychain_switch(macos: bool, words: &[String]) -> Option<&'static str> {
+    const MOCK: &str = "--use-mock-keychain";
+    (macos
+        && !words
+            .iter()
+            .any(|w| w == MOCK || w.starts_with("--use-mock-keychain=")))
+    .then_some(MOCK)
+}
+
 fn initialize_cef(e: &Engine, first: &ProfileSpec) -> Result<Global, String> {
     let layout = layout().as_ref().map_err(Clone::clone)?;
     #[cfg(target_os = "macos")]
@@ -813,6 +836,9 @@ fn initialize_cef(e: &Engine, first: &ProfileSpec) -> Result<Global, String> {
     // going for minutes.
     if !words.iter().any(|w| w.ends_with("-auto-reload")) {
         words.push("--disable-auto-reload".to_owned());
+    }
+    if let Some(switch) = keychain_switch(cfg!(target_os = "macos"), &words) {
+        words.push(switch.to_owned());
     }
     let words: &'static [CString] = Vec::leak(
         words
@@ -4830,6 +4856,26 @@ mod tests {
         assert!(later[0].contains("caches in /cache/p"), "{later:?}");
         let none = ignored_paths(&spec("/data/q", "/cache/q"), "");
         assert!(none[0].contains("caches beside its data"), "{none:?}");
+    }
+
+    #[test]
+    fn an_engine_on_macos_never_asks_for_the_login_keychain() {
+        let words = |w: &[&str]| w.iter().map(|w| w.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            keychain_switch(true, &words(&["ljos"])),
+            Some("--use-mock-keychain"),
+            "Chromium would ask the login keychain for \"Chromium Safe Storage\" as it starts"
+        );
+        assert_eq!(
+            keychain_switch(true, &words(&["ljos", "--use-mock-keychain"])),
+            None,
+            "asked for already, through LJOS_WEBENGINE_CHROMIUM_FLAGS"
+        );
+        assert_eq!(
+            keychain_switch(false, &words(&["ljos"])),
+            None,
+            "only macOS has the keychain"
+        );
     }
 
     #[test]
