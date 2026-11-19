@@ -28,9 +28,11 @@ Rectangle {
     // A running animation keeps the duration it started with, and the
     // system's answer about reduced motion can come after the turntable
     // has started: a new speed starts the turn again from where the watch
-    // is, so it neither jumps nor keeps the old speed. The handler gives
-    // the turntable its new duration itself: the binding on `duration`
-    // follows only once the handler has run, as on Qt.
+    // is, so it neither jumps nor keeps the old speed. The binding on
+    // `duration` only gives the starting speed: bindings that read
+    // `turnSeconds` update after this handler, as on Qt, so the handler
+    // writes the new duration itself, and that write takes `duration`
+    // over from the binding.
     onTurnSecondsChanged: {
         const at: number = showcase.spin % 360
         turntable.from = at
