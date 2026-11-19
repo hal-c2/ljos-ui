@@ -6,15 +6,19 @@
 Feature: A window shows the root put in it at once
   A root put in the window of another changes nothing the old root had,
   and the window keeps its size, yet the window shows another picture.
-  It is drawn in the next frame, not when something else happens to ask
-  for one: a window that frames only when asked would show the old root
-  until the pointer moved over it.
+  The new picture shows without another input event: a window that
+  waited for one would show the old root until the pointer moved over it.
 
   Background:
     Given the file "Default.qml":
       """qml
       import QtQuick
       Window { width: 200; height: 100; visible: true; color: "#ff0000" }
+      """
+    And the file "Blue.qml":
+      """qml
+      import QtQuick
+      Window { width: 200; height: 100; visible: true; color: "#0000ff" }
       """
     And the QML:
       """qml
@@ -44,11 +48,6 @@ Feature: A window shows the root put in it at once
   Scenario: An agent finds the loader that stands for the window
     Then the pixel at 100, 50 of the window is "#ff0000"
     And the property "status" of "loader" is 2
-    Given the file "Blue.qml":
-      """qml
-      import QtQuick
-      Window { width: 200; height: 100; visible: true; color: "#0000ff" }
-      """
     When the property "source" of "loader" is set to "Blue.qml"
     Then the pixel at 100, 50 of the window is "#0000ff"
     And the property "status" of "loader" is 1
