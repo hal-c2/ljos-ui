@@ -170,8 +170,8 @@ impl QuickScene {
         !self.touch.points.is_empty() || !self.touch.areas.is_empty()
     }
 
-    /// Qt 6.11: an area that stops taking touch (disabled, hidden or
-    /// gone) while it has fingers hears no more of any of them, not even
+    /// Qt 6.11: an area that stops taking touch (disabled, hidden,
+    /// gone or no longer in the scene) while it has fingers hears no more of any of them, not even
     /// `canceled`, and what they do next goes nowhere, even once the
     /// area takes touch again. An area that stopped before it was told
     /// of a finger keeps that one, disabled or not. Nothing tells the
@@ -183,18 +183,19 @@ impl QuickScene {
     }
 
     fn let_go_where(&mut self, engine: &Engine, of: impl Fn(ObjectId) -> bool) {
-        for f in self
-            .touch
-            .areas
-            .iter_mut()
-            .filter(|f| !f.gone && of(f.area))
-        {
-            let now = multi_touch::takes_touch(engine, f.area);
+        for i in 0..self.touch.areas.len() {
+            let f = self.touch.areas[i];
+            if f.gone || !of(f.area) {
+                continue;
+            }
+            // An area the scene no longer shows, as when the root is
+            // replaced, has stopped taking touch however it is set.
+            let now = self.shows_item(f.area) && multi_touch::takes_touch(engine, f.area);
             if f.taking && !now {
-                f.gone = true;
+                self.touch.areas[i].gone = true;
                 multi_touch::forget(engine, f.area, multi_touch::Who::Finger(f.id));
             }
-            f.taking = now;
+            self.touch.areas[i].taking = now;
         }
     }
 

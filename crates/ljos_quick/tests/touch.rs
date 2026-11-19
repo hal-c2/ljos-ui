@@ -332,3 +332,18 @@ fn a_finger_down_when_its_area_was_disabled_is_let_go_at_the_next_frame() {
     touch(&mut s, &e, 1, TouchPhase::End, 50.0, 50.0);
     assert_eq!(get(&e, root, "log"), Value::from("P1 "));
 }
+
+#[test]
+fn a_finger_on_an_area_the_scene_no_longer_shows_never_reaches_it_again() {
+    let e = engine();
+    let root = load(&e, TOUCH_AREA);
+    let mut s = scene(&e, root, 300.0, 100.0);
+    frame(&mut s, &e);
+    touch(&mut s, &e, 1, TouchPhase::Begin, 50.0, 50.0);
+    let other = load(&e, "import QtQuick\nItem { width: 300; height: 100 }");
+    s.set_root(&e, other).unwrap();
+    touch(&mut s, &e, 1, TouchPhase::Move, 60.0, 50.0);
+    touch(&mut s, &e, 1, TouchPhase::End, 60.0, 50.0);
+    assert_eq!(get(&e, root, "log"), Value::from("P1 "));
+    assert!(!s.touching());
+}

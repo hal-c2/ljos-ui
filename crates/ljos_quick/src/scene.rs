@@ -1662,6 +1662,11 @@ impl QuickScene {
         r
     }
 
+    /// Whether `obj` is an item of the tree the scene shows.
+    pub(crate) fn shows_item(&self, obj: ObjectId) -> bool {
+        self.items.contains(obj)
+    }
+
     pub fn root(&self) -> Option<ObjectId> {
         self.root
     }
