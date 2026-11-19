@@ -60,6 +60,7 @@ pub struct UserQml {
     watch: bool,
     modules: Option<String>,
     theme: bool,
+    loads_from: Vec<PathBuf>,
 }
 
 impl std::fmt::Debug for UserQml {
@@ -70,6 +71,7 @@ impl std::fmt::Debug for UserQml {
             .field("watch", &self.watch)
             .field("modules", &self.modules)
             .field("theme", &self.theme)
+            .field("loads_from", &self.loads_from)
             .finish()
     }
 }
@@ -86,7 +88,19 @@ impl UserQml {
             watch: true,
             modules: None,
             theme: true,
+            loads_from: Vec::new(),
         }
+    }
+
+    /// A directory the application itself loads QML from while it runs,
+    /// as plugins it fetched: a file there is compiled when a script asks
+    /// for it (`Qt.createComponent`, a `Loader`), against the
+    /// application's types with the user's over them, and a text placed
+    /// there (`Qt.createQmlObject`) is not refused.
+    #[must_use]
+    pub fn loads_from(mut self, dir: impl Into<PathBuf>) -> Self {
+        self.loads_from.push(dir.into());
+        self
     }
 
     /// Called on the UI thread for every fault of the user's files: one
@@ -546,6 +560,7 @@ impl UserSession {
             watch,
             modules,
             theme,
+            loads_from: _,
         } = config;
         let dir = match modules {
             Some(modules) => UserDir::new(dir).with_modules(&modules),
@@ -813,6 +828,12 @@ impl UserSession {
             State::Active { watcher } => watcher.is_some(),
             State::Off => false,
         }
+    }
+
+    /// Whether a compiler was made for QML a script holds as text, or for
+    /// a file of a directory the application loads from.
+    pub fn compiles_texts(&self) -> bool {
+        false
     }
 
     /// How many reloads were applied.

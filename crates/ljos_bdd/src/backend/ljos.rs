@@ -1748,6 +1748,14 @@ impl Application for LjosBackend {
         self.live()?.run_built_ahead(entry)
     }
 
+    fn plugin_file(&mut self, name: &str, text: &str) -> Result<()> {
+        self.live()?.plugin_file(name, text)
+    }
+
+    fn plugin_url(&mut self, name: &str) -> Result<String> {
+        self.live()?.plugin_url(name)
+    }
+
     fn windows_of_their_own(&mut self) -> Result<()> {
         self.windows_of_their_own = true;
         if let Some(live) = self.live.as_ref() {
