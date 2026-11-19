@@ -91,3 +91,27 @@ Feature: Each thing `ljos check` finds names its kind
       """
       Main.qml:4:26: warning: `Engine` is not a name in sight: it is looked up when the program runs; module Stocks is built with C++ that does not run here (engine.cpp, engine.h): give it a stand-in with --alias Stocks=DIR, or a Rust module [unresolved-name]
       """
+
+  # qml6 refuses to load an object that declares a member twice; `ljos check`
+  # says so before anything runs it.
+  Scenario: A member declared twice names its kind
+    Given the file "Main.qml":
+      """qml
+      import QtQuick
+      Item {
+        property int p
+        property real p
+        signal pChanged()
+        function f() { return 1 }
+        function f() { return 2 }
+      }
+      """
+    When the files are checked
+    Then the check reports:
+      """
+      Main.qml:4:23: error: Duplicate property name: the object declares `p` twice [duplicate-name]
+      Main.qml:5:16: error: Duplicate signal name: `pChanged` is the change signal of property `p` [duplicate-name]
+      Main.qml:7:18: error: Duplicate method name: the object declares `f` twice [duplicate-name]
+      1 files, 3 errors, 0 warnings
+      ljos: 3 errors
+      """
