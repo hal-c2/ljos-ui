@@ -1,12 +1,19 @@
 #!/usr/bin/env bash
-#MISE description="Try the fork's QML patch on the newest oxc_parser release in a scratch copy and report whether it applies and builds"
+#MISE description="Try the fork's QML patch on the newest oxc_parser release in a scratch copy and report whether it applies and builds (into $CARGO_TARGET_DIR/oxc-check). Fetches from crates.io"
+#MISE dir="{{config_root}}"
 set -euo pipefail
+# shellcheck source-path=SCRIPTDIR source=../_lib/env.sh
+. "$(dirname "$0")/../_lib/env.sh"
+cd "$ljos_root"
+need_curl
+need patch "install patch (Arch: pacman -S patch; Debian, Ubuntu: apt install patch)"
 # Drift shows up here before a rebase is due (vendor/FORK.md, 06 §3.4).
 # Nothing in the repository is changed; everything happens under a temp dir.
-root=$(pwd)
-base=$(sed -n 's/^version = "\(.*\)"$/\1/p' vendor/oxc_parser/Cargo.toml | head -n 1)
+root="$ljos_root"
+base=$(crate_version vendor/oxc_parser/Cargo.toml)
 latest=$(curl -sSfL -H 'User-Agent: ljos-ui oxc:check' https://crates.io/api/v1/crates/oxc_parser |
   sed -n 's/.*"max_stable_version":"\([^"]*\)".*/\1/p')
+[ -n "$latest" ] || die "oxc:check: crates.io did not say which oxc_parser release is the newest"
 echo "fork base: oxc_parser $base; newest release: $latest"
 
 work=$(mktemp -d)
@@ -19,8 +26,9 @@ fetch "$base"
 # manifest (the fork renames its package; the release's own manifest
 # builds the same code) and the licence the fork adds.
 diff -ru -x qml -x Cargo.toml -x LICENSE -x rustfmt.toml -x Cargo.toml.orig -x .cargo_vcs_info.json -x Cargo.lock \
-  "$work/oxc_parser-$base" "$root/vendor/oxc_parser" > "$work/fork.patch" || [ $? -eq 1 ]
-sed -i -e "s|$work/oxc_parser-$base/|a/|g" -e "s|$root/vendor/oxc_parser/|b/|g" "$work/fork.patch"
+  "$work/oxc_parser-$base" "$root/vendor/oxc_parser" > "$work/fork.diff" || [ $? -eq 1 ]
+# Not sed -i, whose form BSD's sed does not share.
+sed -e "s|$work/oxc_parser-$base/|a/|g" -e "s|$root/vendor/oxc_parser/|b/|g" "$work/fork.diff" > "$work/fork.patch"
 
 target="$work/oxc_parser-$latest"
 cp -r "$root/vendor/oxc_parser/src/qml" "$target/src/qml"
@@ -34,7 +42,7 @@ cat >> "$target/Cargo.toml" <<TOML
 
 [workspace]
 TOML
-if cargo build --quiet --manifest-path "$target/Cargo.toml" --target-dir "$root/target/oxc-check"; then
+if cargo build --quiet --manifest-path "$target/Cargo.toml" --target-dir "$(target_dir)/oxc-check"; then
   echo "oxc:check: the fork applies to and builds on oxc_parser $latest"
 else
   echo "oxc:check: the patch applies to $latest but does not build; rebase needed"

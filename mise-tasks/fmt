@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+#MISE description="Format every crate with rustfmt (cargo fmt --all); --check only says what would change, and fails when something would, as mise run check does"
+#MISE dir="{{config_root}}"
+#USAGE flag "--check" help="Change nothing: list the files rustfmt would change, and fail when there are any"
+set -euo pipefail
+case " $* " in
+  *" --check "*) usage_check=true ;;
+esac
+if [ "${usage_check:-false}" = true ]; then
+  exec cargo fmt --all --check
+fi
+exec cargo fmt --all

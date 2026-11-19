@@ -1,33 +1,252 @@
 #!/usr/bin/env bash
-#MISE description="First run after a clone, safe to repeat: tools from mise.toml, the submodules, Qt's type table when Qt is here, CEF only with --webengine; ends with what it did and what it skipped"
+#MISE description="First run after a clone, safe to repeat: mise.toml's tools (Rust 1.98.1 with its components and wasm target, cargo-nextest), the submodules, Qt's type table when Qt is here, CEF only with --webengine. Ends with what it did, what it skipped, notes (a Qt that is not the one CI pins) and what is missing, and fails only when something is missing (Rust that is not mise.toml's, a submodule a Cargo.toml uses). --check installs nothing"
 #MISE dir="{{config_root}}"
+#USAGE flag "--check" help="Install, fetch and build nothing: say what is there, what each task would lack, and whether this machine's Qt is the one CI pins; fail only when something is missing (another Qt is a note). Ask it as `mise run --skip-tools setup --check`, or mise first installs mise.toml's missing tools"
 #USAGE flag "--webengine" help="Also build ljos with QtWebEngine (mise run webengine:build), which fetches CEF (about 1.5 GB unpacked) into $CEF_PATH"
 #USAGE flag "--no-corpus" help="Leave out the qtdoc corpus submodule (gallery, parse and compile need it)"
 #USAGE flag "--no-types" help="Do not generate Qt's type table (crates/qt_types/src/types.txt) even when Qt is found"
 set -euo pipefail
+# shellcheck source-path=SCRIPTDIR source=_lib/env.sh
+. "$(dirname "$0")/_lib/env.sh"
+cd "$ljos_root"
 # Never installs system packages and never uses sudo: what is missing is
-# named, with what it is needed for, and the run goes on without it.
-root="$(pwd)"
-did=()
-skipped=()
+# named, with what needs it and the one command that gets it.
+# mise hands the flags over as usage_*; run as a plain script, they are read
+# from the arguments, so `bash mise-tasks/setup --check` installs nothing too.
+for arg in "$@"; do
+  case "$arg" in
+    --check) usage_check=true ;;
+    --webengine) usage_webengine=true ;;
+    --no-corpus) usage_no_corpus=true ;;
+    --no-types) usage_no_types=true ;;
+    *) die "setup takes --check, --webengine, --no-corpus and --no-types, not $arg" ;;
+  esac
+done
+check="${usage_check:-false}"
+done_list=""
+skipped=""
+notes=""
+missing=""
+item() { printf '\n  - %s' "$1"; }
+did() { done_list="$done_list$(item "$1")"; }
+skip() { skipped="$skipped$(item "$1")"; }
+note() { notes="$notes$(item "$1")"; }
+lack() { missing="$missing$(item "$1")"; }
 
-echo "setup: tools pinned in mise.toml" >&2
-mise install --yes
-did+=("tools from mise.toml: $(mise exec -- rustc --version), cargo-nextest")
+if [ "$check" = true ]; then
+  # rustup's proxies install a missing toolchain when asked its version.
+  export RUSTUP_AUTO_INSTALL=0
+fi
 
-if git rev-parse --is-inside-work-tree > /dev/null 2>&1; then
-  # The workspace builds FilmCraft's crates by path (QtMultimedia's
-  # decoders): nothing builds without it. Shallow, as CI fetches it.
-  git submodule update --init --depth 1 third_party/filmcraft
-  did+=("submodule third_party/filmcraft (QtMultimedia's decoders; every build needs it)")
-  if [ "${usage_no_corpus:-false}" = true ]; then
-    skipped+=("submodule corpus/qtdoc (--no-corpus): gallery, gallery:run, parse and compile need it")
+# --- Rust ------------------------------------------------------------------
+
+# Every build uses the rustc found here, so one that is not mise.toml's is
+# missing, not skipped: it lacks the components and target CI builds with.
+rust_report() {
+  local why kind got parts=""
+  if ! command -v rustup >/dev/null 2>&1; then
+    lack "$(no_rustup)"
+    return 0
+  fi
+  if why="$(wrong_rustc)" && [ -n "$why" ]; then
+    lack "Rust: $why"
+    return 0
+  fi
+  did "found $(rustc --version)"
+  for kind in components targets; do
+    if got="$(missing_rust_parts "$kind")"; then
+      parts="$parts $got"
+    else
+      lack "Rust's $kind: rustup cannot list them for Rust $(rust_pin version); mise run setup installs it with them"
+      return 0
+    fi
+  done
+  parts="$(printf '%s' "$parts" | tr -s ' ' | sed 's/^ //; s/ $//')"
+  if [ -n "$parts" ]; then
+    lack "Rust's $parts (mise.toml): mise run setup adds them (mise install, through rustup)"
   else
-    git submodule update --init --depth 1 corpus/qtdoc
-    did+=("submodule corpus/qtdoc (the examples gallery, parse and compile read)")
+    did "found Rust's $(rust_pin components) and $(rust_pin targets)"
+  fi
+}
+
+mise_rust=true
+if [ "$check" = true ]; then
+  for tool in rust github:nextest-rs/nextest; do
+    if at="$(mise where "$tool" 2>/dev/null)" && [ -d "$at" ]; then
+      did "found mise's $tool ($at)"
+    else
+      lack "mise's $tool (mise.toml): mise run setup runs mise install"
+      [ "$tool" != rust ] || mise_rust=false
+    fi
+  done
+else
+  echo "setup: mise install (the tools mise.toml pins)" >&2
+  mise install --yes
+  did "mise's tools (mise.toml): Rust $(rust_pin version), cargo-nextest"
+fi
+# Without mise's Rust, asking rustc its version may go through mise's shim,
+# which installs it: --check says it is missing and asks nothing more.
+[ "$mise_rust" = false ] || rust_report
+
+# --- Submodules -------------------------------------------------------------
+
+# The Cargo.toml files of this checkout, each ended by a NUL: what git tracks
+# or would add (a submodule's own are not listed), else, outside git, what is
+# on disk. NUL-ended, a name comes whole and unquoted: git quotes one it
+# prints a line at a time (crates/média), and a newline would split it.
+manifests() {
+  if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    git ls-files -z --cached --others --exclude-standard -- 'Cargo.toml' '*/Cargo.toml'
+  else
+    find . \( -name target -o -name .git \) -prune -o -name Cargo.toml -print0
+  fi
+}
+
+# manifests_use <dir>: whether a manifest outside <dir> names a path at or
+# below it, as a `path = "…"` dependency or a `members` entry, read from the
+# manifest's own directory as cargo reads it. A submodule is needed when one
+# does: the rule is the manifests', not this machine's. `exclude = […]` and
+# comments name nothing. Read as text, so it needs neither cargo nor the
+# submodule's files, which `cargo metadata` would.
+manifests_use() {
+  local m files=()
+  # The manifests go to awk as operands, never as lines of text, so a name is
+  # read whole. `./` keeps awk from taking a name with `=` for an assignment.
+  # A tracked one deleted from the working tree is left out.
+  while IFS= read -r -d '' m; do
+    m="${m#./}"
+    if [ -f "$m" ]; then files+=("./$m"); fi
+  done < <(manifests)
+  [ ${#files[@]} -gt 0 ] || return 1
+  awk -v dir="$1" -v root="$ljos_root" '
+    function normal(p,    n, i, k, part, out) {
+      n = split(p, part, "/"); k = 0
+      for (i = 1; i <= n; i++) {
+        if (part[i] == "" || part[i] == ".") continue
+        # Above the checkout is outside it: no submodule of it is there.
+        if (part[i] == "..") { if (k == 0) return "/"; k--; continue }
+        out[++k] = part[i]
+      }
+      p = ""
+      for (i = 1; i <= k; i++) p = p (i > 1 ? "/" : "") out[i]
+      return p
+    }
+    function under(m, v,    base) {
+      if (substr(v, 1, 1) == "/") {
+        if (index(v, root "/") != 1) return 0
+        v = substr(v, length(root) + 2)
+      } else {
+        base = m; sub(/\/?Cargo\.toml$/, "", base)
+        v = (base == "" ? v : base "/" v)
+      }
+      v = normal(v)
+      return v == dir || index(v, dir "/") == 1
+    }
+    # The quoted strings of a line, into s[1..n]; their count.
+    function strings(line, s,    n) {
+      n = 0
+      while (match(line, /"[^"]*"|\047[^\047]*\047/)) {
+        s[++n] = substr(line, RSTART + 1, RLENGTH - 2)
+        line = substr(line, RSTART + RLENGTH)
+      }
+      return n
+    }
+    FNR == 1 {
+      m = FILENAME; sub(/^\.\//, "", m)
+      skip = (index(m, dir "/") == 1); members = 0
+    }
+    skip { next }
+    {
+      line = $0
+      sub(/#.*/, "", line)
+      if (members || line ~ /^[[:space:]]*members[[:space:]]*=/) {
+        members = (line !~ /\]/)
+        n = strings(line, s)
+        for (i = 1; i <= n; i++) if (under(m, s[i])) found = 1
+      }
+      # A key starts a line or follows `{`, `,` or a space, bare or quoted.
+      rest = " " line
+      while (match(rest, /[{,[:space:]](path|"path"|\047path\047)[[:space:]]*=[[:space:]]*("[^"]*"|\047[^\047]*\047)/)) {
+        v = substr(rest, RSTART, RLENGTH); sub(/^[^=]*=[[:space:]]*["\047]/, "", v); v = substr(v, 1, length(v) - 1)
+        if (under(m, v)) found = 1
+        rest = substr(rest, RSTART + RLENGTH)
+      }
+    }
+    END { exit found ? 0 : 1 }' "${files[@]}"
+}
+
+# A submodule by its path: found at the commit this checkout records, moved
+# there (normal setup; never forced over changes in it), or fetched shallow,
+# as CI fetches it. --check moves and fetches nothing.
+submodule() {
+  local path="$1" what="$2" state
+  state="$(git submodule status -- "$path" 2>/dev/null | cut -c1 || true)"
+  if ! [ -f "$path/.git" ] && ! [ -d "$path/.git" ]; then
+    if [ "$check" = true ]; then
+      lack "submodule $path ($what): mise run setup fetches it (git submodule update --init --depth 1 $path)"
+    else
+      echo "setup: git submodule update --init --depth 1 $path" >&2
+      git submodule update --init --depth 1 -- "$path"
+      did "submodule $path ($what)"
+    fi
+  elif [ "$state" = "+" ] && [ "$check" = true ]; then
+    note "submodule $path is at another commit than this checkout records (git submodule status): mise run setup checks out the recorded one, unless that would overwrite changes in it"
+  elif [ "$state" = "+" ]; then
+    echo "setup: git submodule update --depth 1 $path (it is at another commit than this checkout records)" >&2
+    if git submodule update --depth 1 -- "$path"; then
+      did "submodule $path moved to the commit this checkout records ($what)"
+    else
+      lack "submodule $path is at another commit than this checkout records, and git could not move it (see above; changes in it are kept): commit or set them aside, then run mise run setup again"
+    fi
+  elif [ "$state" = U ]; then
+    note "submodule $path has a merge conflict on its commit (git submodule status): resolve it in this checkout"
+  else
+    did "found submodule $path ($what)"
+  fi
+}
+filmcraft="QtMultimedia's decoders; the workspace's manifests build its crates by path"
+if ! manifests_use third_party/filmcraft; then
+  skip "submodule third_party/filmcraft: the workspace's manifests do not use it; media decoding is off"
+  filmcraft=""
+fi
+if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  [ -z "$filmcraft" ] || submodule third_party/filmcraft "$filmcraft"
+  if [ "${usage_no_corpus:-false}" = true ]; then
+    skip "submodule corpus/qtdoc (--no-corpus): gallery, gallery:run, parse and compile need it"
+  else
+    submodule corpus/qtdoc "the examples gallery, parse and compile read"
   fi
 else
-  skipped+=("submodules: not a git checkout; fetch third_party/filmcraft and corpus/qtdoc yourself")
+  skip "submodules: not a git checkout; fetch ${filmcraft:+third_party/filmcraft and }corpus/qtdoc yourself"
+fi
+
+# --- Qt ---------------------------------------------------------------------
+
+# CI compares with one Qt (the install-qt-action steps of ci.yml). Another
+# minor version here is a Qt all the same: Qt is only what Ljós is compared
+# with, and every task that compares says so itself when it runs. So it is a
+# note, in --check too, and never a failure.
+# Asked once: what is classified below is what is reported.
+pin="$(qt_pin)"
+inventory="$(qt_found)"
+other="$(qt_other "$pin" "$inventory")"
+found="$(printf '%s\n' "$inventory" | sed -n 1p)"
+if [ -n "$other" ]; then
+  while read -r version tools; do
+    at=""
+    for tool in ${tools//,/ }; do
+      at="${at:+$at, }$tool ($(command -v "$tool"))"
+    done
+    note "found Qt $version: $at"
+  done <<EOF
+$other
+EOF
+  note "CI pins Qt $pin (.github/workflows/ci.yml), another minor version than the tools above"
+  note "for CI's results, $(qt_pin_fix "$pin")"
+elif [ -n "$found" ]; then
+  did "found Qt ${found##* } (${found% *}), CI's Qt ${pin%.*} (ci.yml pins $pin)"
+else
+  skip "Qt 6: none found (qmake6, qtpaths6, qml6). features:parity, gallery:reference, qttest, fuzz:qt and bench's Qt side need it: $(qt_pin_fix "$pin")"
 fi
 
 # Where Qt keeps its QML modules, as qmltypes reads them: every root of
@@ -35,72 +254,102 @@ fi
 # usual place). All of them go to `mise run types` as --qt, in that order.
 roots=()
 if [ -n "${QML_IMPORT_PATH:-}" ]; then
-  IFS=: read -r -a imports <<< "$QML_IMPORT_PATH"
+  IFS=: read -r -a imports <<<"$QML_IMPORT_PATH"
   for c in ${imports[@]+"${imports[@]}"}; do
     [ -n "$c" ] && [ -d "$c" ] && roots+=("$c")
   done
 fi
 own=()
-for tool in qtpaths6 qtpaths qmake6; do
-  if command -v "$tool" > /dev/null; then
-    q=$("$tool" --query QT_INSTALL_QML 2> /dev/null || "$tool" -query QT_INSTALL_QML 2> /dev/null || true)
+for tool in qtpaths6 qmake6; do
+  if command -v "$tool" >/dev/null 2>&1; then
+    q="$("$tool" --query QT_INSTALL_QML 2>/dev/null || "$tool" -query QT_INSTALL_QML 2>/dev/null || true)"
     [ -n "$q" ] && own+=("$q")
   fi
 done
 own+=(/usr/lib/qt6/qml /usr/lib64/qt6/qml)
 for c in "${own[@]}"; do
-  if [ -f "$c/QtQuick/qmldir" ]; then roots+=("$c"); break; fi
+  if [ -f "$c/QtQuick/qmldir" ]; then
+    roots+=("$c")
+    break
+  fi
 done
 # Qt is here when one of the roots has QtQuick.
 qt_qml=""
 for c in ${roots[@]+"${roots[@]}"}; do
-  if [ -f "$c/QtQuick/qmldir" ]; then qt_qml="$c"; break; fi
+  if [ -f "$c/QtQuick/qmldir" ]; then
+    qt_qml="$c"
+    break
+  fi
 done
 qt_args=()
 for c in ${roots[@]+"${roots[@]}"}; do qt_args+=(--qt "$c"); done
 
-types="$root/crates/qt_types/src/types.txt"
+types="$ljos_root/crates/qt_types/src/types.txt"
 if [ -n "${LJOS_QT_TYPES:-}" ]; then
-  did+=("Qt's type table: LJOS_QT_TYPES=$LJOS_QT_TYPES is set, so builds take that (none = Ljós's own types only)")
+  did "Qt's type table: LJOS_QT_TYPES=$LJOS_QT_TYPES is set, so builds take that (none = Ljós's own types only)"
 elif [ -z "$qt_qml" ]; then
-  skipped+=("Qt's type table: no Qt 6 QML modules found (QML_IMPORT_PATH, qtpaths6, /usr/lib/qt6/qml). Builds read QML against Ljós's own types, as CI's LJOS_QT_TYPES=none does; install qt6-declarative (or set QML_IMPORT_PATH) and run mise run setup again for Qt's names in diagnostics")
-elif [ "${usage_no_types:-false}" = true ]; then
-  skipped+=("Qt's type table (--no-types): Qt is at $qt_qml; mise run types -- ${qt_args[*]} makes it")
+  skip "Qt's type table: no Qt 6 QML modules found (QML_IMPORT_PATH, qtpaths6, /usr/lib/qt6/qml). Builds read QML against Ljós's own types, as CI's LJOS_QT_TYPES=none does; install Qt (or set QML_IMPORT_PATH) and run mise run setup again for Qt's names in diagnostics"
 elif [ -s "$types" ]; then
-  did+=("Qt's type table: kept $types (mise run types -- ${qt_args[*]} regenerates it)")
+  did "Qt's type table: kept $types (mise run types -- ${qt_args[*]} regenerates it)"
+elif [ "${usage_no_types:-false}" = true ] || [ "$check" = true ]; then
+  skip "Qt's type table: Qt is at $qt_qml; mise run setup (or mise run types -- ${qt_args[*]}) makes it"
 else
   echo "setup: Qt's type table from $qt_qml" >&2
   mise run types -- "${qt_args[@]}"
-  did+=("Qt's type table from ${roots[*]} into $types (git-ignored)")
+  did "Qt's type table from ${roots[*]} into $types (git-ignored)"
 fi
 
-# What some tasks need besides cargo. Named, not installed.
-need() {
-  local tool="$1" why="$2"
-  command -v "$tool" > /dev/null || skipped+=("$tool not found: $why")
-}
-need python3 "gallery, gallery:*, ci:changes and bench need it, and desktop:cua gives its seat a keyboard with it"
-need qml6 "features:parity, gallery:reference, fuzz:qt, lottie --qt and bench's Qt side run Qt 6 (qt6-declarative)"
-need qmltestrunner "qttest:parity compares with Qt's QML test runner (qt6-declarative's test tools)"
-need sway "desktop:cua, gallery:drive, gallery:hot and bench run apps off-screen in a headless sway"
-need Xwayland "desktop:cua's sandbox runs X11 apps through Xwayland"
-need cua-driver "desktop:cua:call and gallery:drive click through apps with cua-driver"
-need valgrind "bench:js counts instructions with callgrind"
+# --- What some tasks need besides cargo ---------------------------------------
 
-if [ "${usage_webengine:-false}" = true ]; then
+# Named, not installed: each is one task's, and the others run without it.
+want() {
+  local tool="$1" why="$2"
+  command -v "$tool" >/dev/null 2>&1 || skip "$tool not found: $why"
+}
+want python3 "gallery, gallery:*, ci:changes, ci:test and bench need it, and desktop:cua gives its seat a keyboard with it"
+want timeout "gallery, gallery:reference, qttest:parity, bench:js and bench:3d hold their runs to a time limit with GNU timeout (macOS: brew install coreutils, then put its gnubin first on PATH)"
+want curl "accesskit:diff, quickjs:diff, oxc:diff and oxc:check fetch upstream with it"
+want qml6 "features:parity, gallery:reference, fuzz:qt, lottie --qt and bench's Qt side run Qt 6's QML runtime"
+if ! (find_qmltestrunner >/dev/null 2>&1); then
+  skip "Qt 6's qmltestrunner not found: qttest:parity and bench:js run Qt's QML tests with it (or set QMLTESTRUNNER)"
+fi
+want sway "desktop:cua, features:run --backend desktop, gallery:drive, gallery:hot and bench run apps off-screen in a headless sway"
+want Xwayland "desktop:cua's sandbox runs X11 apps through Xwayland"
+want dbus-run-session "desktop:cua's sandbox gives each app a bus of its own"
+find_atspi_registry >/dev/null || skip "at-spi2-registryd not found (at-spi2-core): desktop:cua's sandbox reads apps' accessibility tree through it"
+want cua-driver "desktop:cua:call and gallery:drive click through apps with cua-driver"
+want xdotool "desktop:cua:call's drags and long presses go through XTEST with xdotool"
+want valgrind "bench:js and bench:hot count instructions with callgrind"
+want nm "bench:hot reads ljos's symbols with nm (binutils)"
+want systemd-run "bench and bench:cross hold each run to a memory and CPU budget with systemd-run"
+want shellcheck "tasks:smoke lints every task with it"
+
+if [ "${usage_webengine:-false}" != true ]; then
+  skip "QtWebEngine (CEF, about 1.5 GB): mise run setup --webengine, or mise run webengine:build"
+elif [ "$check" = true ]; then
+  skip "QtWebEngine (--webengine): --check builds nothing; mise run webengine:build does"
+else
   echo "setup: ljos with QtWebEngine (CEF)" >&2
   mise run webengine:build
-  did+=("ljos with QtWebEngine; CEF in ${CEF_PATH:-${CARGO_TARGET_DIR:-$root/target}/cef}")
-else
-  skipped+=("QtWebEngine (CEF, about 1.5 GB): mise run setup --webengine, or mise run webengine:build")
+  did "ljos with QtWebEngine; CEF in ${CEF_PATH:-$(target_dir)/cef}"
 fi
 
-echo
-echo "setup done:"
-printf '  - %s\n' "${did[@]}"
-if ((${#skipped[@]})); then
-  echo "skipped:"
-  printf '  - %s\n' "${skipped[@]}"
+verb=did
+[ "$check" != true ] || verb=found
+printf '\nsetup %s:%s\n' "$verb" "${done_list:-
+  - nothing}"
+if [ -n "$skipped" ]; then
+  printf 'setup skipped:%s\n' "$skipped"
+fi
+if [ -n "$notes" ]; then
+  printf 'setup notes:%s\n' "$notes"
+fi
+if [ -n "$missing" ]; then
+  printf 'setup is missing:%s\n' "$missing" >&2
+  if [ "$check" = true ]; then
+    echo "mise run setup gets what it can of these; each line says how to get the rest" >&2
+  fi
+  exit 1
 fi
 echo
-echo "next: mise run dev (a QML app, reloaded on save), mise run test, mise run install (ljos on your PATH)"
+echo "next: mise run check, mise run test, mise run dev (a QML app, reloaded on save), mise run install (ljos on your PATH)"

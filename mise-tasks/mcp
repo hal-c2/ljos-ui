@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-#MISE description="Start the ljos MCP authoring server on stdio for this repository"
-#USAGE arg "[project]" default="." help="Project directory the server authors"
+#MISE description="Start the ljos MCP authoring server on stdio for this repository (or the project given); it ends when its standard input closes"
+#MISE dir="{{config_root}}"
+#USAGE arg "[project]" help="Project directory the server authors, from where mise was started (default: this repository)"
 # .mcp.json runs this too, so an editor or agent gets the same server as
 # `mise run mcp`. It builds `ljos`, then becomes it. The server speaks
 # JSON-RPC on stdout, so everything else (this script's word on which way it
@@ -12,19 +13,27 @@
 # LJOS_BUILD_WRAPPER names a program the build runs through (one that queues
 # builds machine-wide, say); it wraps the build only, never the server, which
 # runs for the whole session.
+#
+# The checkout is the one this runs in (mise runs it in the root), not the one
+# the script came from.
 set -euo pipefail
+# shellcheck source-path=SCRIPTDIR source=_lib/env.sh
+. "$(dirname "$0")/_lib/env.sh"
 
 say() { echo "mcp: $*" >&2; }
-die() {
-  say "$*"
-  exit 1
-}
 
-project="${usage_project:-${1:-.}}"
-project=$(cd "$project" && pwd -P) || die "no project directory ${usage_project:-${1:-.}}"
+project="${usage_project:-${1:-}}"
+# Nothing given is this repository; anything given (`.` too) is from where
+# mise was started. .mcp.json's `.` is run in the root, so it is the root.
+case "$project" in
+  "") project="$PWD" ;;
+  *) project="$(from_asked "$project")" ;;
+esac
+[ -d "$project" ] || die "mcp: no project directory $project"
+project="$(physical "$project")"
 
 if [ -n "${LJOS_BIN:-}" ]; then
-  [ -x "$LJOS_BIN" ] || die "LJOS_BIN is $LJOS_BIN, which is not a program"
+  [ -x "$LJOS_BIN" ] || die "mcp: LJOS_BIN is $LJOS_BIN, which is not a program"
   say "starting $LJOS_BIN, built already (LJOS_BIN)"
   exec "$LJOS_BIN" mcp --project "$project"
 fi
@@ -33,22 +42,22 @@ fi
 # common dir of a linked worktree is the main checkout's .git; of a bare
 # repository or a submodule it is something else, and the checkout keeps its
 # own target.
-if checkout=$(git rev-parse --show-toplevel 2>/dev/null) && [ -n "$checkout" ]; then
-  checkout=$(cd "$checkout" && pwd -P)
-  main=$checkout
-  common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)
+if checkout="$(git rev-parse --show-toplevel 2>/dev/null)" && [ -n "$checkout" ]; then
+  checkout="$(physical "$checkout")"
+  main="$checkout"
+  common="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
   if [ -n "$common" ] && [ "$(basename "$common")" = .git ]; then
-    main=$(cd "$(dirname "$common")" && pwd -P)
+    main="$(physical "$(dirname "$common")")"
   fi
 else
-  checkout=$(pwd -P)
-  main=$checkout
+  checkout="$(pwd -P)"
+  main="$checkout"
 fi
 
 target="${CARGO_TARGET_DIR:-$main/target}"
 # A target that is a link (to a drive with room, say) is where it leads.
 if [ -d "$target" ]; then
-  target=$(cd "$target" && pwd -P)
+  target="$(physical "$target")"
 fi
 export CARGO_TARGET_DIR="$target"
 
@@ -70,7 +79,7 @@ fi
 
 if [ -n "${LJOS_BUILD_WRAPPER:-}" ]; then
   command -v "$LJOS_BUILD_WRAPPER" >/dev/null 2>&1 ||
-    die "LJOS_BUILD_WRAPPER is $LJOS_BUILD_WRAPPER, which is not a program; unset it to build with cargo alone"
+    die "mcp: LJOS_BUILD_WRAPPER is $LJOS_BUILD_WRAPPER, which is not a program; unset it to build with cargo alone"
   say "building ljos through $LJOS_BUILD_WRAPPER into $target"
   build=("$LJOS_BUILD_WRAPPER" "${build[@]}")
 else
@@ -85,12 +94,7 @@ cd "$checkout"
 # stderr is a pipe more often than a terminal).
 status=0
 messages="$("${build[@]}" | tee >({ grep --line-buffered -v -e '^{"reason":' -e '^$' || true; } >&2))" || status=$?
-[ "$status" -eq 0 ] || die "the build of ljos failed"
-# The program's path is a JSON string: a quote, a backslash or a slash in it
-# comes escaped. Any other escape is a control character, which no path of a
-# build has; it is left, and the path is then no program.
-server="$(printf '%s\n' "$messages" |
-  sed -n -E 's/^\{"reason":"compiler-artifact".*"executable":"(([^"\\]|\\.)*)".*/\1/p' |
-  tail -n 1 | sed -E 's/\\(["\\/])/\1/g')"
-[ -n "$server" ] && [ -x "$server" ] || die "the build named no ljos program it made"
+[ "$status" -eq 0 ] || die "mcp: the build of ljos failed"
+server="$(printf '%s\n' "$messages" | cargo_executable)"
+[ -n "$server" ] && [ -x "$server" ] || die "mcp: the build named no ljos program it made"
 exec "$server" mcp --project "$project"

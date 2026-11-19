@@ -6,8 +6,8 @@
 //!
 //! - Linux: the Secret Service on the session bus (GNOME Keyring, KWallet,
 //!   KeePassXC), in its default collection ([`SecretService`]);
-//! - macOS: the user's keychain ([`Keychain`]);
-//! - Windows: the Credential Manager ([`CredentialManager`]);
+//! - macOS: the user's keychain (`Keychain`);
+//! - Windows: the Credential Manager (`CredentialManager`);
 //! - anywhere else, [`NoSecureStorage`]: every call is
 //!   [`SecretError::Unsupported`].
 //!

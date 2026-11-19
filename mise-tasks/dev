@@ -1,20 +1,39 @@
 #!/usr/bin/env bash
-#MISE description="Run a QML file on ljos from this checkout with ljos run --watch, so a save shows at once and keeps the app's state: dev [file.qml] [ljos run args…] (bench/feed.qml by default)"
+#MISE description="Run a QML file on ljos from this checkout with ljos run --watch, so a save shows at once and keeps the app's state: dev [file.qml] [--check] [ljos run args…] (bench/feed.qml by default). --check builds it and runs it for 2 s with no window"
+#MISE dir="{{config_root}}"
 #USAGE arg "[file]" default="bench/feed.qml" help="QML file to run, relative to where mise was started"
+#USAGE flag "--check" help="Build ljos and run the file for 2 s with no window or display (ljos run --headless), then stop: fails when it does not build or load"
 #USAGE arg "[args]..." var=#true help="Arguments for ljos run after the file (--mcp=inspect,input, --top); the app's own arguments go after -- --, as mise takes the first --"
 set -euo pipefail
-root="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source-path=SCRIPTDIR source=_lib/env.sh
+. "$(dirname "$0")/_lib/env.sh"
+cd "$ljos_root"
 # Read from the raw arguments, as mise's own parsing drops a `--` that
-# ljos run needs to tell its options from the app's.
-file="$root/bench/feed.qml"
+# ljos run needs to tell its options from the app's. --check is this task's
+# wherever it comes before that `--`.
+file="$ljos_root/bench/feed.qml"
+check=
+args=()
+apps=
+for a in "$@"; do
+  if [ -z "$apps" ] && [ "$a" = --check ]; then
+    check=1
+  else
+    [ "$a" != -- ] || apps=1
+    args+=("$a")
+  fi
+done
+set -- ${args[@]+"${args[@]}"}
 if [ $# -gt 0 ] && [ "${1#-}" = "$1" ]; then
-  file="$1"
-  shift
   # mise runs tasks from the repository root; a path is meant from where it was typed.
-  case "$file" in
-    /*) ;;
-    *) file="${MISE_ORIGINAL_CWD:-$PWD}/$file" ;;
-  esac
+  file="$(from_asked "$1")"
+  shift
 fi
-[ -f "$file" ] || { echo "no such file: $file" >&2; exit 1; }
-exec cargo run --quiet --manifest-path "$root/Cargo.toml" -p ljos_cli --bin ljos -- run --watch "$file" "$@"
+[ -f "$file" ] || die "dev: no such file: $file"
+if [ -n "$check" ]; then
+  # Without --watch, which would start a file that does not load with a
+  # placeholder for it and wait for a save that fixes it: a check fails.
+  check_run "$(built_program -p ljos_cli --bin ljos)" run "$file" "$@"
+  exit
+fi
+exec cargo run --quiet -p ljos_cli --bin ljos -- run --watch "$file" "$@"

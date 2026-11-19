@@ -1,9 +1,28 @@
 #!/usr/bin/env bash
-#MISE description="Compile the qtdoc examples to Ljós IR and print the baseline: files compiled whole, in part or not at all, and bindings with every name resolved"
-#USAGE arg "[dir]" default="corpus/qtdoc/examples" help="Directory of QML to compile"
+#MISE description="Compile the qtdoc examples to Ljós IR and print the baseline: files compiled whole, in part or not at all, and bindings with every name resolved. Fetches the corpus submodule when it compiles the corpus and it is not here; another directory is compiled as it is"
+#MISE dir="{{config_root}}"
+#USAGE arg "[dir]" help="Directory of QML to compile, from where mise was started (default: the qtdoc examples)"
 set -euo pipefail
-cd "$(dirname "$0")/.."
-if [ ! -e corpus/qtdoc/examples ]; then
-  git submodule update --init --depth 1 corpus/qtdoc
+# shellcheck source-path=SCRIPTDIR source=_lib/env.sh
+. "$(dirname "$0")/_lib/env.sh"
+cd "$ljos_root"
+corpus="$ljos_root/corpus/qtdoc/examples"
+dir="${usage_dir:-${1:-}}"
+# A directory given is from where mise was started; it is the corpus only
+# when it leads there.
+if [ -n "$dir" ]; then
+  dir="$(from_asked "$dir")"
+  if [ -d "$dir" ] && [ "$(physical "$dir")" = "$(physical "$corpus" 2>/dev/null || true)" ]; then
+    dir="$corpus"
+  fi
 fi
-cargo run --quiet --release -p ljos_compiler --bin ljos-compile -- baseline "${usage_dir:-${1:-corpus/qtdoc/examples}}"
+if [ -z "$dir" ] || [ "$dir" = "$corpus" ]; then
+  dir="$corpus"
+  if [ ! -e "$dir" ]; then
+    echo "compile: git submodule update --init --depth 1 corpus/qtdoc" >&2
+    git submodule update --init --depth 1 corpus/qtdoc
+  fi
+else
+  [ -d "$dir" ] || die "compile: no directory $dir"
+fi
+exec cargo run --quiet --release -p ljos_compiler --bin ljos-compile -- baseline "$dir"

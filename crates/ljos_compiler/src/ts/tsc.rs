@@ -1,4 +1,4 @@
-//! TypeScript itself, run on modules [`super::extract`] wrote: `deno check`,
+//! TypeScript itself, run on modules [`super::extract()`] wrote: `deno check`,
 //! or the `tsc` the variable `LJOS_TSC` names. Both are held to the same
 //! strict settings, written beside the modules for each run.
 

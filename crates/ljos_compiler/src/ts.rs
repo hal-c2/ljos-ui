@@ -1,5 +1,5 @@
 //! Ljós's API and its files as TypeScript: the declarations of the API
-//! ([`dts`]), each file in it as a module ([`extract`]), and TypeScript run
+//! ([`dts`]), each file in it as a module ([`mod@extract`]), and TypeScript run
 //! on them ([`tsc`]), which is the checker's oracle: a file TypeScript
 //! accepts is one the checker accepts (docs/DIALECT.md M4).
 

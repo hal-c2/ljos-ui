@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 #MISE description="Run an external acceptance suite on Ljós: features:acceptance <suite> [--path DIR] [--raise] [--allow-dirty] [--digest]"
+#MISE dir="{{config_root}}"
 #USAGE arg "<suite>" help="Suite under acceptance/ (e.g. example)"
 #USAGE flag "--path <dir>" help="The suite's checkout (default: the variable the PIN names)"
 #USAGE flag "--raise" help="Add the scenarios that pass now to RATCHET"
@@ -11,10 +12,12 @@ set -euo pipefail
 # RATCHET which scenarios must pass, steps/ is the adapter crate. The adapter
 # is a crate of its own workspace (the repository's workspace is crates/*),
 # so it is built through its manifest path.
-root="$(cd "$(dirname "$0")/../.." && pwd)"
+# shellcheck source-path=SCRIPTDIR source=../_lib/env.sh
+. "$(dirname "$0")/../_lib/env.sh"
+root="$ljos_root"
 if [ $# -lt 1 ] || [[ "$1" == -* ]]; then
   echo "usage: mise run features:acceptance <suite> [--path DIR] [--raise]" >&2
-  echo "suites:" $(cd "$root/acceptance" && ls -d */ 2>/dev/null | tr -d /) >&2
+  echo "suites: $(cd "$root/acceptance" && ls -d -- */ 2>/dev/null | tr -d / | tr '\n' ' ')" >&2
   exit 2
 fi
 suite="$1"
@@ -26,5 +29,6 @@ if [ ! -f "$dir/PIN" ] || [ ! -f "$dir/steps/Cargo.toml" ]; then
 fi
 # Same versions as the repository's own build; the copy is not committed.
 [ -f "$dir/steps/Cargo.lock" ] || cp "$root/Cargo.lock" "$dir/steps/Cargo.lock"
-export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$root/target}"
+CARGO_TARGET_DIR="$(target_dir)"
+export CARGO_TARGET_DIR
 exec cargo run --quiet --manifest-path "$dir/steps/Cargo.toml" -- --suite "$dir" "$@"

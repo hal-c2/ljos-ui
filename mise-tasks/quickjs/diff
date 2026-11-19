@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
 #MISE description="Diff the vendored rquickjs-sys and rquickjs-core forks against the crates.io releases they are based on"
+#MISE dir="{{config_root}}"
 #USAGE arg "[args]..." var=#true help="Options for diff (e.g. --brief, -u)"
 set -euo pipefail
+# shellcheck source-path=SCRIPTDIR source=../_lib/env.sh
+. "$(dirname "$0")/../_lib/env.sh"
+cd "$ljos_root"
+need_curl
 # What vendor/QUICKJS.md says the patch is, checked against what it really is.
 # The fork keeps only the files its build reads (vendor/QUICKJS.md), so what
 # it leaves out is listed once as "Only in" and not printed as a deletion.
@@ -9,7 +14,7 @@ work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 status=0
 for crate in rquickjs-sys rquickjs-core; do
-  version=$(sed -n 's/^version = "\(.*\)"$/\1/p' "vendor/$crate/Cargo.toml" | head -n 1)
+  version=$(crate_version "vendor/$crate/Cargo.toml")
   curl -sSfL "https://static.crates.io/crates/$crate/$crate-$version.crate" | tar -xz -C "$work"
   # diff exits 1 when there are differences, which there always are.
   diff -ru -x Cargo.toml.orig -x .cargo_vcs_info.json -x Cargo.lock \

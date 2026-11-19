@@ -2,13 +2,18 @@
 #MISE description="Run QtTest files (tst_*.qml) on Ljós: ljos test <files or dirs> [-import <dir>] [--filter name]; with no arguments, the suite of crates/ljos_test/tests/qml"
 #USAGE arg "[args]..." var=#true help="Arguments for ljos test: tst_*.qml files or dirs, -import <dir>, --filter <name> (default: the suite of crates/ljos_test/tests/qml)"
 set -euo pipefail
-root="$(cd "$(dirname "$0")/../.." && pwd)"
+# shellcheck source-path=SCRIPTDIR source=../_lib/env.sh
+. "$(dirname "$0")/../_lib/env.sh"
+root="$ljos_root"
 if [ $# -eq 0 ]; then
   set -- "$root/crates/ljos_test/tests/qml/suite" -import "$root/crates/ljos_test/tests/qml/imports"
   # The suite saves a picture (`grabImage(...).save(name)`) into the current
   # directory, which must not be the checkout.
-  work="${QTTEST_DIR:-${CARGO_TARGET_DIR:-$root/target}/qttest}"
+  work="$(from_asked "${QTTEST_DIR:-$(target_dir)/qttest}")"
   mkdir -p "$work"
   cd "$work"
+else
+  # Paths given are from where mise was started.
+  cd "$(asked_in)"
 fi
 exec cargo run --quiet -p ljos_cli --bin ljos --manifest-path "$root/Cargo.toml" -- test "$@"

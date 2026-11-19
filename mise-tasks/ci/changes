@@ -1,5 +1,13 @@
 #!/usr/bin/env bash
 #MISE description="What CI runs for the change since a revision: ci:changes [base] (default origin/main); prints the jobs' inputs"
+#MISE dir="{{config_root}}"
 #USAGE arg "[base]" default="origin/main" help="The revision to compare HEAD with"
 set -euo pipefail
-exec python3 scripts/ci_changes.py --mode pr --base "${usage_base:-${1:-origin/main}}" --head HEAD
+# shellcheck source-path=SCRIPTDIR source=../_lib/env.sh
+. "$(dirname "$0")/../_lib/env.sh"
+cd "$ljos_root"
+need_python3
+base="${usage_base:-${1:-origin/main}}"
+git rev-parse -q --verify "$base^{commit}" >/dev/null ||
+  die "ci:changes: $base is not a revision here: git fetch origin, or name another base"
+exec python3 scripts/ci_changes.py --mode pr --base "$base" --head HEAD

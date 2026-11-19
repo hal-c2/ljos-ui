@@ -143,6 +143,30 @@ Feature: Starting the authoring server from a checkout of Ljós
       {"jsonrpc":"2.0","id":1,"result":{"serverInfo":{"name":"ljos"}}}
       """
 
+  # This cargo builds into a directory whose name holds a tab, which JSON writes as \t. Beside it
+  # is one named with a backslash and a "t", whose stale program answers otherwise.
+  Scenario: A build directory whose name holds a tab is where the server is started from
+    Given the project is a git checkout with the linked worktree "wt"
+    And the file "bin/cargo":
+      """sh
+      #!/bin/sh
+      root=$(cd "$(dirname "$0")/.." && pwd -P)
+      out="$CARGO_TARGET_DIR/$(printf 'tab\tbuilds')/debug"
+      stale="$CARGO_TARGET_DIR/tab\\tbuilds/debug"
+      mkdir -p "$out" "$stale"
+      cp "$root/server.sh" "$out/ljos"
+      printf '#!/bin/sh\necho stale\n' > "$stale/ljos"
+      chmod +x "$stale/ljos"
+      dir=$(printf '%s' "$CARGO_TARGET_DIR" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')
+      printf '%s\n' "{\"reason\":\"compiler-artifact\",\"executable\":\"$dir/tab\\tbuilds/debug/ljos\",\"fresh\":false}"
+      """
+    When the author runs "mise-tasks/mcp" in "wt"
+    Then the command exits with status 0
+    And the command's standard output is:
+      """json
+      {"jsonrpc":"2.0","id":1,"result":{"serverInfo":{"name":"ljos"}}}
+      """
+
   Scenario: A linked worktree builds with the cargo settings the main checkout keeps outside git, into the shared target all the same
     Given the project is a git checkout with the linked worktree "wt"
     And the file ".cargo/config.toml":
@@ -222,6 +246,57 @@ Feature: Starting the authoring server from a checkout of Ljós
     And the command's standard output is:
       """json
       {"jsonrpc":"2.0","id":1,"result":{"serverInfo":{"name":"ljos"}}}
+      """
+
+  # .mcp.json runs `bash mise-tasks/mcp .` without mise. The editor or agent that runs it may have
+  # been started by a mise task of another project, and then hands down all of mise's variables:
+  # where that task was started, its name and its file. "project.sh" stands in for the server and
+  # says which directory it was given to author.
+  Scenario: Run outside mise, "." is the checkout it runs in
+    Given the file "project.sh":
+      """sh
+      #!/bin/sh
+      root=$(cd "$(dirname "$0")" && pwd -P)
+      echo "authoring .${3#"$root"}"
+      """
+    And the file "elsewhere/README":
+      """
+      Where a mise task of another project was started.
+      """
+    And the project is a git checkout with the linked worktree "wt"
+    And the author's environment has "LJOS_BIN" set to "{project}/project.sh"
+    And the author's environment has "MISE_ORIGINAL_CWD" set to "{project}/elsewhere"
+    And the author's environment has no "MISE_TASK_NAME"
+    And the author's environment has no "MISE_TASK_FILE"
+    When the author runs "mise-tasks/mcp ." in "wt"
+    Then the command exits with status 0
+    And the command's standard output is:
+      """
+      authoring ./wt
+      """
+
+  Scenario: Run outside mise by a program another project's mise task started, "." is still the checkout it runs in
+    Given the file "project.sh":
+      """sh
+      #!/bin/sh
+      root=$(cd "$(dirname "$0")" && pwd -P)
+      echo "authoring .${3#"$root"}"
+      """
+    And the file "elsewhere/mise-tasks/agents":
+      """sh
+      #!/bin/sh
+      echo "Another project's task, which started the agent."
+      """
+    And the project is a git checkout with the linked worktree "wt"
+    And the author's environment has "LJOS_BIN" set to "{project}/project.sh"
+    And the author's environment has "MISE_ORIGINAL_CWD" set to "{project}/elsewhere"
+    And the author's environment has "MISE_TASK_NAME" set to "agents"
+    And the author's environment has "MISE_TASK_FILE" set to "{project}/elsewhere/mise-tasks/agents"
+    When the author runs "mise-tasks/mcp ." in "wt"
+    Then the command exits with status 0
+    And the command's standard output is:
+      """
+      authoring ./wt
       """
 
   Scenario: A server LJOS_BIN names is started without a build

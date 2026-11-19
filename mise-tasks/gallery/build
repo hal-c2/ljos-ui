@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
-#MISE description="Build the two programs the gallery runs (ljos and qml-compare)"
+#MISE description="Build the two programs the gallery runs (ljos and qml-compare); mise run gallery runs this first"
+#MISE dir="{{config_root}}"
 set -euo pipefail
-cd "$(dirname "$0")/../.."
+# shellcheck source-path=SCRIPTDIR source=../_lib/env.sh
+. "$(dirname "$0")/../_lib/env.sh"
+cd "$ljos_root"
 exec cargo build --quiet -p ljos_cli -p qml_compare

@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
-#MISE description="Format check, clippy with warnings as errors, and the web build: check [-p pkg…] lints those packages only, without the web build"
+#MISE description="Format check, clippy with warnings as errors, and the web build, with the Rust mise.toml pins (it prints cargo --version first, and stops on another Rust): check [-p pkg…] lints those packages only, without the web build"
+#MISE dir="{{config_root}}"
 #USAGE arg "[args]..." var=#true help="Packages to lint instead of the workspace (-p pkg …); with any, the web build is skipped"
 set -euo pipefail
+# shellcheck source-path=SCRIPTDIR source=../_lib/env.sh
+. "$(dirname "$0")/../_lib/env.sh"
+need_pinned_rust
 cargo fmt --all --check
 if [ $# -eq 0 ]; then
   cargo clippy --workspace --all-targets -- -D warnings

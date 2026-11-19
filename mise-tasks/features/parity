@@ -1,8 +1,14 @@
 #!/usr/bin/env bash
-#MISE description="Run @qt-parity scenarios on real Qt (qml6, offscreen); backlog expectations are verified too. Takes features:run's arguments."
-#USAGE flag "-t --tags <tagexpr>" help="Only scenarios matching the tag expression"
+#MISE description="Run @qt-parity scenarios on real Qt (qml6, offscreen); backlog expectations are verified too. Takes features:run's arguments. The runner keeps only @qt-parity scenarios when Qt is the only backend (crates/ljos_bdd/src/runner.rs, Selection::require_tag), so -t narrows within them"
+#MISE dir="{{config_root}}"
+#USAGE flag "-t --tags <tagexpr>" help="Only scenarios matching the tag expression (within the @qt-parity ones)"
 #USAGE flag "-n --name <regex>" help="Only scenarios whose name matches"
 #USAGE arg "[globs]..." var=#true help="Paths under features/, as for features:run"
 set -euo pipefail
-command -v "${QML6:-qml6}" >/dev/null || { echo "qml6 not found; install Qt 6 or set QML6" >&2; exit 1; }
+# shellcheck source-path=SCRIPTDIR source=../_lib/env.sh
+. "$(dirname "$0")/../_lib/env.sh"
+need_qml6
+mismatch="$(qt_mismatch "${QML6:-qml6}")" || exit 1
+[ -z "$mismatch" ] || printf 'features:parity: %s\n' "$mismatch" >&2
+qt_offscreen
 exec "$(dirname "$0")/run" --backend qt "$@"

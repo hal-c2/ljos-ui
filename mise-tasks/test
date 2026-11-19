@@ -1,5 +1,18 @@
 #!/usr/bin/env bash
-#MISE description="Every Rust test in the workspace (features run separately: mise run features)"
-#USAGE arg "[args]..." var=#true help="Arguments for cargo test (--no-fail-fast, a test filter; mise takes the first --, so test-binary options go after -- --, as in -- -- --nocapture)"
+#MISE description="Rust tests: every crate of the workspace, or only those named with -p (test -p ljos_quick); features run separately (mise run features)"
+#MISE dir="{{config_root}}"
+#USAGE arg "[args]..." var=#true help="Arguments for cargo test: -p <crate> to test only that crate, --no-fail-fast, a test filter. mise takes the first --, so test-binary options go after -- --, as in -- -- --nocapture"
 set -euo pipefail
-exec cargo test --workspace "$@"
+# shellcheck source-path=SCRIPTDIR source=_lib/env.sh
+. "$(dirname "$0")/_lib/env.sh"
+leave_out_absent_nvidia
+# Narrowed when a crate is named; cargo would otherwise test the workspace
+# beside it.
+scope=(--workspace)
+for arg in "$@"; do
+  case "$arg" in
+    -p | --package | -p?* | --package=*) scope=() ;;
+    --) break ;;
+  esac
+done
+exec cargo test ${scope[@]+"${scope[@]}"} "$@"

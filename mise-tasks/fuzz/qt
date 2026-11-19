@@ -1,22 +1,31 @@
 #!/usr/bin/env bash
 #MISE description="Differential fuzzing of Ljós against Qt (qml6, offscreen): random programs, shrunk repros, bucketed differences. fuzz:qt [area] [--cases N] [--seed S] [ljos-fuzz options]; exits 1 on a bucket not in crates/ljos_fuzz/known/<area>.txt"
+#MISE dir="{{config_root}}"
 #USAGE arg "[area]" help="Area to fuzz (e.g. bindings; crates/ljos_fuzz/known/<area>.txt holds its known buckets)"
 #USAGE flag "--cases <n>" help="How many programs to try"
 #USAGE flag "--seed <seed>" help="Seed of the random programs"
 #USAGE arg "[args]..." var=#true help="More ljos-fuzz options"
 set -euo pipefail
-root="$(cd "$(dirname "$0")/../.." && pwd)"
-target="${CARGO_TARGET_DIR:-$root/target}"
+# shellcheck source-path=SCRIPTDIR source=../_lib/env.sh
+. "$(dirname "$0")/../_lib/env.sh"
+cd "$ljos_root"
+target="$(target_dir)"
+need_qml6
 qml="${QML6:-qml6}"
-command -v "$qml" >/dev/null || { echo "$qml not found; install Qt 6 or set QML6" >&2; exit 1; }
+qt_mismatch "$qml" >&2 || exit 1
+# ljos-fuzz runs qml6 off-screen; a desktop platform theme would still reach
+# for a display.
+qt_offscreen
 
 # Most of a run is the Ljós side, which an optimised build runs several times faster.
 profile="${FUZZ_PROFILE:-release}"
-cargo build --quiet --manifest-path "$root/Cargo.toml" -p ljos_fuzz --profile "$profile"
+cargo build --quiet -p ljos_fuzz --profile "$profile"
 dir="$profile"
-[ "$profile" = dev ] && dir=debug
+[ "$profile" != dev ] || dir=debug
 
-cd "$root"
+# A relative FUZZ_OUT is from the checkout's root, not from where mise was
+# started: ljos-fuzz empties it first, so it must not land on a directory of
+# someone's own by being typed elsewhere.
 exec "$target/$dir/ljos-fuzz" --qml "$qml" \
-  --known "$root/crates/ljos_fuzz/known" \
+  --known "$ljos_root/crates/ljos_fuzz/known" \
   --out "${FUZZ_OUT:-$target/fuzz/out}" --work "$target/fuzz/work" "$@"

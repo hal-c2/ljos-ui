@@ -1,21 +1,20 @@
 #!/usr/bin/env bash
 #MISE description="Run the QtTest suites of crates/ljos_test/tests/qml on ljos test and on Qt's qmltestrunner (offscreen, under timeout) and compare the result lines"
 set -euo pipefail
+# shellcheck source-path=SCRIPTDIR source=../_lib/env.sh
+. "$(dirname "$0")/../_lib/env.sh"
 # qmltestrunner is a black box here: it is only run, and what it prints is
 # compared. Where the two outputs go: QTTEST_DIR, default target/qttest.
-root="$(cd "$(dirname "$0")/../.." && pwd)"
-target="${CARGO_TARGET_DIR:-$root/target}"
-work="${QTTEST_DIR:-$target/qttest}"
+root="$ljos_root"
+target="$(target_dir)"
+work="$(from_asked "${QTTEST_DIR:-$target/qttest}")"
 qml="$root/crates/ljos_test/tests/qml"
-# A plain `qmltestrunner` on the path may be Qt 5's, so Qt 6's own
-# directories are tried first (the same order the feature runner uses).
-runner="${QMLTESTRUNNER:-}"
-for candidate in /usr/lib/qt6/bin/qmltestrunner /usr/lib64/qt6/bin/qmltestrunner \
-    /usr/lib/x86_64-linux-gnu/qt6/bin/qmltestrunner "$(command -v qmltestrunner6 || true)"; do
-  [ -n "$runner" ] && break
-  [ -x "$candidate" ] && runner="$candidate"
-done
-[ -n "$runner" ] && [ -x "$runner" ] || { echo "Qt 6's qmltestrunner not found; install Qt 6 or set QMLTESTRUNNER" >&2; exit 1; }
+need_timeout
+# A plain `qmltestrunner` on the path may be Qt 5's (see find_qmltestrunner).
+runner="$(find_qmltestrunner)"
+# qmltestrunner does not say its version, so every Qt 6 tool on PATH is asked.
+qt_mismatch >&2 || exit 1
+qt_offscreen
 cargo build --quiet -p ljos_cli --bin ljos --manifest-path "$root/Cargo.toml"
 mkdir -p "$work"
 # `grabImage(...).save(name)` writes into the current directory.
@@ -31,7 +30,7 @@ lines() {
 status=0
 for suite in suite failing; do
   "$target/debug/ljos" test "$qml/$suite" -import "$qml/imports" >"$suite.ljos.out" 2>"$suite.ljos.err" && ours=0 || ours=$?
-  QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software timeout -k 5 60 \
+  QT_QUICK_BACKEND=software timeout -k 5 60 \
     "$runner" -input "$qml/$suite" -import "$qml/imports" >"$suite.qt.out" 2>&1 && theirs=0 || theirs=$?
   lines "$suite.ljos.out" >"$suite.ljos.lines"
   lines "$suite.qt.out" >"$suite.qt.lines"

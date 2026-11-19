@@ -16,21 +16,38 @@ Ljós is a general-purpose Rust UI toolkit for malleable software: apps that peo
 
 | Task | Command |
 |---|---|
-| First run after a clone (tools, submodules, Qt types; `--webengine` for CEF) | `mise run setup` |
-| Run a QML file with hot reload (default `bench/feed.qml`) | `mise run dev [file.qml] [ljos run args…]` |
-| Build / install the `ljos` CLI | `mise run build [--release]`, `mise run install [--root <dir>]` |
-| Format, clippy | `mise run check` |
-| Rust tests | `mise run test` |
+| First run after a clone, safe to repeat (tools, submodules, Qt types; `--webengine` for CEF, `--no-corpus`) | `mise trust`, then `mise run setup` |
+| What is here and what is missing, installing nothing (fails on a Qt that is not CI's 6.11) | `mise run --skip-tools setup --check` |
+| Run a QML file with hot reload (default `bench/feed.qml`); `--check` runs it 2 s with no window | `mise run dev [file.qml] [--check] [ljos run args…]` |
+| Run a QML file without reload | `mise run run <file.qml> [--release] [--check] [ljos run args…]` |
+| Build / install the `ljos` CLI | `mise run build [--release] [--workspace]`, `mise run install [--root <dir>]` |
+| Format, clippy (prints `cargo --version`); format only | `mise run check`, `mise run fmt [--check]` |
+| The web build of the protocol half (`check` runs it) | `mise run check:wasm` |
+| Rust tests | `mise run test [-p <crate>]` |
+| API docs (rustdoc warnings printed) and the Markdown links | `mise run docs [-p <crate>] [--open]` |
 | Gherkin ledger | `mise run features` |
-| Gherkin, only the feature files a branch adds or changes (a change's gate; CI runs the ledger) | `mise run features:changed [path…]` |
-| QML tests (`tst_*.qml`) | `mise run qttest` |
-| External suite | `mise run features:acceptance <suite>` |
-| qtdoc gallery | `mise run gallery` (after `mise run gallery:reference`) |
-| Run one corpus example | `mise run gallery:run <id>` (no id lists them) |
+| Gherkin, only the feature files a branch adds or changes (a change's gate; CI runs the ledger) | `mise run features:changed [--base <rev>] [path…]` |
+| Part of the ledger, on Ljós, on Qt (`@qt-parity`) | `mise run features:run [globs…] [-t tags] [-n name]`, `features:ljos`, `features:parity` |
+| Lint the ledger | `mise run features:lint` |
+| External suite, and the acceptance mechanism's own test | `mise run features:acceptance <suite>`, `mise run features:acceptance-test` |
+| QML tests (`tst_*.qml`), and against Qt's qmltestrunner | `mise run qttest [files…]`, `mise run qttest:parity` |
+| qtdoc gallery | `mise run gallery` (after `mise run gallery:reference`; it runs `gallery:build`) |
+| Run one corpus example; fetch its assets | `mise run gallery:run <id>` (no id lists them), `mise run gallery:assets [id…]` |
 | Click through corpus examples off-screen, list what each click did and logged | `mise run gallery:drive [id…]` |
+| Edit corpus examples while they run off-screen, list what each save kept | `mise run gallery:hot <id…>` |
+| Pictures and corpus runs as the gallery compares them | `mise run compare -- <diff A B \| run …>` (`-- --help` lists them) |
+| Parse / compile the qtdoc corpus and print the baseline | `mise run parse [paths…]`, `mise run compile [dir]` |
+| Differential fuzzing against Qt | `mise run fuzz:qt [area] [--cases N] [--seed S]` |
+| Qt's type table from the local Qt (git-ignored; `setup` makes it) | `mise run types [--qt <dir>]` |
+| Benchmarks against Qt (docs/BENCHMARKS.md) | `mise run bench [ids…]`, `bench:3d`, `bench:egui`, `bench:js`, `bench:cross`, `bench:hot [--check]` |
+| Play a Lottie file | `mise run lottie [file] [--qt] [--check]` |
 | Build / run with QtWebEngine (CEF, fetched once into `$CEF_PATH`, default `<target>/cef`) | `mise run webengine:build`, `mise run webengine:run <file.qml>` |
-| MCP authoring server | `mise run mcp` (what `.mcp.json` runs; builds into the main checkout's target, through `LJOS_BUILD_WRAPPER` when set; `LJOS_BIN` skips the build) |
+| MCP authoring server | `mise run mcp [project]` (what `.mcp.json` runs; builds into the main checkout's target, through `LJOS_BUILD_WRAPPER` when set; `LJOS_BIN` skips the build) |
 | Run an app off-screen (headless sway, own bus, cua-driver) | `mise run desktop:cua <file.qml> [args]`, `desktop:cua:exec <command…>`, `desktop:cua:call <tool> [json]`, `desktop:cua:stop` |
+| See what drags from other applications carry | `mise run desktop:drag-in [--check]` |
+| Diff a vendored fork against its release; try the oxc patch on the newest one | `mise run accesskit:diff`, `quickjs:diff`, `oxc:diff` (`--brief`), `mise run oxc:check` |
+| What CI runs for a change; test CI's scripts and the tasks' shared code | `mise run ci:changes [base]`, `mise run ci:test`, `mise run tasks:test` |
+| Every task in a quick mode (CI's `tasks-smoke` job) | `mise run tasks:smoke [--list] [--only <task>] [--dry]` |
 | Every task and its arguments | `mise tasks`, `mise run <task> --help` |
 
 ## Conventions

@@ -1,42 +1,97 @@
 #!/usr/bin/env bash
-#MISE description="Run on Ljós only the feature files this branch adds or changes (committed, staged, unstaged or untracked), plus any paths given. Takes features:run's arguments."
+#MISE description="Run on Ljós only the feature files this branch adds or changes against origin/main (committed, staged, unstaged or untracked), plus any paths given; fetches origin/main when it is not here, fails when there is no base, and says which base it compared with. Takes features:run's arguments"
+#MISE dir="{{config_root}}"
+#USAGE flag "--base <rev>" help="Compare with this revision instead of origin/main (LJOS_FEATURES_BASE sets it too)"
 #USAGE flag "--backend <backend>" help="Engine the scenarios run on" { choices "ljos" "qt" "both"; }
 #USAGE flag "-t --tags <tagexpr>" help="Only scenarios matching the tag expression"
 #USAGE flag "-n --name <regex>" help="Only scenarios whose name matches"
 #USAGE flag "--backlog" help="Run only backlog work"
 #USAGE arg "[paths]..." var=#true help="More feature paths to run besides the changed ones (as for features:run)"
 set -euo pipefail
+# shellcheck source-path=SCRIPTDIR source=../_lib/env.sh
+. "$(dirname "$0")/../_lib/env.sh"
+cd "$ljos_root"
 # A worker's gate is the behaviour it touched; CI runs the whole ledger.
-# The base is where the branch left the shared line, so files others changed are not run.
-base_ref="${LJOS_FEATURES_BASE:-}"
-if [ -z "$base_ref" ]; then
-  for r in origin/scaffold/m0 origin/main; do
-    if git rev-parse -q --verify "$r" >/dev/null; then base_ref=$r; break; fi
-  done
-fi
-files=()
-if [ -n "$base_ref" ]; then
-  base=$(git merge-base HEAD "$base_ref")
-  mapfile -t files < <(
-    {
-      git diff --name-only --diff-filter=AMR "$base" -- 'features/*.feature'
-      git ls-files --others --exclude-standard -- 'features/*.feature'
-    } | sort -u
-  )
-fi
+# The base is where the branch left main, so files others changed are not run.
+
+# features:run's arguments go through as they are; --base is this task's.
+base_ref="${LJOS_FEATURES_BASE:-origin/main}"
+args=()
 paths=0
 skip=0
+want_base=0
 for a in "$@"; do
-  if [ "$skip" -eq 1 ]; then skip=0; continue; fi
+  if [ "$want_base" -eq 1 ]; then
+    base_ref="$a"
+    want_base=0
+    continue
+  fi
+  if [ "$skip" -eq 1 ]; then
+    skip=0
+    args+=("$a")
+    continue
+  fi
   case "$a" in
-    -t|--tags|-n|--name|--input|-i|--backend) skip=1 ;;
-    -*) ;;
-    *) paths=1 ;;
+    --base) want_base=1 ;;
+    --base=*) base_ref="${a#--base=}" ;;
+    -t | --tags | -n | --name | --backend)
+      skip=1
+      args+=("$a")
+      ;;
+    --input | -i)
+      # A selection of its own, which features:run runs.
+      paths=1
+      skip=1
+      args+=("$a")
+      ;;
+    --input=*)
+      paths=1
+      args+=("$a")
+      ;;
+    -*) args+=("$a") ;;
+    *)
+      paths=1
+      args+=("$a")
+      ;;
   esac
 done
+[ "$want_base" -eq 0 ] || die "features:changed: --base needs a revision"
+
+if ! git rev-parse -q --verify "$base_ref^{commit}" >/dev/null; then
+  case "$base_ref" in
+    origin/*)
+      echo "features:changed: $base_ref is not here; git fetch origin ${base_ref#origin/}" >&2
+      git fetch --quiet origin "${base_ref#origin/}:refs/remotes/$base_ref" ||
+        die "features:changed has no base to compare with: $base_ref is not here and git fetch origin ${base_ref#origin/} failed. Fetch it, or pass --base <rev>"
+      ;;
+    *) die "features:changed has no base to compare with: $base_ref is not a revision here. Pass --base <rev> (a branch, tag or commit)" ;;
+  esac
+fi
+base="$(git merge-base HEAD "$base_ref")" ||
+  die "features:changed: HEAD and $base_ref share no commit here (a shallow clone?): git fetch --unshallow origin, or pass --base <rev>"
+said="$base_ref ($(git rev-parse --short "$base"))"
+
+# Collected before it is read, so a git that fails fails the task: from a
+# process substitution its status would be lost.
+changed="$(
+  {
+    git diff --name-only --diff-filter=AMR "$base" -- 'features/*.feature'
+    git ls-files --others --exclude-standard -- 'features/*.feature'
+  } | sort -u
+)" || die "features:changed: git could not list the files changed against $said"
+files=()
+while IFS= read -r f; do
+  [ -n "$f" ] && files+=("$f")
+done <<<"$changed"
+
 if [ ${#files[@]} -eq 0 ] && [ "$paths" -eq 0 ]; then
-  echo "features:changed: no feature file added or changed against ${base_ref:-a base}, and no path given" >&2
+  echo "features:changed: no feature file added or changed against $said, and no path given: nothing to run"
   exit 0
 fi
-printf 'features:changed: %s\n' "${files[@]}" >&2
-exec "$(dirname "$0")/run" --backend ljos "${files[@]}" "$@"
+if [ ${#files[@]} -eq 0 ]; then
+  echo "features:changed: no feature file added or changed against $said; running what was given" >&2
+else
+  echo "features:changed: against $said:" >&2
+  printf '  %s\n' "${files[@]}" >&2
+fi
+exec "$(dirname "$0")/run" --backend ljos ${files[@]+"${files[@]}"} ${args[@]+"${args[@]}"}

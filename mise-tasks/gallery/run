@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
 #MISE description="Run one qtdoc corpus example in a Ljós window: gallery:run <id> [ljos run args…]; no id lists the examples (* = rendered in the last gallery run)"
+#MISE dir="{{config_root}}"
 #USAGE flag "--list" help="List the examples (the same as giving no id)"
 #USAGE arg "[id]" help="Corpus example id; none lists them (* = rendered in the last gallery run)"
 #USAGE arg "[args]..." var=#true help="Arguments for ljos run (--watch, --top, --mcp=inspect,input, …)"
 set -euo pipefail
-root="$(cd "$(dirname "$0")/../.." && pwd)"
+# shellcheck source-path=SCRIPTDIR source=../_lib/env.sh
+. "$(dirname "$0")/../_lib/env.sh"
+root="$ljos_root"
+need_python3
 manifest="$root/corpus/examples.json"
-target="${CARGO_TARGET_DIR:-$root/target}"
-report="${GALLERY_DIR:-$target/gallery}/report.json"
-
-if [ ! -d "$root/corpus/qtdoc" ]; then
-  echo "no corpus at corpus/qtdoc (\`git submodule update --init corpus/qtdoc\`)" >&2
-  exit 1
-fi
+target="$(target_dir)"
+gallery="${GALLERY_DIR:-$target/gallery}"
+report="$gallery/report.json"
 
 # id <tab> dir <tab> entry <tab> WxH <tab> renders(yes/no/?) per example.
 rows="$(python3 - "$manifest" "$report" <<'EOF'
@@ -43,6 +43,8 @@ if [ $# -eq 0 ] || [ "$1" = --list ]; then
   list
   exit 0
 fi
+# The list is the manifest's; running one needs the examples themselves.
+need_corpus
 
 id="$1"; shift
 row=""
@@ -74,7 +76,7 @@ fi
 standins=()
 if [ -d "$root/corpus/standins/$id" ]; then
   while IFS= read -r qmldir; do
-    module="$(sed -n 's/^module[[:space:]]\+//p' "$qmldir" | head -1)"
+    module="$(sed -n 's/^module[[:space:]][[:space:]]*//p' "$qmldir" | sed -n 1p)"
     standins+=(--alias "$module=$(dirname "$qmldir")")
   done < <(find "$root/corpus/standins/$id" -name qmldir -not -path '*/downloaded/*')
   # The C++ they stand in for reads the example's files; QML may only with this said.
@@ -104,7 +106,7 @@ if grep -q "^  \"$id\":" "$root/corpus/assets.json"; then
   # gallery:drive looks for the inspector's token where it started this.
   export LJOS_MCP_DIR="${LJOS_MCP_DIR:-$PWD}"
   if [ -d "$root/corpus/standins/$id/downloaded" ]; then
-    here="$target/gallery/cwd/$id"
+    here="$gallery/cwd/$id"
     mkdir -p "$here"
     assets="$root/corpus/standins/$id/downloaded"
     [ -d "$assets/content" ] && assets="$assets/content"

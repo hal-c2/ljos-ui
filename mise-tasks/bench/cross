@@ -4,15 +4,18 @@
 set -euo pipefail
 # Nothing is installed here: a missing piece is named and the check fails.
 triple="${BENCH_TRIPLE:-aarch64-unknown-linux-gnu}"
-root="$(pwd)"
-target="${CARGO_TARGET_DIR:-$root/target}"
-env_triple="${triple//-/_}"
-linker_var="CARGO_TARGET_${env_triple^^}_LINKER"
+# shellcheck source-path=SCRIPTDIR source=../_lib/env.sh
+. "$(dirname "$0")/../_lib/env.sh"
+target="$(target_dir)"
+env_triple="$(printf '%s' "${triple//-/_}" | tr '[:lower:]' '[:upper:]')"
+linker_var="CARGO_TARGET_${env_triple}_LINKER"
 linker="${!linker_var:-aarch64-linux-gnu-gcc}"
 # The C libraries the binary links (ldd of the host build) are found
 # through pkg-config in the board's sysroot.
 sysroot="${PKG_CONFIG_SYSROOT_DIR:-}"
 missing=()
+# Sizes in bytes, with what both GNU and BSD have.
+size() { wc -c <"$1" | tr -d ' '; }
 
 if ! rustup target list --installed 2> /dev/null | grep -qx "$triple"; then
   missing+=("Rust's standard library for $triple (rustup target add $triple)")
@@ -25,10 +28,10 @@ if [[ -z $sysroot || ! -d $sysroot ]]; then
 fi
 
 host="$target/release/ljos"
-if [[ -x $host ]]; then
+if [[ -x $host ]] && command -v strip >/dev/null; then
   stripped="$(mktemp "$target/ljos-stripped.XXXXXX")"
   strip -o "$stripped" "$host"
-  echo "host release ljos: $(stat -c %s "$host") bytes, $(stat -c %s "$stripped") stripped (x86_64, for comparison)"
+  echo "host release ljos: $(size "$host") bytes, $(size "$stripped") stripped ($(uname -m), for comparison)"
   rm -f "$stripped"
 fi
 
@@ -44,4 +47,4 @@ strip_tool=llvm-strip
 command -v "$strip_tool" > /dev/null || strip_tool="${linker%gcc}strip"
 out="$target/$triple/release/ljos.stripped"
 "$strip_tool" -o "$out" "$bin"
-echo "$triple ljos: $(stat -c %s "$bin") bytes, $(stat -c %s "$out") stripped ($out)"
+echo "$triple ljos: $(size "$bin") bytes, $(size "$out") stripped ($out)"

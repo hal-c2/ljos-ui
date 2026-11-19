@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-#MISE description="Record which functions of the dist binary QML apps run, into the link order crates/ljos_cli/link/hot.txt: bench:hot [ids…]; ids as for bench (all by default), BENCH_HOT_SECONDS per app (15)"
+#MISE description="Record which functions of the dist binary QML apps run, and rewrite the committed link order crates/ljos_cli/link/hot.txt with them: bench:hot [ids…]; ids as for bench (all by default), BENCH_HOT_SECONDS per app (15). --check only says whether it could run"
 #MISE dir="{{config_root}}"
+#USAGE flag "--check" help="Build, run and write nothing: check for valgrind, nm, python3 and the sandbox's tools, and say what a run would rewrite"
 #USAGE arg "[ids]..." var=#true help="bench/*.qml names and corpus example ids, as for bench (default all)"
 set -euo pipefail
 # The dist build links the functions named in hot.txt first, next to each
@@ -11,11 +12,32 @@ set -euo pipefail
 # The names are mangled with the crates' hashes, which change with the
 # toolchain or dependencies but not with most edits; a name the binary no
 # longer has is skipped by the linker, so a stale file only orders less.
-root="$(pwd)"
-target="${CARGO_TARGET_DIR:-$root/target}"
+# shellcheck source-path=SCRIPTDIR source=../_lib/env.sh
+. "$(dirname "$0")/../_lib/env.sh"
+root="$ljos_root"
+target="$(target_dir)"
 out="$target/bench-hot"
 secs="${BENCH_HOT_SECONDS:-15}"
 order="$root/crates/ljos_cli/link/hot.txt"
+
+ids=()
+check="${usage_check:-false}"
+for a in "$@"; do
+  case "$a" in
+    --check) check=true ;;
+    *) ids+=("$a") ;;
+  esac
+done
+need_valgrind
+need nm "install binutils (Arch: pacman -S binutils; Debian, Ubuntu: apt install binutils)"
+need_python3
+for tool in sway dbus-run-session; do
+  need "$tool" "the sandbox (scripts/cua-sandbox.sh) runs the apps in a headless sway on a bus of its own: install sway and dbus"
+done
+if [ "$check" = true ]; then
+  echo "bench:hot can run: it would build the dist ljos into $target/dist, run ${ids[*]:-every bench app} under callgrind for ${secs}s each, and rewrite $order (tracked: commit it, or git checkout it)"
+  exit 0
+fi
 
 cargo build --quiet --profile dist -p ljos_cli
 cargo build --quiet -p qml_compare
@@ -23,7 +45,7 @@ bin="$target/dist/ljos"
 
 rm -rf "${out:?}"
 mkdir -p "$out/runs"
-"$root/scripts/bench-manifest.sh" "$out" "$@"
+"$root/scripts/bench-manifest.sh" "$out" ${ids[@]+"${ids[@]}"}
 
 sandbox="$("$root/scripts/cua-sandbox.sh" env)"
 value() { sed -n "s/^$1=//p" <<< "$sandbox"; }
