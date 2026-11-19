@@ -1304,10 +1304,27 @@ pub fn min_memory(
 /// it start, and says what held it: whether, and how, the limits can be
 /// had here.
 ///
+/// A probe a scope did not isolate is placed again, up to [`LAUNCHES`]
+/// times, as [`run`] launches an application again.
+///
 /// # Errors
-/// [`Error::Unheld`] when nothing `--limit-by` allows holds the limit, or
-/// what else would stop a run.
+/// [`Error::Unheld`] when nothing `--limit-by` allows holds the limit,
+/// [`Error::Refused`] when no launch was isolated, or what else would stop
+/// a run.
 pub fn check_limits(setup: &Setup, profile: &Profile) -> Result<Enforcement, Error> {
+    let mut launch = 1;
+    loop {
+        match check_limits_once(setup, profile) {
+            Err(Error::Refused(why)) if launch < LAUNCHES => {
+                eprintln!("ljos bench: placing the probe again: {why}");
+                launch += 1;
+            }
+            other => return other,
+        }
+    }
+}
+
+fn check_limits_once(setup: &Setup, profile: &Profile) -> Result<Enforcement, Error> {
     static COUNT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
     let n = COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     std::fs::create_dir_all(&setup.work)?;

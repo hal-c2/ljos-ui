@@ -167,7 +167,9 @@ for weaker ones.
   `cpu`. Each run gets a cgroup of its own with `memory.max`, `memory.swap.max` 0 and `cpu.max`, and
   `cpuset.cpus` when the `cpuset` controller is there (affinity otherwise). A cgroup with processes
   cannot hand its controllers down, so when the bench is all its cgroup holds, or that cgroup is the
-  container's root, the bench moves those processes into `ljos-bench-leaf` below it first. In
+  container's root, the bench moves those processes into `ljos-bench-leaf` below it first; they stay
+  there, under the same limits. If the controllers still cannot be handed down, it moves them back
+  and removes the leaf, and the error says whether that worked. In
   rootless podman the tree is read-only unless the container runs with
   `--security-opt unmask=/sys/fs/cgroup` (or `--systemd=always`).
 - **`container`** checks `memory.max`, `memory.swap.max` and `cpu.max` from the bench's cgroup up to

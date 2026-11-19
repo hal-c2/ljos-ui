@@ -277,65 +277,138 @@ impl Drop for Made {
     }
 }
 
+/// How [`hand_down`] writes a cgroup's file: the kernel's own, or a test's
+/// stand-in that answers as the kernel would.
+type WriteFile<'a> = &'a dyn Fn(&Path, &str) -> std::io::Result<()>;
+
+fn write_file(path: &Path, value: &str) -> std::io::Result<()> {
+    std::fs::write(path, value)
+}
+
+/// The controllers of `want` that `have` does not hand down yet.
+fn missing<'a>(want: &[&'a str], have: &[String]) -> Vec<&'a str> {
+    want.iter()
+        .copied()
+        .filter(|c| !have.iter().any(|h| h == c))
+        .collect()
+}
+
+/// Whether the processes of `dir` may be moved into a leaf below it: when
+/// the bench (`me`) is all it holds, or it is the root of the container's
+/// tree, whose processes stay under the container's limits.
+fn may_move(dir: &Path, procs: &[u32], me: u32, is_root: bool) -> Result<(), String> {
+    if is_root || procs.iter().all(|&p| p == me) {
+        return Ok(());
+    }
+    Err(format!(
+        "{} holds processes other than the bench ({procs:?}), so it cannot hand its controllers down; give --cgroup-parent a cgroup the bench may make cgroups in",
+        dir.display()
+    ))
+}
+
+fn processes(n: usize) -> String {
+    if n == 1 {
+        "1 process".to_owned()
+    } else {
+        format!("{n} processes")
+    }
+}
+
 /// Hands `want` down from `parent`, moving its processes into a leaf if it
-/// must and may: when the bench is all it holds, or it is the root of the
-/// container's tree, whose processes stay under the container's limits.
+/// must and [`may_move`] lets it. When the controllers still cannot be
+/// handed down, the processes are moved back and the leaf removed.
 fn hand_down(
     root: &Path,
     parent: &Cgroup,
     want: &[&str],
+    me: u32,
+    write: WriteFile<'_>,
     notes: &mut Vec<String>,
 ) -> Result<(), String> {
-    let have = parent.subtree_control();
-    let missing: Vec<&str> = want
-        .iter()
-        .copied()
-        .filter(|c| !have.iter().any(|h| h == c))
-        .collect();
+    let missing = missing(want, &parent.subtree_control());
     if missing.is_empty() {
         return Ok(());
     }
     let line: Vec<String> = missing.iter().map(|c| format!("+{c}")).collect();
     let line = line.join(" ");
     let file = parent.dir.join("cgroup.subtree_control");
-    match parent.write("cgroup.subtree_control", &line) {
+    match write(&file, &line) {
         Ok(()) => return Ok(()),
         Err(e) if e.raw_os_error() == Some(libc::EBUSY) => {}
         Err(e) => return Err(format!("{} cannot be given {line:?}: {e}", file.display())),
     }
     let procs = parent.procs().unwrap_or_default();
-    let me = std::process::id();
-    let is_root = parent.dir == root;
-    if !(is_root || procs.iter().all(|&p| p == me)) {
+    may_move(&parent.dir, &procs, me, parent.dir == root)?;
+    let leaf = parent.dir.join(LEAF);
+    std::fs::create_dir_all(&leaf).map_err(|e| format!("cannot make {}: {e}", leaf.display()))?;
+    let into = leaf.join("cgroup.procs");
+    // One that ended meanwhile is not in the way any more.
+    let moved: Vec<u32> = procs
+        .into_iter()
+        .filter(|pid| write(&into, &pid.to_string()).is_ok())
+        .collect();
+    if let Err(e) = write(&file, &line) {
+        let back = parent.dir.join("cgroup.procs");
+        let stuck: Vec<u32> = moved
+            .iter()
+            .copied()
+            .filter(|pid| write(&back, &pid.to_string()).is_err())
+            .collect();
+        let undone = if stuck.is_empty() {
+            let _ = std::fs::remove_dir(&leaf);
+            format!(
+                "the {} moved into {LEAF} to make room were moved back",
+                processes(moved.len())
+            )
+        } else {
+            format!(
+                "{} moved into {LEAF} to make room could not be moved back ({stuck:?}); they are still under {}'s limits",
+                processes(stuck.len()),
+                enforce::relative(root, &parent.dir)
+            )
+        };
         return Err(format!(
-            "{} holds processes other than the bench ({procs:?}), so it cannot hand its controllers down; give --cgroup-parent a cgroup the bench may make cgroups in",
-            parent.dir.display()
+            "{} cannot be given {line:?}: {e}; {undone}",
+            file.display()
         ));
     }
-    let leaf = Cgroup {
-        dir: parent.dir.join(LEAF),
-    };
-    std::fs::create_dir_all(&leaf.dir)
-        .map_err(|e| format!("cannot make {}: {e}", leaf.dir.display()))?;
-    let mut moved = 0;
-    for pid in procs {
-        // One that ended meanwhile is not in the way any more.
-        if leaf.write("cgroup.procs", &pid.to_string()).is_ok() {
-            moved += 1;
-        }
-    }
-    parent
-        .write("cgroup.subtree_control", &line)
-        .map_err(|e| format!("{} cannot be given {line:?}: {e}", file.display()))?;
-    let (count, verb) = if moved == 1 {
-        ("1 process".to_owned(), "was")
-    } else {
-        (format!("{moved} processes"), "were")
-    };
+    let verb = if moved.len() == 1 { "was" } else { "were" };
     notes.push(format!(
-        "{count} {verb} moved from {} into {LEAF} below it, so it could hand its controllers down; they keep its limits",
+        "{} {verb} moved from {} into {LEAF} below it, so it could hand its controllers down; they keep its limits",
+        processes(moved.len()),
         enforce::relative(root, &parent.dir)
     ));
+    Ok(())
+}
+
+/// Has `command`'s process write itself into `procs` (a cgroup's
+/// `cgroup.procs`) and take `affinity` before it execs, so not even it
+/// runs outside the limit.
+fn join_on_exec(
+    command: &mut Command,
+    procs: &Path,
+    affinity: Option<libc::cpu_set_t>,
+) -> Result<(), String> {
+    let procs = CString::new(procs.as_os_str().as_encoded_bytes()).map_err(|e| e.to_string())?;
+    // SAFETY: open, write, close and sched_setaffinity between fork and
+    // exec; the path and the set were made before the fork.
+    unsafe {
+        command.pre_exec(move || {
+            let fd = libc::open(procs.as_ptr(), libc::O_WRONLY | libc::O_CLOEXEC);
+            if fd < 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            let wrote = libc::write(fd, b"0".as_ptr().cast(), 1);
+            libc::close(fd);
+            if wrote != 1 {
+                return Err(std::io::Error::last_os_error());
+            }
+            if let Some(mask) = &affinity {
+                set_affinity(mask)?;
+            }
+            Ok(())
+        });
+    }
     Ok(())
 }
 
@@ -379,7 +452,15 @@ fn own_cgroup(ask: &Ask<'_>, auto: bool) -> Result<Placed, Fail> {
         CpusBy::Affinity
     };
     let mut notes = Vec::new();
-    hand_down(root, &parent, &want, &mut notes).map_err(Fail::Cannot)?;
+    hand_down(
+        root,
+        &parent,
+        &want,
+        std::process::id(),
+        &write_file,
+        &mut notes,
+    )
+    .map_err(Fail::Cannot)?;
 
     let dir = parent.dir.join(format!("ljos-bench-{}", ask.tag));
     std::fs::create_dir(&dir).map_err(|e| {
@@ -416,34 +497,12 @@ fn own_cgroup(ask: &Ask<'_>, auto: bool) -> Result<Placed, Fail> {
         set("cpu.max", &format!("{quota} {period}"))?;
     }
 
-    // The gate moves itself in before it execs, so not even it runs
-    // outside the limit.
-    let procs = CString::new(dir.join("cgroup.procs").as_os_str().as_encoded_bytes())
-        .map_err(|e| Fail::Cannot(e.to_string()))?;
     let affinity = match cpus_by {
         CpusBy::Affinity => mask(ask.profile)?,
         CpusBy::Cpuset => None,
     };
     let mut command = gate_command(ask)?;
-    // SAFETY: open, write, close and sched_setaffinity between fork and
-    // exec; the path and the set were made before the fork.
-    unsafe {
-        command.pre_exec(move || {
-            let fd = libc::open(procs.as_ptr(), libc::O_WRONLY | libc::O_CLOEXEC);
-            if fd < 0 {
-                return Err(std::io::Error::last_os_error());
-            }
-            let wrote = libc::write(fd, b"0".as_ptr().cast(), 1);
-            libc::close(fd);
-            if wrote != 1 {
-                return Err(std::io::Error::last_os_error());
-            }
-            if let Some(mask) = &affinity {
-                set_affinity(mask)?;
-            }
-            Ok(())
-        });
-    }
+    join_on_exec(&mut command, &dir.join("cgroup.procs"), affinity).map_err(Fail::Cannot)?;
     let mut child = spawn(&mut command, ask.what)?;
     let pid = child.id();
     let check = || -> Result<(), String> {
@@ -630,4 +689,231 @@ fn process_limits(ask: &Ask<'_>) -> Result<Placed, Fail> {
         unit: None,
         made: None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{cell::Cell, fs, os::unix::process::ExitStatusExt};
+
+    use super::*;
+
+    /// Answers writes as cgroup v2 does: a cgroup holding processes cannot
+    /// hand controllers down (unless `busy` says it never can), and a pid
+    /// written to a `cgroup.procs` leaves the cgroup it was in.
+    struct Kernel {
+        root: PathBuf,
+        busy: bool,
+        writes: Cell<u32>,
+    }
+
+    fn procs_of(dir: &Path) -> Vec<String> {
+        fs::read_to_string(dir.join("cgroup.procs"))
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_owned)
+            .collect()
+    }
+
+    fn cgroups(dir: &Path, out: &mut Vec<PathBuf>) {
+        out.push(dir.to_owned());
+        for e in fs::read_dir(dir).unwrap().flatten() {
+            if e.file_type().unwrap().is_dir() {
+                cgroups(&e.path(), out);
+            }
+        }
+    }
+
+    impl Kernel {
+        fn new(root: &Path, busy: bool) -> Self {
+            Self {
+                root: root.to_owned(),
+                busy,
+                writes: Cell::new(0),
+            }
+        }
+
+        fn write(&self, path: &Path, value: &str) -> std::io::Result<()> {
+            self.writes.set(self.writes.get() + 1);
+            let dir = path.parent().unwrap();
+            match path.file_name().unwrap().to_str().unwrap() {
+                "cgroup.subtree_control" => {
+                    if self.busy || !procs_of(dir).is_empty() {
+                        return Err(std::io::Error::from_raw_os_error(libc::EBUSY));
+                    }
+                    let mut have = fs::read_to_string(path).unwrap_or_default();
+                    for c in value.split_whitespace() {
+                        have.push_str(c.trim_start_matches('+'));
+                        have.push(' ');
+                    }
+                    fs::write(path, have)
+                }
+                "cgroup.procs" => {
+                    let mut all = Vec::new();
+                    cgroups(&self.root, &mut all);
+                    for cg in all {
+                        let left: Vec<String> =
+                            procs_of(&cg).into_iter().filter(|p| p != value).collect();
+                        let file = cg.join("cgroup.procs");
+                        // An emptied leaf can be removed, as an empty cgroup can.
+                        if left.is_empty() && cg.file_name().is_some_and(|n| n == LEAF) {
+                            let _ = fs::remove_file(&file);
+                        } else if file.exists() {
+                            fs::write(
+                                &file,
+                                left.iter().map(|p| format!("{p}\n")).collect::<String>(),
+                            )?;
+                        }
+                    }
+                    let mut now = procs_of(dir);
+                    now.push(value.to_owned());
+                    fs::write(
+                        path,
+                        now.iter().map(|p| format!("{p}\n")).collect::<String>(),
+                    )
+                }
+                other => panic!("hand_down wrote {other}"),
+            }
+        }
+    }
+
+    /// A cgroup `name` below a stand-in root, holding `procs` and handing
+    /// down `subtree`.
+    fn cgroup(root: &Path, name: &str, procs: &str, subtree: &str) -> Cgroup {
+        let dir = if name.is_empty() {
+            root.to_owned()
+        } else {
+            root.join(name)
+        };
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("cgroup.procs"), procs).unwrap();
+        fs::write(dir.join("cgroup.subtree_control"), subtree).unwrap();
+        Cgroup { dir }
+    }
+
+    fn hand(k: &Kernel, parent: &Cgroup, me: u32, notes: &mut Vec<String>) -> Result<(), String> {
+        hand_down(
+            &k.root,
+            parent,
+            &["memory", "cpu"],
+            me,
+            &|p, v| k.write(p, v),
+            notes,
+        )
+    }
+
+    #[test]
+    fn controllers_handed_down_already_are_not_written() {
+        let t = tempfile::tempdir().unwrap();
+        let k = Kernel::new(t.path(), false);
+        let parent = cgroup(t.path(), "box", "42\n", "cpu memory\n");
+        let mut notes = Vec::new();
+        hand(&k, &parent, 42, &mut notes).unwrap();
+        assert_eq!(k.writes.get(), 0);
+        assert!(notes.is_empty());
+        assert_eq!(
+            missing(&["memory", "cpuset"], &["memory".to_owned()]),
+            ["cpuset"]
+        );
+    }
+
+    #[test]
+    fn a_cgroup_holding_only_the_bench_moves_it_into_a_leaf() {
+        let t = tempfile::tempdir().unwrap();
+        let k = Kernel::new(t.path(), false);
+        let parent = cgroup(t.path(), "box", "42\n", "");
+        let mut notes = Vec::new();
+        hand(&k, &parent, 42, &mut notes).unwrap();
+        assert_eq!(procs_of(&parent.dir.join(LEAF)), ["42"]);
+        assert!(procs_of(&parent.dir).is_empty());
+        assert_eq!(parent.subtree_control(), ["memory", "cpu"]);
+        assert_eq!(notes.len(), 1);
+        assert!(
+            notes[0].starts_with("1 process was moved from /box into ljos-bench-leaf"),
+            "{notes:?}"
+        );
+    }
+
+    #[test]
+    fn a_cgroup_holding_others_is_turned_away_untouched() {
+        let t = tempfile::tempdir().unwrap();
+        let k = Kernel::new(t.path(), false);
+        let parent = cgroup(t.path(), "box", "42\n7\n", "");
+        let mut notes = Vec::new();
+        let why = hand(&k, &parent, 42, &mut notes).unwrap_err();
+        assert!(
+            why.contains("holds processes other than the bench ([42, 7])"),
+            "{why}"
+        );
+        assert!(!parent.dir.join(LEAF).exists());
+        assert_eq!(procs_of(&parent.dir), ["42", "7"]);
+        assert!(may_move(&parent.dir, &[42, 7], 42, true).is_ok());
+    }
+
+    #[test]
+    fn the_containers_root_moves_all_it_holds() {
+        let t = tempfile::tempdir().unwrap();
+        let k = Kernel::new(t.path(), false);
+        let root = cgroup(t.path(), "", "1\n7\n42\n", "");
+        let mut notes = Vec::new();
+        hand(&k, &root, 42, &mut notes).unwrap();
+        assert_eq!(procs_of(&root.dir.join(LEAF)), ["1", "7", "42"]);
+        assert!(notes[0].starts_with("3 processes were moved"), "{notes:?}");
+    }
+
+    #[test]
+    fn a_hand_down_that_still_fails_moves_the_processes_back() {
+        let t = tempfile::tempdir().unwrap();
+        let k = Kernel::new(t.path(), true);
+        let root = cgroup(t.path(), "", "1\n42\n", "");
+        let mut notes = Vec::new();
+        let why = hand(&k, &root, 42, &mut notes).unwrap_err();
+        assert!(
+            why.contains("the 2 processes moved into ljos-bench-leaf to make room were moved back"),
+            "{why}"
+        );
+        assert_eq!(procs_of(&root.dir), ["1", "42"]);
+        assert!(!root.dir.join(LEAF).exists());
+        assert!(notes.is_empty());
+    }
+
+    /// On a machine that lets the test make a cgroup below its own: what
+    /// joins on exec starts inside it, and dropping it kills what is left
+    /// and removes it.
+    #[test]
+    fn a_made_cgroup_holds_what_joins_it_and_takes_it_away() {
+        let root = Path::new("/sys/fs/cgroup");
+        if !cgroup::is_cgroup2(root) {
+            eprintln!("skipped: {} is not cgroup v2", root.display());
+            return;
+        }
+        let own = cgroup::of_pid(root, std::process::id()).unwrap();
+        let dir = own.join(format!("ljos-bench-test-{}", std::process::id()));
+        if let Err(e) = fs::create_dir(&dir) {
+            eprintln!("skipped: cannot make a cgroup in {}: {e}", own.display());
+            return;
+        }
+        let made = Made(Cgroup { dir: dir.clone() });
+        let mut command = Command::new("sleep");
+        command.arg("30");
+        join_on_exec(&mut command, &dir.join("cgroup.procs"), None).unwrap();
+        let mut child = match command.spawn() {
+            Ok(c) => c,
+            // Moving needs the cgroup above to hand no controllers down
+            // while it holds processes, and to be writable.
+            Err(e)
+                if matches!(
+                    e.raw_os_error(),
+                    Some(libc::EBUSY | libc::EACCES | libc::EPERM)
+                ) =>
+            {
+                eprintln!("skipped: cannot move a process into {}: {e}", dir.display());
+                return;
+            }
+            Err(e) => panic!("{e}"),
+        };
+        assert_eq!(cgroup::of_pid(root, child.id()).unwrap(), dir);
+        drop(made);
+        assert_eq!(child.wait().unwrap().signal(), Some(libc::SIGKILL));
+        assert!(!dir.exists(), "{} is left", dir.display());
+    }
 }
