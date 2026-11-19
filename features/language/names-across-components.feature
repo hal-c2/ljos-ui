@@ -392,3 +392,77 @@ Feature: Names of the component around
         }
         """
       Then the property "seen" of "probe" is "property"
+
+    Scenario: Under ComponentBehavior Bound the id where the component is made comes before the target of a PropertyChanges
+      Given the QML:
+        """qml
+        pragma ComponentBehavior: Bound
+        import QtQuick
+        Item {
+          component Box: Item {
+            objectName: "box"
+            property string seed: "own"
+            property alias seen: holder.seen
+            property alias seen2: holder2.seen
+            QtObject { id: holder; property string seed: "target"; property string seen: "none" }
+            QtObject { id: holder2; property string seen: "none" }
+            state: "on"
+            states: State {
+              name: "on"
+              PropertyChanges { target: holder; seen: typeof seed === "string" ? seed : seed.objectName }
+              PropertyChanges { target: holder2; seen: typeof seed === "string" ? seed : seed.objectName }
+            }
+          }
+          Item { id: seed; objectName: "id" }
+          Box { }
+        }
+        """
+      Then the property "seen" of "box" is "id"
+      And the property "seen2" of "box" is "id"
+
+    Scenario: Under ComponentBehavior Bound the target of a PropertyChanges has the name when no id where the component is made does
+      Given the QML:
+        """qml
+        pragma ComponentBehavior: Bound
+        import QtQuick
+        Item {
+          component Box: Item {
+            objectName: "box"
+            property string seed: "own"
+            property alias seen: holder.seen
+            property alias seen2: holder2.seen
+            QtObject { id: holder; property string seed: "target"; property string seen: "none" }
+            QtObject { id: holder2; property string seen: "none" }
+            state: "on"
+            states: State {
+              name: "on"
+              PropertyChanges { target: holder; seen: typeof seed === "string" ? seed : seed.objectName }
+              PropertyChanges { target: holder2; seen: typeof seed === "string" ? seed : seed.objectName }
+            }
+          }
+          component Other: Item { Item { id: seed; objectName: "id" } }
+          Other { }
+          Box { }
+        }
+        """
+      Then the property "seen" of "box" is "target"
+      And the property "seen2" of "box" is "own"
+
+    @ljos-only
+    Scenario: Under ComponentBehavior Bound a name of Ljos.Core is Ljos.Core's where no id of the name is
+      Given the QML:
+        """qml
+        pragma ComponentBehavior: Bound
+        import Ljos.Ui
+        import Ljos.Core
+        Item {
+          component Box: Item {
+            objectName: "box"
+            property real seen: point(3, 4).x
+          }
+          component Other: Item { Item { id: point } }
+          Other { }
+          Box { }
+        }
+        """
+      Then the property "seen" of "box" is 3
