@@ -3832,11 +3832,8 @@ impl Engine {
                 cur = c.parent;
             }
         };
-        Some(if self.is_alive(found) {
-            Value::Object(found)
-        } else {
-            Value::Null
-        })
+        // Tracked: a binding that read the id reads again when it goes.
+        Some(self.live(Value::Object(found)))
     }
 
     /// See [`Context::file`].
