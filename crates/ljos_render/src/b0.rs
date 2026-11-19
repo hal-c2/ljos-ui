@@ -22,8 +22,8 @@
 //!   is skipped;
 //! * an image larger than the GPU's texture limit is drawn from a smaller
 //!   copy;
-//! * gradient text uses its first stop colour, and colour glyphs (emoji) are
-//!   not drawn;
+//! * gradient text uses its first stop colour, and colour outline glyphs
+//!   (COLR) are filled in the text's colour;
 //! * the unshaped `Text` op ignores rotation and shear;
 //! * a [`DrawOp::Shape`] that should be drawn from pixels (see below) and
 //!   cannot be is drawn as triangles, a radial or conical gradient then in
@@ -68,7 +68,7 @@ use crate::display_list::{
     Decorations, DisplayList, DisplayListId, DrawOp, GlyphRun, LinearGradient, Paint, PathStyle,
     TextAlign, fill_area,
 };
-use crate::glyph::{baseline_snap, is_upright, snap_bar};
+use crate::glyph::{ColorGlyphCache, baseline_snap, is_upright, snap_bar};
 use crate::glyph_atlas::{BINS, Full, GlyphAtlas, GlyphKey, Slot};
 use crate::image::{ImageBlit, ImageHandle, WeakImage, image_blit, nine_patch_blits};
 use crate::image_atlas::{ImageAtlas, Place};
@@ -1091,6 +1091,9 @@ pub struct EpaintBackend {
     /// [`EncodeStats::warnings`] of the last `encode`.
     warnings: u32,
     atlas: GlyphAtlas,
+    /// Colour glyphs (emoji) as pictures. Their quads hold them only
+    /// weakly, as they do every image, so this keeps them.
+    colors: ColorGlyphCache,
     textures: FxHashMap<TextureKey, TextureEntry>,
     /// The shared pages small pictures are put on.
     pages: ImageAtlas,
@@ -1417,6 +1420,7 @@ impl EpaintBackend {
             glyph_meshes_built: 0,
             warnings: 0,
             atlas: GlyphAtlas::default(),
+            colors: ColorGlyphCache::default(),
             textures: FxHashMap::default(),
             pages: ImageAtlas::default(),
             texture_uploads: 0,
@@ -1607,6 +1611,7 @@ impl EpaintBackend {
             self.shapes.clear();
             // Glyphs are filled per device size; none of the old ones match.
             self.atlas.clear();
+            self.colors.clear();
         }
     }
 
@@ -1819,11 +1824,30 @@ impl EpaintBackend {
                             continue;
                         }
                     };
-                    if color.is_transparent() {
-                        continue;
-                    }
                     if !cur.is_empty() {
                         segs.push(LocalSeg::Mesh(Arc::new(std::mem::take(&mut cur))));
+                    }
+                    // A colour glyph has no outline for the atlas to fill:
+                    // it is a picture, drawn whatever colour the text is.
+                    let size = f64::from(run.font_size) * f64::from(self.ppp);
+                    let inv_ppp = 1.0 / f64::from(self.ppp);
+                    for g in &run.glyphs {
+                        let Some(picture) = self.colors.get(run, g.id, size) else {
+                            continue;
+                        };
+                        let at = *origin + Vec2::new(f64::from(g.x), f64::from(g.y));
+                        let r = picture.rect;
+                        let dst = Rect::new(
+                            r.x0 * inv_ppp,
+                            r.y0 * inv_ppp,
+                            r.x1 * inv_ppp,
+                            r.y1 * inv_ppp,
+                        ) + at;
+                        let blit = image_blit(picture.image.rect(), dst, None, [false, false]);
+                        image_segs(&mut segs, &picture.image, &[blit], true, 1.0, None, || 1);
+                    }
+                    if color.is_transparent() {
+                        continue;
                     }
                     segs.push(LocalSeg::Glyphs(GlyphsCmd {
                         run: Arc::clone(run),
@@ -2589,6 +2613,7 @@ impl RenderBackend for EpaintBackend {
                 self.nodes.clear();
                 self.shapes.clear();
                 self.atlas.reset();
+                self.colors.clear();
                 self.textures.clear();
                 self.pages.sweep();
             }

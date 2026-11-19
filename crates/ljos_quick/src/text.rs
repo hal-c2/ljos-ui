@@ -1579,7 +1579,9 @@ pub(crate) fn paint(
     if let Some(d) = &t.rich {
         return rich::paint(te, t, d, size, out);
     }
-    if t.text.is_empty() || t.color.a == 0 {
+    // A transparent text is still painted: its colour glyphs (emoji) are
+    // drawn in their own colours, and the renderers skip the rest.
+    if t.text.is_empty() {
         return;
     }
     // The request polish made, so this is a cache hit unless the item was

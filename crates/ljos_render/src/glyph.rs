@@ -8,6 +8,7 @@
 use rustc_hash::FxHashMap as HashMap;
 use std::sync::Arc;
 
+use skrifa::bitmap::{BitmapData, BitmapFormat, BitmapStrikes, Origin};
 use skrifa::instance::{LocationRef, NormalizedCoord, Size};
 use skrifa::outline::{DrawSettings, OutlinePen};
 use skrifa::raw::TableProvider;
@@ -15,7 +16,9 @@ use skrifa::{FontRef, GlyphId, MetadataProvider};
 use vello_cpu::kurbo::{Affine, BezPath, Rect, Shape, Vec2};
 use vello_cpu::peniko::FontData;
 
+use crate::backend::RgbaImage;
 use crate::display_list::GlyphRun;
+use crate::image::ImageHandle;
 
 /// A synthetic bold grows every outline by this fraction of the em in total.
 const EMBOLDEN_EM: f64 = 1.0 / 24.0;
@@ -154,6 +157,152 @@ impl Outline {
     }
 }
 
+/// Colour glyph sizes are told apart in steps of 1/`COLOR_SIZE_STEPS`
+/// device pixels: the picture is resampled to whole pixels anyway.
+const COLOR_SIZE_STEPS: f64 = 4.0;
+
+/// A colour glyph (an emoji) as a picture, at one size in device pixels.
+#[derive(Debug)]
+pub(crate) struct ColorGlyph {
+    /// Premultiplied RGBA, one texel a device pixel.
+    pub image: ImageHandle,
+    /// Where `image` goes, in device pixels from the glyph origin, y down.
+    /// Whole pixels wide and high, so an upright glyph is drawn texel on
+    /// pixel.
+    pub rect: Rect,
+}
+
+#[derive(Clone, PartialEq, Eq, Hash)]
+struct ColorKey {
+    font: u64,
+    index: u32,
+    glyph: u32,
+    size: u32,
+}
+
+/// Colour glyph pictures by font, glyph and size. A glyph that has none is
+/// remembered as `None` too, so text without emoji asks once per glyph.
+#[derive(Debug, Default)]
+pub(crate) struct ColorGlyphCache {
+    map: HashMap<ColorKey, Option<Arc<ColorGlyph>>>,
+}
+
+impl std::fmt::Debug for ColorKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{:x}#{}:{}@{}",
+            self.font, self.index, self.glyph, self.size
+        )
+    }
+}
+
+impl ColorGlyphCache {
+    /// The picture of `glyph` of `run` at `size_px` device pixels, or `None`
+    /// when the font draws that glyph with an outline (or not at all).
+    pub(crate) fn get(
+        &mut self,
+        run: &GlyphRun,
+        glyph: u32,
+        size_px: f64,
+    ) -> Option<Arc<ColorGlyph>> {
+        let steps = (size_px * COLOR_SIZE_STEPS).round().max(1.0);
+        let key = ColorKey {
+            font: run.font.data.id(),
+            index: run.font.index,
+            glyph,
+            size: steps as u32,
+        };
+        self.map
+            .entry(key)
+            .or_insert_with(|| load_color(run, glyph, steps / COLOR_SIZE_STEPS).map(Arc::new))
+            .clone()
+    }
+
+    /// Drop everything.
+    pub(crate) fn clear(&mut self) {
+        self.map.clear();
+    }
+}
+
+/// The largest side, in device pixels, a colour glyph is drawn at: past it
+/// a picture would cost more memory than any text is worth.
+const MAX_COLOR_SIDE: f64 = 1024.0;
+
+/// A colour bitmap glyph (`CBDT` or `sbix`, the tables colour emoji fonts
+/// on Linux, Android and Apple systems use) at `size_px` pixels, and where
+/// its bitmap goes from the glyph origin, y down. Monochrome bitmaps
+/// (`EBDT`) are left to the outline.
+fn color_bitmap<'a>(
+    font: &FontRef<'a>,
+    glyph: u32,
+    size_px: f64,
+) -> Option<(skrifa::bitmap::BitmapGlyph<'a>, Rect)> {
+    let strikes = BitmapStrikes::with_format(font, BitmapFormat::Cbdt)
+        .or_else(|| BitmapStrikes::with_format(font, BitmapFormat::Sbix))?;
+    let bitmap = strikes.glyph_for_size(Size::new(size_px as f32), GlyphId::new(glyph))?;
+    if bitmap.width == 0 || bitmap.height == 0 || bitmap.ppem_x <= 0.0 || bitmap.ppem_y <= 0.0 {
+        return None;
+    }
+    let units_per_em = f64::from(font.head().ok()?.units_per_em());
+    if units_per_em <= 0.0 {
+        return None;
+    }
+    let sx = size_px / f64::from(bitmap.ppem_x);
+    let sy = size_px / f64::from(bitmap.ppem_y);
+    let units = size_px / units_per_em;
+    let (w, h) = (f64::from(bitmap.width) * sx, f64::from(bitmap.height) * sy);
+    let x0 = f64::from(bitmap.bearing_x) * units + f64::from(bitmap.inner_bearing_x) * sx;
+    // The inner bearing is in the strike's pixels, y up: to the top edge
+    // for `CBDT`, to the bottom edge for `sbix`.
+    let y0 = match bitmap.placement_origin {
+        Origin::TopLeft => {
+            -(f64::from(bitmap.bearing_y) * units) - f64::from(bitmap.inner_bearing_y) * sy
+        }
+        Origin::BottomLeft => {
+            -(f64::from(bitmap.bearing_y) * units + f64::from(bitmap.inner_bearing_y) * sy) - h
+        }
+    };
+    Some((bitmap, Rect::new(x0, y0, x0 + w, y0 + h)))
+}
+
+/// Reads a colour bitmap glyph and resamples it to `size_px`.
+fn load_color(run: &GlyphRun, glyph: u32, size_px: f64) -> Option<ColorGlyph> {
+    let font = FontRef::from_index(run.font.data.as_ref(), run.font.index).ok()?;
+    let (bitmap, at) = color_bitmap(&font, glyph, size_px)?;
+    let (dw, dh) = (at.width().round().max(1.0), at.height().round().max(1.0));
+    if dw > MAX_COLOR_SIDE || dh > MAX_COLOR_SIDE {
+        return None;
+    }
+    let (w, h) = (bitmap.width, bitmap.height);
+    let picture = match bitmap.data {
+        BitmapData::Png(bytes) => {
+            let png = RgbaImage::from_png(bytes).ok()?;
+            if (png.width, png.height) != (w, h) {
+                return None;
+            }
+            ImageHandle::from_straight(w, h, png.data).ok()?
+        }
+        BitmapData::Bgra(bytes) => {
+            let len = (w as usize).checked_mul(h as usize)?.checked_mul(4)?;
+            let rgba = bytes
+                .get(..len)?
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .flat_map(|[b, g, r, a]| [*r, *g, *b, *a])
+                .collect();
+            ImageHandle::from_premultiplied(w, h, rgba).ok()?
+        }
+        BitmapData::Mask(_) => return None,
+    };
+    let image = picture.resized(dw as u32, dh as u32)?;
+    Some(ColorGlyph {
+        image,
+        rect: Rect::new(at.x0, at.y0, at.x0 + dw, at.y0 + dh),
+    })
+}
+
 /// True when `t` only scales (by positive factors) and translates, so text
 /// stays upright and can be snapped to the pixel grid.
 pub(crate) fn is_upright(t: Affine) -> bool {
@@ -266,6 +415,8 @@ pub fn font_tables(font: &FontData) -> Option<FontTables> {
 /// ones its glyph positions use), with the run's synthetic bold and slant
 /// applied. `None` for a glyph without ink, such as a space.
 ///
+/// A colour glyph (an emoji) counts the box its picture is drawn in.
+///
 /// Outlines are read each time: this is for measuring a text once, not for
 /// drawing, which goes through the backends' caches.
 pub fn glyph_ink_bounds(run: &GlyphRun) -> Vec<Option<Rect>> {
@@ -275,13 +426,22 @@ pub fn glyph_ink_bounds(run: &GlyphRun) -> Vec<Option<Rect>> {
         .iter()
         .map(|g| {
             let at_origin = *seen.entry(g.id).or_insert_with(|| {
-                load(run, g.id)
-                    .filter(|outline| !outline.path.is_empty())
-                    .map(|outline| outline.ink_bounds(run, size))
+                color_ink_bounds(run, g.id, size).or_else(|| {
+                    load(run, g.id)
+                        .filter(|outline| !outline.path.is_empty())
+                        .map(|outline| outline.ink_bounds(run, size))
+                })
             });
             at_origin.map(|r| r + Vec2::new(f64::from(g.x), f64::from(g.y)))
         })
         .collect()
+}
+
+/// The box a colour bitmap glyph is drawn in at `size` pixels, at the
+/// origin, without reading its picture.
+fn color_ink_bounds(run: &GlyphRun, glyph: u32, size: f64) -> Option<Rect> {
+    let font = FontRef::from_index(run.font.data.as_ref(), run.font.index).ok()?;
+    color_bitmap(&font, glyph, size).map(|(_, at)| at)
 }
 
 /// The advance width the font gives each of `glyphs`, in font units, and the
