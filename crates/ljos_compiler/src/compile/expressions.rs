@@ -705,6 +705,14 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
             .or(made);
         let core = matches!(resolution.target, Some(Target::Global(Global::Core)));
         if resolution.made_in {
+            // Qt reads the id, else the component's own property as it is
+            // when read, and assigns the property, in the same function: a
+            // read after `this.label = …` sees what was written.
+            if resolution.aimed.is_none()
+                && let Some(plan) = base.as_ref().and_then(|base| made_in_written(name, base))
+            {
+                return plan;
+            }
             if !is_written {
                 let mut fallback = fallback_of(name, base.as_ref(), core);
                 // Qt 6.12 reads the target of a PropertyChanges after the id
@@ -718,13 +726,6 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                     }));
                 }
                 return made_in(name, base, fallback);
-            }
-            // Qt reads the id and assigns the component's own property, in
-            // the same function.
-            if resolution.aimed.is_none()
-                && let Some(plan) = base.as_ref().and_then(|base| made_in_written(name, base))
-            {
-                return plan;
             }
         }
         let role = resolution.roles.first().copied();
@@ -1281,10 +1282,11 @@ fn made_in(name: &str, base: Option<Plan>, fallback: Option<Box<Arg>>) -> Plan {
     }
 }
 
-/// The plan for a name a Bound inline component both reads and assigns,
-/// where `base` is its own property: the script reads and writes the name
-/// through what it is given, which reads the id where the component is made
-/// and writes the property.
+/// The plan for a name of a Bound inline component that may be an id where
+/// it is made, where `base` is its own property: the script reads and
+/// writes the name through what it is given, which reads the id where the
+/// component is made, else the property as it is then, and writes the
+/// property.
 fn made_in_written(name: &str, base: &Plan) -> Option<Plan> {
     let (
         Some(_),
