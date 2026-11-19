@@ -34,6 +34,10 @@ Rectangle {
         turntable.from = at
         turntable.to = at + 360
         turntable.restart()
+        // A restart forgets that the turntable was paused, and `paused`'s
+        // binding does not run again while the drag goes on.
+        if (scene.dragging)
+            turntable.pause()
     }
     NumberAnimation on spin {
         id: turntable

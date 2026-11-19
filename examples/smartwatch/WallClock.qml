@@ -22,7 +22,10 @@ QtObject {
     }
 
     function read() {
-        const at = new Date()
+        clock.publish(new Date())
+    }
+
+    function publish(at) {
         clock.hours = at.getHours()
         clock.minutes = at.getMinutes()
         clock.seconds = at.getSeconds()
@@ -31,9 +34,12 @@ QtObject {
         clock.month = at.getMonth()
     }
 
+    // One reading for both the face and the next wake: two could fall
+    // either side of a minute, and the face would keep the old one for a
+    // whole minute more.
     function show() {
-        clock.read()
         const at = new Date()
+        clock.publish(at)
         turn.interval = Math.max(1, 60000 - at.getSeconds() * 1000 - at.getMilliseconds())
         turn.restart()
     }

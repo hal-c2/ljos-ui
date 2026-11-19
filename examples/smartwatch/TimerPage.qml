@@ -12,6 +12,8 @@ WatchScreen {
     readonly property real total: page.watch.timerMinutes * 60000
     readonly property real left: page.watch.timerState === "set" ? page.total : page.watch.timerLeft
     readonly property bool ringing: page.watch.timerState === "ringing"
+    // What the readout shows, in whole seconds, for a screen reader to say.
+    readonly property int leftSeconds: Math.floor(Math.max(0, page.left) / 1000)
 
     Ring {
         anchors.centerIn: parent
@@ -52,7 +54,11 @@ WatchScreen {
             font.weight: Font.DemiBold
             font.features: { "tnum": 1 }
             Accessible.role: Accessible.StaticText
-            Accessible.name: t`${page.watch.timerMinutes} minutes`
+            Accessible.name: page.ringing ? t`Time's up`
+                : page.watch.timerState === "set" ? t`${page.watch.timerMinutes} minutes`
+                : page.watch.timerState === "paused"
+                    ? t`${Math.floor(page.leftSeconds / 60)} minutes ${page.leftSeconds % 60} seconds left, paused`
+                : t`${Math.floor(page.leftSeconds / 60)} minutes ${page.leftSeconds % 60} seconds left`
         }
         Chip {
             Layout.alignment: Align.VCenter

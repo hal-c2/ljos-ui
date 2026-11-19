@@ -70,6 +70,9 @@ Object {
 
     function touch() {
         if (watch.ambient) {
+            // Asleep, the clock was read only on the minute: the first
+            // awake frame shows the second it was woken at.
+            watch.clock.read()
             watch.ambient = false
             watch.refresh()
         }
@@ -164,9 +167,17 @@ Object {
     property list<real> history: Health.seed(40)
     readonly property int historyKeep: 40
     property int steps: 7900
-    readonly property Health.Rings rings: Health.rings(watch.steps, watch.workoutSeconds)
+    // The seconds of the runs ended today, so a closed summary or a new
+    // run does not take them out of the day's rings.
+    property int exerciseBanked: 0
+    readonly property bool inWorkout: watch.workout === "running" || watch.workout === "paused"
+    readonly property Health.Rings rings: Health.rings(watch.steps,
+        watch.exerciseBanked + (watch.inWorkout ? watch.workoutSeconds : 0))
 
     function sample() {
+        // The heart screen does not tick, so the run's seconds are brought
+        // up to now here for the workout's climb.
+        watch.keepWorkout(Date.now())
         watch.samples = watch.samples + 1
         watch.bpm = Health.bpm(watch.samples, watch.workout === "running", watch.workoutSeconds)
         watch.history = Health.push(watch.history, watch.bpm, watch.historyKeep)
@@ -208,6 +219,9 @@ Object {
         if (watch.workout === "running") {
             watch.pauseWorkout()
         }
+        if (watch.inWorkout) {
+            watch.exerciseBanked = watch.exerciseBanked + watch.workoutSeconds
+        }
         watch.workout = "done"
     }
 
@@ -238,7 +252,14 @@ Object {
 
     function pauseTimer() {
         watch.touch()
-        watch.timerLeft = Math.max(0, watch.timerEnds - Date.now())
+        const left = watch.timerEnds - Date.now()
+        // Past its end the countdown is over, though its wake has not come
+        // yet: paused at zero, it would never ring.
+        if (left <= 0) {
+            watch.ring()
+            return
+        }
+        watch.timerLeft = left
         watch.timerState = "paused"
     }
 
@@ -309,9 +330,13 @@ Object {
 
     function pause() {
         watch.touch()
-        watch.playBanked = watch.playBanked + Date.now() - watch.playFrom
+        const now = Date.now()
+        // A track that ended since the last look gives way to the next
+        // first, so the pause lands in the track that was playing.
+        watch.keepMusic(now)
+        watch.playBanked = watch.playBanked + now - watch.playFrom
         watch.playing = false
-        watch.refresh()
+        watch.keepMusic(now)
     }
 
     function skip(by: int) {
@@ -335,17 +360,25 @@ Object {
     // screen shows one, and once on waking.
     function refresh() {
         const now = Date.now()
-        if (watch.workout === "running") {
-            watch.workoutSeconds = Math.floor((watch.workoutBanked + now - watch.workoutFrom) / 1000)
-        } else {
-            watch.workoutSeconds = Math.floor(watch.workoutBanked / 1000)
-        }
+        watch.keepWorkout(now)
         if (watch.stopwatchRunning) {
             watch.stopwatchMs = watch.stopwatchBanked + now - watch.stopwatchFrom
         }
         if (watch.timerState === "running") {
             watch.timerLeft = Math.max(0, watch.timerEnds - now)
         }
+        watch.keepMusic(now)
+    }
+
+    function keepWorkout(now: real) {
+        if (watch.workout === "running") {
+            watch.workoutSeconds = Math.floor((watch.workoutBanked + now - watch.workoutFrom) / 1000)
+        } else {
+            watch.workoutSeconds = Math.floor(watch.workoutBanked / 1000)
+        }
+    }
+
+    function keepMusic(now: real) {
         if (watch.playing) {
             let at = (watch.playBanked + now - watch.playFrom) / 1000
             while (at >= watch.nowPlaying.seconds) {
