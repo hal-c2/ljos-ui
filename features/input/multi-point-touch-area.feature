@@ -17,8 +17,9 @@ Feature: MultiPointTouchArea follows every finger on it
 
   The log tells each signal by its letter, then each point as its `x`,
   its `y` and `d` while it is down or `u` once it is up; while `all` is
-  false it tells only `pressed` and `released`. `f` tells the declared
-  point: where it is, its start, its `previousX`, and whether it is down.
+  false it tells only `pressed`, `released` and `gestureStarted`. `f` tells the declared
+  point: where it is, its start, its `previousX`, and whether it is down;
+  `last` the points of the last `updated`.
 
   Background:
     Given the QML:
@@ -29,6 +30,7 @@ Feature: MultiPointTouchArea follows every finger on it
         objectName: "root"
         width: 300; height: 200
         property string log: ""
+        property string last: ""
         property string f: first.x + "," + first.y + " s" + first.startX + "," + first.startY + " p" + first.previousX + (first.pressed ? " d" : " u")
         function ps(points) { var s = []; for (var i = 0; i < points.length; i++) s.push(points[i].x + "," + points[i].y + (points[i].pressed ? "d" : "u")); return s.join("/") }
         function on(c, points) { log += c + ps(points) + " " }
@@ -39,11 +41,11 @@ Feature: MultiPointTouchArea follows every finger on it
           property bool all: true
           touchPoints: [ TouchPoint { id: first } ]
           onPressed: (p) => root.on("P", p)
-          onUpdated: (p) => { if (all) root.on("U", p) }
+          onUpdated: (p) => { root.last = root.ps(p); if (all) root.on("U", p) }
           onReleased: (p) => root.on("R", p)
           onCanceled: (p) => root.on("C", p)
           onTouchUpdated: (p) => { if (all) root.on("T", p) }
-          onGestureStarted: (g) => { if (all) root.log += "G" + g.touchPoints.length + " " }
+          onGestureStarted: (g) => root.log += "G" + g.touchPoints.length + " "
         }
       }
       """
@@ -55,7 +57,7 @@ Feature: MultiPointTouchArea follows every finger on it
     And the property "f" of "root" is "0,0 s0,0 p0 u"
 
   Scenario: One finger is pressed, updated as it moves and released
-    When the user's fingers go through the frames:
+    When the user's fingers go through these positions:
       """
       0 at 50, 50
       0 at 60, 50
@@ -64,7 +66,7 @@ Feature: MultiPointTouchArea follows every finger on it
     Then the property "log" of "root" is "P50,50d T50,50d U60,50d T60,50d G1 U80,50d T80,50d R80,50u T "
 
   Scenario: The first finger has the first declared TouchPoint, which keeps where it was
-    When the user's fingers go through the frames:
+    When the user's fingers go through these positions:
       """
       0 at 50, 40
       0 at 70, 45
@@ -73,7 +75,7 @@ Feature: MultiPointTouchArea follows every finger on it
     Then the property "f" of "root" is "90,45 s50,40 p70 u"
 
   Scenario: A finger a little way from where it came down starts no gesture
-    When the user's fingers go through the frames:
+    When the user's fingers go through these positions:
       """
       0 at 50, 50
       0 at 56, 56
@@ -83,7 +85,7 @@ Feature: MultiPointTouchArea follows every finger on it
 
   Scenario: Two fingers each have a point of their own
     When the property "all" of "area" is set to false
-    And the user's fingers go through the frames:
+    And the user's fingers go through these positions:
       """
       0 at 50, 50
       0 at 50, 50; 1 at 150, 50
@@ -97,7 +99,7 @@ Feature: MultiPointTouchArea follows every finger on it
   # just the fingers that changed.
   @ljos-only
   Scenario: Two fingers are each told, a still one among those updated
-    When the user's fingers go through the frames:
+    When the user's fingers go through these positions:
       """
       0 at 50, 50
       0 at 50, 50; 1 at 150, 50
@@ -109,7 +111,7 @@ Feature: MultiPointTouchArea follows every finger on it
   Scenario: Fingers fewer than the minimum are not told
     When the property "minimumTouchPoints" of "area" is set to 2
     And the property "all" of "area" is set to false
-    And the user's fingers go through the frames:
+    And the user's fingers go through these positions:
       """
       0 at 50, 50
       0 at 52, 50
@@ -122,7 +124,7 @@ Feature: MultiPointTouchArea follows every finger on it
 
   Scenario: Fingers more than the maximum are not told
     When the property "maximumTouchPoints" of "area" is set to 1
-    And the user's fingers go through the frames:
+    And the user's fingers go through these positions:
       """
       0 at 50, 50
       0 at 50, 50; 1 at 150, 50
@@ -130,6 +132,19 @@ Feature: MultiPointTouchArea follows every finger on it
       0 at 54, 50
       """
     Then the property "log" of "root" is "P50,50d T50,50d R54,50u T "
+
+  Scenario: A finger that moved while the area did not listen is where it is once it does
+    When the property "maximumTouchPoints" of "area" is set to 2
+    And the property "all" of "area" is set to false
+    And the user's fingers go through these positions:
+      """
+      0 at 50, 50
+      0 at 50, 50; 1 at 150, 50
+      0 at 60, 50; 1 at 150, 50; 2 at 250, 50
+      0 at 60, 50; 1 at 150, 50
+      0 at 60, 50; 1 at 155, 50
+      """
+    Then the property "last" of "root" is "60,50d/155,50d"
 
   Scenario: The mouse is one more point
     When the user presses the pointer at 50, 50

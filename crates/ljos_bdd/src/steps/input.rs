@@ -167,7 +167,7 @@ fn finger_frames(text: &str) -> Result<Vec<TouchFrame>, String> {
 
 // Fingers as written, frame by frame; every finger is lifted after the
 // last frame.
-#[when(regex = r"^the user's fingers go through the frames:$")]
+#[when(regex = r"^the user's fingers go through these positions:$")]
 fn user_finger_frames(w: &mut LjosWorld, step: &Step) -> StepResult {
     let frames = finger_frames(&docstring(step)?)?;
     w.each(|b| b.input()?.touch_frames(&frames))
