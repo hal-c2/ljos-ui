@@ -231,6 +231,7 @@ Rectangle {
 ## Limits and edge cases
 
 - A `MultiPointTouchArea` inside a `Flickable` keeps its fingers even when no handler grabs the gesture; Qt would let the `Flickable` take them.
+- A finger on a `MultiPointTouchArea` under a `TapHandler`, `DragHandler` or `PointHandler` that only watches the point (a `TapHandler`'s default `DragThreshold` policy) goes to the area alone; Qt gives it to both. A handler that grabs, such as a `TapHandler` with `WithinBounds`, has the finger.
 
 - On macOS and Windows, dragging out of the application window to external applications is not supported because `winit` 0.30.13 provides no API to initiate an OS drag session; drags stay within the window.
 - `Wheel.margin` is stored as a property but has no effect on hit testing.
