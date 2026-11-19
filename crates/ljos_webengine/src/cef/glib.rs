@@ -128,6 +128,8 @@ pub(super) struct Glib {
     fns: &'static Fns,
     contexts: Vec<Context>,
     fds: Vec<PollFd>,
+    /// What the first poll of an iteration found on each of `fds`.
+    polled: Vec<c_ushort>,
 }
 
 /// The file descriptors of the contexts and when their next timeout is due.
@@ -174,6 +176,7 @@ impl Glib {
             fns,
             contexts,
             fds: Vec::new(),
+            polled: Vec::new(),
         })
     }
 
@@ -188,7 +191,7 @@ impl Glib {
             // dispatched nothing.
             let mut held: Vec<c_int> = Vec::new();
             loop {
-                let (dispatched, timeout) = self.iterate(self.contexts[i]);
+                let (dispatched, timeout, read) = self.iterate(self.contexts[i]);
                 left -= 1;
                 if dispatched {
                     held.clear();
@@ -202,7 +205,10 @@ impl Glib {
                     // as long as it says so. One ready after only one
                     // check may be the context's wakeup, from another
                     // thread since that check: the next check reads it.
-                    if ready().all(|p| held.contains(&p.fd)) {
+                    // And a check that read something, the wakeup most
+                    // likely, may have left out descriptors added since
+                    // the query: the next query has them.
+                    if !read && ready().all(|p| held.contains(&p.fd)) {
                         wait.fds
                             .extend(self.fds.iter().filter(|p| p.revents == 0).copied());
                         if let Ok(ms @ 1..) = u64::try_from(timeout) {
@@ -223,9 +229,11 @@ impl Glib {
     }
 
     /// One iteration of `context` that waits for nothing: whether it
-    /// dispatched a source, and glib's timeout for the wait after it (-1
-    /// for none). Its descriptors are left in `self.fds`.
-    fn iterate(&mut self, context: Context) -> (bool, c_int) {
+    /// dispatched a source, glib's timeout for the wait after it (-1 for
+    /// none), and, when it dispatched nothing, whether a descriptor ready
+    /// before the check is not after it. Its descriptors are left in
+    /// `self.fds`, polled again after a check that dispatched nothing.
+    fn iterate(&mut self, context: Context) -> (bool, c_int, bool) {
         let f = self.fns;
         let mut priority = 0;
         let mut timeout = -1;
@@ -251,6 +259,10 @@ impl Glib {
                 self.fds.truncate(n);
                 break;
             }
+            #[cfg(test)]
+            if let Some(hook) = tests::AFTER_QUERY.take() {
+                hook();
+            }
             if !self.fds.is_empty() {
                 poll(self.fds.as_mut_ptr(), self.fds.len() as c_ulong, 0);
             }
@@ -260,6 +272,7 @@ impl Glib {
                 self.fds.as_mut_ptr(),
                 self.fds.len() as c_int,
             ) != 0;
+            let mut read = false;
             if ready {
                 (f.dispatch)(context);
             } else if !self.fds.is_empty() {
@@ -267,15 +280,22 @@ impl Glib {
                 // ready: what is ready is asked again, so that a wakeup
                 // read stays waited on.
                 #[cfg(test)]
-                if let Some(between) = tests::BETWEEN.take() {
-                    between();
+                if let Some(hook) = tests::AFTER_CHECK.take() {
+                    hook();
                 }
+                self.polled.clear();
+                self.polled.extend(self.fds.iter().map(|p| p.revents));
                 for p in &mut self.fds {
                     p.revents = 0;
                 }
                 poll(self.fds.as_mut_ptr(), self.fds.len() as c_ulong, 0);
+                read = self
+                    .fds
+                    .iter()
+                    .zip(&self.polled)
+                    .any(|(p, &was)| was != 0 && p.revents == 0);
             }
-            (ready, timeout)
+            (ready, timeout, read)
         }
     }
 }
@@ -381,9 +401,12 @@ mod tests {
     static FIRED: AtomicUsize = AtomicUsize::new(0);
 
     thread_local! {
+        /// Run once on this thread between a query and the poll after it.
+        pub(super) static AFTER_QUERY: std::cell::Cell<Option<Box<dyn FnOnce()>>> =
+            const { std::cell::Cell::new(None) };
         /// Run once on this thread between a check that dispatched
         /// nothing and the poll after it.
-        pub(super) static BETWEEN: std::cell::Cell<Option<Box<dyn FnOnce()>>> =
+        pub(super) static AFTER_CHECK: std::cell::Cell<Option<Box<dyn FnOnce()>>> =
             const { std::cell::Cell::new(None) };
     }
 
@@ -504,6 +527,117 @@ mod tests {
         }
     }
 
+    /// `GSourceFuncs`.
+    #[repr(C)]
+    struct Funcs {
+        prepare: unsafe extern "C" fn(Source, *mut c_int) -> c_int,
+        check: unsafe extern "C" fn(Source) -> c_int,
+        dispatch: Option<unsafe extern "C" fn(Source, *mut c_void, *mut c_void) -> c_int>,
+        finalize: Option<unsafe extern "C" fn(Source)>,
+        closure_callback: *mut c_void,
+        closure_marshal: *mut c_void,
+    }
+
+    /// A prepare that leaves it to the check and sets no timeout.
+    unsafe extern "C" fn never(_: Source, timeout: *mut c_int) -> c_int {
+        // SAFETY: glib passes a timeout to write.
+        unsafe { *timeout = -1 };
+        0
+    }
+
+    /// A source that polls `fd` and is ready when it is, made for good.
+    ///
+    /// # Safety
+    /// libcef's glib is in the process.
+    unsafe fn fd_source(
+        fd: c_int,
+        check: unsafe extern "C" fn(Source) -> c_int,
+        dispatch: Option<unsafe extern "C" fn(Source, *mut c_void, *mut c_void) -> c_int>,
+    ) -> (Source, &'static PollFd) {
+        let funcs: &'static Funcs = Box::leak(Box::new(Funcs {
+            prepare: never,
+            check,
+            dispatch,
+            finalize: None,
+            closure_callback: std::ptr::null_mut(),
+            closure_marshal: std::ptr::null_mut(),
+        }));
+        let poll_fd: &'static mut PollFd = Box::leak(Box::new(PollFd {
+            fd,
+            events: POLLIN,
+            revents: 0,
+        }));
+        // SAFETY: glib's functions, as it documents them; the source's
+        // funcs and descriptor live for good.
+        unsafe {
+            let source_new: unsafe extern "C" fn(*const Funcs, u32) -> Source =
+                sym(c"g_source_new").unwrap();
+            let add_poll: unsafe extern "C" fn(Source, *mut PollFd) =
+                sym(c"g_source_add_poll").unwrap();
+            // GSource is 96 bytes on 64-bit Linux; a larger size is fine.
+            let source = source_new(funcs, 256);
+            add_poll(source, &raw mut *poll_fd);
+            (source, poll_fd)
+        }
+    }
+
+    static READ_POLL: AtomicUsize = AtomicUsize::new(0);
+    static READ: AtomicUsize = AtomicUsize::new(0);
+
+    unsafe extern "C" fn readable(_: Source) -> c_int {
+        let poll_fd = READ_POLL.load(Ordering::SeqCst) as *const PollFd;
+        // SAFETY: the source's descriptor, which lives for good; glib wrote
+        // what the poll found before it checks.
+        c_int::from(unsafe { (*poll_fd).revents } != 0)
+    }
+
+    unsafe extern "C" fn read(_: Source, _: *mut c_void, _: *mut c_void) -> c_int {
+        READ.fetch_add(1, Ordering::SeqCst);
+        0
+    }
+
+    /// A source with a descriptor that another thread adds between a query
+    /// and the poll after it is dispatched in that turn: the check reads
+    /// the wakeup the attach sent and dispatches nothing, as the context's
+    /// descriptors changed, and the turn queries again rather than waiting
+    /// on the descriptors it had.
+    #[test]
+    fn a_source_added_just_after_a_query_is_dispatched() {
+        // SAFETY: glib's function, as it documents it.
+        let context = unsafe {
+            let new: unsafe extern "C" fn() -> Context = sym(c"g_main_context_new").unwrap();
+            new()
+        };
+        let mut glib = Glib::owning(vec![context]).expect("libcef's glib is in the process");
+        let (socket, other) = UnixStream::pair().unwrap();
+        (&other).write_all(&[1]).unwrap();
+        // SAFETY: as above.
+        let (source, poll_fd) = unsafe { fd_source(socket.as_raw_fd(), readable, Some(read)) };
+        READ_POLL.store(std::ptr::from_ref(poll_fd) as usize, Ordering::SeqCst);
+        let (added, into) = (source as usize, context as usize);
+        AFTER_QUERY.set(Some(Box::new(move || {
+            // From another thread, as GDBus's worker adds its sources.
+            std::thread::spawn(move || {
+                // SAFETY: attaching a source to a context is thread-safe.
+                unsafe {
+                    let attach: unsafe extern "C" fn(Source, Context) -> u32 =
+                        sym(c"g_source_attach").unwrap();
+                    attach(added as Source, into as Context);
+                }
+            })
+            .join()
+            .unwrap();
+        })));
+        let wait = glib.turn();
+        assert_eq!(
+            READ.load(Ordering::SeqCst),
+            1,
+            "the source added was not dispatched"
+        );
+        assert_eq!(wait.due, None);
+        drop((socket, other));
+    }
+
     /// A source another thread adds between a check that dispatched
     /// nothing and the poll after it wakes the context then: the turn
     /// reads that wakeup and dispatches the source, rather than taking
@@ -521,7 +655,7 @@ mod tests {
         // SAFETY: a context glib made, which lives as long as the test.
         unsafe { wakeup(context) };
         let added = context as usize;
-        BETWEEN.set(Some(Box::new(move || {
+        AFTER_CHECK.set(Some(Box::new(move || {
             // From another thread, as GDBus's worker adds its sources.
             std::thread::spawn(move || {
                 // SAFETY: as above.
@@ -545,52 +679,19 @@ mod tests {
     /// wait, so it does not end at once, while the context's wakeup stays.
     #[test]
     fn a_descriptor_ready_after_every_check_is_left_out_of_the_wait() {
-        #[repr(C)]
-        struct Funcs {
-            prepare: unsafe extern "C" fn(Source, *mut c_int) -> c_int,
-            check: unsafe extern "C" fn(Source) -> c_int,
-            dispatch: Option<unsafe extern "C" fn(Source, *mut c_void, *mut c_void) -> c_int>,
-            finalize: Option<unsafe extern "C" fn(Source)>,
-            closure_callback: *mut c_void,
-            closure_marshal: *mut c_void,
-        }
-        unsafe extern "C" fn never(_: Source, timeout: *mut c_int) -> c_int {
-            // SAFETY: glib passes a timeout to write.
-            unsafe { *timeout = -1 };
-            0
-        }
         unsafe extern "C" fn not_ready(_: Source) -> c_int {
             0
         }
         let (stuck, other) = UnixStream::pair().unwrap();
         (&other).write_all(&[1]).unwrap();
-        let funcs: &'static Funcs = Box::leak(Box::new(Funcs {
-            prepare: never,
-            check: not_ready,
-            dispatch: None,
-            finalize: None,
-            closure_callback: std::ptr::null_mut(),
-            closure_marshal: std::ptr::null_mut(),
-        }));
-        let poll_fd: &'static mut PollFd = Box::leak(Box::new(PollFd {
-            fd: stuck.as_raw_fd(),
-            events: POLLIN,
-            revents: 0,
-        }));
         // SAFETY: glib's functions, as it documents them, on a context of
-        // this test's own; the source's funcs and descriptor live for good.
+        // this test's own.
         let context = unsafe {
             let new: unsafe extern "C" fn() -> Context = sym(c"g_main_context_new").unwrap();
-            let source_new: unsafe extern "C" fn(*const Funcs, u32) -> Source =
-                sym(c"g_source_new").unwrap();
-            let add_poll: unsafe extern "C" fn(Source, *mut PollFd) =
-                sym(c"g_source_add_poll").unwrap();
             let attach: unsafe extern "C" fn(Source, Context) -> u32 =
                 sym(c"g_source_attach").unwrap();
             let context = new();
-            // GSource is 96 bytes on 64-bit Linux; a larger size is fine.
-            let source = source_new(funcs, 256);
-            add_poll(source, poll_fd);
+            let (source, _) = fd_source(stuck.as_raw_fd(), not_ready, None);
             attach(source, context);
             context
         };
