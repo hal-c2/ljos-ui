@@ -64,10 +64,10 @@ export function kcal(seconds: number): number {
 }
 
 // The minutes before the watch was put on: `keep` resting samples, so the
-// chart has a history from its first frame.
+// chart is full from its first frame.
 export function seed(keep: number): number[] {
     const out: number[] = []
-    for (let i = 0; i < keep - 1; i++) {
+    for (let i = 0; i < keep; i++) {
         out.push(bpm(i - keep, false, 0))
     }
     return out

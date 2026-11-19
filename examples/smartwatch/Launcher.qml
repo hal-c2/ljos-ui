@@ -44,7 +44,12 @@ WatchScreen {
                 tint: cell.modelData.page === "health" || cell.modelData.page === "music" ? launcher.theme.magenta
                     : cell.modelData.page === "workout" ? launcher.theme.green
                     : launcher.theme.cyan
-                onPressed: launcher.watch.show(cell.modelData.page)
+                onPressed: {
+                    // A tap on an app is a touch like any other: the app
+                    // gets the whole idle time, not what the launcher left.
+                    launcher.watch.touch()
+                    launcher.watch.show(cell.modelData.page)
+                }
             }
         }
     }

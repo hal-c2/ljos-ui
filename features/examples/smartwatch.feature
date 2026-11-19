@@ -115,6 +115,13 @@ Feature: The smartwatch example
         | Notifications | notifications |
         | Settings      | settings      |
 
+    Scenario: Opening an app is a touch, so the watch stays awake for the app
+      When 14 seconds pass
+      And the user clicks the "button" "Stopwatch"
+      And 2 seconds pass
+      Then the property "ambient" of "watch" is false
+      And the property "page" of "watch" is "stopwatch"
+
   Rule: Notifications open, and are dismissed
 
     Background:
@@ -144,6 +151,17 @@ Feature: The smartwatch example
 
     Scenario: On the face no heart sample is taken
       Then the property "running" of "beat" is false
+
+    Scenario: The heart chart has all its samples when the watch loads
+      Then the property "history.length" of "watch" is 40
+      And the property "historyKeep" of "watch" is 40
+
+    Scenario: A run's heart rate climbs on the heart screen, though nothing else there counts the run's seconds
+      When the property "sleeps" of "display" is set to false
+      And the method "startWorkout" of "watch" is called
+      And the method "show" of "watch" is called with "health"
+      And 65 seconds pass
+      Then the property "bpm" of "watch" is at least 125
 
     Scenario: The heart screen samples once a second and draws the beats
       When the user drags from 400, 227 to 60, 227
@@ -181,6 +199,33 @@ Feature: The smartwatch example
       And the user clicks the "button" "End"
       Then the property "workout" of "watch" is "done"
 
+  Rule: A finished run stays in the day's exercise ring
+
+    Background:
+      When "Main.qml" is loaded
+      And the property "sleeps" of "display" is set to false
+
+    Scenario: Closing a run's summary keeps its minute in the exercise ring
+      Then the property "rings.exercise" of "watch" is within 0.005 of 0.7333
+      When the method "startWorkout" of "watch" is called
+      And 60 seconds pass
+      And the method "endWorkout" of "watch" is called
+      Then the property "rings.exercise" of "watch" is within 0.005 of 0.7667
+      When the method "closeWorkout" of "watch" is called
+      Then the property "rings.exercise" of "watch" is within 0.005 of 0.7667
+
+    Scenario: A second run adds to the first
+      When the method "startWorkout" of "watch" is called
+      And 60 seconds pass
+      And the method "endWorkout" of "watch" is called
+      And the method "closeWorkout" of "watch" is called
+      And the method "startWorkout" of "watch" is called
+      And 60 seconds pass
+      Then the property "rings.exercise" of "watch" is within 0.005 of 0.8
+      When the method "endWorkout" of "watch" is called
+      And the method "closeWorkout" of "watch" is called
+      Then the property "rings.exercise" of "watch" is within 0.005 of 0.8
+
   Rule: The timer counts down to its end, and the stopwatch counts up
 
     Background:
@@ -204,6 +249,37 @@ Feature: The smartwatch example
       When 59 seconds pass
       Then the property "timerState" of "watch" is "running"
       When 2 seconds pass
+      Then the property "timerState" of "watch" is "ringing"
+
+    Scenario: The countdown says what is left, and that the time is up
+      Given an assistive technology is listening
+      When the property "sleeps" of "display" is set to false
+      And the user clicks the "button" "Timer"
+      And 400 milliseconds pass
+      Then the accessibility tree has a "label" named "5 minutes"
+      When the user clicks the "button" "Start timer"
+      And 30 seconds pass
+      And 500 milliseconds pass
+      Then the accessibility tree has a "label" named "4 minutes 30 seconds left"
+      When the user clicks the "button" "Pause timer"
+      Then the accessibility tree has a "label" named "4 minutes 29 seconds left, paused"
+
+    Scenario: A countdown that has rung says that the time is up
+      Given an assistive technology is listening
+      When the user clicks the "button" "Timer"
+      And 400 milliseconds pass
+      And the user turns the wheel 4 notches up at 227, 227
+      And the user clicks the "button" "Start timer"
+      And 61 seconds pass
+      Then the property "timerState" of "watch" is "ringing"
+      And the accessibility tree has a "label" named "Time's up"
+
+    Scenario: A pause that comes after the countdown's end rings instead
+      When the user clicks the "button" "Timer"
+      And 400 milliseconds pass
+      And the user clicks the "button" "Start timer"
+      And the property "timerEnds" of "watch" is set to 0
+      And the method "pauseTimer" of "watch" is called
       Then the property "timerState" of "watch" is "ringing"
 
     Scenario: The stopwatch counts, keeps laps, and stops
@@ -234,6 +310,26 @@ Feature: The smartwatch example
     Scenario: The next track
       When the user clicks the "button" "Next track"
       Then the property "track" of "watch" is 1
+
+    Scenario: A pause after the track has ended, before anything noticed, is a pause in the next track
+      When the property "sleeps" of "display" is set to false
+      And the user clicks the "button" "Play"
+      And the method "show" of "watch" is called with "settings"
+      And 214 seconds pass
+      And 500 milliseconds pass
+      And the method "pause" of "watch" is called
+      Then the property "track" of "watch" is 1
+      And the property "position" of "watch" is within 0.1 of 0.5
+
+    Scenario: A pause just before the track ends keeps the track
+      When the property "sleeps" of "display" is set to false
+      And the user clicks the "button" "Play"
+      And the method "show" of "watch" is called with "settings"
+      And 213 seconds pass
+      And 500 milliseconds pass
+      And the method "pause" of "watch" is called
+      Then the property "track" of "watch" is 0
+      And the property "position" of "watch" is within 0.1 of 213.5
 
     Scenario: The crown turns the volume up
       Then the property "volume" of "watch" is 6
@@ -279,6 +375,11 @@ Feature: The smartwatch example
       And the user clicks the "button" "Wake"
       Then the property "ambient" of "watch" is false
       And the property "page" of "watch" is "face"
+
+    Scenario: Woken, the face shows the second it was woken at, not the one it fell asleep at
+      When 36 seconds pass
+      And the user clicks the "button" "Wake"
+      Then the property "seconds" of "watch" is 43
 
     Scenario: A swipe on the always-on face wakes the watch as a tap does
       When 16 seconds pass
@@ -336,6 +437,19 @@ Feature: The smartwatch example
     Scenario: Asked for while the watch turns, reduced motion slows the turntable from there
       When "Showcase.qml" is loaded
       And the system setting "reduced motion" changes to true
+      And 4 seconds pass
+      Then the property "spin" of "showcase" is at least 8
+      And the property "spin" of "showcase" is at most 16
+
+    Scenario: Asked for while the viewer drags the watch, reduced motion leaves the turntable waiting
+      When "Showcase.qml" is loaded
+      And the user presses the pointer at 450, 450
+      And the user moves the pointer to 470, 450
+      And the user moves the pointer to 520, 450
+      And the system setting "reduced motion" changes to true
+      And 4 seconds pass
+      Then the property "spin" of "showcase" is at most 1
+      When the user releases the pointer at 520, 450
       And 4 seconds pass
       Then the property "spin" of "showcase" is at least 8
       And the property "spin" of "showcase" is at most 16
