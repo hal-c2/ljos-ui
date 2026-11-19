@@ -33,6 +33,7 @@ data/models.md 8 gap:imports
 data/other-views.md 2 gap:imports
 data/other-views.md 3 gap:imports
 data/pointer-input.md 5 gap:ui-types
+data/pointer-input.md 6 gap:ui-types
 data/repeater-and-delegates.md 2 gap:layout
 data/tasks.md 1 qt-tr
 data/tasks.md 2 qt-tr

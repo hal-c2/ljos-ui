@@ -1666,6 +1666,11 @@ impl QuickScene {
         r
     }
 
+    /// Whether `obj` is an item of the tree the scene shows.
+    pub(crate) fn shows_item(&self, obj: ObjectId) -> bool {
+        self.items.contains(obj)
+    }
+
     pub fn root(&self) -> Option<ObjectId> {
         self.root
     }
@@ -1936,6 +1941,7 @@ impl QuickScene {
         // 4. Deferred deletes.
         engine.process_deferred_deletes();
         self.sweep_dead(engine);
+        self.let_go_of_lost_areas(engine);
         // Focus asked for while objects were being made.
         crate::focus::tree::settle(engine);
         self.sync_layer(engine);

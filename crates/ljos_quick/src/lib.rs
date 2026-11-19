@@ -50,6 +50,7 @@ mod long_press;
 mod metrics;
 mod mirroring;
 mod mouse_drag;
+mod multi_touch;
 mod off_thread;
 mod paint_item;
 mod painted_item;
@@ -166,6 +167,7 @@ pub use loader::Loader;
 #[allow(deprecated)]
 pub use metrics::{FontInfo, FontMetrics, TextMetrics};
 pub use mirroring::{LayoutMirroring, LayoutMirroringAttached};
+pub use multi_touch::{GestureEvent, MultiPointTouchArea, TouchPoint};
 pub use paint_item::{ItemPaint, ReadPaint, register_paint_item, request_repaint};
 pub use painted_item::PaintedItem;
 pub use palette::{ColorGroup, Palette};
@@ -253,6 +255,7 @@ pub fn register(engine: &Engine) {
     engine.register_module(ljos_engine::module!("QtQuick.Layouts" 1.15 => [
         Layout, RowLayout, ColumnLayout, GridLayout, StackLayout, LayoutItemProxy,
     ]));
+    multi_touch::register(engine);
     mirroring::register(engine);
     safe_area::register(engine);
     positioners::register(engine);

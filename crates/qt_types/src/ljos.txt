@@ -3164,6 +3164,7 @@ module QtQuick
 	FontLoader QtQuick.FontLoader
 	FontMetrics QtQuick.FontMetrics
 	FrameAnimation QtQuick.FrameAnimation
+	GestureEvent QtQuick.GestureEvent
 	Gradient QtQuick.Gradient
 	GradientStop QtQuick.GradientStop
 	Grid QtQuick.Grid
@@ -3183,6 +3184,7 @@ module QtQuick
 	Matrix4x4 QtQuick.Matrix4x4
 	MouseArea QtQuick.MouseArea
 	MouseEvent QtQuick.MouseEvent
+	MultiPointTouchArea QtQuick.MultiPointTouchArea
 	NumberAnimation QtQuick.NumberAnimation
 	OpacityAnimator QtQuick.OpacityAnimator
 	PaintedItem QtQuick.PaintedItem
@@ -3251,6 +3253,7 @@ module QtQuick
 	TextInput QtQuick.TextInput
 	TextMetrics QtQuick.TextMetrics
 	TextSelection QtQuick.TextSelection
+	TouchPoint QtQuick.TouchPoint
 	Transition QtQuick.Transition
 	Translate QtQuick.Translate
 	TreeView QtQuick.TreeView
@@ -3829,6 +3832,12 @@ module QtQuick
 		method resume
 		method restart
 		method reset
+	type QtQuick.GestureEvent GestureEvent
+		prototype QtQml.QtObject named
+		is uncreatable
+		prop touchPoints QtQuick.TouchPoint named list pointer readonly
+		prop dragThreshold QtQml.real named readonly
+		method grab
 	type QtQuick.Gradient Gradient
 		prototype QtQml.QtObject named
 		default stops
@@ -4159,6 +4168,21 @@ module QtQuick
 		prop wasHeld QtQml.bool named readonly
 		prop isClick QtQml.bool named readonly
 		prop accepted QtQml.bool named
+	type QtQuick.MultiPointTouchArea MultiPointTouchArea
+		prototype QtQuick.Item named
+		prop touchPoints QtQuick.TouchPoint named list pointer
+		prop minimumTouchPoints QtQml.int named
+		prop maximumTouchPoints QtQml.int named
+		prop mouseEnabled QtQml.bool named
+		signal minimumTouchPointsChanged
+		signal maximumTouchPointsChanged
+		signal mouseEnabledChanged
+		signal pressed touchPoints:var
+		signal updated touchPoints:var
+		signal released touchPoints:var
+		signal canceled touchPoints:var
+		signal gestureStarted gesture:QtObject
+		signal touchUpdated touchPoints:var
 	type QtQuick.NumberAnimation NumberAnimation
 		prototype QtQuick.PropertyAnimation named
 	type QtQuick.OpacityAnimator OpacityAnimator
@@ -5319,6 +5343,40 @@ module QtQuick
 		signal fontChanged
 		signal colorChanged
 		signal alignmentChanged
+	type QtQuick.TouchPoint TouchPoint
+		prototype QtQml.QtObject named
+		prop pointId QtQml.int named readonly
+		prop uniqueId QtQml.var named readonly
+		prop pressed QtQml.bool named readonly
+		prop x QtQml.real named readonly
+		prop y QtQml.real named readonly
+		prop ellipseDiameters QtQml.size named readonly
+		prop pressure QtQml.real named readonly
+		prop rotation QtQml.real named readonly
+		prop velocity QtQuick.vector2d named readonly
+		prop area QtQml.rect named readonly
+		prop startX QtQml.real named readonly
+		prop startY QtQml.real named readonly
+		prop previousX QtQml.real named readonly
+		prop previousY QtQml.real named readonly
+		prop sceneX QtQml.real named readonly
+		prop sceneY QtQml.real named readonly
+		signal pointIdChanged
+		signal uniqueIdChanged
+		signal pressedChanged
+		signal xChanged
+		signal yChanged
+		signal ellipseDiametersChanged
+		signal pressureChanged
+		signal rotationChanged
+		signal velocityChanged
+		signal areaChanged
+		signal startXChanged
+		signal startYChanged
+		signal previousXChanged
+		signal previousYChanged
+		signal sceneXChanged
+		signal sceneYChanged
 	type QtQuick.Transition Transition
 		prototype QtQml.QtObject named
 		default animations
