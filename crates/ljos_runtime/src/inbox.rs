@@ -35,6 +35,12 @@
 //! the lock, so it is exact: no lost wake-up and no hook call per message. If a
 //! budgeted [`UiInbox::drain`] leaves messages behind it re-arms the hook, so a
 //! partially drained inbox always schedules another frame.
+//!
+//! The sender's hook runs before the lock is let go. A drain pops under the
+//! same lock, so it never takes a message whose wake is still to come: a
+//! sender paused between the two would otherwise wake the UI thread after
+//! the message was handled, for a frame with nothing in it, while the
+//! application is idle.
 
 use std::collections::{HashMap, VecDeque};
 use std::fmt;
@@ -53,7 +59,9 @@ use crate::time::Clock;
 
 /// Called from a sender's thread when the inbox goes from empty to non-empty.
 /// The shell passes something like `move || ctx.request_repaint()`. It must be
-/// cheap and must not block.
+/// cheap and must not block. It runs under the lock of the inbox or side
+/// stream that was sent to (see the wake protocol), so it must not send to,
+/// drain or measure that inbox or any of its side streams.
 pub type WakeHook = Arc<dyn Fn() + Send + Sync>;
 
 /// Identifies a stream of "latest value wins" messages (a progress bar, a
@@ -313,20 +321,25 @@ impl<M> UiHandle<M> {
         let shared = &*self.shared;
         let mut q = shared.lock();
         let pushed = shared.try_push(&mut q, key, msg);
-        drop(q);
-        self.pushed(pushed)
+        self.pushed(q, pushed)
     }
 
-    /// The part of a push done outside the lock: wake the UI, drop what
-    /// was replaced or rejected.
-    fn pushed(&self, pushed: Result<Pushed<M>, SendError<M>>) -> Result<(), SendError<M>> {
+    /// The rest of a push, from under the lock `q` holds: the UI is woken
+    /// before it is let go, so no drain takes the message ahead of its
+    /// wake; what was replaced or rejected is dropped after.
+    fn pushed(
+        &self,
+        q: MutexGuard<'_, Queue<M>>,
+        pushed: Result<Pushed<M>, SendError<M>>,
+    ) -> Result<(), SendError<M>> {
+        if matches!(pushed, Ok(Pushed::Queued { was_empty: true })) {
+            self.shared.fire_wake();
+        }
+        drop(q);
         let counts = &self.shared.counts;
         match pushed {
-            Ok(Pushed::Queued { was_empty }) => {
+            Ok(Pushed::Queued { .. }) => {
                 Counts::bump(&counts.sent);
-                if was_empty {
-                    self.shared.fire_wake();
-                }
             }
             Ok(Pushed::Replaced(old)) => {
                 Counts::bump(&counts.sent);
@@ -358,10 +371,7 @@ impl<M> UiHandle<M> {
         loop {
             match shared.try_push(&mut q, None, msg) {
                 Err(SendError::Full(back)) => msg = back,
-                other => {
-                    drop(q);
-                    return self.pushed(other);
-                }
+                other => return self.pushed(q, other),
             }
             q.blocked += 1;
             q = shared.room.wait(q).unwrap_or_else(|e| e.into_inner());
@@ -462,10 +472,7 @@ impl<M> Future for SendAsync<'_, M> {
                 self.msg = Some(back);
                 Poll::Pending
             }
-            other => {
-                drop(q);
-                Poll::Ready(self.handle.pushed(other))
-            }
+            other => Poll::Ready(self.handle.pushed(q, other)),
         }
     }
 }
@@ -756,10 +763,11 @@ impl<M> Drop for UiInbox<M> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::time::VirtualClock;
     use std::sync::atomic::AtomicUsize;
+    use std::sync::mpsc;
 
     fn counting_wake() -> (WakeHook, Arc<AtomicUsize>) {
         let n = Arc::new(AtomicUsize::new(0));
@@ -778,6 +786,55 @@ mod tests {
             out.push(m)
         });
         out
+    }
+
+    /// A wake hook that stops the sender inside it until `go` is sent, as
+    /// a busy machine may stop a sender at any point: `entered` is told
+    /// once the sender is there.
+    pub(crate) fn paused_wake() -> (WakeHook, mpsc::Receiver<()>, mpsc::Sender<()>) {
+        let (entered_tx, entered) = mpsc::channel();
+        let (go, go_rx) = mpsc::channel();
+        let go_rx = Mutex::new(go_rx);
+        let hook: WakeHook = Arc::new(move || {
+            let _ = entered_tx.send(());
+            let _ = go_rx.lock().unwrap().recv();
+        });
+        (hook, entered, go)
+    }
+
+    /// A sender stopped between queueing a message and waking the UI
+    /// thread must not let the UI thread take the message first: its wake
+    /// would then come after the message was handled, a frame for nothing
+    /// in a window that is idle (#572). Each way of sending is held to it.
+    #[test]
+    fn no_drain_takes_a_message_before_its_wake() {
+        type Sending = fn(&UiHandle<u32>);
+        let sends: [(&str, Sending); 4] = [
+            ("send", |tx| tx.send(7).unwrap()),
+            ("send_coalesced", |tx| {
+                tx.send_coalesced(CoalesceKey(1), 7).unwrap()
+            }),
+            ("send_blocking", |tx| tx.send_blocking(7).unwrap()),
+            ("send_async", |tx| {
+                let mut fut = std::pin::pin!(tx.send_async(7));
+                let mut cx = Context::from_waker(Waker::noop());
+                assert!(fut.as_mut().poll(&mut cx).is_ready());
+            }),
+        ];
+        for (how, send) in sends {
+            let (hook, entered, go) = paused_wake();
+            let (inbox, tx) = UiInbox::<u32>::channel_with_wake(4, hook);
+            let sender = std::thread::spawn(move || send(&tx));
+            entered.recv().unwrap();
+            // A drain pops under this lock: held, it waits for the wake.
+            assert!(
+                inbox.shared.queue.try_lock().is_err(),
+                "{how}: a drain could take the message before its wake"
+            );
+            go.send(()).unwrap();
+            sender.join().unwrap();
+            assert_eq!(drain_all(&inbox), vec![7], "{how}");
+        }
     }
 
     #[test]
