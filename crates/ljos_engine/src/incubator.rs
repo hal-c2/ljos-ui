@@ -1569,10 +1569,14 @@ impl Engine {
                     continue;
                 }
             };
+            // An alias of a list (`alias control: row.data`) takes one object
+            // the way the list does: appended, so the list's hook parents it.
+            let (to, tp) = self.redirect(t.obj, t.prop);
             let is_list = oa.is_list
+                || self.is_list_property(to, tp)
                 || self
-                    .meta_of(t.obj)
-                    .and_then(|mm| mm.property(t.prop).map(|p| p.is_list()))
+                    .meta_of(to)
+                    .and_then(|mm| mm.property(tp).map(|p| p.is_list()))
                     .unwrap_or(false);
             for v in &oa.values {
                 let value = match v {
