@@ -1055,6 +1055,111 @@ Feature: The design audit checks layout and content in the live tree
         """
       Then the design audit does not report "layout-content-overflow"
 
+    Scenario: A button under a layer that only watches presses
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Rectangle {
+          width: 320; height: 200
+          color: "white"
+          Button { x: 20; y: 20; text: "Press me" }
+          Item {
+            anchors.fill: parent
+            z: 1
+            PointHandler {}
+            WheelHandler {}
+          }
+        }
+        """
+      Then the design audit does not report "layout-occluded"
+
+    Scenario: A button under a layer that takes presses
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Rectangle {
+          width: 320; height: 200
+          color: "white"
+          Button { x: 20; y: 20; text: "Press me" }
+          Item {
+            anchors.fill: parent
+            z: 1
+            TapHandler { gesturePolicy: TapHandler.WithinBounds }
+          }
+        }
+        """
+      Then the design audit reports "layout-occluded" at line 6
+
+    Scenario: A button under a layer whose tap and drag take the press only once it moves
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Rectangle {
+          width: 320; height: 200
+          color: "white"
+          Button { x: 20; y: 20; text: "Press me" }
+          Item {
+            anchors.fill: parent
+            z: 1
+            TapHandler {}
+            DragHandler {}
+          }
+        }
+        """
+      Then the design audit does not report "layout-occluded"
+
+    Scenario: A narrow splitter the arrow keys move
+      Given the QML:
+        """qml
+        import QtQuick
+        Row {
+          width: 480; height: 300
+          Rectangle {
+            id: list
+            width: 200; height: parent.height
+            color: "#eeeeee"
+            MouseArea {
+              anchors.right: parent.right
+              width: 6; height: parent.height
+              activeFocusOnTab: true
+              Accessible.role: Accessible.Splitter
+              Accessible.name: "Resize list"
+              Accessible.onPressAction: list.width = 200
+              Keys.onLeftPressed: list.width -= 16
+              Keys.onRightPressed: list.width += 16
+            }
+          }
+          Rectangle { width: 280; height: parent.height; color: "white" }
+        }
+        """
+      Then the design audit does not report "a11y-target-size"
+
+    Scenario: A narrow splitter only the pointer moves
+      Given the QML:
+        """qml
+        import QtQuick
+        Row {
+          width: 480; height: 300
+          Rectangle {
+            id: list
+            width: 200; height: parent.height
+            color: "#eeeeee"
+            MouseArea {
+              anchors.right: parent.right
+              width: 6; height: parent.height
+              Accessible.role: Accessible.Splitter
+              Accessible.name: "Resize list"
+              Accessible.onPressAction: list.width = 200
+            }
+          }
+          Rectangle { width: 280; height: parent.height; color: "white" }
+        }
+        """
+      Then the design audit reports "a11y-target-size" at line 8
+
   Rule: Content, as the window says it
 
     Scenario: An identifier shown as it is stored

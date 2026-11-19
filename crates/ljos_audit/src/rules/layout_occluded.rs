@@ -74,7 +74,7 @@ fn takes_press(engine: &Engine, item: ObjectId) -> bool {
                 && engine.read_by_name(item, "acceptedButtons").to_number() != 0.0
         });
     }
-    ljos_quick::takes_pointer(engine, item)
+    ljos_quick::takes_press(engine, item)
 }
 
 pub(crate) fn check(cx: &mut Cx) {

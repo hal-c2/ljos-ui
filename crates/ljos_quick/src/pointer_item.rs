@@ -76,16 +76,37 @@ pub(crate) fn pointer_item(engine: &Engine, obj: ObjectId) -> Option<PointerItem
 /// accessibility tree has no node for; hover alone does not count.
 pub fn takes_pointer(engine: &Engine, obj: ObjectId) -> bool {
     use crate::item::is_a;
-    engine.untrack(|| {
-        is_a::<crate::input::MouseArea>(engine, obj)
-            || is_a::<crate::flickable::Flickable>(engine, obj)
-            || pointer_item(engine, obj).is_some()
-            || crate::tree::resources(engine, obj).into_iter().any(|h| {
+    takes_press(engine, obj)
+        || engine.untrack(|| {
+            crate::tree::resources(engine, obj).into_iter().any(|h| {
                 is_a::<crate::input::TapHandler>(engine, h)
                     || is_a::<crate::handlers::DragHandler>(engine, h)
                     || is_a::<crate::handlers::PointHandler>(engine, h)
                     || is_a::<crate::handlers::PinchHandler>(engine, h)
                     || is_a::<crate::wheel_handler::WheelHandler>(engine, h)
+            })
+        })
+}
+
+/// Whether a press on `obj` can stop there instead of going on to the
+/// items under it, as the scene delivers it: a `MouseArea`, a `Flickable`,
+/// an item of a type registered here, or an enabled `TapHandler` that
+/// grabs on its own. A `TapHandler` with the `DragThreshold` policy, a
+/// `DragHandler` and a `PointHandler` take only a passive grab at the
+/// press, so the items beneath get it too; a `PinchHandler` and a
+/// `WheelHandler` take no press at all.
+pub fn takes_press(engine: &Engine, obj: ObjectId) -> bool {
+    use crate::input::TapHandler;
+    use crate::item::is_a;
+    engine.untrack(|| {
+        is_a::<crate::input::MouseArea>(engine, obj)
+            || is_a::<crate::flickable::Flickable>(engine, obj)
+            || pointer_item(engine, obj).is_some()
+            || crate::tree::resources(engine, obj).into_iter().any(|h| {
+                is_a::<TapHandler>(engine, h)
+                    && engine.read(h, TapHandler::ENABLED.index).to_boolean()
+                    && engine.read(h, TapHandler::GESTURE_POLICY.index).to_number() as i32
+                        != crate::enums::gesture_policy::DRAG_THRESHOLD
             })
     })
 }
