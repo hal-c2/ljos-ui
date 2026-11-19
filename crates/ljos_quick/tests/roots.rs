@@ -6,9 +6,9 @@
 mod common;
 
 use common::*;
-use ljos_engine::{Engine, ObjectId};
-use ljos_quick::Rectangle;
-use ljos_quick::roots::{RootError, RootSwaps, replace_root};
+use ljos_engine::{Engine, MetaRef, ObjectId, QmlType};
+use ljos_quick::roots::{RootError, RootSwaps, adopt, replace_root};
+use ljos_quick::{Item, Rectangle};
 
 /// A root with no parent, as an application makes one.
 fn root(e: &Engine) -> ObjectId {
@@ -365,4 +365,115 @@ fn a_loader_that_let_go_of_its_shell_keeps_it_until_what_replaces_it_shows() {
         assert_eq!(host.root, next);
         assert!(e.is_going(shell));
     }
+}
+
+/// An engine whose `Rectangle` is a window type, as a `Window` is where
+/// the controls are registered: what [`window`] makes.
+fn engine_with_windows() -> Engine {
+    let e = engine();
+    ljos_quick::register_window_type(&e, MetaRef::Static(Rectangle::static_meta()));
+    e
+}
+
+/// A window with no parent, declaring the width and height given.
+fn window(e: &Engine, width: Option<f64>, height: Option<f64>) -> ObjectId {
+    let w = make::<Rectangle>(e, None);
+    for (size, v) in [(Item::WIDTH, width), (Item::HEIGHT, height)] {
+        if let Some(v) = v {
+            e.set(w, size, v).unwrap();
+        }
+    }
+    w
+}
+
+/// The root a host shows in a window of 300 by 240.
+fn shown_at_300_by_240(e: &Engine) -> (Host, ObjectId) {
+    let old = make::<Item>(e, None);
+    e.set(old, Item::WIDTH, 300.0).unwrap();
+    e.set(old, Item::HEIGHT, 240.0).unwrap();
+    (Host::open(e, old), old)
+}
+
+fn size(e: &Engine, obj: ObjectId) -> (f64, f64) {
+    (num(e, obj, "width"), num(e, obj, "height"))
+}
+
+#[test]
+fn a_window_put_in_place_of_a_root_is_shown_at_the_size_it_declares() {
+    // Each size it declares none of is the window's.
+    for (width, height, shown) in [
+        (Some(200.0), Some(100.0), (200.0, 100.0)),
+        (Some(200.0), None, (200.0, 240.0)),
+        (None, Some(100.0), (300.0, 100.0)),
+        (None, None, (300.0, 240.0)),
+    ] {
+        let e = engine_with_windows();
+        let (mut host, old) = shown_at_300_by_240(&e);
+        let new = window(&e, width, height);
+        replace_root(&e, old, new).unwrap();
+        host.frame(&e);
+        assert_eq!(host.root, new);
+        assert_eq!(size(&e, new), shown, "declaring {width:?} by {height:?}");
+    }
+}
+
+#[test]
+fn an_item_put_in_place_of_a_root_fills_the_window() {
+    let e = engine_with_windows();
+    let (mut host, old) = shown_at_300_by_240(&e);
+    let new = make::<Item>(&e, None);
+    e.set(new, Item::WIDTH, 20.0).unwrap();
+    e.set(new, Item::HEIGHT, 10.0).unwrap();
+    replace_root(&e, old, new).unwrap();
+    host.frame(&e);
+    assert_eq!(host.root, new);
+    assert_eq!(size(&e, new), (300.0, 240.0));
+}
+
+#[test]
+fn a_window_a_loader_stands_for_next_is_shown_at_the_size_it_declares() {
+    let e = engine_with_windows();
+    let loader = make::<Item>(&e, None);
+    let first = window(&e, Some(300.0), Some(240.0));
+    RootSwaps::of(&e).present(&e, loader, Some(first));
+    let mut host = Host::open(&e, loader);
+    host.frame(&e);
+    assert_eq!(host.root, first);
+    assert_eq!(size(&e, first), (300.0, 240.0), "the first at its own size");
+    // The loader's next shell, as its source changed or the first failed.
+    let next = e.create_native(Rectangle::default(), Some(loader)).unwrap();
+    e.set(next, Item::WIDTH, 200.0).unwrap();
+    e.set(next, Item::HEIGHT, 100.0).unwrap();
+    e.complete(next).unwrap();
+    RootSwaps::of(&e).present(&e, loader, Some(next));
+    host.frame(&e);
+    assert_eq!(host.root, next);
+    assert_eq!(size(&e, next), (200.0, 100.0));
+}
+
+#[test]
+fn a_window_a_reload_made_again_keeps_the_size_the_window_has() {
+    let e = engine_with_windows();
+    let loader = make::<Item>(&e, None);
+    let shell = window(&e, Some(300.0), Some(240.0));
+    RootSwaps::of(&e).present(&e, loader, Some(shell));
+    let mut host = Host::open(&e, loader);
+    host.frame(&e);
+    // The person made the window larger.
+    e.set(shell, Item::WIDTH, 500.0).unwrap();
+    e.set(shell, Item::HEIGHT, 400.0).unwrap();
+    // A reload makes the loader and its shell again, as declared.
+    let again = make::<Item>(&e, None);
+    let shell_again = e.create_native(Rectangle::default(), Some(again)).unwrap();
+    e.set(shell_again, Item::WIDTH, 300.0).unwrap();
+    e.set(shell_again, Item::HEIGHT, 240.0).unwrap();
+    e.complete(shell_again).unwrap();
+    RootSwaps::of(&e).present(&e, again, Some(shell_again));
+    // What the host of a reload does: the new root at the old one's size.
+    adopt(&e, shell, again);
+    RootSwaps::of(&e).shows(&e, Some(shell), again);
+    host.root = again;
+    host.frame(&e);
+    assert_eq!(host.root, shell_again);
+    assert_eq!(size(&e, shell_again), (500.0, 400.0));
 }

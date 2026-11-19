@@ -310,7 +310,10 @@ Feature: A ShellLoader shows a user's shell, or the application's own when the u
     Where each `Window` is a platform window, a loader at the root of an
     application's window stands for the shell it shows: a shell that is a
     `Window` is that window, not a second one, and the shell that takes
-    its place takes the same window at the size it has.
+    its place takes the same window. A `Window` shell is shown at the
+    width and height it declares, as an edit of them would make it, and
+    keeps the size the window has where it declares none; a shell that is
+    not a `Window` fills the window.
 
     Background:
       Given each Window has a platform window of its own
@@ -340,7 +343,7 @@ Feature: A ShellLoader shows a user's shell, or the application's own when the u
       Then the application's windows are "default-window"
       And the property "status" of "loader" is 2
 
-    Scenario: The user's Window takes the window the fallback had, at its size
+    Scenario: The user's Window takes the window the fallback had, at the size it declares
       Given the file "Shell.qml":
         """qml
         import QtQuick
@@ -354,10 +357,62 @@ Feature: A ShellLoader shows a user's shell, or the application's own when the u
       When the file "Main.qml" is opened in a window of its own
       And the property "source" of "loader" is set to "Other.qml"
       Then the application's windows are "other-window"
-      And the property "width" of "other-window" is 300
-      And the property "height" of "other-window" is 240
+      And the property "width" of "other-window" is 200
+      And the property "height" of "other-window" is 100
       And the object "default-window" does not exist
       And the property "status" of "loader" is 1
+
+    Scenario: A Window shell that declares no size keeps the size the window has
+      Given the file "Shell.qml":
+        """qml
+        import QtQuick
+        Rectangle { NoSuchThing { } }
+        """
+      And the file "Other.qml":
+        """qml
+        import QtQuick
+        Window { objectName: "other-window"; visible: true }
+        """
+      When the file "Main.qml" is opened in a window of its own
+      And the property "source" of "loader" is set to "Other.qml"
+      Then the application's windows are "other-window"
+      And the property "width" of "other-window" is 300
+      And the property "height" of "other-window" is 240
+
+    Scenario: A Window shell that declares only its width keeps the height the window has
+      Given the file "Shell.qml":
+        """qml
+        import QtQuick
+        Rectangle { NoSuchThing { } }
+        """
+      And the file "Other.qml":
+        """qml
+        import QtQuick
+        Window { objectName: "other-window"; width: 200; visible: true }
+        """
+      When the file "Main.qml" is opened in a window of its own
+      And the property "source" of "loader" is set to "Other.qml"
+      Then the application's windows are "other-window"
+      And the property "width" of "other-window" is 200
+      And the property "height" of "other-window" is 240
+
+    Scenario: A Window shell in place of one that is not a Window is shown at the size it declares
+      Given the file "Shell.qml":
+        """qml
+        import QtQuick
+        Rectangle { objectName: "user-shell" }
+        """
+      And the file "Other.qml":
+        """qml
+        import QtQuick
+        Window { objectName: "other-window"; width: 200; height: 100; visible: true }
+        """
+      When the file "Main.qml" is opened in a window of its own
+      And the property "source" of "loader" is set to "Other.qml"
+      Then the application's windows are "other-window"
+      And the property "width" of "other-window" is 200
+      And the property "height" of "other-window" is 100
+      And the object "user-shell" does not exist
 
     Scenario: A shell that is not a Window gives the window back to the loader
       Given the file "Shell.qml":
@@ -377,7 +432,7 @@ Feature: A ShellLoader shows a user's shell, or the application's own when the u
       And the object "loader/user-shell" exists
       And the object "default-window" does not exist
 
-    Scenario: A Window shell that fails after it was made gives its window to the fallback
+    Scenario: A Window shell that fails after it was made gives its window to the fallback, at the size the fallback declares
       Given the file "Shell.qml":
         """qml
         import QtQuick
@@ -389,11 +444,12 @@ Feature: A ShellLoader shows a user's shell, or the application's own when the u
       When the file "Main.qml" is opened in a window of its own
       And a native handler of "part" panics with "shell broke"
       Then the application's windows are "default-window"
-      And the property "width" of "default-window" is 200
+      And the property "width" of "default-window" is 300
+      And the property "height" of "default-window" is 240
       And the object "user-window" does not exist
       And the property "status" of "loader" is 2
 
-    Scenario: Mending a Window shell's file replaces the fallback in the same window
+    Scenario: Mending a Window shell's file replaces the fallback in the same window, at the size it declares
       Given the file "Shell.qml":
         """qml
         import QtQuick
@@ -408,7 +464,8 @@ Feature: A ShellLoader shows a user's shell, or the application's own when the u
       And a reload happens
       Then there is no reload error
       And the application's windows are "user-window"
-      And the property "width" of "user-window" is 300
+      And the property "width" of "user-window" is 200
+      And the property "height" of "user-window" is 100
       And the property "status" of "loader" is 1
 
   Rule: Editing the shell while the application runs

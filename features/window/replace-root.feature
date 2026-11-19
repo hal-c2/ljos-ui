@@ -9,7 +9,9 @@ Feature: The application puts another root in its window
   An application that makes its whole interface again, because a setting
   switched layouts or a file of the user's appeared, makes a new root and
   puts it in the window of the old one. The new root takes the old one's
-  window, at the size it has, and the old root goes. A window that is
+  window and the old root goes. A `Window` is shown at the width and
+  height it declares, and keeps the size the window has where it
+  declares none; a plain item fills the window. A window that is
   never shown twice has nothing to put back. A root the window cannot
   show is refused where it is asked for, and the old root stays.
 
@@ -41,10 +43,30 @@ Feature: The application puts another root in its window
       """
     When the file "First.qml" is opened in a window of its own
 
-  Scenario: The new root takes the window at the size it has
+  Scenario: A Window put in the window is shown at the size it declares
     When the application puts an object of "Next.qml" in the window of "first"
-    Then the property "width" of "next" is 300
-    And the property "height" of "next" is 240
+    Then the property "width" of "next" is 200
+    And the property "height" of "next" is 100
+
+  Scenario: A Window that declares no size takes the size the window has
+    Given the file "Sizeless.qml":
+      """qml
+      import QtQuick
+      Window { objectName: "sizeless"; visible: true }
+      """
+    When the application puts an object of "Sizeless.qml" in the window of "first"
+    Then the property "width" of "sizeless" is 300
+    And the property "height" of "sizeless" is 240
+
+  Scenario: An item put in the window fills it
+    Given the file "Card.qml":
+      """qml
+      import QtQuick
+      Rectangle { objectName: "card"; width: 20; height: 10 }
+      """
+    When the application puts an object of "Card.qml" in the window of "first"
+    Then the property "width" of "card" is 300
+    And the property "height" of "card" is 240
 
   Scenario: The old root goes once the new one is in its window
     When the application puts an object of "Next.qml" in the window of "first"
