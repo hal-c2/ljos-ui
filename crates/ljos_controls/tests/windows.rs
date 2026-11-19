@@ -177,7 +177,9 @@ fn the_host_is_told_when_a_window_wants_something_else() {
 #[test]
 fn a_window_whose_implicit_size_follows_its_other_side_has_the_size_the_platform_gave() {
     // Giving it one side changes the implicit size of the other, which it
-    // still follows: it declares no size.
+    // still follows: it declares no size. Between the second and the third
+    // size only the width changes, then only the height: the side the
+    // platform gives again as it was still holds.
     for follows in ["implicitWidth: height * 2", "implicitHeight: width * 2"] {
         let (e, _) = hosted();
         let main = load(
@@ -185,7 +187,7 @@ fn a_window_whose_implicit_size_follows_its_other_side_has_the_size_the_platform
             &format!("import QtQuick\nWindow {{ visible: true; {follows} }}\n"),
         );
         let sys = WindowSystem::of(&e);
-        for (w, h) in [(320, 240), (500, 400)] {
+        for (w, h) in [(320, 240), (500, 240), (500, 400), (320, 400)] {
             sys.resized(&e, main, [f64::from(w), f64::from(h)]);
             let shown = (int(&e, main, "width"), int(&e, main, "height"));
             assert_eq!(shown, (w, h), "{follows}");
