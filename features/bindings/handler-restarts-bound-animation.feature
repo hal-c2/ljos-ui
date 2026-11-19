@@ -20,30 +20,36 @@ Feature: A change handler that restarts an animation bound to its property
         id: root; objectName: "root"
         property real seconds: 1
         property real spin: 0
-        property real started: -1
         property bool own: false
+        property alias turnDuration: turn.duration
         onSecondsChanged: {
           if (own)
             turn.duration = seconds * 1000
           turn.restart()
-          started = turn.duration
         }
-        NumberAnimation on spin { id: turn; objectName: "turn"; from: 0; to: 1000; duration: root.seconds * 1000; running: false }
+        NumberAnimation on spin { id: turn; from: 0; to: 1000; duration: root.seconds * 1000; running: false }
       }
       """
 
   Scenario: The handler restarts the animation with the duration it had
     When the property "seconds" of "root" is set to 10
-    Then the property "started" of "root" is 1000
+    And 500 milliseconds pass
+    Then the property "spin" of "root" is within 100 of 500
 
   Scenario: A handler that writes the duration restarts with the new one
     When the property "own" of "root" is set to true
     And the property "seconds" of "root" is set to 10
-    Then the property "started" of "root" is 10000
+    And 500 milliseconds pass
+    Then the property "spin" of "root" is within 30 of 50
 
   Scenario: Once the handler has written the duration the binding no longer follows
     When the property "own" of "root" is set to true
     And the property "seconds" of "root" is set to 10
     And the property "own" of "root" is set to false
     And the property "seconds" of "root" is set to 2
-    Then the property "duration" of "turn" is 10000
+    Then the property "turnDuration" of "root" is 10000
+
+  Scenario: Without the handler's write the binding still follows
+    When the property "seconds" of "root" is set to 10
+    And the property "seconds" of "root" is set to 2
+    Then the property "turnDuration" of "root" is 2000
