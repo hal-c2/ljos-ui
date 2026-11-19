@@ -58,6 +58,8 @@ pub struct UserQml {
     dir: PathBuf,
     on_fault: Option<FaultHandler>,
     watch: bool,
+    modules: Option<String>,
+    theme: bool,
 }
 
 impl std::fmt::Debug for UserQml {
@@ -66,6 +68,8 @@ impl std::fmt::Debug for UserQml {
             .field("dir", &self.dir)
             .field("on_fault", &self.on_fault.is_some())
             .field("watch", &self.watch)
+            .field("modules", &self.modules)
+            .field("theme", &self.theme)
             .finish()
     }
 }
@@ -80,6 +84,8 @@ impl UserQml {
             dir: path.into(),
             on_fault: None,
             watch: true,
+            modules: None,
+            theme: true,
         }
     }
 
@@ -99,6 +105,30 @@ impl UserQml {
     #[must_use]
     pub fn watch(mut self, watch: bool) -> Self {
         self.watch = watch;
+        self
+    }
+
+    /// `dir`, a directory in the user's (`/`-separated), holds the
+    /// user's modules: its files have the names they would have on the
+    /// application's import path, so `qml/Lib/Badge.qml` under
+    /// `modules("qml")` is the application's `Lib/Badge.qml`, which
+    /// `import Lib` finds. The user's other files keep their names from
+    /// the user's directory; of two that come to one name, the one among
+    /// the modules is read. For an application whose users already keep
+    /// their modules there.
+    #[must_use]
+    pub fn modules(mut self, dir: impl Into<String>) -> Self {
+        self.modules = Some(dir.into());
+        self
+    }
+
+    /// Whether the directory's `theme.json` is a theme of `Ljos.Design`
+    /// (the default), read at the start and followed while the
+    /// application runs. Without, it is no file of the user's to Ljós:
+    /// for an application that reads a theme of its own there.
+    #[must_use]
+    pub fn theme(mut self, theme: bool) -> Self {
+        self.theme = theme;
         self
     }
 
@@ -498,6 +528,8 @@ impl UserSession {
             dir,
             on_fault,
             watch,
+            modules: _,
+            theme: _,
         } = config;
         let dir = UserDir::new(dir);
         let mut dirs = BTreeSet::new();

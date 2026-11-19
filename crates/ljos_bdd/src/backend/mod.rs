@@ -1034,6 +1034,18 @@ pub trait Application: Backend {
         Err(BackendError::NotImplemented("a user's directory"))
     }
 
+    /// The application keeps its user's modules in `dir`, a directory in
+    /// the user's (`UserQml::modules`); set before it runs.
+    fn user_qml_modules(&mut self, _dir: &str) -> Result<()> {
+        Err(BackendError::NotImplemented("a user's directory"))
+    }
+
+    /// The application reads its user's `theme.json` itself
+    /// (`UserQml::theme(false)`); set before it runs.
+    fn user_qml_own_theme(&mut self) -> Result<()> {
+        Err(BackendError::NotImplemented("a user's directory"))
+    }
+
     /// Runs `entry` of the given files built ahead into a pack that
     /// carries their sources (`sources`; else none), with the user's
     /// directory over them. `built_from`: files the build compiled from

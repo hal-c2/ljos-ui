@@ -35,6 +35,16 @@ fn user_saves_link_out(w: &mut LjosWorld, name: String) -> StepResult {
     w.each(|b| b.application()?.user_qml_link_out(&name))
 }
 
+#[given(regex = r#"^the application keeps its user's modules in "([^"]+)"$"#)]
+fn keeps_modules(w: &mut LjosWorld, dir: String) -> StepResult {
+    w.each(|b| b.application()?.user_qml_modules(&dir))
+}
+
+#[given(regex = r#"^the application reads its user's "theme\.json" itself$"#)]
+fn reads_own_theme(w: &mut LjosWorld) -> StepResult {
+    w.each(|b| b.application()?.user_qml_own_theme())
+}
+
 #[when("the user's directory is removed and made again")]
 fn user_dir_made_again(w: &mut LjosWorld) -> StepResult {
     w.each(|b| b.application()?.user_qml_dir_made_again())

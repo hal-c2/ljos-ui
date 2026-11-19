@@ -1718,6 +1718,16 @@ impl Application for LjosBackend {
         self.live()?.user_qml_dir_made_again()
     }
 
+    fn user_qml_modules(&mut self, dir: &str) -> Result<()> {
+        self.live()?.user()?.modules = Some(dir.to_owned());
+        Ok(())
+    }
+
+    fn user_qml_own_theme(&mut self) -> Result<()> {
+        self.live()?.user()?.own_theme = true;
+        Ok(())
+    }
+
     fn run_with_user_qml(
         &mut self,
         entry: &str,

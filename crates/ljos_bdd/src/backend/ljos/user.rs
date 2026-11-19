@@ -35,6 +35,10 @@ pub(super) struct User {
     dir: tempfile::TempDir,
     /// Where a file outside the user's directory is, removed with it.
     outside: tempfile::TempDir,
+    /// The directory of the user's modules the application names.
+    pub(super) modules: Option<String>,
+    /// Whether the application reads its user's `theme.json` itself.
+    pub(super) own_theme: bool,
 }
 
 impl User {
@@ -51,12 +55,14 @@ impl User {
             told: Rc::default(),
             dir,
             outside,
+            modules: None,
+            own_theme: false,
         })
     }
 }
 
 impl Live {
-    fn user(&mut self) -> Result<&mut User> {
+    pub(super) fn user(&mut self) -> Result<&mut User> {
         if self.user.is_none() {
             self.user = Some(User::new()?);
         }
@@ -129,9 +135,14 @@ impl Live {
         self.user()?;
         let user = self.user.as_mut().expect("made above");
         let told = Rc::clone(&user.told);
-        let config = UserQml::dir(user.dir.path()).on_fault(move |fault| {
-            told.borrow_mut().push(fault.to_string());
-        });
+        let mut config = UserQml::dir(user.dir.path())
+            .theme(!user.own_theme)
+            .on_fault(move |fault| {
+                told.borrow_mut().push(fault.to_string());
+            });
+        if let Some(modules) = &user.modules {
+            config = config.modules(modules);
+        }
         let session = UserSession::start(
             &self.engine,
             pack,
