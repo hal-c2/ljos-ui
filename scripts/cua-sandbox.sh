@@ -7,6 +7,7 @@
 #   cua-sandbox.sh exec <command…>           run any command there (mise run gallery:run <id> …)
 #   cua-sandbox.sh call <tool> [<json>]      a cua-driver tool, on the app start launched
 #   cua-sandbox.sh env                       print the sandbox's sockets and directories as KEY=VALUE lines
+#   cua-sandbox.sh keyboard on|off           give the seat its keyboard, or take it away
 #   cua-sandbox.sh stop
 #
 # start and exec bring up what is not running. call fills in the app's pid, a shared session
@@ -14,6 +15,14 @@
 # (mouse_button_down, mouse_drag, mouse_button_up) through XTEST, with xdotool, as the app
 # does not read the events the driver's own post. Files go under LJOS_CUA_HOME,
 # default <target>/cua.
+#
+# The compositor is headless, and a headless seat has no keyboard. A compositor gives the
+# keyboard focus, and tells a client it has it or has lost it, only on a seat with one, so a
+# window there was never active and never stopped being. The sandbox gives its seat a keyboard
+# before anything runs: a virtual one that types nothing (scripts/seat-keyboard.py, Python's
+# standard library alone). The tools that type (cua-driver, xdotool) go through XWayland's
+# XTEST, not through it. `keyboard off` takes it away again, for what an app does on a seat
+# without one (a kiosk, a tablet), until `keyboard on` gives it back or the sandbox stops.
 #
 # The compositor renders in software (pixman), so its clients do too: Mesa's llvmpipe. With
 # LJOS_CUA_GPU=<render node> (/dev/dri/renderD128) it renders on that GPU and hands its
@@ -130,8 +139,10 @@ start_sway() {
   stop_one app
   stop_one cua
   stop_one registry
+  stop_one keyboard
   mkdir -p "$run" && chmod 700 "$run"
-  rm -f "$home/display" "$home/bus" "$home/sway.raw"
+  # A new sandbox's seat has its keyboard, whatever the last one was told.
+  rm -f "$home/display" "$home/wayland" "$home/bus" "$home/sway.raw" "$home/keyboard.off"
   # The stock session bus listens in /tmp; this one's socket goes with the sandbox's others.
   cat > "$home/bus.config" << EOF
 <!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus Configuration 1.0//EN"
@@ -155,6 +166,7 @@ default_border none
 # Windows keep the size they ask for, as on a desktop that does not tile.
 for_window [all] floating enable
 xwayland enable
+exec printenv WAYLAND_DISPLAY > "$home/wayland"
 exec printenv DISPLAY > "$home/display"
 EOF
   local renderer=(WLR_RENDERER=pixman)
@@ -171,6 +183,84 @@ EOF
   track "$(< "$home/sway.raw")" sway
   wait_for 20 "Xwayland (see $home/sway.log; mise run desktop:cua:stop cleans up)" test -s "$home/display"
   load_sandbox
+}
+
+# The compositor's Wayland and IPC sockets, in $wayland and $sock. A sway that died leaves its
+# sockets behind, so both are the running sway's: the Wayland one by the name it gave its
+# clients, the IPC one by its pid, which sway names it after.
+sockets() {
+  local pid
+  pid=$(pid_of sway) || die "the sandbox is not running: mise run desktop:cua"
+  if [[ -s $home/wayland ]]; then
+    wayland="$run/$(< "$home/wayland")"
+  else
+    # A sandbox started before sway wrote its socket's name down.
+    for wayland in "$run"/wayland-*; do
+      [[ -S $wayland ]] && break
+    done
+  fi
+  sock="$run/sway-ipc.$(id -u).$pid.sock"
+  [[ -S $wayland && -S $sock ]] || die "the sandbox's sway has no sockets in $run"
+}
+
+# The seat has a keyboard: bit 2 of its capabilities (wl_seat's capability enum). 0 it has,
+# 1 it has none, 2 sway did not say, which is neither.
+seat_has_keyboard() {
+  local wayland sock seats caps
+  sockets
+  seats=$(swaymsg -s "$sock" -t get_seats -r) || return 2
+  caps=$(sed -n 's/.*"capabilities": *\([0-9]*\).*/\1/p' <<< "$seats" | head -n 1)
+  [[ $caps =~ ^[0-9]+$ ]] || return 2
+  (((caps & 2) != 0))
+}
+seat_has_no_keyboard() {
+  local status=0
+  seat_has_keyboard || status=$?
+  ((status == 1))
+}
+keyboard_up() {
+  pid_of keyboard > /dev/null || die "the seat's keyboard ended: $(< "$home/keyboard.log")"
+  seat_has_keyboard
+}
+
+start_keyboard() {
+  # Taken away (keyboard off), it stays away when start, exec or call bring the rest up.
+  [[ -e $home/keyboard.off ]] && return
+  if ! pid_of keyboard > /dev/null; then
+    local wayland sock
+    sockets
+    # The client finds the compositor by its socket, as any Wayland client does; the sandbox's
+    # environment leaves Wayland out for the X11 apps it starts.
+    "${sandbox_env[@]}" WAYLAND_DISPLAY="$wayland" setsid python3 -I "$root/scripts/seat-keyboard.py" \
+      > "$home/keyboard.log" 2>&1 < /dev/null &
+    track $! keyboard
+  fi
+  # A helper still running from an earlier start may not have reached the seat yet, so the
+  # seat is asked either way; one that never does is stopped, and the next start replaces it.
+  local deadline=$((SECONDS + 20))
+  until keyboard_up; do
+    if ((SECONDS >= deadline)); then
+      stop_one keyboard
+      die "timed out waiting for the seat's keyboard (see $home/keyboard.log)"
+    fi
+    sleep 0.2
+  done
+}
+
+keyboard() {
+  case ${1:-} in
+    on)
+      rm -f "$home/keyboard.off"
+      up
+      ;;
+    off)
+      pid_of sway > /dev/null || die "the sandbox is not running: mise run desktop:cua"
+      : > "$home/keyboard.off"
+      stop_one keyboard
+      wait_for 20 "the seat to lose its keyboard" seat_has_no_keyboard
+      ;;
+    *) die "usage: cua-sandbox.sh keyboard on|off" ;;
+  esac
 }
 
 start_registry() {
@@ -201,8 +291,10 @@ start_cua() {
 
 up() {
   [[ $(uname -s) == Linux ]] || die "runs on Linux only"
+  command -v python3 > /dev/null || die "needs python3 to give the seat a keyboard (scripts/seat-keyboard.py): install python"
   mkdir -p "$home"
   start_sway
+  start_keyboard
   start_registry
   start_cua
 }
@@ -257,18 +349,12 @@ exec_in() {
 print_env() {
   up
   local wayland sock
-  for wayland in "$run"/wayland-*; do
-    [[ -S $wayland ]] && break
-  done
-  for sock in "$run"/sway-ipc.*.sock; do
-    [[ -S $sock ]] && break
-  done
-  [[ -S $wayland && -S $sock ]] || die "the sandbox's sway has no sockets in $run"
+  sockets
   printf '%s\n' "WAYLAND_DISPLAY=$wayland" "SWAYSOCK=$sock" "DISPLAY=$(< "$home/display")" \
     "DBUS_SESSION_BUS_ADDRESS=$(< "$home/bus")" "XDG_RUNTIME_DIR=$run" \
     "XDG_CONFIG_HOME=$home/xdg/config" "XDG_DATA_HOME=$home/xdg/data" "XDG_STATE_HOME=$home/xdg/state" \
     "XDG_CACHE_HOME=$home/xdg/cache" "HOME=$home/xdg/home" "LJOS_GUARD_HOME=${LJOS_GUARD_HOME:-$HOME}" \
-    "LJOS_SCREEN_READER=${LJOS_SCREEN_READER:-off}"
+    "LJOS_SCREEN_READER=${LJOS_SCREEN_READER:-off}" "LJOS_CUA_HOME=$home"
 }
 
 # Adds "key":value to the json object unless it has the key or the tool does not take it.
@@ -297,10 +383,11 @@ focus_target() {
   focus "$criteria"
 }
 focus() {
-  local sock
-  for sock in "$run"/sway-ipc.*.sock; do
-    [[ -S $sock ]] && break
-  done
+  local pid sock
+  # The running sway's socket, by its pid as in sockets(): a dead sway's would take the
+  # command and focus nothing. Without one there is nothing to focus, which is not an error.
+  pid=$(pid_of sway) || return 0
+  sock="$run/sway-ipc.$(id -u).$pid.sock"
   [[ -S $sock ]] || return 0
   swaymsg -s "$sock" "[$1] focus" > /dev/null 2>&1 || true
 }
@@ -415,14 +502,14 @@ stop_activated() {
 }
 
 stop() {
-  for part in app cua registry sway; do stop_one "$part"; done
+  for part in app cua registry keyboard sway; do stop_one "$part"; done
   [[ -d $run ]] && stop_activated
-  rm -f "$home/display" "$home/bus"
+  rm -f "$home/display" "$home/bus" "$home/keyboard.off"
   rm -rf "$run"
 }
 
 case ${1:-} in
-  start | call | stop)
+  start | call | keyboard | stop)
     verb=$1
     shift
     "$verb" "$@"
@@ -432,5 +519,5 @@ case ${1:-} in
     exec_in "$@"
     ;;
   env) print_env ;;
-  *) die "usage: cua-sandbox.sh start|exec|call|env|stop" ;;
+  *) die "usage: cua-sandbox.sh start|exec|call|env|keyboard|stop" ;;
 esac

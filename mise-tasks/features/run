@@ -97,6 +97,8 @@ if [ -n "$desktop" ]; then
   export LJOS_CUA_HOME="$target/cua-features"
   mkdir -p "$target/features"
   if why=$(scripts/cua-sandbox.sh env 2>&1 > "$target/features/desktop.env"); then
+    # Set before the build, so a build that fails stops the sandbox env started too.
+    trap 'scripts/cua-sandbox.sh stop' EXIT
     # Built once here, outside the test, which then runs this one: a build
     # from inside it would be told the test's package (see testrun.rs).
     if [ -z "${LJOS_BIN:-}" ]; then
@@ -104,8 +106,11 @@ if [ -n "$desktop" ]; then
       export LJOS_BIN="$target/debug/ljos"
     fi
     export LJOS_BDD_DESKTOP="$target/features/desktop.env"
-    trap 'scripts/cua-sandbox.sh stop' EXIT
   else
+    # env can fail after it started sway and its bus (a seat that never
+    # got its keyboard, say). This sandbox is this run's own, so what it
+    # started goes; the scenarios are skipped with env's word on why.
+    scripts/cua-sandbox.sh stop > /dev/null 2>&1 || true
     export LJOS_BDD_DESKTOP_SKIP="${why##*$'\n'}"
   fi
   "${runner[@]}" "${args[@]}"

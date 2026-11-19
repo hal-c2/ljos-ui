@@ -156,6 +156,31 @@ Feature: Editing QML with the authoring tools
         }
         """
 
+    Scenario: An object moved into an empty one stands on a line of its own
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
+
+        Rectangle {
+            Behavior on width {}
+            NumberAnimation { duration: 250 }
+        }
+        """
+      When the agent calls the tool "qml_edit_apply" with:
+        """json
+        {"path": "Main.qml", "write": true, "edit": {"op": "move_object", "object": {"path": "root/1"}, "parent": {"path": "root/0"}, "index": 0}}
+        """
+      Then the file "Main.qml" is:
+        """qml
+        import QtQuick
+
+        Rectangle {
+            Behavior on width {
+                NumberAnimation { duration: 250 }
+            }
+        }
+        """
+
     Scenario: A removed object leaves its neighbours as they were
       Given the file "Main.qml":
         """qml

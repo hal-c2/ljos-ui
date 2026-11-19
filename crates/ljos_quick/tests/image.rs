@@ -1677,12 +1677,16 @@ Item {
     assert_eq!((image.width(), image.height()), (224, 112));
     assert_eq!(image.pixel(10, 10), BLUE);
     // The next frame has nothing to wait for.
-    let t = std::time::Instant::now();
+    let slept = store.frame_sleeps();
     assert_eq!(
         store.wait_for_frame(&e, std::time::Duration::from_secs(30)),
         0
     );
-    assert!(t.elapsed() < std::time::Duration::from_secs(1));
+    assert_eq!(
+        store.frame_sleeps(),
+        slept,
+        "a frame with nothing to wait for slept"
+    );
 }
 
 #[test]

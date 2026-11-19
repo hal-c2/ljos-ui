@@ -343,6 +343,8 @@ struct State {
     fresh: HashSet<ImageKey>,
     /// What later frames have waited for pictures lately.
     later_waits: WaitAllowance,
+    /// Times a frame has slept waiting for a picture.
+    frame_sleeps: u64,
     /// Large local pictures whose decode waits for the frame to be about
     /// to be drawn, so that it is at the size the item is laid out at.
     deferred: Vec<(ObjectId, u64)>,
@@ -434,6 +436,7 @@ impl Default for ImageStore {
                 after_frame: false,
                 fresh: HashSet::new(),
                 later_waits: WaitAllowance::default(),
+                frame_sleeps: 0,
                 deferred: Vec::new(),
                 vectors: HashSet::new(),
                 missing: HashSet::new(),
@@ -727,6 +730,13 @@ impl ImageStore {
         self.state.borrow().decodes
     }
 
+    /// How many times a frame has slept waiting for a picture
+    /// ([`ImageStore::wait_for_frame`]). Whether a frame waited is then
+    /// read from the store, not from a clock that a loaded machine slows.
+    pub fn frame_sleeps(&self) -> u64 {
+        self.state.borrow().frame_sleeps
+    }
+
     /// Background decodes asked for whose result has not been delivered.
     pub fn pending(&self) -> usize {
         self.state.borrow().jobs.len()
@@ -870,6 +880,7 @@ impl ImageStore {
             if left.is_zero() {
                 break;
             }
+            self.state.borrow_mut().frame_sleeps += 1;
             let sent = self
                 .signal
                 .sent
@@ -1779,9 +1790,14 @@ mod tests {
         };
         store.state.borrow_mut().fresh.insert(key.clone());
         store.state.borrow_mut().jobs.insert(key, Vec::new());
-        let t = Instant::now();
         store.wait_for_later_frame(&engine, true);
-        assert!(t.elapsed() < ImageStore::LATER_FRAME_WAIT);
+        // The picture never comes, so a frame given any time would sleep.
+        assert_eq!(store.frame_sleeps(), 0, "the moving frame slept");
+        assert_eq!(
+            store.state.borrow().later_waits.left(Instant::now()),
+            ImageStore::LATER_WAIT_PER_SECOND,
+            "the moving frame spent the later frames' allowance"
+        );
         // Still, nothing is left waiting for the next frame.
         assert!(store.state.borrow().fresh.is_empty());
     }

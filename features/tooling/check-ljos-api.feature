@@ -187,6 +187,107 @@ Feature: Checking the scripts of a file written in Ljós's API
         ljos: 3 errors
         """
 
+    Scenario: A function of another component gives and takes the types it declares
+      Given the file "Helper.qml":
+        """qml
+        import Ljos.Ui
+        Item {
+          function label(n: int): string { return `#${n}` }
+          function size(of: string[]): int { return of.length }
+          function said() { }
+        }
+        """
+      And the file "Main.qml":
+        """qml
+        import Ljos.Ui
+        Item {
+          Helper { id: helper }
+          property real count: helper.size(["a"])
+          Text { text: helper.label(3) + " items" }
+          Text { text: helper.label("3") + helper.said() }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        Main.qml:6:37: error: `n` is a number; this gives it a string [ts-assign-type]
+        Main.qml:6:44: error: `+` needs numbers or a string, and this is an unknown value [ts-assign-type]
+        2 files, 2 errors, 0 warnings
+        ljos: 2 errors
+        """
+
+    Scenario: A type parameter of another component's function is not the type it shares a name with
+      Given the file "Helper.qml":
+        """qml
+        import Ljos.Ui
+        Item {
+          function first<Row>(rows: Row[]): Row { return rows[0] }
+        }
+        """
+      And the file "Main.qml":
+        """qml
+        import Ljos.Ui
+        Item {
+          Helper { id: helper }
+          property string name: helper.first(["a"])
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        2 files, 0 errors, 0 warnings
+        """
+
+    Scenario: A typed rest parameter of another component's function takes only what it declares
+      Given the file "Helper.qml":
+        """qml
+        import Ljos.Ui
+        Item {
+          property real sum: 0
+          function add(...values: real[]) { sum = values.reduce((a, b) => a + b, sum) }
+        }
+        """
+      And the file "Main.qml":
+        """qml
+        import Ljos.Ui
+        Item {
+          Helper { id: helper }
+          function go() { helper.add(1, "2") }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        Main.qml:4:41: error: `rest` is a number; this gives it a string [ts-assign-type]
+        2 files, 1 errors, 0 warnings
+        ljos: 1 errors
+        """
+
+    Scenario: An enum another component's function declares is that enum
+      Given the file "Helper.qml":
+        """qml
+        import Ljos.Ui
+        Item {
+          function centre(): Text.HAlignment { return Text.AlignHCenter }
+        }
+        """
+      And the file "Main.qml":
+        """qml
+        import Ljos.Ui
+        Item {
+          Helper { id: helper }
+          property string wrong: helper.centre()
+          Text { align: helper.centre() }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        Main.qml:4:34: error: `wrong` is a string; this gives it a Text.HAlignment [ts-assign-type]
+        2 files, 1 errors, 0 warnings
+        ljos: 1 errors
+        """
+
     Scenario: Arrays, arrows, templates and object literals are typed
       Given the file "Gauge.qml":
         """qml

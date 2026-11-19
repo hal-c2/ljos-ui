@@ -897,7 +897,7 @@ fn shape_member<T>(shape: &Shape, name: &str) -> Option<Member<T>> {
     if shape.signals.contains_key(name) {
         return Some(Member::Signal);
     }
-    if shape.functions.contains(name) {
+    if shape.functions.contains_key(name) {
         return Some(Member::Method);
     }
     // A property comes with the signal that says it changed.

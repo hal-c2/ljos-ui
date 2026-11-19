@@ -15,7 +15,8 @@ Feature: A window is active on a seat without a keyboard
   one; once one has, the system says which window is active.
 
   Background:
-    Given the QML:
+    Given the seat has no keyboard
+    And the QML:
       """qml
       import QtQuick
       import QtQuick.Controls
@@ -26,9 +27,10 @@ Feature: A window is active on a seat without a keyboard
       }
       """
 
-  # On the desktop surface: `ljos run` on the desktop sandbox's sway, whose
-  # seat has a virtual pointer and no keyboard. The rule lives in the
-  # platform host, which the headless runner does not have.
+  # On the desktop surface: `ljos run` on the desktop sandbox's sway, with
+  # the seat's keyboard taken away for the scenario, so the seat has a
+  # virtual pointer and no keyboard. The rule lives in the platform host,
+  # which the headless runner does not have.
   @api-QtQuick.Window.active
   Scenario: A press makes the window active and gives the field the focus
     When the user presses the pointer at 50, 30

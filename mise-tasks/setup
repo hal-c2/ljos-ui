@@ -79,7 +79,7 @@ need() {
   local tool="$1" why="$2"
   command -v "$tool" > /dev/null || skipped+=("$tool not found: $why")
 }
-need python3 "gallery, gallery:*, ci:changes and bench need it"
+need python3 "gallery, gallery:*, ci:changes and bench need it, and desktop:cua gives its seat a keyboard with it"
 need qml6 "features:parity, gallery:reference, fuzz:qt, lottie --qt and bench's Qt side run Qt 6 (qt6-declarative)"
 need qmltestrunner "qttest:parity compares with Qt's QML test runner (qt6-declarative's test tools)"
 need sway "desktop:cua, gallery:drive, gallery:hot and bench run apps off-screen in a headless sway"

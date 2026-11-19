@@ -95,6 +95,9 @@ pub enum Event {
         id: u64,
         audio: bool,
     },
+    /// What the engine's log is to say of how the backend served the
+    /// page, as why a page's question went on without the view asked.
+    Note(String),
 }
 
 /// Where a page is about to go, as the view is asked about it.

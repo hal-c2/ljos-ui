@@ -434,6 +434,12 @@ pub trait Input: Backend {
 
     fn touch(&mut self, x: f64, y: f64) -> Result<()>;
 
+    /// The seat the application runs on has a keyboard (`present`) or has
+    /// none, from before the application starts.
+    fn seat_keyboard(&mut self, _present: bool) -> Result<()> {
+        Err(BackendError::NotImplemented("a seat without a keyboard"))
+    }
+
     /// Type `text` on the keyboard, one key press per character.
     fn type_text(&mut self, _text: &str) -> Result<()> {
         Err(BackendError::NotImplemented("typing text"))

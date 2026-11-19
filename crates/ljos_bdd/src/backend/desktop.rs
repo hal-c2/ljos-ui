@@ -2,10 +2,12 @@
 //! compositor, with its platform host, off the user's screen.
 //!
 //! The compositor is the desktop sandbox's (`scripts/cua-sandbox.sh`): a
-//! headless sway on its own bus whose seat has a virtual pointer and no
-//! keyboard. The pointer is sway's own (wlr virtual pointer), so input
-//! takes the path a mouse does; what the application holds is read through
-//! its inspector (`--mcp`), over `ljos attach`.
+//! headless sway on its own bus whose seat has a virtual pointer and a
+//! virtual keyboard that types nothing. The pointer is sway's own (wlr
+//! virtual pointer), so input takes the path a mouse does; the keyboard is
+//! there so that the compositor gives the keyboard focus and takes it away,
+//! which another client of it does here. What the application holds is
+//! read through its inspector (`--mcp`), over `ljos attach`.
 //!
 //! Nothing here waits for a while. The compositor and the inspector are
 //! two sockets, so nothing orders a read after the input it follows; the
@@ -18,7 +20,7 @@
 //! `cua-sandbox.sh env` prints them.
 
 use std::collections::{BTreeMap, VecDeque};
-use std::io::{BufRead as _, BufReader, Write as _};
+use std::io::{BufRead as _, BufReader, ErrorKind, Write as _};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::{Arc, Mutex};
@@ -31,8 +33,8 @@ use serde_json::{Value, json};
 
 use super::inspector::{Answer, Ask, Refusal, Seen};
 use super::{
-    A11yNode, Backend, BackendError, Files, LogEntry, LogLevel, PointerStep, Probes, QmlFile,
-    Result, Tooling,
+    A11yNode, Backend, BackendError, Files, Input, LogEntry, LogLevel, PointerStep, Probes,
+    QmlFile, Result, Tooling,
 };
 
 /// Names the file with the sandbox's sockets; set when one runs.
@@ -57,6 +59,9 @@ const CALLS_PER_SECOND: usize = 18;
 /// change before it is taken: the application has presented its last
 /// frame, and the compositor shows it within a frame or two of its own.
 const STILL: Duration = Duration::from_millis(100);
+/// The other client of the compositor, which takes the focus from the
+/// application: a window of its own and nothing in it.
+const OTHER_CLIENT: &str = "import QtQuick\nWindow { width: 120; height: 80; visible: true }\n";
 /// How much of a child's stderr is kept to say why it ended.
 const STDERR_TAIL: usize = 8 * 1024;
 /// How long a picture may take, the window settling included.
@@ -307,6 +312,33 @@ impl Running {
         said
     }
 
+    /// How many frames the UI thread has run and how many times it has
+    /// rested, to wait from with [`Running::turned_after`].
+    fn turns(&mut self) -> Result<(u64, u64)> {
+        let told = self.ask("app_watch", json!({"topics": ["frames", "rests"]}))?;
+        let count = |k: &str| told["counts"][k].as_u64().unwrap_or(0);
+        Ok((count("frames"), count("rests")))
+    }
+
+    /// Waits until the UI thread has run a frame or rested anew since
+    /// `turns`, or until `deadline`: whether it did. A rest is counted
+    /// only when it says something new, and a window told of the focus
+    /// can go back to the same rest it had, so the frame it ran for it
+    /// counts too.
+    fn turned_after(&mut self, (frames, rests): (u64, u64), deadline: Instant) -> Result<bool> {
+        let left = deadline.saturating_duration_since(Instant::now());
+        let wait_ms = u64::try_from(left.as_millis()).unwrap_or(u64::MAX).max(1);
+        let told = self.ask(
+            "app_watch",
+            json!({
+                "since": {"frames": frames, "rests": rests},
+                "topics": ["frames", "rests"], "wait_ms": wait_ms,
+            }),
+        )?;
+        let past = |k: &str, was: u64| told["counts"][k].as_u64().is_some_and(|n| n > was);
+        Ok(past("frames", frames) || past("rests", rests))
+    }
+
     /// The UI thread's last rest (`app_watch`'s `rest`), and the count of
     /// rests to wait from.
     fn rest(&mut self) -> Result<(u64, Value)> {
@@ -416,6 +448,49 @@ pub struct DesktopBackend {
     env: Vec<(String, String)>,
     /// The application is a client of the sandbox's XWayland.
     x11: bool,
+    /// Another client of the compositor, with a window that takes the
+    /// focus from the application's, and the directory of its file, kept
+    /// apart from the scenario's (which may have a file of that name).
+    other: Option<(Reaped, tempfile::TempDir)>,
+    /// The scenario took the seat's keyboard away, and it is given back
+    /// when the scenario ends.
+    keyboard_off: bool,
+}
+
+impl Drop for DesktopBackend {
+    fn drop(&mut self) {
+        // Every later desktop scenario of the run would fail without a
+        // keyboard, far from this cause, so a failed restore says so here.
+        if self.keyboard_off
+            && let Some(sandbox) = &self.sandbox
+            && let Err(err) = sandbox_keyboard(sandbox, true)
+        {
+            eprintln!("[desktop] the seat's keyboard was not given back: {err}");
+        }
+    }
+}
+
+/// Gives the sandbox's seat its keyboard, or takes it away
+/// (`cua-sandbox.sh keyboard on|off`), on the sandbox the description
+/// names (its `LJOS_CUA_HOME`), which is the one the application runs on
+/// whatever this process inherited.
+fn sandbox_keyboard(sandbox: &Sandbox, on: bool) -> Result<()> {
+    let script = crate::runner::workspace_root().join("scripts/cua-sandbox.sh");
+    let told = Command::new(&script)
+        .args(["keyboard", if on { "on" } else { "off" }])
+        .env("LJOS_CUA_HOME", sandbox.path("LJOS_CUA_HOME")?)
+        .stdin(Stdio::null())
+        .output()?;
+    if told.status.success() {
+        Ok(())
+    } else {
+        Err(BackendError::Failed(format!(
+            "{} keyboard {}: {}",
+            script.display(),
+            if on { "on" } else { "off" },
+            String::from_utf8_lossy(&told.stderr).trim_end()
+        )))
+    }
 }
 
 /// Each thread of process `pid` by id: its name, and how many times the
@@ -500,6 +575,7 @@ impl DesktopBackend {
         self.work_from.clear();
         self.observer = None;
         self.running = None;
+        self.other = None;
         let sandbox = match &self.sandbox {
             Some(s) => s,
             None => self.sandbox.insert(Sandbox::from_env()?),
@@ -540,6 +616,12 @@ impl DesktopBackend {
         let token = dir.join(format!("target/ljos/mcp-{pid}.json"));
         let sway = Sway::new(&sandbox.path("SWAYSOCK")?);
         let deadline = Instant::now() + STARTUP;
+        let no_window = || {
+            BackendError::Failed(format!(
+                "ljos run showed no window in {} s",
+                STARTUP.as_secs()
+            ))
+        };
         let rect = loop {
             if let Some(status) = app.try_wait()? {
                 let log = std::fs::read_to_string(
@@ -551,16 +633,13 @@ impl DesktopBackend {
                 )));
             }
             if token.is_file()
-                && let Some(rect) = sway.window_rect(pid)?
+                && let Some(rect) = in_time(sway.window_rect(pid, Some(deadline)), no_window)?
                 && rect.2 > 0
             {
                 break rect;
             }
             if Instant::now() > deadline {
-                return Err(BackendError::Failed(format!(
-                    "ljos run showed no window in {} s",
-                    STARTUP.as_secs()
-                )));
+                return Err(no_window());
             }
             std::thread::sleep(Duration::from_millis(50));
         };
@@ -665,6 +744,71 @@ impl DesktopBackend {
         }
     }
 
+    fn sway(&self) -> Result<Sway> {
+        let socket = self
+            .sandbox
+            .as_ref()
+            .ok_or_else(|| BackendError::Failed("no sandbox".into()))?
+            .path("SWAYSOCK")?;
+        Ok(Sway::new(&socket))
+    }
+
+    /// The process of another client of the compositor with a window up,
+    /// started the first time one is wanted.
+    fn other_client(&mut self) -> Result<u32> {
+        if let Some((other, _)) = &self.other {
+            return Ok(other.id());
+        }
+        let features = crate::runner::target_dir().join("features");
+        std::fs::create_dir_all(&features)?;
+        let own = tempfile::Builder::new()
+            .prefix("desktop-other-")
+            .tempdir_in(features)?;
+        let dir = own.path().to_owned();
+        std::fs::write(dir.join("other-client.qml"), OTHER_CLIENT)?;
+        let sandbox = self
+            .sandbox
+            .as_ref()
+            .ok_or_else(|| BackendError::Failed("no sandbox".into()))?;
+        let log = crate::runner::target_dir().join("features/desktop-other.log");
+        let mut command = Command::new(Self::ljos()?);
+        command
+            .current_dir(&dir)
+            .args(["run", "other-client.qml"])
+            .env_remove("DISPLAY")
+            .env_remove("WAYLAND_DISPLAY")
+            .env_remove("HYPRLAND_INSTANCE_SIGNATURE")
+            .env_remove("AT_SPI_BUS_ADDRESS")
+            .envs(sandbox.env.iter().filter(|(k, _)| *k != "DISPLAY"))
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(std::fs::File::create(&log)?);
+        let mut other = Reaped::spawn(&mut command)?;
+        let pid = other.id();
+        let sway = self.sway()?;
+        let deadline = Instant::now() + STARTUP;
+        let no_window = || {
+            BackendError::Failed(format!(
+                "the other client showed no window in {} s",
+                STARTUP.as_secs()
+            ))
+        };
+        while in_time(sway.window_rect(pid, Some(deadline)), no_window)?.is_none_or(|r| r.2 == 0) {
+            if let Some(status) = other.try_wait()? {
+                let said = std::fs::read_to_string(&log).unwrap_or_default();
+                return Err(BackendError::Failed(format!(
+                    "the other client ended ({status}) before showing its window:\n{said}"
+                )));
+            }
+            if Instant::now() > deadline {
+                return Err(no_window());
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        self.other = Some((other, own));
+        Ok(pid)
+    }
+
     fn pointer_device(&mut self) -> Result<&mut Pointer> {
         if self.pointer.is_none() {
             let display = self
@@ -701,6 +845,15 @@ impl DesktopBackend {
 
 fn not_yet(what: &'static str) -> BackendError {
     BackendError::NotImplemented(what)
+}
+
+/// A compositor's answer that did not come by its deadline is the step's
+/// own `late` failure, not an I/O error.
+fn in_time<T>(answer: std::io::Result<T>, late: impl FnOnce() -> BackendError) -> Result<T> {
+    match answer {
+        Err(e) if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => Err(late()),
+        other => Ok(other?),
+    }
 }
 
 impl Backend for DesktopBackend {
@@ -786,7 +939,7 @@ impl Backend for DesktopBackend {
     fn key(&mut self, _: &str) -> Result<()> {
         Err(BackendError::Unsupported {
             backend: "desktop",
-            what: "keys: the sandbox's seat has no keyboard",
+            what: "keys: the sandbox's seat has a keyboard that types nothing",
         })
     }
 
@@ -893,12 +1046,95 @@ impl Backend for DesktopBackend {
         Some(self)
     }
 
+    fn as_input(&mut self) -> Option<&mut dyn Input> {
+        Some(self)
+    }
+
     fn as_probes(&mut self) -> Option<&mut dyn Probes> {
         Some(self)
     }
 
     fn as_tooling(&mut self) -> Option<&mut dyn Tooling> {
         Some(self)
+    }
+}
+
+impl Input for DesktopBackend {
+    fn key_hold(&mut self, _: &str, _: u32) -> Result<()> {
+        Err(BackendError::Unsupported {
+            backend: "desktop",
+            what: "keys: the sandbox's seat has a keyboard that types nothing",
+        })
+    }
+
+    /// The compositor moves the keyboard focus: to another client's window,
+    /// or back to the application's. What the window makes of it is the
+    /// scenario's to say; this waits only until the compositor has moved
+    /// it and the application has woken for what it was told.
+    fn window_active(&mut self, active: bool) -> Result<()> {
+        let turns = self.running()?.turns()?;
+        let target = if active {
+            self.running()?.app.id()
+        } else {
+            self.other_client()?
+        };
+        let sway = self.sway()?;
+        // One deadline from the command on: a compositor that stops
+        // answering fails the step at it, whether it is the command's reply
+        // or the focus after it that does not come, as one that answers with
+        // another focus does.
+        let deadline = Instant::now() + SEEN;
+        let late = || {
+            BackendError::Failed(format!(
+                "sway did not move the focus to the window of pid {target} in {} s",
+                SEEN.as_secs()
+            ))
+        };
+        let told = in_time(
+            sway.command(&format!("[pid={target}] focus"), Some(deadline)),
+            late,
+        )?;
+        if told[0]["success"] != Value::Bool(true) {
+            return Err(BackendError::Failed(format!(
+                "sway would not focus the window of pid {target}: {told}"
+            )));
+        }
+        while in_time(sway.focused(Some(deadline)), late)? != Some(target) {
+            if Instant::now() >= deadline {
+                return Err(late());
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        // The compositor tells the window in the same turn it moves the
+        // focus. A window it tells nothing does not wake, and the steps
+        // after this say what it missed.
+        self.running()?.turned_after(turns, deadline)?;
+        Ok(())
+    }
+
+    fn touch(&mut self, _: f64, _: f64) -> Result<()> {
+        Err(not_yet("a touch on the desktop"))
+    }
+
+    fn seat_keyboard(&mut self, present: bool) -> Result<()> {
+        if self.running.is_some() {
+            return Err(BackendError::Failed(
+                "the seat's keyboard changes before the application starts, which hears of it once"
+                    .into(),
+            ));
+        }
+        let sandbox = match &self.sandbox {
+            Some(s) => s,
+            None => self.sandbox.insert(Sandbox::from_env()?),
+        };
+        // `keyboard off` can fail after it has taken the keyboard away, so
+        // the keyboard is given back whenever it was asked to go.
+        if !present {
+            self.keyboard_off = true;
+        }
+        sandbox_keyboard(sandbox, present)?;
+        self.keyboard_off = !present;
+        Ok(())
     }
 }
 
