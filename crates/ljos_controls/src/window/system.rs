@@ -339,8 +339,9 @@ impl WindowSystem {
             return;
         };
         // Both sides, the one the platform gives again as it was too: it
-        // is left as it is, but a binding the other side's write moves
-        // can take it away, and then it is given again.
+        // is left as it is, but when it follows its implicit size, which
+        // the other side's write can move, it is given again. One its
+        // author bound goes where their binding takes it.
         let sides = [(Item::WIDTH, size[0]), (Item::HEIGHT, size[1])];
         st.own(|| give_host_size(engine, win, &sides));
     }

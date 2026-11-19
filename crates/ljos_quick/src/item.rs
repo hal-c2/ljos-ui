@@ -419,32 +419,47 @@ pub fn effective_margin(engine: &Engine, obj: ObjectId, side: PropIndex) -> f64 
 
 /// The host gives `obj` the size it has: each of `sides`, a `width` or a
 /// `height` with its value. A side that already is its value is left as
-/// it is, so one its author made stays theirs; any other is written as
-/// the host's ([`WriteKind::Host`]), so a binding the side has stays, and
-/// a side that only follows its implicit size still does. A platform
-/// resize and a root fitted to its window both give a size this way.
+/// it is; any other is written as the host's ([`WriteKind::Host`]), so a
+/// binding the side has stays, and a side that only follows its implicit
+/// size still does. A platform resize and a root fitted to its window
+/// both give a size this way.
 ///
 /// Giving one side can change an implicit size another side follows (a
 /// window with `implicitWidth: height * 2`), and that binding then takes
-/// that side away from its value, whether it was written or left. So
-/// every side is checked again and each that is not its value is given
-/// again, once per side, which settles a side that follows the other.
-/// It all happens in one batch, whose reads pull current values: what
-/// watches the size sees only the size given. Sides that each follow
-/// the other never settle and keep what the last write gave them; a side
-/// a limit holds is given again and held again.
+/// that side away from its value, whether it was written or left. So,
+/// after the first write, the sides that were written and those that
+/// still follow their implicit size are checked again, and each that is
+/// not its value is given again, once per side, which settles a side
+/// that follows the other. A side left as it was and bound by its author
+/// (`height: width * 0.75`) is not: it is theirs, and goes where their
+/// binding takes it, which is the size the window then asks the host
+/// for. It all happens in one batch, whose reads pull current values:
+/// what watches the size sees only the size given. Sides that each
+/// follow the other never settle and keep what the last write gave them;
+/// a side a limit holds is given again and held again.
 pub fn give_host_size(engine: &Engine, obj: ObjectId, sides: &[(Prop<f64>, f64)]) {
     engine.batch(|| {
-        for _ in 0..=sides.len() {
-            let give: Vec<_> = sides
-                .iter()
-                .filter(|(side, v)| engine.untrack(|| engine.get_if(obj, *side)) != Some(*v))
+        let mut written = vec![false; sides.len()];
+        for round in 0..=sides.len() {
+            let give: Vec<_> = (0..sides.len())
+                .filter(|&i| {
+                    let (side, v) = sides[i];
+                    let horizontal = side.index == Item::WIDTH.index;
+                    engine.untrack(|| {
+                        engine.get_if(obj, side) != Some(v)
+                            && (round == 0
+                                || written[i]
+                                || size_follows_implicit(engine, obj, horizontal))
+                    })
+                })
                 .collect();
             if give.is_empty() {
                 break;
             }
-            for (side, v) in give {
-                let _ = engine.write(obj, side.index, Value::Real(*v), WriteKind::Host);
+            for i in give {
+                let (side, v) = sides[i];
+                let _ = engine.write(obj, side.index, Value::Real(v), WriteKind::Host);
+                written[i] = true;
             }
         }
     });
