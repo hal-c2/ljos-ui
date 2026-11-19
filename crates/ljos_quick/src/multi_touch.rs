@@ -241,6 +241,9 @@ struct Finger {
     pos: kurbo::Point,
     /// Where it was before it last moved, taken or not.
     prev: kurbo::Point,
+    /// Where it came down, which the drag threshold is measured from
+    /// even when the point has no start.
+    down: kurbo::Point,
     /// Whether it came down in this event.
     began: bool,
     /// The point it has once a taken event gave it one.
@@ -414,12 +417,30 @@ fn move_point(
     place(engine, area, p, to);
 }
 
-/// Whether the point is further than the drag threshold from where it
+/// Whether the finger is further than the drag threshold from where it
 /// came down, along either axis.
-fn past_threshold(engine: &Engine, p: ObjectId) -> bool {
-    let d = |a, b| (num(engine, p, a) - num(engine, p, b)).abs() > DRAG_THRESHOLD;
-    d(TouchPoint::X.index, TouchPoint::START_X.index)
-        || d(TouchPoint::Y.index, TouchPoint::START_Y.index)
+fn past_threshold(f: &Finger) -> bool {
+    (f.pos.x - f.down.x).abs() > DRAG_THRESHOLD || (f.pos.y - f.down.y).abs() > DRAG_THRESHOLD
+}
+
+/// Lets go of a finger without telling the area: what Qt 6.11 does when
+/// the area is disabled or hidden while the finger is down. Its point is
+/// left pressed.
+pub(crate) fn forget(engine: &Engine, area: ObjectId, who: Who) {
+    let Some(st) = state(engine, area) else {
+        return;
+    };
+    let mut fingers = st.fingers.borrow_mut();
+    let Some(at) = fingers.iter().position(|f| f.who == who) else {
+        return;
+    };
+    let f = fingers.remove(at);
+    if f.point.is_some_and(|p| st.made.borrow().contains(&p)) {
+        st.spare.borrow_mut().extend(f.point);
+    }
+    if fingers.is_empty() {
+        st.grabbed.set(false);
+    }
 }
 
 /// Tells `area` what its pointers did in one event.
@@ -452,6 +473,7 @@ pub(crate) fn deliver(engine: &Engine, area: ObjectId, changes: &[Change]) {
                     who: c.who,
                     pos: c.pos,
                     prev: c.pos,
+                    down: c.pos,
                     began: true,
                     point: None,
                     moved: false,
@@ -516,7 +538,13 @@ pub(crate) fn deliver(engine: &Engine, area: ObjectId, changes: &[Change]) {
                     }
                 }
                 (Some(p), None) => {
-                    if moved {
+                    // A finger can have moved in an event the area did not
+                    // take: the point is where it is before it is told.
+                    let told = kurbo::Point::new(
+                        num(engine, p, TouchPoint::SCENE_X.index),
+                        num(engine, p, TouchPoint::SCENE_Y.index),
+                    );
+                    if moved || told != pos {
                         let dt = now.saturating_since(time).as_secs_f64();
                         move_point(engine, area, p, prev, pos, dt);
                         st.fingers.borrow_mut()[i].time = now;
@@ -553,7 +581,12 @@ pub(crate) fn deliver(engine: &Engine, area: ObjectId, changes: &[Change]) {
         return;
     }
     let down: Vec<ObjectId> = st.fingers.borrow().iter().filter_map(|f| f.point).collect();
-    if !st.grabbed.get() && updated.iter().any(|&p| past_threshold(engine, p)) {
+    let moving = st
+        .fingers
+        .borrow()
+        .iter()
+        .any(|f| f.point.is_some_and(|p| updated.contains(&p)) && past_threshold(f));
+    if !st.grabbed.get() && moving {
         let grabbed = Rc::new(Cell::new(false));
         let gesture = GestureEvent {
             grabbed: grabbed.clone(),

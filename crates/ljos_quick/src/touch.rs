@@ -74,7 +74,17 @@ pub(crate) struct Touches {
     points: Vec<Point>,
     owner: Owner,
     /// Fingers a MultiPointTouchArea has, apart from the two above.
-    areas: Vec<(PointerId, ObjectId)>,
+    areas: Vec<AreaFinger>,
+}
+
+/// A finger a MultiPointTouchArea took when it came down.
+#[derive(Debug, Clone, Copy)]
+struct AreaFinger {
+    id: PointerId,
+    area: ObjectId,
+    /// The area stopped taking touch while the finger was down and let
+    /// go of it: what the finger does next goes nowhere.
+    gone: bool,
 }
 
 impl Touches {
@@ -166,33 +176,52 @@ impl QuickScene {
         let mut areas: Vec<(ObjectId, Vec<multi_touch::Change>)> = Vec::new();
         for ev in events {
             let area = if ev.phase == TouchPhase::Begin {
-                // An area is a pointer item too, for the mouse: look for
-                // it before what takes a press.
+                // The finger goes to the topmost of what the scene would
+                // give a press to; an area is a pointer item too, for the
+                // mouse, so one that does not take touch now is passed by.
                 self.hits(engine, ev.pos)
                     .into_iter()
                     .find(|&o| {
                         multi_touch::takes_touch(engine, o)
-                            || takes_press(engine, o)
+                            || (crate::pointer_item::takes_press(engine, o)
+                                && !is_a::<multi_touch::MultiPointTouchArea>(engine, o))
                             || pinch_area::takes_touch(engine, o)
                     })
                     .filter(|&o| multi_touch::takes_touch(engine, o))
             } else {
-                self.touch
-                    .areas
-                    .iter()
-                    .find(|(id, _)| *id == ev.id)
-                    .map(|&(_, a)| a)
+                let Some(at) = self.touch.areas.iter().position(|f| f.id == ev.id) else {
+                    rest.push(*ev);
+                    continue;
+                };
+                let f = self.touch.areas[at];
+                if matches!(ev.phase, TouchPhase::End | TouchPhase::Cancel) {
+                    self.touch.areas.remove(at);
+                }
+                if f.gone {
+                    continue;
+                }
+                // Qt 6.11: an area that is disabled, hidden or gone while
+                // a finger is down hears no more of it, not even
+                // `canceled`, and what the finger does next goes nowhere.
+                if !multi_touch::takes_touch(engine, f.area) {
+                    if let Some(f) = self.touch.areas.iter_mut().find(|f| f.id == ev.id) {
+                        f.gone = true;
+                    }
+                    multi_touch::forget(engine, f.area, multi_touch::Who::Finger(ev.id));
+                    continue;
+                }
+                Some(f.area)
             };
             let Some(area) = area else {
                 rest.push(*ev);
                 continue;
             };
-            match ev.phase {
-                TouchPhase::Begin => self.touch.areas.push((ev.id, area)),
-                TouchPhase::End | TouchPhase::Cancel => {
-                    self.touch.areas.retain(|(id, _)| *id != ev.id);
-                }
-                TouchPhase::Move => {}
+            if ev.phase == TouchPhase::Begin {
+                self.touch.areas.push(AreaFinger {
+                    id: ev.id,
+                    area,
+                    gone: false,
+                });
             }
             let change = multi_touch::Change {
                 who: multi_touch::Who::Finger(ev.id),
