@@ -496,6 +496,41 @@ fn a_root_fitted_to_one_that_is_gone_keeps_its_own_size() {
 }
 
 #[test]
+fn a_window_whose_implicit_size_follows_its_other_side_is_shown_at_the_window_size() {
+    // Its implicit width is twice its height, or its implicit height twice
+    // its width: giving it one side changes the implicit size of the
+    // other, which it still follows.
+    for (name, follows, of) in [
+        ("implicitWidth", Item::IMPLICIT_WIDTH, Item::HEIGHT),
+        ("implicitHeight", Item::IMPLICIT_HEIGHT, Item::WIDTH),
+    ] {
+        let e = engine_with_windows();
+        let (_host, old) = shown_at_300_by_240(&e);
+        let new = window(&e, None, None);
+        e.bind(new, follows.index, move |e| {
+            (e.get(new, of).unwrap_or(0.0) * 2.0).into()
+        })
+        .unwrap();
+        fit(&e, old, new);
+        assert_eq!(
+            size(&e, new),
+            (300.0, 240.0),
+            "{name} follows the other side"
+        );
+        // Each side is still the one the window gave, so the next fit
+        // takes the size the window has then.
+        e.set(old, Item::WIDTH, 500.0).unwrap();
+        e.set(old, Item::HEIGHT, 400.0).unwrap();
+        fit(&e, old, new);
+        assert_eq!(
+            size(&e, new),
+            (500.0, 400.0),
+            "{name} follows the other side"
+        );
+    }
+}
+
+#[test]
 fn a_window_fitted_again_takes_the_size_the_window_has_then() {
     let e = engine_with_windows();
     let (_host, old) = shown_at_300_by_240(&e);
