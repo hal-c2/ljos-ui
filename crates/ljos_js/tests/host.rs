@@ -1046,6 +1046,33 @@ fn dropped_refs_are_released_on_the_next_run() {
     assert!(after <= before + 2, "before {before}, after {after}");
 }
 
+/// A run can last as long as a test function that waits, where everything
+/// else runs nested inside it: what Rust lets go of meanwhile is freed
+/// there, not only once the outermost run ends.
+#[test]
+fn refs_dropped_inside_a_long_run_are_freed_by_nested_runs() {
+    let host = JsHost::new(JsConfig {
+        memory_limit: Some(16 * 1024 * 1024),
+        ..JsConfig::default()
+    })
+    .unwrap();
+    let slice = host.config().slice;
+    // About 2 MB each, 60 MB in all: over the limit unless freed as it goes.
+    let make =
+        "(() => { const a = []; for (let i = 0; i < 25000; i++) a.push({ i }); return a; })()";
+    host.enter("outer", slice, |s| {
+        for _ in 0..30 {
+            let v: ljos_js::rquickjs::Value = s.eval(make)?;
+            drop(s.keep(v));
+            host.enter("nested", slice, |_| Ok(())).map_err(|e| {
+                ljos_js::rquickjs::Error::new_from_js_message("nested", "run", e.to_string())
+            })?;
+        }
+        Ok(())
+    })
+    .unwrap();
+}
+
 #[test]
 fn global_functions_and_scripts() {
     let host = plain();

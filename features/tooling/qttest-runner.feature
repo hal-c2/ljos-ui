@@ -532,3 +532,45 @@ Feature: Running QML test files
         PASS   : Log::cleanupTestCase()
         Totals: 3 passed, 0 failed, 0 skipped
         """
+
+  Rule: A long test function does not run out of script memory
+
+    # Issue #591: everything a function that waits lets go of was kept until
+    # the function returned, so reopening a page many times filled the heap.
+    Scenario: Objects made and destroyed many times in one function free their script values as it runs
+      Given the file "tst_reopen.qml":
+        """qml
+        import QtQuick
+        import QtTest
+        TestCase {
+          name: "Reopen"
+          Component {
+            id: page
+            QtObject {
+              property var rows: {
+                const a = []
+                for (let i = 0; i < 100000; i++) a.push({ i: i, s: "row " + i })
+                return a
+              }
+            }
+          }
+          function test_reopen_many_times() {
+            for (let n = 0; n < 20; n++) {
+              const p = page.createObject(null)
+              compare(p.rows.length, 100000)
+              wait(0)
+              p.destroy()
+              wait(0)
+            }
+          }
+        }
+        """
+      When the tests are run
+      Then the test report is:
+        """
+        PASS   : Reopen::initTestCase()
+        PASS   : Reopen::test_reopen_many_times()
+        PASS   : Reopen::cleanupTestCase()
+        Totals: 3 passed, 0 failed, 0 skipped
+        """
+      And the test run exits with status 0
