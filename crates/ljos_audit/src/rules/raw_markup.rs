@@ -83,8 +83,7 @@ const HTML: &[&str] = &[
     "var",
 ];
 
-/// A tag in a text: `<name …>` or `<name/>` where it starts a word, or
-/// `</name>`.
+/// A tag in a text: `<name …>`, `<name/>` or `</name>`.
 struct Tag<'a> {
     name: &'a str,
     closing: bool,
@@ -118,8 +117,10 @@ fn tag_end(after: &str) -> Option<usize> {
 }
 
 /// The tags in `text`, in order. Scanning resumes after each tag's `>`,
-/// so what is inside its attributes is never taken for a tag.
-fn tags(text: &str) -> impl Iterator<Item = Tag<'_>> {
+/// so what is inside its attributes is never taken for a tag. In `prose`
+/// an opening tag must start a word: `Vec<String>` in plain text is
+/// words, while rich text parses `e<date>` as a tag all the same.
+fn tags(text: &str, prose: bool) -> impl Iterator<Item = Tag<'_>> {
     let bytes = text.as_bytes();
     let mut from = 0;
     std::iter::from_fn(move || {
@@ -134,7 +135,7 @@ fn tags(text: &str) -> impl Iterator<Item = Tag<'_>> {
             // A closing tag ends the word before it (`Done</b>`); an
             // opening one starts a word (`Vec<String>` is no tag).
             let starts_word = at == 0 || !bytes[at - 1].is_ascii_alphanumeric();
-            if !starts_word && !closing {
+            if prose && !starts_word && !closing {
                 continue;
             }
             let name_len = rest
@@ -145,10 +146,13 @@ fn tags(text: &str) -> impl Iterator<Item = Tag<'_>> {
                 continue;
             }
             let after = &rest[name_len..];
-            let selfclosing = after.starts_with("/>");
-            let closes = after.starts_with('>') || selfclosing;
-            let attrs = after.starts_with(' ')
-                && tag_end(after).is_some_and(|end| after[..end].contains('='));
+            // Any whitespace may part the name from attributes or `/>`
+            // (`<foo />`, `<foo\tid="7">`).
+            let spaced = after.starts_with(|c: char| c.is_ascii_whitespace());
+            let suffix = after.trim_start_matches(|c: char| c.is_ascii_whitespace());
+            let selfclosing = suffix.starts_with("/>");
+            let closes = suffix.starts_with('>') || selfclosing;
+            let attrs = spaced && tag_end(after).is_some_and(|end| after[..end].contains('='));
             if !(closes || attrs) {
                 continue;
             }
@@ -201,14 +205,17 @@ pub(crate) fn shown_markup(text: &str, format: i64) -> Option<String> {
     let first_line = text.split('\n').next().unwrap_or("");
     let rich = format == RICH
         || format == STYLED
-        || (format == AUTO && tags(first_line).next().is_some_and(|t| t.html()));
+        || (format == AUTO && tags(first_line, false).next().is_some_and(|t| t.html()));
     let shown = if rich {
-        tags(text).find(|t| !t.html())
+        tags(text, false).find(|t| !t.html())
     } else {
         // A tag closed somewhere in the text is markup; the closed names
         // are gathered once, and only plain text asks.
-        let closed: Vec<&str> = tags(text).filter(|t| t.closing).map(|t| t.name).collect();
-        tags(text).find(|t| t.html() || t.closing || t.marked || closed.contains(&t.name))
+        let closed: std::collections::HashSet<&str> = tags(text, true)
+            .filter(|t| t.closing)
+            .map(|t| t.name)
+            .collect();
+        tags(text, true).find(|t| t.html() || t.closing || t.marked || closed.contains(&t.name))
     };
     if let Some(tag) = shown {
         return Some(format!("the tag `<{}>`", tag.name));
@@ -264,6 +271,12 @@ mod tests {
         // A tag after one with a quoted attribute is still seen.
         assert!(shown_markup("<a title=\"x > y\" href=\"h\">Help</a> <date>", RICH).is_some());
         assert!(shown_markup("<b>Current</b><date>Previous</date>", RICH).is_some());
+        // Rich text parses a tag right after a letter; only prose spares it.
+        assert!(shown_markup("<b>Value<date></b>", RICH).is_some());
+        // Whitespace of any kind parts a name from `/>` or attributes.
+        assert!(shown_markup("see <foo /> here", 0).is_some());
+        assert!(shown_markup("<foo\tid=\"7\">", 0).is_some());
+        assert!(shown_markup("<foo\n/> here", AUTO).is_some());
     }
 
     #[test]
