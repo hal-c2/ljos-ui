@@ -2,7 +2,9 @@
 #   https://doc.qt.io/qt-6/qtqml-documents-scope.html
 #   https://doc.qt.io/qt-6/qml-qtquick-repeater.html
 #   https://doc.qt.io/qt-6/qml-qtquick-loader.html
-# Verified on Qt 6.11.2 (qml6, offscreen).
+#   https://doc.qt.io/qt-6/qtqml-documents-definetypes.html#inline-components
+#   https://doc.qt.io/qt-6/qtqml-documents-structure.html#componentbehavior
+# Verified on Qt 6.11.2 (qml6, offscreen); the inline component rules on Qt 6.12.0.
 
 @qt-parity
 Feature: Names of the component around
@@ -263,3 +265,77 @@ Feature: Names of the component around
         }
         """
       Then the property "seen" of "root" is "3 1"
+
+  Rule: An inline component finds what it does not have where it is made
+
+    Scenario: A delegate in an inline component reads an id of the file
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: settings
+          objectName: "root"
+          property string foreground: "red"
+          component Choice: Row {
+            Repeater { model: 1; Text { objectName: "choice"; text: settings.foreground } }
+          }
+          Choice { }
+        }
+        """
+      Then the property "text" of "choice" is "red"
+      When the property "foreground" of "root" is set to "blue"
+      Then the property "text" of "choice" is "blue"
+
+    Scenario: An inline component's own property comes before an id of the file
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          component Probe: QtObject {
+            objectName: "probe"
+            property string label: "mine"
+            property string seen: typeof label === "string" ? "property" : "id"
+          }
+          Probe { }
+          Item { id: label }
+        }
+        """
+      Then the property "seen" of "probe" is "property"
+
+    Scenario: Under ComponentBehavior Bound an id of the file comes before the component's own property
+      Given the QML:
+        """qml
+        pragma ComponentBehavior: Bound
+        import QtQuick
+        Item {
+          component Probe: QtObject {
+            objectName: "probe"
+            property string label: "mine"
+            property string seen: typeof label === "string" ? "property" : "id"
+          }
+          Probe { }
+          Item { id: label }
+        }
+        """
+      Then the property "seen" of "probe" is "id"
+
+    Scenario: Under ComponentBehavior Bound the id is the one where the component is made
+      Given the QML:
+        """qml
+        pragma ComponentBehavior: Bound
+        import QtQuick
+        Item {
+          QtObject { id: source; property string name: "root" }
+          component Probe: QtObject { property string seen: source.name }
+          Probe { objectName: "top" }
+          Repeater {
+            model: 1
+            Item {
+              QtObject { id: source; property string name: "row" }
+              Probe { objectName: "inner" }
+            }
+          }
+        }
+        """
+      Then the property "seen" of "top" is "root"
+      And the property "seen" of "inner" is "row"
