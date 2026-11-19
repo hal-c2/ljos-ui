@@ -10,7 +10,7 @@ use std::rc::Rc;
 use ljos_engine::{Engine, LogLevel, ObjectFlags, ObjectId};
 
 use crate::Item;
-use crate::item::{is_item, is_window, size_follows_implicit};
+use crate::item::{give_host_size, is_item, is_window, size_follows_implicit};
 
 /// Why [`replace_root`] refused.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
@@ -565,7 +565,7 @@ pub fn adopt(engine: &Engine, old: ObjectId, new: ObjectId) {
 /// window: it takes the size `old` has.
 pub fn fit(engine: &Engine, old: ObjectId, new: ObjectId) {
     let window = is_window(engine, new);
-    // The sides given to the window as the host's, with what each is.
+    // The sides the window gives, as the host's.
     let mut given = Vec::new();
     engine.batch(|| {
         for (size, horizontal) in [(Item::WIDTH, true), (Item::HEIGHT, false)] {
@@ -578,30 +578,12 @@ pub fn fit(engine: &Engine, old: ObjectId, new: ObjectId) {
             } else if engine.untrack(|| size_follows_implicit(engine, new, horizontal)) {
                 // A size nothing gave the window: it still follows its
                 // implicit size, a binding that is not its author's.
-                // Written as the host's, which leaves that binding in
+                // Given as the host's, which leaves that binding in
                 // place: a window that cannot show the size and offers it
                 // again later fits it to the size it has then.
-                let _ = engine.write_derived(new, size.index, v.into());
                 given.push((size, v));
             }
         }
+        give_host_size(engine, new, &given);
     });
-    // A side whose implicit size follows the other side was taken back by
-    // that binding when the other was given: write it again. Once for
-    // each side settles one following the other; sides that each follow
-    // the other never settle, and keep what the last write gave them.
-    for _ in 0..given.len() {
-        let taken: Vec<_> = given
-            .iter()
-            .filter(|(size, v)| engine.get_if(new, *size) != Some(*v))
-            .collect();
-        if taken.is_empty() {
-            break;
-        }
-        engine.batch(|| {
-            for (size, v) in taken {
-                let _ = engine.write_derived(new, size.index, (*v).into());
-            }
-        });
-    }
 }

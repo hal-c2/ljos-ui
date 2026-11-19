@@ -145,8 +145,8 @@ pub use input::{ScrollPhase, WheelEvent};
 pub use input_method::{InputMethod, set_on_screen_keyboard};
 pub use item::{
     AnchorLine, AnchorProps, Anchors, Edge, Item, ItemLayer, WindowPosition, effective_margin,
-    init_item, is_item, local_transform, map_from_scene, map_to_scene, register_backdrop,
-    register_window_position, register_window_type, scene_transform,
+    give_host_size, init_item, is_item, local_transform, map_from_scene, map_to_scene,
+    register_backdrop, register_window_position, register_window_type, scene_transform,
 };
 pub use item_picture::{ItemPicture, PictureArea, item_picture};
 pub use layer::{
