@@ -331,7 +331,9 @@ struct Node<V> {
     /// Scratch for source diffing: where this node's observer entry sat
     /// before the diff started.
     scratch: u32,
-    /// Stamp of the last frame that recorded a read of this node.
+    /// Stamp of the last frame that recorded a read of this node; 0 once
+    /// that run took the read back. Other runs still going may hold it
+    /// too (`Inner::hidden`).
     read_stamp: u64,
     /// Stamp of the last run whose reads became its sources.
     done_stamp: u64,
@@ -403,6 +405,18 @@ struct Frame {
     reads: Vec<NodeId>,
 }
 
+/// A run still going whose read of `node` another run took over
+/// (`read_stamp` names one run only): a run nested in it read `node` after
+/// it, or another reader was adopted. While the run stamped `by` holds
+/// `read_stamp`, a change of `node` reaches the hidden run too; when it
+/// ends, `node` names the hidden run again ([`unhide`]).
+#[derive(Clone, Copy)]
+struct Hidden {
+    node: NodeId,
+    stamp: u64,
+    by: u64,
+}
+
 struct Inner<V> {
     nodes: Slots<NodeId, Node<V>>,
     /// [`Graph::set_node_data`]'s tags, beside the nodes: few nodes have
@@ -419,6 +433,9 @@ struct Inner<V> {
     /// Qt's handlers nest, and not with the number of waiting roots.
     queues: Vec<Queue>,
     frames: Vec<Frame>,
+    /// The runs still going that another one hid ([`Hidden`]): entries
+    /// only for the runs going, so few, and none once no run is.
+    hidden: SmallVec<[Hidden; 4]>,
     read_pool: Vec<Vec<NodeId>>,
     /// Node lists of disposed scopes, emptied, for the scopes made next: a
     /// view that makes and disposes delegates grows no list after the first.
@@ -898,6 +915,7 @@ impl<V: Clone + 'static> Graph<V> {
                 root,
                 queues: vec![Queue::new()],
                 frames: Vec::new(),
+                hidden: SmallVec::new(),
                 read_pool: Vec::new(),
                 node_lists: Vec::new(),
                 dead_nodes: Vec::new(),
@@ -1705,7 +1723,7 @@ impl<V: Clone + 'static> Graph<V> {
             let node = i.nodes.get_mut(n)?;
             node.value.as_ref()?;
             if node.state == NodeState::Clean {
-                record_read_of(n, node, &mut i.frames, &mut i.stats);
+                record_read_of(n, node, &mut i.frames, &mut i.hidden, &mut i.stats);
                 return node.value.clone();
             }
         }
@@ -1722,7 +1740,7 @@ impl<V: Clone + 'static> Graph<V> {
             let node = i.nodes.get_mut(n)?;
             node.value.as_ref()?;
             if node.state == NodeState::Clean {
-                record_read_of(n, node, &mut i.frames, &mut i.stats);
+                record_read_of(n, node, &mut i.frames, &mut i.hidden, &mut i.stats);
                 return node.value.as_ref().map(f);
             }
         }
@@ -1823,6 +1841,7 @@ impl<V: Clone + 'static> Graph<V> {
 
     #[inline(never)]
     fn leave_untracked(&self) {
+        // An untracked frame reads nothing and so hides nothing.
         self.inner.borrow_mut().frames.pop();
     }
 
@@ -1873,12 +1892,38 @@ impl<V: Clone + 'static> Graph<V> {
         if f.node.is_none() || at >= f.reads.len() {
             return;
         }
-        for n in f.reads.drain(at..) {
-            if let Some(node) = i.nodes.get_mut(n) {
-                // No run has stamp 0: the next read records it again.
+        let stamp = f.stamp;
+        // Out and back in, not copied: the frames are looked at meanwhile.
+        let mut reads = std::mem::take(&mut f.reads);
+        let (kept, taken) = reads.split_at(at);
+        for &n in taken {
+            if let Some(node) = i.nodes.get_mut(n)
+                && node.read_stamp == stamp
+                // Still held through a read it keeps. That takes an outer
+                // run adopted as reading the node while this one held it,
+                // which hid this one: only then is the scan made.
+                && !(i.hidden.iter().any(|h| h.node == n && h.stamp == stamp) && kept.contains(&n))
+            {
+                // The run this one hid is named again, as when this one
+                // ends. Else no run: stamp 0, and the next read records it
+                // again. A stamp an adopted reader took stays its.
                 node.read_stamp = 0;
+                if let Some(k) = i.hidden.iter().rposition(|h| {
+                    h.node == n && h.by == stamp && running(&i.frames, h.stamp).is_some()
+                }) {
+                    node.read_stamp = i.hidden.remove(k).stamp;
+                }
             }
             out.extend([n]);
+        }
+        // Hidden no more: this run no longer holds what it gave back.
+        if !i.hidden.is_empty() {
+            i.hidden
+                .retain(|h| h.stamp != stamp || !taken.contains(&h.node) || kept.contains(&h.node));
+        }
+        reads.truncate(at);
+        if let Some(f) = i.frames.last_mut() {
+            f.reads = reads;
         }
     }
 
@@ -1917,12 +1962,17 @@ impl<V: Clone + 'static> Graph<V> {
             if r.node == n {
                 continue;
             }
-            if let Some(f) = i.frames.iter_mut().rev().find(|f| f.node == Some(r.node))
-                && f.stamp == r.run
+            if let Some(at) = i.frames.iter().rposition(|f| f.node == Some(r.node))
+                && i.frames[at].stamp == r.run
             {
-                if i.nodes[n].read_stamp != r.run {
-                    i.nodes[n].read_stamp = r.run;
-                    f.reads.push(n);
+                let node = &mut i.nodes[n];
+                // Not a run that holds `n` already, named or hidden.
+                if node.read_stamp != r.run
+                    && !i.hidden.iter().any(|h| h.node == n && h.stamp == r.run)
+                {
+                    hide(&mut i.hidden, &i.frames, n, node.read_stamp, r.run);
+                    node.read_stamp = r.run;
+                    i.frames[at].reads.push(n);
                 }
                 continue;
             }
@@ -3850,6 +3900,9 @@ impl<V: Clone + 'static> Graph<V> {
             let i = &mut *g;
             let frame = i.frames.pop();
             debug_assert!(frame.as_ref().is_some_and(|f| f.node == Some(n)));
+            if let Some(f) = &frame {
+                unhide(&mut i.nodes, &mut i.hidden, &i.frames, f.stamp);
+            }
             i.eval_stack.pop();
             let stamp = frame.as_ref().map_or(0, |f| f.stamp);
             let mut reads = frame.map(|f| f.reads).unwrap_or_default();
@@ -3957,14 +4010,24 @@ impl<V: Clone + 'static> Graph<V> {
 const ALWAYS_STALE: u64 = u64::MAX;
 
 /// [`Inner::record_read`] of a node already in hand.
-fn record_read_of<V>(n: NodeId, node: &mut Node<V>, frames: &mut [Frame], stats: &mut Stats) {
-    let Some(frame) = frames.last_mut() else {
+fn record_read_of<V>(
+    n: NodeId,
+    node: &mut Node<V>,
+    frames: &mut [Frame],
+    hidden: &mut SmallVec<[Hidden; 4]>,
+    stats: &mut Stats,
+) {
+    let Some((frame, outer)) = frames.split_last_mut() else {
         return;
     };
     match frame.node {
         None => {}
         Some(owner) if owner == n => node.flags.set(Flags::SELF_READ, true),
         Some(_) if node.read_stamp != frame.stamp => {
+            // A later stamp is a run nested in this one, which has ended.
+            if node.read_stamp < frame.stamp {
+                hide(hidden, outer, n, node.read_stamp, frame.stamp);
+            }
             node.read_stamp = frame.stamp;
             frame.reads.push(n);
             stats.reads += 1;
@@ -4095,14 +4158,133 @@ fn note<V>(noted: &mut Waiting, n: NodeId, node: &mut Node<V>) {
 }
 
 /// Whether a run still going that is not `n`'s own read `n` (last read in
-/// a run stamped `read_stamp`). It has no edge to `n` until it finishes;
-/// `read_stamp` names only the last reader, and none once a run takes its
-/// reads back (`take_reads_since`): a nested run that read `n` leaves an
-/// outer one holding `n` in its reads under another stamp.
+/// a run stamped `read_stamp`). It has no edge to `n` until it finishes.
+/// From the runs' own reads, which say what [`runs_holding`] says, at the
+/// cost of a scan: for a caller that asks once, not for every mark.
 fn read_by_a_run(frames: &[Frame], n: NodeId, read_stamp: u64) -> bool {
     frames
         .iter()
         .any(|f| f.node.is_some_and(|r| r != n) && (f.stamp == read_stamp || f.reads.contains(&n)))
+}
+
+/// The tracked run with stamp `s`, if it is going. Tracked runs start in
+/// stamp order (an untracked frame has 0): a stamp from before the
+/// outermost, as most are, is none at once, and the walk in from the
+/// innermost stops at the first older run.
+fn running(frames: &[Frame], s: u64) -> Option<&Frame> {
+    if s == 0 || s < frames.iter().find(|f| f.node.is_some())?.stamp {
+        return None;
+    }
+    let f = frames
+        .iter()
+        .rev()
+        .filter(|f| f.node.is_some())
+        .find(|f| f.stamp <= s)?;
+    (f.stamp == s).then_some(f)
+}
+
+/// The runs still going, other than `n`'s own, that read `n`, each with
+/// its stamp: the one `read_stamp` names, and those another run hid
+/// ([`Hidden`]). A first read gives no edge to `n` until the run finishes.
+fn runs_holding<'a>(
+    frames: &'a [Frame],
+    hidden: &'a [Hidden],
+    n: NodeId,
+    read_stamp: u64,
+) -> impl Iterator<Item = (NodeId, u64)> + 'a {
+    let hid = hidden
+        .iter()
+        .filter(move |h| h.node == n)
+        .map(|h| (h.stamp, true));
+    std::iter::once((read_stamp, false))
+        .chain(hid)
+        .filter_map(move |(s, was_hidden)| {
+            let f = running(frames, s)?;
+            // The table says no more than the run's own reads do.
+            debug_assert!(!was_hidden || f.reads.contains(&n));
+            Some((f.node.filter(|r| *r != n)?, s))
+        })
+}
+
+/// Puts on `stack`, as `st`, the runs still going that hold `n` (last
+/// read under `stamp`) and that its observers, which `stack` has already,
+/// leave out: one with no edge to it yet, and one another run hid, under
+/// its own stamp.
+fn push_holders(
+    frames: &[Frame],
+    hidden: &[Hidden],
+    n: NodeId,
+    stamp: u64,
+    observers: &[Edge],
+    st: NodeState,
+    stack: &mut Vec<(NodeId, NodeState, u64)>,
+) {
+    for (r, at) in runs_holding(frames, hidden, n, stamp) {
+        if at != stamp || !observers.iter().any(|o| o.node == r) {
+            stack.push((r, st, at));
+        }
+    }
+}
+
+/// `n` was last read under `old` and is now read under `by`: if a run
+/// still going has `old`, it holds `n` and is hidden while `by` does.
+fn hide(hidden: &mut SmallVec<[Hidden; 4]>, frames: &[Frame], n: NodeId, old: u64, by: u64) {
+    if old != by
+        && running(frames, old).is_some()
+        && !hidden.iter().any(|h| h.node == n && h.stamp == old)
+    {
+        hidden.push(Hidden {
+            node: n,
+            stamp: old,
+            by,
+        });
+    }
+}
+
+/// The run stamped `by` ended. What it hid is named again, if that run
+/// is still going and no other run going is named; if one is, it hides
+/// it now. What hid `by` hides nothing any more. An untracked frame hides
+/// nothing.
+fn unhide<V>(
+    nodes: &mut Slots<NodeId, Node<V>>,
+    hidden: &mut SmallVec<[Hidden; 4]>,
+    frames: &[Frame],
+    by: u64,
+) {
+    if by == 0 || hidden.is_empty() {
+        return;
+    }
+    if frames.is_empty() {
+        hidden.clear();
+        return;
+    }
+    let mut k = hidden.len();
+    while k > 0 {
+        k -= 1;
+        let h = hidden[k];
+        // A run that hid nothing more once the run it hid ended.
+        if h.stamp == by {
+            hidden.remove(k);
+            continue;
+        }
+        if h.by != by {
+            continue;
+        }
+        let Some(node) = nodes
+            .get_mut(h.node)
+            .filter(|_| running(frames, h.stamp).is_some())
+        else {
+            hidden.remove(k);
+            continue;
+        };
+        let now = node.read_stamp;
+        if now != h.stamp && running(frames, now).is_some() {
+            hidden[k].by = now;
+        } else {
+            node.read_stamp = h.stamp;
+            hidden.remove(k);
+        }
+    }
 }
 
 /// Lifts ([`lift`]) what of `node` (`n`) waits to be told, its hook or,
@@ -4443,10 +4625,11 @@ impl<V: Clone + 'static> Inner<V> {
         let Inner {
             nodes,
             frames,
+            hidden,
             stats,
             ..
         } = self;
-        record_read_of(n, &mut nodes[n], frames, stats);
+        record_read_of(n, &mut nodes[n], frames, hidden, stats);
     }
 
     /// Stamps the change about to spread, and says what it does to what
@@ -4661,19 +4844,18 @@ impl<V: Clone + 'static> Inner<V> {
             // A run still going that read `n` for the first time has no
             // edge to it yet: a flush nested in that run (a write it
             // made) changed what it read, and only `finish` would have
-            // linked it. It runs again.
-            if stamp != 0
-                && let Some(r) = self
-                    .frames
-                    .iter()
-                    .rev()
-                    .find(|f| f.stamp == stamp)
-                    .and_then(|f| f.node)
-                && r != n
-                && !node.observers.iter().any(|o| o.node == r)
-            {
-                stack.push((r, first, stamp));
-            }
+            // linked it. It runs again. One that another run hid
+            // (`hidden`), edge or none, would keep what it read with
+            // nothing to run it again: it is told under its own stamp.
+            push_holders(
+                &self.frames,
+                &self.hidden,
+                n,
+                stamp,
+                &node.observers,
+                first,
+                &mut stack,
+            );
         }
         // Passed on as it is: every write of a property comes here, most
         // with one observer, and the stack was taken out and put back
@@ -4837,6 +5019,17 @@ impl<V: Clone + 'static> Inner<V> {
                     node.observers
                         .iter()
                         .map(|o| (o.node, NodeState::Check, stamp)),
+                );
+                // A run still going that read it with no edge yet, or that
+                // another run hid, as in `mark_observers`.
+                push_holders(
+                    &self.frames,
+                    &self.hidden,
+                    m,
+                    stamp,
+                    &node.observers,
+                    NodeState::Check,
+                    stack,
                 );
                 true
             };
