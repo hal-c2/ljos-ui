@@ -16,6 +16,13 @@ set -- "$file" "$@"
 mise-tasks/webengine/build >&2
 target="$(target_dir)"
 if [ "$(uname -s)" = Darwin ]; then
+  # A development run is not the application the person trusts with the
+  # login keychain: without this a profile on disk has macOS ask for
+  # their password for "Chromium Safe Storage" (#586).
+  case " ${LJOS_WEBENGINE_CHROMIUM_FLAGS:-} " in
+    *" --use-mock-keychain "* | *" --use-mock-keychain="*) ;;
+    *) export LJOS_WEBENGINE_CHROMIUM_FLAGS="${LJOS_WEBENGINE_CHROMIUM_FLAGS:-} --use-mock-keychain" ;;
+  esac
   # The bundle webengine:build made (see there).
   exec "$target/debug/ljos.app/Contents/MacOS/ljos" run "$@"
 fi
