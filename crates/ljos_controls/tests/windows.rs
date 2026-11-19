@@ -175,6 +175,30 @@ fn the_host_is_told_when_a_window_wants_something_else() {
 }
 
 #[test]
+fn a_window_whose_implicit_size_follows_its_other_side_has_the_size_the_platform_gave() {
+    // Giving it one side changes the implicit size of the other, which it
+    // still follows: it declares no size.
+    for follows in ["implicitWidth: height * 2", "implicitHeight: width * 2"] {
+        let (e, _) = hosted();
+        let main = load(
+            &e,
+            &format!("import QtQuick\nWindow {{ visible: true; {follows} }}\n"),
+        );
+        let sys = WindowSystem::of(&e);
+        for (w, h) in [(320, 240), (500, 400)] {
+            sys.resized(&e, main, [f64::from(w), f64::from(h)]);
+            let shown = (int(&e, main, "width"), int(&e, main, "height"));
+            assert_eq!(shown, (w, h), "{follows}");
+            assert_eq!(
+                sys.spec(&e, main).unwrap().size,
+                [f64::from(w), f64::from(h)],
+                "{follows}"
+            );
+        }
+    }
+}
+
+#[test]
 fn what_the_platform_made_of_a_window_is_what_the_window_says() {
     let (e, _) = hosted();
     let main = load(&e, TWO);

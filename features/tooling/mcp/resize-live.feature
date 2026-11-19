@@ -57,6 +57,29 @@ Feature: An agent resizes the window of a running application
     And the property "height" of "root" is 150
     And the property "width" of "fill" is 300
 
+  # Its width follows an implicit width that follows its height: the
+  # height the platform gives does not take back the width it gave.
+  Scenario: A root window whose implicit width follows its height is told both sides
+    Given the QML:
+      """qml
+      import QtQuick
+      Window {
+        objectName: "root"
+        visible: true
+        implicitWidth: height * 2
+        Rectangle { objectName: "fill"; anchors.fill: parent }
+      }
+      """
+    When the agent calls the tool "app_resize" with:
+      """json
+      {"width": 320, "height": 240}
+      """
+    Then the answer's "/width" is 320
+    And the answer's "/height" is 240
+    And the property "width" of "root" is 320
+    And the property "height" of "root" is 240
+    And the property "width" of "fill" is 320
+
   # The window's own limits make the platform's answer the same on every
   # desktop: the size asked for is past the largest the window may have.
   @api-QtQuick.Window.maximumWidth
