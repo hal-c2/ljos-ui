@@ -143,10 +143,16 @@ impl RootSwaps {
     }
 
     /// The root that stands for `window`, if one does: the root of the
-    /// application still, though a host shows `window` in its place.
+    /// application still, though a host shows `window` in its place. So
+    /// is the root that let go of `window` where its window could not
+    /// show the root, and shows `window` still.
     pub fn holder_of(&self, window: ObjectId) -> Option<ObjectId> {
         let presents = self.presents.borrow();
-        presents.iter().find(|(_, w)| *w == window).map(|(h, _)| *h)
+        if let Some((h, _)) = presents.iter().find(|(_, w)| *w == window) {
+            return Some(*h);
+        }
+        let left = self.left.borrow();
+        left.iter().find(|(_, w)| *w == window).map(|(h, _)| *h)
     }
 
     /// `holder` stands for `window` from now on (None: for nothing, and
@@ -184,9 +190,9 @@ impl RootSwaps {
             }
             current
         };
-        if Some(current) == left {
-            self.left.borrow_mut().retain(|(h, _)| *h != holder);
-        }
+        // A window the holder let go of and the host shows still stays in
+        // `left` until the host shows what replaces it: a replacement
+        // destroyed first leaves it shown, and the holder's again.
         // A window the holder let go of; never the holder itself.
         let let_go = current != holder;
         // The window the holder stood for goes from here only if this is
@@ -253,6 +259,7 @@ impl RootSwaps {
                 adopt(engine, root, swap.new);
             }
             if show(root, swap.new) {
+                self.left.borrow_mut().retain(|(_, w)| *w != root);
                 for r in swap.retire {
                     engine.destroy(r);
                     gone.push(r);
@@ -357,10 +364,7 @@ impl RootSwaps {
         let holder = if self.presented(old).is_some() || self.left_by(old).is_some() {
             Some(old)
         } else {
-            self.holder_of(old).or_else(|| {
-                let left = self.left.borrow();
-                left.iter().find(|(_, w)| *w == old).map(|(h, _)| *h)
-            })
+            self.holder_of(old)
         };
         let face = {
             let mut shown = self.shown.borrow_mut();

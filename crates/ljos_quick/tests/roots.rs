@@ -145,3 +145,32 @@ fn a_root_shown_by_the_host_drops_what_was_asked_for_in_its_place() {
     host.frame(&e);
     assert_eq!(host.root, next);
 }
+
+#[test]
+fn a_shell_that_stays_shown_is_the_loaders_until_what_replaces_it_is_shown() {
+    let e = engine();
+    let (mut host, loader, shell) = loader_showing_its_shell(&e);
+    let swaps = RootSwaps::of(&e);
+    assert!(swaps.present(&e, loader, None));
+    host.frame_showing(&e, false);
+    assert_eq!(host.root, shell);
+    // What looks into the application finds the loader behind the shell.
+    assert_eq!(swaps.holder_of(shell), Some(loader));
+
+    // The loader's next shell goes before the window shows it.
+    let gone = window_of(&e, loader);
+    assert!(!swaps.present(&e, loader, Some(gone)));
+    e.destroy(gone);
+    host.frame(&e);
+    assert_eq!(host.root, shell, "the shell shown stays");
+    assert!(!e.is_going(shell));
+    assert_eq!(swaps.holder_of(shell), Some(loader));
+
+    // The one after takes the window.
+    let next = window_of(&e, loader);
+    assert!(!swaps.present(&e, loader, Some(next)));
+    host.frame(&e);
+    assert_eq!(host.root, next);
+    assert!(e.is_going(shell));
+    assert_eq!(swaps.holder_of(next), Some(loader));
+}
