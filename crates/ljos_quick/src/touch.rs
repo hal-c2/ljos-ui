@@ -13,6 +13,7 @@ use ljos_runtime::Time;
 use crate::handlers::{PinchGesture, PinchPhase};
 use crate::input::{MouseArea, MouseButtons, PointerEvent, PointerId, PointerKind, PointerSource};
 use crate::item::is_a;
+use crate::multi_touch;
 use crate::pinch_area::{self, Fingers};
 use crate::scene::{DRAG_THRESHOLD, QuickScene};
 
@@ -72,6 +73,8 @@ enum Owner {
 pub(crate) struct Touches {
     points: Vec<Point>,
     owner: Owner,
+    /// Fingers a MultiPointTouchArea has, apart from the two above.
+    areas: Vec<(PointerId, ObjectId)>,
 }
 
 impl Touches {
@@ -117,9 +120,9 @@ impl QuickScene {
     /// whether something took them.
     pub fn touch_event(&mut self, engine: &Engine, events: &[TouchEvent]) -> bool {
         let _acting = crate::input::Delivering::begin(engine);
-        let mut handled = false;
+        let (events, mut handled) = self.multi_touch(engine, events);
         let mut moved: Option<(TouchEvent, bool)> = None;
-        for ev in events {
+        for ev in &events {
             if ev.phase != TouchPhase::Move
                 && let Some((m, first)) = moved.take()
             {
@@ -151,7 +154,67 @@ impl QuickScene {
 
     /// Whether a finger is down.
     pub fn touching(&self) -> bool {
-        !self.touch.points.is_empty()
+        !self.touch.points.is_empty() || !self.touch.areas.is_empty()
+    }
+
+    /// Hands the MultiPointTouchAreas the fingers they have, or that come
+    /// down on one before anything else under them takes a press, each
+    /// area all its fingers of the event at once. Returns the events left
+    /// and whether an area took some.
+    fn multi_touch(&mut self, engine: &Engine, events: &[TouchEvent]) -> (Vec<TouchEvent>, bool) {
+        let mut rest = Vec::new();
+        let mut areas: Vec<(ObjectId, Vec<multi_touch::Change>)> = Vec::new();
+        for ev in events {
+            let area = if ev.phase == TouchPhase::Begin {
+                // An area is a pointer item too, for the mouse: look for
+                // it before what takes a press.
+                self.hits(engine, ev.pos)
+                    .into_iter()
+                    .find(|&o| {
+                        multi_touch::takes_touch(engine, o)
+                            || takes_press(engine, o)
+                            || pinch_area::takes_touch(engine, o)
+                    })
+                    .filter(|&o| multi_touch::takes_touch(engine, o))
+            } else {
+                self.touch
+                    .areas
+                    .iter()
+                    .find(|(id, _)| *id == ev.id)
+                    .map(|&(_, a)| a)
+            };
+            let Some(area) = area else {
+                rest.push(*ev);
+                continue;
+            };
+            match ev.phase {
+                TouchPhase::Begin => self.touch.areas.push((ev.id, area)),
+                TouchPhase::End | TouchPhase::Cancel => {
+                    self.touch.areas.retain(|(id, _)| *id != ev.id);
+                }
+                TouchPhase::Move => {}
+            }
+            let change = multi_touch::Change {
+                who: multi_touch::Who::Finger(ev.id),
+                phase: ev.phase,
+                pos: ev.pos,
+                time: ev.time,
+            };
+            match areas.iter_mut().find(|(a, _)| *a == area) {
+                Some((_, changes)) => changes.push(change),
+                None => areas.push((area, vec![change])),
+            }
+        }
+        let taken = !areas.is_empty();
+        if taken {
+            self.note_input();
+        }
+        for (area, changes) in areas {
+            if engine.is_alive(area) {
+                multi_touch::deliver(engine, area, &changes);
+            }
+        }
+        (rest, taken)
     }
 
     fn touch_begin(&mut self, engine: &Engine, ev: &TouchEvent) -> bool {
