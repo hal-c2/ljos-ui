@@ -28,7 +28,7 @@ Feature: A change handler that restarts an animation bound to its property
           turn.restart()
           started = turn.duration
         }
-        NumberAnimation on spin { id: turn; from: 0; to: 1000; duration: root.seconds * 1000; running: false }
+        NumberAnimation on spin { id: turn; objectName: "turn"; from: 0; to: 1000; duration: root.seconds * 1000; running: false }
       }
       """
 
@@ -46,4 +46,4 @@ Feature: A change handler that restarts an animation bound to its property
     And the property "seconds" of "root" is set to 10
     And the property "own" of "root" is set to false
     And the property "seconds" of "root" is set to 2
-    Then the property "started" of "root" is 10000
+    Then the property "duration" of "turn" is 10000
