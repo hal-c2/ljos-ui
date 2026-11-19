@@ -796,11 +796,15 @@ impl<V: Clone + 'static> Drop for SettleGuard<'_, V> {
     }
 }
 
-/// Holds a bound property while a handler of its change runs.
-struct HandlerHold<'g, V: Clone + 'static>(&'g Graph<V>, NodeId);
+/// Holds a bound property while a handler of its change runs, with the
+/// flush level the handler runs on.
+struct HandlerHold<'g, V: Clone + 'static>(&'g Graph<V>, NodeId, Option<LevelGuard<'g, V>>);
 
 impl<V: Clone + 'static> Drop for HandlerHold<'_, V> {
     fn drop(&mut self) {
+        // What waits on the handler's level goes below before the hold
+        // ends, so what the hold works out sees it queued where it runs.
+        drop(self.2.take());
         self.0.end_handler_hold(self.1);
     }
 }
@@ -1415,8 +1419,16 @@ impl<V: Clone + 'static> Graph<V> {
     /// binding asks for, and the size that follows from it). What a type
     /// only makes its property follow ([`Graph::mark_following`]) is no
     /// such binding.
+    ///
+    /// The handler runs on a flush level of its own, so a flush nested in
+    /// it runs only what the handler's writes queued. What waited from
+    /// before, as another handler of the change that made the binding
+    /// update, runs after the handler ends, as Qt sends a signal to its
+    /// handlers one after another: the binding is then no longer held, and
+    /// what that one changes the binding follows.
     fn hold_for_handler(&self, target: NodeId) -> Option<HandlerHold<'_, V>> {
-        let mut i = self.inner.borrow_mut();
+        let mut g = self.inner.borrow_mut();
+        let i = &mut *g;
         let node = i.nodes.get_mut(target)?;
         let held = matches!(&node.kind, Kind::Property(p) if p.is_bound() && !p.top().following);
         if !held || node.flags.has(Flags::SETTLING) {
@@ -1425,7 +1437,9 @@ impl<V: Clone + 'static> Graph<V> {
         node.flags.set(Flags::SETTLING, true);
         node.flags.set(Flags::CAME_BACK, false);
         node.flags.set(Flags::MISSED, false);
-        Some(HandlerHold(self, target))
+        i.queues.push(Queue::new());
+        let level = LevelGuard(self, i.waiting_changes.len(), None);
+        Some(HandlerHold(self, target, Some(level)))
     }
 
     /// Ends the hold [`Graph::hold_for_handler`] took on `n`.
