@@ -466,3 +466,110 @@ Feature: Names of the component around
         }
         """
       Then the property "seen" of "box" is 3
+
+    Scenario: Under ComponentBehavior Bound a read after the function writes its own property sees the write
+      Given the QML:
+        """qml
+        pragma ComponentBehavior: Bound
+        import QtQuick
+        Item {
+          component Probe: QtObject {
+            objectName: "probe"
+            property string label: "mine"
+            property string after: ""
+            function go() {
+              this.label = "written"
+              after = label
+            }
+          }
+          component Other: Item { Item { id: label } }
+          Other { }
+          Probe { }
+        }
+        """
+      When the method "go" of "probe" is called
+      Then the property "after" of "probe" is "written"
+
+    @ljos-only
+    Scenario: Under ComponentBehavior Bound a binding that reads an id where the component is made reads again when the id goes
+      Given the QML:
+        """qml
+        pragma ComponentBehavior: Bound
+        import QtQuick
+        Item {
+          component Probe: QtObject {
+            objectName: "probe"
+            property string source: "mine"
+            property bool present: source !== null
+          }
+          Probe { }
+          Item { id: source; objectName: "source" }
+        }
+        """
+      Then the property "present" of "probe" is true
+      When the object "source" is destroyed
+      Then the property "present" of "probe" is false
+
+    Scenario: Under ComponentBehavior Bound the target of a PropertyChanges is looked for no further out than the file
+      Given the file "Panel.qml":
+        """qml
+        pragma ComponentBehavior: Bound
+        import QtQuick
+        Item {
+          component Box: Item {
+            objectName: "box"
+            property alias seen: holder.seen
+            QtObject { id: holder; property string seen: "none" }
+            state: "on"
+            states: State {
+              name: "on"
+              PropertyChanges { target: holder; seen: typeof seed === "object" && seed !== null ? seed.objectName : "nothing" }
+            }
+          }
+          component Other: Item { Item { id: seed; objectName: "other" } }
+          Other { }
+          Box { }
+        }
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        Item {
+          Item { id: seed; objectName: "outer" }
+          Panel { }
+        }
+        """
+      Then the property "seen" of "box" is "nothing"
+
+    @ljos-only
+    Scenario: Under ComponentBehavior Bound a PropertyChanges reads Ljos.Core's name and not an id of the file that uses the file
+      Given the file "Panel.qml":
+        """qml
+        pragma ComponentBehavior: Bound
+        import Ljos.Ui
+        import Ljos.Core
+        Item {
+          component Box: Item {
+            objectName: "box"
+            property alias seen: holder.seen
+            Item { id: holder; property real seen: -1 }
+            state: "on"
+            states: State {
+              name: "on"
+              PropertyChanges { target: holder; seen: point(3, 4).x }
+            }
+          }
+          component Other: Item { Item { id: point } }
+          Other { }
+          Box { }
+        }
+        """
+      And the QML:
+        """qml
+        import Ljos.Ui
+        Item {
+          Item { id: point }
+          Panel { }
+        }
+        """
+      Then the property "seen" of "box" is 3
