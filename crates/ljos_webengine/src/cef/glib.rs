@@ -184,22 +184,34 @@ impl Glib {
         let now = Instant::now();
         for i in 0..self.contexts.len() {
             let mut left = BURST;
+            // The descriptors still ready after the last check, when it
+            // dispatched nothing.
+            let mut held: Vec<c_int> = Vec::new();
             loop {
                 let (dispatched, timeout) = self.iterate(self.contexts[i]);
                 left -= 1;
-                if !dispatched {
-                    // What is still ready after a check that dispatched
-                    // nothing is a source whose work is not glib's to run:
-                    // Chromium's own task source, which says its tasks are
-                    // due while CEF's work runs them. Waiting on it would
-                    // wake at once, for nothing, for as long as it says so.
-                    wait.fds
-                        .extend(self.fds.iter().filter(|p| p.revents == 0).copied());
-                    if let Ok(ms @ 1..) = u64::try_from(timeout) {
-                        let due = now + Duration::from_millis(ms);
-                        wait.due = Some(wait.due.map_or(due, |d| d.min(due)));
+                if dispatched {
+                    held.clear();
+                } else {
+                    let ready = || self.fds.iter().filter(|p| p.revents != 0);
+                    // A descriptor still ready after two checks running
+                    // that dispatched nothing is a source whose work is
+                    // not glib's to run: Chromium's own task source, which
+                    // says its tasks are due while CEF's work runs them.
+                    // Waiting on it would wake at once, for nothing, for
+                    // as long as it says so. One ready after only one
+                    // check may be the context's wakeup, from another
+                    // thread since that check: the next check reads it.
+                    if ready().all(|p| held.contains(&p.fd)) {
+                        wait.fds
+                            .extend(self.fds.iter().filter(|p| p.revents == 0).copied());
+                        if let Ok(ms @ 1..) = u64::try_from(timeout) {
+                            let due = now + Duration::from_millis(ms);
+                            wait.due = Some(wait.due.map_or(due, |d| d.min(due)));
+                        }
+                        break;
                     }
-                    break;
+                    held = ready().map(|p| p.fd).collect();
                 }
                 if left == 0 {
                     wait.due = Some(now);
@@ -254,6 +266,10 @@ impl Glib {
                 // The check read glib's own wakeup and left it marked
                 // ready: what is ready is asked again, so that a wakeup
                 // read stays waited on.
+                #[cfg(test)]
+                if let Some(between) = tests::BETWEEN.take() {
+                    between();
+                }
                 for p in &mut self.fds {
                     p.revents = 0;
                 }
@@ -364,6 +380,13 @@ mod tests {
 
     static FIRED: AtomicUsize = AtomicUsize::new(0);
 
+    thread_local! {
+        /// Run once on this thread between a check that dispatched
+        /// nothing and the poll after it.
+        pub(super) static BETWEEN: std::cell::Cell<Option<Box<dyn FnOnce()>>> =
+            const { std::cell::Cell::new(None) };
+    }
+
     unsafe extern "C" fn fired(_: *mut c_void) -> c_int {
         FIRED.fetch_add(1, Ordering::SeqCst);
         0
@@ -451,5 +474,145 @@ mod tests {
             wait.block(woken.as_raw_fd()),
             "the second wakeup did not end the wait"
         );
+    }
+    static IDLE: AtomicUsize = AtomicUsize::new(0);
+
+    unsafe extern "C" fn idled(_: *mut c_void) -> c_int {
+        IDLE.fetch_add(1, Ordering::SeqCst);
+        0
+    }
+
+    /// Adds an idle source that runs `callback` to `context`.
+    ///
+    /// # Safety
+    /// `context` is a live context of libcef's glib, which is in the process.
+    unsafe fn add_idle(context: Context, callback: unsafe extern "C" fn(*mut c_void) -> c_int) {
+        type Callback = unsafe extern "C" fn(*mut c_void) -> c_int;
+        // SAFETY: glib's functions, as it documents them; attaching a
+        // source is safe from any thread.
+        unsafe {
+            let new: unsafe extern "C" fn() -> Source = sym(c"g_idle_source_new").unwrap();
+            let set_callback: unsafe extern "C" fn(Source, Callback, *mut c_void, *mut c_void) =
+                sym(c"g_source_set_callback").unwrap();
+            let attach: unsafe extern "C" fn(Source, Context) -> u32 =
+                sym(c"g_source_attach").unwrap();
+            let unref: unsafe extern "C" fn(Source) = sym(c"g_source_unref").unwrap();
+            let source = new();
+            set_callback(source, callback, std::ptr::null_mut(), std::ptr::null_mut());
+            attach(source, context);
+            unref(source);
+        }
+    }
+
+    /// A source another thread adds between a check that dispatched
+    /// nothing and the poll after it wakes the context then: the turn
+    /// reads that wakeup and dispatches the source, rather than taking
+    /// the wakeup for a source that is always ready and waiting without it.
+    #[test]
+    fn a_source_added_just_after_a_check_that_dispatched_nothing_is_dispatched() {
+        // SAFETY: glib's functions, as it documents them, on a context of
+        // this test's own.
+        let (context, wakeup) = unsafe {
+            let new: unsafe extern "C" fn() -> Context = sym(c"g_main_context_new").unwrap();
+            let wakeup: unsafe extern "C" fn(Context) = sym(c"g_main_context_wakeup").unwrap();
+            (new(), wakeup)
+        };
+        let mut glib = Glib::owning(vec![context]).expect("libcef's glib is in the process");
+        // SAFETY: a context glib made, which lives as long as the test.
+        unsafe { wakeup(context) };
+        let added = context as usize;
+        BETWEEN.set(Some(Box::new(move || {
+            // From another thread, as GDBus's worker adds its sources.
+            std::thread::spawn(move || {
+                // SAFETY: as above.
+                unsafe { add_idle(added as Context, idled) };
+            })
+            .join()
+            .unwrap();
+        })));
+        let wait = glib.turn();
+        assert_eq!(
+            IDLE.load(Ordering::SeqCst),
+            1,
+            "the source added was not dispatched"
+        );
+        assert_eq!(wait.due, None, "nothing left to wait for but the wakeup");
+        assert!(!wait.fds.is_empty(), "the wakeup is not waited on");
+    }
+
+    /// A descriptor ready after every check, which no source of the
+    /// context dispatches (Chromium's task source), is left out of the
+    /// wait, so it does not end at once, while the context's wakeup stays.
+    #[test]
+    fn a_descriptor_ready_after_every_check_is_left_out_of_the_wait() {
+        #[repr(C)]
+        struct Funcs {
+            prepare: unsafe extern "C" fn(Source, *mut c_int) -> c_int,
+            check: unsafe extern "C" fn(Source) -> c_int,
+            dispatch: Option<unsafe extern "C" fn(Source, *mut c_void, *mut c_void) -> c_int>,
+            finalize: Option<unsafe extern "C" fn(Source)>,
+            closure_callback: *mut c_void,
+            closure_marshal: *mut c_void,
+        }
+        unsafe extern "C" fn never(_: Source, timeout: *mut c_int) -> c_int {
+            // SAFETY: glib passes a timeout to write.
+            unsafe { *timeout = -1 };
+            0
+        }
+        unsafe extern "C" fn not_ready(_: Source) -> c_int {
+            0
+        }
+        let (stuck, other) = UnixStream::pair().unwrap();
+        (&other).write_all(&[1]).unwrap();
+        let funcs: &'static Funcs = Box::leak(Box::new(Funcs {
+            prepare: never,
+            check: not_ready,
+            dispatch: None,
+            finalize: None,
+            closure_callback: std::ptr::null_mut(),
+            closure_marshal: std::ptr::null_mut(),
+        }));
+        let poll_fd: &'static mut PollFd = Box::leak(Box::new(PollFd {
+            fd: stuck.as_raw_fd(),
+            events: POLLIN,
+            revents: 0,
+        }));
+        // SAFETY: glib's functions, as it documents them, on a context of
+        // this test's own; the source's funcs and descriptor live for good.
+        let context = unsafe {
+            let new: unsafe extern "C" fn() -> Context = sym(c"g_main_context_new").unwrap();
+            let source_new: unsafe extern "C" fn(*const Funcs, u32) -> Source =
+                sym(c"g_source_new").unwrap();
+            let add_poll: unsafe extern "C" fn(Source, *mut PollFd) =
+                sym(c"g_source_add_poll").unwrap();
+            let attach: unsafe extern "C" fn(Source, Context) -> u32 =
+                sym(c"g_source_attach").unwrap();
+            let context = new();
+            // GSource is 96 bytes on 64-bit Linux; a larger size is fine.
+            let source = source_new(funcs, 256);
+            add_poll(source, poll_fd);
+            attach(source, context);
+            context
+        };
+        let mut glib = Glib::owning(vec![context]).expect("libcef's glib is in the process");
+        let wait = glib.turn();
+        assert!(
+            wait.fds.iter().all(|p| p.fd != stuck.as_raw_fd()),
+            "the descriptor ready after every check is waited on"
+        );
+        assert!(
+            !wait.fds.is_empty(),
+            "the context's wakeup is not waited on"
+        );
+        assert_eq!(wait.due, None);
+        let (wake, woken) = UnixStream::pair().unwrap();
+        let started = Instant::now();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(300));
+            let _ = (&wake).write(&[1]);
+        });
+        assert!(!wait.block(woken.as_raw_fd()), "the wait ended at once");
+        assert!(started.elapsed() >= Duration::from_millis(250));
+        drop(stuck);
     }
 }
