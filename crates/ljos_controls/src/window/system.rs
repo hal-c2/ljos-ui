@@ -11,7 +11,7 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use ljos_engine::{Engine, ObjectFlags, ObjectId, Value, WriteKind};
-use ljos_quick::{ColorScheme, Item, Rectangle};
+use ljos_quick::{ColorScheme, Item, Rectangle, give_host_size};
 
 use super::app::{self, Application, ApplicationState, ScreenSpec};
 use super::{Window, state_of};
@@ -338,15 +338,12 @@ impl WindowSystem {
         let Some(st) = state_of(engine, win) else {
             return;
         };
-        st.own(|| {
-            engine.batch(|| {
-                for (prop, v) in [(Item::WIDTH.index, size[0]), (Item::HEIGHT.index, size[1])] {
-                    if engine.untrack(|| engine.read(win, prop)).to_number() != v {
-                        let _ = engine.write(win, prop, Value::Real(v), WriteKind::Host);
-                    }
-                }
-            });
-        });
+        // Both sides, the one the platform gives again as it was too: it
+        // is left as it is, but when it follows its implicit size, which
+        // the other side's write can move, it is given again. One its
+        // author bound goes where their binding takes it.
+        let sides = [(Item::WIDTH, size[0]), (Item::HEIGHT, size[1])];
+        st.own(|| give_host_size(engine, win, &sides));
     }
 
     /// The platform says `win` is at this place now.

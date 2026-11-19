@@ -396,6 +396,25 @@ Feature: A ShellLoader shows a user's shell, or the application's own when the u
       And the property "width" of "other-window" is 200
       And the property "height" of "other-window" is 240
 
+    # Giving it its height changes the implicit width its width follows;
+    # the width stays the window's.
+    Scenario: A Window shell whose implicit width follows its height keeps the size the window has
+      Given the file "Shell.qml":
+        """qml
+        import QtQuick
+        Rectangle { NoSuchThing { } }
+        """
+      And the file "Other.qml":
+        """qml
+        import QtQuick
+        Window { objectName: "other-window"; visible: true; implicitWidth: height * 2 }
+        """
+      When the file "Main.qml" is opened in a window of its own
+      And the property "source" of "loader" is set to "Other.qml"
+      Then the application's windows are "other-window"
+      And the property "width" of "other-window" is 300
+      And the property "height" of "other-window" is 240
+
     Scenario: A Window shell in place of one that is not a Window is shown at the size it declares
       Given the file "Shell.qml":
         """qml

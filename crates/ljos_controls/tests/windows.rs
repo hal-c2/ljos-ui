@@ -175,6 +175,58 @@ fn the_host_is_told_when_a_window_wants_something_else() {
 }
 
 #[test]
+fn a_window_whose_implicit_size_follows_its_other_side_has_the_size_the_platform_gave() {
+    // Giving it one side changes the implicit size of the other, which it
+    // still follows: it declares no size. Between the second and the third
+    // size only the width changes, then only the height: the side the
+    // platform gives again as it was still holds.
+    for follows in ["implicitWidth: height * 2", "implicitHeight: width * 2"] {
+        let (e, _) = hosted();
+        let main = load(
+            &e,
+            &format!("import QtQuick\nWindow {{ visible: true; {follows} }}\n"),
+        );
+        let sys = WindowSystem::of(&e);
+        for (w, h) in [(320, 240), (500, 240), (500, 400), (320, 400)] {
+            sys.resized(&e, main, [f64::from(w), f64::from(h)]);
+            let shown = (int(&e, main, "width"), int(&e, main, "height"));
+            assert_eq!(shown, (w, h), "{follows}");
+            assert_eq!(
+                sys.spec(&e, main).unwrap().size,
+                [f64::from(w), f64::from(h)],
+                "{follows}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_side_its_author_bound_to_the_other_follows_a_resize_of_that_side() {
+    // The platform gives one side again as it was, but the author's
+    // binding moves it with the other: the window wants that size, and
+    // the spec the host reads says so.
+    for (decl, given, wants) in [
+        ("width: 400; height: width * 0.75", (600, 300), (600, 450)),
+        ("height: 300; width: height * 4 / 3", (400, 450), (600, 450)),
+    ] {
+        let (e, _) = hosted();
+        let main = load(
+            &e,
+            &format!("import QtQuick\nWindow {{ visible: true; {decl} }}\n"),
+        );
+        let sys = WindowSystem::of(&e);
+        sys.resized(&e, main, [f64::from(given.0), f64::from(given.1)]);
+        let shown = (int(&e, main, "width"), int(&e, main, "height"));
+        assert_eq!(shown, wants, "{decl}");
+        assert_eq!(
+            sys.spec(&e, main).unwrap().size,
+            [f64::from(wants.0), f64::from(wants.1)],
+            "{decl}"
+        );
+    }
+}
+
+#[test]
 fn what_the_platform_made_of_a_window_is_what_the_window_says() {
     let (e, _) = hosted();
     let main = load(&e, TWO);
