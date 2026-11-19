@@ -549,13 +549,16 @@ pub fn fit(engine: &Engine, old: ObjectId, new: ObjectId) {
     let window = is_window(engine, new);
     engine.batch(|| {
         for size in [Item::WIDTH, Item::HEIGHT] {
-            let v = engine.read(old, size.index);
+            // An `old` that is gone has no size to give.
+            let Some(v) = engine.get_if(old, size) else {
+                continue;
+            };
             if !window {
                 let _ = engine.set(new, size, v);
             } else if !declares(engine, new, size.index) {
                 // Not as its author's: a window that cannot show it and
                 // offers it again later fits it to the size it has then.
-                let _ = engine.write_derived(new, size.index, v);
+                let _ = engine.write_derived(new, size.index, v.into());
             }
         }
     });
