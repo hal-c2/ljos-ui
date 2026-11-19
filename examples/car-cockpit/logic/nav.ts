@@ -56,12 +56,21 @@ function span(a: Spot, b: Spot): number {
     return Math.hypot(b.x - a.x, b.y - a.y)
 }
 
+// The map's scale: metres to one unit of the plane.
+export const metresPerUnit = 4.2
+
 export function length(): number {
     let total = 0
     for (let i = 1; i < route.length; i += 1) {
         total += span(route[i - 1] ?? start, route[i] ?? start)
     }
     return total
+}
+
+// The route's length on the road, in metres: the one length that moves
+// the car along the route and counts what is left of it.
+export function routeMetres(): number {
+    return length() * metresPerUnit
 }
 
 // The route as an SVG path, for a PathSvg.
@@ -134,7 +143,7 @@ export function nextTurn(fraction: number): Turn {
 
 // Metres to the next turn.
 export function metresTo(turn: Turn, fraction: number): number {
-    return Math.max(0, Math.round(((turn.at - fraction) * length() * 4.2) / 10) * 10)
+    return Math.max(0, Math.round(((turn.at - fraction) * routeMetres()) / 10) * 10)
 }
 
 // A short way, as the driver's units count it: metres, or feet up to a

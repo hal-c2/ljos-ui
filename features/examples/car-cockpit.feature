@@ -215,6 +215,23 @@ Feature: The car cockpit example
       And the user clicks the "button" "Navigation"
       Then the object "nextTurn" is exposed as a "label" named "In 0.3 miles, left onto Ember Avenue"
 
+  Rule: The route is as long as the car drives it
+
+    # The route is 5.69 km on the map's scale. One length moves the car
+    # along it and counts what is left, so the distance to go runs out
+    # just as the route starts again.
+    Scenario: Each kilometre driven takes a kilometre off the distance to go
+      When "Main.qml" is loaded
+      And the property "width" of "cockpit" is set to 400
+      And the property "height" of "cockpit" is set to 225
+      And the property "travelled" of "car" is set to 0
+      Then the property "remaining" of "navPanel" is within 0.01 of 5.69
+      When the method "advance" of "car" is called with 1
+      Then the property "remaining" of "navPanel" is within 0.01 of 4.69
+      When the method "advance" of "car" is called with 5
+      Then the property "travelled" of "car" is within 0.001 of 0.055
+      And the property "remaining" of "navPanel" is within 0.01 of 5.38
+
   Rule: Settings change the look and the glow
 
     Background:
