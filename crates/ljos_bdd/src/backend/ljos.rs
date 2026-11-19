@@ -786,7 +786,13 @@ impl Live {
                     let source = compile(&wanted, self.controls_style.as_ref(), self.lowered)?;
                     self.engine.set_component_source(source);
                 }
-                Err(_) if kept && self.engine.last_reload_error().is_some() => {}
+                // The engine runs what it ran: what was given is made
+                // from it again next time, and refused again.
+                Err(_) if kept && self.engine.last_reload_error().is_some() => {
+                    self.engine
+                        .set_qml_text_compiler(Some(text::compiler(&wanted)));
+                    return Ok(());
+                }
                 Err(e) => return Err(e),
             }
             self.engine

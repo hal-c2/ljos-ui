@@ -98,8 +98,13 @@ fn cannot_put_in_window(w: &mut LjosWorld, name: String, old: String) -> StepRes
     })
 }
 
+/// `""` is no names.
 fn list(text: &str) -> Vec<String> {
-    text.split(',').map(|s| s.trim().to_owned()).collect()
+    text.split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned)
+        .collect()
 }
 
 #[when(regex = r#"^the application watches the roots "([^"]+)" for the entries "([^"]+)"$"#)]
