@@ -253,6 +253,10 @@ pub(crate) struct HostState {
     /// Keys of dropped [`JsRef`]s. A mutex because a `JsRef` may be dropped
     /// on any thread; only this host ever drains it.
     handle_release: Arc<Mutex<Vec<u64>>>,
+    /// The buffers a drain works in, kept between drains: nested runs drain
+    /// often, and each would otherwise leave the queue to grow again from
+    /// nothing and collect into a new list.
+    release_spare: RefCell<(Vec<u64>, Vec<Held>)>,
     /// Made by the first colour that crosses; most hosts never see one
     /// before their first QML file does.
     color: RefCell<Option<ColorFace>>,
@@ -355,31 +359,33 @@ impl HostState {
     /// the table first and dropped after the borrow ends, because freeing an
     /// object can run finalisers.
     fn drain_handles(&self) {
-        let keys = match self.handle_release.lock() {
-            Ok(mut q) => std::mem::take(&mut *q),
-            Err(_) => return,
-        };
-        if keys.is_empty() {
-            return;
+        // Taken out, not borrowed, as a finaliser may drain again.
+        let (mut keys, mut freed) = std::mem::take(&mut *self.release_spare.borrow_mut());
+        match self.handle_release.lock() {
+            Ok(mut q) if !q.is_empty() => std::mem::swap(&mut *q, &mut keys),
+            _ => {
+                *self.release_spare.borrow_mut() = (keys, freed);
+                return;
+            }
         }
-        let freed: Vec<_> = {
+        {
             let mut handles = self.handles.borrow_mut();
             let mut by_object = self.by_object.borrow_mut();
-            keys.iter()
-                .filter_map(|k| {
-                    let held = handles.remove(k)?;
-                    // The object may have been given a new reference since
-                    // this one was dropped; that entry stays.
-                    if let Some(at) = held.object
-                        && by_object.get(&at).is_some_and(|(key, _)| key == k)
-                    {
-                        by_object.remove(&at);
-                    }
-                    Some(held)
-                })
-                .collect()
-        };
-        drop(freed);
+            freed.extend(keys.iter().filter_map(|k| {
+                let held = handles.remove(k)?;
+                // The object may have been given a new reference since
+                // this one was dropped; that entry stays.
+                if let Some(at) = held.object
+                    && by_object.get(&at).is_some_and(|(key, _)| key == k)
+                {
+                    by_object.remove(&at);
+                }
+                Some(held)
+            }));
+        }
+        keys.clear();
+        freed.clear();
+        *self.release_spare.borrow_mut() = (keys, freed);
     }
 
     fn host(&self) -> Result<Rc<dyn HostObjects>, rquickjs::Error> {
@@ -1783,6 +1789,7 @@ impl JsHost {
             arrays_by_reference: Cell::new(false),
             next_handle: Cell::new(1),
             handle_release: Arc::default(),
+            release_spare: RefCell::default(),
             color: RefCell::default(),
             kinds: RefCell::default(),
             panicked: RefCell::default(),
@@ -1979,6 +1986,12 @@ impl JsHost {
         // `raw` is the context of this host, alive as long as `self.ctx`.
         // The `Ctx` does not escape `f`, whose lifetime is fresh.
         let ctx = unsafe { Ctx::from_raw(self.raw) };
+        // An outer run can last as long as a test function that waits, with
+        // the whole event loop nested inside it; values let go of meanwhile
+        // would otherwise pile up until it returns and fill the heap. Nothing
+        // here holds the handle tables, and what a caller restored from a
+        // dropped ref is its own reference, so freeing now is safe.
+        self.state.drain_handles();
         let scope = Scope {
             ctx: ctx.clone(),
             state: self.state.clone(),

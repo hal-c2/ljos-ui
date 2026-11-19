@@ -497,6 +497,8 @@ fn ten_plain_items() {
     // `fetch`'s helper is one more object an engine, made when JavaScript
     // starts, as `Qt.inputMethod`'s is: nothing an item pays, but the
     // object table's growth falls elsewhere in the count (192 bytes).
+    // What frees the script values Rust let go of keeps its lists between
+    // runs, which nested runs now do too (#591): six fewer.
     assert_eq!(
         b,
         Budget {
@@ -513,7 +515,7 @@ fn ten_plain_items() {
                 names: 0,
                 atoms: 0,
             },
-            allocations: 671,
+            allocations: 665,
             bytes: 120344,
         }
     );
