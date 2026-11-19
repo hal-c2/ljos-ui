@@ -302,3 +302,67 @@ fn a_shell_whose_next_one_goes_before_the_frame_is_the_loaders_again() {
         assert_eq!(swaps.holder_of(next), Some(loader));
     }
 }
+
+#[test]
+fn a_loader_asked_back_before_the_frame_stands_for_its_window_still() {
+    for can in [true, false] {
+        let e = engine();
+        let (mut host, loader, shell) = loader_showing_its_shell(&e);
+        let swaps = RootSwaps::of(&e);
+        let asked = root(&e);
+        replace_root(&e, loader, asked).unwrap();
+        replace_root(&e, asked, loader).unwrap();
+        assert!(!swaps.is_pending(), "nothing is to change");
+        assert!(e.is_going(asked));
+
+        host.frame_showing(&e, can);
+        assert_eq!(host.root, shell, "can: {can}");
+        assert!(!e.is_going(loader) && !e.is_going(shell), "can: {can}");
+        assert_eq!(swaps.holder_of(shell), Some(loader));
+
+        // The loader is what is replaced next, its shell with it.
+        let next = root(&e);
+        replace_root(&e, loader, next).unwrap();
+        host.frame(&e);
+        assert_eq!(host.root, next, "can: {can}");
+        assert!(e.is_going(loader) && e.is_going(shell), "can: {can}");
+    }
+}
+
+#[test]
+fn a_loader_that_let_go_of_its_shell_keeps_it_until_what_replaces_it_shows() {
+    for can in [true, false] {
+        let e = engine();
+        let (mut host, loader, shell) = loader_showing_its_shell(&e);
+        let swaps = RootSwaps::of(&e);
+        // Its shell is shown, and would go with it.
+        assert_eq!(
+            replace_root(&e, loader, shell),
+            Err(RootError::Shown(shell))
+        );
+        assert!(swaps.present(&e, loader, None));
+        assert_eq!(
+            replace_root(&e, loader, shell),
+            Err(RootError::Owned(shell))
+        );
+        let asked = root(&e);
+        replace_root(&e, loader, asked).unwrap();
+        assert!(!e.is_going(loader) && !e.is_going(shell), "can: {can}");
+
+        host.frame_showing(&e, can);
+        if can {
+            assert_eq!(host.root, asked);
+            assert!(e.is_going(loader) && e.is_going(shell));
+            continue;
+        }
+        assert_eq!(host.root, shell);
+        assert!(!e.is_going(loader) && !e.is_going(shell) && e.is_going(asked));
+        assert_eq!(swaps.holder_of(shell), Some(loader));
+        // The loader's next shell takes the window.
+        let next = window_of(&e, loader);
+        swaps.present(&e, loader, Some(next));
+        host.frame(&e);
+        assert_eq!(host.root, next);
+        assert!(e.is_going(shell));
+    }
+}

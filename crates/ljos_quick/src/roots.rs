@@ -23,6 +23,8 @@ pub enum RootError {
     Shown(ObjectId),
     #[error("{0:?} is not an Item, which a window shows")]
     NotAnItem(ObjectId),
+    #[error("{0:?} belongs to the root it would replace, and would go with it")]
+    Owned(ObjectId),
 }
 
 /// A root a host is to show in place of one it shows.
@@ -385,10 +387,18 @@ impl RootSwaps {
         // one still shown, is shown already: in its own window, that would
         // make it what it replaces, and destroy it once there.
         let stands_for = [self.presented(new), self.left_by(new)];
+        let goes = holder.unwrap_or(old);
         let face = {
             let mut shown = self.shown.borrow_mut();
             if shown.contains(&new) || stands_for.iter().flatten().any(|w| shown.contains(w)) {
                 return Err(RootError::Shown(new));
+            }
+            // A window a loader stands for, its shell, is the loader's:
+            // it would go with what it replaces.
+            if std::iter::successors(engine.owner(new), |o| engine.owner(*o))
+                .any(|o| o == old || o == goes)
+            {
+                return Err(RootError::Owned(new));
             }
             let window = holder.and_then(|h| self.presented(h));
             let left = holder.and_then(|h| self.left_by(h));
@@ -402,15 +412,22 @@ impl RootSwaps {
             // has made the change: a handler may hand the window on at once.
             std::mem::replace(&mut shown[at], new)
         };
-        let goes = holder.unwrap_or(old);
         let mut pending = self.pending.borrow_mut();
+        // `new` is what the window shows still, or the root that stands
+        // for it there.
+        let back = |s: &Swap| {
+            s.old == new || [self.presented(new), self.left_by(new)].contains(&Some(s.old))
+        };
         match pending.iter().position(|s| s.new == face) {
             // `face` never got the window, and `new` is what it was to
-            // replace there: the window shows `new` still, and nothing
-            // is to change but `face` going, with its holder.
-            Some(at) if pending[at].old == new => {
-                pending.remove(at);
+            // replace there: the window shows what it does still, and
+            // nothing is to change but `face` going, with its holder.
+            Some(at) if back(&pending[at]) => {
+                let swap = pending.remove(at);
                 drop(pending);
+                if swap.old != new {
+                    self.restore(new, swap.old);
+                }
                 engine.destroy(face);
                 if let Some(h) = holder.filter(|h| *h != face) {
                     engine.destroy(h);
@@ -420,18 +437,23 @@ impl RootSwaps {
             Some(at) => {
                 let waiting = &mut pending[at];
                 let skipped = std::mem::replace(&mut waiting.new, new);
-                // A holder that never got the window goes now, as what
-                // was skipped does; one whose window was to have it goes
-                // once `new` is shown.
-                if let Some(h) = holder.filter(|h| *h != skipped)
+                // A holder whose window is shown still, as it let go of it
+                // for `skipped`, goes once `new` is shown, and keeps that
+                // window if `new` is not. One that never got the window
+                // goes now, as what was skipped does.
+                let keeps = waiting.let_go_by == Some(skipped);
+                if let Some(h) = holder.filter(|h| *h != skipped || keeps)
                     && !waiting.retire.contains(&h)
                 {
                     waiting.retire.push(h);
                 }
+                waiting.retire.retain(|r| *r != new);
                 waiting.refused = Some(new);
                 waiting.adopt = true;
                 drop(pending);
-                engine.destroy(skipped);
+                if !keeps {
+                    engine.destroy(skipped);
+                }
             }
             None => {
                 pending.push(Swap {
@@ -457,7 +479,8 @@ impl RootSwaps {
 ///
 /// # Errors
 /// `old` or `new` is gone, `new` is not an `Item`, `old` is no root a
-/// window shows, or `new` is shown already.
+/// window shows, `new` is shown already, or `new` is `old`'s (a shell
+/// its loader stands for), which would go with it.
 pub fn replace_root(engine: &Engine, old: ObjectId, new: ObjectId) -> Result<(), RootError> {
     RootSwaps::of(engine).ask(engine, old, new)
 }
