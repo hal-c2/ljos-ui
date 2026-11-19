@@ -82,6 +82,8 @@ pub struct UserSeen {
     pub reloads: u64,
     /// What the application's fault handler was told.
     pub told: Vec<String>,
+    /// The user's directory, as a `file:` URL with no `/` at its end.
+    pub dir: String,
 }
 
 /// Why a changed file was not applied.

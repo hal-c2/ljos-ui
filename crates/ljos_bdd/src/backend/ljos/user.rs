@@ -274,6 +274,9 @@ impl Live {
             watching: session.is_watching(),
             reloads: session.reloads(),
             told: user.told.borrow().clone(),
+            dir: ljos_engine::file_url(user.dir.path())
+                .trim_end_matches('/')
+                .to_owned(),
         })
     }
 }

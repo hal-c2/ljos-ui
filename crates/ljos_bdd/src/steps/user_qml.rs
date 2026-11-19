@@ -132,6 +132,22 @@ fn saves_applied(w: &mut LjosWorld, want: u64) -> StepResult {
     })
 }
 
+/// `<dir>` in the pattern is the user's directory, as a `file:` URL: a
+/// message names a user's file where the user has it, or would.
+#[then(
+    regex = r#"^the log has a warning matching "([^"]+)" with "<dir>" for the user's directory$"#
+)]
+fn log_warning_in_users_dir(w: &mut LjosWorld, pattern: String) -> StepResult {
+    // `seen` takes a `Fn`, as it asks every backend.
+    let dir = std::cell::RefCell::new(String::new());
+    seen(w, |s| {
+        dir.replace(s.dir.clone());
+        Ok(())
+    })?;
+    let pattern = pattern.replace("<dir>", &regex::escape(&dir.into_inner()));
+    super::scene::log_matches(w, &pattern, crate::backend::LogLevel::Warning, true)
+}
+
 #[then(regex = r#"^the application was told of a fault matching "(.+)"$"#)]
 fn told_fault(w: &mut LjosWorld, pattern: String) -> StepResult {
     let re = Regex::new(&pattern).map_err(|e| format!("bad pattern {pattern:?}: {e}"))?;
