@@ -19,6 +19,7 @@ pub mod i18n;
 pub mod ljl;
 pub mod locale;
 pub mod message;
+mod number;
 pub mod plural;
 #[cfg(feature = "po")]
 pub mod po;

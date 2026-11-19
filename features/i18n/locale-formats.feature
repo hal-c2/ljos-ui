@@ -4,7 +4,7 @@
 #   https://doc.qt.io/qt-6/qml-qtqml-number.html
 #   https://doc.qt.io/qt-6/qml-qtqml-qt.html#formatDateTime-method
 #   https://doc.qt.io/qt-6/qlocale.html#toString-13
-# Verified on Qt 6.11.2 (qml6, offscreen).
+# Verified on Qt 6.11.2 (qml6, offscreen); Number.fromLocaleString on Qt 6.12.0.
 # The oracle runs with LANG=en_US.UTF-8 and TZ=UTC, so Qt.locale() is en_US and local time is UTC;
 # the ledger runs Ljós in UTC too. Every date below is made in local time.
 # A locale's own time formats put U+202F (a narrow no-break space) before "AM" and "PM", as
@@ -15,7 +15,8 @@ Feature: Dates, times and numbers written and read the way a locale does
   A locale knows how its language writes a date and a time, long or short. Date.toLocaleDateString,
   toLocaleTimeString and toLocaleString write a date with a locale and either one of its formats
   or a format string; Date.fromLocaleDateString and its family read one back. Number.toLocaleString
-  writes a number with the locale's digits and separators.
+  writes a number with the locale's digits and separators, and Number.fromLocaleString reads one
+  back.
 
   @api-QtQml.Locale.FormatType @api-QtQml.Locale.DayOfWeek @api-QtQml.Locale.MeasurementSystem
   Scenario Outline: The Locale type names its enums
@@ -415,6 +416,157 @@ Feature: Dates, times and numbers written and read the way a locale does
         | Number(1.5).toLocaleString(Qt.locale(), "g")     | 1.5         |
         | Number(12345678).toLocaleString(Qt.locale(), "f", 0) | 12,345,678 |
         | Number(1234.5).toLocaleString(Qt.locale("ar_EG")) | ١٬٢٣٤٫٥٠   |
+
+    @api-QtQml.Number.fromLocaleString
+    Scenario Outline: A number written the way a locale writes it is read back
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          objectName: "root"
+          property string value: {
+            const n = Number.fromLocaleString(<arguments>);
+            return Object.is(n, -0) ? "-0" : String(n);
+          }
+        }
+        """
+      Then the property "value" of "root" is "<value>"
+
+      Examples:
+        | arguments                                  | value    |
+        | Qt.locale(), "7"                           | 7        |
+        | Qt.locale("de_DE"), "1.000"                | 1000     |
+        | Qt.locale("de_DE"), "1.234,56"             | 1234.56  |
+        | Qt.locale("de_DE"), "1234,56"              | 1234.56  |
+        | Qt.locale("de_DE"), "10.000.000"           | 10000000 |
+        | Qt.locale("de_DE"), "-1.000"               | -1000    |
+        | Qt.locale("de_DE"), "+5"                   | 5        |
+        | Qt.locale("de_DE"), ",5"                   | 0.5      |
+        | Qt.locale("de_DE"), "5,"                   | 5        |
+        | Qt.locale("de_DE"), "1,5e3"                | 1500     |
+        | Qt.locale("de_DE"), 12                     | 12       |
+        | "1234.56"                                  | 1234.56  |
+        | "1,234.56"                                 | 1234.56  |
+        | Qt.locale("en_US"), " 1,000.5 "            | 1000.5   |
+        | Qt.locale("en_US"), "1.5E-3"               | 0.0015   |
+        | Qt.locale("en_US"), "1,000.5e3"            | 1000500  |
+        | Qt.locale("en_US"), "0,123"                | 123      |
+        | Qt.locale("en_US"), "-0"                   | -0       |
+        | Qt.locale("en_US"), "007"                  | 7        |
+        | Qt.locale("en_US"), "4e-324"               | 5e-324   |
+        | Qt.locale("en_US"), "inf"                  | Infinity |
+        | Qt.locale("en_US"), "-INF"                 | -Infinity |
+        | Qt.locale("en_US"), "nan"                  | NaN      |
+        | Qt.locale("en_US"), ""                     | NaN      |
+        | Qt.locale("hi_IN"), "1,23,45,678"          | 12345678 |
+        | Qt.locale("hi_IN"), "12,345"               | 12345    |
+        | Qt.locale("es_ES"), "10.000"               | 10000    |
+        | Qt.locale("es_ES"), "1.000.000"            | 1000000  |
+        | Qt.locale("fr_FR"), "1 234,5"              | 1234.5   |
+        | Qt.locale("ar_EG"), "١٬٢٣٤٫٥"              | 1234.5   |
+        | Qt.locale("ar_EG"), "1٢3"                  | 123      |
+        | Qt.locale("C"), "1,000"                    | 1000     |
+
+    @api-QtQml.Number.fromLocaleString @api-QtQml.Number.toLocaleString
+    Scenario Outline: What a locale writes it reads back
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          objectName: "root"
+          readonly property var locale: Qt.locale("<name>")
+          property real value: Number.fromLocaleString(locale, Number(-1234567.25).toLocaleString(locale, "f", 2))
+        }
+        """
+      Then the property "value" of "root" is -1234567.25
+
+      Examples:
+        | name  |
+        | en_US |
+        | de_DE |
+        | fr_FR |
+        | hi_IN |
+        | ar_EG |
+        | fa_IR |
+        | sv_SE |
+        | C     |
+
+    @api-QtQml.Number.fromLocaleString
+    Scenario Outline: A text that is not a number as the locale writes one throws
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          objectName: "root"
+          property string error: {
+            try { Number.fromLocaleString(<arguments>); return "" } catch (e) { return e.message }
+          }
+        }
+        """
+      Then the property "error" of "root" is "Locale: Number.fromLocaleString(): <error>"
+
+      Examples:
+        | arguments                            | error             |
+        | Qt.locale("de_DE"), "abc"            | Invalid format    |
+        | Qt.locale("de_DE"), "1.5"            | Invalid format    |
+        | Qt.locale("de_DE"), "1.23"           | Invalid format    |
+        | Qt.locale("de_DE"), "1.2.3"          | Invalid format    |
+        | Qt.locale("de_DE"), "1,5%"           | Invalid format    |
+        | Qt.locale("de_DE"), null             | Invalid format    |
+        | Qt.locale("de_DE")                   | Invalid format    |
+        | Qt.locale("en_US"), "1,00"           | Invalid format    |
+        | Qt.locale("en_US"), "1,000,"         | Invalid format    |
+        | Qt.locale("en_US"), ",100"           | Invalid format    |
+        | Qt.locale("en_US"), "1234,567"       | Invalid format    |
+        | Qt.locale("en_US"), "1,000.000,5"    | Invalid format    |
+        | Qt.locale("en_US"), "1 000"          | Invalid format    |
+        | Qt.locale("en_US"), "   "            | Invalid format    |
+        | Qt.locale("en_US"), "1e"             | Invalid format    |
+        | Qt.locale("en_US"), "1e400"          | Invalid format    |
+        | Qt.locale("en_US"), "2e-324"         | Invalid format    |
+        | Qt.locale("en_US"), "Infinity"       | Invalid format    |
+        | Qt.locale("en_US"), "-nan"           | Invalid format    |
+        | Qt.locale("en_US"), "++5"            | Invalid format    |
+        | Qt.locale("en_US"), "0x10"           | Invalid format    |
+        | Qt.locale("hi_IN"), "100,000"        | Invalid format    |
+        | Qt.locale("es_ES"), "1.000"          | Invalid format    |
+        | Qt.locale("ar_EG"), "1.5"            | Invalid format    |
+        |                                      | Invalid arguments |
+        | Qt.locale("de_DE"), "1", "2"         | Invalid arguments |
+        | "de_DE", "1,5"                       | Invalid arguments |
+        | ({}), "1"                            | Invalid arguments |
+        | undefined, "2"                       | Invalid arguments |
+
+    @api-QtQml.Number.fromLocaleString @api-QtQml.Number.toLocaleString
+    Scenario Outline: A locale named by something other than a text is the C locale
+      Only no argument at all, or undefined, is the application's locale; null, a number, another
+      locale or an empty name is C, and reads and writes as C does. A String object names its text.
+
+      Given the application starts with the locale environment "LANG=de_DE.UTF-8"
+      And the QML:
+        """qml
+        import QtQuick
+        Item {
+          objectName: "root"
+          readonly property var locale: Qt.locale(<argument>)
+          property string name: locale.name
+          property string read: String(Number.fromLocaleString(locale, "1.000"))
+          property string written: Number(1234.5).toLocaleString(locale, "f", 1)
+        }
+        """
+      Then the property "name" of "root" is "<name>"
+      And the property "read" of "root" is "<read>"
+      And the property "written" of "root" is "<written>"
+
+      Examples:
+        | argument            | name  | read | written |
+        | null                | C     | 1    | 1234.5  |
+        | ""                  | C     | 1    | 1234.5  |
+        | 5                   | C     | 1    | 1234.5  |
+        | Qt.locale("en_US")  | C     | 1    | 1234.5  |
+        | new String("en_US") | en_US | 1    | 1,234.5 |
+        | undefined           | de_DE | 1000 | 1.234,5 |
+        |                     | de_DE | 1000 | 1.234,5 |
 
     @api-QtQml.Number.toLocaleCurrencyString
     Scenario: Without a locale a currency amount is a plain number

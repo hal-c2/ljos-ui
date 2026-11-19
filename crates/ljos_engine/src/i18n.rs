@@ -450,7 +450,7 @@ impl Engine {
             })
         };
         // The prelude below has checked the arguments, with Qt's messages.
-        let functions: [(&str, HostFn); 16] = [
+        let functions: [(&str, HostFn); 17] = [
             (
                 // (message, context, key, "a,b", a, b): the prelude has
                 // made each value a number or a string.
@@ -694,6 +694,16 @@ impl Engine {
                     )))
                 }),
             ),
+            (
+                "__ljos_parseNumber",
+                // (locale, text): the number, or null when the text is none.
+                host(|e, a| {
+                    let info = e.locale_info(locale_arg(a.first()));
+                    Ok(info
+                        .parse_number(string(a.get(1)))
+                        .map_or(JsValue::Null, JsValue::Number))
+                }),
+            ),
         ];
         for (name, f) in functions {
             js.host
@@ -862,6 +872,11 @@ pub(crate) const PRELUDE: &str = r##"
 
   define(Qt, "locale", function locale(name) {
     if (arguments.length > 1) throw new Error("Too many arguments");
+    // Only a missing name, or undefined, is the application's locale and
+    // follows it; a String object names its text, and null, a number or
+    // another locale names none, which is C in qml6.
+    if (name instanceof String) name = String(name);
+    else if (name !== undefined && typeof name !== "string") name = "C";
     const o = hostLocale(name);
     const width = (format) => format === undefined ? LONG : format;
     define(o, "dayName", (d, f) => localeName(name, false, d, width(f), false));
@@ -1012,6 +1027,18 @@ pub(crate) const PRELUDE: &str = r##"
       typeof precision === "number" ? precision : 2);
   };
   define(Number.prototype, "toLocaleString", toLocaleNumber);
+  // Number.fromLocaleString(locale, text), or (text) in the application's
+  // locale. Anything that is not a number as the locale writes one throws,
+  // as in Qt; an empty text is NaN.
+  const parseNumber = g.__ljos_parseNumber;
+  define(Number, "fromLocaleString", function fromLocaleString() {
+    const count = arguments.length;
+    if (count === 0 || count > 2 || (count === 2 && !isLocale(arguments[0])))
+      throw new Error("Locale: Number.fromLocaleString(): Invalid arguments");
+    const read = parseNumber(count === 2 ? nameOf(arguments[0]) : undefined, String(arguments[count - 1]));
+    if (read === null) throw new Error("Locale: Number.fromLocaleString(): Invalid format");
+    return read;
+  });
   // The currency symbol goes before the amount. Without a symbol it is
   // empty: Ljós has no locale's currency yet.
   define(Number.prototype, "toLocaleCurrencyString", function (locale, symbol) {
