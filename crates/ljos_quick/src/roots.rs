@@ -7,10 +7,10 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use ljos_engine::{Engine, LogLevel, ObjectFlags, ObjectId, PropIndex, Provenance};
+use ljos_engine::{Engine, LogLevel, ObjectFlags, ObjectId};
 
 use crate::Item;
-use crate::item::{is_item, is_window};
+use crate::item::{is_item, is_window, size_follows_implicit};
 
 /// Why [`replace_root`] refused.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
@@ -548,27 +548,21 @@ pub fn adopt(engine: &Engine, old: ObjectId, new: ObjectId) {
 pub fn fit(engine: &Engine, old: ObjectId, new: ObjectId) {
     let window = is_window(engine, new);
     engine.batch(|| {
-        for size in [Item::WIDTH, Item::HEIGHT] {
+        for (size, horizontal) in [(Item::WIDTH, true), (Item::HEIGHT, false)] {
             // An `old` that is gone has no size to give.
             let Some(v) = engine.get_if(old, size) else {
                 continue;
             };
             if !window {
                 let _ = engine.set(new, size, v);
-            } else if !declares(engine, new, size.index) {
-                // Not as its author's: a window that cannot show it and
-                // offers it again later fits it to the size it has then.
+            } else if engine.untrack(|| size_follows_implicit(engine, new, horizontal)) {
+                // A size nothing gave the window: it still follows its
+                // implicit size, a binding that is not its author's.
+                // Written as the host's, which leaves that binding in
+                // place: a window that cannot show the size and offers it
+                // again later fits it to the size it has then.
                 let _ = engine.write_derived(new, size.index, v.into());
             }
         }
     });
-}
-
-/// Whether the author of `obj` gave `p` its value: a value, a binding, or
-/// one an animation moves.
-fn declares(engine: &Engine, obj: ObjectId, p: PropIndex) -> bool {
-    matches!(
-        engine.provenance(obj, p),
-        Some(Provenance::Assigned | Provenance::Bound | Provenance::Animated)
-    )
 }
