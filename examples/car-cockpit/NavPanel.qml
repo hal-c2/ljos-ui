@@ -18,6 +18,8 @@ Item {
     readonly property Nav.Turn turn: Nav.nextTurn(panel.car.travelled)
     // How far the turn is, in the driver's units.
     readonly property Nav.Short ahead: Nav.shortDistance(Nav.metresTo(panel.turn, panel.car.travelled), panel.car.miles)
+    // Kilometres left to the route's end.
+    readonly property real remaining: (1 - panel.car.travelled) * Nav.routeMetres() / 1000
     // The map fills the panel's width; the panel shows a band of it that
     // follows the car, so the car stays in sight on a wide, short screen.
     readonly property real fit: panel.width / 1000
@@ -230,7 +232,7 @@ Item {
         fill: panel.theme.raised
         border.color: panel.theme.line
         border.width: 1
-        readonly property real km: (1 - panel.car.travelled) * Nav.length() * 4.2 / 1000
+        readonly property real km: panel.remaining
         Accessible.role: Accessible.StaticText
         Accessible.name: t`${Drive.toUnit(arrival.km, panel.car.miles)} ${panel.car.miles ? "miles" : "kilometres"} to go`
         Text {

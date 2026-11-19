@@ -4,6 +4,7 @@ import "logic/drive.ts" as Drive
 import "logic/car.ts" as Car
 import "logic/media.ts" as Media
 import "logic/climate.ts" as Climate
+import "logic/nav.ts" as Nav
 
 // Everything the car is: what the cluster shows, what the touchscreen
 // changes. The views only read it and call its functions, so a test (or
@@ -50,9 +51,8 @@ Object {
         // second's braking won back: the clock may stop on this tick.
         car.power = car.gear === "P" || next === 0 ? 0 : Drive.power(car.speed, next)
         const km = Drive.distance(next, 1)
-        car.odometer = car.odometer + km
         car.charge = Math.max(0.05, car.charge - (km * Drive.rangeCost(next)) / 520)
-        car.travelled = (car.travelled + km / 9) % 1
+        car.advance(km)
         car.speed = next
         if (car.gear === "D") {
             if (car.legLeft <= 1) {
@@ -62,6 +62,13 @@ Object {
                 car.legLeft = car.legLeft - 1
             }
         }
+    }
+
+    // Moves the car `km` along the road: on the odometer and along the
+    // map's route, which starts again where it ends.
+    function advance(km: real) {
+        car.odometer = car.odometer + km
+        car.travelled = (car.travelled + km * 1000 / Nav.routeMetres()) % 1
     }
 
     // Leaving park closes what is open, so the car never drives off with
