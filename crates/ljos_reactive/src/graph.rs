@@ -2,7 +2,7 @@
 
 use std::cell::RefCell;
 use std::cmp::Reverse;
-use std::collections::{BinaryHeap, HashMap, VecDeque};
+use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
 use std::fmt;
 use std::rc::Rc;
 
@@ -4788,6 +4788,50 @@ impl<V: Clone + 'static> Inner<V> {
         self.lift_stack = stack;
     }
 
+    /// Queues on the innermost flush level the effects behind `from` that
+    /// wait on an outer one: a node a change reached and went no further
+    /// from, as a change before it marked it already. The change is news
+    /// to them all the same, and they run with its flush, as the ones it
+    /// marks do (`propagate`). Left outside, an effect would run after the
+    /// handler whose write reached it, and the handler would read what it
+    /// keeps up to date as it was, where on Qt the write has run it. Only
+    /// what the change would have gone through is gone past, and none of
+    /// it when nothing waits outside.
+    fn pull_in_behind(&mut self, from: NodeId) {
+        let top = self.queues.len() - 1;
+        if self.queues[..top].iter().all(Queue::is_empty) {
+            return;
+        }
+        let all = self.options.eager;
+        let mut stack = std::mem::take(&mut self.lift_stack);
+        let mut gone_past = HashSet::new();
+        stack.push(from);
+        while let Some(n) = stack.pop() {
+            if !gone_past.insert(n) {
+                continue;
+            }
+            let Some(node) = self.nodes.get_mut(n) else {
+                continue;
+            };
+            // A change goes no further than a settling or a running node
+            // either: one drops it, the other runs again and marks what
+            // lies past itself.
+            if node.state == NodeState::Clean
+                || node.state == NodeState::Computing
+                || node.flags.has(Flags::SETTLING)
+            {
+                continue;
+            }
+            // `from` was queued where the change met it.
+            if n != from && node.is_eager(all) && node.flags.has(Flags::QUEUED) {
+                enqueue(&mut self.queues, n, node);
+            }
+            stack.extend(node.observers.iter().map(|o| o.node));
+        }
+        stack.clear();
+        self.lift_stack = stack;
+    }
+
     /// Lets [`Inner::lift_behind`] go past every property again: an own
     /// queue that opens or drops moves the floors, and what lay above the
     /// old ones may lie below the new.
@@ -5053,6 +5097,9 @@ impl<V: Clone + 'static> Inner<V> {
                 }
                 if reach.restamping {
                     self.restamp_behind(m);
+                }
+                if self.queues.len() > 1 {
+                    self.pull_in_behind(m);
                 }
             }
         }

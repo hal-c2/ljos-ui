@@ -337,13 +337,11 @@ Feature: ComboBox
         import QtQuick
         import QtQuick.Controls.Basic
         Item {
-          id: page
-          objectName: "page"
+          id: page; objectName: "page"
           width: 400; height: 400
           property string chosen: "b"
           QtObject {
-            id: source
-            objectName: "source"
+            id: source; objectName: "source"
             property var names: ["a", "b"]
           }
           Connections {
@@ -354,8 +352,7 @@ Feature: ComboBox
             }
           }
           ComboBox {
-            id: c
-            objectName: "c"
+            id: c; objectName: "c"
             model: source.names.map(name => name.toUpperCase())
             currentIndex: source.names.indexOf(page.chosen)
             property string seen: count + " " + currentIndex + " [" + currentText + "]"
