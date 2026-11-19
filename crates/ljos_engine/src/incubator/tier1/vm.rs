@@ -341,7 +341,21 @@ impl Run<'_> {
             Arg::MadeIn { name, fallback, .. } => {
                 match self.e.context_id(inst.context, &inst.file.url, name) {
                     Some(v) => Some(normal(self.e, v)),
-                    None => self.arg(inst, fallback.as_deref()?),
+                    None => match fallback.as_deref()? {
+                        Arg::Context {
+                            component: None,
+                            name,
+                            fallback,
+                        } => match self.e.context_name_within(
+                            inst.context,
+                            Some(&inst.file.url),
+                            name,
+                        ) {
+                            Some(v) => Some(normal(self.e, v)),
+                            None => self.arg(inst, fallback.as_deref()?),
+                        },
+                        f => self.arg(inst, f),
+                    },
                 }
             }
             // Made here if this is the first read.
