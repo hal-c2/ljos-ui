@@ -836,12 +836,12 @@ fn a_value_that_names_a_root_made_later_is_given_once_it_stands() {
 const HOLDER: &str =
     "import QtQuick\nItem {\n  objectName: \"second\"\n  property var other: null\n}\n";
 
+/// What each marked root was replaced by.
+type Told = std::rc::Rc<std::cell::RefCell<std::collections::HashMap<ObjectId, ObjectId>>>;
+
 /// Marks `roots` in that order; what each is replaced by lands in the map.
-fn mark_all(
-    r: &Rig,
-    roots: &[ObjectId],
-) -> std::rc::Rc<std::cell::RefCell<std::collections::HashMap<ObjectId, ObjectId>>> {
-    let told = std::rc::Rc::default();
+fn mark_all(r: &Rig, roots: &[ObjectId]) -> Told {
+    let told = Told::default();
     for w in roots {
         let heard = std::rc::Rc::clone(&told);
         r.h.engine
