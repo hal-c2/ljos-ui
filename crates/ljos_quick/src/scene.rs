@@ -1932,6 +1932,7 @@ impl QuickScene {
         // 4. Deferred deletes.
         engine.process_deferred_deletes();
         self.sweep_dead(engine);
+        self.let_go_of_lost_areas(engine);
         // Focus asked for while objects were being made.
         crate::focus::tree::settle(engine);
         self.sync_layer(engine);

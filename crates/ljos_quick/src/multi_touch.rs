@@ -250,7 +250,11 @@ struct Finger {
     point: Option<ObjectId>,
     moved: bool,
     ended: Option<crate::touch::TouchPhase>,
+    /// When its point was last told.
     time: Time,
+    /// When it last came in an event, taken or not: a point catching up
+    /// on a move the area did not take moved at that move's time.
+    seen: Time,
 }
 
 #[derive(Debug, Default)]
@@ -464,6 +468,7 @@ pub(crate) fn deliver(engine: &Engine, area: ObjectId, changes: &[Change]) {
                         f.prev = f.pos;
                     }
                     f.pos = c.pos;
+                    f.seen = c.time;
                     if matches!(c.phase, TouchPhase::End | TouchPhase::Cancel) {
                         f.ended = Some(c.phase);
                     }
@@ -479,6 +484,7 @@ pub(crate) fn deliver(engine: &Engine, area: ObjectId, changes: &[Change]) {
                     moved: false,
                     ended: None,
                     time: c.time,
+                    seen: c.time,
                 }),
                 None => {}
             }
@@ -502,14 +508,12 @@ pub(crate) fn deliver(engine: &Engine, area: ObjectId, changes: &[Change]) {
     if taken {
         let n = st.fingers.borrow().len();
         for i in 0..n {
-            let (point, ended, moved, pos, prev, time, who) = {
+            let (point, ended, moved, pos, prev, time, now, who) = {
                 let f = &st.fingers.borrow()[i];
-                (f.point, f.ended, f.moved, f.pos, f.prev, f.time, f.who)
+                (
+                    f.point, f.ended, f.moved, f.pos, f.prev, f.time, f.seen, f.who,
+                )
             };
-            let now = changes
-                .iter()
-                .find(|c| c.who == who)
-                .map_or(time, |c| c.time);
             match (point, ended) {
                 (Some(p), Some(phase)) => {
                     let dt = now.saturating_since(time).as_secs_f64();

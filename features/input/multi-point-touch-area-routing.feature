@@ -9,7 +9,8 @@ Feature: A finger goes to a MultiPointTouchArea only when nothing above it takes
   MultiPointTouchArea, or what takes a press, such as a MouseArea or a
   TapHandler that grabs the point. An area that is disabled lets fingers
   through, and one disabled while a finger is down hears no more of it,
-  not even `canceled`.
+  not even `canceled`; one disabled after it was given a finger but
+  before it was told keeps it.
 
   Background:
     Given the QML:
@@ -69,3 +70,11 @@ Feature: A finger goes to a MultiPointTouchArea only when nothing above it takes
       0 at 270, 150
       """
     Then the property "log" of "root" is "P stop "
+
+  Scenario: An area disabled by another just before it is told of a finger keeps it
+    When the user's fingers go through these positions:
+      """
+      0 at 350, 50; 1 at 250, 150
+      0 at 350, 50; 1 at 260, 150
+      """
+    Then the property "log" of "root" is "stop P R "

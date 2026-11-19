@@ -255,3 +255,80 @@ fn two_fingers_turn_a_pinch_handler_clockwise() {
     // A finger 50 px out goes 10 px down past 11.5°: from 15° to 90°.
     assert!((num(&e, h, "persistentRotation") - 75.0).abs() < 1e-9);
 }
+
+fn timed(id: u64, phase: TouchPhase, x: f64, ms: u64) -> TouchEvent {
+    TouchEvent {
+        time: Time::from_millis(ms),
+        ..point(id, phase, x, 50.0)
+    }
+}
+
+const TOUCH_AREA: &str = r#"
+import QtQuick
+Item {
+    width: 300; height: 100
+    property string log: ""
+    property real vx: first.velocity.x
+    MultiPointTouchArea {
+        objectName: "area"
+        anchors.fill: parent
+        maximumTouchPoints: 2
+        touchPoints: [ TouchPoint { id: first } ]
+        onPressed: (p) => parent.log += "P" + p.length + " "
+        onReleased: (p) => parent.log += "R" + p.length + " "
+        onCanceled: (p) => parent.log += "C" + p.length + " "
+    }
+}
+"#;
+
+#[test]
+fn a_point_that_moved_while_its_area_did_not_listen_has_the_speed_of_that_move() {
+    let e = engine();
+    let root = load(&e, TOUCH_AREA);
+    let mut s = scene(&e, root, 300.0, 100.0);
+    frame(&mut s, &e);
+    s.touch_event(&e, &[timed(1, TouchPhase::Begin, 50.0, 0)]);
+    s.touch_event(&e, &[timed(2, TouchPhase::Begin, 150.0, 0)]);
+    // A third finger is one more than the area takes: the first one's
+    // move, 10 px in 100 ms, is not told.
+    s.touch_event(&e, &[timed(3, TouchPhase::Begin, 250.0, 0)]);
+    s.touch_event(&e, &[timed(1, TouchPhase::Move, 60.0, 100)]);
+    s.touch_event(&e, &[timed(3, TouchPhase::End, 250.0, 200)]);
+    assert_eq!(num(&e, root, "vx"), 0.0);
+    s.touch_event(&e, &[timed(2, TouchPhase::Move, 155.0, 300)]);
+    assert_eq!(num(&e, root, "vx"), 100.0);
+}
+
+#[test]
+fn a_finger_down_when_its_area_was_disabled_never_reaches_it_again() {
+    let e = engine();
+    let root = load(&e, TOUCH_AREA);
+    let area = find(&e, root, "area");
+    let mut s = scene(&e, root, 300.0, 100.0);
+    frame(&mut s, &e);
+    touch(&mut s, &e, 1, TouchPhase::Begin, 50.0, 50.0);
+    touch(&mut s, &e, 2, TouchPhase::Begin, 150.0, 50.0);
+    set(&e, area, "enabled", Value::Bool(false));
+    touch(&mut s, &e, 1, TouchPhase::Move, 60.0, 50.0);
+    set(&e, area, "enabled", Value::Bool(true));
+    // The second finger had nothing to say while the area was disabled.
+    touch(&mut s, &e, 2, TouchPhase::End, 150.0, 50.0);
+    touch(&mut s, &e, 1, TouchPhase::End, 60.0, 50.0);
+    assert_eq!(get(&e, root, "log"), Value::from("P1 P1 "));
+    assert!(!s.touching());
+}
+
+#[test]
+fn a_finger_down_when_its_area_was_disabled_is_let_go_at_the_next_frame() {
+    let e = engine();
+    let root = load(&e, TOUCH_AREA);
+    let area = find(&e, root, "area");
+    let mut s = scene(&e, root, 300.0, 100.0);
+    frame(&mut s, &e);
+    touch(&mut s, &e, 1, TouchPhase::Begin, 50.0, 50.0);
+    set(&e, area, "enabled", Value::Bool(false));
+    frame(&mut s, &e);
+    set(&e, area, "enabled", Value::Bool(true));
+    touch(&mut s, &e, 1, TouchPhase::End, 50.0, 50.0);
+    assert_eq!(get(&e, root, "log"), Value::from("P1 "));
+}
