@@ -142,6 +142,13 @@ impl Glib {
     /// for a thread other than the process's first, and the process's
     /// default, which the display's source joins. A context another
     /// thread runs is that thread's to dispatch, and left out.
+    ///
+    /// The thread owns the default context from then on, for the life of
+    /// the process, as a GTK application's main thread does. A loop
+    /// another thread runs on it (`g_main_loop_run`, or
+    /// `g_main_context_iteration(NULL, …)`) would wait for good for the
+    /// thread to let it go: a library that runs a glib loop off the
+    /// Engine thread must run it on a context of its own.
     pub(super) fn on_this_thread() -> Option<Self> {
         let fns = fns()?;
         // SAFETY: glib's functions, called as glib documents them; the
@@ -152,9 +159,17 @@ impl Glib {
             if !contexts.contains(&default) {
                 contexts.push(default);
             }
-            contexts.retain(|&c| !c.is_null() && (fns.acquire)(c) != 0);
             contexts
         };
+        Self::owning(contexts)
+    }
+
+    /// Those of `contexts` this thread can own, owned by it for good.
+    fn owning(mut contexts: Vec<Context>) -> Option<Self> {
+        let fns = fns()?;
+        // SAFETY: acquire is called on contexts glib gave, and a context
+        // acquired is never released.
+        contexts.retain(|&c| !c.is_null() && unsafe { (fns.acquire)(c) } != 0);
         (!contexts.is_empty()).then(|| Self {
             fns,
             contexts,
@@ -173,11 +188,11 @@ impl Glib {
                 let (dispatched, timeout) = self.iterate(self.contexts[i]);
                 left -= 1;
                 if !dispatched {
-                    // What is ready now and still dispatched nothing is a
-                    // source whose work is not glib's to run: Chromium's
-                    // own task source, which says its tasks are due while
-                    // CEF's work runs them. Waiting on it would wake at
-                    // once, for nothing, for as long as it says so.
+                    // What is still ready after a check that dispatched
+                    // nothing is a source whose work is not glib's to run:
+                    // Chromium's own task source, which says its tasks are
+                    // due while CEF's work runs them. Waiting on it would
+                    // wake at once, for nothing, for as long as it says so.
                     wait.fds
                         .extend(self.fds.iter().filter(|p| p.revents == 0).copied());
                     if let Ok(ms @ 1..) = u64::try_from(timeout) {
@@ -235,6 +250,14 @@ impl Glib {
             ) != 0;
             if ready {
                 (f.dispatch)(context);
+            } else if !self.fds.is_empty() {
+                // The check read glib's own wakeup and left it marked
+                // ready: what is ready is asked again, so that a wakeup
+                // read stays waited on.
+                for p in &mut self.fds {
+                    p.revents = 0;
+                }
+                poll(self.fds.as_mut_ptr(), self.fds.len() as c_ulong, 0);
             }
             (ready, timeout)
         }
@@ -373,8 +396,7 @@ mod tests {
             unref(source);
             context
         };
-        let mut glib = Glib::on_this_thread().expect("libcef's glib is in the process");
-        assert!(glib.contexts.contains(&context));
+        let mut glib = Glib::owning(vec![context]).expect("libcef's glib is in the process");
         let first = glib.turn();
         assert_eq!(
             FIRED.load(Ordering::SeqCst),
@@ -396,6 +418,38 @@ mod tests {
             FIRED.load(Ordering::SeqCst),
             1,
             "dispatched once it was due"
+        );
+    }
+
+    /// A turn that reads the context's wakeup and dispatches nothing still
+    /// waits on the wakeup, so the next one ends the wait: a source added
+    /// from another thread wakes the context that way.
+    #[test]
+    fn a_context_woken_again_after_a_turn_with_nothing_to_dispatch_ends_the_wait() {
+        // SAFETY: glib's functions, as it documents them, on a context of
+        // this test's own.
+        let (context, wakeup) = unsafe {
+            let new: unsafe extern "C" fn() -> Context = sym(c"g_main_context_new").unwrap();
+            let wakeup: unsafe extern "C" fn(Context) = sym(c"g_main_context_wakeup").unwrap();
+            (new(), wakeup)
+        };
+        let mut glib = Glib::owning(vec![context]).expect("libcef's glib is in the process");
+        // SAFETY: a context glib made, which lives as long as the test.
+        unsafe { wakeup(context) };
+        let wait = glib.turn();
+        assert_eq!(wait.due, None, "nothing to wait for but the wakeup");
+        // SAFETY: as above.
+        unsafe { wakeup(context) };
+        let (wake, woken) = UnixStream::pair().unwrap();
+        // Ends a wait the wakeup failed to end, so the test fails and
+        // does not hang.
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_secs(2));
+            let _ = (&wake).write(&[1]);
+        });
+        assert!(
+            wait.block(woken.as_raw_fd()),
+            "the second wakeup did not end the wait"
         );
     }
 }
