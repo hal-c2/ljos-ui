@@ -703,13 +703,27 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
             .as_ref()
             .map(|target| self.target(name, target, chain, scope, context))
             .or(made);
+        let core = matches!(resolution.target, Some(Target::Global(Global::Core)));
         if resolution.made_in {
             if !is_written {
-                return made_in(name, base);
+                let mut fallback = fallback_of(name, base.as_ref(), core);
+                // Qt 6.12 reads the target of a PropertyChanges after the id
+                // where the component is made and before what the component
+                // has itself.
+                if resolution.aimed.is_some() {
+                    fallback = Some(Box::new(Arg::Context {
+                        component: None,
+                        name: name.to_string(),
+                        fallback,
+                    }));
+                }
+                return made_in(name, base, fallback);
             }
             // Qt reads the id and assigns the component's own property, in
             // the same function.
-            if let Some(plan) = base.as_ref().and_then(|base| made_in_written(name, base)) {
+            if resolution.aimed.is_none()
+                && let Some(plan) = base.as_ref().and_then(|base| made_in_written(name, base))
+            {
                 return plan;
             }
         }
@@ -723,23 +737,7 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
         // The running program may have the name first: a role of the model,
         // or what the target of a PropertyChanges has.
         let component = role.map(|c| CompIdx(c as u32));
-        let fallback_arg = base.as_ref().and_then(|base| {
-            // `Ljos.Core`'s is a const of the module, which the function
-            // is not given: the engine reads it where the role is not.
-            if base.param.is_none()
-                && matches!(resolution.target, Some(Target::Global(Global::Core)))
-            {
-                return Some(Box::new(Arg::Core(name.to_string())));
-            }
-            let param = base.param.as_ref()?;
-            Some(Box::new(match (&base.rewrite, &param.arg) {
-                (Some(_), Arg::Object(object)) => Arg::Property {
-                    object: *object,
-                    name: name.to_string(),
-                },
-                (_, arg) => arg.clone(),
-            }))
-        });
+        let fallback_arg = fallback_of(name, base.as_ref(), core);
         Plan {
             resolved: Resolved::ContextProp {
                 component,
@@ -1240,21 +1238,31 @@ fn made_where(name: &str) -> Plan {
     }
 }
 
+/// What the engine reads for `name` when what the running program has
+/// first does not have it: `base` as the function would be given it.
+/// `core` says `base` is a const of `Ljos.Core`, which the function is not
+/// given, so the engine reads it from the module.
+fn fallback_of(name: &str, base: Option<&Plan>, core: bool) -> Option<Box<Arg>> {
+    let base = base?;
+    if core && base.param.is_none() {
+        return Some(Box::new(Arg::Core(name.to_string())));
+    }
+    let param = base.param.as_ref()?;
+    Some(Box::new(match (&base.rewrite, &param.arg) {
+        (Some(_), Arg::Object(object)) => Arg::Property {
+            object: *object,
+            name: name.to_string(),
+        },
+        (_, arg) => arg.clone(),
+    }))
+}
+
 /// A name of an inline component under `pragma ComponentBehavior: Bound`
-/// that may be an id where the component is made: that id, else `base`.
+/// that may be an id where the component is made: that id, else what
+/// `fallback` reads.
 /// What the function is given stands for both, so a member `base` reaches
 /// through its object is given as a value.
-fn made_in(name: &str, base: Option<Plan>) -> Plan {
-    let fallback = base.as_ref().and_then(|base| {
-        let param = base.param.as_ref()?;
-        Some(Box::new(match (&base.rewrite, &param.arg) {
-            (Some(_), Arg::Object(object)) => Arg::Property {
-                object: *object,
-                name: name.to_string(),
-            },
-            (_, arg) => arg.clone(),
-        }))
-    });
+fn made_in(name: &str, base: Option<Plan>, fallback: Option<Box<Arg>>) -> Plan {
     Plan {
         resolved: Resolved::ContextProp {
             component: None,
