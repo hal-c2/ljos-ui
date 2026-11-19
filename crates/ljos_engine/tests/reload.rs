@@ -1002,7 +1002,9 @@ fn filled(r: &Rig) -> (ObjectId, ObjectId) {
 
 #[test]
 fn the_outcome_names_the_roots_the_host_gives_in_its_order() {
-    let mut r = rig(&[("Main", COUNTER), ("Second", HOLDER)]);
+    // A value that a save can give where the objects stand.
+    let sized = HOLDER.replace("  property var", "  width: 10\n  property var");
+    let mut r = rig(&[("Main", COUNTER), ("Second", sized.as_str())]);
     let marked =
         r.h.engine
             .create_from_url("Second", None, Vec::new())
@@ -1019,9 +1021,10 @@ fn the_outcome_names_the_roots_the_host_gives_in_its_order() {
     // The host shows a root made after the marked one it names.
     r.root = host;
 
-    let edited = HOLDER.replace("\"second\"", "\"edited\"");
+    let edited = sized.replace("width: 10", "width: 20");
     let done = r.edit("Second", &edited).unwrap();
     assert_eq!(done.roots, vec![(host, host)], "patched in place");
+    assert_eq!(r.h.num(marked, "width"), 20.0);
     let done = r.edit("Second", &remade(&edited)).unwrap();
     assert_eq!(done.roots.len(), 1);
     assert_eq!(done.roots[0].0, host, "made again");
@@ -1037,9 +1040,10 @@ fn the_outcome_names_the_roots_the_host_gives_in_its_order() {
         r.h.engine.finish_reload();
         done
     };
-    let again = remade(&edited).replace("\"edited\"", "\"again\"");
+    let again = remade(&edited).replace("width: 20", "width: 30");
     let done = reload(&mut r, &again, &[host, marked]);
     assert_eq!(done.roots, vec![(host, host), (marked, marked)]);
+    assert_eq!(r.h.num(marked, "width"), 30.0);
     let done = reload(
         &mut r,
         &again.replacen("{\n", "{\n  signal twice\n", 1),
