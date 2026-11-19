@@ -833,6 +833,142 @@ fn a_value_that_names_a_root_made_later_is_given_once_it_stands() {
     assert_eq!(r.h.get(now, "other").as_object(), Some(r.root));
 }
 
+const HOLDER: &str =
+    "import QtQuick\nItem {\n  objectName: \"second\"\n  property var other: null\n}\n";
+
+/// Marks `roots` in that order; what each is replaced by lands in the map.
+fn mark_all(
+    r: &Rig,
+    roots: &[ObjectId],
+) -> std::rc::Rc<std::cell::RefCell<std::collections::HashMap<ObjectId, ObjectId>>> {
+    let told = std::rc::Rc::default();
+    for w in roots {
+        let heard = std::rc::Rc::clone(&told);
+        r.h.engine
+            .remake_on_reload(*w, move |_, was, now| {
+                heard.borrow_mut().insert(was, now);
+            })
+            .unwrap();
+    }
+    told
+}
+
+#[test]
+fn a_marked_root_is_made_after_the_roots_its_initial_properties_name() {
+    let mut r = rig(&[("Main", COUNTER), ("Second", HOLDER)]);
+    let first =
+        r.h.engine
+            .create_from_url("Second", None, Vec::new())
+            .unwrap();
+    let next =
+        r.h.engine
+            .create_from_url("Second", None, vec![("other".into(), Value::Object(first))])
+            .unwrap();
+    // Marked the other way round from how they were made.
+    let told = mark_all(&r, &[next, first]);
+
+    r.edit("Second", &remade(HOLDER)).unwrap();
+    let (first, next) = (told.borrow()[&first], told.borrow()[&next]);
+    assert_eq!(r.h.get(next, "other").as_object(), Some(first));
+}
+
+#[test]
+fn a_marked_root_is_made_after_the_root_its_scope_is_of() {
+    let holder = |tag: &str| {
+        format!(
+            "import QtQuick\nItem {{\n  objectName: \"holder\"\n  property string tag: \"{tag}\"\n}}\n"
+        )
+    };
+    let scoped =
+        "import QtQuick\nItem {\n  objectName: \"scoped\"\n  property string seen: tag\n}\n";
+    let first = holder("first");
+    let mut r = rig(&[
+        ("Main", COUNTER),
+        ("Holder", first.as_str()),
+        ("Scoped", scoped),
+    ]);
+    let held =
+        r.h.engine
+            .create_from_url("Holder", None, Vec::new())
+            .unwrap();
+    let (inside, _) =
+        r.h.engine
+            .make(Request::url("Scoped").in_scope(held))
+            .unwrap();
+    assert_eq!(r.h.get(inside, "seen").to_js_string().as_str(), "first");
+    let told = mark_all(&r, &[inside, held]);
+
+    r.edit("Holder", &remade(&holder("second"))).unwrap();
+    let now = told
+        .borrow()
+        .get(&inside)
+        .copied()
+        .expect("made again, in the scope that goes on for its own");
+    assert_eq!(r.h.get(now, "seen").to_js_string().as_str(), "second");
+}
+
+#[test]
+fn an_initial_property_that_names_a_root_made_later_is_given_once_it_stands() {
+    let mut r = rig(&[("Main", COUNTER), ("Second", HOLDER)]);
+    let make = |r: &Rig, props: Vec<(String, Value)>| {
+        r.h.engine.create_from_url("Second", None, props).unwrap()
+    };
+    let lone = make(&r, Vec::new());
+    let a = make(&r, vec![("other".into(), Value::Object(lone))]);
+    let b = make(&r, vec![("other".into(), Value::Object(a))]);
+    // Moved under the root made last, the one `a` names closes a circle:
+    // `a` is made with an object of `b`, and `b` with `a`.
+    r.h.engine.set_owner(lone, Some(b)).unwrap();
+    let told = mark_all(&r, &[a, b, lone]);
+
+    r.edit("Second", &remade(HOLDER)).unwrap();
+    let now = |old: ObjectId| told.borrow()[&old];
+    assert_eq!(r.h.get(now(a), "other").as_object(), Some(now(lone)));
+    assert_eq!(r.h.get(now(b), "other").as_object(), Some(now(a)));
+
+    // Given late, it is still on record for the next reload.
+    let (a, lone) = (now(a), now(lone));
+    r.edit("Second", HOLDER).unwrap();
+    assert_eq!(r.h.get(now(a), "other").as_object(), Some(now(lone)));
+}
+
+#[test]
+fn a_value_that_names_what_a_script_made_under_a_later_root_is_given() {
+    let main = "import QtQuick\nItem {\n  objectName: \"main\"\n  property var other: null\n  function hold(o) { other = o }\n}\n";
+    let second = r#"import QtQuick
+Item {
+  id: root
+  objectName: "second"
+  function fill() { return tile.createObject(root) }
+  Component {
+    id: tile
+    Item { objectName: "tile" }
+  }
+}
+"#;
+    let mut r = rig(&[("Main", main), ("Second", second)]);
+    let window =
+        r.h.engine
+            .create_from_url("Second", None, Vec::new())
+            .unwrap();
+    let made =
+        r.h.engine
+            .invoke_by_name(window, "fill", &[])
+            .unwrap()
+            .as_object()
+            .expect("the tile is made");
+    r.h.engine
+        .invoke_by_name(r.root, "hold", &[Value::Object(made)])
+        .unwrap();
+    let told = mark_all(&r, &[window]);
+
+    r.edit("Second", &remade(second)).unwrap();
+    let now = told.borrow()[&window];
+    let tile = r.h.find(now, "tile");
+    assert_ne!(tile, made);
+    assert_eq!(r.h.get(r.root, "other").as_object(), Some(tile));
+}
+
 const MODEL: &str = r#"import QtQuick
 import QtQml.Models
 Item {

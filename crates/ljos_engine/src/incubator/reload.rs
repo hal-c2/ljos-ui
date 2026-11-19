@@ -264,6 +264,9 @@ struct Pending {
     /// What an object made again is given once every root stands: values
     /// that name an object of a root made after it.
     later: Vec<(ObjectId, PropIndex, Carried)>,
+    /// A root's initial properties that name an object of a root made
+    /// after it, given once every root stands: (new root, them, as how).
+    later_given: Vec<(ObjectId, Vec<(String, Value)>, Initial)>,
 }
 
 struct Overlay {
@@ -739,8 +742,10 @@ impl Engine {
     /// new root. A root destroyed is let go of. While the host gives a
     /// marked root too, its `swap` is what hears of the new one, and
     /// `replaced` is not called. A root made with an owner is made again
-    /// under what goes on for its owner, after the roots that own it, and
-    /// goes with its owner when nothing goes on for that.
+    /// under what goes on for its owner, and goes with its owner when
+    /// nothing goes on for that. Each root is made after the roots whose
+    /// objects it was made with: its owner's, its scope's, and those its
+    /// initial properties name.
     ///
     /// With tracking off nothing is made again, and nothing is kept.
     ///
@@ -788,41 +793,102 @@ impl Engine {
             self.flags(*r)
                 .is_some_and(|f| !f.contains(crate::ObjectFlags::PENDING_DELETE))
         });
-        let mut marked: Vec<ObjectId> = remade
+        remade
             .iter()
             .map(|(r, _)| *r)
             .filter(|r| !given.contains(r))
+            .collect()
+    }
+
+    /// `plan` in the order its roots can be made in: each after the roots
+    /// whose objects it is made with (its owner, its scope, an object an
+    /// initial property names), and otherwise as it was. Such an object
+    /// stood before the root that names it was made, so only an object
+    /// moved to another owner since closes a circle; the circle keeps the
+    /// order it had, and the property waits until every root stands.
+    fn reload_order(
+        &self,
+        plan: Vec<(ObjectId, Request, Rc<str>)>,
+    ) -> Vec<(ObjectId, Request, Rc<str>)> {
+        let of = |o: ObjectId, root: ObjectId| {
+            std::iter::successors(Some(o), |c| self.owner(*c)).any(|c| c == root)
+        };
+        let needs: Vec<Vec<usize>> = plan
+            .iter()
+            .enumerate()
+            .map(|(i, (_, req, _))| {
+                plan.iter()
+                    .enumerate()
+                    .filter(|&(j, (root, ..))| {
+                        let root = *root;
+                        j != i
+                            && (req.parent.into_iter().chain(req.scope).any(|o| of(o, root))
+                                || req
+                                    .props
+                                    .iter()
+                                    .any(|(_, v)| names_any(v, &|o| of(o, root))))
+                    })
+                    .map(|(j, _)| j)
+                    .collect()
+            })
             .collect();
-        drop(remade);
-        // One a marked root owns is made after it, with what goes on for
-        // its owner.
-        let all = marked.clone();
-        marked.sort_by_cached_key(|r| {
-            std::iter::successors(self.owner(*r), |o| self.owner(*o))
-                .filter(|o| all.contains(o))
-                .count()
-        });
-        marked
+        let mut placed = vec![false; plan.len()];
+        let mut order = Vec::with_capacity(plan.len());
+        while order.len() < plan.len() {
+            let ready = |i: usize| !placed[i] && needs[i].iter().all(|j| placed[*j]);
+            let next = (0..plan.len())
+                .find(|i| ready(*i))
+                .or_else(|| (0..plan.len()).find(|i| !placed[*i]))
+                .expect("a root is left to place");
+            placed[next] = true;
+            order.push(next);
+        }
+        let mut plan: Vec<Option<_>> = plan.into_iter().map(Some).collect();
+        order.into_iter().filter_map(|i| plan[i].take()).collect()
     }
 
     /// What `origin`, a root's, makes in a full reload: its owner, scope
-    /// and properties are the objects that go on for theirs. `None` when
-    /// its owner or scope goes and nothing goes on for it.
-    fn reload_again(&self, origin: &Request) -> Option<Request> {
+    /// and initial properties are the objects that go on for theirs, and
+    /// the properties that name an object of a root made later are given
+    /// apart (the second of the pair). `None` when its owner or scope goes
+    /// and nothing goes on for it, but for a root the host gives
+    /// (`given`), which stays one with neither.
+    fn reload_again(
+        &self,
+        origin: &Request,
+        given: bool,
+    ) -> Option<(Request, Vec<(String, Value)>)> {
         let mut again = origin.copy();
         let object = |o: ObjectId| self.reload_translate(Value::Object(o))?.as_object();
-        if let Some(p) = origin.parent {
-            again.parent = Some(object(p)?);
-        }
-        if let Some(s) = origin.scope {
-            again.scope = Some(object(s)?);
-        }
+        let placed = (|| {
+            let parent = match origin.parent {
+                Some(p) => Some(object(p)?),
+                None => None,
+            };
+            let scope = match origin.scope {
+                Some(s) => Some(object(s)?),
+                None => None,
+            };
+            Some((parent, scope))
+        })();
+        (again.parent, again.scope) = match placed {
+            Some(placed) => placed,
+            None if given => (None, None),
+            None => return None,
+        };
+        let mut later = Vec::new();
         again.props = origin
             .props
             .iter()
-            .filter_map(|(k, v)| self.reload_translate(v.clone()).map(|v| (k.clone(), v)))
+            .filter_map(|(k, v)| {
+                if holds_object(v) && self.reload_names_unmade(v) {
+                    later.push((k.clone(), v.clone()));
+                    return None;
+                }
+                self.reload_translate(v.clone()).map(|v| (k.clone(), v))
+            })
             .collect();
-        Some(again)
+        Some((again, later))
     }
 
     /// Whether `v` names an object of a root that is still to be made
@@ -842,23 +908,51 @@ impl Engine {
         names_any(v, &unmade)
     }
 
-    /// Gives what [`Engine::reload_give`] kept back until every root
-    /// stood (`Pending::later`).
+    /// Gives what was kept back until every root stood, and what a script
+    /// made with them was made again: a root's initial properties
+    /// (`Pending::later_given`), and what [`Engine::reload_give`] carried
+    /// (`Pending::later`).
     fn reload_give_later(&self) {
         let st = &self.inner.reload;
-        let later = match st.pending.borrow_mut().as_mut() {
-            Some(p) => std::mem::take(&mut p.later),
+        let (later, given) = match st.pending.borrow_mut().as_mut() {
+            Some(p) => (
+                std::mem::take(&mut p.later),
+                std::mem::take(&mut p.later_given),
+            ),
             None => return,
         };
-        if later.is_empty() {
+        if later.is_empty() && given.is_empty() {
             return;
         }
+        // Set while it is made, an initial property is heard by no handler.
         let was_muting = (st.muting.get(), st.muted_all.get());
         st.muting.set(true);
         st.muted_all.set(true);
         self.batch(|| {
+            for (root, props, how) in given {
+                if !self.is_alive(root) {
+                    continue;
+                }
+                let props: Vec<(String, Value)> = props
+                    .into_iter()
+                    .filter_map(|(k, v)| self.reload_translate(v).map(|v| (k, v)))
+                    .collect();
+                if let Err(e) = self.set_properties_as(root, &props, &how) {
+                    self.warn(format!("{e}"));
+                }
+                self.reload_note_given(root, &props);
+                // On record as it was asked for, for the next reload.
+                if let Some(a) = st.asked.borrow_mut().get_mut(&root) {
+                    a.request.props.extend(props);
+                }
+            }
             for (to, tp, c) in later {
                 if !self.is_alive(to) {
+                    continue;
+                }
+                // A binding made since outranks what was carried, as it
+                // does when the value is given at once.
+                if !c.script && self.is_bound(to, tp) {
                     continue;
                 }
                 let Some(v) = self.reload_translate(c.value) else {
@@ -893,8 +987,11 @@ impl Engine {
     /// them; [`ReloadOutcome::roots`] names only the ones given here. What
     /// a root is made with (its owner, its properties) is translated to
     /// what goes on for it; a given root whose owner goes with nothing
-    /// going on for it is made with none. A value that names an object of
-    /// a root made later is given once every root stands.
+    /// going on for it is made with none. Each root is made after those it
+    /// is made with (see [`Engine::remake_on_reload`]); a value that still
+    /// names an object of a root made later, an initial property among
+    /// them, is given once every root, and what scripts made under them,
+    /// stands.
     ///
     /// Call it between frames, outside any batch, with roots made by
     /// [`Engine::create_from_url`] while tracking was on.
@@ -930,6 +1027,7 @@ impl Engine {
                 plan.push((root, o, p));
             }
         }
+        let plan = self.reload_order(plan);
         let all: Vec<ObjectId> = plan.iter().map(|(root, ..)| *root).collect();
         *st.pending.borrow_mut() = None;
         if let Some(mut done) = self.reload_in_place(patch, &all) {
@@ -962,23 +1060,24 @@ impl Engine {
             if let Some(p) = st.pending.borrow_mut().as_mut() {
                 p.unmade.remove(old_root);
             }
-            let again = match self.reload_again(origin) {
-                Some(again) => again,
-                // A root the host shows stays one, with no owner.
-                None if roots.contains(old_root) => {
-                    let mut again = origin.copy();
-                    again.parent = None;
-                    again.scope = None;
-                    again
-                }
-                // A marked root goes with its owner.
-                None => continue,
+            // A root the host shows stays one, with no owner; a marked
+            // root goes with its owner.
+            let Some((again, later)) = self.reload_again(origin, roots.contains(old_root)) else {
+                continue;
             };
+            let how = again.how.clone();
             *st.forced.borrow_mut() = Some(path.clone());
             // The window keeps its singletons.
             self.singleton_scope_adopt(*old_root);
             match self.make(again) {
-                Ok((new, _)) => made.push((*old_root, new)),
+                Ok((new, _)) => {
+                    if !later.is_empty()
+                        && let Some(p) = st.pending.borrow_mut().as_mut()
+                    {
+                        p.later_given.push((new, later, how));
+                    }
+                    made.push((*old_root, new));
+                }
                 Err(e) => {
                     failure = Some(e);
                     break;
@@ -1017,8 +1116,10 @@ impl Engine {
             return Err(ReloadError::Failed(fault));
         }
 
-        self.reload_give_later();
+        // What a script made under a root is made again before what was
+        // kept back is given: a value may name it.
         self.reload_remake_scripted();
+        self.reload_give_later();
         phases.mark("scripted");
         for (old_root, new) in &made {
             self.singleton_scope_moved(*old_root, *new);
