@@ -8,6 +8,4 @@ set -euo pipefail
 root="$ljos_root"
 dir="$root/acceptance/example"
 [ -f "$dir/steps/Cargo.lock" ] || cp "$root/Cargo.lock" "$dir/steps/Cargo.lock"
-CARGO_TARGET_DIR="$(target_dir)"
-export CARGO_TARGET_DIR
-exec cargo test --quiet --manifest-path "$dir/steps/Cargo.toml" "$@"
+cargo test --quiet --manifest-path "$dir/steps/Cargo.toml" "$@"

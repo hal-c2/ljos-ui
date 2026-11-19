@@ -11,7 +11,7 @@ root="$ljos_root"
 need_python3
 manifest="$root/corpus/examples.json"
 target="$(target_dir)"
-gallery="${GALLERY_DIR:-$target/gallery}"
+gallery="${GALLERY_DIR:-$(checkout_dir gallery)}"
 report="$gallery/report.json"
 
 # id <tab> dir <tab> entry <tab> WxH <tab> renders(yes/no/?) per example.

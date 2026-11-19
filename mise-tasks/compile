@@ -25,4 +25,4 @@ if [ -z "$dir" ] || [ "$dir" = "$corpus" ]; then
 else
   [ -d "$dir" ] || die "compile: no directory $dir"
 fi
-exec cargo run --quiet --release -p ljos_compiler --bin ljos-compile -- baseline "$dir"
+cargo run --quiet --release -p ljos_compiler --bin ljos-compile -- baseline "$dir"

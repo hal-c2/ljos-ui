@@ -15,7 +15,7 @@ need_qml6
 need_timeout
 qml6="${QML6:-qml6}"
 target="$(target_dir)"
-work="${GALLERY_DIR:-$target/gallery}/reference-work"
+work="${GALLERY_DIR:-$(checkout_dir gallery)}/reference-work"
 refs="$root/corpus/reference"
 mkdir -p "$work" "$refs"
 cargo build --quiet -p qml_compare --manifest-path "$root/Cargo.toml"

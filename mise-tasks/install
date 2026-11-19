@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#MISE description="Install the ljos CLI from this checkout (cargo install --path crates/ljos_cli --locked) into cargo's bin directory, or <dir>/bin with --root"
+#MISE description="Install the ljos CLI from this checkout (cargo install --path crates/ljos_cli --locked) into cargo's bin directory, or <dir>/bin with --root; it builds in the tasks' target directory, not a temporary one"
 #MISE dir="{{config_root}}"
 #USAGE flag "--root <dir>" help="Install into <dir>/bin instead of cargo's (CARGO_INSTALL_ROOT, else ~/.cargo/bin)"
 set -euo pipefail

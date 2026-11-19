@@ -6,14 +6,22 @@ set -euo pipefail
 # shellcheck source-path=SCRIPTDIR source=../_lib/env.sh
 . "$(dirname "$0")/../_lib/env.sh"
 cd "$ljos_root"
-# LJOS is the binary measured (a release build); QMLTESTRUNNER is Qt 6's
-# (Qt 5's is the one on PATH on some systems); NO_QT=1 measures Ljós only.
-target="$(target_dir)"
-ljos="$(from_asked "${LJOS:-$target/release/ljos}")"
-out="$(from_asked "${OUT:-$target/bench-js}")"
+# LJOS is the binary measured (a release build), else this checkout's
+# release build, the run's own link to it (pin_programs): the target may be
+# shared with another checkout, whose release ljos would otherwise be
+# measured as this one. QMLTESTRUNNER is Qt 6's (Qt 5's is the one on PATH
+# on some systems); NO_QT=1 measures Ljós only.
+out="$(from_asked "${OUT:-$(checkout_dir bench-js)}")"
 need_valgrind
 need_timeout
-[ -x "$ljos" ] || die "bench:js measures a release ljos, and $ljos is not one: cargo build --release -p ljos_cli, or set LJOS"
+if [ -n "${LJOS:-}" ]; then
+  ljos="$(from_asked "$LJOS")"
+  [ -x "$ljos" ] || die "bench:js measures a release ljos, and LJOS=$ljos is not one: unset LJOS to build this checkout's"
+else
+  programs="$(pin_programs "$out/bin" build --quiet --release -p ljos_cli --bin ljos)" || die "bench:js: the release ljos did not build"
+  ljos="$(pinned_program ljos "$programs")"
+  [ -n "$ljos" ] || die "bench:js: the build made no ljos"
+fi
 qt=
 if [ -z "${NO_QT:-}" ]; then
   qt="$(find_qmltestrunner)"

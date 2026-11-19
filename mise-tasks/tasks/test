@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#MISE description="Test what the tasks share (mise-tasks/_lib/env.sh) against stand-in tools: the Qt CI pins read from ci.yml alone, another Qt minor version found by qmake6, qtpaths or qml6 is a mismatch setup notes and exits 0 on (it fails only on what is missing, a rustc that is not mise.toml's say), paths hold under a TMPDIR with a trailing slash or a link, and NVIDIA's Vulkan driver is left out of tests only when its kernel driver is not loaded"
+#MISE description="Test what the tasks share (mise-tasks/_lib/env.sh) against stand-in tools: the Qt CI pins read from ci.yml alone, another Qt minor version found by qmake6, qtpaths or qml6 is a mismatch setup notes and exits 0 on (it fails only on what is missing, a rustc that is not mise.toml's say), paths hold under a TMPDIR with a trailing slash or a link, a linked worktree builds into its main checkout's target/ with its settings as the MCP server does, .mcp.json starts that server through mise-tasks/mcp, and NVIDIA's Vulkan driver is left out of tests only when its kernel driver is not loaded"
 set -euo pipefail
 # What the caller's shell says is not what is tested: a workflow to read the
 # pin from, setup's flags as mise hands them over, a git repository to work in.
@@ -555,6 +555,983 @@ elif [ "$out" = "features:run: --input $suite/missing is no file or directory" ]
 else
   bad "features:run --input of a missing path failed, but not with the one line" "$out"
 fi
+
+# --- Where builds go -------------------------------------------------------------
+
+# A repository of the tasks alone, with a linked worktree "wt", a bare clone
+# with a worktree "bw", and a submodule "sub". Git looks no higher than
+# $real, so the checkout this runs in is never what answers.
+export GIT_CEILING_DIRECTORIES="$real"
+# The fixtures are made with the real git, which the guard above stands in
+# for: a bare clone and a submodule of a repository in $real, never of the
+# checkout. A step that fails leaves a fixture out, which the cases below
+# say; the step and git's error are printed first, so the cause is there.
+# The developer's own git settings that could fail a step (signing) are off.
+quiet_git() {
+  local out
+  out="$("${real_git:-git}" -c user.name=tasks -c user.email=tasks@example.invalid -c init.defaultBranch=main \
+    -c protocol.file.allow=always -c commit.gpgSign=false -c tag.gpgSign=false "$@" 2>&1)" ||
+    printf 'fixture step failed: git %s\n%s\n' "$*" "$out" >&2
+}
+repo="$real/repo"
+mkdir "$repo"
+cp -R "$ljos_root/mise-tasks" "$repo/mise-tasks"
+quiet_git -C "$repo" init
+quiet_git -C "$repo" add -A
+quiet_git -C "$repo" commit -q -m fixture
+quiet_git -C "$repo" worktree add "$real/wt"
+quiet_git clone --bare "$repo" "$real/bare.git"
+quiet_git -C "$real/bare.git" worktree add "$real/bw"
+quiet_git -C "$repo" submodule add "$real/bare.git" sub
+# A bare repository may be called .git ("archive", with a worktree "aw"),
+# and a checkout's git directory may be kept elsewhere under any name ("sep",
+# whose git directory is sep.gitdir, with a worktree "sw"), where git keeps no
+# word of the checkout.
+quiet_git clone --bare "$repo" "$real/archive/.git"
+quiet_git -C "$real/archive/.git" worktree add "$real/aw"
+quiet_git init -q --separate-git-dir "$real/sep.gitdir" "$real/sep"
+: >"$real/sep/file"
+quiet_git -C "$real/sep" add file
+quiet_git -C "$real/sep" commit -q -m fixture
+quiet_git -C "$real/sep" worktree add "$real/sw"
+# A main checkout whose cargo settings are in a directory above it ("up"),
+# with a worktree "upw" made elsewhere.
+mkdir -p "$real/up/main"
+: >"$real/up/main/file"
+quiet_git -C "$real/up/main" init
+quiet_git -C "$real/up/main" add file
+quiet_git -C "$real/up/main" commit -q -m fixture
+quiet_git -C "$real/up/main" worktree add "$real/upw"
+mkdir "$real/plain"
+# where <dir>: target_dir for <dir> with no CARGO_TARGET_DIR.
+# Cargo's own home is a fixture's too, so this machine's settings are never
+# what answers.
+where() { (unset CARGO_TARGET_DIR CARGO_BUILD_TARGET_DIR && CARGO_HOME="$real/cargo-home" target_dir "$1"); }
+
+# Settings above the fixtures are cargo's to read as well, and nothing stops
+# cargo (or target_dir, which reads as it does) from reading them: say so
+# rather than leave the cases that expect target/ failing with no cause. The
+# case with settings above a checkout ("outer") is the one that checks they
+# win.
+while IFS= read -r file; do
+  if [ -n "$(settings_target_dir "$file")" ]; then
+    echo "note  $file, above $real, names a target-dir: the cases below that expect target/ fail here for that reason; run with TMPDIR set to a directory with no such settings above it"
+  fi
+done <<EOF_ABOVE
+$(CARGO_HOME="$real/cargo-home" settings_files "$(dirname "$real")")
+EOF_ABOVE
+
+if [ -d "$real/wt" ] && [ -d "$real/bw" ] && [ -d "$repo/sub" ]; then
+  out="$(where "$real/wt")"
+  if [ "$out" = "$repo/target" ]; then ok "a linked worktree builds into its main checkout's target/"; else bad "target_dir gave $out for a linked worktree, not $repo/target"; fi
+  out="$(where "$repo")"
+  if [ "$out" = "$repo/target" ]; then ok "the main checkout builds into its own target/"; else bad "target_dir gave $out for the main checkout"; fi
+  out="$(where "$real/bw")"
+  if [ "$out" = "$real/bw/target" ]; then ok "a bare repository's worktree keeps its own target/"; else bad "target_dir gave $out for a bare repository's worktree"; fi
+  out="$(where "$repo/sub")"
+  if [ "$out" = "$repo/sub/target" ]; then ok "a submodule keeps its own target/"; else bad "target_dir gave $out for a submodule"; fi
+  if [ -d "$real/aw" ]; then
+    out="$(where "$real/aw")"
+    if [ "$out" = "$real/aw/target" ]; then ok "a worktree of a bare repository called .git keeps its own target/"; else bad "target_dir gave $out for a worktree of the bare repository $real/archive/.git"; fi
+  else
+    bad "the bare repository called .git with a worktree was not made (git $(git --version 2>&1))"
+  fi
+  if [ -d "$real/sw" ]; then
+    out="$(where "$real/sw")"
+    if [ "$out" = "$real/sw/target" ]; then ok "a linked worktree of a git directory kept elsewhere, whose checkout git cannot name, keeps its own target/"; else bad "target_dir gave $out for a worktree of $real/sep.gitdir, not $real/sw/target"; fi
+    out="$(where "$real/sep")"
+    if [ "$out" = "$real/sep/target" ]; then ok "a checkout whose git directory is kept elsewhere builds into its own target/"; else bad "target_dir gave $out for $real/sep"; fi
+  else
+    bad "the checkout with its git directory elsewhere and a worktree was not made (git $(git --version 2>&1))"
+  fi
+
+  mkdir "$real/roomy"
+  ln -s "$real/roomy" "$repo/target"
+  out="$(where "$real/wt")"
+  if [ "$out" = "$real/roomy" ]; then ok "a main checkout's target/ that is a link is followed"; else bad "target_dir gave $out for a worktree whose main target/ links to $real/roomy"; fi
+  rm "$repo/target"
+
+  out="$(CARGO_TARGET_DIR="$real/shared" target_dir "$real/wt")"
+  if [ "$out" = "$real/shared" ]; then ok "CARGO_TARGET_DIR wins over the main checkout's target/"; else bad "target_dir gave $out in a worktree with CARGO_TARGET_DIR=$real/shared"; fi
+  out="$(CARGO_TARGET_DIR=build target_dir "$real/wt")"
+  if [ "$out" = "$real/wt/build" ]; then ok "a relative CARGO_TARGET_DIR is from the checkout it is asked for"; else bad "target_dir gave $out in a worktree with CARGO_TARGET_DIR=build"; fi
+else
+  bad "the fixture repository with its worktrees and submodule was not made (git $(git --version 2>&1))"
+fi
+out="$(where "$real/plain")"
+if [ "$out" = "$real/plain/target" ]; then ok "a directory that is no git checkout builds into its own target/"; else bad "target_dir gave $out outside git"; fi
+
+# The main checkout's machine-local cargo settings, which a worktree has no
+# copy of. given <dir>: what cargo gets there, each followed by |: the lines
+# of the settings file it is given, and any other --config, with no variable
+# of the developer's (CARGO_*, RUST*, cargo's home aside) setting a key
+# instead. unexported: those variables, unset.
+unexported() {
+  local name
+  for name in $(compgen -e); do
+    case "$name" in
+      CARGO_HOME) ;;
+      CARGO_* | RUST*) unset "$name" ;;
+    esac
+  done
+}
+# shown <dir>: config_args, as given prints it, with <dir> its settings'.
+shown() {
+  local a
+  for a in ${config_args[@]+"${config_args[@]}"}; do
+    case "$a" in
+      --config) ;;
+      "$1/settings.toml") while IFS= read -r a; do printf '%s|' "$a"; done <"$1/settings.toml" ;;
+      *) printf '%s|' "$a" ;;
+    esac
+  done
+}
+given() {
+  (
+    unexported
+    CARGO_HOME="$real/cargo-home"
+    d="$(mktemp -d)"
+    config_args "$(cargo_config "$1")" "$d"
+    shown "$d"
+    rm -f "$d/settings.toml"
+    rmdir "$d"
+  )
+}
+mkdir "$repo/.cargo"
+printf '[build]\njobs = 2\n' >"$repo/.cargo/config.toml"
+out="$(given "$real/wt")"
+if [ "$out" = "build.jobs = 2|" ]; then ok "a linked worktree builds with its main checkout's .cargo/config.toml"; else bad "cargo in a linked worktree was given '$out'"; fi
+out="$(given "$repo")"
+if [ -z "$out" ]; then ok "the main checkout's own .cargo/config.toml is cargo's to find"; else bad "cargo in the main checkout was given '$out'"; fi
+# Settings kept in .cargo/config, the name without the extension, are the
+# same settings.
+mv "$repo/.cargo/config.toml" "$repo/.cargo/config"
+out="$(given "$real/wt")"
+if [ "$out" = "build.jobs = 2|" ]; then ok "a linked worktree builds with its main checkout's .cargo/config"; else bad "cargo in a linked worktree whose main checkout keeps .cargo/config was given '$out'"; fi
+mv "$repo/.cargo/config" "$repo/.cargo/config.toml"
+# The developer's environment wins over the main checkout's settings, as it
+# does over the settings cargo finds: a --config would outrank it.
+out="$( (unexported && CARGO_BUILD_JOBS=1 && export CARGO_BUILD_JOBS && d="$(mktemp -d)" && config_args "$(CARGO_HOME="$real/cargo-home" cargo_config "$real/wt")" "$d" && shown "$d") )"
+if [ -z "$out" ]; then ok "CARGO_BUILD_JOBS wins over the jobs a worktree's main checkout sets"; else bad "with CARGO_BUILD_JOBS=1, cargo in a worktree was still given '$out'"; fi
+# Only an exported variable reaches cargo: one the shell keeps to itself
+# sets nothing, and the main checkout's setting stays.
+out="$( (unexported && CARGO_BUILD_JOBS=1 && d="$(mktemp -d)" && config_args "$(CARGO_HOME="$real/cargo-home" cargo_config "$real/wt")" "$d" && shown "$d") )"
+if [ "$out" = "build.jobs = 2|" ]; then ok "a CARGO_BUILD_JOBS the shell does not export leaves the main checkout's jobs"; else bad "with CARGO_BUILD_JOBS=1 not exported, cargo in a worktree was given '$out'"; fi
+# A worktree's own settings win key by key, and are not given again: cargo
+# finds them itself, and an array given twice comes twice (rustflags'
+# --sysroot, say, which rustc takes once). An array both set is joined, as
+# cargo joins the arrays of every file it reads.
+printf '[build]\njobs = 2\nrustflags = ["--cfg", "main"]\n[profile.dev]\nopt-level = 1\ndebug = 2\n' >"$repo/.cargo/config.toml"
+mkdir "$real/wt/.cargo"
+printf '[build]\nrustflags = ["--cfg", "own"]\n[profile.dev]\ndebug = 0\n' >"$real/wt/.cargo/config"
+out="$(given "$real/wt")"
+if [ "$out" = 'build.jobs = 2|build.rustflags = ["--cfg", "main"]|profile.dev.opt-level = 1|' ]; then ok "a worktree with settings of its own gets its main checkout's other keys and arrays, and its own once"; else bad "cargo in a worktree with a .cargo/config of its own was given '$out'"; fi
+rm "$real/wt/.cargo/config"
+rmdir "$real/wt/.cargo"
+# A path the main checkout's settings give relative to them is made whole: a
+# KEY=VALUE path is from where cargo runs. A program with no slash is
+# PATH's to find.
+printf '[build]\nrustc-wrapper = "tools/wrap"\nrustdoc = "rustdoc"\n[env]\nSEEN = { value = "data", relative = true }\n[target."cfg(unix)"]\nrunner = "bin/run --fast"\n' >"$repo/.cargo/config.toml"
+want="build.rustc-wrapper = \"$repo/tools/wrap\"|build.rustdoc = \"rustdoc\"|env.SEEN.value = \"$repo/data\"|env.SEEN.relative = true|target.\"cfg(unix)\".runner = \"$repo/bin/run --fast\"|"
+out="$(given "$real/wt")"
+if [ "$out" = "$want" ]; then ok "the main checkout's relative paths are made whole, and its quoted keys stay quoted"; else bad "cargo in a worktree was given paths:" "gave: $out" "not:  $want"; fi
+# Every key cargo takes as a path is one: a vendored source's directory, a
+# patch's path, an install root, a credential provider's program. A
+# build-dir that starts with a template is cargo's to place.
+printf '[source.vendored-sources]\ndirectory = "vendor"\n[patch.crates-io]\nfoo = { path = "../foo" }\n[install]\nroot = "/opt/tools"\n[build]\nbuild-dir = "{workspace-root}/b"\n[registry]\nglobal-credential-providers = ["cargo:token", "bin/cred --x"]\n' >"$repo/.cargo/config.toml"
+want="source.vendored-sources.directory = \"$repo/vendor\"|patch.crates-io.foo.path = \"$repo/../foo\"|install.root = \"/opt/tools\"|build.build-dir = \"{workspace-root}/b\"|registry.global-credential-providers = [\"cargo:token\", \"$repo/bin/cred --x\"]|"
+out="$(given "$real/wt")"
+if [ "$out" = "$want" ]; then ok "a vendored source, a patch and a credential provider the main checkout names relative to it are found from the worktree"; else bad "cargo in a worktree was given paths:" "gave: $out" "not:  $want"; fi
+# What TOML writes escaped is given escaped.
+printf '[env]\nODD = "a\\\\b\\"c\\td\\u007f"\n' >"$repo/.cargo/config.toml"
+out="$(given "$real/wt")"
+if [ "$out" = 'env.ODD = "a\\b\"c\td\u007F"|' ]; then ok "a string in the main checkout's settings is given as the same TOML string"; else bad "cargo in a worktree was given '$out' for env.ODD"; fi
+# A cargo that a program starts by itself (ljos_bdd's build of ljos, the
+# MCP server's cargo test) is given no --config: export_settings puts what
+# a variable can carry in the environment, unless a variable of the
+# developer's sets it already, and says once what none can carry (a cfg
+# target's, a custom profile's, a token, an array with a word that holds a
+# space). [env] is exported only when asked: cargo gives it to what it
+# starts itself. exported_by <dir> <env or nothing> [VAR=value…]:
+# NAME=value| for each variable exported, then the task's note.
+printf '[build]\njobs = 2\nrustflags = ["--cfg", "main"]\n[profile.dev]\nopt-level = 1\n[profile.fast]\ninherits = "dev"\n[alias]\nb2 = "build -v"\n[env]\nSEEN = "yes"\nFORCED = { value = "theirs", force = true }\n[target."cfg(unix)"]\nrunner = "run"\n[target.x86_64-unknown-linux-gnu]\nlinker = "cc"\n[registry]\ntoken = "secret"\n[net]\nssh.known-hosts = ["host ssh-ed25519 AAA"]\n' >"$repo/.cargo/config.toml"
+exported_by() {
+  local dir="$1" mode="$2" a
+  shift 2
+  (
+    unexported
+    unset LJOS_UNEXPORTED_NOTED
+    for a in "$@"; do export "${a?}"; done
+    CARGO_HOME="$real/cargo-home"
+    ljos_settings_exported=""
+    lines="$(cargo_config "$dir")"
+    export_settings "$lines" ${mode:+"$mode"} 2>"$real/note.err"
+    for n in $ljos_settings_exported; do printf '%s=%s|' "$n" "${!n}"; done
+    cat "$real/note.err"
+  )
+}
+# The note starts with the task's name, as mise runs it (tasks:test, ci:test).
+note="$(task_name): the main checkout's cargo settings profile.fast.inherits target.\"cfg(unix)\".runner registry.token net.ssh.known-hosts reach cargo only through a task's cargo: no variable can carry them, so a cargo that a program runs by itself builds without them"
+want="CARGO_BUILD_JOBS=2|CARGO_BUILD_RUSTFLAGS=--cfg main|CARGO_PROFILE_DEV_OPT_LEVEL=1|CARGO_ALIAS_B2=build -v|CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=cc|$note"
+out="$(exported_by "$real/wt" "")"
+if [ "$out" = "$want" ]; then ok "a linked worktree's main checkout's settings are exported for a cargo a program runs, and the task names those none can carry"; else bad "export_settings in a linked worktree:" "gave: $out" "not:  $want"; fi
+out="$(exported_by "$real/wt" env)"
+want="CARGO_BUILD_JOBS=2|CARGO_BUILD_RUSTFLAGS=--cfg main|CARGO_PROFILE_DEV_OPT_LEVEL=1|CARGO_ALIAS_B2=build -v|SEEN=yes|FORCED=theirs|CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=cc|$note"
+if [ "$out" = "$want" ]; then ok "asked for, [env] is exported too, for a program that runs cargo and was not started by it"; else bad "export_settings with env:" "gave: $out" "not:  $want"; fi
+out="$(exported_by "$repo" "")"
+if [ -z "$out" ]; then ok "a main checkout exports nothing: every cargo there finds its settings"; else bad "export_settings in the main checkout gave: $out"; fi
+# The developer's variables win: one that sets a key (or replaces an array,
+# as RUSTFLAGS does) leaves it unexported, and an [env] entry is the
+# developer's unless forced.
+out="$(exported_by "$real/wt" env CARGO_BUILD_JOBS=1 RUSTFLAGS=-g SEEN=mine FORCED=mine)"
+want="CARGO_PROFILE_DEV_OPT_LEVEL=1|CARGO_ALIAS_B2=build -v|FORCED=theirs|CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=cc|$note"
+if [ "$out" = "$want" ]; then ok "a variable the developer exported wins over the main checkout's setting, and a forced [env] entry over the developer's"; else bad "export_settings with the developer's variables:" "gave: $out" "not:  $want"; fi
+# A task's cargo is then given only the rest, so no array comes twice; and
+# a task started by a task says nothing again.
+out="$( (
+  unexported
+  unset LJOS_UNEXPORTED_NOTED
+  CARGO_HOME="$real/cargo-home"
+  lines="$(cargo_config "$real/wt")"
+  export_settings "$lines" 2>/dev/null
+  d="$(mktemp -d)"
+  config_args "$lines" "$d"
+  shown "$d"
+  export_settings "$lines" 2>&1
+) )"
+want='profile.fast.inherits = "dev"|env.SEEN = "yes"|env.FORCED.value = "theirs"|env.FORCED.force = true|target."cfg(unix)".runner = "run"|registry.token = "secret"|net.ssh.known-hosts = ["host ssh-ed25519 AAA"]|'
+if [ "$out" = "$want" ]; then ok "a task's cargo is given only what the environment does not carry, and the note comes once"; else bad "config_args after export_settings:" "gave: $out" "not:  $want"; fi
+# The developer's own CARGO_BUILD_RUSTFLAGS is added to the files', so the
+# main checkout's rustflags still reach a task's cargo with it.
+out="$( (
+  unexported
+  CARGO_HOME="$real/cargo-home"
+  export CARGO_BUILD_RUSTFLAGS=-g
+  lines="$(cargo_config "$real/wt")"
+  export_settings "$lines" 2>/dev/null
+  d="$(mktemp -d)"
+  config_args "$lines" "$d"
+  shown "$d"
+) | grep -o 'build.rustflags = [^|]*' )"
+if [ "$out" = 'build.rustflags = ["--cfg", "main"]' ]; then ok "with the developer's CARGO_BUILD_RUSTFLAGS, the main checkout's rustflags are still given to a task's cargo"; else bad "with CARGO_BUILD_RUSTFLAGS=-g, a task's cargo was given '$out' for rustflags"; fi
+printf '[build]\njobs = 2\n' >"$repo/.cargo/config.toml"
+
+# Without Python's tomllib (macOS's python3 is 3.9) the settings cannot be
+# read key by key: they are given as whole files, the worktree's own after
+# them, with the target the environment names last, and the task says so.
+nopy="$real/nopy"
+mkdir "$nopy"
+printf '#!/bin/sh\ncase "$1" in -V) echo "Python 3.9.6" ;; esac\nexit 3\n' >"$nopy/python3"
+chmod +x "$nopy/python3"
+mkdir "$real/wt/.cargo"
+printf '[build]\njobs = 3\n' >"$real/wt/.cargo/config"
+out="$( (unexported && CARGO_TARGET_DIR="$real/shared" && export CARGO_TARGET_DIR && PATH="$nopy:$PATH" && d="$(mktemp -d)" && config_args "$(CARGO_HOME="$real/cargo-home" cargo_config "$real/wt" 2>"$real/nopy.err")" "$d" && shown "$d") )"
+want="$repo/.cargo/config.toml|$real/wt/.cargo/config|build.target-dir=\"$real/shared\"|"
+if [ "$out" = "$want" ]; then ok "without tomllib, a worktree still gets its main checkout's settings, as whole files"; else bad "without tomllib, cargo in a worktree was given:" "gave: $out" "not:  $want"; fi
+case "$(cat "$real/nopy.err")" in
+  *"Python 3.11"*"Python 3.9.6"*"whole files"*"outranked"*) ok "a worktree whose main checkout's settings cannot be read key by key says why, and what that costs" ;;
+  *) bad "cargo_config with no tomllib said: $(cat "$real/nopy.err")" ;;
+esac
+rm "$real/wt/.cargo/config"
+rmdir "$real/wt/.cargo"
+# A file that is not TOML is named, with what is wrong in it; Python's
+# version is not the reason.
+printf '[build\njobs = 2\n' >"$repo/.cargo/config.toml"
+if python3 -I -c 'import tomllib' 2>/dev/null || python3 -I -c 'import tomli' 2>/dev/null; then
+  out="$( (CARGO_HOME="$real/cargo-home" cargo_config "$real/wt") 2>&1)"
+  case "$out" in
+    *"Python 3.11"*) bad "a main checkout's settings that are not TOML were blamed on Python: $out" ;;
+    *"$repo/.cargo/config.toml is not TOML"*"whole files"*) ok "a main checkout's settings that are not TOML are named, and given whole for cargo to say more" ;;
+    *) bad "cargo_config with settings that are not TOML said: $out" ;;
+  esac
+else
+  echo "note  this python3 has no tomllib: the case of settings that are not TOML is left out"
+fi
+printf '[build]\njobs = 2\n' >"$repo/.cargo/config.toml"
+# Settings in a directory above the main checkout are its settings too; a
+# worktree made elsewhere has none of them, so they are given, the farthest
+# first.
+if [ -d "$real/upw" ]; then
+  mkdir "$real/up/.cargo"
+  printf '[build]\nrustc-wrapper = "wrap"\n' >"$real/up/.cargo/config.toml"
+  out="$(given "$real/upw")"
+  if [ "$out" = 'build.rustc-wrapper = "wrap"|' ]; then ok "a linked worktree builds with the settings above its main checkout"; else bad "cargo in a worktree whose main checkout's settings are in $real/up/.cargo was given '$out'"; fi
+  mkdir "$real/up/main/.cargo"
+  printf '[build]\njobs = 2\n' >"$real/up/main/.cargo/config.toml"
+  out="$(given "$real/upw")"
+  if [ "$out" = 'build.rustc-wrapper = "wrap"|build.jobs = 2|' ]; then ok "the main checkout's own settings are given with those above it"; else bad "cargo in a worktree whose main checkout has settings of its own and above it was given '$out'"; fi
+  # Merged as cargo merges them: the nearer file's value wins, arrays are
+  # joined, the farther file's first.
+  printf '[build]\njobs = 4\nrustflags = ["--cfg", "up"]\n' >"$real/up/.cargo/config.toml"
+  printf '[build]\njobs = 2\nrustflags = ["--cfg", "main"]\n' >"$real/up/main/.cargo/config.toml"
+  out="$(given "$real/upw")"
+  if [ "$out" = 'build.jobs = 2|build.rustflags = ["--cfg", "up", "--cfg", "main"]|' ]; then ok "the main checkout's settings and those above it are merged as cargo merges them"; else bad "cargo in a worktree whose main checkout and the directory above it both set jobs and rustflags was given '$out'"; fi
+  printf '[build]\njobs = 2\n' >"$real/up/main/.cargo/config.toml"
+  printf '[build]\nrustc-wrapper = "wrap"\n' >"$real/up/.cargo/config.toml"
+  out="$(given "$real/wt")"
+  if [ "$out" = "build.jobs = 2|" ]; then ok "settings a worktree reads where it is are not given again"; else bad "cargo in a worktree that shares the settings above it with its main checkout was given '$out'"; fi
+else
+  bad "the main checkout with settings above it and a worktree was not made (git $(git --version 2>&1))"
+fi
+
+# A target directory cargo's own settings name is the one used: put on a
+# drive with room there, it must not move back to target/.
+printf '[build]\njobs = 2\ntarget-dir = "%s"\n' "$real/roomy-cfg" >"$repo/.cargo/config.toml"
+out="$(where "$real/wt")"
+if [ "$out" = "$real/roomy-cfg" ]; then ok "a linked worktree builds where its main checkout's .cargo/config.toml says"; else bad "target_dir gave $out for a worktree whose main config sets target-dir $real/roomy-cfg"; fi
+out="$(where "$repo")"
+if [ "$out" = "$real/roomy-cfg" ]; then ok "the main checkout builds where its .cargo/config.toml says"; else bad "target_dir gave $out for a main checkout whose config sets target-dir $real/roomy-cfg"; fi
+out="$(CARGO_TARGET_DIR="$real/shared" target_dir "$real/wt")"
+if [ "$out" = "$real/shared" ]; then ok "CARGO_TARGET_DIR wins over the target-dir cargo's settings name"; else bad "target_dir gave $out with CARGO_TARGET_DIR=$real/shared and a config target-dir"; fi
+out="$( (unset CARGO_TARGET_DIR && CARGO_BUILD_TARGET_DIR="$real/env" target_dir "$real/wt") )"
+if [ "$out" = "$real/env" ]; then ok "CARGO_BUILD_TARGET_DIR wins over the settings, as in cargo"; else bad "target_dir gave $out with CARGO_BUILD_TARGET_DIR=$real/env"; fi
+out="$( (unset CARGO_TARGET_DIR && CARGO_BUILD_TARGET_DIR=envrel target_dir "$real/wt") )"
+if [ "$out" = "$real/wt/envrel" ]; then ok "a relative CARGO_BUILD_TARGET_DIR is from the checkout it is asked for"; else bad "target_dir gave $out with CARGO_BUILD_TARGET_DIR=envrel"; fi
+printf '# where the builds go\nbuild.target-dir = '\''big'\''\n' >"$repo/.cargo/config.toml"
+out="$(where "$real/wt")"
+if [ "$out" = "$repo/big" ]; then ok "a relative target-dir in the settings is from the directory that holds .cargo, as in cargo"; else bad "target_dir gave $out for a main config with build.target-dir = 'big', not $repo/big"; fi
+# settings_says <what> <want> <TOML line>…: the target-dir a main checkout's
+# settings of those lines give its worktree is <want>.
+settings_says() {
+  local what="$1" want="$2" got
+  shift 2
+  printf '%s\n' "$@" >"$repo/.cargo/config.toml"
+  got="$(where "$real/wt")"
+  if [ "$got" = "$want" ]; then ok "$what"; else bad "$what: target_dir gave '$got', not '$want', for settings:" "$@"; fi
+}
+settings_says "a quoted target-dir key is the same key" "$real/q" '[build]' "\"target-dir\" = \"$real/q\""
+settings_says "a quoted table name and a literal-quoted key are the same" "$real/q" '[ "build" ]' "'target-dir' = \"$real/q\""
+settings_says "a dotted key quoted part by part is the same key" "$real/q" "\"build\" . 'target-dir' = '$real/q'"
+settings_says "a target-dir in an inline build table is read" "$real/q" "build = { jobs = 2, target-dir = \"$real/q\" }"
+settings_says "a target-dir in another table is not the build's" "$repo/target" '[target.x86_64-unknown-linux-gnu]' "target-dir = \"$real/q\""
+settings_says "a commented-out target-dir is not read, and a comment after one is not part of it" "$real/q" '[build]' "# target-dir = \"$real/no\"" "target-dir = \"$real/q\" # roomy"
+settings_says "a basic string's escapes are decoded as cargo decodes them" "$real/fast disk" '[build]' "target-dir = \"$real/fast\\u0020disk\""
+settings_says "the same path written out is the same target" "$real/fast disk" '[build]' "target-dir = '$real/fast disk'"
+settings_says "an escaped quote and backslash are a quote and a backslash" "$real/a\\b\"c" '[build]' "target-dir = \"$real/a\\\\b\\\"c\""
+settings_says "a literal string keeps its backslashes" "$real/lit\\u0020x" '[build]' "target-dir = '$real/lit\\u0020x'"
+settings_says "a quoted table name with a blank in it is another table" "$real/q" '[build]' "target-dir = \"$real/q\"" '["build "]' "target-dir = \"$real/no\""
+settings_says "a quoted key with a dot in it is one key, not build's target-dir" "$repo/target" "\"build.target-dir\" = \"$real/no\""
+# A target-dir whose escapes cannot be decoded stops target_dir: taken as
+# no setting, the build would go to target/, the drive it was moved off.
+badpy="$real/badpy"
+mkdir "$badpy"
+printf '#!/bin/sh\nexit 1\n' >"$badpy/python3"
+chmod +x "$badpy/python3"
+printf '[build]\ntarget-dir = "%s"\n' "$real/fast\\u0020disk" >"$repo/.cargo/config.toml"
+if out="$(PATH="$badpy:$PATH" where "$real/wt" 2>&1)"; then
+  bad "target_dir gave '$out' for a target-dir it could not decode"
+else
+  ok "a target-dir that cannot be decoded stops target_dir"
+fi
+mkdir "$real/wt/.cargo"
+printf '[build]\ntarget-dir = "own"\n' >"$real/wt/.cargo/config.toml"
+out="$(where "$real/wt")"
+if [ "$out" = "$real/wt/own" ]; then ok "a worktree with settings of its own builds where they say"; else bad "target_dir gave $out for a worktree whose own config sets target-dir own"; fi
+printf '[build]\njobs = 3\n' >"$real/wt/.cargo/config.toml"
+printf '[build]\ntarget-dir = "%s"\n' "$real/roomy-cfg" >"$repo/.cargo/config.toml"
+out="$(where "$real/wt")"
+if [ "$out" = "$real/roomy-cfg" ]; then ok "a worktree whose own settings name no target builds where its main checkout's say"; else bad "target_dir gave $out for a worktree with settings of its own and a main config with target-dir $real/roomy-cfg"; fi
+rm "$real/wt/.cargo/config.toml"
+rmdir "$real/wt/.cargo"
+printf '[build]\njobs = 2\n' >"$repo/.cargo/config.toml"
+
+# Settings a file includes are its settings, as cargo 1.98.1 reads them
+# (checked against it): an array of paths ending in .toml, each a string or
+# a table {path, optional}, from the directory of the file that names it.
+# The included files merge first, each in the order listed, and the file's
+# own keys win; a relative path in one is from the directory that holds its
+# .cargo, as in any settings file.
+mkdir -p "$repo/.cargo/inc/deep"
+printf '[build]\ntarget-dir = "%s"\n' "$real/inc-a" >"$repo/.cargo/inc/a.toml"
+printf '[build]\ntarget-dir = "%s"\n' "$real/inc-b" >"$repo/.cargo/inc/b.toml"
+printf 'include = ["deep/d.toml"]\n' >"$repo/.cargo/inc/n.toml"
+printf '[build]\ntarget-dir = "rel"\n' >"$repo/.cargo/inc/deep/d.toml"
+settings_says "a target-dir an included file names is the one used" "$real/inc-a" 'include = ["inc/a.toml"]'
+settings_says "a later include's target-dir wins over an earlier one's" "$real/inc-b" "include = [ 'inc/a.toml', \"inc/b.toml\" ]"
+settings_says "the including file's own target-dir wins over its includes'" "$real/own" 'include = ["inc/b.toml"]' '[build]' "target-dir = \"$real/own\""
+settings_says "an include given as a table, over lines, is read, and a missing optional one is skipped" "$real/inc-a" 'include = [' '  { path = "inc/none.toml", optional = true },  # not there' "  { path = 'inc/a.toml', optional = false }," ']'
+settings_says "an included file's own include is from its directory, and its relative target-dir from the directory that holds its .cargo" "$repo/.cargo/inc/rel" 'include = ["inc/n.toml"]'
+settings_says "an include under another table is not cargo's include" "$repo/target" '[build]' 'include = ["inc/a.toml"]'
+# An include cargo stops on stops the task, in one line that names the file
+# and what is wrong; it never goes round a cycle.
+include_stops() {
+  local what="$1" want="$2" got
+  shift 2
+  printf '%s\n' "$@" >"$repo/.cargo/config.toml"
+  if got="$(where "$real/wt" 2>&1)"; then
+    bad "$what: target_dir gave '$got' for settings:" "$@"
+  elif [ "$(printf '%s\n' "$got" | wc -l | tr -d ' ')" = 1 ] && case "$got" in *"$repo/.cargo/"*"$want"*) true ;; *) false ;; esac; then
+    ok "$what"
+  else
+    bad "$what: target_dir said, not one line naming the file and '$want':" "$got"
+  fi
+}
+include_stops "an include given as a string stops the task, as cargo takes only an array" "not an array" 'include = "inc/a.toml"'
+include_stops "an include that is not there stops the task unless it is optional" "inc/none.toml is not there" 'include = ["inc/a.toml", "inc/none.toml"]'
+include_stops "an include not ending in .toml stops the task, as it stops cargo" "does not end with .toml" 'include = ["inc/a.txt"]'
+printf 'include = ["../config.toml"]\n' >"$repo/.cargo/inc/c.toml"
+include_stops "an include cycle stops the task rather than going round" "include cycle" 'include = ["inc/c.toml"]'
+printf 'include = ["deep/../c2.toml"]\n' >"$repo/.cargo/inc/c2.toml"
+include_stops "a file that includes itself by another path is a cycle" "include cycle" 'include = ["inc/c2.toml"]'
+# Cargo takes a file met twice in one file's includes as a cycle, even met
+# through two different files.
+printf 'include = ["a.toml"]\n' >"$repo/.cargo/inc/x.toml"
+printf 'include = ["a.toml"]\n' >"$repo/.cargo/inc/y.toml"
+include_stops "a file two includes both include is a cycle, as cargo says" "include cycle" 'include = ["inc/x.toml", "inc/y.toml"]'
+# A linked worktree is given the main checkout's settings with what they
+# include, merged as cargo merges them; an include cargo stops on stops the
+# task in one line there too, CARGO_TARGET_DIR set or not.
+mkdir -p "$repo/.cargo/inc/tools"
+printf '[build]\njobs = 4\nrustc-wrapper = "tools/w"\nrustflags = ["--cfg", "inc"]\n' >"$repo/.cargo/inc/k.toml"
+printf 'include = [{ path = "inc/k.toml" }]\n[build]\njobs = 2\nrustflags = ["--cfg", "own"]\n' >"$repo/.cargo/config.toml"
+want="build.jobs = 2|build.rustc-wrapper = \"$repo/.cargo/tools/w\"|build.rustflags = [\"--cfg\", \"inc\", \"--cfg\", \"own\"]|"
+out="$(given "$real/wt")"
+if [ "$out" = "$want" ]; then ok "a linked worktree gets what its main checkout's settings include, the including file's keys winning"; else bad "cargo in a worktree whose main settings include inc/k.toml was given:" "gave: $out" "not:  $want"; fi
+if python3 -I -c 'import tomllib' 2>/dev/null || python3 -I -c 'import tomli' 2>/dev/null; then
+  for case in 'include = ["inc/none.toml"]|is not there' 'include = ["inc/x.toml", "inc/y.toml"]|include cycle'; do
+    printf '%s\n' "${case%|*}" >"$repo/.cargo/config.toml"
+    if out="$( (unexported && CARGO_HOME="$real/cargo-home" cargo_config "$real/wt") 2>&1)"; then
+      bad "cargo_config went on with settings cargo stops on (${case%|*}): $out"
+    elif [ "$(printf '%s\n' "$out" | wc -l | tr -d ' ')" = 1 ] && case "$out" in *"${case#*|}"*) true ;; *) false ;; esac; then
+      ok "a main checkout's include cargo stops on (${case#*|}) stops a worktree's task in one line"
+    else
+      bad "cargo_config with settings that ${case#*|} said, not one line:" "$out"
+    fi
+  done
+else
+  echo "note  this python3 has no tomllib: a worktree's include that stops cargo is left out"
+fi
+rm -r "$repo/.cargo/inc"
+printf '[build]\njobs = 2\n' >"$repo/.cargo/config.toml"
+
+# Cargo reads settings in every directory above where it runs too, and in its
+# home, after the checkout's own.
+mkdir -p "$real/outer/.cargo" "$real/outer/plain" "$real/cargo-home"
+printf '[build]\ntarget-dir = "outer-target"\n' >"$real/outer/.cargo/config.toml"
+out="$(where "$real/outer/plain")"
+if [ "$out" = "$real/outer/outer-target" ]; then ok "a target-dir in a directory above the checkout is the one used"; else bad "target_dir gave $out under $real/outer, whose .cargo/config.toml sets target-dir outer-target"; fi
+printf '[build]\ntarget-dir = "%s"\n' "$real/home-target" >"$real/cargo-home/config.toml"
+out="$(where "$real/outer/plain")"
+if [ "$out" = "$real/outer/outer-target" ]; then ok "the settings above the checkout win over cargo's home"; else bad "target_dir gave $out under $real/outer with a target-dir in cargo's home too"; fi
+out="$(where "$real/wt")"
+if [ "$out" = "$real/home-target" ]; then ok "a target-dir in cargo's home is the one used when the checkout's settings name none"; else bad "target_dir gave $out for a worktree with target-dir $real/home-target in CARGO_HOME/config.toml"; fi
+rm "$real/cargo-home/config.toml"
+
+# A cargo task and the MCP server, both run in the worktree, build into the
+# same place with the same settings. The stand-in cargo notes the target it
+# would build into (--target-dir, else a build.target-dir --config, else
+# CARGO_TARGET_DIR, else ./target as cargo's own) and the settings it was
+# given, CARGO_BUILD_JOBS first and then each --config in order, and makes a
+# server there. It writes nothing outside
+# the fixture: a target anywhere else is refused before anything is made.
+fakes="$real/fakes"
+mkdir "$fakes"
+cat >"$fakes/cargo" <<'EOF_CARGO'
+#!/bin/sh
+target="${CARGO_TARGET_DIR:-$PWD/target}" config="${CARGO_BUILD_JOBS:+build.jobs = $CARGO_BUILD_JOBS}"
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --target-dir) target="$2"; shift ;;
+    --config)
+      case "$2" in
+        build.target-dir=*) target="${2#build.target-dir=\"}"; target="${target%\"}" ;;
+        */settings.toml) while IFS= read -r line; do config="${config:+$config,}$line"; done <"$2" ;;
+        *) config="${config:+$config,}$2" ;;
+      esac
+      shift
+      ;;
+  esac
+  shift
+done
+case "$target" in
+  "$FAKE_ROOT"/*) ;;
+  *) echo "refused to build into $target, outside $FAKE_ROOT" >>"$FAKE_LOG"; exit 1 ;;
+esac
+echo "$target ${config:-none}" >>"$FAKE_LOG"
+mkdir -p "$target/debug"
+printf '#!/bin/sh\necho "{}"\n' >"$target/debug/ljos"
+chmod +x "$target/debug/ljos"
+printf '{"reason":"compiler-artifact","executable":"%s"}\n' "$target/debug/ljos"
+EOF_CARGO
+chmod +x "$fakes/cargo"
+# cargo gives the main checkout's settings that no variable sets instead,
+# looking at the variables at each call: one a task sets after env.sh was
+# read wins too.
+argfakes="$real/argfakes"
+mkdir "$argfakes"
+# The stand-in prints its arguments, a settings file as its lines in braces
+# and whether only its user can read where it is.
+cat >"$argfakes/cargo" <<'EOF_ARGS'
+#!/bin/sh
+for a in "$@"; do
+  case "$a" in
+    */settings.toml)
+      printf '{'
+      while IFS= read -r line; do printf '%s;' "$line"; done <"$a"
+      printf '}%s|' "$(ls -ld "$(dirname "$a")" | cut -c1-10)"
+      ;;
+    /dev/fd/*)
+      printf '{'
+      while IFS= read -r line; do printf '%s;' "$line"; done <"$a"
+      printf '}fd|'
+      ;;
+    *) printf '%s|' "$a" ;;
+  esac
+done
+EOF_ARGS
+chmod +x "$argfakes/cargo"
+settings="$(printf 'CARGO_BUILD_JOBS\tbuild.jobs = 2\nCARGO_BUILD_TARGET_DIR CARGO_TARGET_DIR\tbuild.target-dir = "%s"' "$real/main-target")"
+mkdir "$real/argtmp"
+out="$( (unset CARGO_BUILD_JOBS CARGO_BUILD_TARGET_DIR && ljos_cargo_config="$settings" && TMPDIR="$real/argtmp" PATH="$argfakes:$PATH" cargo build) )"
+if [ "$out" = "--config|{build.jobs = 2;}drwx------|build|" ]; then ok "in a worktree, cargo gets its main checkout's settings in a file only its user can read, but the target CARGO_TARGET_DIR names"; else bad "cargo in a worktree gave: $out"; fi
+if [ -z "$(ls -A "$real/argtmp")" ]; then ok "the settings file is gone once cargo is"; else bad "cargo left behind: $(ls -A "$real/argtmp")"; fi
+# exec_cargo: cargo takes the shell's process, and nothing is left behind.
+out="$( (unset CARGO_BUILD_JOBS CARGO_BUILD_TARGET_DIR && ljos_cargo_config="$settings" && TMPDIR="$real/argtmp" PATH="$argfakes:$PATH" exec_cargo build; echo "still here|") )"
+if [ -d /proc/self/fd ]; then
+  want="--config|{build.jobs = 2;}fd|build|"
+  if [ "$out" = "$want" ]; then ok "exec_cargo runs cargo in the shell's place with the main checkout's settings, read from a descriptor"; else bad "exec_cargo gave: $out" "not:  $want"; fi
+  if [ -z "$(ls -A "$real/argtmp")" ]; then ok "exec_cargo leaves no settings file behind"; else bad "exec_cargo left behind: $(ls -A "$real/argtmp")"; fi
+else
+  case "$out" in
+    "--config|{build.jobs = 2;}drwx------|build|") ok "exec_cargo runs cargo in the shell's place with the main checkout's settings, in a file only its user can read" ;;
+    *) bad "exec_cargo gave: $out" ;;
+  esac
+fi
+out="$( (unset CARGO_BUILD_TARGET_DIR && ljos_cargo_config="$settings" && CARGO_BUILD_JOBS=1 && export CARGO_BUILD_JOBS && PATH="$argfakes:$PATH" cargo build) )"
+if [ "$out" = "build|" ]; then ok "a variable set after env.sh was read still wins over the main checkout's settings"; else bad "cargo given CARGO_BUILD_JOBS=1 after env.sh was read gave: $out"; fi
+out="$( (unset CARGO_BUILD_JOBS CARGO_BUILD_TARGET_DIR && ljos_cargo_config="$settings" && CARGO_BUILD_JOBS=1 PATH="$argfakes:$PATH" cargo build) )"
+if [ "$out" = "build|" ]; then ok "CARGO_BUILD_JOBS=1 cargo wins over the main checkout's jobs"; else bad "CARGO_BUILD_JOBS=1 cargo gave: $out"; fi
+out="$( (unset CARGO_BUILD_JOBS CARGO_BUILD_TARGET_DIR && ljos_cargo_config="$settings" && CARGO_BUILD_JOBS=1 && PATH="$argfakes:$PATH" cargo build) )"
+if [ "$out" = "--config|{build.jobs = 2;}drwx------|build|" ]; then ok "a CARGO_BUILD_JOBS the task does not export leaves the main checkout's jobs"; else bad "with CARGO_BUILD_JOBS=1 not exported, cargo gave: $out"; fi
+
+# in_worktree <task>: the task, run from the worktree's copy of the tasks as
+# mise would (in the worktree's root), with the stand-in cargo and cargo's
+# home a fixture's, and no target asked for; prints what it noted.
+in_worktree() {
+  : >"$real/built.log"
+  (
+    cd "$real/wt"
+    unset CARGO_TARGET_DIR CARGO_BUILD_TARGET_DIR LJOS_BIN LJOS_BUILD_WRAPPER CARGO_BUILD_TARGET CARGO_BUILD_JOBS
+    CARGO_HOME="$real/cargo-home" FAKE_ROOT="$real" FAKE_LOG="$real/built.log" PATH="$fakes:$PATH" \
+      bash "mise-tasks/$1" </dev/null >/dev/null 2>&1
+  ) || echo "failed"
+  cat "$real/built.log"
+}
+if [ -d "$real/wt" ]; then
+  task="$(CARGO_BUILD_TARGET_DIR="$real/stray" in_worktree types)"
+  mcp="$(in_worktree mcp)"
+  if [ "$task" = "$repo/target build.jobs = 2" ] && [ "$task" = "$mcp" ]; then
+    ok "a cargo task and the MCP server agree in a worktree: $repo/target, with its main checkout's settings"
+  else
+    bad "in a worktree, a cargo task and the MCP server built differently" "types: $task" "mcp:   $mcp"
+  fi
+  if [ ! -e "$real/wt/target" ]; then ok "nothing was built in the worktree's own target/"; else bad "the worktree has a target/ of its own"; fi
+  mkdir "$real/wt/.cargo"
+  printf '[build]\njobs = 3\n' >"$real/wt/.cargo/config"
+  task="$(in_worktree types)"
+  mcp="$(in_worktree mcp)"
+  if [ "$task" = "$repo/target none" ] && [ "$task" = "$mcp" ]; then
+    ok "with settings of its own, a worktree's cargo task and MCP server both build with its own keys over its main checkout's"
+  else
+    bad "in a worktree with settings of its own, a cargo task and the MCP server built differently" "types: $task" "mcp:   $mcp"
+  fi
+  rm "$real/wt/.cargo/config"
+  rmdir "$real/wt/.cargo"
+fi
+
+# --- .mcp.json starts the server the way the tasks build ---------------------------
+
+# taken <file>: mcp_json_problem accepts <file>, by its exit status as well
+# as by saying nothing (a validator that fails says nothing on stdout).
+# refused <file>: it exits 0 and says what is wrong.
+taken() {
+  local out
+  out="$(mcp_json_problem "$1" 2>&1)" && [ -z "$out" ]
+}
+refused() {
+  local out
+  out="$(mcp_json_problem "$1" 2>/dev/null)" && [ -n "$out" ] && printf '%s\n' "$out"
+}
+if taken .mcp.json; then ok "this repository's .mcp.json starts its ljos server through mise-tasks/mcp"; else bad "this repository's .mcp.json:" "$(mcp_json_problem .mcp.json 2>&1)"; fi
+printf '%s\n' '{"mcpServers":{"ljos":{"command":"cargo","args":["run","--quiet","-p","ljos_cli","--","mcp","--project","."]}}}' >"$real/old.json"
+case "$(refused "$real/old.json")" in
+  *"cargo run"*"mise-tasks/mcp"*) ok "an .mcp.json whose ljos server is a bare cargo run is refused, with the fix" ;;
+  *) bad "an .mcp.json whose ljos server is a bare cargo run was not refused with the fix" "$(mcp_json_problem "$real/old.json" 2>&1)" ;;
+esac
+printf '%s\n' '{"mcpServers":{"ljos":{"command":"mise","args":["run","mcp"]}}}' >"$real/mise.json"
+if taken "$real/mise.json"; then ok "an .mcp.json that starts its ljos server with mise run mcp is taken"; else bad "an .mcp.json running mise run mcp was refused" "$(mcp_json_problem "$real/mise.json" 2>&1)"; fi
+printf '%s\n' '{"mcpServers":{"ljos":{"command":"bash","args":["mise-tasks/mcp","."]}}}' >"$real/bash.json"
+if taken "$real/bash.json"; then ok "an .mcp.json that starts mise-tasks/mcp with bash is taken"; else bad "an .mcp.json running bash mise-tasks/mcp was refused" "$(mcp_json_problem "$real/bash.json" 2>&1)"; fi
+printf '%s\n' '{"mcpServers":{"ljos":{"command":"sh","args":["mise-tasks/mcp","."]}}}' >"$real/sh.json"
+case "$(refused "$real/sh.json")" in
+  *bash*) ok "an .mcp.json that starts mise-tasks/mcp with sh, which may not be bash, is refused" ;;
+  *) bad "an .mcp.json running sh mise-tasks/mcp was not refused" "$(mcp_json_problem "$real/sh.json" 2>&1)" ;;
+esac
+printf '%s\n' '{"mcpServers":{}}' >"$real/none.json"
+case "$(refused "$real/none.json")" in
+  *"no ljos server"*) ok "an .mcp.json with no ljos server is refused" ;;
+  *) bad "an .mcp.json with no ljos server was not refused" ;;
+esac
+for args in null '"mise-tasks/mcp"' '{"a":1}'; do
+  printf '{"mcpServers":{"ljos":{"command":"bash","args":%s}}}\n' "$args" >"$real/args.json"
+  case "$(refused "$real/args.json")" in
+    *"not a list"*) ok "an .mcp.json whose ljos server's args are $args is refused, not a validator that fails" ;;
+    *) bad "an .mcp.json whose ljos server's args are $args was not refused" "$(mcp_json_problem "$real/args.json" 2>&1)" ;;
+  esac
+done
+for server in '"command":"bash","args":["mise-tasks/mcp",null]' '"command":"bash","args":["mise-tasks/mcp",1]' '"command":["bash"],"args":["mise-tasks/mcp","."]'; do
+  printf '{"mcpServers":{"ljos":{%s}}}\n' "$server" >"$real/args.json"
+  case "$(refused "$real/args.json")" in
+    *"not a string"*) ok "an .mcp.json whose ljos server is $server is refused: a command and its args are strings" ;;
+    *) bad "an .mcp.json whose ljos server is $server was not refused" "$(mcp_json_problem "$real/args.json" 2>&1)" ;;
+  esac
+done
+
+# --- A task runs cargo through env.sh ----------------------------------------------
+
+mkdir "$real/lint"
+# lints <what> <want: none|source|round> <line>…: what cargo_problems says of
+# a task of those lines.
+lints() {
+  local what="$1" want="$2" got
+  shift 2
+  printf '%s\n' '#!/usr/bin/env bash' "$@" >"$real/lint/task"
+  got="$(cargo_problems "$real/lint/task" "$real/lint")"
+  case "$want:$got" in
+    none:) ok "$what" ;;
+    source:*"without sourcing"*) ok "$what" ;;
+    round:*"goes round"*) ok "$what" ;;
+    *) bad "$what: cargo_problems said '$got', not $want, of:" "$@" ;;
+  esac
+}
+env_line='. "$(dirname "$0")/_lib/env.sh"'
+lints "a task that sources env.sh and runs cargo is taken" none "$env_line" 'cargo test'
+lints "a task that only prints a cargo command runs no cargo" none 'echo "Run cargo test first"'
+lints "a task that runs cargo and does not source env.sh is refused" source 'cargo test'
+lints "cargo in a condition or a command substitution is a cargo run" source 'if cargo test; then :; fi'
+lints "cargo after an assignment is a cargo run" source 'x="$(RUSTFLAGS=-g cargo metadata)"'
+lints "a commented-out source of env.sh does not count" source "# $env_line" 'cargo test'
+lints "exec cargo goes round env.sh's cargo" round "$env_line" 'exec cargo test'
+lints "exec_cargo is env.sh's cargo in the task's process" none "$env_line" 'exec_cargo test'
+# shellcheck disable=SC1003 # the backslash ends the task's line
+lints "command cargo across a continued line goes round env.sh's cargo" round "$env_line" 'command \' '  cargo test'
+# A program that runs another runs the cargo program, not env.sh's cargo.
+# shellcheck disable=SC2016 # the task's own text, expanded when it runs
+for wrapped in 'timeout 60 cargo test' 'nice -n 10 cargo build' 'env X=1 cargo test' \
+  '"$S/bin/capped" cargo build' '$S/bin/capped cargo build' 'command cargo test' \
+  'nohup cargo build' 'mise exec -- cargo build' 'if timeout 60 cargo test; then :; fi' \
+  'xargs cargo build' 'xargs -n 1 cargo build' 'taskset -c 0 cargo build' 'taskset 0x1 cargo build' \
+  'chrt 1 cargo build' 'chrt -i 0 cargo build'; do
+  lints "$wrapped, in a task that does not source env.sh, is refused" source "$wrapped"
+  lints "$wrapped goes round env.sh's cargo" round "$env_line" "$wrapped"
+done
+lints "a message that names a wrapped cargo runs none" none 'echo "run timeout 60 cargo test"'
+lints "a message that names cargo runs none" none 'echo "run cargo"'
+lints "a message in single quotes after a separator runs none" none "printf '%s\n' 'built; cargo build'"
+lints "a message that runs on over lines runs none" none 'echo "first line' 'cargo build"'
+lints "an inline comment runs none" none ': built # ; cargo build'
+lints "a here-document's text runs none" none "cat <<'EOF'" 'cargo build' 'EOF'
+lints "an indented here-document's text runs none, and a cargo after its terminator is a cargo run" source 'cat <<-"END" | grep x' '	cargo run' '	END' 'cargo test'
+lints "a shift in arithmetic is no here-document" source 'x=$((1 << n))' 'cargo test'
+lints "a here-string is no here-document" source 'x="$(sed s/a/b/ <<<"$y")"' 'cargo test'
+lints "a here-string of a word is no here-document" source 'grep -q x <<< y' 'cargo test'
+lints "cargo in a quoted command substitution is a cargo run" source 'x="$(timeout 60 cargo metadata)"'
+# A wrapper takes its own options, and the next word is its program.
+lints "exec of another program whose flag names cargo runs none" none 'exec "$prog" run --note "cargo build"'
+lints "timeout of another program whose argument is cargo runs none" none 'timeout 60 "$prog" cargo'
+lints "command -v cargo runs none" none 'command -v cargo >/dev/null || echo "no cargo"'
+lints "exec -a names the program, and cargo after it goes round env.sh's cargo" round "$env_line" 'exec -a build cargo build'
+# mise-tasks/bench/_default's last command, as it is there.
+bench=(
+  'exec "$target/$profile/ljos" bench --manifest "$manifest" \'
+  '  --sway "$(value SWAYSOCK)" --wayland "$(value WAYLAND_DISPLAY)" \'
+  '  --app-env "DBUS_SESSION_BUS_ADDRESS=$(value DBUS_SESSION_BUS_ADDRESS)" \'
+  '  --app-env "XDG_CONFIG_HOME=$(value XDG_CONFIG_HOME)" --app-env "XDG_DATA_HOME=$(value XDG_DATA_HOME)" \'
+  '  --app-env "XDG_STATE_HOME=$(value XDG_STATE_HOME)" \'
+  '  --app-env "LJOS_SCREEN_READER=$(value LJOS_SCREEN_READER)" \'
+  '  --qml6 "$qml" ${defaults[@]+"${defaults[@]}"} \'
+  '  --note "ljos: $(git -C "$root" rev-parse --short HEAD), cargo build --profile $profile ($build)" \'
+  '  --note "$qt_note" \'
+  '  --note "both on the sandbox'"'"'s headless sway (${LJOS_CUA_GPU:-pixman}), as Wayland clients" \'
+  '  --out "$out" ${opts[@]+"${opts[@]}"}'
+)
+lints "exec of the bench, whose note names cargo build, runs no cargo" none "${bench[@]}"
+lints "exec of the bench, in a task that runs cargo, does not go round env.sh's cargo" none "$env_line" 'cargo build' "${bench[@]}"
+# Longer than a pipe holds: a lint that pipes the task to grep -q sees the
+# match fail under pipefail once grep stops reading.
+long=()
+for _ in $(seq 20000); do long+=(': filler line for a task longer than a pipe holds'); done
+lints "a long task that sources env.sh and runs cargo is taken" none "$env_line" 'cargo test' "${long[@]}"
+lints "a long task that runs exec cargo goes round env.sh's cargo" round "$env_line" 'exec cargo test' "${long[@]}"
+# env.sh's cargo is a shell function, which no script a task runs has: a
+# script that runs cargo sources env.sh itself, or its cargo builds without
+# the main checkout's settings.
+mkdir "$real/lint/scripts"
+printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail' 'cargo build -p ljos_cli' >"$real/lint/scripts/build.sh"
+printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail' '. "$(dirname "$0")/../mise-tasks/_lib/env.sh"' 'cargo build -p ljos_cli' >"$real/lint/scripts/sourced.sh"
+printf '%s\n' '#!/usr/bin/env bash' '. "$(dirname "$0")/../mise-tasks/_lib/env.sh"' 'exec cargo build -p ljos_cli' >"$real/lint/scripts/round.sh"
+printf '%s\n' '#!/usr/bin/env bash' 'echo "no cargo here"' >"$real/lint/scripts/quiet.sh"
+lints "a task whose script runs cargo, and neither sources env.sh, is refused" source 'exec scripts/build.sh start "$@"'
+lints "a task whose script runs cargo without sourcing env.sh is refused, though the task sources it" source "$env_line" 'exec scripts/build.sh start "$@"'
+lints "a task whose script runs cargo is taken when the script sources env.sh" none 'exec scripts/sourced.sh start "$@"'
+lints "a script that runs exec cargo goes round env.sh's cargo" round "$env_line" 'exec scripts/round.sh'
+lints "a task whose script runs no cargo need not source env.sh" none '"$root/scripts/quiet.sh" "$out"'
+got="$(cargo_problems "$ljos_root/mise-tasks/desktop/cua/_default" "$ljos_root")"
+if [ -z "$got" ]; then ok "desktop:cua's sandbox builds through env.sh's cargo"; else bad "desktop:cua: cargo_problems said '$got'"; fi
+
+# --- What a checkout's runs write ------------------------------------------------
+
+if [ -d "$real/wt" ]; then
+  main_dir="$( (unset CARGO_TARGET_DIR CARGO_BUILD_TARGET_DIR && CARGO_HOME="$real/cargo-home" checkout_dir gallery "$repo") )"
+  wt_dir="$( (unset CARGO_TARGET_DIR CARGO_BUILD_TARGET_DIR && CARGO_HOME="$real/cargo-home" checkout_dir gallery "$real/wt") )"
+  if [ "$main_dir" = "$repo/target/gallery" ]; then ok "the main checkout's runs write in its target directory"; else bad "checkout_dir gave $main_dir for the main checkout"; fi
+  case "$wt_dir" in
+    "$repo/target/worktrees/wt-"*/gallery) ok "a linked worktree's runs write in a directory of its own in the target it shares" ;;
+    *) bad "checkout_dir gave $wt_dir for a linked worktree, not one under $repo/target/worktrees/" ;;
+  esac
+fi
+
+# --- A long run keeps the programs it built ----------------------------------------
+
+# Where a build keeps its intermediate files is cargo's to say (build_dir
+# asks it), in its own order: CARGO_BUILD_BUILD_DIR, then the settings (a
+# linked worktree's main checkout's too), then the target directory, with
+# its templates expanded. Asked of the real cargo, as only it says what it
+# does; the developer's RUSTUP_* stay, so it is the pinned one.
+# bdir <dir> [VAR=value…]: build_dir for the workspace at <dir>, whose
+# target is <dir>/tgt.
+bdir() {
+  local dir="$1" toolchain="${RUSTUP_TOOLCHAIN-}" rustup_home="${RUSTUP_HOME-}" a
+  shift
+  (
+    unexported
+    [ -z "$toolchain" ] || export RUSTUP_TOOLCHAIN="$toolchain"
+    [ -z "$rustup_home" ] || export RUSTUP_HOME="$rustup_home"
+    export CARGO_HOME="$real/cargo-home" CARGO_TARGET_DIR="$dir/tgt"
+    for a in "$@"; do export "${a?}"; done
+    cd "$dir" && ljos_root="$dir" && ljos_cargo_config="$(cargo_config "$dir")" && build_dir
+  )
+}
+if cargo -V >/dev/null 2>&1 && [ -d "$real/wt" ]; then
+  printf '[workspace]\n' >"$real/wt/Cargo.toml"
+  printf '[workspace]\n' >"$repo/Cargo.toml"
+  printf '[build]\njobs = 2\n' >"$repo/.cargo/config.toml"
+  out="$(bdir "$real/wt" 2>&1)" || true
+  if [ "$out" = "$real/wt/tgt" ]; then ok "a build keeps its intermediate files in the target directory when nothing names a build directory"; else bad "build_dir gave '$out' with no build-dir set, not $real/wt/tgt"; fi
+  printf '[build]\nbuild-dir = "bd"\n' >"$repo/.cargo/config.toml"
+  out="$(bdir "$real/wt" 2>&1)" || true
+  if [ "$out" = "$repo/bd" ]; then ok "a linked worktree keeps its intermediate files in the build directory its main checkout's settings name"; else bad "build_dir gave '$out' for a worktree whose main settings say build-dir = \"bd\", not $repo/bd"; fi
+  out="$(bdir "$real/wt" CARGO_BUILD_BUILD_DIR="$real/env-bd" 2>&1)" || true
+  if [ "$out" = "$real/env-bd" ]; then ok "CARGO_BUILD_BUILD_DIR wins over the build directory the settings name, as in cargo"; else bad "build_dir gave '$out' with CARGO_BUILD_BUILD_DIR=$real/env-bd"; fi
+  printf '[build]\nbuild-dir = "{workspace-root}/bd"\n' >"$repo/.cargo/config.toml"
+  out="$(bdir "$real/wt" 2>&1)" || true
+  if [ "$out" = "$real/wt/bd" ]; then ok "{workspace-root} in a main checkout's build-dir is the worktree's workspace, as cargo expands it there"; else bad "build_dir gave '$out' for build-dir = \"{workspace-root}/bd\", not $real/wt/bd"; fi
+  printf '[build]\nbuild-dir = "{cargo-cache-home}/bd"\n' >"$repo/.cargo/config.toml"
+  out="$(bdir "$real/wt" 2>&1)" || true
+  if [ "$out" = "$real/cargo-home/bd" ]; then ok "{cargo-cache-home} in a build-dir is cargo's home, as cargo expands it"; else bad "build_dir gave '$out' for build-dir = \"{cargo-cache-home}/bd\", not $real/cargo-home/bd"; fi
+  mkdir "$repo/.cargo/inc"
+  printf '[build]\nbuild-dir = "%s"\n' "$real/inc-bd" >"$repo/.cargo/inc/bd.toml"
+  printf 'include = ["inc/bd.toml"]\n' >"$repo/.cargo/config.toml"
+  out="$(bdir "$real/wt" 2>&1)" || true
+  if [ "$out" = "$real/inc-bd" ]; then ok "a build-dir a main checkout's settings include is the worktree's"; else bad "build_dir gave '$out' for a build-dir in an included file, not $real/inc-bd"; fi
+  rm -r "$repo/.cargo/inc"
+  rm "$real/wt/Cargo.toml" "$repo/Cargo.toml"
+  printf '[build]\njobs = 2\n' >"$repo/.cargo/config.toml"
+else
+  echo "note  no cargo runs here: where a build keeps its intermediate files is left out"
+fi
+# Given as whole files (no tomllib), the main checkout's settings would
+# outrank CARGO_BUILD_BUILD_DIR, so it is given after them as well.
+mkdir -p "$real/wt/.cargo"
+out="$( (unexported && CARGO_TARGET_DIR="$real/shared" CARGO_BUILD_BUILD_DIR="$real/bd" && export CARGO_TARGET_DIR CARGO_BUILD_BUILD_DIR && PATH="$nopy:$PATH" && d="$(mktemp -d)" && config_args "$(CARGO_HOME="$real/cargo-home" cargo_config "$real/wt" 2>/dev/null)" "$d" && shown "$d") )"
+want="$repo/.cargo/config.toml|build.target-dir=\"$real/shared\"|build.build-dir=\"$real/bd\"|"
+if [ "$out" = "$want" ]; then ok "without tomllib, CARGO_BUILD_BUILD_DIR still wins over the main checkout's whole files"; else bad "without tomllib, with CARGO_BUILD_BUILD_DIR set, cargo in a worktree was given:" "gave: $out" "not:  $want"; fi
+rmdir "$real/wt/.cargo"
+
+# pin_programs builds with the build directory cargo says (asked once, with
+# the target the task builds into) and puts the programs in a target of the
+# pin directory's own, so another checkout's build, which writes its
+# programs to the shared target, never reaches them. The stand-in cargo
+# answers metadata with PIN_BUILD_DIR as the build directory, and on a
+# build makes prog anew (a new file, as a linker does) in the target it is
+# given, saying with what; right after, another checkout's build puts its
+# own prog in the shared target, PIN_SHARED.
+pinfakes="$real/pinfakes"
+mkdir "$pinfakes"
+cat >"$pinfakes/cargo" <<'EOF_CARGO'
+#!/bin/sh
+case "$1" in
+  metadata)
+    printf '{"packages":[],"target_directory":"%s","build_directory":"%s","version":1}\n' "$CARGO_TARGET_DIR" "$PIN_BUILD_DIR"
+    exit 0 ;;
+esac
+n=$(( $(cat "$PIN_COUNT" 2>/dev/null || echo 0) + 1 ))
+echo "$n" >"$PIN_COUNT"
+mkdir -p "$CARGO_TARGET_DIR/debug" "$PIN_SHARED/debug"
+rm -f "$CARGO_TARGET_DIR/debug/prog"
+echo "build $n, build dir ${CARGO_BUILD_BUILD_DIR:-none}, target $CARGO_TARGET_DIR" >"$CARGO_TARGET_DIR/debug/prog"
+chmod +x "$CARGO_TARGET_DIR/debug/prog"
+echo other >"$PIN_SHARED/debug/prog"
+echo "Compiling prog (a line that is no message)"
+printf '{"reason":"compiler-artifact","executable":null,"fresh":false}\n'
+printf '{"reason":"compiler-artifact","executable":"%s","fresh":false}\n' "$CARGO_TARGET_DIR/debug/prog"
+printf '{"reason":"build-finished","success":true}\n'
+EOF_CARGO
+chmod +x "$pinfakes/cargo"
+out="$(printf '%s\n' '{"reason":"compiler-artifact","executable":null,"fresh":true}' \
+  '{"reason":"compiler-artifact","executable":"/a\tb/say \"hi\"\\/prog","fresh":true}' \
+  '{"reason":"compiler-artifact","executable":"/a\nb/prog","fresh":true}' \
+  '{"reason":"build-finished","success":true}' | built_programs)"
+if [ "$out" = "$(printf '/a\tb/say "hi"\\/prog')" ]; then ok "built_programs decodes each program's path, and leaves out none and one with a newline"; else bad "built_programs gave: $out"; fi
+dir="$real/pin"
+out="$(
+  PATH="$pinfakes:$PATH" PIN_COUNT="$dir/count" PIN_BUILD_DIR="$dir/build" PIN_SHARED="$dir/shared" CARGO_TARGET_DIR="$dir/shared"
+  export PATH PIN_COUNT PIN_BUILD_DIR PIN_SHARED CARGO_TARGET_DIR
+  ljos_cargo_config=""
+  out="$(pin_programs "$dir/bin" build --quiet 2>/dev/null)" || { echo failed; exit 0; }
+  printf '%s builds, %s: %s\n' "$(cat "$dir/count")" "$out" "$(cat "$dir/bin/prog" 2>/dev/null)"
+)"
+want="1 builds, prog $dir/bin/prog: build 1, build dir $dir/build, target $dir/bin/.target"
+if [ "$out" = "$want" ]; then ok "a run's programs are built once, with the build directory cargo says, into a target of the run's own that another checkout's build does not reach"; else bad "pin_programs gave:" "gave: $out" "not:  $want"; fi
+
+# With the real cargo: a program built already in the shared target is
+# pinned from the same build (cargo finds it fresh in the build directory
+# and copies it to the run's target), not built again.
+if cargo -V >/dev/null 2>&1; then
+  pinws="$real/pinws"
+  mkdir -p "$pinws/src"
+  printf '[package]\nname = "pinws"\nversion = "0.1.0"\nedition = "2021"\n\n[workspace]\n' >"$pinws/Cargo.toml"
+  printf 'fn main() { println!("pinned"); }\n' >"$pinws/src/main.rs"
+  out="$(
+    toolchain="${RUSTUP_TOOLCHAIN-}" rustup_home="${RUSTUP_HOME-}"
+    unexported
+    [ -z "$toolchain" ] || export RUSTUP_TOOLCHAIN="$toolchain"
+    [ -z "$rustup_home" ] || export RUSTUP_HOME="$rustup_home"
+    export CARGO_HOME="$real/cargo-home" CARGO_TARGET_DIR="$pinws/shared"
+    cd "$pinws" && ljos_root="$pinws" && ljos_cargo_config="" || exit 1
+    cargo build --quiet --offline 2>&1 || exit 1
+    built=""
+    for f in "$pinws"/shared/debug/deps/pinws-*; do
+      case "$f" in *.d) ;; *) built="$f" ;; esac
+    done
+    before="$(ls -i "$built" | awk '{ print $1 }')"
+    programs="$(pin_programs "$pinws/bin" build --quiet --offline 2>&1)" || { echo "failed: $programs"; exit 0; }
+    after="$(ls -i "$built" | awk '{ print $1 }')"
+    pinned="$(ls -i "$(pinned_program pinws "$programs")" | awk '{ print $1 }')"
+    printf '%s|%s|%s\n' "$([ "$before" = "$after" ] && echo same build || echo built again)" \
+      "$([ "$pinned" = "$after" ] && echo the build\'s program || echo another file)" "$("$pinws/bin/pinws")"
+  )"
+  if [ "$out" = "same build|the build's program|pinned" ]; then ok "with cargo, a run pins the program the shared build directory holds, without building it again"; else bad "pin_programs with the real cargo: $out"; fi
+else
+  echo "note  no cargo runs here: pinning from the real cargo's build directory is left out"
+fi
+
+# --- A program that runs cargo itself builds with the main checkout's settings
+
+# With the real cargo, started by a program rather than by a task's cargo
+# (sh knows no function of env.sh's): in a linked worktree it builds with
+# the main checkout's rustflags, as ljos_bdd's build of ljos and the MCP
+# server's cargo test do.
+if cargo -V >/dev/null 2>&1 && [ -d "$real/wt" ]; then
+  probe="$real/wt/probe"
+  mkdir -p "$probe/src"
+  printf '[package]\nname = "probe"\nversion = "0.1.0"\nedition = "2021"\n\n[workspace]\n\n[lints.rust]\nunexpected_cfgs = "allow"\n' >"$probe/Cargo.toml"
+  printf '#[cfg(main_settings)]\nfn main() { println!("main settings"); }\n#[cfg(not(main_settings))]\nfn main() { println!("none"); }\n' >"$probe/src/main.rs"
+  printf '[build]\nrustflags = ["--cfg", "main_settings"]\n' >"$repo/.cargo/config.toml"
+  out="$(
+    toolchain="${RUSTUP_TOOLCHAIN-}" rustup_home="${RUSTUP_HOME-}"
+    unexported
+    unset LJOS_UNEXPORTED_NOTED
+    [ -z "$toolchain" ] || export RUSTUP_TOOLCHAIN="$toolchain"
+    [ -z "$rustup_home" ] || export RUSTUP_HOME="$rustup_home"
+    export CARGO_HOME="$real/cargo-home" CARGO_TARGET_DIR="$probe/tgt"
+    cd "$probe" && export_settings "$(cargo_config "$real/wt")" 2>&1 || exit 1
+    sh -c 'cargo run --quiet --offline' 2>&1
+  )"
+  if [ "$out" = "main settings" ]; then ok "a cargo a program runs in a linked worktree builds with the main checkout's rustflags"; else bad "a cargo run by sh in a linked worktree gave: $out"; fi
+  rm -r "$probe"
+  printf '[build]\njobs = 2\n' >"$repo/.cargo/config.toml"
+else
+  echo "note  no cargo runs here: a cargo a program runs is left out"
+fi
+
+# The MCP server runs cargo test itself in the project it authors: it gets
+# the settings of the project's main checkout, [env] too, whether it was
+# built or named (LJOS_BIN). This stand-in says what it got.
+if [ -d "$real/wt" ]; then
+  printf '[build]\njobs = 2\nrustflags = ["--cfg", "main"]\n[env]\nSEEN = "yes"\n' >"$repo/.cargo/config.toml"
+  printf '#!/bin/sh\nprintf "%%s|%%s|%%s|%%s\\n" "$*" "${CARGO_BUILD_JOBS-}" "${CARGO_BUILD_RUSTFLAGS-}" "${SEEN-}"\n' >"$real/envserver"
+  chmod +x "$real/envserver"
+  out="$( (
+    unexported
+    unset LJOS_UNEXPORTED_NOTED SEEN
+    export CARGO_HOME="$real/cargo-home" LJOS_BIN="$real/envserver"
+    bash "$ljos_root/mise-tasks/mcp" "$real/wt" 2>/dev/null
+  ) )"
+  want="mcp --project $real/wt|2|--cfg main|yes"
+  if [ "$out" = "$want" ]; then ok "the MCP server gets the settings of its project's main checkout for the cargo it runs"; else bad "the MCP server was given:" "gave: $out" "not:  $want"; fi
+  # What a task in the linked worktree exported is its main checkout's: a
+  # task it starts for another checkout (the MCP server for the main
+  # checkout, any task of the main checkout's) drops it, but keeps what the
+  # developer set again since.
+  from_worktree() {
+    (
+      unexported
+      unset LJOS_UNEXPORTED_NOTED LJOS_SETTINGS_EXPORTED SEEN
+      export CARGO_HOME="$real/cargo-home" LJOS_BIN="$real/envserver"
+      export_settings "$(cargo_config "$real/wt")" env 2>/dev/null
+      [ -z "${1-}" ] || export "${1?}"
+      bash "$ljos_root/mise-tasks/mcp" "$repo" 2>/dev/null
+      bash -c '. "$1/mise-tasks/_lib/env.sh" && printf "%s|%s|%s\n" "${CARGO_BUILD_JOBS-}" "${CARGO_BUILD_RUSTFLAGS-}" "${SEEN-}"' task "$ljos_root" 2>/dev/null
+    )
+  }
+  out="$(from_worktree | tr '\n' '#')"
+  want="mcp --project $repo|||#||#"
+  if [ "$out" = "$want" ]; then ok "a task in a linked worktree that starts the MCP server or a task for another checkout passes it none of its main checkout's settings"; else bad "started from a linked worktree's task, another checkout's MCP server and task got:" "gave: $out" "not:  $want"; fi
+  out="$(from_worktree CARGO_BUILD_JOBS=7 | tr '\n' '#')"
+  want="mcp --project $repo|7||#7||#"
+  if [ "$out" = "$want" ]; then ok "a variable the developer set again after a task exported it is the developer's, and is kept"; else bad "with CARGO_BUILD_JOBS=7 set after the export, another checkout's MCP server and task got:" "gave: $out" "not:  $want"; fi
+  # The target a task in the linked worktree found is its main checkout's
+  # too: a task it starts in another repository (`mise -C <it> run`) builds
+  # into that one's, unless the developer named a target before either ran.
+  mkdir "$real/apart"
+  cp -R "$ljos_root/mise-tasks" "$real/apart/"
+  quiet_git -C "$real/apart" init
+  quiet_git -C "$real/apart" add mise-tasks
+  quiet_git -C "$real/apart" commit -q -m fixture
+  apart_task() {
+    (
+      unexported
+      unset LJOS_UNEXPORTED_NOTED LJOS_SETTINGS_EXPORTED CARGO_TARGET_DIR
+      export CARGO_HOME="$real/cargo-home"
+      [ -z "${1-}" ] || export "${1?}"
+      cd "$real/wt" && bash -c '. mise-tasks/_lib/env.sh && printf "%s|" "$CARGO_TARGET_DIR" && cd "$1" && bash -c ". mise-tasks/_lib/env.sh && printf %s \"\$CARGO_TARGET_DIR\""' task "$real/apart" 2>/dev/null
+    )
+  }
+  out="$(apart_task)"
+  want="$(where "$real/wt")|$(where "$real/apart")"
+  if [ "$out" = "$want" ]; then ok "a task in a linked worktree that starts a task in another repository leaves it that repository's own target"; else bad "a linked worktree's task, then another repository's, built into:" "gave: $out" "not:  $want"; fi
+  out="$(apart_task CARGO_TARGET_DIR="$real/mine")"
+  want="$real/mine|$real/mine"
+  if [ "$out" = "$want" ]; then ok "a target the developer named before any task ran is kept by a task another repository's task starts"; else bad "with CARGO_TARGET_DIR=$real/mine, a linked worktree's task, then another repository's, built into:" "gave: $out" "not:  $want"; fi
+  # The MCP server, built already (LJOS_BIN), runs with the target of the
+  # checkout it is served in, as one built there does, not this script's.
+  printf '#!/bin/sh\nprintf "%%s\\n" "${CARGO_TARGET_DIR-}"\n' >"$real/targetserver"
+  chmod +x "$real/targetserver"
+  out="$( (
+    unexported
+    unset LJOS_SETTINGS_EXPORTED CARGO_TARGET_DIR
+    export CARGO_HOME="$real/cargo-home" LJOS_BIN="$real/targetserver"
+    cd "$real/apart" && bash "$ljos_root/mise-tasks/mcp" "$real/apart" 2>/dev/null
+  ) )"
+  want="$(where "$real/apart")"
+  if [ "$out" = "$want" ]; then ok "the MCP server, built already, runs with the target of the checkout it is served in"; else bad "the MCP server built already (LJOS_BIN), served in $real/apart, was given the target:" "gave: $out" "not:  $want"; fi
+  printf '[build]\njobs = 2\n' >"$repo/.cargo/config.toml"
+fi
+
+programs="$(printf '%s\n' "ljos-x $real/a b/bin/ljos-x" "ljos $real/a b/bin/ljos" "qml-compare $real/a b/bin/qml-compare")"
+out="$(pinned_program ljos "$programs")|$(pinned_program qml-compare "$programs")|$(pinned_program qml "$programs")"
+if [ "$out" = "$real/a b/bin/ljos|$real/a b/bin/qml-compare|" ]; then ok "a pinned program's path is all of it, spaces and all"; else bad "pinned_program gave: $out"; fi
 
 # --- Vulkan drivers --------------------------------------------------------------
 

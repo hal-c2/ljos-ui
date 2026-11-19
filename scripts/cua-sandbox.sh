@@ -13,8 +13,8 @@
 # start and exec bring up what is not running. call fills in the app's pid, a shared session
 # label and foreground delivery where the tool takes them; it holds a button down
 # (mouse_button_down, mouse_drag, mouse_button_up) through XTEST, with xdotool, as the app
-# does not read the events the driver's own post. Files go under LJOS_CUA_HOME,
-# default <target>/cua.
+# does not read the events the driver's own post. Files go under LJOS_CUA_HOME, by default the
+# checkout's own directory in the target directory (checkout_dir in mise-tasks/_lib/env.sh).
 #
 # The compositor is headless, and a headless seat has no keyboard. A compositor gives the
 # keyboard focus, and tells a client it has it or has lost it, only on a seat with one, so a
@@ -38,14 +38,20 @@
 # (ARCHITECTURE.md section 14); their accessibility tree is exposed all the same.
 set -euo pipefail
 
+root="$(cd "$(dirname "$0")/.." && pwd)"
+# The tasks' target directory, sandbox home and cargo, whether a task runs this or a person
+# does: a task's cargo is a shell function, which does not reach this script, and without it a
+# linked worktree's build leaves out its main checkout's settings.
+# shellcheck source-path=SCRIPTDIR source=../mise-tasks/_lib/env.sh
+. "$root/mise-tasks/_lib/env.sh"
+
 die() {
   echo "desktop:cua: $*" >&2
   exit 1
 }
 
-root="$(cd "$(dirname "$0")/.." && pwd)"
-target="${CARGO_TARGET_DIR:-$root/target}"
-home="${LJOS_CUA_HOME:-$target/cua}"
+target="$CARGO_TARGET_DIR"
+home="$LJOS_CUA_HOME"
 # Socket paths have a short length limit: they go in the user's runtime dir, keyed by home.
 runtime="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 [[ -d $runtime ]] || die "no XDG_RUNTIME_DIR for the sandbox's sockets"
@@ -310,24 +316,37 @@ start() {
   (($#)) || die "usage: mise run desktop:cua <file.qml> [<ljos run args>]"
   up
   stop_one app
+  # The app runs the sandbox's own link to the ljos it built (pin_programs): another checkout
+  # may build into the same target while the app is driven.
   # LJOS_CLI_CARGO_FEATURES picks optional features of `ljos`, as `webengine`,
-  # whose helper is built beside it.
-  local features=()
+  # whose helper is pinned beside it.
+  local features=() programs ljos cef runtime=()
   if [ -n "${LJOS_CLI_CARGO_FEATURES:-}" ]; then
     features=(--features "$LJOS_CLI_CARGO_FEATURES")
     case ",$LJOS_CLI_CARGO_FEATURES," in
       *,webengine,*)
         export CEF_PATH="${CEF_PATH:-$target/cef}"
-        cargo build --quiet --manifest-path "$root/Cargo.toml" -p ljos_webengine --features cef --bin ljos-webengine-helper ;;
+        pin_programs "$home/bin" build --quiet --manifest-path "$root/Cargo.toml" -p ljos_webengine --features cef \
+          --bin ljos-webengine-helper > /dev/null || die "ljos-webengine-helper did not build"
+        ;;
     esac
   fi
-  cargo build --quiet --manifest-path "$root/Cargo.toml" -p ljos_cli "${features[@]}"
-  # After both builds, as either may have copied CEF's libraries, unstripped (see the script).
+  programs="$(pin_programs "$home/bin" build --quiet --manifest-path "$root/Cargo.toml" -p ljos_cli \
+    ${features[@]+"${features[@]}"})" || die "ljos did not build"
+  ljos="$(pinned_program ljos "$programs")"
+  [ -n "$ljos" ] || die "the build made no ljos"
   case ",${LJOS_CLI_CARGO_FEATURES:-}," in
-    *,webengine,*) "$root/scripts/strip-cef-runtime.sh" "$target/debug" ;;
+    *,webengine,*)
+      # The cef crate's build script copies CEF's runtime into the build directory's profile
+      # directory, not beside the pinned programs, so the app is told where it is. After both
+      # builds, as either may have copied it, unstripped (see the script).
+      cef="$(build_dir)/debug" || die "cargo did not say where CEF's runtime is"
+      "$root/scripts/strip-cef-runtime.sh" "$cef"
+      runtime=(LD_LIBRARY_PATH="$cef${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" LJOS_CEF_DIR="$cef")
+      ;;
   esac
   # X11 through XWayland: cua-driver's input and capture are X11's.
-  "${sandbox_env[@]}" setsid "$target/debug/ljos" run "$@" > "$home/app.log" 2>&1 &
+  "${sandbox_env[@]}" ${runtime[@]+"${runtime[@]}"} setsid "$ljos" run "$@" > "$home/app.log" 2>&1 &
   track $! app
   wait_for 60 "the app's window (see $home/app.log)" app_window
   cat << EOF

@@ -82,14 +82,1192 @@ from_asked() {
   esac
 }
 
-# CARGO_TARGET_DIR as an absolute path (a relative one is from the root, where
-# the tasks build), else the checkout's target/.
-target_dir() {
-  case "${CARGO_TARGET_DIR:-}" in
-    "") printf '%s\n' "$ljos_root/target" ;;
-    /*) printf '%s\n' "$CARGO_TARGET_DIR" ;;
-    *) printf '%s\n' "$ljos_root/$CARGO_TARGET_DIR" ;;
+# --- Where cargo builds ----------------------------------------------------------
+
+# The main checkout of the repository whose top <dir> is, from what git
+# keeps in the repository's common git directory, whatever its name: a
+# directory git names in core.worktree there (a submodule's), else the one
+# holding it when it is a .git. A bare repository (core.bare) has no main
+# checkout, and git keeps no word of where the checkout of a git directory
+# made elsewhere (git init --separate-git-dir) is; so those worktrees, like
+# a checkout that is no git checkout or is only a directory inside one, are
+# their own main checkouts.
+main_checkout() {
+  local dir top common tree
+  dir="$(physical "$1")"
+  top="$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null || true)"
+  if [ -n "$top" ] && [ -d "$top" ] && [ "$(physical "$top")" = "$dir" ]; then
+    common="$(git -C "$dir" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+    if [ -n "$common" ] && [ -d "$common" ] &&
+      [ "$(git --git-dir="$common" rev-parse --is-bare-repository 2>/dev/null)" = false ]; then
+      tree="$(git --git-dir="$common" config core.worktree 2>/dev/null || true)"
+      if [ -n "$tree" ]; then
+        tree="$(cd "$common" && cd "$tree" 2>/dev/null && pwd -P || true)"
+      elif [ "$(basename "$common")" = .git ]; then
+        tree="$(dirname "$common")"
+      fi
+      if [ -n "$tree" ] && [ -d "$tree" ]; then
+        physical "$tree"
+        return 0
+      fi
+    fi
+  fi
+  printf '%s\n' "$dir"
+}
+
+# toml_unescape <text>: a TOML basic string's escapes decoded (\" \\ \b \t
+# \n \f \r \e, \xHH, \uHHHH and \UHHHHHHHH). Only a setting with a backslash
+# in it comes here, so only that needs python3. (need_python3 is defined
+# below, after this runs as env.sh is sourced.)
+toml_unescape() {
+  need python3 "install Python 3 (Arch: pacman -S python; Debian, Ubuntu: apt install python3; macOS: brew install python) to read the escapes in a cargo target-dir setting"
+  python3 -I -c '
+import re, sys
+plain = {"b": "\b", "t": "\t", "n": "\n", "f": "\f", "r": "\r", "e": "\x1b", "\"": "\"", "\\": "\\"}
+def one(m):
+    e = m.group(1)
+    return chr(int(e[1:], 16)) if e[0] in "xuU" else plain.get(e, "\\" + e)
+sys.stdout.write(re.sub(r"\\(x[0-9A-Fa-f]{2}|u[0-9A-Fa-f]{4}|U[0-9A-Fa-f]{8}|.)", one, sys.argv[1]))
+' "$1"
+}
+
+# own_target_dir <config.toml>: the build.target-dir a cargo settings
+# file names itself (not through an include), from the directory that holds
+# its .cargo as cargo reads it, or nothing. A line-wise reading rather than a TOML parser, since macOS's
+# python3 has no tomllib: a [build] table's target-dir, a dotted
+# build.target-dir, or one in an inline `build = { … }`, with any part of the
+# key quoted either way; the last one wins. A basic ("…") string's escapes
+# are decoded as cargo decodes them, a literal ('…') one is taken as it is.
+# Multi-line strings are not read: no path needs one.
+own_target_dir() {
+  local file="$1" value
+  [ -f "$file" ] || return 0
+  value="$(awk '
+    # A key as cargo reads it: blanks outside quotes left out, a quoted
+    # part kept as it is (["build "] is not [build]), and a dot inside
+    # quotes part of the name, not a separator.
+    function bare(s,   out, i, c, q) {
+      out = ""; q = ""
+      for (i = 1; i <= length(s); i++) {
+        c = substr(s, i, 1)
+        if (q != "") {
+          if (c == q) q = ""
+          else if (q == "\"" && c == "\\") { out = out c substr(s, i + 1, 1); i++ }
+          else out = out (c == "." ? "\034" : c)
+        } else if (c == "\"" || c == "'\''") q = c
+        else if (c != " " && c != "\t") out = out c
+      }
+      return out
+    }
+    # The string at the start of s: "b:" or "l:" and what is between its quotes.
+    function string(s,   q, i, c) {
+      q = substr(s, 1, 1)
+      if (q == "'\''") { i = index(substr(s, 2), q); return i > 0 ? "l:" substr(s, 2, i - 1) : "" }
+      if (q != "\"") return ""
+      for (i = 2; i <= length(s); i++) {
+        c = substr(s, i, 1)
+        if (c == "\\") i++
+        else if (c == "\"") return "b:" substr(s, 2, i - 2)
+      }
+      return ""
+    }
+    { sub(/\r$/, "") }
+    /^[ \t]*#/ { next }
+    /^[ \t]*\[/ { table = $0; sub(/\].*$/, "", table); gsub(/\[/, "", table); table = bare(table); next }
+    {
+      eq = index($0, "=")
+      if (eq == 0) next
+      key = bare(substr($0, 1, eq - 1)); value = substr($0, eq + 1); sub(/^[ \t]*/, "", value)
+      if (table == "build" && key == "target-dir") s = string(value)
+      else if (table == "" && key == "build.target-dir") s = string(value)
+      else if (table == "" && key == "build" && match(value, /[{,][ \t]*["'\'']?target-dir["'\'']?[ \t]*=[ \t]*/)) s = string(substr(value, RSTART + RLENGTH))
+      else next
+      if (s != "") found = s
+    }
+    END { if (length(found) > 2) print found }
+  ' "$file")"
+  # A target-dir that cannot be decoded stops here: taken as no setting, the
+  # build would go to target/, the drive the setting moved it off.
+  value="$(toml_text "$value")" || {
+    printf '%s\n' "$(task_name): $file: its build.target-dir's escapes cannot be decoded (above), so where cargo builds cannot be told" >&2
+    return 1
+  }
+  case "$value" in
+    "") ;;
+    /*) printf '%s\n' "$value" ;;
+    *) printf '%s/%s\n' "$(dirname "$(dirname "$file")")" "$value" ;;
   esac
+}
+
+# settings_target_dir <config.toml>: the build.target-dir a cargo settings
+# file names with what it includes, or nothing: the last one in the order
+# settings_tree gives, so the file's own wins over its includes', and a
+# later include's over an earlier one's. Each is from the directory that
+# holds the .cargo of the file that names it.
+settings_target_dir() {
+  local tree file value found=""
+  [ -f "$1" ] || return 0
+  tree="$(settings_tree "$1")" || return 1
+  while IFS= read -r file; do
+    [ -n "$file" ] || continue
+    value="$(own_target_dir "$file")" || return 1
+    [ -z "$value" ] || found="$value"
+  done <<EOF_TREE
+$tree
+EOF_TREE
+  [ -z "$found" ] || printf '%s\n' "$found"
+}
+
+# settings_tree <config.toml> [files met already]: the file and those it
+# includes, one per line in the order cargo merges them (cargo_settings'
+# expand says how cargo 1.98.1 includes), or a line saying what stops cargo.
+settings_tree() {
+  local file="$1" seen="${2:-}" includes line item sub nl='
+'
+  # Files are met by where they are, so ../i/x.toml from i/x.toml is x.toml
+  # again, not a new file each time round.
+  seen="$seen$(physical "$(dirname "$file")")/${file##*/}$nl"
+  includes="$(settings_includes "$file")" || return 1
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    item="$(toml_text "${line#*	}")" || {
+      printf '%s\n' "$(task_name): $file: an include's escapes cannot be decoded (above)" >&2
+      return 1
+    }
+    case "$item" in
+      *.toml) ;;
+      *) printf '%s\n' "$(task_name): $file: its include $item does not end with .toml, which cargo asks of an include" >&2; return 1 ;;
+    esac
+    case "$item" in /*) ;; *) item="$(dirname "$file")/$item" ;; esac
+    case "$nl$seen" in
+      *"$nl$(physical "$(dirname "$item")" 2>/dev/null)/${item##*/}$nl"*) printf '%s\n' "$(task_name): $file: its include $item comes round again (an include cycle), which cargo refuses" >&2; return 1 ;;
+    esac
+    if [ ! -f "$item" ]; then
+      [ "${line%%	*}" = o ] && continue
+      printf '%s\n' "$(task_name): $file: its include $item is not there; cargo stops on it" >&2
+      return 1
+    fi
+    sub="$(settings_tree "$item" "$seen")" || return 1
+    printf '%s\n' "$sub"
+    while IFS= read -r line; do
+      seen="$seen$(physical "$(dirname "$line")")/${line##*/}$nl"
+    done <<EOF_SUB
+$sub
+EOF_SUB
+  done <<EOF_INCLUDES
+$includes
+EOF_INCLUDES
+  printf '%s\n' "$file"
+}
+
+# toml_text <b:text or l:text>: a string as own_target_dir's reading gives
+# it, a basic one's escapes decoded as cargo decodes them.
+toml_text() {
+  case "$1" in
+    b:*\\*) toml_unescape "${1#b:}" ;;
+    *) printf '%s' "${1#?:}" ;;
+  esac
+}
+
+# settings_includes <config.toml>: what a cargo settings file's top-level
+# include lists, one per line in its order: "r" (or "o" for an optional
+# one), a tab, then the path as own_target_dir's reading gives a string. An
+# include that is not an array of strings and tables {path, optional} stops
+# the task, as it stops cargo. Line-wise like own_target_dir; the array may
+# span lines.
+settings_includes() {
+  local out
+  out="$(awk '
+    # str: the string that starts at s[i], "b:" or "l:" then its text; at
+    # holds where its closing quote is.
+    function str(s, i,   q, j, c) {
+      q = substr(s, i, 1)
+      for (j = i + 1; j <= length(s); j++) {
+        c = substr(s, j, 1)
+        if (q == "\"" && c == "\\") { j++; continue }
+        if (c == q) break
+      }
+      at = j
+      return (q == "\"" ? "b:" : "l:") substr(s, i + 1, j - i - 1)
+    }
+    # closed: whether text holds a whole array, quotes and comments skipped.
+    function closed(text,   depth, q, i, c) {
+      depth = 0; q = ""
+      for (i = 1; i <= length(text); i++) {
+        c = substr(text, i, 1)
+        if (q != "") { if (q == "\"" && c == "\\") i++; else if (c == q) q = "" }
+        else if (c == "\"" || c == "'\''") q = c
+        else if (c == "#") { while (i <= length(text) && substr(text, i, 1) != "\n") i++ }
+        else if (c == "[" || c == "{") depth++
+        else if ((c == "]" || c == "}") && --depth == 0) return i
+      }
+      return 0
+    }
+    function bad() { print "!"; done = 1; exit }
+    # One element of the array: a string, or { path = "…", optional = … }.
+    function inline(t,   i, n, c, key, path, opt, w) {
+      n = length(t); path = ""; opt = "r"; key = ""
+      for (i = 2; i < n; i++) {
+        c = substr(t, i, 1)
+        if (c ~ /[ \t\n,]/) continue
+        if (key == "") {
+          if (c == "\"" || c == "'\''") { key = substr(str(t, i), 3); i = at; continue }
+          w = substr(t, i); match(w, /^[A-Za-z0-9_-]+/); if (RLENGTH <= 0) bad()
+          key = substr(w, 1, RLENGTH); i += RLENGTH - 1; continue
+        }
+        if (c == "=") continue
+        if (key == "path") { if (c != "\"" && c != "'\''") bad(); path = str(t, i); i = at }
+        else if (key == "optional") {
+          w = substr(t, i)
+          if (w ~ /^true/) { opt = "o"; i += 3 } else if (w ~ /^false/) i += 4; else bad()
+        } else bad()
+        key = ""
+      }
+      if (path == "") bad()
+      print opt "\t" path
+    }
+    { sub(/\r$/, "") }
+    !open && /^[ \t]*#/ { next }
+    !open && /^[ \t]*\[/ { table = 1; next }
+    !open && !table && match($0, /^[ \t]*("include"|'\''include'\''|include)[ \t]*=[ \t]*/) {
+      text = substr($0, RSTART + RLENGTH); open = 1
+      if (substr(text, 1, 1) != "[") bad()
+    }
+    open && !started { started = 1; if (!closed(text)) next }
+    open && started && !closed(text) { text = text "\n" $0; if (!closed(text)) next }
+    open {
+      end = closed(text); value = substr(text, 2, end - 2); n = length(value)
+      for (i = 1; i <= n; i++) {
+        c = substr(value, i, 1)
+        if (c ~ /[ \t\n,]/) continue
+        if (c == "#") { while (i <= n && substr(value, i, 1) != "\n") i++; continue }
+        if (c == "\"" || c == "'\''") { print "r\t" str(value, i); i = at; continue }
+        if (c != "{") bad()
+        j = closed(substr(value, i)); if (!j) bad()
+        inline(substr(value, i, j)); i += j - 1
+      }
+      done = 1; exit
+    }
+  ' "$1")"
+  case "$out" in
+    *'!'*) printf '%s\n' "$(task_name): $1: its include is not an array of paths and tables {path, optional}, as cargo takes it" >&2; return 1 ;;
+  esac
+  [ -z "$out" ] || printf '%s\n' "$out"
+}
+
+# settings_file <dir>: the settings file in <dir>/.cargo, which cargo takes
+# without the extension when both are there, or nothing.
+settings_file() {
+  if [ -f "$1/.cargo/config" ]; then
+    printf '%s\n' "$1/.cargo/config"
+  elif [ -f "$1/.cargo/config.toml" ]; then
+    printf '%s\n' "$1/.cargo/config.toml"
+  fi
+}
+
+# settings_files <dir>: the settings files cargo reads when it runs in <dir>,
+# the one that binds most first: <dir>'s, every directory's above it, then
+# cargo's home's.
+settings_files() {
+  local dir="$1" home="${CARGO_HOME:-$HOME/.cargo}"
+  while :; do
+    settings_file "$dir"
+    if [ "$dir" = / ] || [ -z "$dir" ]; then break; fi
+    dir="$(dirname "$dir")"
+  done
+  if [ -f "$home/config" ]; then
+    printf '%s\n' "$home/config"
+  elif [ -f "$home/config.toml" ]; then
+    printf '%s\n' "$home/config.toml"
+  fi
+}
+
+# target_dir [dir]: where cargo builds for the checkout at <dir> (this one by
+# default), the one place that is decided, in cargo's own order:
+# CARGO_TARGET_DIR, then CARGO_BUILD_TARGET_DIR (a relative one of either is
+# from the checkout, where the tasks build), then the first target-dir in the
+# settings cargo reads, so a target put on a drive with room stays there. A
+# linked worktree's own settings come first, then those its main checkout
+# builds with (its own, the directories' above it, cargo's home), then the
+# worktree's surroundings. Else the main checkout's target/, so a linked
+# worktree reuses the build that is there rather than growing one of its own
+# wherever the worktree was made. A target that is a link (to a drive with
+# room, say) is where it leads.
+target_dir() {
+  local dir="${1:-$ljos_root}" asked="${CARGO_TARGET_DIR:-${CARGO_BUILD_TARGET_DIR:-}}" target main
+  case "$asked" in
+    "")
+      main="$(main_checkout "$dir")"
+      local file
+      while IFS= read -r file; do
+        target="$(settings_target_dir "$file")" || return 1
+        if [ -n "$target" ]; then break; fi
+      done <<EOF_SETTINGS
+$(settings_file "$dir")
+$(settings_files "$main")
+$(settings_files "$dir")
+EOF_SETTINGS
+      if [ -z "$target" ]; then target="$main/target"; fi
+      ;;
+    /*) target="$asked" ;;
+    *) target="$dir/$asked" ;;
+  esac
+  if [ -d "$target" ]; then
+    target="$(physical "$target")"
+  fi
+  printf '%s\n' "$target"
+}
+
+# cargo_config [dir]: the main checkout's cargo settings that <dir> builds
+# with when it is a linked worktree, one per line, for config_args. Cargo
+# looks for its settings from where it runs upwards, so a worktree made
+# elsewhere would build without the ones its main checkout keeps outside git
+# (a compile cache, a cap on jobs, incremental builds off, in the checkout's
+# .cargo or a directory above it), and the two would keep rebuilding each
+# other's crates in the target they share. So every file cargo reads for the
+# main checkout that it does not read in the worktree is given, merged as
+# cargo merges them (the nearest file's value wins, arrays are joined, the
+# farthest first), key by key rather than as files:
+# - a key the worktree's own settings set is theirs, as if cargo had found
+#   both files there (given as a file again, the worktree's own arrays, such
+#   as rustflags, would come twice). An array both set is joined, as cargo
+#   joins it, the main checkout's after the worktree's: a --config ranks
+#   above the files;
+# - a --config outranks the environment, so config_args leaves a key out
+#   while an exported variable sets it (CARGO_BUILD_JOBS, say, or
+#   CARGO_TARGET_DIR, which env.sh sets): the environment wins, as in plain
+#   cargo. An array is kept, as cargo adds the environment's to the files'
+#   (RUSTFLAGS, which replaces every rustflags, leaves rustflags out);
+# - a path the file names relative to it is made whole, as the settings
+#   reach cargo from a file of their own somewhere else.
+# A line is the variables that set its key instead, a tab, then the setting
+# as a TOML line, and what a variable can carry of it (cargo_settings says
+# how), for export_settings. Reading TOML takes Python 3.11's tomllib (or tomli);
+# without it (macOS's python3 is 3.9), or when a file cannot be read, the
+# files are given whole ("@file", a tab, the file), the farthest first, then
+# the worktree's own again so that they still win, and the task says why
+# and what that costs. Nothing for a main checkout, whose settings cargo
+# finds itself.
+cargo_config() {
+  local dir main here mains file out why n=0 status=0 given=() own=() i
+  dir="$(physical "${1:-$ljos_root}")"
+  main="$(main_checkout "$dir")"
+  [ "$main" != "$dir" ] || return 0
+  here="$(settings_files "$dir")"
+  mains="$(settings_files "$main")"
+  while IFS= read -r file; do
+    if [ -z "$file" ] || grep -qxF "$file" <<<"$here"; then continue; fi
+    given=("$file" ${given[@]+"${given[@]}"})
+  done <<EOF_MAIN
+$mains
+EOF_MAIN
+  [ ${#given[@]} -gt 0 ] || return 0
+  while IFS= read -r file; do
+    if [ -z "$file" ] || grep -qxF "$file" <<<"$mains"; then continue; fi
+    own+=("$file")
+    n=$((n + 1))
+  done <<EOF_HERE
+$here
+EOF_HERE
+  if command -v python3 >/dev/null 2>&1; then
+    out="$(cargo_settings "$n" ${own[@]+"${own[@]}"} "${given[@]}")" || status=$?
+  else
+    status=127
+  fi
+  if [ "$status" -eq 0 ]; then
+    [ -z "$out" ] || printf '%s\n' "$out"
+    return 0
+  fi
+  case "$status" in
+    3) why="reading them key by key takes Python 3.11's tomllib (or tomli), which $(python3 -V 2>&1) has not" ;;
+    4) why="$out" ;;
+    5) printf '%s: %s\n' "$(task_name)" "$out" >&2; return 1 ;;
+    127) why="reading them key by key takes python3, which is not on PATH" ;;
+    *) why="python3 stopped with status $status reading them (above)" ;;
+  esac
+  printf '%s: %s; so the main checkout'\''s cargo settings (%s) are given as whole files, and this worktree'\''s own after them: an exported CARGO_* variable may be outranked by them, an array both set comes more than once, and a cargo that a program runs by itself builds with none of them\n' \
+    "$(task_name)" "$why" "$(printf '%s ' "${given[@]}" | sed 's/ $//')" >&2
+  for file in "${given[@]}"; do
+    printf '@file\t%s\n' "$file"
+  done
+  i=$n
+  while [ "$i" -gt 0 ]; do
+    i=$((i - 1))
+    printf '@file\t%s\n' "${own[$i]}"
+  done
+}
+
+# cargo_settings <n> <the worktree's own n files> <the main checkout's files,
+# farthest first>: cargo_config's lines. Status 3 without tomllib; 4, with
+# what failed as its output, when a file cannot be read; 5, likewise, on an
+# include cargo stops on. Nothing is printed
+# before every file is read, so a failure leaves no half.
+cargo_settings() {
+  python3 -I - "$@" <<'EOF_SETTINGS'
+import json, os, re, sys
+try:
+    import tomllib
+except ImportError:
+    try:
+        import tomli as tomllib
+    except ImportError:
+        sys.exit(3)
+
+n = int(sys.argv[1])
+own, given = sys.argv[2:2 + n], sys.argv[2 + n:]
+
+def load(path):
+    try:
+        with open(path, "rb") as f:
+            return tomllib.load(f)
+    except OSError as e:
+        print("%s cannot be read: %s" % (path, e.strerror or e))
+    except ValueError as e:
+        print("%s is not TOML cargo can read: %s" % (path, e))
+    sys.exit(4)
+
+# An include cargo stops on stops the task too, in one line: given whole,
+# the files would only have cargo say it again after the task's note.
+def fail(what):
+    print(what)
+    sys.exit(5)
+
+# expand <file>: the file and what it includes, as cargo 1.98.1 reads them,
+# in the order they merge (a later one's value wins): each include in the
+# order listed, each with what it includes before it, then the file's own
+# keys. An include is an array of paths ending in .toml, each a string or a
+# table {path, optional}, from the directory of the file that names it;
+# a missing one stops cargo unless it is optional. Cargo takes a file met a
+# second time in one settings file's includes as a cycle, even one met
+# through two different files, so seen spans the whole tree.
+def expand(path, seen=None):
+    path = os.path.abspath(path)
+    seen = set() if seen is None else seen
+    seen.add(os.path.realpath(path))
+    table = load(path)
+    includes = table.pop("include", [])
+    if not isinstance(includes, list):
+        fail("%s: its include is not an array; cargo takes a list of strings or of tables {path, optional}" % path)
+    out = []
+    for item in includes:
+        optional = False
+        if isinstance(item, dict):
+            optional = item.get("optional", False)
+            item = item.get("path")
+            if not isinstance(optional, bool):
+                fail("%s: an include's optional is not true or false" % path)
+        if not isinstance(item, str):
+            fail("%s: an include is neither a path nor a table with a path, as cargo takes it" % path)
+        if not item.endswith(".toml"):
+            fail("%s: its include %s does not end with .toml, which cargo asks of an include" % (path, item))
+        target = os.path.abspath(os.path.join(os.path.dirname(path), item))
+        if os.path.realpath(target) in seen:
+            fail("%s: its include %s comes round again (an include cycle), which cargo refuses" % (path, item))
+        if not os.path.exists(target):
+            if optional:
+                continue
+            fail("%s: its include %s is not there (%s); cargo stops on it" % (path, item, target))
+        out += expand(target, seen)
+    return out + [(path, table)]
+
+own = [t for f in own for _, t in expand(f)]
+given = [g for f in given for g in expand(f)]
+
+# A setting's leaves, each with the table it is in: an [env] entry's value
+# and `relative` come apart, so the worktree can set one and not the other.
+def leaves(table, path=()):
+    for k, v in table.items():
+        p = path + (k,)
+        if isinstance(v, dict):
+            yield from leaves(v, p)
+        else:
+            yield p, v, table
+
+# The variables that set a key in place of the files: cargo's own name for
+# it, for a value that is not an array (an array takes the variable's words
+# as well), and the older names cargo still reads.
+OTHER = {
+    ("build", "rustc"): ["RUSTC"],
+    ("build", "rustc-wrapper"): ["RUSTC_WRAPPER"],
+    ("build", "rustc-workspace-wrapper"): ["RUSTC_WORKSPACE_WRAPPER"],
+    ("build", "rustdoc"): ["RUSTDOC"],
+    ("build", "target-dir"): ["CARGO_TARGET_DIR"],
+    ("build", "incremental"): ["CARGO_INCREMENTAL"],
+    ("build", "rustflags"): ["RUSTFLAGS", "CARGO_ENCODED_RUSTFLAGS"],
+    ("build", "rustdocflags"): ["RUSTDOCFLAGS", "CARGO_ENCODED_RUSTDOCFLAGS"],
+    ("http", "proxy"): ["HTTPS_PROXY", "https_proxy", "http_proxy"],
+}
+NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
+def variables(p, v):
+    names = list(OTHER.get(p, []))
+    if not isinstance(v, list):
+        names.insert(0, "CARGO_" + "_".join(k.upper().replace("-", "_").replace(".", "_") for k in p))
+    return [name for name in names if NAME.match(name)]
+
+# What cargo takes as a path relative to the directory that holds .cargo: a
+# directory or file always (a build-dir that starts with a {template} is
+# cargo's to place), a program only when it has a slash (else PATH finds
+# it), and a command's program, its first word, the same.
+def kind(p):
+    if p in (("build", "target-dir"), ("build", "build-dir"), ("build", "dep-info-basedir"),
+             ("install", "root"), ("http", "cainfo")):
+        return "path"
+    if len(p) == 3 and p[0] == "source" and p[2] in ("directory", "local-registry"):
+        return "path"
+    if len(p) == 4 and p[0] == "patch" and p[3] == "path":
+        return "path"
+    if p in (("build", "rustc"), ("build", "rustc-wrapper"), ("build", "rustc-workspace-wrapper"),
+             ("build", "rustdoc")) or (p[0] in ("target", "host") and p[-1] == "linker"):
+        return "program"
+    if (p[0] in ("target", "host") and p[-1] == "runner") or p == ("doc", "browser") or \
+            (p[0] in ("registry", "registries") and p[-1] == "credential-provider"):
+        return "command"
+    if p == ("registry", "global-credential-providers"):
+        return "commands"
+    if p == ("paths",):
+        return "paths"
+    return None
+
+def whole(base, s):
+    return s if os.path.isabs(s) else os.path.join(base, s)
+def program(base, s):
+    return whole(base, s) if "/" in s else s
+def command(base, v):
+    if isinstance(v, str):
+        words = v.split()
+        return " ".join([program(base, words[0])] + words[1:]) if words else v
+    if isinstance(v, list) and v and isinstance(v[0], str):
+        return [program(base, v[0])] + v[1:]
+    return v
+def placed(p, v, table, base):
+    k = kind(p)
+    if k == "path" and isinstance(v, str) and not v.startswith("{"):
+        return whole(base, v)
+    if k == "program" and isinstance(v, str):
+        return program(base, v)
+    if k == "command":
+        return command(base, v)
+    if k == "commands" and isinstance(v, list):
+        return [command(base, x) for x in v]
+    if k == "paths" and isinstance(v, list):
+        return [whole(base, x) if isinstance(x, str) else x for x in v]
+    if len(p) == 3 and p[0] == "env" and p[2] == "value" and table.get("relative") is True and isinstance(v, str):
+        return whole(base, v)
+    return v
+
+BARE = re.compile(r"[A-Za-z0-9_-]+\Z")
+def key(p):
+    return ".".join(k if BARE.match(k) else string(k) for k in p)
+def string(s):
+    # A TOML basic string: JSON's escapes are TOML's, and DEL is escaped too.
+    return json.dumps(s, ensure_ascii=False).replace("\x7f", "\\u007F")
+def value(v):
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, (int, float)):
+        return repr(v)
+    if isinstance(v, list):
+        return "[" + ", ".join(value(x) for x in v) + "]"
+    if isinstance(v, dict):
+        return "{" + ", ".join("%s = %s" % (key((k,)), value(x)) for k, x in v.items()) + "}"
+    return string(str(v))
+
+def under(p, q):
+    return p[:len(q)] == q or q[:len(p)] == p
+
+# The worktree's own keys are its own, but an array both set is joined, as
+# cargo joins the arrays of every file it reads.
+mine = {p: v for d in own for p, v, _ in leaves(d)}
+def theirs(p, v):
+    for q, w in mine.items():
+        if q == p:
+            return isinstance(v, list) and isinstance(w, list)
+        if under(p, q):
+            return False
+    return True
+
+# One file's worth: a nearer file's value replaces a farther one's (and a
+# table or value it puts in the place of one), arrays are joined.
+merged = {}
+for f, d in given:
+    base = os.path.dirname(os.path.dirname(os.path.abspath(f)))
+    for p, v, table in leaves(d):
+        if not theirs(p, v):
+            continue
+        v = placed(p, v, table, base)
+        for q in [q for q in merged if q != p and under(p, q)]:
+            del merged[q]
+        if isinstance(v, list) and isinstance(merged.get(p), list):
+            v = merged[p] + v
+        merged[p] = v
+
+# The variable cargo reads a setting from (CARGO_ and its key, upper case,
+# - and . as _), for the settings a cargo that a program starts by itself
+# should build with too (ljos_bdd's build of ljos, the MCP server's cargo
+# test): the build's and the network's, the four profiles cargo has, a
+# target's linker, runner and flags, aliases and registries. A key with a
+# character a variable cannot spell (a target cfg(...), a package name), a
+# table cargo does not read from variables ([patch], [source], [unstable]),
+# a custom profile, which cargo finds only in files, and a registry token,
+# which every program the task runs would see, have none.
+SPELLED = re.compile(r"[A-Za-z0-9_-]+\Z")
+PROFILES = ("dev", "release", "test", "bench")
+WHOLE = ("build", "net", "http", "term", "cargo-new", "future-incompat-report", "cache",
+         "resolver", "alias", "doc", "install")
+def cargo_variable(p):
+    if not all(SPELLED.match(k) for k in p):
+        return None
+    if not (p[0] in WHOLE
+            or (p[0] == "profile" and p[1:2] and p[1] in PROFILES
+                and (len(p) == 3 or (len(p) == 4 and p[2] == "build-override")))
+            or (p[0] == "target" and len(p) == 3 and p[2] in ("linker", "runner", "rustflags", "rustdocflags"))
+            or (p[0] == "registry" and len(p) == 2 and p[1] != "token")
+            or (p[0] == "registries" and len(p) == 3 and p[2] != "token")):
+        return None
+    return "CARGO_" + "_".join(k.upper().replace("-", "_") for k in p)
+
+# A value as a variable holds it: an array as its words, which cargo splits
+# on whitespace and adds after the files' (cargo 1.98.1 reads no TOML array
+# from a variable), so not one with a word that holds whitespace.
+def spelled(v):
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, int):
+        return str(v)
+    if isinstance(v, str):
+        return None if "\n" in v or "\t" in v else v
+    if isinstance(v, list) and all(isinstance(x, str) and x and not any(c.isspace() for c in x) for x in v):
+        return " ".join(v)
+    return None
+
+# A line is the variables that set the key instead, a tab, the setting as a
+# TOML line, and, for what a variable can carry, a tab, its kind, a tab, the
+# variable and a tab, its value: "set" for a cargo setting, "env" for an
+# [env] entry (its value, given to what cargo starts unless set already),
+# "force" for one that is forced on it. What no variable carries is named on
+# a line of its own, "@unexported", a tab, the keys.
+unexported = []
+for p, v in merged.items():
+    line = "%s\t%s = %s" % (" ".join(variables(p, v)), key(p), value(v))
+    if p[0] == "env":
+        name = p[1] if len(p) == 2 or (len(p) == 3 and p[2] == "value") else None
+        forced = len(p) == 3 and merged.get(("env", p[1], "force")) is True
+        if name and NAME.match(name) and isinstance(v, str) and "\n" not in v and "\t" not in v:
+            line += "\t%s\t%s\t%s" % ("force" if forced else "env", name, v)
+    elif p != ("build", "target-dir") and not (isinstance(v, list) and not v):
+        name, text = cargo_variable(p), spelled(v)
+        if name and text is not None:
+            line += "\tset\t%s\t%s" % (name, text)
+        else:
+            unexported.append(key(p))
+    print(line)
+if unexported:
+    print("@unexported\t%s" % " ".join(unexported))
+EOF_SETTINGS
+}
+
+# toml_string <text>: <text> as a TOML basic string.
+toml_string() {
+  local t="$1"
+  t="${t//\\/\\\\}"
+  t="${t//\"/\\\"}"
+  t="${t//$'\t'/\\t}"
+  t="${t//$'\n'/\\n}"
+  t="${t//$'\r'/\\r}"
+  printf '"%s"' "$t"
+}
+
+# config_args <cargo_config output> <dir>: the --config arguments for its
+# settings, into the array config_args. The settings no exported variable
+# sets instead go into <dir>/settings.toml, a new file in a directory only
+# the user can read, never into the arguments, where any user of the machine
+# can read them (an [env] token, say), nor what export_settings put in the
+# environment already. Whole files are given as they are,
+# with the target CARGO_TARGET_DIR names and the build directory
+# CARGO_BUILD_BUILD_DIR names after them, as they would outrank those.
+config_args() {
+  local line names name value rest overridden exported nl=$'\n' tab=$'\t' settings="" whole=""
+  config_args=()
+  # Only an exported variable reaches cargo (one given to this call as
+  # `VAR=1 cargo` is exported to it).
+  exported="$nl$(compgen -e)$nl"
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    names="${line%%"$tab"*}"
+    value="${line#*"$tab"}"
+    case "$names" in
+      @file)
+        config_args+=(--config "$value")
+        whole=1
+        continue
+        ;;
+      @*) continue ;;
+    esac
+    overridden=
+    for name in $names; do
+      case "$exported" in *"$nl$name$nl"*) overridden=1 && break ;; esac
+    done
+    [ -z "$overridden" ] || continue
+    # A setting export_settings put in its variable is there already: given
+    # again, an array would come twice.
+    case "$value" in
+      *"$tab"set"$tab"*)
+        rest="${value#*"$tab"set"$tab"}"
+        name="${rest%%"$tab"*}"
+        case "$exported" in
+          *"$nl$name$nl"*) [ "${!name}" != "${rest#*"$tab"}" ] || continue ;;
+        esac
+        ;;
+    esac
+    value="${value%%"$tab"*}"
+    settings="$2/settings.toml"
+    printf '%s\n' "$value" >>"$settings"
+  done <<EOF_SETTINGS
+$1
+EOF_SETTINGS
+  if [ -n "$settings" ]; then config_args+=(--config "$settings"); fi
+  [ -n "$whole" ] || return 0
+  case "$exported" in
+    *"${nl}CARGO_TARGET_DIR$nl"*) config_args+=(--config "build.target-dir=$(toml_string "$CARGO_TARGET_DIR")") ;;
+  esac
+  case "$exported" in
+    *"${nl}CARGO_BUILD_BUILD_DIR$nl"*) config_args+=(--config "build.build-dir=$(toml_string "$CARGO_BUILD_BUILD_DIR")") ;;
+  esac
+}
+
+# noted_export <name> <value>: exports it, noted in LJOS_SETTINGS_EXPORTED
+# (NAME=value lines, exported with it) as env.sh's, not the developer's.
+noted_export() {
+  local nl=$'\n'
+  export "$1=$2"
+  export LJOS_SETTINGS_EXPORTED="${LJOS_SETTINGS_EXPORTED:+$LJOS_SETTINGS_EXPORTED$nl}$1=$2"
+}
+
+# unexport_settings: what env.sh exported (noted_export: the target, the
+# main checkout's settings), here or in a task that started this one, gone
+# again. A task started by a task inherits the variables and the note, and
+# its checkout may be another one, whose target and main checkout's settings
+# these are not (mise-tasks/mcp for another project, `mise -C <other
+# checkout> run`). Left alone they would read as the developer's: the
+# target would be this one's, and the settings would keep that checkout's
+# own out and outrank its files. A variable whose value is no longer the
+# noted one was set again since, by the developer, and is kept.
+unexport_settings() {
+  local line name
+  while IFS= read -r line; do
+    name="${line%%=*}"
+    case "$name" in "" | [0-9]* | *[!A-Za-z0-9_]*) continue ;; esac
+    if [ "${!name+set}" = set ] && [ "${!name}" = "${line#*=}" ]; then
+      unset "$name"
+    fi
+  done <<EOF_EXPORTED
+${LJOS_SETTINGS_EXPORTED-}
+EOF_EXPORTED
+  unset LJOS_SETTINGS_EXPORTED
+  ljos_settings_exported=""
+}
+unexport_settings
+
+# Every task builds where target_dir says, and so does every cargo its cargo
+# starts (ljos_bdd's builds of ljos, say), through the variable. What was
+# asked for before that is kept for a task that builds another checkout
+# (mise-tasks/mcp). A target nobody asked for is env.sh's, and noted so: a
+# task this one starts for another checkout finds its own.
+# shellcheck disable=SC2034 # read by mise-tasks/mcp
+ljos_asked_target_dir="${CARGO_TARGET_DIR-}"
+# Each failure says what stops it, in one line of its own.
+CARGO_TARGET_DIR="$(target_dir)" || exit 1
+if [ -n "$ljos_asked_target_dir" ]; then
+  export CARGO_TARGET_DIR
+else
+  noted_export CARGO_TARGET_DIR "$CARGO_TARGET_DIR"
+fi
+ljos_cargo_config="$(cargo_config)" || exit 1
+
+# export_settings <cargo_config output> [env]: the settings a variable can
+# carry, exported, each unless the user exported one of the variables that
+# set it (then the user's wins, as in plain cargo), so that a cargo that a
+# program starts by itself builds with them too: ljos_bdd builds ljos with
+# the cargo that runs its tests, and the MCP server runs cargo test, and
+# neither is a task's cargo. With env, the [env] entries are exported as
+# well, for a program that runs cargo by itself and was not started by cargo,
+# which gives them to whatever it starts (mise-tasks/mcp's server); a forced
+# one replaces the user's, as cargo's does. The variables are named in
+# ljos_settings_exported, and noted (noted_export) for unexport_settings.
+# What no variable can carry (cargo_settings says which) reaches only a
+# task's cargo, which the task says once.
+ljos_settings_exported=""
+export_settings() {
+  local line names rest kind name value blocked n exported nl=$'\n' tab=$'\t'
+  exported="$nl$(compgen -e)$nl"
+  while IFS= read -r line; do
+    case "$line" in
+      "@unexported$tab"*)
+        rest="${line#*"$tab"}"
+        if [ "${LJOS_UNEXPORTED_NOTED-}" != "$rest" ]; then
+          printf '%s: the main checkout'\''s cargo settings %s reach cargo only through a task'\''s cargo: no variable can carry them, so a cargo that a program runs by itself builds without them\n' "$(task_name)" "$rest" >&2
+          export LJOS_UNEXPORTED_NOTED="$rest"
+        fi
+        continue
+        ;;
+      @* | "") continue ;;
+    esac
+    names="${line%%"$tab"*}"
+    rest="${line#*"$tab"}"
+    case "$rest" in *"$tab"*) ;; *) continue ;; esac
+    rest="${rest#*"$tab"}"
+    kind="${rest%%"$tab"*}"
+    rest="${rest#*"$tab"}"
+    name="${rest%%"$tab"*}"
+    value="${rest#*"$tab"}"
+    case "$kind" in
+      set) names="$names $name" ;;
+      env) [ "${2-}" = env ] || continue; names="$name" ;;
+      force) [ "${2-}" = env ] || continue; names="" ;;
+      *) continue ;;
+    esac
+    blocked=
+    for n in $names; do
+      case "$exported" in *"$nl$n$nl"*) blocked=1 && break ;; esac
+    done
+    [ -z "$blocked" ] || continue
+    noted_export "$name" "$value"
+    ljos_settings_exported="${ljos_settings_exported:+$ljos_settings_exported }$name"
+  done <<EOF_SETTINGS
+$1
+EOF_SETTINGS
+}
+
+export_settings "$ljos_cargo_config"
+
+# cargo, with the main checkout's settings in a worktree, from a settings
+# file of its own that is gone once cargo is. A task runs `cargo` (or
+# `exec_cargo`), never `exec cargo` or `command cargo`, which would go round
+# this (tasks:smoke holds every task to that).
+cargo() {
+  local config_args settings status=0
+  if [ -z "$ljos_cargo_config" ]; then
+    command cargo "$@"
+    return
+  fi
+  settings="$(mktemp -d "${TMPDIR:-/tmp}/ljos-cargo.XXXXXX")" || return
+  config_args "$ljos_cargo_config" "$settings"
+  command cargo ${config_args[@]+"${config_args[@]}"} "$@" || status=$?
+  rm -f "$settings/settings.toml"
+  rmdir "$settings"
+  return "$status"
+}
+
+# exec_cargo <args…>: cargo in place of this shell, as `exec cargo` would run
+# it (a signal sent to the task reaches cargo), with the settings `cargo`
+# gives. No shell is left to remove the settings file after cargo, so it is
+# opened on descriptor 9 and removed first, and cargo reads it as
+# /dev/fd/9. Where opening /dev/fd/9 is not opening the file again (macOS
+# has no /proc, and gives a copy of the descriptor that shares its offset
+# with whatever read it before), the file stays in its directory, which only
+# its user can read, under TMPDIR.
+exec_cargo() {
+  local config_args settings i
+  if [ -z "$ljos_cargo_config" ]; then
+    exec cargo "$@"
+  fi
+  settings="$(mktemp -d "${TMPDIR:-/tmp}/ljos-cargo.XXXXXX")" || exit
+  config_args "$ljos_cargo_config" "$settings"
+  if [ -f "$settings/settings.toml" ] && [ -d /proc/self/fd ]; then
+    exec 9<"$settings/settings.toml" || exit
+    for i in "${!config_args[@]}"; do
+      [ "${config_args[$i]}" != "$settings/settings.toml" ] || config_args[i]=/dev/fd/9
+    done
+    rm -f "$settings/settings.toml"
+  fi
+  rmdir "$settings" 2>/dev/null || true
+  # exec runs the program, never this file's cargo function.
+  exec cargo ${config_args[@]+"${config_args[@]}"} "$@"
+}
+
+# Empty when .mcp.json (<file>) starts its ljos server through mise-tasks/mcp,
+# which builds where target_dir says; otherwise what is wrong, with the fix.
+# A bare `cargo run` there builds into the worktree's own target/ every time
+# an editor or agent starts in a new worktree.
+mcp_json_problem() {
+  need_python3
+  python3 -I - "$1" <<'EOF_MCP'
+import json, sys
+path = sys.argv[1]
+fix = 'start it with "command": "bash", "args": ["mise-tasks/mcp", "."] (or mise run mcp), which builds where the tasks do'
+def problem(what):
+    print("%s: %s" % (what, fix))
+    sys.exit(0)
+try:
+    server = json.load(open(path)).get("mcpServers", {}).get("ljos")
+except (OSError, ValueError, AttributeError) as e:
+    problem("%s cannot be read (%s)" % (path, e))
+if not isinstance(server, dict):
+    problem("%s has no ljos server" % path)
+args = server.get("args", [])
+if not isinstance(args, list):
+    problem("%s's ljos server has args that are not a list (%s)" % (path, json.dumps(args)))
+run = [server.get("command", "")] + args
+if not all(isinstance(a, str) for a in run):
+    problem("%s's ljos server has a command or args that are not a string (%s)" % (path, json.dumps(run)))
+launcher = ("mise-tasks/mcp", "./mise-tasks/mcp")
+# The task is a bash script: sh, which may be dash, would stop at its first
+# bash-only line.
+if run[0] == "sh" and len(run) > 1 and run[1] in launcher:
+    problem("%s's ljos server runs mise-tasks/mcp with sh, which need not be bash" % path)
+if not (run[0] in launcher
+        or (run[0] == "bash" and len(run) > 1 and run[1] in launcher)
+        or (run[0] == "mise" and run[1:3] == ["run", "mcp"])):
+    problem("%s's ljos server runs `%s`, not mise-tasks/mcp, so in a linked worktree it builds into that worktree's own target/"
+            % (path, " ".join(run)))
+EOF_MCP
+}
+
+# shell_code <file>: a shell script with its comment lines left out and its
+# continued lines joined, one command line per line.
+shell_code() {
+  awk '
+    /^[ \t]*#/ { next }
+    { line = line $0 }
+    /\\$/ { sub(/\\$/, "", line); next }
+    { print line; line = "" }
+    END { if (line != "") print line }
+  ' "$1"
+}
+
+# command_words: shell_code's output with each quoted string made one word:
+# a blank or separator inside quotes becomes _, and a string that runs on
+# over lines is joined, so words in a message or a flag's value never start
+# a command. A command substitution inside double quotes is code again. An
+# inline comment is left out, and so is a here-document's text, up to its
+# terminator: it is what a command reads, not commands (a `<<` inside
+# `$(( ))` is a shift, and `<<<` a here-string, whose word is all it reads).
+command_words() {
+  awk '
+    function neutral(c) { return c ~ /[ \t;&|()<>`{}]/ ? "_" : c }
+    BEGIN { n = 0; st[0] = "c"; buf = ""; nh = 0; hi = 1 }
+    hi <= nh {
+      t = $0
+      if (hs[hi]) sub(/^\t+/, "", t)
+      if (t == hd[hi]) hi++
+      if (hi > nh) { nh = 0; hi = 1 }
+      next
+    }
+    {
+      s = $0; len = length(s); out = ""; i = 1
+      while (i <= len) {
+        ch = substr(s, i, 1); two = substr(s, i, 2); top = st[n]
+        if (top == "s") {
+          if (ch == "\047") n--
+          out = out neutral(ch); i++; continue
+        }
+        if (top == "a" || top == "d") {
+          if (ch == "\\") { out = out "__"; i += 2; continue }
+          if (top == "a" && ch == "\047") { n--; out = out ch; i++; continue }
+          if (top == "d" && ch == "\"") { n--; out = out ch; i++; continue }
+          if (top == "d" && two == "$(") { st[++n] = "c"; dp[n] = 1; out = out two; i += 2; continue }
+          if (top == "d" && ch == "`") { st[++n] = "b"; out = out ch; i++; continue }
+          out = out neutral(ch); i++; continue
+        }
+        if (ch == "\\") { out = out "__"; i += 2; continue }
+        if (ch == "#" && (i == 1 || substr(s, i - 1, 1) ~ /[ \t;&|(]/)) break
+        if (substr(s, i, 3) == "<<<") { out = out "<<<"; i += 3; continue }
+        if (two == "<<" && !(top == "c" && n > 0 && dp[n] > 1)) {
+          j = i + 2; dash = 0; w = ""
+          if (substr(s, j, 1) == "-") { dash = 1; j++ }
+          while (substr(s, j, 1) ~ /[ \t]/) j++
+          q = substr(s, j, 1)
+          if (q == "\047" || q == "\"") {
+            k = index(substr(s, j + 1), q)
+            if (k > 0) { w = substr(s, j + 1, k - 1); j += k + 1 }
+          } else {
+            if (q == "\\") j++
+            if (substr(s, j, 1) ~ /[A-Za-z_]/) {
+              while (substr(s, j, 1) ~ /[A-Za-z0-9_]/) { w = w substr(s, j, 1); j++ }
+            }
+          }
+          if (w != "") { hd[++nh] = w; hs[nh] = dash; out = out "<<_"; i = j; continue }
+        }
+        if (two == "$\047") { st[++n] = "a"; out = out two; i += 2; continue }
+        if (ch == "\047") st[++n] = "s"
+        else if (ch == "\"") st[++n] = "d"
+        else if (two == "$(") { st[++n] = "c"; dp[n] = 1; out = out two; i += 2; continue }
+        else if (ch == "`") { if (top == "b") n--; else st[++n] = "b" }
+        else if (ch == "(" && top == "c" && n > 0) dp[n]++
+        else if (ch == ")" && top == "c" && n > 0 && --dp[n] == 0) n--
+        out = out ch; i++
+      }
+      if (st[n] == "s" || st[n] == "a" || st[n] == "d") buf = buf out "_"
+      else { print buf out; buf = "" }
+    }
+    END { if (buf != "") print buf }
+  '
+}
+
+# cargo_problems <task> [root]: what is wrong with how a task runs cargo,
+# for tasks:smoke to list, or nothing. A task's cargo builds where
+# target_dir says, with the main checkout's settings in a worktree, only
+# through env.sh's cargo: a task that runs cargo sources env.sh, and never
+# goes round its cargo. exec, command and a program that runs another
+# (timeout, nice, env, capped, mise exec, …) run the cargo program, not
+# env.sh's cargo, so each of those counts as both. A script of the
+# checkout's scripts/ (under <root>, this checkout by default) that the task
+# names and that runs cargo is held to the same, as the script's own: a
+# shell function does not reach the program a task runs, so the script's
+# cargo is env.sh's only when the script sources env.sh itself (a task
+# that sourced it would hand the script the target directory, but not the
+# main checkout's settings). cargo counts only as a command's program:
+# where a command starts (after a separator, a keyword such as if, or
+# assignments), or as the program such a wrapper runs. A wrapper takes
+# only its own options and their values (timeout its duration, taskset its
+# mask or CPU list, chrt its priority), so the next word is the program:
+# `exec "$prog" --note "cargo build"` runs $prog, and command -v cargo runs
+# nothing. command_words makes quoted text one word, so a message that names
+# a cargo command runs none. The text goes to grep as a here-string, not
+# down a pipe: under pipefail, grep -q stopping early fails a long task's
+# printf on the closed pipe, and the match with it.
+cargo_problems() {
+  local code pre via script s o v
+  code="$(shell_code "$1")"
+  pre='(^|[;&|({`])[[:space:]]*((then|do|else|elif|if|while|until|!|time)[[:space:]]+)*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*'
+  s='[[:space:]]+'
+  o="-[^[:space:];&|]*$s"
+  v="[^[:space:];&|]+$s"
+  via="((exec$s(-a$s$v|-[cl]+$s)*"
+  via+="|command$s(-p$s)*"
+  via+="|env$s((-u|-C|-S|--unset|--chdir|--split-string)$s$v|$o|[A-Za-z_][A-Za-z0-9_]*=[^[:space:];&|]*$s)*"
+  via+="|nice$s((-n|--adjustment)$s$v|$o)*"
+  via+="|(nohup|setsid)$s($o)*"
+  via+="|timeout$s((-s|-k|--signal|--kill-after)$s$v|$o)*$v"
+  via+="|stdbuf$s((-i|-o|-e)$s$v|$o)*"
+  via+="|ionice$s((-c|-n|-p|-P|-u)$s$v|$o)*"
+  via+="|(taskset|chrt)$s($o)*$v"
+  via+="|xargs$s((-n|-I|-P|-L|-s|-d|-E|-a|--max-args|--replace|--max-procs|--max-lines|--max-chars|--delimiter|--eof|--arg-file)$s$v|$o)*"
+  via+="|mise$s(exec|x)$s((-C|--cd|-E|--env|-j|--jobs)$s$v|$o|[^[:space:];&|@]+@[^[:space:];&|]+$s)*"
+  via+="|\"?([^[:space:];&|\"]*/)?capped\"?$s($o)*))"
+  cargo_rules "$code" ""
+  while IFS= read -r script; do
+    case "$script" in *.py | *.qml) continue ;; esac
+    [ -f "${2:-$ljos_root}/$script" ] || continue
+    cargo_rules "$(shell_code "${2:-$ljos_root}/$script")" "$script: "
+  done <<EOF_SCRIPTS
+$(grep -oE 'scripts/[A-Za-z0-9_.-]+' <<<"$code" | sort -u)
+EOF_SCRIPTS
+  return 0
+}
+
+# cargo_rules <code> <who>: cargo_problems's word on one shell program's
+# code, each problem led by <who> ("<script>: " for a script, nothing
+# for the task); pre and via are cargo_problems's.
+cargo_rules() {
+  local words
+  words="$(command_words <<<"$1")"
+  grep -Eq "${pre}${via}*cargo([[:space:]]|$)" <<<"$words" || return 0
+  grep -Eq '^[[:space:]]*(\.|source)[[:space:]].*_lib/env\.sh"?[[:space:]]*$' <<<"$1" ||
+    printf ' %sruns cargo without sourcing _lib/env.sh, so it builds into a worktree'"'"'s own target/;' "$2"
+  grep -Eq "${pre}${via}+cargo([[:space:]]|$)" <<<"$words" &&
+    printf ' %sexec cargo, command cargo or a program that runs cargo (timeout, nice, env, capped) goes round env.sh'"'"'s cargo (run cargo, or exec_cargo where cargo takes the process);' "$2"
+  return 0
+}
+
+# checkout_dir <name> [dir]: where the runs of the checkout at <dir> (this
+# one by default) keep what they write under <name> (a report, a sandbox's
+# home): in the target directory, and for a linked worktree, which shares
+# that with its main checkout, in worktrees/<its name>-<a sum of its path>/
+# there, so two checkouts' runs never write over or clear each other's.
+checkout_dir() {
+  local dir target
+  dir="$(physical "${2:-$ljos_root}")"
+  target="$(target_dir "$dir")"
+  if [ "$(main_checkout "$dir")" = "$dir" ]; then
+    printf '%s/%s\n' "$target" "$1"
+  else
+    printf '%s/worktrees/%s-%s/%s\n' "$target" "$(basename "$dir")" "$(printf '%s' "$dir" | cksum | awk '{ print $1 }')" "$1"
+  fi
+}
+
+# built_programs: from cargo's JSON messages on stdin, the path of every
+# program the build made, one per line, decoded as json_string does. A path
+# json_string leaves empty, or one with a newline in it, is no program.
+built_programs() {
+  local exe nl='
+'
+  while IFS= read -r exe; do
+    exe="$(printf '%s\n' "$exe" | json_string)"
+    case "$exe" in "" | *"$nl"*) continue ;; esac
+    printf '%s\n' "$exe"
+  done <<EOF_BUILT
+$(sed -n -E 's/^\{"reason":"compiler-artifact".*"executable":"(([^"\\]|\\.)*)".*/\1/p')
+EOF_BUILT
+}
+
+# pin_build <cargo args…>: cargo with its JSON messages on stdout; any other
+# line it prints there goes to stderr.
+pin_build() {
+  local out
+  out="$(cargo "$@" --message-format=json-render-diagnostics)" || return 1
+  printf '%s\n' "$out" | grep -v -e '^{"reason":' -e '^$' >&2 || true
+  printf '%s\n' "$out" | grep '^{"reason":' || true
+}
+
+# build_dir: where cargo keeps the intermediate files of this checkout's
+# build (build.build-dir), as cargo itself decides it for a build run here:
+# CARGO_BUILD_BUILD_DIR, then the settings (with a linked worktree's main
+# checkout's, as `cargo` gives them), then the target directory; its
+# {workspace-root}, {cargo-cache-home} and {workspace-path-hash} expanded
+# by cargo. Asking cargo keeps its order, which a reading of the settings
+# here would have to copy.
+build_dir() {
+  local out dir
+  out="$(cargo metadata --no-deps --format-version 1 --offline --manifest-path "$ljos_root/Cargo.toml")" || {
+    printf '%s\n' "$(task_name): cargo could not say where this checkout's build directory is (above)" >&2
+    return 1
+  }
+  dir="$(printf '%s\n' "$out" | sed -n -E 's/.*"build_directory":"(([^"\\]|\\.)*)".*/\1/p' | json_string)"
+  [ -n "$dir" ] || dir="$(printf '%s\n' "$out" | sed -n -E 's/.*"target_directory":"(([^"\\]|\\.)*)".*/\1/p' | json_string)"
+  [ -n "$dir" ] || {
+    printf '%s\n' "$(task_name): cargo metadata named no build directory" >&2
+    return 1
+  }
+  printf '%s\n' "$dir"
+}
+
+# pin_programs <dir> <cargo args…>: builds, gives the run its own link to
+# every program the build made, in <dir>, and prints "<name> <path>" for
+# each. A target directory may be shared (a linked worktree's is its main
+# checkout's), and another checkout's build while a long run goes on would
+# put that checkout's programs where the run's were. So the build keeps its
+# intermediate files in the build directory it always uses (build_dir:
+# nothing is built again) and puts its programs in a target of <dir>'s own,
+# <dir>/.target, which no other checkout's build writes to. Cargo holds the
+# build directory's lock from the compile to the programs' copies, so no
+# other build comes between them. A hard link keeps the file it was made to,
+# as cargo and the linker put new files in place of old ones (a <dir> on
+# another drive than the target gets a copy).
+pin_programs() {
+  local into="$1" build messages exe pinned=""
+  shift
+  mkdir -p "$into"
+  build="$(build_dir)" || return 1
+  messages="$(CARGO_BUILD_BUILD_DIR="$build" CARGO_TARGET_DIR="$into/.target" pin_build "$@")" || return 1
+  while IFS= read -r exe; do
+    [ -n "$exe" ] || continue
+    ln -f "$exe" "$into/${exe##*/}" 2>/dev/null || cp -p "$exe" "$into/${exe##*/}" || return 1
+    pinned="$pinned${exe##*/} $into/${exe##*/}
+"
+  done <<EOF_PROGRAMS
+$(printf '%s\n' "$messages" | built_programs)
+EOF_PROGRAMS
+  printf '%s' "$pinned"
+}
+
+# pinned_program <name> <pin_programs output>: the path pinned for program
+# <name>, all of it (a path may hold spaces); nothing when there is none.
+pinned_program() {
+  local line
+  while IFS= read -r line; do
+    case "$line" in "$1 "*) printf '%s\n' "${line#"$1 "}"; return 0 ;; esac
+  done <<<"$2"
 }
 
 # Off-screen Qt: no window opens, and a platform theme set for the desktop
@@ -465,3 +1643,9 @@ built_program() {
   [ -n "$program" ] && [ -x "$program" ] || die "cargo build $* named no program it made"
   printf '%s\n' "$program"
 }
+
+# The desktop:cua sandbox's home (scripts/cua-sandbox.sh), one per checkout:
+# a linked worktree shares its main checkout's target, and a sandbox started
+# from one would end the app another drives.
+LJOS_CUA_HOME="${LJOS_CUA_HOME:-$(checkout_dir cua)}"
+export LJOS_CUA_HOME

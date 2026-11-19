@@ -6,4 +6,4 @@ set -euo pipefail
 # shellcheck source-path=SCRIPTDIR source=../_lib/env.sh
 . "$(dirname "$0")/../_lib/env.sh"
 cd "$ljos_root"
-exec cargo run --quiet -p ljos_bdd --bin features-lint -- "$@"
+cargo run --quiet -p ljos_bdd --bin features-lint -- "$@"

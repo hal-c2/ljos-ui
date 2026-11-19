@@ -7,12 +7,14 @@
 # JSON-RPC on stdout, so everything else (this script's word on which way it
 # built, the build's own output) goes to stderr.
 #
-# Where the build goes: CARGO_TARGET_DIR, else the main checkout's target/
-# (a linked worktree shares it rather than growing a build of its own), else
-# ./target. LJOS_BIN names a server built already and skips the build.
-# LJOS_BUILD_WRAPPER names a program the build runs through (one that queues
-# builds machine-wide, say); it wraps the build only, never the server, which
-# runs for the whole session.
+# Where the build goes is target_dir's (mise-tasks/_lib/env.sh), as for every
+# task, in cargo's own order: CARGO_TARGET_DIR, else CARGO_BUILD_TARGET_DIR,
+# else the build.target-dir cargo's settings name, else the main checkout's
+# target/ (a linked worktree shares it rather than growing a build of its
+# own); target_dir is where that order is kept. LJOS_BIN names a server
+# built already and skips the build. LJOS_BUILD_WRAPPER names a program the
+# build runs through (one that queues builds machine-wide, say); it wraps the
+# build only, never the server, which runs for the whole session.
 #
 # The checkout is the one this runs in (mise runs it in the root), not the one
 # the script came from.
@@ -32,45 +34,61 @@ esac
 [ -d "$project" ] || die "mcp: no project directory $project"
 project="$(physical "$project")"
 
+# The server runs cargo itself (a scenario run is a cargo test), in the
+# project: with the settings of the project's main checkout when the project
+# is a linked worktree, and [env]'s too, as nothing cargo starts gives it
+# them (export_settings). The ones env.sh exported for this script's own
+# checkout are not the build's either, which goes below with its checkout's,
+# and neither is the target env.sh found for it.
+unexport_settings
+served="$(cargo_config "$project")" || exit 1
+
+# The checkout this runs in, which need not be the one this script came from:
+# its build goes where target_dir says for it (CARGO_TARGET_DIR as asked, not
+# as env.sh resolved it for the script's own checkout), with its main
+# checkout's cargo settings when it is a linked worktree (cargo_config). The
+# server, built here or named, runs with that target too.
+if checkout="$(git rev-parse --show-toplevel 2>/dev/null)" && [ -n "$checkout" ]; then
+  checkout="$(physical "$checkout")"
+else
+  checkout="$(pwd -P)"
+fi
+target="$(CARGO_TARGET_DIR="$ljos_asked_target_dir" target_dir "$checkout")" || exit 1
+if [ -n "$ljos_asked_target_dir" ]; then
+  export CARGO_TARGET_DIR="$target"
+else
+  noted_export CARGO_TARGET_DIR "$target"
+fi
+
 if [ -n "${LJOS_BIN:-}" ]; then
   [ -x "$LJOS_BIN" ] || die "mcp: LJOS_BIN is $LJOS_BIN, which is not a program"
   say "starting $LJOS_BIN, built already (LJOS_BIN)"
+  export_settings "$served" env
   exec "$LJOS_BIN" mcp --project "$project"
 fi
 
-# The checkout this runs in, and the main checkout of its repository. The
-# common dir of a linked worktree is the main checkout's .git; of a bare
-# repository or a submodule it is something else, and the checkout keeps its
-# own target.
-if checkout="$(git rev-parse --show-toplevel 2>/dev/null)" && [ -n "$checkout" ]; then
-  checkout="$(physical "$checkout")"
-  main="$checkout"
-  common="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
-  if [ -n "$common" ] && [ "$(basename "$common")" = .git ]; then
-    main="$(physical "$(dirname "$common")")"
-  fi
+# The settings file config_args writes lives until the build is over, or
+# until this stops before it (exec runs no trap).
+settings="$(mktemp -d "${TMPDIR:-/tmp}/ljos-cargo.XXXXXX")"
+settings_gone() { rm -f "$settings/settings.toml" && rmdir "$settings" 2>/dev/null || true; }
+trap settings_gone EXIT
+if [ "$checkout" = "$project" ]; then
+  main_settings="$served"
 else
-  checkout="$(pwd -P)"
-  main="$checkout"
+  main_settings="$(cargo_config "$checkout")" || exit 1
 fi
+config_args "$main_settings" "$settings"
+# The build is put together here, for that checkout: env.sh's cargo adds the
+# script's own checkout's settings.
+unset -f cargo
 
-target="${CARGO_TARGET_DIR:-$main/target}"
-# A target that is a link (to a drive with room, say) is where it leads.
-if [ -d "$target" ]; then
-  target="$(physical "$target")"
-fi
-export CARGO_TARGET_DIR="$target"
-
-# --target-dir as well as CARGO_TARGET_DIR: a build.target-dir in a --config
-# file would outrank the variable. Cargo's messages name the program it made.
+# --target-dir as well as CARGO_TARGET_DIR, for a build wrapper that clears
+# the environment (config_args leaves the main checkout's build.target-dir
+# out only while the variable is set). Cargo's messages name the program it
+# made.
 build=(cargo build --quiet -p ljos_cli --bin ljos
-  --message-format=json-render-diagnostics --target-dir "$target")
-# The main checkout's cargo settings (a compiler cache, a cap on jobs) are
-# often kept outside git; a linked worktree builds with them too.
-if [ "$main" != "$checkout" ] && [ -f "$main/.cargo/config.toml" ] &&
-  [ ! -f "$checkout/.cargo/config.toml" ]; then
-  build+=(--config "$main/.cargo/config.toml")
-fi
+  --message-format=json-render-diagnostics --target-dir "$target"
+  ${config_args[@]+"${config_args[@]}"})
 # The toolchain is the one the checkout pins, not whichever cargo is first
 # on PATH.
 if [ -f "$checkout/mise.toml" ] && command -v mise >/dev/null 2>&1; then
@@ -94,7 +112,9 @@ cd "$checkout"
 # stderr is a pipe more often than a terminal).
 status=0
 messages="$("${build[@]}" | tee >({ grep --line-buffered -v -e '^{"reason":' -e '^$' || true; } >&2))" || status=$?
+settings_gone
 [ "$status" -eq 0 ] || die "mcp: the build of ljos failed"
 server="$(printf '%s\n' "$messages" | cargo_executable)"
 [ -n "$server" ] && [ -x "$server" ] || die "mcp: the build named no ljos program it made"
+export_settings "$served" env
 exec "$server" mcp --project "$project"

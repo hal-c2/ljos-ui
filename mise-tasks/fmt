@@ -3,10 +3,13 @@
 #MISE dir="{{config_root}}"
 #USAGE flag "--check" help="Change nothing: list the files rustfmt would change, and fail when there are any"
 set -euo pipefail
+# shellcheck source-path=SCRIPTDIR source=_lib/env.sh
+. "$(dirname "$0")/_lib/env.sh"
 case " $* " in
   *" --check "*) usage_check=true ;;
 esac
 if [ "${usage_check:-false}" = true ]; then
-  exec cargo fmt --all --check
+  cargo fmt --all --check
+else
+  cargo fmt --all
 fi
-exec cargo fmt --all

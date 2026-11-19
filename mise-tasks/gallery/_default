@@ -10,7 +10,8 @@ set -euo pipefail
 # and example ids to run only those.
 # Needs the pictures `mise run gallery:reference` makes (Qt-derived, never
 # committed, so a checkout without them scores nothing and the ratchet has
-# nothing to hold). Where the report goes: GALLERY_DIR, default target/gallery.
+# nothing to hold). Where the report goes: GALLERY_DIR, default gallery/ in the
+# target directory (checkout_dir: a linked worktree's runs have their own).
 # shellcheck source-path=SCRIPTDIR source=../_lib/env.sh
 . "$(dirname "$0")/../_lib/env.sh"
 root="$ljos_root"
@@ -24,10 +25,16 @@ for png in "$root"/corpus/reference/*.png; do
   fi
 done
 [ "$pictures" = 1 ] || die "gallery scores Ljós against qml6's pictures, and corpus/reference/ has none: mise run gallery:reference takes them (it needs qml6)"
-target="$(target_dir)"
-report="${GALLERY_DIR:-$target/gallery}"
+report="${GALLERY_DIR:-$(checkout_dir gallery)}"
 mkdir -p "$report"
-"$(dirname "$0")/build"
+# gallery:build's programs, the run's own (pin_programs): the target may be
+# shared with another checkout, whose build during the run would otherwise
+# put its programs in place of these. Their paths are the ones cargo gives,
+# whatever layout its settings choose.
+programs="$(pin_programs "$report/bin" build --quiet -p ljos_cli -p qml_compare)" || die "gallery: ljos and qml-compare did not build"
+ljos="$(pinned_program ljos "$programs")"
+compare="$(pinned_program qml-compare "$programs")"
+[ -n "$ljos" ] && [ -n "$compare" ] || die "gallery: the build made no ljos or no qml-compare"
 
 # Each run starts from an empty home, with the user's fonts (scripts/own-home.sh).
 . "$root/scripts/own-home.sh"
@@ -56,9 +63,9 @@ done
 # family such as Helvetica is the face fontconfig substitutes), so Ljós sets
 # text in the same ones. --network: qml6 fetched what an example asks the
 # network for (a feed, its pictures), so Ljós does too.
-renderer="timeout -k 5 120 '$target/debug/ljos' render --system-fonts --network \"\$QML_COMPARE_DIR\" --entry \"\$QML_COMPARE_ENTRY\" --size \"\${QML_COMPARE_WIDTH}x\${QML_COMPARE_HEIGHT}\" --settle \"\$QML_COMPARE_SETTLE_MS\" --out {out} --example \"\$QML_COMPARE_ID\" \${QML_COMPARE_CAPTURED_AT:+--now \"\$QML_COMPARE_CAPTURED_AT\"}"
+renderer="timeout -k 5 120 '$ljos' render --system-fonts --network \"\$QML_COMPARE_DIR\" --entry \"\$QML_COMPARE_ENTRY\" --size \"\${QML_COMPARE_WIDTH}x\${QML_COMPARE_HEIGHT}\" --settle \"\$QML_COMPARE_SETTLE_MS\" --out {out} --example \"\$QML_COMPARE_ID\" \${QML_COMPARE_CAPTURED_AT:+--now \"\$QML_COMPARE_CAPTURED_AT\"}"
 
-exec "$target/debug/qml-compare" run \
+exec "$compare" run \
   --manifest "$root/corpus/examples.json" \
   --renderer "$renderer" \
   --ratchet "$root/corpus/expected.json" \

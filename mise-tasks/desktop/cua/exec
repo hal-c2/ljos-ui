@@ -3,4 +3,7 @@
 #MISE dir="{{config_root}}"
 #USAGE arg "<command>..." var=#true help="Command to run in the sandbox (e.g. mise run gallery:run <id>)"
 set -euo pipefail
+# The sandbox builds ljos where the tasks do, and has a home per checkout.
+# shellcheck source-path=SCRIPTDIR source=../../_lib/env.sh
+. "$(dirname "$0")/../../_lib/env.sh"
 exec scripts/cua-sandbox.sh exec "$@"

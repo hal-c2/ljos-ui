@@ -14,7 +14,7 @@ read -r -a defaults <<< "${BENCH_DEFAULTS---warm-up --repeat 3}"
 qml="$(bench_qml6 ${defaults[@]+"${defaults[@]}"} "$@")"
 QML6="$qml" need_qml6
 unset QT_QPA_PLATFORMTHEME
-out="${BENCH_DIR:-$target/bench-egui}"
+out="${BENCH_DIR:-$(checkout_dir bench-egui)}"
 
 cargo build --quiet --release -p ljos_cli
 cargo build --quiet --release -p ljos_egui --example feed_egui

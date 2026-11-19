@@ -2,4 +2,7 @@
 #MISE description="Stop the desktop:cua sandbox: the app, cua-driver, the AT-SPI registry and the headless display"
 #MISE dir="{{config_root}}"
 set -euo pipefail
+# The sandbox builds ljos where the tasks do, and has a home per checkout.
+# shellcheck source-path=SCRIPTDIR source=../../_lib/env.sh
+. "$(dirname "$0")/../../_lib/env.sh"
 exec scripts/cua-sandbox.sh stop "$@"

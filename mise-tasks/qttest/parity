@@ -7,7 +7,7 @@ set -euo pipefail
 # compared. Where the two outputs go: QTTEST_DIR, default target/qttest.
 root="$ljos_root"
 target="$(target_dir)"
-work="$(from_asked "${QTTEST_DIR:-$target/qttest}")"
+work="$(from_asked "${QTTEST_DIR:-$(checkout_dir qttest)}")"
 qml="$root/crates/ljos_test/tests/qml"
 need_timeout
 # A plain `qmltestrunner` on the path may be Qt 5's (see find_qmltestrunner).
