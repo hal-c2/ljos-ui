@@ -41,21 +41,35 @@ impl Host for Windows<'_> {
     }
 
     fn show(&mut self, engine: &Engine, old: Option<ObjectId>, new: ObjectId) {
-        match old {
-            Some(old) => {
-                adopt(engine, old, new);
-                for r in self.windows.iter_mut().chain(self.roots.iter_mut()) {
+        let swaps = RootSwaps::of(engine);
+        // What the window of `old` shows: `old`, or the window it stands
+        // for.
+        let face = old.map(|old| {
+            swaps
+                .presented(old)
+                .filter(|w| self.windows.contains(w))
+                .unwrap_or(old)
+        });
+        match (old, face) {
+            (Some(old), Some(face)) => {
+                adopt(engine, face, new);
+                for w in self.windows.iter_mut() {
+                    if *w == face {
+                        *w = new;
+                    }
+                }
+                for r in self.roots.iter_mut() {
                     if *r == old {
                         *r = new;
                     }
                 }
             }
-            None => {
+            _ => {
                 self.windows.push(new);
                 self.roots.push(new);
             }
         }
-        RootSwaps::of(engine).shows(old, new);
+        swaps.shows(engine, face, new);
         self.shown = Some(new);
     }
 }

@@ -34,7 +34,7 @@ use serde_json::{Value, json};
 use super::inspector::{Answer, Ask, Refusal, Seen};
 use super::{
     A11yNode, Backend, BackendError, Files, Input, LogEntry, LogLevel, PointerStep, Probes,
-    QmlFile, Result, Tooling,
+    QmlFile, Reload, Result, Tooling,
 };
 
 /// Names the file with the sandbox's sockets; set when one runs.
@@ -455,6 +455,9 @@ pub struct DesktopBackend {
     /// The scenario took the seat's keyboard away, and it is given back
     /// when the scenario ends.
     keyboard_off: bool,
+    /// The scenario changes files under the running application, which
+    /// `ljos run --watch` applies.
+    watch: bool,
 }
 
 impl Drop for DesktopBackend {
@@ -586,6 +589,7 @@ impl DesktopBackend {
         command
             .current_dir(dir)
             .args(["run", entry, "--mcp=inspect,input,mutate,eval"])
+            .args(self.watch.then_some("--watch"))
             // A Wayland client of the sandbox's compositor, not an X11 one
             // of its XWayland, unless the scenario says so, and nothing of
             // the developer's session.
@@ -1050,6 +1054,10 @@ impl Backend for DesktopBackend {
         Some(self)
     }
 
+    fn as_reload(&mut self) -> Option<&mut dyn Reload> {
+        Some(self)
+    }
+
     fn as_probes(&mut self) -> Option<&mut dyn Probes> {
         Some(self)
     }
@@ -1143,6 +1151,41 @@ impl Files for DesktopBackend {
         let path = self.dir()?.join(name);
         std::fs::write(path, bytes)?;
         Ok(())
+    }
+}
+
+impl Reload for DesktopBackend {
+    fn watch_files(&mut self) {
+        self.watch = true;
+    }
+
+    /// Saves the file beside the running application and waits until it
+    /// has applied it (or failed to) and presented what it shows then:
+    /// the inspector counts reloads as the watcher's quiet time ends.
+    fn change_file(&mut self, name: &str, source: Option<&str>) -> Result<()> {
+        let before = self
+            .running()?
+            .ask("app_watch", json!({"topics": ["reloads"]}))?["counts"]["reloads"]
+            .as_u64()
+            .unwrap_or(0);
+        let path = self.dir()?.join(name);
+        match source {
+            Some(text) => std::fs::write(&path, text)?,
+            None => std::fs::remove_file(&path)?,
+        }
+        let deadline = Instant::now() + SEEN;
+        let wait_ms = u64::try_from(SEEN.as_millis()).unwrap_or(u64::MAX);
+        let told = self.running()?.ask(
+            "app_watch",
+            json!({"since": {"reloads": before}, "topics": ["reloads"], "wait_ms": wait_ms}),
+        )?;
+        if told["counts"]["reloads"].as_u64().unwrap_or(before) == before {
+            return Err(BackendError::Failed(format!(
+                "the application did not reload {name} within {} s",
+                SEEN.as_secs()
+            )));
+        }
+        self.running()?.presented(deadline)
     }
 }
 

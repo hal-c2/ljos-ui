@@ -59,6 +59,29 @@ fn a_second_frame_with_nothing_to_do_is_idle() {
     assert_eq!(s.render_tree().content_rebuilds(), rebuilds + 1);
 }
 
+/// A root put in place of one of its size changes nothing the old root
+/// had, yet the window shows another picture: the scene asks for that
+/// frame, or a host that frames only when asked keeps the old picture.
+#[test]
+fn a_root_put_in_place_of_another_asks_for_a_frame() {
+    let e = engine();
+    let red = rect_item(&e, None, (0.0, 0.0, 100.0, 100.0), rgb(200, 0, 0));
+    let mut s = scene(&e, red, 100.0, 100.0);
+    let first = frame(&mut s, &e);
+    assert!(!s.needs_frame());
+    let woke = Rc::new(Cell::new(0));
+    let w = woke.clone();
+    s.set_waker(move || w.set(w.get() + 1));
+
+    let blue = rect_item(&e, None, (0.0, 0.0, 100.0, 100.0), rgb(0, 0, 200));
+    s.set_root(&e, blue).unwrap();
+    assert!(s.needs_frame(), "the new root asks for a frame");
+    assert_eq!(woke.get(), 1, "and wakes the host for it");
+    let next = s.frame(&e, Time::from_millis(16));
+    assert!(next.changed);
+    assert!(!Arc::ptr_eq(&first.snapshot, &next.snapshot));
+}
+
 /// A frame where one item of many changes colour or moves leaves the
 /// paint effects of the rest alone: it does not look at every item to
 /// tell which are on screen, as it must when one comes or goes.

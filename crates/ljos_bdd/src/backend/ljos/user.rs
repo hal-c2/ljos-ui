@@ -17,7 +17,7 @@ use ljos_compiler::sources::PackSources;
 use ljos_dev::{UserQml, UserSession};
 use ljos_engine::MapSource;
 
-use crate::backend::UserSeen;
+use crate::backend::{QmlFile, UserSeen};
 
 use super::{DRIVER, Live, Result, compile, disk::Windows, failed, key_of};
 
@@ -84,7 +84,26 @@ impl Live {
         built_from: &[(String, String)],
         with_sources: bool,
     ) -> Result<()> {
-        let sources = self.application_files();
+        self.run_with_user_qml_at(entry, &[], built_from, with_sources, false)
+    }
+
+    /// As [`run_with_user_qml`](Self::run_with_user_qml); `given`: files
+    /// the build carries over the loaded ones, given since the last load.
+    /// They go into the build only: the engine runs what the build makes,
+    /// at the generation the session starts from. `own_window`: the root
+    /// is made with no parent and shown in a window of its own.
+    pub(super) fn run_with_user_qml_at(
+        &mut self,
+        entry: &str,
+        given: &[QmlFile],
+        built_from: &[(String, String)],
+        with_sources: bool,
+        own_window: bool,
+    ) -> Result<()> {
+        let mut sources = self.application_files();
+        for file in given {
+            sources.insert(file.name.clone(), file.source.clone());
+        }
         let mut compiled = sources.clone();
         for (name, text) in built_from {
             compiled.insert(name.clone(), text.clone());
@@ -122,12 +141,18 @@ impl Live {
         );
         user.session = Some(session);
         // A visual child of the scene's root, as every scenario's QML is:
-        // what the user types goes to it.
+        // what the user types goes to it. Or a window's root.
+        let parent = (!own_window).then_some(self.driver);
         let root = self
             .engine
-            .create_from_url(key_of(entry), Some(self.driver), Vec::new())
+            .create_from_url(key_of(entry), parent, Vec::new())
             .map_err(|e| failed(format!("cannot make {entry}: {e}")))?;
-        ljos_quick::add_data(&self.engine, self.driver, root).map_err(failed)?;
+        if own_window {
+            self.windows.push(root);
+            ljos_quick::roots::RootSwaps::of(&self.engine).shows(&self.engine, None, root);
+        } else {
+            ljos_quick::add_data(&self.engine, self.driver, root).map_err(failed)?;
+        }
         self.roots.push(root);
         let user = self.user.as_mut().expect("made above");
         let session = user.session.as_mut().expect("started above");

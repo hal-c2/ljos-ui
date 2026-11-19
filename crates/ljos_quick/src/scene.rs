@@ -1631,6 +1631,10 @@ impl QuickScene {
                 wake(&s);
             }
         });
+        // Adopting a tree changes none of its properties, so nothing else
+        // marks the scene: a host whose window keeps its size would go on
+        // showing the old root's picture.
+        mark(&self.shared, |_| {});
         Ok(())
     }
 

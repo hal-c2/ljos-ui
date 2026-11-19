@@ -52,9 +52,32 @@ fn paged_model(
     w.each(|b| b.application()?.paged_model(&name, total, page, delay))
 }
 
+// Before the QML: as on a desktop, where every `Window` is a platform
+// window.
+#[given("each Window has a platform window of its own")]
+fn windows_of_their_own(w: &mut LjosWorld) -> StepResult {
+    w.each(|b| b.application()?.windows_of_their_own())
+}
+
+#[then(regex = r#"^the application's windows are "([^"]*)"$"#)]
+fn application_windows(w: &mut LjosWorld, names: String) -> StepResult {
+    let want = list(&names);
+    w.each(|b| {
+        let have = b.application()?.application_windows()?;
+        if have == want {
+            Ok(())
+        } else {
+            Err(BackendError::Failed(format!(
+                "the application's windows are {have:?}, not {want:?}"
+            )))
+        }
+    })
+}
+
 #[when(regex = r#"^the file "([^"]+\.qml)" is opened in a window of its own$"#)]
 fn file_opened_in_window(w: &mut LjosWorld, name: String) -> StepResult {
-    w.each(|b| b.application()?.open_window(&name))
+    let files = w.staged()?;
+    w.each(|b| b.application()?.open_window(&files, &name))
 }
 
 #[when(regex = r#"^the application puts an object of "([^"]+\.qml)" in the window of "([^"]+)"$"#)]
@@ -75,8 +98,13 @@ fn cannot_put_in_window(w: &mut LjosWorld, name: String, old: String) -> StepRes
     })
 }
 
+/// `""` is no names.
 fn list(text: &str) -> Vec<String> {
-    text.split(',').map(|s| s.trim().to_owned()).collect()
+    text.split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned)
+        .collect()
 }
 
 #[when(regex = r#"^the application watches the roots "([^"]+)" for the entries "([^"]+)"$"#)]

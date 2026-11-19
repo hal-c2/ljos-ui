@@ -135,11 +135,18 @@ pub enum Wheel {
 }
 
 /// The part of a host the driver does not play: what the caller does
-/// around each settle, as its host would around frames.
+/// around each frame of a settle, as its host would around frames.
 pub trait Host {
-    /// Before a settle's first frame: what the host does before it draws
+    /// Before each frame of a settle: what the host does before it draws
     /// again (shows a root the application put in a window).
-    fn before_settle(&mut self, _engine: &Engine, _scene: &mut QuickScene) {}
+    fn before_frame(&mut self, _engine: &Engine, _scene: &mut QuickScene) {}
+
+    /// Whether the host has something to do before the next frame, which
+    /// keeps a settle going past a frame at rest: a frame can ask for a
+    /// root that only the next one shows.
+    fn wants_frame(&self, _engine: &Engine) -> bool {
+        false
+    }
 
     /// After each frame of a settle (reads what the frame measured).
     fn after_frame(&mut self, _engine: &Engine, _scene: &mut QuickScene) {}
@@ -613,11 +620,11 @@ fn settle<'f>(
     // Frames within one settle nest in this turn: work for the turn's end
     // runs only after the last frame, not between two of them.
     let _turn = engine.begin_turn(ljos_engine::TurnCause::Host, None);
-    if let Some(h) = host.as_deref_mut() {
-        h.before_settle(engine, scene);
-    }
     let mut settling = Settling::new(clock);
     loop {
+        if let Some(h) = host.as_deref_mut() {
+            h.before_frame(engine, scene);
+        }
         if engine.has_due_calls() {
             engine.run_pending_calls();
         }
@@ -625,7 +632,7 @@ fn settle<'f>(
         if let Some(h) = host.as_deref_mut() {
             h.after_frame(engine, scene);
         }
-        if rest {
+        if rest && !host.as_deref().is_some_and(|h| h.wants_frame(engine)) {
             return Ok(());
         }
     }

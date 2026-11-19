@@ -587,7 +587,7 @@ impl<M: Send + 'static> ShellApp<M> {
         // named only if it names them.
         inbox.observe_as("application", message_kinds);
         let mut view = QmlView::new(Rc::clone(&engine), root)?.with_clock(clock);
-        ljos_quick::roots::RootSwaps::of(&engine).shows(None, root);
+        ljos_quick::roots::RootSwaps::of(&engine).shows(&engine, None, root);
         if let Some(tree) = tree {
             view = view.with_accessibility_graft(tree);
         }
@@ -695,6 +695,10 @@ impl<M: Send + 'static> ShellApp<M> {
         self.pump_user();
         #[cfg(feature = "dev")]
         self.pump_dev();
+        // A root a reload made may stand for a window, shown in its place
+        // before this frame.
+        #[cfg(any(feature = "user-qml", feature = "dev"))]
+        self.swap_roots();
         #[cfg(feature = "dev")]
         self.pump_tools();
     }
