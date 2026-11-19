@@ -937,7 +937,10 @@ impl<'s> Text<'s> {
                 return self.open_up(object, members, at, snippet, grouped, cut);
             }
             if !self.src[open..close].contains('\n') {
-                let replacement = if one_line {
+                // Text moved from lines of its own goes on a line of its
+                // own: `removal` left the braces it was taken from as `{}`,
+                // so moving it back that way gives the file back.
+                let replacement = if one_line && snippet.gaps.is_none() {
                     format!(" {} ", snippet.text)
                 } else {
                     let inner = format!("{outer}{}", self.unit);
@@ -963,7 +966,17 @@ impl<'s> Text<'s> {
         let span = member_span(anchor);
         let indent = self.indent_at(span.start as usize).to_owned();
         let nl = self.nl;
-        match (self.extent(span), before) {
+        let mut extent = self.extent(span);
+        // Several lines, or an object moved from lines of its own, go on
+        // lines of their own beside a line of members rather than open the
+        // object up, so that moving it back gives the file back.
+        if matches!(extent, Extent::Inline { .. })
+            && (!one_line || snippet.gaps.is_some())
+            && let Some(lines) = self.own_lines(object, span, before)
+        {
+            extent = lines;
+        }
+        match (extent, before) {
             (Extent::Lines { start, .. }, true) => {
                 let spaced = grouped
                     && self
@@ -1262,6 +1275,15 @@ impl<'s> Text<'s> {
             Some(b'\r') => line_rest + 2,
             Some(_) => line_rest + 1,
         };
+        Extent::Lines {
+            start: self.top_of(first),
+            end: last,
+        }
+    }
+
+    /// Where the lines of a member that starts its line at `first` begin:
+    /// the comment lines right above it are about it.
+    fn top_of(&self, first: usize) -> usize {
         let mut top = first;
         while top > 0 {
             let previous = line_start(self.src, top - 1);
@@ -1279,9 +1301,55 @@ impl<'s> Text<'s> {
                 _ => break,
             }
         }
-        Extent::Lines {
-            start: top,
-            end: last,
+        top
+    }
+
+    /// The whole lines of a member that shares its line with others, for
+    /// text that goes on a line of its own next to it: `before` it, the
+    /// member must be the first on its line, after it the last. An object
+    /// whose `{` or `}` shares a line with a member is opened up instead.
+    fn own_lines(&self, object: &QmlObject<'_>, span: Span, before: bool) -> Option<Extent> {
+        let (open, close) = self.braces(object);
+        let (start, end) = (span.start as usize, self.end_of(span));
+        let first = line_start(self.src, start);
+        if first <= open
+            || self.line_end_after(open + 1).is_none()
+            || !is_blank(&self.src[line_start(self.src, close)..close])
+        {
+            return None;
+        }
+        let last = self.line_end_after(end);
+        if before {
+            is_blank(&self.src[first..start]).then(|| Extent::Lines {
+                start: self.top_of(first),
+                end: last.unwrap_or(end),
+            })
+        } else {
+            last.map(|last| Extent::Lines {
+                start: self.top_of(first),
+                end: last,
+            })
+        }
+    }
+
+    /// Past the line end after `end`, when only a `;`, blanks and comments
+    /// are between them.
+    fn line_end_after(&self, end: usize) -> Option<usize> {
+        let bytes = self.src.as_bytes();
+        let mut at = skip_blanks(bytes, end);
+        if bytes.get(at) == Some(&b';') {
+            at = skip_blanks(bytes, at + 1);
+        }
+        while let Some(comment_end) = self.comment_from(at)
+            && !self.src[at..comment_end].contains('\n')
+        {
+            at = skip_blanks(bytes, comment_end);
+        }
+        match bytes.get(at) {
+            None => Some(at),
+            Some(b'\n') => Some(at + 1),
+            Some(b'\r') if bytes.get(at + 1) == Some(&b'\n') => Some(at + 2),
+            _ => None,
         }
     }
 
