@@ -2694,6 +2694,10 @@ impl Engine {
                 Some(v) => Some(v),
                 None => self.arg_value_at(inst, fallback.as_deref()?, plan),
             },
+            Arg::MadeIn { name, fallback } => match self.context_id(inst.context, name) {
+                Some(v) => Some(v),
+                None => self.arg_value_at(inst, fallback.as_deref()?, plan),
+            },
             Arg::Attached { ty, object } => {
                 let o = inst.resolve(*object)?;
                 let meta = match plan {
@@ -2817,6 +2821,14 @@ impl Engine {
                 },
             },
             Arg::Core(name) => core(s, name),
+            Arg::MadeIn { name, fallback } => match self.context_id(inst.context, name) {
+                Some(v) => self.to_js(&v),
+                None => match fallback.as_deref() {
+                    Some(f) => self.arg_js_at(s, inst, f, plan),
+                    None if has_global(s, name) => global(s, name),
+                    None => global(s, NOWHERE),
+                },
+            },
             Arg::Dynamic(name) => match self.context_name(inst.context, name) {
                 Some(v) => self.to_js(&v),
                 None => match self.singleton_named(name, inst.context) {

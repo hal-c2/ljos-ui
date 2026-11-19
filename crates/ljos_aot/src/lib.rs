@@ -793,6 +793,7 @@ impl<'p> Gen<'p> {
                 }
                 Arg::Dynamic(_) => Err(no("a name found at run time", name)),
                 Arg::Core(_) => Err(no("Ljos.Core", name)),
+                Arg::MadeIn { .. } => Err(no("an id where the component is made", name)),
             };
         }
         match name {

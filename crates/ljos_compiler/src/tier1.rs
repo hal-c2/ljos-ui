@@ -675,7 +675,8 @@ impl<'p, 'a> Gen<'p, 'a> {
                 | Arg::Context { .. }
                 | Arg::Attached { .. }
                 | Arg::Dynamic(_)
-                | Arg::Core(_) => {
+                | Arg::Core(_)
+                | Arg::MadeIn { .. } => {
                     let reg = self.alloc()?;
                     self.emit(Op::Param {
                         dst: reg,

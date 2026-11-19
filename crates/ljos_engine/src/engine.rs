@@ -3811,6 +3811,29 @@ impl Engine {
         found.filter(|o| self.is_alive(*o))
     }
 
+    /// The object `name` is the id of from `ctx` outwards, as
+    /// [`Engine::context_name`] gives it: `null` for one that is gone.
+    /// Nothing else of a context is looked at.
+    pub(crate) fn context_id(&self, ctx: ContextId, name: &str) -> Option<Value> {
+        crate::lookups::name();
+        let found = {
+            let contexts = self.inner.contexts.borrow();
+            let mut cur = Some(ctx);
+            loop {
+                let c = contexts.get(cur?)?;
+                if let Some(o) = c.id(name) {
+                    break o;
+                }
+                cur = c.parent;
+            }
+        };
+        Some(if self.is_alive(found) {
+            Value::Object(found)
+        } else {
+            Value::Null
+        })
+    }
+
     /// See [`Context::root`].
     pub(crate) fn set_context_root(&self, ctx: ContextId, obj: ObjectId) {
         if let Some(c) = self.inner.contexts.borrow_mut().get_mut(ctx) {

@@ -29,7 +29,7 @@ pub mod color;
 /// Bumped whenever the serialised shape changes, or what the compiled
 /// functions ask of the engine, so a cache written by an older compiler is
 /// rebuilt instead of misread.
-pub const IR_VERSION: u32 = 17;
+pub const IR_VERSION: u32 = 18;
 
 macro_rules! index {
     ($(#[$doc:meta])* $name:ident) => {
@@ -838,6 +838,15 @@ pub enum Arg {
     /// of [`Arg::Context`], where a delegate reads a name of one of its
     /// macros that the model may have as a role.
     Core(String),
+    /// The object an id names in the context the instance is made in, from
+    /// there outwards, else `fallback`. Under `pragma ComponentBehavior:
+    /// Bound` an inline component is made only in its own file, and the ids
+    /// where it is made come before its own properties; which object an id
+    /// names depends on where that is (the file's root, a delegate).
+    MadeIn {
+        name: String,
+        fallback: Option<Box<Arg>>,
+    },
 }
 
 /// A free name an expression uses.
