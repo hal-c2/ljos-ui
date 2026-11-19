@@ -27,16 +27,23 @@ T.Control {
 
     spacing: 1
 
-    function openMenu() {
+    // `chevron` is the button that opens it, whose far edge from the
+    // start the menu is set against.
+    function openMenu(chevron) {
         if (menu) {
             // The popup that opens here, so a menu given later does not move
             // this one or leave it bound to nothing.
             const popup = menu
             popup.parent = control
             // Under the chevron's end, and kept there as the button's width
-            // changes. A popover places itself by its edge.
+            // changes: the row of the two is set against the start, so a
+            // wider button leaves the chevron short of its end. A popover
+            // places itself by its edge.
             if (popup.side === undefined) {
-                popup.x = Qt.binding(() => control.mirrored ? 0 : control.width - popup.width)
+                const content = control.contentItem
+                popup.x = Qt.binding(() => !chevron ? (control.mirrored ? 0 : control.width - popup.width)
+                                     : control.mirrored ? content.x + chevron.x
+                                     : content.x + chevron.x + chevron.width - popup.width)
                 popup.y = Qt.binding(() => control.height)
             }
             popup.open()
@@ -48,6 +55,9 @@ T.Control {
         Row {
             spacing: control.spacing
             layoutDirection: control.mirrored ? Qt.RightToLeft : Qt.LeftToRight
+            // The direction is the control's own mirroring already: the row
+            // mirrored again by what the control passes on would undo it.
+            LayoutMirroring.enabled: false
 
             // The Basic style has no icons of its own; `iconName` is kept
             // so a file moves between the modules by its import alone, and
@@ -62,12 +72,13 @@ T.Control {
             }
 
             Basic.Button {
+                id: more
                 objectName: "more"
                 text: "▾"
                 font: control.font
                 enabled: control.menuEnabled
                 Accessible.name: control.menuName
-                onClicked: control.openMenu()
+                onClicked: control.openMenu(more)
             }
         }
     }

@@ -2,9 +2,14 @@
 // its text, so a strip of them reads as a row of words. The current tab is
 // raised, and its text is heavier and in the text's colour; the others are
 // muted, and the pointer over one lifts it a little. The weight is what
-// says which is current to a reader who cannot tell the colours apart. `iconName`, one of the style's own
-// icons, is drawn before the text.
+// says which is current to a reader who cannot tell the colours apart. Its
+// icon (`icon.source`, or its action's) is drawn in the text's colour;
+// `iconName`, one of the style's own icons, wins over it. The icon is drawn
+// before the text, or over it, alone, or not at all as `display` says
+// (AbstractButton.TextUnderIcon, IconOnly, TextOnly); a tab with only one
+// of the two shows it whatever the display.
 import QtQuick
+import QtQuick.Controls.impl
 import QtQuick.Templates as T
 import Ljos.Design
 
@@ -23,35 +28,81 @@ T.TabButton {
                              implicitContentHeight + topPadding + bottomPadding)
 
     horizontalPadding: Theme.spacing
-    verticalPadding: 0
+    // One line is centred in the strip's height; the icon over the text is
+    // taller, so the tab grows to it and keeps half a spacing above and below.
+    // With only one of the two shown it is one line, whatever the display.
+    // Content says whether it draws the icon over the text with
+    // `iconOverText`, as the style's own does; for content a caller gives
+    // that does not say, the display decides.
+    verticalPadding: (contentItem && contentItem.iconOverText !== undefined
+                      ? contentItem.iconOverText === true
+                      : display === T.AbstractButton.TextUnderIcon) ? Theme.spacing / 2 : 0
     spacing: Theme.spacingSmall
+    // The picture is made no larger than the style's icons unless the tab
+    // is given its own size.
+    icon.width: Theme.iconSizeSmall
+    icon.height: Theme.iconSizeSmall
     hoverEnabled: true
     font.pixelSize: Theme.fontSizeSmall
     opacity: enabled ? 1 : 0.64
 
     contentItem: Component {
         Item {
+            id: content
+            readonly property bool hasIcon: control.iconName.length > 0 || picture.implicitWidth > 0
+            readonly property bool showsIcon: control.display !== T.AbstractButton.TextOnly
+                                              || control.text.length === 0
+            // Which part is shown, from what it shows rather than from
+            // `visible`: under a hidden parent nothing is visible, and the
+            // tab still asks for the room it takes once shown.
+            readonly property bool glyphShown: control.iconName.length > 0 && showsIcon
+            readonly property bool pictureShown: control.iconName.length === 0 && showsIcon && picture.implicitWidth > 0
+            readonly property bool textShown: control.text.length > 0
+                                              && (control.display !== T.AbstractButton.IconOnly || !hasIcon)
+            // The icon over the text, both shown, as the grid lays them out.
+            readonly property bool iconOverText: (glyphShown || pictureShown) && textShown
+                                                 && control.display === T.AbstractButton.TextUnderIcon
             implicitWidth: row.implicitWidth
             implicitHeight: row.implicitHeight
 
-            Row {
+            // One row, or the icon over the text in one column.
+            Grid {
                 id: row
                 anchors.centerIn: parent
-                spacing: control.spacing
+                // Two only when both are shown: a grid keeps the spacing
+                // after a lone part in a first column of two.
+                columns: (content.glyphShown || content.pictureShown) && content.textShown && !content.iconOverText ? 2 : 1
+                columnSpacing: control.spacing
+                rowSpacing: control.spacing
+                horizontalItemAlignment: Grid.AlignHCenter
+                verticalItemAlignment: Grid.AlignVCenter
                 layoutDirection: control.mirrored ? Qt.RightToLeft : Qt.LeftToRight
+                // The direction is the tab's own mirroring already: the grid
+                // mirrored again by what the tab passes on would undo it.
+                LayoutMirroring.enabled: false
 
                 Icon {
+                    id: glyph
                     objectName: "glyph"
-                    visible: control.iconName.length > 0
-                    anchors.verticalCenter: parent.verticalCenter
+                    visible: content.glyphShown
                     name: control.iconName
                     size: Theme.iconSizeSmall
                     color: control.ink
                 }
 
+                // Text-less, it is the icon alone, taken from the tab or the
+                // action it follows, no larger than the style's icons.
+                IconLabel {
+                    id: picture
+                    objectName: "picture"
+                    visible: content.pictureShown
+                    color: control.ink
+                }
+
                 Text {
+                    id: label
                     objectName: "label"
-                    anchors.verticalCenter: parent.verticalCenter
+                    visible: content.textShown
                     // As wide as the heavier text, so a tab keeps its
                     // width as it becomes current and the strip stays put.
                     width: Math.max(implicitWidth, Math.ceil(heavy.advanceWidth))
@@ -71,6 +122,15 @@ T.TabButton {
                         text: control.text
                     }
                 }
+            }
+            // Where the picture would not be shown it loads nothing, as a
+            // button's does (Button.qml says why it is not its own source).
+            Binding {
+                target: picture
+                property: "icon.source"
+                value: ""
+                when: control.iconName.length > 0
+                      || control.display === T.AbstractButton.TextOnly && control.text.length > 0
             }
         }
     }

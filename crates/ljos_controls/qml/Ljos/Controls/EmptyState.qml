@@ -33,119 +33,140 @@ T.Control {
     spacing: Theme.spacing
     font.pixelSize: Theme.fontSize
 
+    // The text keeps to the width the control is given, and wraps or
+    // elides in it; what the control asks for is still the width its text
+    // would take up to `maximumTextWidth`, whatever width it is given, so
+    // a layout that gives it less does not make it ask for less.
     contentItem: Component {
-        Column {
-            spacing: control.spacing
+        Item {
+            implicitWidth: Math.max(tileBox.width,
+                                    title.text.length > 0 ? Math.min(title.implicitWidth, control.maximumTextWidth) : 0,
+                                    description.text.length > 0 ? Math.min(description.implicitWidth, control.maximumTextWidth) : 0,
+                                    control.actionText.length > 0 || control.secondaryActionText.length > 0 ? actionsBox.width : 0)
+            implicitHeight: column.implicitHeight
 
-            Item {
-                anchors.horizontalCenter: parent.horizontalCenter
-                width: tile.width
-                height: tile.height + Theme.spacingSmall
+            Column {
+                id: column
+                width: parent.width
+                spacing: control.spacing
 
-                Rectangle {
-                    id: tile
-                    objectName: "tile"
-                    width: 40
-                    height: 40
-                    radius: Theme.radius
-                    // A well in the page rather than a raised part, so the
-                    // tile reads as a mark, not as something to press.
-                    color: Theme.canvas
-                    border.width: 1
-                    border.color: Theme.border
+                Item {
+                    id: tileBox
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    width: tile.width
+                    height: tile.height + Theme.spacingSmall
 
-                    Icon {
-                        id: glyph
-                        objectName: "glyph"
-                        anchors.centerIn: parent
-                        name: control.status === "loading" ? "circle-dashed"
-                              : control.status === "error" ? "circle-alert" : control.iconName
-                        size: Theme.iconSize + 8
-                        color: control.status === "error" ? Theme.warningForeground : Theme.iconMuted
-                        // Loading turns it; with reduced motion it pulses
-                        // instead, so the wait still shows.
-                        rotation: 0
-                        opacity: 1
+                    Rectangle {
+                        id: tile
+                        objectName: "tile"
+                        width: 40
+                        height: 40
+                        radius: Theme.radius
+                        // A well in the page rather than a raised part, so the
+                        // tile reads as a mark, not as something to press.
+                        color: Theme.canvas
+                        border.width: 1
+                        border.color: Theme.border
 
-                        RotationAnimation on rotation {
-                            running: control.status === "loading" && control.visible && !Motion.reduced
-                            from: 0
-                            to: 360
-                            duration: 1600
-                            loops: Animation.Infinite
-                            // A stopped animation leaves the angle where it
-                            // was, so the icon that follows would be tilted.
-                            onRunningChanged: if (!running) glyph.rotation = 0
-                        }
-                        SequentialAnimation on opacity {
-                            running: control.status === "loading" && control.visible && Motion.reduced
-                            loops: Animation.Infinite
-                            onRunningChanged: if (!running) glyph.opacity = 1
-                            NumberAnimation { to: 0.4; duration: 800; easing.type: Easing.InOutSine }
-                            NumberAnimation { to: 1; duration: 800; easing.type: Easing.InOutSine }
+                        Icon {
+                            id: glyph
+                            objectName: "glyph"
+                            anchors.centerIn: parent
+                            name: control.status === "loading" ? "circle-dashed"
+                                  : control.status === "error" ? "circle-alert" : control.iconName
+                            size: Theme.iconSize + 8
+                            color: control.status === "error" ? Theme.warningForeground : Theme.iconMuted
+                            // Loading turns it; with reduced motion it pulses
+                            // instead, so the wait still shows.
+                            rotation: 0
+                            opacity: 1
+
+                            RotationAnimation on rotation {
+                                running: control.status === "loading" && control.visible && !Motion.reduced
+                                from: 0
+                                to: 360
+                                duration: 1600
+                                loops: Animation.Infinite
+                                // A stopped animation leaves the angle where it
+                                // was, so the icon that follows would be tilted.
+                                onRunningChanged: if (!running) glyph.rotation = 0
+                            }
+                            SequentialAnimation on opacity {
+                                running: control.status === "loading" && control.visible && Motion.reduced
+                                loops: Animation.Infinite
+                                onRunningChanged: if (!running) glyph.opacity = 1
+                                NumberAnimation { to: 0.4; duration: 800; easing.type: Easing.InOutSine }
+                                NumberAnimation { to: 1; duration: 800; easing.type: Easing.InOutSine }
+                            }
                         }
                     }
                 }
-            }
 
-            Text {
-                objectName: "title"
-                visible: text.length > 0
-                anchors.horizontalCenter: parent.horizontalCenter
-                width: Math.min(implicitWidth, control.maximumTextWidth)
-                text: control.title
-                color: Theme.text
-                font.pixelSize: Theme.fontSize + 3
-                font.weight: Font.DemiBold
-                lineHeight: 22
-                lineHeightMode: Text.FixedHeight
-                horizontalAlignment: Text.AlignHCenter
-                elide: Text.ElideRight
-                Accessible.role: Accessible.Heading
-            }
+                Text {
+                    id: title
+                    objectName: "title"
+                    visible: text.length > 0
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    width: Math.min(implicitWidth, control.maximumTextWidth, column.width)
+                    text: control.title
+                    color: Theme.text
+                    font.pixelSize: Theme.fontSize + 3
+                    font.weight: Font.DemiBold
+                    lineHeight: 22
+                    lineHeightMode: Text.FixedHeight
+                    horizontalAlignment: Text.AlignHCenter
+                    elide: Text.ElideRight
+                    Accessible.role: Accessible.Heading
+                }
 
-            Text {
-                objectName: "description"
-                visible: text.length > 0
-                anchors.horizontalCenter: parent.horizontalCenter
-                width: Math.min(implicitWidth, control.maximumTextWidth)
-                text: control.description
-                color: Theme.textMuted
-                font: control.font
-                lineHeight: 18
-                lineHeightMode: Text.FixedHeight
-                horizontalAlignment: Text.AlignHCenter
-                wrapMode: Text.Wrap
-                maximumLineCount: 2
-                elide: Text.ElideRight
-            }
+                Text {
+                    id: description
+                    objectName: "description"
+                    visible: text.length > 0
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    width: Math.min(implicitWidth, control.maximumTextWidth, column.width)
+                    text: control.description
+                    color: Theme.textMuted
+                    font: control.font
+                    lineHeight: 18
+                    lineHeightMode: Text.FixedHeight
+                    horizontalAlignment: Text.AlignHCenter
+                    wrapMode: Text.Wrap
+                    maximumLineCount: 2
+                    elide: Text.ElideRight
+                }
 
-            Item {
-                visible: actions.visible
-                anchors.horizontalCenter: parent.horizontalCenter
-                width: actions.width
-                height: actions.height + Theme.spacingSmall
+                Item {
+                    id: actionsBox
+                    visible: actions.visible
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    width: actions.width
+                    height: actions.height + Theme.spacingSmall
 
-                Row {
-                    id: actions
-                    y: Theme.spacingSmall
-                    visible: control.actionText.length > 0 || control.secondaryActionText.length > 0
-                    spacing: Theme.spacing
-                    layoutDirection: control.mirrored ? Qt.RightToLeft : Qt.LeftToRight
+                    Row {
+                        id: actions
+                        y: Theme.spacingSmall
+                        visible: control.actionText.length > 0 || control.secondaryActionText.length > 0
+                        spacing: Theme.spacing
+                        layoutDirection: control.mirrored ? Qt.RightToLeft : Qt.LeftToRight
+                        // The direction is the control's own mirroring already: the row
+                        // mirrored again by what the control passes on would undo it.
+                        LayoutMirroring.enabled: false
 
-                    Button {
-                        objectName: "secondaryAction"
-                        visible: control.secondaryActionText.length > 0
-                        text: control.secondaryActionText
-                        onClicked: control.secondaryActionTriggered()
-                    }
+                        Button {
+                            objectName: "secondaryAction"
+                            visible: control.secondaryActionText.length > 0
+                            text: control.secondaryActionText
+                            onClicked: control.secondaryActionTriggered()
+                        }
 
-                    Button {
-                        objectName: "action"
-                        visible: control.actionText.length > 0
-                        primary: true
-                        text: control.actionText
-                        onClicked: control.actionTriggered()
+                        Button {
+                            objectName: "action"
+                            visible: control.actionText.length > 0
+                            primary: true
+                            text: control.actionText
+                            onClicked: control.actionTriggered()
+                        }
                     }
                 }
             }

@@ -1,7 +1,10 @@
 // Ljós's own style (docs/DIALECT.md §4.16): a row of a menu, with an
 // optional icon (`iconName`, one of the style's own, wins over
 // `icon.source` and its action's), the shortcut that runs it muted at the end, and a
-// chevron where it opens a submenu.
+// chevron where it opens a submenu. `display` shows the icon alone or the
+// text alone (AbstractButton.IconOnly, TextOnly); a row keeps its icon in
+// the icons' column, so TextUnderIcon draws it beside the text, as by
+// default.
 import QtQuick
 import QtQuick.Controls.impl
 import QtQuick.Templates as T
@@ -50,16 +53,34 @@ T.MenuItem {
 
     contentItem: Component {
         Item {
+            // A row with only one of the two shows it whatever the
+            // display, as IconLabel does.
+            readonly property bool hasIcon: control.iconName.length > 0 || picture.implicitWidth > 0
+            // Text that draws something once its mnemonic markers are gone,
+            // as a button's (Button.qml).
+            readonly property bool hasLabel: control.text.indexOf("&&") >= 0
+                                             || control.text.split("&").join("").length > 0
+            readonly property bool showsIcon: hasIcon && (control.display !== T.AbstractButton.TextOnly || !hasLabel)
+            readonly property bool showsText: hasLabel && (control.display !== T.AbstractButton.IconOnly || !hasIcon)
+            // Which part is shown, from what it shows rather than from
+            // `visible`: under a hidden parent nothing is visible, and the
+            // row still asks for the room it takes once shown.
+            readonly property bool glyphShown: control.iconName.length > 0 && showsIcon
+            readonly property bool pictureShown: control.iconName.length === 0 && showsIcon && picture.implicitWidth > 0
+            readonly property bool keysShown: control.shortcut.length > 0 && control.subMenu === null
+            readonly property bool moreShown: control.subMenu !== null
             // The style's own icon, else the row's or its action's.
-            readonly property Item mark: glyph.visible ? glyph : picture.visible ? picture : null
+            readonly property Item mark: glyphShown ? glyph : pictureShown ? picture : null
             readonly property real gutter: mark || control.iconSpace
                                            ? iconSize + control.spacing : 0
-            readonly property real end: (keys.visible ? keys.implicitWidth + control.spacing : 0)
-                                        + (more.visible ? more.width + control.spacing : 0)
+            readonly property real end: (keysShown ? keys.implicitWidth + control.spacing : 0)
+                                        + (moreShown ? more.width + control.spacing : 0)
                                         + (control.checkable ? Theme.iconSize + control.spacing : 0)
             readonly property real iconSize: Theme.iconSize
-            implicitWidth: gutter + label.implicitWidth + end
-            implicitHeight: Math.max(label.implicitHeight, Theme.iconSize)
+            implicitWidth: gutter + (showsText ? label.implicitWidth : 0) + end
+            // A hidden label is still measured: its text's height is not
+            // the row's.
+            implicitHeight: Math.max(showsText ? label.implicitHeight : 0, Theme.iconSize)
 
             // Mirroring moves anchors only: the icon's column is at the
             // start of the row, and the shortcut, the check's room and the
@@ -67,7 +88,7 @@ T.MenuItem {
             Icon {
                 id: glyph
                 objectName: "glyph"
-                visible: control.iconName.length > 0
+                visible: parent.glyphShown
                 x: control.mirrored ? parent.width - width : 0
                 y: (parent.height - height) / 2
                 name: control.iconName
@@ -78,7 +99,7 @@ T.MenuItem {
             IconLabel {
                 id: picture
                 objectName: "picture"
-                visible: !glyph.visible && implicitWidth > 0
+                visible: parent.pictureShown
                 x: control.mirrored ? parent.width - parent.iconSize + (parent.iconSize - width) / 2
                                     : (parent.iconSize - width) / 2
                 y: (parent.height - height) / 2
@@ -91,6 +112,7 @@ T.MenuItem {
             IconLabel {
                 id: label
                 objectName: "label"
+                visible: parent.showsText
                 x: control.mirrored ? parent.end : parent.gutter
                 width: parent.width - parent.gutter - parent.end
                 height: parent.height
@@ -107,7 +129,7 @@ T.MenuItem {
             Text {
                 id: keys
                 objectName: "keys"
-                visible: control.shortcut.length > 0 && control.subMenu === null
+                visible: parent.keysShown
                 readonly property real checkSpace: control.checkable ? Theme.iconSize + control.spacing : 0
                 x: control.mirrored ? checkSpace : parent.width - width - checkSpace
                 height: parent.height
@@ -121,7 +143,7 @@ T.MenuItem {
             Icon {
                 id: more
                 objectName: "more"
-                visible: control.subMenu !== null
+                visible: parent.moreShown
                 // Past the check's room, as the shortcut is: the menu's
                 // delegate draws its submenus' rows too, checked or not.
                 readonly property real checkSpace: control.checkable ? Theme.iconSize + control.spacing : 0

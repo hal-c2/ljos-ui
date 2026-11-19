@@ -316,3 +316,45 @@ Feature: The icon of a button
     Scenario: A button draws its action's icon in its text's colour where the action gives none
       Then the property "icon.color" of "plainlyActing" is "#00000000"
       And the pixel at 250, 70 of the window is "#26282a"
+
+  Rule: An icon given whole is all of that icon
+
+    # Given another button's icon whole, a button takes every member that
+    # icon was given; one it was not given, as the colour of `bare`'s, is
+    # still its action's to give. An action given back the icon of its own
+    # button is no loop.
+    Background:
+      Given a 16 by 16 image file "red.png" filled with "#ff0000"
+      And the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Rectangle {
+          objectName: "root"
+          width: 300; height: 300; color: "white"
+          Button { id: bare; objectName: "bare"; icon.source: "red.png" }
+          Button {
+            objectName: "linkedActing"; y: 50
+            icon: bare.icon; action: Action { icon.color: "#0066cc" }
+          }
+          Button {
+            id: linkedBack; objectName: "linkedBack"; y: 100
+            icon: bare.icon; action: Action { id: back; icon: linkedBack.icon }
+          }
+          // The action holds the picture it was given back.
+          readonly property bool backGiven: String(back.icon.source).endsWith("red.png")
+                                            && String(back.icon.source) === String(linkedBack.icon.source)
+        }
+        """
+
+    @api-QtQuick.Controls.AbstractButton.icon
+    Scenario: A button given another's icon whole, which gave no colour, draws it in its action's
+      Then the pixel at 50, 70 of the window is "#0066cc"
+      And the property "icon.color" of "linkedActing" is "#0066cc"
+
+    @api-QtQuick.Controls.AbstractButton.icon
+    Scenario: A button whose action is given back its own icon draws it in its text's colour, and is no loop
+      Then the pixel at 50, 120 of the window is "#26282a"
+      And the property "icon.color" of "linkedBack" is "#00000000"
+      And the property "backGiven" of "root" is true
+      And the log has no warnings

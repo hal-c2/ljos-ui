@@ -482,12 +482,14 @@ module Ljos.Controls.impl
 		prop gap QtQml.real named
 		prop anchorWidth QtQml.real named readonly
 		prop anchorHeight QtQml.real named readonly
+		prop placement QtQml.var named readonly
 		signal edgeChanged
 		signal sideChanged
 		signal gapChanged
 		signal anchorWidthChanged
 		signal anchorHeightChanged
-		method placed
+		signal placementChanged
+		method place
 	type Ljos/Controls/impl/PopupEnter.qml PopupEnter
 		prototype QtQuick.Transition named
 	type Ljos/Controls/impl/PopupShade.qml PopupShade
