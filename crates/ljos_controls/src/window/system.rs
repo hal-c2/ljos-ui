@@ -338,13 +338,11 @@ impl WindowSystem {
         let Some(st) = state_of(engine, win) else {
             return;
         };
-        // Only the sides that changed: one the platform gives again as it
-        // is stays what its author made it.
-        let changed: Vec<_> = [(Item::WIDTH, size[0]), (Item::HEIGHT, size[1])]
-            .into_iter()
-            .filter(|(side, v)| engine.untrack(|| engine.read(win, side.index)).to_number() != *v)
-            .collect();
-        st.own(|| give_host_size(engine, win, &changed));
+        // Both sides, the one the platform gives again as it was too: it
+        // is left as it is, but a binding the other side's write moves
+        // can take it away, and then it is given again.
+        let sides = [(Item::WIDTH, size[0]), (Item::HEIGHT, size[1])];
+        st.own(|| give_host_size(engine, win, &sides));
     }
 
     /// The platform says `win` is at this place now.
