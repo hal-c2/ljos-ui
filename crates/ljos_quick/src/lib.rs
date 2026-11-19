@@ -172,7 +172,7 @@ pub use palette::{ColorGroup, Palette};
 pub use pinch_area::{Pinch, PinchArea, PinchEvent};
 pub use pointer_item::{
     HoverMove, PointerItem, contains_point, follows_implicit_size, give_size, is_mirrored, place,
-    register_hover_move, register_pointer_item, takes_pointer,
+    register_hover_move, register_pointer_item, takes_pointer, takes_press,
 };
 pub use pointer_item::{PointerCondition, register_pointer_condition};
 pub use positioners::{Column, Flow, Grid, Positioner, PositionerAttached, Row};

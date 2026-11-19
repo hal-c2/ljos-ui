@@ -76,6 +76,21 @@ pub(crate) fn pointer_item(engine: &Engine, obj: ObjectId) -> Option<PointerItem
 /// accessibility tree has no node for; hover alone does not count.
 pub fn takes_pointer(engine: &Engine, obj: ObjectId) -> bool {
     use crate::item::is_a;
+    takes_press(engine, obj)
+        || engine.untrack(|| {
+            crate::tree::resources(engine, obj).into_iter().any(|h| {
+                is_a::<crate::handlers::PointHandler>(engine, h)
+                    || is_a::<crate::wheel_handler::WheelHandler>(engine, h)
+            })
+        })
+}
+
+/// Whether a press on `obj` can stop there instead of going on to the
+/// items under it: what [`takes_pointer`] counts, less the handlers that
+/// only watch. A `PointHandler` takes a passive grab, so the press goes on;
+/// a `WheelHandler` takes no press at all.
+pub fn takes_press(engine: &Engine, obj: ObjectId) -> bool {
+    use crate::item::is_a;
     engine.untrack(|| {
         is_a::<crate::input::MouseArea>(engine, obj)
             || is_a::<crate::flickable::Flickable>(engine, obj)
@@ -83,9 +98,7 @@ pub fn takes_pointer(engine: &Engine, obj: ObjectId) -> bool {
             || crate::tree::resources(engine, obj).into_iter().any(|h| {
                 is_a::<crate::input::TapHandler>(engine, h)
                     || is_a::<crate::handlers::DragHandler>(engine, h)
-                    || is_a::<crate::handlers::PointHandler>(engine, h)
                     || is_a::<crate::handlers::PinchHandler>(engine, h)
-                    || is_a::<crate::wheel_handler::WheelHandler>(engine, h)
             })
     })
 }
