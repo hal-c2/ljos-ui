@@ -1,6 +1,6 @@
 ---
 title: Pointer Input and Gestures
-description: Handle clicks, taps, drags, hover, wheel turns, pinches, and drag-and-drop with PointerArea, gestures, PinchArea, and DropArea.
+description: Handle clicks, taps, drags, hover, wheel turns, pinches, touch points, and drag-and-drop with PointerArea, gestures, PinchArea, MultiPointTouchArea, and DropArea.
 section: data
 order: 5
 ---
@@ -203,7 +203,34 @@ Item {
 }
 ```
 
+## MultiPointTouchArea
+
+A `MultiPointTouchArea` follows every finger on it, each as a `TouchPoint` with its `x`, `y`, `startX`, `previousX`, `sceneX`, `pressed` and `pressure`. In each touch event it emits `released`, `canceled`, `updated` (every point still down, still ones too) and `pressed` for the points concerned, then `touchUpdated` with every point down. `gestureStarted` comes first while a point is more than `gesture.dragThreshold` from where it came down; call `gesture.grab()` to stop it. Points declared in `touchPoints` go to fingers in order, and later fingers get points the area makes.
+
+An event is taken only while the number of fingers in it is from `minimumTouchPoints` to `maximumTouchPoints`. While `mouseEnabled` (the default), the left mouse button is one more point; otherwise the mouse goes to what is under the area.
+
+```qml
+import QtQuick
+
+Rectangle {
+    width: 300
+    height: 300
+    MultiPointTouchArea {
+        anchors.fill: parent
+        touchPoints: [ TouchPoint { id: finger } ]
+    }
+    Rectangle {
+        width: 40; height: 40; radius: 20
+        visible: finger.pressed
+        x: finger.x - 20; y: finger.y - 20
+        color: palette.accent
+    }
+}
+```
+
 ## Limits and edge cases
+
+- A `MultiPointTouchArea` inside a `Flickable` keeps its fingers even when no handler grabs the gesture; Qt would let the `Flickable` take them.
 
 - On macOS and Windows, dragging out of the application window to external applications is not supported because `winit` 0.30.13 provides no API to initiate an OS drag session; drags stay within the window.
 - `Wheel.margin` is stored as a property but has no effect on hit testing.
