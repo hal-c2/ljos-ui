@@ -36,6 +36,8 @@ use crate::types::{
     permissions_policy,
 };
 
+#[cfg(target_os = "linux")]
+mod glib;
 mod inspector;
 
 use inspector::Inspector;
@@ -458,6 +460,7 @@ fn start_pump() -> Arc<Pump> {
                                     .posted = false;
                                 hold_awake(false);
                                 do_message_loop_work();
+                                glib_turn();
                                 if loading() {
                                     hold_awake(true);
                                 }
@@ -471,6 +474,46 @@ fn start_pump() -> Arc<Pump> {
         })
         .expect("a thread for CEF's message pump");
     pump
+}
+
+/// On CEF's UI thread, after its work: the glib sources Chromium reads
+/// the display from, which CEF's work leaves to the embedder (see
+/// [`glib`]), and what to wait on for them until the next turn.
+#[cfg(target_os = "linux")]
+fn glib_turn() {
+    thread_local! {
+        static GLIB: RefCell<Option<Option<glib::Glib>>> = const { RefCell::new(None) };
+    }
+    let wait = GLIB.with(|g| {
+        g.borrow_mut()
+            .get_or_insert_with(glib::Glib::on_this_thread)
+            .as_mut()
+            .map(glib::Glib::turn)
+    });
+    if let Some(wait) = wait {
+        glib::watch(wait, glib_due);
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn glib_turn() {}
+
+/// A glib source of the UI thread is ready: a turn of glib alone. It is
+/// no work CEF asked for, so it neither holds the browser awake nor runs
+/// CEF's work; what a source hands Chromium asks CEF for work of its own.
+#[cfg(target_os = "linux")]
+fn glib_due() {
+    let Some(pump) = PUMP.get() else {
+        return;
+    };
+    let post = pump
+        .post
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .clone();
+    if let Some(post) = post {
+        post.send(|_| glib_turn());
+    }
 }
 
 /// CEF's work is done on `e`'s thread, and promised to it.
