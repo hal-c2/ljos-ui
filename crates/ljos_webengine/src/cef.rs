@@ -39,6 +39,8 @@ use crate::types::{
 #[cfg(target_os = "linux")]
 mod glib;
 mod inspector;
+#[cfg(target_os = "macos")]
+mod mac_app;
 
 use inspector::Inspector;
 
@@ -760,7 +762,14 @@ fn headless_warning(words: &[String]) -> Option<String> {
 fn initialize_cef(e: &Engine, first: &ProfileSpec) -> Result<Global, String> {
     let layout = layout().as_ref().map_err(Clone::clone)?;
     #[cfg(target_os = "macos")]
-    load_framework()?;
+    {
+        load_framework()?;
+        // Before CEF starts: Chromium asks NSApp about the events it is
+        // sending from the first one it handles.
+        if let Err(why) = mac_app::answer_cef_app_protocol() {
+            e.log(LogLevel::Warning, crate::CATEGORY, why);
+        }
+    }
     let _ = api_hash(sys::CEF_API_VERSION_LAST, 0);
     pump_into(e);
     let first = &root_profile(e, first);

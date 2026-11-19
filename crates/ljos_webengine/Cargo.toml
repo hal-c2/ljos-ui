@@ -12,7 +12,7 @@ publish.workspace = true
 default = []
 # Show pages with the Chromium Embedded Framework. Without it the types
 # are there and every load fails, saying there is no web engine.
-cef = ["dep:cef", "dep:url", "dep:getrandom", "dep:sha1_smol"]
+cef = ["dep:cef", "dep:url", "dep:getrandom", "dep:sha1_smol", "dep:objc2"]
 
 [[bin]]
 name = "ljos-webengine-helper"
@@ -37,6 +37,10 @@ cef = { workspace = true, optional = true }
 getrandom = { workspace = true, optional = true }
 sha1_smol = { workspace = true, optional = true }
 url = { workspace = true, optional = true }
+
+# CEF's application protocol taught to the running NSApp (src/cef/mac_app.rs).
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = { workspace = true, optional = true }
 
 [dev-dependencies]
 ljos_compiler = { path = "../ljos_compiler" }
