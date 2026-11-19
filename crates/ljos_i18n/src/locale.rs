@@ -161,6 +161,16 @@ impl DataSizeFormat {
     }
 }
 
+/// How a locale groups the digits of a whole number: `1,23,45,678` has a
+/// last group of three, groups of two before it, and is grouped only from
+/// `minimum` digits before the last group on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Grouping {
+    pub(crate) last: usize,
+    pub(crate) others: usize,
+    pub(crate) minimum: usize,
+}
+
 /// What `Qt.locale(name)` describes.
 #[derive(Debug, Clone)]
 pub struct LocaleInfo {
@@ -394,18 +404,9 @@ impl LocaleInfo {
     /// The separator between groups of digits; empty when the locale has none.
     #[must_use]
     pub fn group_separator(&self) -> String {
-        let Some(locale) = &self.numeric else {
+        let Some(text) = self.always_grouped("1111111") else {
             return ",".to_owned();
         };
-        let mut options = DecimalFormatterOptions::default();
-        options.grouping_strategy = Some(GroupingStrategy::Always);
-        let Ok(always) = DecimalFormatter::try_new(locale.into(), options) else {
-            return ",".to_owned();
-        };
-        let Ok(million) = Decimal::try_from_str("1111111") else {
-            return ",".to_owned();
-        };
-        let text = always.format(&million).to_string();
         let one = text.chars().next().unwrap_or('1');
         // Everything between the first two runs of the digit is one separator.
         text.trim_start_matches(one)
@@ -454,6 +455,73 @@ impl LocaleInfo {
             self.format_double(value, 'f', precision.min(99)),
             units[power - 1]
         )
+    }
+
+    /// `ascii` with a separator between every group, however short.
+    fn always_grouped(&self, ascii: &str) -> Option<String> {
+        let mut options = DecimalFormatterOptions::default();
+        options.grouping_strategy = Some(GroupingStrategy::Always);
+        let always = DecimalFormatter::try_new(self.numeric.as_ref()?.into(), options).ok()?;
+        Some(
+            always
+                .format(&Decimal::try_from_str(ascii).ok()?)
+                .to_string(),
+        )
+    }
+
+    /// How the locale groups the digits of a whole number; `None` when it
+    /// does not. The `C` locale groups by threes with a comma.
+    #[must_use]
+    pub(crate) fn grouping(&self) -> Option<Grouping> {
+        let Some(grouped) = &self.grouped else {
+            return Some(Grouping {
+                last: 3,
+                others: 3,
+                minimum: 1,
+            });
+        };
+        let separator = self.group_separator();
+        if separator.is_empty() {
+            return None;
+        }
+        // Ten ones show the last group and at least one before it.
+        let text = self.always_grouped("1111111111")?;
+        let runs: Vec<usize> = text
+            .split(separator.as_str())
+            .map(|r| r.chars().count())
+            .collect();
+        let (&last, before) = runs.split_last()?;
+        let others = match before {
+            [] => return None,
+            [_] => last,
+            [.., others, _] => *others,
+        };
+        // A locale's own grouping leaves a short number whole (`1000` in
+        // Spanish): the fewest digits it writes before the last group.
+        let minimum = (1..=4)
+            .find(|extra| {
+                let ones = "1".repeat(last + extra);
+                Decimal::try_from_str(&ones)
+                    .is_ok_and(|d| grouped.format(&d).to_string().contains(separator.as_str()))
+            })
+            .unwrap_or(1);
+        Some(Grouping {
+            last,
+            others,
+            minimum,
+        })
+    }
+
+    /// The locale's digits, zero to nine.
+    #[must_use]
+    pub(crate) fn digit_set(&self) -> [char; 10] {
+        let mut out = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'];
+        for (i, d) in out.iter_mut().enumerate() {
+            if let Some(c) = self.format_plain(&i.to_string()).chars().next() {
+                *d = c;
+            }
+        }
+        out
     }
 
     fn format_plain(&self, ascii: &str) -> String {
