@@ -59,8 +59,9 @@ use crate::time::Clock;
 
 /// Called from a sender's thread when the inbox goes from empty to non-empty.
 /// The shell passes something like `move || ctx.request_repaint()`. It must be
-/// cheap and must not block. It runs under the inbox's lock (see the wake
-/// protocol), so it must not send to, drain or measure that inbox.
+/// cheap and must not block. It runs under the lock of the inbox or side
+/// stream that was sent to (see the wake protocol), so it must not send to,
+/// drain or measure that inbox or any of its side streams.
 pub type WakeHook = Arc<dyn Fn() + Send + Sync>;
 
 /// Identifies a stream of "latest value wins" messages (a progress bar, a
