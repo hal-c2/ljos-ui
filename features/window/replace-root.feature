@@ -36,6 +36,16 @@ Feature: The application puts another root in its window
         Component.onDestruction: console.info("first gone")
       }
       """
+    And the file "Sizeless.qml":
+      """qml
+      import QtQuick
+      Window { objectName: "sizeless"; visible: true }
+      """
+    And the file "Card.qml":
+      """qml
+      import QtQuick
+      Rectangle { objectName: "card"; width: 20; height: 10 }
+      """
     And the QML:
       """qml
       import QtQuick
@@ -49,21 +59,11 @@ Feature: The application puts another root in its window
     And the property "height" of "next" is 100
 
   Scenario: A Window that declares no size takes the size the window has
-    Given the file "Sizeless.qml":
-      """qml
-      import QtQuick
-      Window { objectName: "sizeless"; visible: true }
-      """
     When the application puts an object of "Sizeless.qml" in the window of "first"
     Then the property "width" of "sizeless" is 300
     And the property "height" of "sizeless" is 240
 
   Scenario: An item put in the window fills it
-    Given the file "Card.qml":
-      """qml
-      import QtQuick
-      Rectangle { objectName: "card"; width: 20; height: 10 }
-      """
     When the application puts an object of "Card.qml" in the window of "first"
     Then the property "width" of "card" is 300
     And the property "height" of "card" is 240

@@ -573,3 +573,45 @@ fn a_window_in_place_of_one_a_reload_made_again_is_shown_at_the_size_it_declares
     assert_eq!(host.root, other);
     assert_eq!(size(&e, other), (200.0, 100.0));
 }
+
+#[test]
+fn a_window_a_reload_shows_from_another_file_is_shown_at_the_size_it_declares() {
+    // A reload makes the loader again, and it stands for a window from
+    // the file it stood for before, or from another: the user's shell
+    // mended or removed, the application's in its place.
+    for (file, shown) in [("Shell", (500.0, 400.0)), ("Other", (200.0, 100.0))] {
+        let e = engine_with_windows();
+        compile(
+            &e,
+            &[
+                (
+                    "Shell",
+                    "import QtQuick\nRectangle { width: 300; height: 240 }",
+                ),
+                (
+                    "Other",
+                    "import QtQuick\nRectangle { width: 200; height: 100 }",
+                ),
+            ],
+        );
+        // Owned by the loader, as a loader owns the shell it makes.
+        let made = |key: &str, holder| e.create_from_url(key, Some(holder), Vec::new()).unwrap();
+        let loader = make::<Item>(&e, None);
+        let shell = made("Shell", loader);
+        RootSwaps::of(&e).present(&e, loader, Some(shell));
+        let mut host = Host::open(&e, loader);
+        host.frame(&e);
+        // The person made the window larger.
+        e.set(shell, Item::WIDTH, 500.0).unwrap();
+        e.set(shell, Item::HEIGHT, 400.0).unwrap();
+        let again = make::<Item>(&e, None);
+        let window = made(file, again);
+        RootSwaps::of(&e).present(&e, again, Some(window));
+        adopt(&e, shell, again);
+        RootSwaps::of(&e).shows(&e, Some(shell), again);
+        host.root = again;
+        host.frame(&e);
+        assert_eq!(host.root, window);
+        assert_eq!(size(&e, window), shown, "a window from {file}");
+    }
+}
