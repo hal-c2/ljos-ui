@@ -46,6 +46,11 @@ Feature: The application puts another root in its window
       import QtQuick
       Rectangle { objectName: "card"; width: 20; height: 10 }
       """
+    And the file "Plain.qml":
+      """qml
+      import QtQml
+      QtObject { objectName: "plain" }
+      """
     And the QML:
       """qml
       import QtQuick
@@ -84,11 +89,6 @@ Feature: The application puts another root in its window
     And the object "inner" exists
 
   Scenario: An object that is not an item cannot take a window, and the old root keeps it
-    Given the file "Plain.qml":
-      """qml
-      import QtQml
-      QtObject { objectName: "plain" }
-      """
     Then the application cannot put an object of "Plain.qml" in the window of "first"
     And the object "first" exists
     And the property "width" of "first" is 300
