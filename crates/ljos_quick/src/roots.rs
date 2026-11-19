@@ -7,7 +7,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use ljos_engine::{Engine, ObjectFlags, ObjectId};
+use ljos_engine::{Engine, LogLevel, ObjectFlags, ObjectId};
 
 use crate::Item;
 use crate::item::is_item;
@@ -52,6 +52,10 @@ pub struct RootSwaps {
     pending: RefCell<Vec<Swap>>,
     /// Each root that stands for a window, and the window.
     presents: RefCell<Vec<(ObjectId, ObjectId)>>,
+    /// Each root whose window could not show it in place of a window it
+    /// let go of, and that window, which the host shows still: what the
+    /// root stands for next takes its place.
+    left: RefCell<Vec<(ObjectId, ObjectId)>>,
     wake: RefCell<Option<Rc<dyn Fn()>>>,
 }
 
@@ -61,6 +65,7 @@ impl std::fmt::Debug for RootSwaps {
             .field("shown", &self.shown.borrow())
             .field("pending", &self.pending.borrow())
             .field("presents", &self.presents.borrow())
+            .field("left", &self.left.borrow())
             .finish_non_exhaustive()
     }
 }
@@ -75,11 +80,34 @@ impl RootSwaps {
     /// the root it showed there before. A root that stands for a window
     /// is replaced by it before the next frame, at the size `old` had
     /// (at its own when there was none).
+    ///
+    /// What was asked to go in the window of `old` and not made yet is
+    /// not made: `root` takes its place. A root the application asked for
+    /// there is destroyed, as one the window cannot show is, and so is
+    /// what it was to replace.
     pub fn shows(&self, engine: &Engine, old: Option<ObjectId>, root: ObjectId) {
+        let superseded: Vec<Swap> = match old {
+            Some(old) => self
+                .pending
+                .borrow_mut()
+                .extract_if(.., |s| s.old == old)
+                .collect(),
+            None => Vec::new(),
+        };
         {
             let mut shown = self.shown.borrow_mut();
-            shown.retain(|r| Some(*r) != old && *r != root);
+            shown.retain(|r| {
+                Some(*r) != old && *r != root && !superseded.iter().any(|s| s.new == *r)
+            });
             shown.push(root);
+        }
+        self.left.borrow_mut().retain(|(_, w)| Some(*w) != old);
+        for swap in superseded {
+            for r in swap.retire.into_iter().chain(swap.refused) {
+                if r != root {
+                    engine.destroy(r);
+                }
+            }
         }
         self.prune(engine);
         if self.present_now(engine, root, old.is_some()) {
@@ -139,12 +167,13 @@ impl RootSwaps {
             }
             before
         };
+        let left = self.left_by(holder);
         let target = window.unwrap_or(holder);
         let current = {
             let mut shown = self.shown.borrow_mut();
             let Some(at) = shown
                 .iter()
-                .position(|r| *r == holder || Some(*r) == before)
+                .position(|r| *r == holder || Some(*r) == before || Some(*r) == left)
             else {
                 // No host shows it: its windows are its own business.
                 return false;
@@ -155,8 +184,14 @@ impl RootSwaps {
             }
             current
         };
+        if Some(current) == left {
+            self.left.borrow_mut().retain(|(h, _)| *h != holder);
+        }
         // A window the holder let go of; never the holder itself.
         let let_go = current != holder;
+        // The window the holder stood for goes from here only if this is
+        // where it was shown; one that never was is the holder's still.
+        let gives = let_go && Some(current) == before;
         let mut pending = self.pending.borrow_mut();
         match pending.iter().position(|s| s.new == current) {
             // `current` never got the window.
@@ -183,7 +218,7 @@ impl RootSwaps {
             }
         }
         self.wake();
-        let_go
+        gives
     }
 
     /// Shows in the window of `root` what was asked to go there, as
@@ -228,6 +263,22 @@ impl RootSwaps {
                 self.restore(swap.new, root);
                 if let Some(n) = swap.refused {
                     engine.destroy(n);
+                } else if swap.retire.contains(&root) {
+                    // `root` is a window a holder let go of, which stays:
+                    // a window shows something. What the holder stands
+                    // for next takes its place, and it goes then.
+                    let holder = self.holder_of(swap.new).unwrap_or(swap.new);
+                    let mut left = self.left.borrow_mut();
+                    left.retain(|(h, _)| *h != holder);
+                    left.push((holder, root));
+                    engine.log(
+                        LogLevel::Warning,
+                        "ljos.window",
+                        format!(
+                            "{root:?} stays shown: its window cannot show {:?}",
+                            swap.new
+                        ),
+                    );
                 }
             }
         }
@@ -271,10 +322,17 @@ impl RootSwaps {
         true
     }
 
+    /// The window `holder` let go of that a host shows still.
+    fn left_by(&self, holder: ObjectId) -> Option<ObjectId> {
+        let left = self.left.borrow();
+        left.iter().find(|(h, _)| *h == holder).map(|(_, w)| *w)
+    }
+
     fn prune(&self, engine: &Engine) {
-        self.presents
-            .borrow_mut()
-            .retain(|(h, w)| engine.is_alive(*h) && engine.is_alive(*w));
+        for list in [&self.presents, &self.left] {
+            list.borrow_mut()
+                .retain(|(h, w)| engine.is_alive(*h) && engine.is_alive(*w));
+        }
     }
 
     fn wake(&self) {
@@ -296,12 +354,13 @@ impl RootSwaps {
         self.prune(engine);
         // `old` may be a root that stands for the window shown, or that
         // window: the root goes, and the window with it.
-        let holder = match self.presented(old) {
-            Some(_) => Some(old),
-            None => {
-                let presents = self.presents.borrow();
-                presents.iter().find(|(_, w)| *w == old).map(|(h, _)| *h)
-            }
+        let holder = if self.presented(old).is_some() || self.left_by(old).is_some() {
+            Some(old)
+        } else {
+            self.holder_of(old).or_else(|| {
+                let left = self.left.borrow();
+                left.iter().find(|(_, w)| *w == old).map(|(h, _)| *h)
+            })
         };
         let face = {
             let mut shown = self.shown.borrow_mut();
@@ -309,9 +368,12 @@ impl RootSwaps {
                 return Err(RootError::Shown(new));
             }
             let window = holder.and_then(|h| self.presented(h));
+            let left = holder.and_then(|h| self.left_by(h));
             let at = shown
                 .iter()
-                .position(|r| *r == old || Some(*r) == holder || Some(*r) == window)
+                .position(|r| {
+                    *r == old || Some(*r) == holder || Some(*r) == window || Some(*r) == left
+                })
                 .ok_or(RootError::NotShown(old))?;
             // From now on `new` is the one to ask about, before the host
             // has made the change: a handler may hand the window on at once.
