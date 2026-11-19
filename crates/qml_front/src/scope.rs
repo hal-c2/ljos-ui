@@ -448,6 +448,7 @@ impl<'a, O: TypeOracle> Analysis<'a, '_, '_, O> {
         let context = self.tree.objects[index].context;
         // What whoever makes the component may set.
         let is_interface = self.tree.contexts[context].root == index;
+        self.errors.extend(duplicate_members(object));
         let mut declared = HashMap::new();
         for member in &object.members {
             match member {
@@ -734,10 +735,69 @@ impl<'a, O: TypeOracle> Analysis<'a, '_, '_, O> {
     }
 }
 
-/// Whether an object of `value` declares a required property it does not
-/// set itself. Qt makes no such object, so where the type of the property
-/// is not known (a type that stands in) it can only be a template, which
-/// whatever has the property makes and sets it on (a delegate).
+/// The members `object` declares twice, as qml6 refuses to load them.
+///
+/// An object has two sets of names: its properties, aliases among them, and
+/// its methods, which are its signals, its functions and the change signal
+/// `<name>Changed` of each of its properties. A property and a method may
+/// share a name; two members of one set may not. Which of two is wrong
+/// follows qml6, which reads the properties, then the signals, then the
+/// functions: a function clashing with a signal is the wrong one whichever
+/// comes first, and so is a method clashing with a change signal.
+fn duplicate_members(object: &QmlObject<'_>) -> Vec<Error> {
+    let mut errors = Vec::new();
+    let mut properties = HashSet::new();
+    for member in &object.members {
+        // `required name` marks an inherited property; it declares nothing.
+        if let QmlMember::Property(declaration) = member
+            && declaration.type_name.is_some()
+        {
+            let name = declaration.name.name.as_str();
+            if !properties.insert(name) {
+                errors.push(duplicate("property", name, declaration.name.span, None));
+            }
+        }
+    }
+    let changed = |name: &str| {
+        name.strip_suffix("Changed")
+            .filter(|property| properties.contains(property))
+            .map(str::to_string)
+    };
+    let mut methods = HashSet::new();
+    for member in &object.members {
+        if let QmlMember::Signal(signal) = member {
+            let name = signal.name.name.as_str();
+            let of = changed(name);
+            if of.is_some() || !methods.insert(name) {
+                errors.push(duplicate("signal", name, signal.name.span, of));
+            }
+        }
+    }
+    for member in &object.members {
+        if let QmlMember::Function(function) = member
+            && let Some(id) = &function.id
+        {
+            let name = id.name.as_str();
+            let of = changed(name);
+            if of.is_some() || !methods.insert(name) {
+                errors.push(duplicate("method", name, id.span, of));
+            }
+        }
+    }
+    errors
+}
+
+/// Begun in qml6's words, so that a message reads the same from either.
+fn duplicate(kind: &str, name: &str, span: Span, change_of: Option<String>) -> Error {
+    let message = match change_of {
+        Some(property) => {
+            format!("Duplicate {kind} name: `{name}` is the change signal of property `{property}`")
+        }
+        None => format!("Duplicate {kind} name: the object declares `{name}` twice"),
+    };
+    Error::with_code(Code::DuplicateName, message, span)
+}
+
 /// Whether `path` names a property that takes a Component in Qt, for a
 /// type whose properties are not known: Qt names those `delegate`, or ends
 /// them in `Delegate` or `Component`.
@@ -746,6 +806,10 @@ pub fn takes_component(path: &[&str]) -> bool {
     *name == "delegate" || name.ends_with("Delegate") || name.ends_with("Component")
 }
 
+/// Whether an object of `value` declares a required property it does not
+/// set itself. Qt makes no such object, so where the type of the property
+/// is not known (a type that stands in) it can only be a template, which
+/// whatever has the property makes and sets it on (a delegate).
 fn leaves_required(value: &QmlBindingValue<'_>) -> bool {
     let objects = match value {
         QmlBindingValue::Object(object) => std::slice::from_ref(object),

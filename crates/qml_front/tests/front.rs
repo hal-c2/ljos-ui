@@ -662,6 +662,7 @@ fn errors_say_what_kind_of_error_they_are() {
         Code::UnknownProperty,
         Code::UnknownSignal,
         Code::DuplicateId,
+        Code::DuplicateName,
         Code::UnknownAliasTarget,
         Code::UnresolvedName,
         Code::Other,
@@ -678,6 +679,7 @@ fn errors_say_what_kind_of_error_they_are() {
             "unknown-property",
             "unknown-signal",
             "duplicate-id",
+            "duplicate-name",
             "unknown-alias-target",
             "unresolved-name",
             "semantic",
@@ -1100,5 +1102,47 @@ Item {
             collected,
             ["property Component named: Rectangle", "delegate: Text"]
         );
+    });
+}
+
+/// qml6 refuses an object that declares a member twice, at the declaration
+/// it reads second: properties first, then signals, then functions.
+#[test]
+fn a_member_declared_twice_is_an_error_at_its_name() {
+    let source = "import QtQuick\nItem {\n    function f() {}\n    property int p\n    signal f()\n    property real p\n    function pChanged() {}\n    function q() {}\n    property int q\n    Item { function f() {} }\n}";
+    analyzed(&[("Sample", source)], "Sample", |_, _, errors| {
+        let found: Vec<(&str, &str, &str)> = errors
+            .iter()
+            .map(|error| {
+                (
+                    error.code.as_str(),
+                    &source[error.span.start as usize..error.span.end as usize],
+                    error.message.as_str(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            found,
+            [
+                (
+                    "duplicate-name",
+                    "p",
+                    "Duplicate property name: the object declares `p` twice"
+                ),
+                (
+                    "duplicate-name",
+                    "f",
+                    "Duplicate method name: the object declares `f` twice"
+                ),
+                (
+                    "duplicate-name",
+                    "pChanged",
+                    "Duplicate method name: `pChanged` is the change signal of property `p`"
+                ),
+            ]
+        );
+        // The function reported is the one at line 3, not the signal.
+        let f = errors.iter().find(|e| e.message.contains("`f`")).unwrap();
+        assert_eq!(f.span.start as usize, source.find("f()").unwrap());
     });
 }
