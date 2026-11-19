@@ -547,6 +547,8 @@ pub fn adopt(engine: &Engine, old: ObjectId, new: ObjectId) {
 /// window: it takes the size `old` has.
 pub fn fit(engine: &Engine, old: ObjectId, new: ObjectId) {
     let window = is_window(engine, new);
+    // The sides given to the window as the host's, with what each is.
+    let mut given = Vec::new();
     engine.batch(|| {
         for (size, horizontal) in [(Item::WIDTH, true), (Item::HEIGHT, false)] {
             // An `old` that is gone has no size to give.
@@ -562,7 +564,26 @@ pub fn fit(engine: &Engine, old: ObjectId, new: ObjectId) {
                 // place: a window that cannot show the size and offers it
                 // again later fits it to the size it has then.
                 let _ = engine.write_derived(new, size.index, v.into());
+                given.push((size, v));
             }
         }
     });
+    // A side whose implicit size follows the other side was taken back by
+    // that binding when the other was given: write it again. Once for
+    // each side settles one following the other; sides that each follow
+    // the other never settle, and keep what the last write gave them.
+    for _ in 0..given.len() {
+        let taken: Vec<_> = given
+            .iter()
+            .filter(|(size, v)| engine.get_if(new, *size) != Some(*v))
+            .collect();
+        if taken.is_empty() {
+            break;
+        }
+        engine.batch(|| {
+            for (size, v) in taken {
+                let _ = engine.write_derived(new, size.index, (*v).into());
+            }
+        });
+    }
 }
