@@ -152,7 +152,7 @@ Feature: The smartwatch example
     Scenario: On the face no heart sample is taken
       Then the property "running" of "beat" is false
 
-    Scenario: The heart chart has all its samples from its first frame
+    Scenario: The heart chart has all its samples when the watch loads
       Then the property "history.length" of "watch" is 40
       And the property "historyKeep" of "watch" is 40
 
