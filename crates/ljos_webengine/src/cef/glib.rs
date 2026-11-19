@@ -198,9 +198,11 @@ impl Glib {
     /// makes ready and the check after it makes not ready. None when no
     /// try singles one out; the turns then go by what the checks read.
     ///
-    /// Each try is an iteration of `context` that waits for nothing: a
-    /// source ready by its check is dispatched then, so sources already
-    /// ready when the contexts are owned run there, before the first turn.
+    /// Each try prepares, queries and checks `context` without waiting, and
+    /// dispatches nothing: a dispatch can send the wakeup again (glib 2.90
+    /// does), so beside a source ready by every check the next try would
+    /// find the wakeup ready already, every time. A source a try's check
+    /// finds ready stays ready to glib, and the first turn dispatches it.
     fn wakeup_of(&mut self, context: Context) -> Option<c_int> {
         let f = self.fns;
         for _ in 0..4 {
@@ -228,14 +230,11 @@ impl Glib {
                     .filter(|&(p, &was)| was == 0 && p.revents != 0)
                     .map(|(p, _)| p.fd)
                     .collect();
-                let ready = (f.check)(context, priority, self.fds.as_mut_ptr(), n as c_int) != 0;
+                (f.check)(context, priority, self.fds.as_mut_ptr(), n as c_int);
                 for p in &mut self.fds {
                     p.revents = 0;
                 }
                 poll(self.fds.as_mut_ptr(), n as c_ulong, 0);
-                if ready {
-                    (f.dispatch)(context);
-                }
                 match woken[..] {
                     [fd] if self.fds.iter().any(|p| p.fd == fd && p.revents == 0) => Some(fd),
                     _ => None,
@@ -882,7 +881,8 @@ mod tests {
     /// The wakeup is found beside a descriptor ready all along, whose
     /// source is ready by every check: waking the context makes only the
     /// wakeup ready, and the check makes it not ready again. That source
-    /// is dispatched while the wakeup is looked for.
+    /// is left ready while the wakeup is looked for, and the first turn
+    /// dispatches it.
     #[test]
     fn the_wakeup_is_found_beside_a_source_ready_all_along() {
         static DISPATCHED: AtomicUsize = AtomicUsize::new(0);
@@ -906,7 +906,7 @@ mod tests {
             attach(source, context);
             context
         };
-        let glib = Glib::owning(vec![context]).expect("libcef's glib is in the process");
+        let mut glib = Glib::owning(vec![context]).expect("libcef's glib is in the process");
         // The last try's query left the context's descriptors: the
         // source's and glib's own wakeup.
         let others: Vec<c_int> = glib
@@ -917,9 +917,15 @@ mod tests {
             .collect();
         assert_eq!(others.len(), 1, "descriptors {:?}", glib.fds);
         assert_eq!(glib.wakeups, vec![Some(others[0])]);
+        assert_eq!(
+            DISPATCHED.load(Ordering::SeqCst),
+            0,
+            "a source was dispatched while the wakeup was looked for"
+        );
+        glib.turn();
         assert!(
             DISPATCHED.load(Ordering::SeqCst) > 0,
-            "the source ready by its check was not dispatched"
+            "the first turn did not dispatch the source ready by its check"
         );
         drop((ready, other));
     }
