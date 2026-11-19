@@ -841,7 +841,7 @@ impl Live {
     /// What an application does that makes its interface again: a new
     /// root, put in the window of the old one by the host before its next
     /// frame.
-    fn put_in_window(&mut self, name: &str, old: &str) -> Result<()> {
+    fn put_in_window(&mut self, name: &str, old: &str) -> Result<std::result::Result<(), String>> {
         let old = self.find(old)?;
         let new = self
             .engine
@@ -849,9 +849,9 @@ impl Live {
             .map_err(|e| failed(format!("cannot make {name}: {e}")))?;
         if let Err(e) = ljos_quick::roots::replace_root(&self.engine, old, new) {
             self.engine.destroy(new);
-            return Err(failed(e));
+            return Ok(Err(e.to_string()));
         }
-        self.settle()
+        self.settle().map(Ok)
     }
 
     /// As an application that makes a window's `Document` before the
@@ -1685,7 +1685,7 @@ impl Application for LjosBackend {
         live.open_window(name)
     }
 
-    fn put_in_window(&mut self, name: &str, old: &str) -> Result<()> {
+    fn put_in_window(&mut self, name: &str, old: &str) -> Result<std::result::Result<(), String>> {
         self.live()?.put_in_window(name, old)
     }
 

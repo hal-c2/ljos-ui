@@ -10,7 +10,7 @@ use std::rc::Rc;
 use ljos_engine::{Engine, LogLevel, ObjectFlags, ObjectId};
 
 use crate::Item;
-use crate::item::is_item;
+use crate::item::{is_item, is_window, size_follows_implicit};
 
 /// Why [`replace_root`] refused.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
@@ -36,11 +36,34 @@ struct Swap {
     retire: Vec<ObjectId>,
     /// Destroyed when the window cannot show `new`.
     refused: Option<ObjectId>,
-    /// `new` takes the size `old` has first: the window keeps its own.
-    adopt: bool,
+    /// How `new` takes its size in the window.
+    fit: Fit,
     /// The root that let go of `old`, a window it stood for: `old` is
     /// that root's again while the window does not show `new`.
     let_go_by: Option<ObjectId>,
+}
+
+/// How a root put in a window takes its size.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Fit {
+    /// Its own: the window had nothing before it.
+    Own,
+    /// The size of the root it replaces, which is the window's: a reload
+    /// made that root again, from the same file, and the window keeps the
+    /// size it has.
+    Kept,
+    /// Another root takes the window ([`fit`]).
+    Fitted,
+}
+
+impl Fit {
+    fn apply(self, engine: &Engine, old: ObjectId, new: ObjectId) {
+        match self {
+            Fit::Own => {}
+            Fit::Kept => adopt(engine, old, new),
+            Fit::Fitted => fit(engine, old, new),
+        }
+    }
 }
 
 /// The roots the hosts of an engine show, and the replacements asked for
@@ -82,9 +105,14 @@ impl RootSwaps {
     }
 
     /// A host shows `root` in a window of its own; `old`, when given, is
-    /// the root it showed there before. A root that stands for a window
-    /// is replaced by it before the next frame, at the size `old` had
-    /// (at its own when there was none).
+    /// the root it showed there before, of which a reload made `root`
+    /// again. A root that stands for a window is replaced by it before
+    /// the next frame: at its own size when there was no `old`, at the
+    /// size `old` had when that window is the one `old` was, made again
+    /// from the same file, and otherwise fitted as another root that
+    /// takes the window is ([`fit`]). A reload can make a `ShellLoader`
+    /// stand for another shell than the one shown: the user's mended, or
+    /// the application's in place of the user's that is gone.
     ///
     /// What was asked to go in the window of `old` and not made yet is
     /// not made: `root` takes its place. A root the application asked for
@@ -115,7 +143,21 @@ impl RootSwaps {
             }
         }
         self.prune(engine);
-        if self.present_now(engine, root, old.is_some()) {
+        let fit = match old {
+            None => Fit::Own,
+            Some(old) => {
+                let face = self.presented(root).unwrap_or(root);
+                // A root not made from QML has no file to tell it by: it
+                // is taken for the one made again.
+                let files = engine.document_url(face).zip(engine.document_url(old));
+                if files.is_some_and(|(face, old)| face != old) {
+                    Fit::Fitted
+                } else {
+                    Fit::Kept
+                }
+            }
+        };
+        if self.present_now(engine, root, fit) {
             self.wake();
         }
     }
@@ -210,7 +252,9 @@ impl RootSwaps {
                 if pending[at].old == target {
                     pending.remove(at);
                 } else {
+                    // Another root than the one a reload made again.
                     pending[at].new = target;
+                    pending[at].fit = Fit::Fitted;
                 }
                 drop(pending);
                 if let_go {
@@ -223,7 +267,7 @@ impl RootSwaps {
                     new: target,
                     retire: if let_go { vec![current] } else { Vec::new() },
                     refused: None,
-                    adopt: true,
+                    fit: Fit::Fitted,
                     let_go_by: let_go.then_some(holder),
                 });
                 drop(pending);
@@ -234,9 +278,10 @@ impl RootSwaps {
     }
 
     /// Shows in the window of `root` what was asked to go there, as
-    /// often as was asked: each time [`adopt`] where it is to, `show`
-    /// puts `new` in the window of `old` (false: it cannot, and `old`
-    /// stays), and what `new` replaces is destroyed. The root shown in
+    /// often as was asked: each time `new` takes its size ([`fit`], or
+    /// [`adopt`] for a root a reload made again), `show` puts `new` in
+    /// the window of `old` (false: it cannot, and `old` stays), and what
+    /// `new` replaces is destroyed. The root shown in
     /// the end, and the roots destroyed on the way, for a host that keeps
     /// its own list of them.
     pub fn swap_in(
@@ -262,9 +307,7 @@ impl RootSwaps {
                 self.stays(&swap, root);
                 continue;
             }
-            if swap.adopt {
-                adopt(engine, root, swap.new);
-            }
+            swap.fit.apply(engine, root, swap.new);
             if show(root, swap.new) {
                 self.left.borrow_mut().retain(|(_, w)| *w != root);
                 for r in swap.retire {
@@ -272,7 +315,7 @@ impl RootSwaps {
                     gone.push(r);
                 }
                 root = swap.new;
-                self.present_now(engine, root, true);
+                self.present_now(engine, root, Fit::Fitted);
             } else {
                 self.restore(swap.new, root);
                 if let Some(n) = swap.refused {
@@ -321,7 +364,7 @@ impl RootSwaps {
 
     /// Asks for the window `root` stands for in place of `root`, which a
     /// host shows. True when it was asked for.
-    fn present_now(&self, engine: &Engine, root: ObjectId, adopt: bool) -> bool {
+    fn present_now(&self, engine: &Engine, root: ObjectId, fit: Fit) -> bool {
         let Some(window) = self.presented(root).filter(|w| lasts(engine, *w)) else {
             return false;
         };
@@ -340,7 +383,7 @@ impl RootSwaps {
             new: window,
             retire: Vec::new(),
             refused: None,
-            adopt,
+            fit,
             let_go_by: None,
         });
         true
@@ -455,7 +498,7 @@ impl RootSwaps {
                 }
                 waiting.retire.retain(|r| *r != new);
                 waiting.refused = Some(new);
-                waiting.adopt = true;
+                waiting.fit = Fit::Fitted;
                 drop(pending);
                 if !keeps {
                     engine.destroy(skipped);
@@ -467,7 +510,7 @@ impl RootSwaps {
                     new,
                     retire: vec![goes],
                     refused: Some(new),
-                    adopt: true,
+                    fit: Fit::Fitted,
                     let_go_by: None,
                 });
                 drop(pending);
@@ -478,10 +521,12 @@ impl RootSwaps {
     }
 }
 
-/// Puts `new` in the window that shows the root `old`, at the size that
-/// window has, before the next frame; `old` is destroyed then. `new` is a
-/// root the application made with no parent, as `old` was: a `Window`
-/// takes the platform window `old` had, and a plain item fills it.
+/// Puts `new` in the window that shows the root `old` before the next
+/// frame; `old` is destroyed then. `new` is a root the application made
+/// with no parent, as `old` was: a `Window` takes the platform window
+/// `old` had, and a plain item fills it. The size is [`fit`]'s: a
+/// `Window` at the width and height it declares, and at the window's
+/// where it declares none.
 ///
 /// # Errors
 /// `old` or `new` is gone, `new` is not an `Item`, `old` is no root a
@@ -499,8 +544,10 @@ pub(crate) fn lasts(engine: &Engine, obj: ObjectId) -> bool {
         .is_some_and(|f| !f.contains(ObjectFlags::PENDING_DELETE))
 }
 
-/// What a host does before it shows `new` where `old` was: `new` takes the
-/// size `old` has, which is the window's, since the window stays.
+/// What a host does before it shows `new` where `old` was, when a reload
+/// made `old` again as `new`: `new` takes the size `old` has, which is
+/// the window's, since the window stays. A root that is another one
+/// takes its size by [`fit`].
 pub fn adopt(engine: &Engine, old: ObjectId, new: ObjectId) {
     engine.batch(|| {
         for size in [Item::WIDTH, Item::HEIGHT] {
@@ -509,4 +556,52 @@ pub fn adopt(engine: &Engine, old: ObjectId, new: ObjectId) {
             }
         }
     });
+}
+
+/// What a host does before it shows `new`, another root than `old`, where
+/// `old` was. A `Window` is shown at the width and height it declares, as
+/// an edit of them would make it, and takes the size `old` has, which is
+/// the window's, on each it declares none of. A plain item fills the
+/// window: it takes the size `old` has.
+pub fn fit(engine: &Engine, old: ObjectId, new: ObjectId) {
+    let window = is_window(engine, new);
+    // The sides given to the window as the host's, with what each is.
+    let mut given = Vec::new();
+    engine.batch(|| {
+        for (size, horizontal) in [(Item::WIDTH, true), (Item::HEIGHT, false)] {
+            // An `old` that is gone has no size to give.
+            let Some(v) = engine.get_if(old, size) else {
+                continue;
+            };
+            if !window {
+                let _ = engine.set(new, size, v);
+            } else if engine.untrack(|| size_follows_implicit(engine, new, horizontal)) {
+                // A size nothing gave the window: it still follows its
+                // implicit size, a binding that is not its author's.
+                // Written as the host's, which leaves that binding in
+                // place: a window that cannot show the size and offers it
+                // again later fits it to the size it has then.
+                let _ = engine.write_derived(new, size.index, v.into());
+                given.push((size, v));
+            }
+        }
+    });
+    // A side whose implicit size follows the other side was taken back by
+    // that binding when the other was given: write it again. Once for
+    // each side settles one following the other; sides that each follow
+    // the other never settle, and keep what the last write gave them.
+    for _ in 0..given.len() {
+        let taken: Vec<_> = given
+            .iter()
+            .filter(|(size, v)| engine.get_if(new, *size) != Some(*v))
+            .collect();
+        if taken.is_empty() {
+            break;
+        }
+        engine.batch(|| {
+            for (size, v) in taken {
+                let _ = engine.write_derived(new, size.index, (*v).into());
+            }
+        });
+    }
 }

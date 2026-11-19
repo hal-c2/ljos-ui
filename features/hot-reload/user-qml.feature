@@ -220,7 +220,7 @@ Feature: A shipped application its users change while it runs
     `Window` as its window, where each `Window` is a platform window. A
     save of the user's shell is applied to it in that window, as a save is
     applied to any file; its removal puts the application's shell in that
-    window at the size the window has.
+    window at the size the application's shell declares.
 
     Background:
       Given each Window has a platform window of its own
@@ -268,7 +268,7 @@ Feature: A shipped application its users change while it runs
       And the property "title" of "user-window" is "Edited"
       And the object "loader/part" exists
 
-    Scenario: The user's Window shell removed gives the window to the application's
+    Scenario: The user's Window shell removed gives the window to the application's, at the size it declares
       Given the user's file "Shell.qml":
         """qml
         import QtQuick
@@ -277,7 +277,8 @@ Feature: A shipped application its users change while it runs
       When the application runs "App.qml" built ahead in a window of its own, with the user's directory over it
       And the user removes the file "Shell.qml"
       Then the application's windows are "default-window"
-      And the property "width" of "default-window" is 200
+      And the property "width" of "default-window" is 300
+      And the property "height" of "default-window" is 240
       And the property "status" of "loader" is 2
       And there is no reload error
 
