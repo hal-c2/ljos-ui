@@ -661,6 +661,178 @@ Item {
     );
 }
 
+#[test]
+fn a_marked_root_the_host_gives_hears_of_its_new_root_once() {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    let mut r = rig(&[("Main", COUNTER)]);
+    let first = r.root;
+    let told = Rc::new(RefCell::new(Vec::new()));
+    let heard = Rc::clone(&told);
+    r.h.engine
+        .remake_on_reload(first, move |_, was, now| {
+            heard.borrow_mut().push((was, now))
+        })
+        .unwrap();
+    let reload = |r: &mut Rig, source: &str, given: &[ObjectId]| {
+        r.session.set_file("Main", source);
+        let patch = r
+            .session
+            .build()
+            .unwrap()
+            .expect("the edit changes something");
+        let mut swapped = Vec::new();
+        let done =
+            r.h.engine
+                .reload(&patch, given, &mut |_, was, now| swapped.push((was, now)))
+                .unwrap();
+        r.session.ack(patch.generation);
+        r.h.engine.finish_reload();
+        (done, swapped)
+    };
+
+    // Given by the host too: the host's swap hears of it, and only it.
+    let (done, swapped) = reload(&mut r, &remade(COUNTER), &[first]);
+    let now = done.roots[0].1;
+    assert_eq!(swapped, vec![(first, now)]);
+    assert!(told.borrow().is_empty(), "replaced is not called as well");
+
+    // The mark moved with it: once the host no longer gives it, the
+    // application hears of the next one.
+    let (done, swapped) = reload(&mut r, COUNTER, &[]);
+    assert!(done.roots.is_empty() && swapped.is_empty());
+    assert_eq!(told.borrow().len(), 1);
+    assert_eq!(told.borrow()[0].0, now);
+}
+
+#[test]
+fn a_host_that_marks_the_new_root_in_its_swap_is_the_one_heard_next() {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    let mut r = rig(&[("Main", COUNTER)]);
+    let first = r.root;
+    let told = Rc::new(RefCell::new(Vec::new()));
+    let heard = Rc::clone(&told);
+    r.h.engine
+        .remake_on_reload(first, move |_, _, _| heard.borrow_mut().push("first mark"))
+        .unwrap();
+    r.session.set_file("Main", remade(COUNTER));
+    let patch = r.session.build().unwrap().unwrap();
+    let marks = Rc::clone(&told);
+    let done =
+        r.h.engine
+            .reload(&patch, &[first], &mut |e, _, now| {
+                let heard = Rc::clone(&marks);
+                e.remake_on_reload(now, move |_, _, _| heard.borrow_mut().push("its own"))
+                    .unwrap();
+            })
+            .unwrap();
+    r.session.ack(patch.generation);
+    r.h.engine.finish_reload();
+    r.root = done.roots[0].1;
+
+    // The host no longer gives it: what it marked the new root with hears.
+    r.session.set_file("Main", COUNTER);
+    let patch = r.session.build().unwrap().unwrap();
+    r.h.engine.reload(&patch, &[], &mut |_, _, _| {}).unwrap();
+    assert_eq!(*told.borrow(), vec!["its own"]);
+}
+
+#[test]
+fn a_marked_root_with_an_owner_is_made_again_under_what_goes_on_for_it() {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    let second = r#"import QtQuick
+Item {
+  objectName: "second"
+}
+"#;
+    let mut r = rig(&[("Main", COUNTER), ("Second", second)]);
+    let told = Rc::new(RefCell::new(Vec::new()));
+    let mark = |owner: ObjectId| {
+        let w =
+            r.h.engine
+                .create_from_url("Second", Some(owner), Vec::new())
+                .expect("Second.qml creates");
+        let heard = Rc::clone(&told);
+        r.h.engine
+            .remake_on_reload(w, move |_, was, now| heard.borrow_mut().push((was, now)))
+            .unwrap();
+        w
+    };
+    let by_root = mark(r.root);
+    let by_box = mark(r.find("box"));
+
+    let done = r.edit("Second", &remade(second)).unwrap();
+    let new_root = done.roots[0].1;
+    let now = told
+        .borrow()
+        .iter()
+        .find(|(was, _)| *was == by_root)
+        .unwrap()
+        .1;
+    assert!(
+        r.h.engine.is_alive(now),
+        "it outlives the old root that owned it"
+    );
+    assert_eq!(r.h.engine.owner(now), Some(new_root));
+    let in_box = told
+        .borrow()
+        .iter()
+        .find(|(was, _)| *was == by_box)
+        .unwrap()
+        .1;
+    assert_eq!(r.h.engine.owner(in_box), Some(r.find("box")));
+
+    // Its owner gone from the file, it goes with it.
+    let no_box = COUNTER.replace(
+        "  Rectangle {\n    id: box\n    objectName: \"box\"\n    property int taps: 0\n    function tap() { taps += 1 }\n    width: 10\n  }\n",
+        "",
+    );
+    assert_ne!(no_box, COUNTER);
+    told.borrow_mut().clear();
+    r.edit("Main", &remade(&no_box)).unwrap();
+    assert!(!r.h.engine.is_alive(in_box));
+    assert_eq!(told.borrow().len(), 1, "only the one whose owner goes on");
+    let now = told.borrow()[0].1;
+    assert_eq!(r.h.engine.owner(now), Some(r.root));
+}
+
+#[test]
+fn a_value_that_names_a_root_made_later_is_given_once_it_stands() {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    let holds = |name: &str| {
+        format!(
+            "import QtQuick\nItem {{\n  objectName: \"{name}\"\n  property var other: null\n  function hold(o) {{ other = o }}\n}}\n"
+        )
+    };
+    let (main, second) = (holds("main"), holds("second"));
+    let mut r = rig(&[("Main", main.as_str()), ("Second", second.as_str())]);
+    let window =
+        r.h.engine
+            .create_from_url("Second", None, Vec::new())
+            .expect("Second.qml creates");
+    let told = Rc::new(RefCell::new(Vec::new()));
+    let heard = Rc::clone(&told);
+    r.h.engine
+        .remake_on_reload(window, move |_, _, now| heard.borrow_mut().push(now))
+        .unwrap();
+    let hold = |r: &Rig, on: ObjectId, what: ObjectId| {
+        r.h.engine
+            .invoke_by_name(on, "hold", &[Value::Object(what)])
+            .unwrap();
+    };
+    hold(&r, r.root, window);
+    hold(&r, window, r.root);
+
+    r.edit("Second", &remade(&second)).unwrap();
+    let now = told.borrow()[0];
+    // Each holds the other's new root: the one made first as well.
+    assert_eq!(r.h.get(r.root, "other").as_object(), Some(now));
+    assert_eq!(r.h.get(now, "other").as_object(), Some(r.root));
+}
+
 const MODEL: &str = r#"import QtQuick
 import QtQml.Models
 Item {

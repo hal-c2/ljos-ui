@@ -259,6 +259,11 @@ struct Pending {
     fresh: usize,
     /// The roots being made again: what they own goes with them.
     old_roots: HashSet<ObjectId>,
+    /// Those of `old_roots` not made again yet.
+    unmade: HashSet<ObjectId>,
+    /// What an object made again is given once every root stands: values
+    /// that name an object of a root made after it.
+    later: Vec<(ObjectId, PropIndex, Carried)>,
 }
 
 struct Overlay {
@@ -576,6 +581,16 @@ fn translate(
     }
 }
 
+/// Whether an object `v` holds is one `which` picks.
+fn names_any(v: &Value, which: &dyn Fn(ObjectId) -> bool) -> bool {
+    match v {
+        Value::Object(o) => which(*o),
+        Value::List(items) => items.iter().any(|i| names_any(i, which)),
+        Value::Map(fields) => fields.iter().any(|(_, v)| names_any(v, which)),
+        _ => false,
+    }
+}
+
 fn holds_object(v: &Value) -> bool {
     match v {
         Value::Object(_) => true,
@@ -721,7 +736,11 @@ impl Engine {
     /// full one makes it again and tells `replaced` (old, new) once every
     /// new root stands, before the old ones go, where the application moves
     /// whatever points at it (its window's content). The mark moves to the
-    /// new root. A root destroyed is let go of.
+    /// new root. A root destroyed is let go of. While the host gives a
+    /// marked root too, its `swap` is what hears of the new one, and
+    /// `replaced` is not called. A root made with an owner is made again
+    /// under what goes on for its owner, after the roots that own it, and
+    /// goes with its owner when nothing goes on for that.
     ///
     /// With tracking off nothing is made again, and nothing is kept.
     ///
@@ -769,11 +788,93 @@ impl Engine {
             self.flags(*r)
                 .is_some_and(|f| !f.contains(crate::ObjectFlags::PENDING_DELETE))
         });
-        remade
+        let mut marked: Vec<ObjectId> = remade
             .iter()
             .map(|(r, _)| *r)
             .filter(|r| !given.contains(r))
-            .collect()
+            .collect();
+        drop(remade);
+        // One a marked root owns is made after it, with what goes on for
+        // its owner.
+        let all = marked.clone();
+        marked.sort_by_cached_key(|r| {
+            std::iter::successors(self.owner(*r), |o| self.owner(*o))
+                .filter(|o| all.contains(o))
+                .count()
+        });
+        marked
+    }
+
+    /// What `origin`, a root's, makes in a full reload: its owner, scope
+    /// and properties are the objects that go on for theirs. `None` when
+    /// its owner or scope goes and nothing goes on for it.
+    fn reload_again(&self, origin: &Request) -> Option<Request> {
+        let mut again = origin.copy();
+        let object = |o: ObjectId| self.reload_translate(Value::Object(o))?.as_object();
+        if let Some(p) = origin.parent {
+            again.parent = Some(object(p)?);
+        }
+        if let Some(s) = origin.scope {
+            again.scope = Some(object(s)?);
+        }
+        again.props = origin
+            .props
+            .iter()
+            .filter_map(|(k, v)| self.reload_translate(v.clone()).map(|v| (k.clone(), v)))
+            .collect();
+        Some(again)
+    }
+
+    /// Whether `v` names an object of a root that is still to be made
+    /// again.
+    fn reload_names_unmade(&self, v: &Value) -> bool {
+        let st = &self.inner.reload;
+        let pending = st.pending.borrow();
+        let Some(p) = pending.as_ref().filter(|p| !p.unmade.is_empty()) else {
+            return false;
+        };
+        let tree = st.tree.get();
+        let info = st.info.borrow();
+        let unmade = |o: ObjectId| {
+            info.get(&o).is_some_and(|i| i.tree != tree)
+                && std::iter::successors(Some(o), |c| self.owner(*c)).any(|c| p.unmade.contains(&c))
+        };
+        names_any(v, &unmade)
+    }
+
+    /// Gives what [`Engine::reload_give`] kept back until every root
+    /// stood (`Pending::later`).
+    fn reload_give_later(&self) {
+        let st = &self.inner.reload;
+        let later = match st.pending.borrow_mut().as_mut() {
+            Some(p) => std::mem::take(&mut p.later),
+            None => return,
+        };
+        if later.is_empty() {
+            return;
+        }
+        let was_muting = (st.muting.get(), st.muted_all.get());
+        st.muting.set(true);
+        st.muted_all.set(true);
+        self.batch(|| {
+            for (to, tp, c) in later {
+                if !self.is_alive(to) {
+                    continue;
+                }
+                let Some(v) = self.reload_translate(c.value) else {
+                    continue;
+                };
+                if self
+                    .write_internal(to, tp, v, WriteKind::Imperative)
+                    .is_ok()
+                    && c.script
+                {
+                    self.reload_note_assigned(to, tp);
+                }
+            }
+        });
+        st.muting.set(was_muting.0);
+        st.muted_all.set(was_muting.1);
     }
 
     /// Applies `patch` as one transaction: every root in `roots` is made
@@ -789,7 +890,11 @@ impl Engine {
     /// are as they were, and [`Engine::last_reload_error`] says why.
     ///
     /// Roots marked with [`Engine::remake_on_reload`] are made again with
-    /// them; [`ReloadOutcome::roots`] names only the ones given here.
+    /// them; [`ReloadOutcome::roots`] names only the ones given here. What
+    /// a root is made with (its owner, its properties) is translated to
+    /// what goes on for it; a given root whose owner goes with nothing
+    /// going on for it is made with none. A value that names an object of
+    /// a root made later is given once every root stands.
     ///
     /// Call it between frames, outside any batch, with roots made by
     /// [`Engine::create_from_url`] while tracking was on.
@@ -838,6 +943,7 @@ impl Engine {
         let mut phases = Phases::start();
         let mut pending = self.reload_snapshot(patch);
         pending.old_roots = plan.iter().map(|(root, ..)| *root).collect();
+        pending.unmade = pending.old_roots.clone();
         phases.mark("snapshot");
         let old: HashSet<ObjectId> = st.info.borrow().keys().copied().collect();
         let saved = self.reload_patch_loader(patch, true)?;
@@ -853,10 +959,25 @@ impl Engine {
         let mut made: Vec<(ObjectId, ObjectId)> = Vec::with_capacity(plan.len());
         let mut failure = None;
         for (old_root, origin, path) in &plan {
+            if let Some(p) = st.pending.borrow_mut().as_mut() {
+                p.unmade.remove(old_root);
+            }
+            let again = match self.reload_again(origin) {
+                Some(again) => again,
+                // A root the host shows stays one, with no owner.
+                None if roots.contains(old_root) => {
+                    let mut again = origin.copy();
+                    again.parent = None;
+                    again.scope = None;
+                    again
+                }
+                // A marked root goes with its owner.
+                None => continue,
+            };
             *st.forced.borrow_mut() = Some(path.clone());
             // The window keeps its singletons.
             self.singleton_scope_adopt(*old_root);
-            match self.make(origin.copy()) {
+            match self.make(again) {
                 Ok((new, _)) => made.push((*old_root, new)),
                 Err(e) => {
                     failure = Some(e);
@@ -896,15 +1017,13 @@ impl Engine {
             return Err(ReloadError::Failed(fault));
         }
 
+        self.reload_give_later();
         self.reload_remake_scripted();
         phases.mark("scripted");
         for (old_root, new) in &made {
             self.singleton_scope_moved(*old_root, *new);
-            if roots.contains(old_root) {
-                swap(self, *old_root, *new);
-            }
-            // The mark moves before the application hears of the new root,
-            // which it may mark again or destroy.
+            // The mark moves before the host or the application hears of
+            // the new root, which either may mark again or destroy.
             let told = {
                 let mut remade = st.remade.borrow_mut();
                 remade.iter_mut().find(|(r, _)| r == old_root).map(|m| {
@@ -912,7 +1031,11 @@ impl Engine {
                     Rc::clone(&m.1)
                 })
             };
-            if let Some(told) = told {
+            // A root the host gives as well hears of it from the host's
+            // `swap` only: once is what moving it into its window takes.
+            if roots.contains(old_root) {
+                swap(self, *old_root, *new);
+            } else if let Some(told) = told {
                 (told.borrow_mut())(self, *old_root, *new);
             }
         }
@@ -950,7 +1073,7 @@ impl Engine {
         phases.done();
         let pending = st.pending.borrow();
         let p = pending.as_ref();
-        made.truncate(roots.len());
+        made.retain(|(old_root, _)| roots.contains(old_root));
         Ok(ReloadOutcome {
             generation: patch.generation,
             roots: made,
@@ -1946,7 +2069,10 @@ impl Engine {
             return false;
         }
         for mut c in taken.values {
-            if holds_object(&c.value) {
+            // An object of a root made after this one is not there yet:
+            // the value is given once every root stands.
+            let later = holds_object(&c.value) && self.reload_names_unmade(&c.value);
+            if holds_object(&c.value) && !later {
                 let Some(v) = self.reload_translate(c.value) else {
                     continue;
                 };
@@ -1968,6 +2094,12 @@ impl Engine {
                 continue;
             }
             if !c.script && self.is_bound(to, tp) {
+                continue;
+            }
+            if later {
+                if let Some(p) = self.inner.reload.pending.borrow_mut().as_mut() {
+                    p.later.push((to, tp, c));
+                }
                 continue;
             }
             if self
