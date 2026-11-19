@@ -211,3 +211,94 @@ fn a_shell_that_stays_shown_is_the_loaders_until_what_replaces_it_is_shown() {
     assert!(e.is_going(shell));
     assert_eq!(swaps.holder_of(next), Some(loader));
 }
+
+#[test]
+fn a_root_asked_back_before_the_frame_stays_in_its_window() {
+    // Back at once, or after one more in between.
+    for between in [false, true] {
+        let e = engine();
+        let first = root(&e);
+        let mut host = Host::open(&e, first);
+        let asked = root(&e);
+        replace_root(&e, first, asked).unwrap();
+        let last = if between {
+            let next = root(&e);
+            replace_root(&e, asked, next).unwrap();
+            next
+        } else {
+            asked
+        };
+        replace_root(&e, last, first).unwrap();
+        assert!(!RootSwaps::of(&e).is_pending(), "nothing is to change");
+        assert!(e.is_going(asked) && e.is_going(last));
+
+        for can in [true, false] {
+            host.frame_showing(&e, can);
+            assert_eq!(host.root, first, "between: {between}");
+            assert!(!e.is_going(first), "between: {between}");
+        }
+        // The window's root is the one replaced next.
+        let next = root(&e);
+        replace_root(&e, first, next).unwrap();
+        host.frame(&e);
+        assert_eq!(host.root, next);
+        assert!(e.is_going(first));
+    }
+}
+
+#[test]
+fn a_loader_asked_for_and_replaced_before_the_frame_goes_with_its_shell() {
+    // Whether the window can show the last one asked for or not.
+    for can in [true, false] {
+        let e = engine();
+        let first = root(&e);
+        let mut host = Host::open(&e, first);
+        let loader = root(&e);
+        let shell = window_of(&e, loader);
+        RootSwaps::of(&e).present(&e, loader, Some(shell));
+        replace_root(&e, first, loader).unwrap();
+        let last = root(&e);
+        replace_root(&e, loader, last).unwrap();
+        // The loader never got the window: it goes now, its shell with it.
+        assert!(e.is_going(loader) && e.is_going(shell), "can: {can}");
+
+        host.frame_showing(&e, can);
+        let (shown, gone) = if can { (last, first) } else { (first, last) };
+        assert_eq!(host.root, shown, "can: {can}");
+        assert!(!e.is_going(shown) && e.is_going(gone), "can: {can}");
+        assert!(!RootSwaps::of(&e).is_pending());
+    }
+}
+
+#[test]
+fn a_shell_whose_next_one_goes_before_the_frame_is_the_loaders_again() {
+    // The loader lets go of its shell first, as a ShellLoader does, or
+    // stands for the next one at once.
+    for let_go_first in [true, false] {
+        let e = engine();
+        let (mut host, loader, shell) = loader_showing_its_shell(&e);
+        let swaps = RootSwaps::of(&e);
+        if let_go_first {
+            assert!(swaps.present(&e, loader, None));
+        }
+        let gone = window_of(&e, loader);
+        swaps.present(&e, loader, Some(gone));
+        e.destroy(gone);
+        host.frame(&e);
+        assert_eq!(host.root, shell, "the shell shown stays");
+        assert!(!e.is_going(shell));
+        assert_eq!(
+            swaps.holder_of(shell),
+            Some(loader),
+            "let go first: {let_go_first}"
+        );
+
+        // The loader's next shell takes the window, and the old one goes.
+        let next = window_of(&e, loader);
+        swaps.present(&e, loader, Some(next));
+        host.frame(&e);
+        assert_eq!(host.root, next, "let go first: {let_go_first}");
+        assert!(e.is_going(shell));
+        assert_eq!(swaps.holder_of(next), Some(loader));
+    }
+}

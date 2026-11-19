@@ -36,6 +36,9 @@ struct Swap {
     refused: Option<ObjectId>,
     /// `new` takes the size `old` has first: the window keeps its own.
     adopt: bool,
+    /// The root that let go of `old`, a window it stood for: `old` is
+    /// that root's again while the window does not show `new`.
+    let_go_by: Option<ObjectId>,
 }
 
 /// The roots the hosts of an engine show, and the replacements asked for
@@ -219,6 +222,7 @@ impl RootSwaps {
                     retire: if let_go { vec![current] } else { Vec::new() },
                     refused: None,
                     adopt: true,
+                    let_go_by: let_go.then_some(holder),
                 });
                 drop(pending);
             }
@@ -253,6 +257,7 @@ impl RootSwaps {
             // stays.
             if !lasts(engine, swap.new) {
                 self.restore(swap.new, root);
+                self.stays(&swap, root);
                 continue;
             }
             if swap.adopt {
@@ -270,14 +275,8 @@ impl RootSwaps {
                 self.restore(swap.new, root);
                 if let Some(n) = swap.refused {
                     engine.destroy(n);
-                } else if swap.retire.contains(&root) {
-                    // `root` is a window a holder let go of, which stays:
-                    // a window shows something. What the holder stands
-                    // for next takes its place, and it goes then.
-                    let holder = self.holder_of(swap.new).unwrap_or(swap.new);
-                    let mut left = self.left.borrow_mut();
-                    left.retain(|(h, _)| *h != holder);
-                    left.push((holder, root));
+                }
+                if self.stays(&swap, root) {
                     engine.log(
                         LogLevel::Warning,
                         "ljos.window",
@@ -290,6 +289,21 @@ impl RootSwaps {
             }
         }
         (root, gone)
+    }
+
+    /// `root`, which the window shows still in place of the `new` of
+    /// `swap`, is a window a holder let go of: it stays, as a window
+    /// shows something, and is the holder's again. What the holder
+    /// stands for next takes its place, and it goes then. True when
+    /// `root` is such a window.
+    fn stays(&self, swap: &Swap, root: ObjectId) -> bool {
+        let Some(holder) = swap.let_go_by.filter(|_| swap.retire.contains(&root)) else {
+            return false;
+        };
+        let mut left = self.left.borrow_mut();
+        left.retain(|(h, _)| *h != holder);
+        left.push((holder, root));
+        true
     }
 
     /// The window shows `old` again in place of `new`.
@@ -325,6 +339,7 @@ impl RootSwaps {
             retire: Vec::new(),
             refused: None,
             adopt,
+            let_go_by: None,
         });
         true
     }
@@ -389,11 +404,26 @@ impl RootSwaps {
         };
         let goes = holder.unwrap_or(old);
         let mut pending = self.pending.borrow_mut();
-        match pending.iter_mut().find(|s| s.new == face) {
+        match pending.iter().position(|s| s.new == face) {
+            // `face` never got the window, and `new` is what it was to
+            // replace there: the window shows `new` still, and nothing
+            // is to change but `face` going, with its holder.
+            Some(at) if pending[at].old == new => {
+                pending.remove(at);
+                drop(pending);
+                engine.destroy(face);
+                if let Some(h) = holder.filter(|h| *h != face) {
+                    engine.destroy(h);
+                }
+            }
             // `face` never got the window: `new` takes the place it was to have.
-            Some(waiting) => {
+            Some(at) => {
+                let waiting = &mut pending[at];
                 let skipped = std::mem::replace(&mut waiting.new, new);
-                if let Some(h) = holder
+                // A holder that never got the window goes now, as what
+                // was skipped does; one whose window was to have it goes
+                // once `new` is shown.
+                if let Some(h) = holder.filter(|h| *h != skipped)
                     && !waiting.retire.contains(&h)
                 {
                     waiting.retire.push(h);
@@ -401,9 +431,7 @@ impl RootSwaps {
                 waiting.refused = Some(new);
                 waiting.adopt = true;
                 drop(pending);
-                if Some(skipped) != holder {
-                    engine.destroy(skipped);
-                }
+                engine.destroy(skipped);
             }
             None => {
                 pending.push(Swap {
@@ -412,6 +440,7 @@ impl RootSwaps {
                     retire: vec![goes],
                     refused: Some(new),
                     adopt: true,
+                    let_go_by: None,
                 });
                 drop(pending);
             }
