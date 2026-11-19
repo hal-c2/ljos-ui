@@ -212,3 +212,71 @@ Feature: Default properties of components
         }
         """
       Then the property "got" of "root" is "null"
+
+  Rule: An alias of an item's data that is not the default parents what is given to it
+
+    Scenario Outline: What is given to the alias is the item's child, laid out with its own
+      Given the file "Holder.qml":
+        """qml
+        import QtQuick
+        import QtQuick.Layouts
+        ColumnLayout {
+          property alias control: beside.data
+          property alias deep: inner.children
+          RowLayout { id: beside; objectName: "beside"; Item { id: inner; objectName: "inner" } }
+        }
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        Item {
+          objectName: "root"
+          width: 300; height: 100
+          property string children
+          property string given
+          property string parentName
+          property real x
+          function names(list) { return Array.from(list).map(o => o.objectName).join(",") }
+          Holder {
+            id: holder
+            <assignment>
+          }
+          Component.onCompleted: {
+            const beside = holder.children[0]
+            children = names(beside.children)
+            given = names(holder.control)
+            parentName = holder.control[1].parent.objectName
+            x = holder.control[1].x
+          }
+        }
+        """
+      Then the property "children" of "root" is "<children>"
+      And the property "given" of "root" is "<children>"
+      And the property "parentName" of "root" is "beside"
+      And the property "x" of "root" is 5
+
+      Examples:
+        | assignment                                                                    | children   |
+        | control: Rectangle { objectName: "r"; implicitWidth: 40; implicitHeight: 10 } | inner,r    |
+        | control: [Item { objectName: "a" }, Item { objectName: "b" }]                 | inner,a,b  |
+
+    Scenario: An alias of a deeper item's children parents what is given to it
+      Given the file "Holder.qml":
+        """qml
+        import QtQuick
+        Column {
+          property alias deep: inner.children
+          Item { Item { id: inner; objectName: "inner" } }
+        }
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        Item {
+          objectName: "root"
+          property string parentName
+          Holder { id: holder; deep: Item { id: given; objectName: "d" } }
+          Component.onCompleted: parentName = given.parent.objectName
+        }
+        """
+      Then the property "parentName" of "root" is "inner"
