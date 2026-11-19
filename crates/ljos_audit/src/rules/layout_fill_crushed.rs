@@ -113,7 +113,8 @@ fn margins(e: &Engine, item: ObjectId, axis: usize) -> f64 {
 /// Whether `child` is given a place, and a gap beside it, by `item`'s
 /// layout or positioner: a `Repeater` never is, and a positioner skips a
 /// child of no size, as Qt's do (`ljos_quick`'s layouts and positioners
-/// skip them the same way).
+/// skip them the same way). Only a size of exactly zero is skipped: a
+/// negative one is still placed, with a gap.
 fn takes_place(e: &Engine, item: ObjectId, child: ObjectId) -> bool {
     if is_a::<Repeater>(e, child) {
         return false;
@@ -122,7 +123,7 @@ fn takes_place(e: &Engine, item: ObjectId, child: ObjectId) -> bool {
         || is_a::<Column>(e, item)
         || is_a::<Grid>(e, item)
         || is_a::<Flow>(e, item);
-    !positioner || (number(e, child, "width") > 0.0 && number(e, child, "height") > 0.0)
+    !positioner || (number(e, child, "width") != 0.0 && number(e, child, "height") != 0.0)
 }
 
 /// The least `item` needs on `axis`, as a floor; see the module.
