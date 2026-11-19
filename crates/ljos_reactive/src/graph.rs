@@ -2,7 +2,7 @@
 
 use std::cell::RefCell;
 use std::cmp::Reverse;
-use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
+use std::collections::{BinaryHeap, HashMap, VecDeque};
 use std::fmt;
 use std::rc::Rc;
 
@@ -98,6 +98,11 @@ impl Past {
     /// A restamp walk ([`Inner::restamp_behind`]) went past it, and
     /// nothing behind it came to wait since.
     const RESTAMPED: u8 = 1 << 1;
+    /// A pull walk ([`Inner::pull_in_behind`]) went past it on the
+    /// innermost flush level, and no edge was made since: what waited
+    /// outside behind it then is queued on that level, and nothing comes
+    /// to wait outside while the level stands.
+    const PULLED_IN: u8 = 1 << 2;
 
     fn has(self, bit: u8) -> bool {
         self.0 & bit != 0
@@ -486,6 +491,9 @@ struct Inner<V> {
     /// The properties a restamp walk ([`Inner::restamp_behind`]) went
     /// past in the innermost own queue.
     restamp_walked: Vec<NodeId>,
+    /// The properties a pull walk ([`Inner::pull_in_behind`]) went past
+    /// on the innermost flush level, to be walked again on the next.
+    pull_walked: Vec<NodeId>,
     /// Scratch for [`Inner::lift_behind`], kept for its room.
     lift_stack: Vec<NodeId>,
     /// Who is told of them ([`Graph::set_note_handler`]).
@@ -729,6 +737,7 @@ impl<V: Clone + 'static> Drop for LevelGuard<'_, V> {
             i.forget_lift_walks();
             i.forget_restamp_walks();
         }
+        i.forget_pull_walks();
         let Some(left) = i.queues.pop() else {
             return;
         };
@@ -802,10 +811,11 @@ struct HandlerHold<'g, V: Clone + 'static>(&'g Graph<V>, NodeId, Option<LevelGua
 
 impl<V: Clone + 'static> Drop for HandlerHold<'_, V> {
     fn drop(&mut self) {
-        // What waits on the handler's level goes below before the hold
-        // ends, so what the hold works out sees it queued where it runs.
-        drop(self.2.take());
+        // The hold ends on the handler's level: a write of a source that
+        // its end brings up to date flushes only what that write queued,
+        // and what waited from before the hold runs once it has ended.
         self.0.end_handler_hold(self.1);
+        drop(self.2.take());
     }
 }
 
@@ -938,6 +948,7 @@ impl<V: Clone + 'static> Graph<V> {
                 told: Waiting::default(),
                 noted: Waiting::default(),
                 lift_walked: Vec::new(),
+                pull_walked: Vec::new(),
                 restamp_walked: Vec::new(),
                 lift_stack: Vec::new(),
                 note_handler: None,
@@ -1437,6 +1448,7 @@ impl<V: Clone + 'static> Graph<V> {
         node.flags.set(Flags::SETTLING, true);
         node.flags.set(Flags::CAME_BACK, false);
         node.flags.set(Flags::MISSED, false);
+        i.forget_pull_walks();
         i.queues.push(Queue::new());
         let level = LevelGuard(self, i.waiting_changes.len(), None);
         Some(HandlerHold(self, target, Some(level)))
@@ -3376,6 +3388,7 @@ impl<V: Clone + 'static> Graph<V> {
             let _level = {
                 let mut i = self.inner.borrow_mut();
                 (i.flush_depth >= SHARED_FLUSH_DEPTH).then(|| {
+                    i.forget_pull_walks();
                     i.queues.push(Queue::new());
                     LevelGuard(self, i.waiting_changes.len(), None)
                 })
@@ -3462,6 +3475,7 @@ impl<V: Clone + 'static> Graph<V> {
     /// it, before what that change sets off there.
     pub fn own_queue(&self, since: Change) -> LevelGuard<'_, V> {
         let mut i = self.inner.borrow_mut();
+        i.forget_pull_walks();
         i.queues.push(Queue::new());
         let open = i.waiting_changes.len();
         // One counted back past the first change is from before it: none
@@ -4796,7 +4810,10 @@ impl<V: Clone + 'static> Inner<V> {
     /// handler whose write reached it, and the handler would read what it
     /// keeps up to date as it was, where on Qt the write has run it. Only
     /// what the change would have gone through is gone past, and none of
-    /// it when nothing waits outside.
+    /// it when nothing waits outside. Each property is gone past once on
+    /// a level ([`Past::PULLED_IN`]), as [`Inner::lift_behind`] goes past
+    /// it once in an own queue: a handler that writes into one dirty
+    /// region many times walks it once.
     fn pull_in_behind(&mut self, from: NodeId) {
         let top = self.queues.len() - 1;
         if self.queues[..top].iter().all(Queue::is_empty) {
@@ -4804,18 +4821,18 @@ impl<V: Clone + 'static> Inner<V> {
         }
         let all = self.options.eager;
         let mut stack = std::mem::take(&mut self.lift_stack);
-        let mut gone_past = HashSet::new();
         stack.push(from);
         while let Some(n) = stack.pop() {
-            if !gone_past.insert(n) {
-                continue;
-            }
             let Some(node) = self.nodes.get_mut(n) else {
                 continue;
             };
-            // A change goes no further than a settling or a running node
-            // either: one drops it, the other runs again and marks what
-            // lies past itself.
+            if n != from {
+                self.stats.pull_steps += 1;
+            }
+            // A change goes no further than a clean, a settling or a
+            // running node: past the first it marks nothing, the second
+            // drops it, the third runs again and marks what lies past
+            // itself.
             if node.state == NodeState::Clean
                 || node.state == NodeState::Computing
                 || node.flags.has(Flags::SETTLING)
@@ -4826,10 +4843,33 @@ impl<V: Clone + 'static> Inner<V> {
             if n != from && node.is_eager(all) && node.flags.has(Flags::QUEUED) {
                 enqueue(&mut self.queues, n, node);
             }
+            let Kind::Property(p) = &mut node.kind else {
+                continue;
+            };
+            if p.past.has(Past::PULLED_IN) {
+                continue;
+            }
+            p.past.set(Past::PULLED_IN, true);
+            self.pull_walked.push(n);
             stack.extend(node.observers.iter().map(|o| o.node));
         }
         stack.clear();
         self.lift_stack = stack;
+    }
+
+    /// Lets [`Inner::pull_in_behind`] go past every property again: a
+    /// flush level opened or closed, and what waited on the innermost one
+    /// may wait outside the new one.
+    fn forget_pull_walks(&mut self) {
+        for n in self.pull_walked.drain(..) {
+            if let Some(Node {
+                kind: Kind::Property(p),
+                ..
+            }) = self.nodes.get_mut(n)
+            {
+                p.past.set(Past::PULLED_IN, false);
+            }
+        }
     }
 
     /// Lets [`Inner::lift_behind`] go past every property again: an own
@@ -4857,6 +4897,9 @@ impl<V: Clone + 'static> Inner<V> {
         }
         if !self.restamp_walked.is_empty() {
             self.forget_restamp_walks();
+        }
+        if !self.pull_walked.is_empty() {
+            self.forget_pull_walks();
         }
     }
 
