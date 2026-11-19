@@ -8,8 +8,15 @@
 #![cfg(feature = "dev")]
 
 use std::{
+    backtrace::Backtrace,
+    fmt::Write as _,
     fs,
-    sync::{Arc, mpsc},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+        mpsc,
+    },
+    thread,
     time::Duration,
 };
 
@@ -34,7 +41,63 @@ struct Window {
     h: Harness<'static, ShellApp<()>>,
     /// Each request for a pass, by how long it may wait.
     woke: mpsc::Receiver<Duration>,
+    asked: Arc<Asked>,
     _tmp: tempfile::TempDir,
+}
+
+/// Who asked for a pass once the test had accounted for every request
+/// before: what an idle window's failure names as its cause.
+#[derive(Default)]
+struct Asked {
+    since_settled: AtomicBool,
+    requests: Mutex<Vec<(String, Duration, Backtrace)>>,
+}
+
+impl Asked {
+    fn note(&self, delay: Duration) {
+        if self.since_settled.load(Ordering::Acquire) {
+            let t = thread::current();
+            let name = t.name().map_or_else(|| format!("{:?}", t.id()), str::to_owned);
+            let request = (name, delay, Backtrace::force_capture());
+            self.requests.lock().unwrap().push(request);
+        }
+    }
+
+    fn settled(&self) {
+        self.requests.lock().unwrap().clear();
+        self.since_settled.store(true, Ordering::Release);
+    }
+
+    /// Each request with the thread that made it and the Ljós frames it
+    /// came through: which mailbox's wake, or which part of a pass.
+    fn report(&self) -> String {
+        let requests = self.requests.lock().unwrap();
+        if requests.is_empty() {
+            return "no request for a pass since the window settled".to_owned();
+        }
+        let mut out = String::new();
+        for (thread, delay, backtrace) in requests.iter() {
+            let _ = write!(out, "\n  thread {thread} asked for a pass in {delay:?}, through:");
+            let text = backtrace.to_string();
+            let mut frames = 0;
+            let mut keep = false;
+            for line in text.lines().map(str::trim) {
+                if line.starts_with("at ") {
+                    if keep {
+                        let _ = write!(out, " ({})", line.trim_start_matches("at "));
+                    }
+                    continue;
+                }
+                let symbol = line.split_once(": ").map_or(line, |(_, s)| s);
+                keep = symbol.contains("ljos_") && !symbol.starts_with("tools::") && frames < 8;
+                if keep {
+                    frames += 1;
+                    let _ = write!(out, "\n    {symbol}");
+                }
+            }
+        }
+        out
+    }
 }
 
 /// A window on a project on disk; `tools` is the part of the setup a
@@ -62,10 +125,13 @@ fn opened(
     let entry = tmp.path().canonicalize().unwrap().join("Main.qml");
     fs::write(&entry, main).unwrap();
     let (tx, woke) = mpsc::channel();
+    let asked = Arc::new(Asked::default());
+    let noted = Arc::clone(&asked);
     let h = Harness::builder()
         .with_size(Vec2::new(480.0, 320.0))
         .with_max_steps(8)
         .build_eframe(move |cc| {
+            cc.egui_ctx.set_repaint_observer(move |info| noted.note(info.delay));
             // What a real window's event loop sleeps on.
             cc.egui_ctx.set_request_repaint_callback(move |info| {
                 let _ = tx.send(info.delay);
@@ -81,12 +147,33 @@ fn opened(
             )
             .unwrap()
         });
-    Window { h, woke, _tmp: tmp }
+    Window {
+        h,
+        woke,
+        asked,
+        _tmp: tmp,
+    }
 }
 
 impl Window {
+    /// Every request so far is accounted for; [`Self::assert_idle`]
+    /// names any after.
     fn forget_wakes(&self) {
         while self.woke.try_recv().is_ok() {}
+        self.asked.settled();
+    }
+
+    /// What a failed idle assertion says: who asked for a pass, and what
+    /// the last pass drained and ran.
+    fn why(&self, frames: u64) -> String {
+        let drain = self.h.state().last_drain();
+        format!(
+            "{} frame(s) of the application ran; the last pass drained {} message(s), {} left; {}",
+            self.frames() - frames,
+            drain.drained,
+            drain.remaining,
+            self.asked.report(),
+        )
     }
 
     fn frames(&self) -> u64 {
@@ -100,16 +187,18 @@ impl Window {
     /// Nothing asks for a pass, and a pass that egui runs anyway runs no
     /// frame of the application.
     fn assert_idle(&mut self) {
-        assert_eq!(self.repaint_delay(), Duration::MAX);
         let frames = self.frames();
-        for _ in 0..3 {
+        assert_eq!(self.repaint_delay(), Duration::MAX, "{}", self.why(frames));
+        for step in 1..=3 {
             self.h.step();
-            assert_eq!(self.repaint_delay(), Duration::MAX);
+            let why = self.why(frames);
+            assert_eq!(self.repaint_delay(), Duration::MAX, "after step {step}: {why}");
         }
-        assert_eq!(self.frames(), frames);
+        assert_eq!(self.frames(), frames, "{}", self.why(frames));
         assert!(
             self.woke.recv_timeout(Duration::from_millis(300)).is_err(),
-            "something woke an idle window"
+            "something woke an idle window: {}",
+            self.why(frames)
         );
     }
 }

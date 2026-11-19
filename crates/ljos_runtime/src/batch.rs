@@ -20,8 +20,9 @@
 //! # Wake protocol
 //!
 //! As the inbox's: the hook fires once per transition from empty to
-//! non-empty, decided under the lock, so a burst of ten thousand items
-//! wakes the UI thread once. A flag beside the lock tells the UI thread
+//! non-empty, decided and fired under the lock, so a burst of ten thousand
+//! items wakes the UI thread once, and no drain takes an item before its
+//! wake. A flag beside the lock tells the UI thread
 //! whether there is anything to take, so a frame that finds every stream
 //! empty takes no lock. A drain that leaves items behind fires the hook
 //! again, so a partly drained stream always schedules another frame.
@@ -161,14 +162,14 @@ pub(crate) trait Queued: Send + Sync {
     /// Whether the ring holds items, read under the stream's lock.
     ///
     /// Why no send is stranded when the inbox's hook is installed late: a
-    /// sender pushes its item under the stream's lock and calls the wake
-    /// hook only after it has released that lock, and the hook looks the
-    /// inbox's hook up in its `OnceLock`. `set_wake` first sets that
-    /// `OnceLock`, then calls this, taking the same lock. The lock orders
+    /// sender pushes its item and calls the wake hook under the stream's
+    /// lock, and the hook looks the inbox's hook up in its `OnceLock`.
+    /// `set_wake` first sets that `OnceLock`, then calls this, taking the
+    /// same lock. The lock orders
     /// the two:
     ///
-    /// - If the sender released the lock first, its push happens-before
-    ///   this read, which sees the item, and `set_wake` fires the hook.
+    /// - If the sender held the lock first, its push happens-before this
+    ///   read, which sees the item, and `set_wake` fires the hook.
     /// - If this read took the lock first, the `OnceLock` set before it
     ///   happens-before the sender's push, and so before its wake call,
     ///   whose `OnceLock::get` therefore finds the hook and fires it.
@@ -308,6 +309,10 @@ impl<T> BatchSender<T> {
         };
         if matches!(sent, Sent::Queued { was_empty: true }) {
             shared.pending.store(true, Ordering::Release);
+            // Before the lock is let go, as the inbox does: the drain takes
+            // the items under it, so none is handled ahead of its wake,
+            // which would come after, for a frame with nothing in it.
+            (shared.wake)();
         }
         drop(ring);
         let counts = &shared.counts;
@@ -316,11 +321,8 @@ impl<T> BatchSender<T> {
                 bump(&counts.refused, 1);
                 return Err(SendError::Full(item));
             }
-            Sent::Queued { was_empty } => {
+            Sent::Queued { .. } => {
                 bump(&counts.sent, 1);
-                if was_empty {
-                    (shared.wake)();
-                }
             }
             // Dropped outside the lock: arbitrary `T::drop` code.
             Sent::Replaced(old) => {
@@ -625,6 +627,26 @@ mod tests {
 
     fn sample_of(name: &str) -> Option<MailboxSample> {
         observe::mailboxes(4).into_iter().find(|m| m.name == name)
+    }
+
+    /// As the inbox's own messages (#572): a sender stopped inside its wake
+    /// holds the drain back, so no item is handled before its wake.
+    #[test]
+    fn no_drain_takes_an_item_before_its_wake() {
+        let (hook, entered, go) = crate::inbox::tests::paused_wake();
+        let (_inbox, handle) = UiInbox::<()>::channel_with_wake(4, hook);
+        let (mut batch, tx) = handle.batch("test.wake-first", 4, BatchPolicy::DropNewest);
+        let sender = std::thread::spawn(move || tx.send(7u32).unwrap());
+        entered.recv().unwrap();
+        assert!(batch.has_pending());
+        // A drain takes the items under this lock: held, it waits.
+        assert!(
+            batch.shared.ring.try_lock().is_err(),
+            "a drain could take the item before its wake"
+        );
+        go.send(()).unwrap();
+        sender.join().unwrap();
+        assert_eq!(all(&mut batch).0, vec![7]);
     }
 
     #[test]
