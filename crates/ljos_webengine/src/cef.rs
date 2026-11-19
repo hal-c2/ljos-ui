@@ -760,26 +760,41 @@ fn headless_warning(words: &[String]) -> Option<String> {
 }
 
 /// The switch that keeps Chromium out of the login keychain, when the
-/// engine runs on macOS and the switches given leave it out.
+/// engine runs on macOS, no profile keeps cookies on disk, and the
+/// switches given leave it out.
 ///
 /// Chromium on macOS reads the key that encrypts a profile's cookies from
 /// a keychain item named "Chromium Safe Storage" as it starts, and macOS
 /// asks the person for their login password before it hands the item to
-/// a program it has not been told to trust. A web view in a Ljós
-/// application keeps no passwords or card numbers, and that item is one
-/// every CEF program shares rather than the application's own, so the
-/// prompt asks the person to trust the wrong thing, for nothing they
-/// stored. With a mock keychain Chromium encrypts cookies on disk with a
-/// fixed key instead, so they are kept from other users by the profile
-/// directory's permissions, as on Linux with no keyring; cookies a
-/// profile wrote under the keychain's key are not read back.
-fn keychain_switch(macos: bool, words: &[String]) -> Option<&'static str> {
+/// a program it has not been told to trust (#586). A profile off the
+/// record keeps no cookies on disk, so the prompt asks for a key that
+/// encrypts nothing, and the item is one every CEF program shares, not
+/// the application's own. A profile on disk keeps the keychain's key:
+/// what it keeps stays encrypted with a key only the person's login
+/// unlocks, and the person is asked once, with the application's name.
+///
+/// The switch is the process's, given as CEF starts, so the profiles made
+/// by then decide it. A profile on disk made later is kept with the mock
+/// keychain's fixed key, protected by the profile directory's permissions
+/// as on Linux with no keyring. Chromium drops the cookies it cannot
+/// decrypt, so a profile that was kept with one key loses its cookies
+/// once when it is next opened with the other.
+fn keychain_switch(macos: bool, on_disk: bool, words: &[String]) -> Option<&'static str> {
     const MOCK: &str = "--use-mock-keychain";
-    (macos
-        && !words
-            .iter()
-            .any(|w| w == MOCK || w.starts_with("--use-mock-keychain=")))
-    .then_some(MOCK)
+    let asked = words
+        .iter()
+        .any(|w| w == MOCK || w.starts_with("--use-mock-keychain="));
+    (macos && !on_disk && !asked).then_some(MOCK)
+}
+
+/// Whether a profile the application has made by now, or the one CEF is
+/// starting for, keeps what it keeps on disk.
+fn any_profile_on_disk(e: &Engine, starting: &ProfileSpec) -> bool {
+    !starting.off_the_record
+        || e.object_ids()
+            .into_iter()
+            .filter(|&id| e.is::<WebEngineProfile>(id))
+            .any(|id| !WebEngineProfile::spec(e, id).off_the_record)
 }
 
 fn initialize_cef(e: &Engine, first: &ProfileSpec) -> Result<Global, String> {
@@ -837,7 +852,8 @@ fn initialize_cef(e: &Engine, first: &ProfileSpec) -> Result<Global, String> {
     if !words.iter().any(|w| w.ends_with("-auto-reload")) {
         words.push("--disable-auto-reload".to_owned());
     }
-    if let Some(switch) = keychain_switch(cfg!(target_os = "macos"), &words) {
+    let on_disk = any_profile_on_disk(e, first);
+    if let Some(switch) = keychain_switch(cfg!(target_os = "macos"), on_disk, &words) {
         words.push(switch.to_owned());
     }
     let words: &'static [CString] = Vec::leak(
@@ -4859,20 +4875,26 @@ mod tests {
     }
 
     #[test]
-    fn an_engine_on_macos_never_asks_for_the_login_keychain() {
+    fn an_engine_on_macos_asks_for_the_login_keychain_only_for_a_profile_on_disk() {
         let words = |w: &[&str]| w.iter().map(|w| w.to_string()).collect::<Vec<_>>();
         assert_eq!(
-            keychain_switch(true, &words(&["ljos"])),
+            keychain_switch(true, false, &words(&["ljos"])),
             Some("--use-mock-keychain"),
-            "Chromium would ask the login keychain for \"Chromium Safe Storage\" as it starts"
+            "off the record, Chromium would ask the login keychain for \"Chromium Safe \
+             Storage\" as it starts, for a key that encrypts nothing"
         );
         assert_eq!(
-            keychain_switch(true, &words(&["ljos", "--use-mock-keychain"])),
+            keychain_switch(true, true, &words(&["ljos"])),
+            None,
+            "a profile on disk keeps its cookies under the keychain's key"
+        );
+        assert_eq!(
+            keychain_switch(true, false, &words(&["ljos", "--use-mock-keychain"])),
             None,
             "asked for already, through LJOS_WEBENGINE_CHROMIUM_FLAGS"
         );
         assert_eq!(
-            keychain_switch(false, &words(&["ljos"])),
+            keychain_switch(false, false, &words(&["ljos"])),
             None,
             "only macOS has the keychain"
         );

@@ -1563,3 +1563,25 @@ Feature: A web page in a WebEngineView
     When 10 seconds pass
     Then the property "stopped" of "root" is "Stops"
     And the property "title" of "page" is "went on, worked"
+
+  # On macOS Chromium reads the key that encrypts cookies from the login
+  # keychain as it starts, and macOS asks the person for their password
+  # for it (#586). A view whose profiles keep nothing on disk has no key to
+  # ask for. The runner has no macOS surface yet: the decision is
+  # ljos_webengine's unit test, and a run of examples/webbrowser on a Mac
+  # shows no prompt.
+  @backlog @ljos-only @api-QtWebEngine.WebEngineProfile.offTheRecord
+  Scenario: A view off the record on macOS starts with no keychain access
+    Given the web engine runs on "macOS"
+    And the QML:
+      """qml
+      import QtQuick
+      import QtWebEngine
+      WebEngineView {
+        objectName: "view"; width: 200; height: 100
+        url: Qt.resolvedUrl("page.html")
+      }
+      """
+    When 2 seconds pass
+    Then the property "title" of "view" is "Fixture Page"
+    And the web engine has not read the login keychain
