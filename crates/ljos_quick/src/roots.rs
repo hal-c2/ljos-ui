@@ -7,10 +7,10 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use ljos_engine::{Engine, LogLevel, ObjectFlags, ObjectId};
+use ljos_engine::{Engine, LogLevel, ObjectFlags, ObjectId, PropIndex, Provenance};
 
 use crate::Item;
-use crate::item::{is_item, is_unset, is_window};
+use crate::item::{is_item, is_window};
 
 /// Why [`replace_root`] refused.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
@@ -234,7 +234,9 @@ impl RootSwaps {
                 if pending[at].old == target {
                     pending.remove(at);
                 } else {
+                    // Another root than the one a reload made again.
                     pending[at].new = target;
+                    pending[at].fit = Fit::Fitted;
                 }
                 drop(pending);
                 if let_go {
@@ -547,12 +549,23 @@ pub fn fit(engine: &Engine, old: ObjectId, new: ObjectId) {
     let window = is_window(engine, new);
     engine.batch(|| {
         for size in [Item::WIDTH, Item::HEIGHT] {
-            if window && !is_unset(engine, new, size.index) {
-                continue;
-            }
-            if let Ok(v) = engine.get(old, size) {
+            let v = engine.read(old, size.index);
+            if !window {
                 let _ = engine.set(new, size, v);
+            } else if !declares(engine, new, size.index) {
+                // Not as its author's: a window that cannot show it and
+                // offers it again later fits it to the size it has then.
+                let _ = engine.write_derived(new, size.index, v);
             }
         }
     });
+}
+
+/// Whether the author of `obj` gave `p` its value: a value, a binding, or
+/// one an animation moves.
+fn declares(engine: &Engine, obj: ObjectId, p: PropIndex) -> bool {
+    matches!(
+        engine.provenance(obj, p),
+        Some(Provenance::Assigned | Provenance::Bound | Provenance::Animated)
+    )
 }

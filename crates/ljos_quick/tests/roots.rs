@@ -7,7 +7,7 @@ mod common;
 
 use common::*;
 use ljos_engine::{Engine, MetaRef, ObjectId, QmlType};
-use ljos_quick::roots::{RootError, RootSwaps, adopt, replace_root};
+use ljos_quick::roots::{RootError, RootSwaps, adopt, fit, replace_root};
 use ljos_quick::{Item, Rectangle};
 
 /// A root with no parent, as an application makes one.
@@ -476,4 +476,48 @@ fn a_window_a_reload_made_again_keeps_the_size_the_window_has() {
     host.frame(&e);
     assert_eq!(host.root, shell_again);
     assert_eq!(size(&e, shell_again), (500.0, 400.0));
+}
+
+#[test]
+fn a_window_fitted_again_takes_the_size_the_window_has_then() {
+    let e = engine_with_windows();
+    let (_host, old) = shown_at_300_by_240(&e);
+    let new = window(&e, Some(200.0), None);
+    fit(&e, old, new);
+    assert_eq!(size(&e, new), (200.0, 240.0));
+    // The window could not show it, and offers it again at another size:
+    // the height it was given is not one it declares.
+    e.set(old, Item::WIDTH, 500.0).unwrap();
+    e.set(old, Item::HEIGHT, 400.0).unwrap();
+    fit(&e, old, new);
+    assert_eq!(size(&e, new), (200.0, 400.0));
+}
+
+#[test]
+fn a_window_in_place_of_one_a_reload_made_again_is_shown_at_the_size_it_declares() {
+    let e = engine_with_windows();
+    let loader = make::<Item>(&e, None);
+    let shell = window(&e, Some(300.0), Some(240.0));
+    RootSwaps::of(&e).present(&e, loader, Some(shell));
+    let mut host = Host::open(&e, loader);
+    host.frame(&e);
+    e.set(shell, Item::WIDTH, 500.0).unwrap();
+    e.set(shell, Item::HEIGHT, 400.0).unwrap();
+    // A reload makes the loader and its shell again ...
+    let again = make::<Item>(&e, None);
+    let shell_again = e.create_native(Rectangle::default(), Some(again)).unwrap();
+    e.complete(shell_again).unwrap();
+    RootSwaps::of(&e).present(&e, again, Some(shell_again));
+    adopt(&e, shell, again);
+    RootSwaps::of(&e).shows(&e, Some(shell), again);
+    host.root = again;
+    // ... and the loader changes to another shell before the frame.
+    let other = e.create_native(Rectangle::default(), Some(again)).unwrap();
+    e.set(other, Item::WIDTH, 200.0).unwrap();
+    e.set(other, Item::HEIGHT, 100.0).unwrap();
+    e.complete(other).unwrap();
+    RootSwaps::of(&e).present(&e, again, Some(other));
+    host.frame(&e);
+    assert_eq!(host.root, other);
+    assert_eq!(size(&e, other), (200.0, 100.0));
 }
