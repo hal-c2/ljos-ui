@@ -4901,6 +4901,40 @@ mod tests {
     }
 
     #[test]
+    fn the_profiles_made_when_the_engine_starts_decide_whether_it_keeps_the_keychain() {
+        let made = |e: &Engine, storage_name: &str, off_the_record: bool| {
+            let mut profile = WebEngineProfile::default();
+            profile.storage_name = storage_name.into();
+            profile.off_the_record = off_the_record;
+            e.create_native(profile, None).expect("a profile");
+        };
+        let default = ProfileSpec::default();
+        let kept = ProfileSpec {
+            storage_name: "Kept".into(),
+            off_the_record: false,
+            ..Default::default()
+        };
+        let e = Engine::new();
+        assert!(
+            !any_profile_on_disk(&e, &default),
+            "the default profile keeps nothing"
+        );
+        assert!(
+            any_profile_on_disk(&e, &kept),
+            "the starting view's own profile is on disk"
+        );
+        // A profile with no storage name keeps nothing on disk, whatever
+        // its offTheRecord says, and one off the record keeps nothing.
+        made(&e, "", false);
+        made(&e, "Kept", true);
+        assert!(!any_profile_on_disk(&e, &default));
+        // A profile on disk declared elsewhere, while the view starting
+        // CEF has the default one.
+        made(&e, "Kept", false);
+        assert!(any_profile_on_disk(&e, &default));
+    }
+
+    #[test]
     fn an_engine_with_no_display_says_what_its_pages_are_refused() {
         let words = |w: &[&str]| w.iter().map(|w| w.to_string()).collect::<Vec<_>>();
         let warned = headless_warning(&words(&["ljos", "--ozone-platform=headless"]))
