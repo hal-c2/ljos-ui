@@ -1016,6 +1016,31 @@ Feature: The design audit checks layout and content in the live tree
         """
       Then the design audit does not report "layout-fill-crushed"
 
+    Scenario: A column that fills and holds a repeater
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        import QtQuick.Layouts
+        Rectangle {
+          width: 400; height: 300; color: "white"
+          ColumnLayout {
+            width: 400
+            spacing: 8
+            Label { text: "Heading"; color: "black" }
+            ColumnLayout {
+              Layout.fillWidth: true
+              spacing: 8
+              Repeater {
+                model: 2
+                delegate: Button { text: "Row " + index }
+              }
+            }
+          }
+        }
+        """
+      Then the design audit does not report "layout-fill-crushed"
+
     Scenario: A row too short for its content and the style's padding
       Given the QML:
         """qml
@@ -1221,6 +1246,57 @@ Feature: The design audit checks layout and content in the live tree
         }
         """
       Then the design audit does not report "text-raw-markup"
+
+    Scenario: A placeholder in angle brackets in plain prose
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Rectangle {
+          width: 640; height: 100
+          color: "white"
+          Label {
+            x: 16; y: 16
+            color: "black"
+            text: "Fix works on a maintenance/<date> branch in a new worktree."
+          }
+        }
+        """
+      Then the design audit does not report "text-raw-markup"
+
+    Scenario: A tag that rich text drops after one it knows
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Rectangle {
+          width: 640; height: 100
+          color: "white"
+          Label {
+            x: 16; y: 16
+            color: "black"
+            text: "<b>Fixed</b> on the branch for <date>"
+          }
+        }
+        """
+      Then the design audit reports "text-raw-markup" at line 6
+
+    Scenario: A program's own tag shown as written
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Rectangle {
+          width: 640; height: 100
+          color: "white"
+          Label {
+            x: 16; y: 16
+            color: "black"
+            text: "<task-result id=\"7\">Done</task-result>"
+          }
+        }
+        """
+      Then the design audit reports "text-raw-markup" at line 6
 
     Scenario: An empty list that shows only its heading
       Given the QML:
