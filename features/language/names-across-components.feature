@@ -339,3 +339,56 @@ Feature: Names of the component around
         """
       Then the property "seen" of "top" is "root"
       And the property "seen" of "inner" is "row"
+
+    Scenario: Under ComponentBehavior Bound a function that assigns the name still reads the id
+      Given the QML:
+        """qml
+        pragma ComponentBehavior: Bound
+        import QtQuick
+        Item {
+          component Probe: QtObject {
+            objectName: "probe"
+            property string label: "mine"
+            property string before: ""
+            property string after: ""
+            function go() {
+              before = typeof label === "string" ? "property" : "id"
+              label = "written"
+              after = typeof label === "string" ? "property" : "id"
+            }
+          }
+          Probe { }
+          Item { id: label }
+        }
+        """
+      When the method "go" of "probe" is called
+      Then the property "before" of "probe" is "id"
+      And the property "after" of "probe" is "id"
+      And the property "label" of "probe" is "written"
+
+    Scenario: Under ComponentBehavior Bound an id of the file that uses the component's file is not found
+      Given the file "Panel.qml":
+        """qml
+        pragma ComponentBehavior: Bound
+        import QtQuick
+        Item {
+          component Probe: QtObject {
+            property string label: "mine"
+            property string seen: typeof label === "string" ? "property" : "id"
+          }
+          Probe { objectName: "probe" }
+          Repeater {
+            model: 1
+            Item { Item { id: label } }
+          }
+        }
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        Item {
+          Item { id: label }
+          Panel { }
+        }
+        """
+      Then the property "seen" of "probe" is "property"
