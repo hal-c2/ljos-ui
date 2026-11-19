@@ -13,7 +13,7 @@
 use ljos_controls::{AbstractButton, Control};
 use ljos_engine::{Engine, MetaRef, ObjectId, Provenance, QmlType};
 use ljos_quick::{
-    Column, ColumnLayout, Flow, Grid, GridLayout, Layout, LayoutAttached, Row, RowLayout,
+    Column, ColumnLayout, Flow, Grid, GridLayout, Layout, LayoutAttached, Repeater, Row, RowLayout,
     StackLayout,
 };
 
@@ -110,6 +110,21 @@ fn margins(e: &Engine, item: ObjectId, axis: usize) -> f64 {
     read(e, att, a.index) + read(e, att, b.index)
 }
 
+/// Whether `child` is given a place, and a gap beside it, by `item`'s
+/// layout or positioner: a `Repeater` never is, and a positioner skips a
+/// child of no size, as Qt's do (`ljos_quick`'s layouts and positioners
+/// skip them the same way).
+fn takes_place(e: &Engine, item: ObjectId, child: ObjectId) -> bool {
+    if is_a::<Repeater>(e, child) {
+        return false;
+    }
+    let positioner = is_a::<Row>(e, item)
+        || is_a::<Column>(e, item)
+        || is_a::<Grid>(e, item)
+        || is_a::<Flow>(e, item);
+    !positioner || (number(e, child, "width") > 0.0 && number(e, child, "height") > 0.0)
+}
+
 /// The least `item` needs on `axis`, as a floor; see the module.
 fn need(e: &Engine, shown: &[ObjectId], item: ObjectId, axis: usize, depth: usize) -> f64 {
     let own = attached(e, item)
@@ -132,7 +147,7 @@ fn need(e: &Engine, shown: &[ObjectId], item: ObjectId, axis: usize, depth: usiz
     let children = || {
         e.visual_children(item)
             .into_iter()
-            .filter(|c| shown.contains(c))
+            .filter(|c| shown.contains(c) && takes_place(e, item, *c))
     };
     let held = if is_a::<Control>(e, item) {
         // What a control holds needs its padding around it.
