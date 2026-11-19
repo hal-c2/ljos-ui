@@ -280,3 +280,46 @@ Feature: Default properties of components
         }
         """
       Then the property "parentName" of "root" is "inner"
+
+    Scenario: An alias of a property that holds one object is written, not appended to
+      Given the file "Holder.qml":
+        """qml
+        import QtQuick
+        Item {
+          property alias target: inner.target
+          property alias content: loader.sourceComponent
+          Item { id: inner; objectName: "inner"; property Item target }
+          Loader { id: loader; objectName: "loader" }
+        }
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        Item {
+          objectName: "root"
+          property bool same
+          property int innerChildren: -1
+          property bool parented: true
+          property string loaded
+          property int holderChildren
+          Holder {
+            id: holder
+            target: Item { id: given; objectName: "t" }
+            content: Component { Text { text: "loaded" } }
+          }
+          Component.onCompleted: {
+            const inner = holder.children[0]
+            same = inner.target === given
+            innerChildren = inner.children.length
+            parented = given.parent !== null
+            loaded = holder.children[1].item.text
+            holderChildren = holder.children.length
+          }
+        }
+        """
+      Then the property "same" of "root" is true
+      And the property "innerChildren" of "root" is 0
+      And the property "parented" of "root" is false
+      And the property "loaded" of "root" is "loaded"
+      And the property "holderChildren" of "root" is 2
+      And the log has no warnings
