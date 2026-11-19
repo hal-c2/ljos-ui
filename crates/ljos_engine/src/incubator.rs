@@ -867,6 +867,7 @@ impl Engine {
             if f.given.is_empty() {
                 self.set_context_slots(f.ctx, &inst);
             }
+            self.set_context_file(f.ctx, &inst.file.url);
             if let Some(&root) = inst.objects.first() {
                 self.set_context_root(f.ctx, root);
                 self.note_library_root(root, &inst.file.url);
@@ -2694,10 +2695,16 @@ impl Engine {
                 Some(v) => Some(v),
                 None => self.arg_value_at(inst, fallback.as_deref()?, plan),
             },
-            Arg::MadeIn { name, fallback } => match self.context_id(inst.context, name) {
-                Some(v) => Some(v),
-                None => self.arg_value_at(inst, fallback.as_deref()?, plan),
-            },
+            // What a script assigns through is made for it as JavaScript.
+            Arg::MadeIn {
+                writes: Some(_), ..
+            } => None,
+            Arg::MadeIn { name, fallback, .. } => {
+                match self.context_id(inst.context, &inst.file.url, name) {
+                    Some(v) => Some(v),
+                    None => self.arg_value_at(inst, fallback.as_deref()?, plan),
+                }
+            }
             Arg::Attached { ty, object } => {
                 let o = inst.resolve(*object)?;
                 let meta = match plan {
@@ -2821,14 +2828,41 @@ impl Engine {
                 },
             },
             Arg::Core(name) => core(s, name),
-            Arg::MadeIn { name, fallback } => match self.context_id(inst.context, name) {
-                Some(v) => self.to_js(&v),
-                None => match fallback.as_deref() {
-                    Some(f) => self.arg_js_at(s, inst, f, plan),
-                    None if has_global(s, name) => global(s, name),
-                    None => global(s, NOWHERE),
-                },
-            },
+            Arg::MadeIn {
+                name,
+                writes: Some(object),
+                ..
+            } => {
+                let target = inst
+                    .resolve(*object)
+                    .map_or(JsValue::Undefined, |o| self.to_js(&Value::Object(o)));
+                match self.context_id(inst.context, &inst.file.url, name) {
+                    Some(id) => {
+                        let id = self.to_js(&id);
+                        s.globals()
+                            .get::<_, ljos_js::rquickjs::Function>(MADE_IN)
+                            .and_then(|f| {
+                                let target = s.to_value(&target)?;
+                                let id = s.to_value(&id)?;
+                                f.call::<_, ljos_js::rquickjs::Value>((target, name.as_str(), id))
+                            })
+                            .ok()
+                            .and_then(|v| s.from_value(&v).ok())
+                            .unwrap_or(target)
+                    }
+                    None => target,
+                }
+            }
+            Arg::MadeIn { name, fallback, .. } => {
+                match self.context_id(inst.context, &inst.file.url, name) {
+                    Some(v) => self.to_js(&v),
+                    None => match fallback.as_deref() {
+                        Some(f) => self.arg_js_at(s, inst, f, plan),
+                        None if has_global(s, name) => global(s, name),
+                        None => global(s, NOWHERE),
+                    },
+                }
+            }
             Arg::Dynamic(name) => match self.context_name(inst.context, name) {
                 Some(v) => self.to_js(&v),
                 None => match self.singleton_named(name, inst.context) {
@@ -2924,6 +2958,9 @@ fn property_type(ty: &str, own_enums: &[&str], aliases: &[&str]) -> TypeTag {
 const NOWHERE: &str = "__ljos_nowhere";
 /// The global that makes what a script assigns to such a name through.
 const UNHELD: &str = "__ljos_unheld";
+/// The global that makes what a Bound inline component reads an id and
+/// assigns its own property through.
+const MADE_IN: &str = "__ljos_made_in";
 
 fn has_global(s: &Scope<'_>, name: &str) -> bool {
     s.globals().contains_key(name).unwrap_or(false)

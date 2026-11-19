@@ -703,8 +703,15 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
             .as_ref()
             .map(|target| self.target(name, target, chain, scope, context))
             .or(made);
-        if resolution.made_in && !is_written {
-            return made_in(name, base);
+        if resolution.made_in {
+            if !is_written {
+                return made_in(name, base);
+            }
+            // Qt reads the id and assigns the component's own property, in
+            // the same function.
+            if let Some(plan) = base.as_ref().and_then(|base| made_in_written(name, base)) {
+                return plan;
+            }
         }
         let role = resolution.roles.first().copied();
         if role.is_none()
@@ -1258,9 +1265,41 @@ fn made_in(name: &str, base: Option<Plan>) -> Plan {
             arg: Arg::MadeIn {
                 name: name.to_string(),
                 fallback,
+                writes: None,
             },
         }),
         rewrite: None,
         replace: None,
     }
+}
+
+/// The plan for a name a Bound inline component both reads and assigns,
+/// where `base` is its own property: the script reads and writes the name
+/// through what it is given, which reads the id where the component is made
+/// and writes the property.
+fn made_in_written(name: &str, base: &Plan) -> Option<Plan> {
+    let (
+        Some(_),
+        Some(Param {
+            arg: Arg::Object(object),
+            ..
+        }),
+    ) = (&base.rewrite, &base.param)
+    else {
+        return None;
+    };
+    let through = format!("$m_{name}");
+    Some(Plan {
+        resolved: base.resolved.clone(),
+        param: Some(Param {
+            name: through.clone(),
+            arg: Arg::MadeIn {
+                name: name.to_string(),
+                fallback: None,
+                writes: Some(*object),
+            },
+        }),
+        rewrite: Some(through),
+        replace: None,
+    })
 }

@@ -3811,16 +3811,21 @@ impl Engine {
         found.filter(|o| self.is_alive(*o))
     }
 
-    /// The object `name` is the id of from `ctx` outwards, as
-    /// [`Engine::context_name`] gives it: `null` for one that is gone.
-    /// Nothing else of a context is looked at.
-    pub(crate) fn context_id(&self, ctx: ContextId, name: &str) -> Option<Value> {
+    /// The object `name` is the id of from `ctx` outwards within the file
+    /// `file`, as [`Engine::context_name`] gives it: `null` for one that is
+    /// gone. Nothing else of a context is looked at, and a context of
+    /// another file ends the walk: Qt does not find, for a Bound inline
+    /// component, an id of the file that uses its file.
+    pub(crate) fn context_id(&self, ctx: ContextId, file: &Atom, name: &str) -> Option<Value> {
         crate::lookups::name();
         let found = {
             let contexts = self.inner.contexts.borrow();
             let mut cur = Some(ctx);
             loop {
                 let c = contexts.get(cur?)?;
+                if c.file.as_ref().is_some_and(|f| f != file) {
+                    return None;
+                }
                 if let Some(o) = c.id(name) {
                     break o;
                 }
@@ -3832,6 +3837,13 @@ impl Engine {
         } else {
             Value::Null
         })
+    }
+
+    /// See [`Context::file`].
+    pub(crate) fn set_context_file(&self, ctx: ContextId, file: &Atom) {
+        if let Some(c) = self.inner.contexts.borrow_mut().get_mut(ctx) {
+            c.file = Some(file.clone());
+        }
     }
 
     /// See [`Context::root`].

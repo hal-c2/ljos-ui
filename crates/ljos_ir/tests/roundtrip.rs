@@ -256,6 +256,18 @@ fn sample() -> CompiledFile {
                         component: CompIdx(1),
                         object: ObjIdx(0),
                     }))),
+                    writes: None,
+                },
+            },
+            Param {
+                name: "$m_label".into(),
+                arg: Arg::MadeIn {
+                    name: "label".into(),
+                    fallback: None,
+                    writes: Some(ObjRef {
+                        component: CompIdx(1),
+                        object: ObjIdx(0),
+                    }),
                 },
             },
         ],

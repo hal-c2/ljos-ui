@@ -344,12 +344,19 @@ fn arg(arg: &Arg) -> String {
         Arg::Property { object, name } => format!("{}.{name}", obj(*object)),
         Arg::Dynamic(name) => format!("dynamic {name}"),
         Arg::Core(name) => format!("core {name}"),
-        Arg::MadeIn { name, fallback } => {
+        Arg::MadeIn {
+            name,
+            fallback,
+            writes,
+        } => {
             let fallback = fallback
                 .as_ref()
                 .map(|f| format!(" else {}", self::arg(f)))
                 .unwrap_or_default();
-            format!("id {name} where made{fallback}")
+            let writes = writes
+                .map(|o| format!(", written to {}.{name}", obj(o)))
+                .unwrap_or_default();
+            format!("id {name} where made{fallback}{writes}")
         }
     }
 }

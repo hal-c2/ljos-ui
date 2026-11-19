@@ -842,10 +842,18 @@ pub enum Arg {
     /// there outwards, else `fallback`. Under `pragma ComponentBehavior:
     /// Bound` an inline component is made only in its own file, and the ids
     /// where it is made come before its own properties; which object an id
-    /// names depends on where that is (the file's root, a delegate).
+    /// names depends on where that is (the file's root, a delegate). The
+    /// walk stops at the file: a context of the file that uses this one is
+    /// not where the component is made.
+    ///
+    /// With `writes`, the script also assigns to the name and reads and
+    /// writes it as a member of what it is given: reading gives the id,
+    /// assigning reaches the property of `writes` (the component's own),
+    /// and without the id both are that property.
     MadeIn {
         name: String,
         fallback: Option<Box<Arg>>,
+        writes: Option<ObjRef>,
     },
 }
 

@@ -2631,6 +2631,16 @@ const PRELUDE: &str = r##"
     });
   };
 
+  // What a Bound inline component that assigns to a name an id where it is
+  // made also has is given: reading gives the id, assigning reaches its own
+  // property, as Qt does in one function.
+  g.__ljos_made_in = function (target, name, id) {
+    return Object.defineProperty({}, name, {
+      get() { return id; },
+      set(v) { target[name] = v; },
+    });
+  };
+
   // Colours come from the host: there is one object per colour, so that two
   // equal colours are also `===`.
   const hostColor = g.__ljos_color;

@@ -335,10 +335,15 @@ impl Run<'_> {
                 .e
                 .context_name(inst.context, name)
                 .map(|v| normal(self.e, v)),
-            Arg::MadeIn { name, fallback } => match self.e.context_id(inst.context, name) {
-                Some(v) => Some(normal(self.e, v)),
-                None => self.arg(inst, fallback.as_deref()?),
-            },
+            Arg::MadeIn {
+                writes: Some(_), ..
+            } => None,
+            Arg::MadeIn { name, fallback, .. } => {
+                match self.e.context_id(inst.context, &inst.file.url, name) {
+                    Some(v) => Some(normal(self.e, v)),
+                    None => self.arg(inst, fallback.as_deref()?),
+                }
+            }
             // Made here if this is the first read.
             Arg::Singleton(ty) => self
                 .e

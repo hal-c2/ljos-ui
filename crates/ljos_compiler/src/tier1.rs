@@ -658,7 +658,12 @@ impl<'p, 'a> Gen<'p, 'a> {
             };
             let number = u16::try_from(number).map_err(|_| Reason::new("too large"))?;
             let slot = match &param.arg {
-                Arg::Holder { name, .. } => {
+                Arg::Holder { name, .. }
+                | Arg::MadeIn {
+                    name,
+                    writes: Some(_),
+                    ..
+                } => {
                     return Err(Reason::with("assignment to a name", name.clone()));
                 }
                 Arg::Namespace { .. } => Slot::Unusable(Reason::new("import namespace")),

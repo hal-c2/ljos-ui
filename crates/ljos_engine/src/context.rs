@@ -33,6 +33,10 @@ pub struct Context {
     /// slots ([`ljos_ir::ComponentDef::ids`]) instead of being written
     /// into `ids` one by one as each instance is made.
     pub(crate) slots: Option<IdSlots>,
+    /// The url of the file whose instance the context is made for. An id
+    /// where a Bound inline component is made is looked for no further out
+    /// than its file ([`ljos_ir::Arg::MadeIn`]).
+    pub(crate) file: Option<Atom>,
 }
 
 /// See [`Context::slots`].
