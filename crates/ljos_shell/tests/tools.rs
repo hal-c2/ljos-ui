@@ -57,7 +57,9 @@ impl Asked {
     fn note(&self, delay: Duration) {
         if self.since_settled.load(Ordering::Acquire) {
             let t = thread::current();
-            let name = t.name().map_or_else(|| format!("{:?}", t.id()), str::to_owned);
+            let name = t
+                .name()
+                .map_or_else(|| format!("{:?}", t.id()), str::to_owned);
             let request = (name, delay, Backtrace::force_capture());
             self.requests.lock().unwrap().push(request);
         }
@@ -77,7 +79,10 @@ impl Asked {
         }
         let mut out = String::new();
         for (thread, delay, backtrace) in requests.iter() {
-            let _ = write!(out, "\n  thread {thread} asked for a pass in {delay:?}, through:");
+            let _ = write!(
+                out,
+                "\n  thread {thread} asked for a pass in {delay:?}, through:"
+            );
             let text = backtrace.to_string();
             let mut frames = 0;
             let mut keep = false;
@@ -131,7 +136,8 @@ fn opened(
         .with_size(Vec2::new(480.0, 320.0))
         .with_max_steps(8)
         .build_eframe(move |cc| {
-            cc.egui_ctx.set_repaint_observer(move |info| noted.note(info.delay));
+            cc.egui_ctx
+                .set_repaint_observer(move |info| noted.note(info.delay));
             // What a real window's event loop sleeps on.
             cc.egui_ctx.set_request_repaint_callback(move |info| {
                 let _ = tx.send(info.delay);
@@ -192,7 +198,11 @@ impl Window {
         for step in 1..=3 {
             self.h.step();
             let why = self.why(frames);
-            assert_eq!(self.repaint_delay(), Duration::MAX, "after step {step}: {why}");
+            assert_eq!(
+                self.repaint_delay(),
+                Duration::MAX,
+                "after step {step}: {why}"
+            );
         }
         assert_eq!(self.frames(), frames, "{}", self.why(frames));
         assert!(

@@ -811,7 +811,9 @@ pub(crate) mod tests {
         type Sending = fn(&UiHandle<u32>);
         let sends: [(&str, Sending); 4] = [
             ("send", |tx| tx.send(7).unwrap()),
-            ("send_coalesced", |tx| tx.send_coalesced(CoalesceKey(1), 7).unwrap()),
+            ("send_coalesced", |tx| {
+                tx.send_coalesced(CoalesceKey(1), 7).unwrap()
+            }),
             ("send_blocking", |tx| tx.send_blocking(7).unwrap()),
             ("send_async", |tx| {
                 let mut fut = std::pin::pin!(tx.send_async(7));
