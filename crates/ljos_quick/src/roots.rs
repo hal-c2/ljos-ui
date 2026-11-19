@@ -49,7 +49,8 @@ enum Fit {
     /// Its own: the window had nothing before it.
     Own,
     /// The size of the root it replaces, which is the window's: a reload
-    /// made that root again, and the window keeps the size it has.
+    /// made that root again, from the same file, and the window keeps the
+    /// size it has.
     Kept,
     /// Another root takes the window ([`fit`]).
     Fitted,
@@ -106,8 +107,12 @@ impl RootSwaps {
     /// A host shows `root` in a window of its own; `old`, when given, is
     /// the root it showed there before, of which a reload made `root`
     /// again. A root that stands for a window is replaced by it before
-    /// the next frame, at the size `old` had (at its own when there was
-    /// none).
+    /// the next frame: at its own size when there was no `old`, at the
+    /// size `old` had when that window is the one `old` was, made again
+    /// from the same file, and otherwise fitted as another root that
+    /// takes the window is ([`fit`]). A reload can make a `ShellLoader`
+    /// stand for another shell than the one shown: the user's mended, or
+    /// the application's in place of the user's that is gone.
     ///
     /// What was asked to go in the window of `old` and not made yet is
     /// not made: `root` takes its place. A root the application asked for
@@ -138,7 +143,20 @@ impl RootSwaps {
             }
         }
         self.prune(engine);
-        let fit = if old.is_some() { Fit::Kept } else { Fit::Own };
+        let fit = match old {
+            None => Fit::Own,
+            Some(old) => {
+                let face = self.presented(root).unwrap_or(root);
+                // A root not made from QML has no file to tell it by: it
+                // is taken for the one made again.
+                let files = engine.document_url(face).zip(engine.document_url(old));
+                if files.is_some_and(|(face, old)| face != old) {
+                    Fit::Fitted
+                } else {
+                    Fit::Kept
+                }
+            }
+        };
         if self.present_now(engine, root, fit) {
             self.wake();
         }
