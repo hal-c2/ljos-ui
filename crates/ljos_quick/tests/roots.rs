@@ -147,6 +147,43 @@ fn a_root_shown_by_the_host_drops_what_was_asked_for_in_its_place() {
 }
 
 #[test]
+fn a_loader_is_no_replacement_for_the_shell_it_stands_for() {
+    // `let_go`: the loader let go of its shell, and its window could not
+    // show the loader, so the shell stays shown as the loader's.
+    for let_go in [false, true] {
+        let e = engine();
+        let (mut host, loader, shell) = loader_showing_its_shell(&e);
+        let swaps = RootSwaps::of(&e);
+        if let_go {
+            assert!(swaps.present(&e, loader, None));
+            host.frame_showing(&e, false);
+        }
+        assert_eq!(host.root, shell);
+        assert_eq!(swaps.holder_of(shell), Some(loader));
+
+        assert_eq!(
+            replace_root(&e, shell, loader),
+            Err(RootError::Shown(loader)),
+            "let go: {let_go}"
+        );
+        assert!(!swaps.is_pending(), "nothing is asked of the host");
+        // Whether the window could show something or not, nothing goes.
+        for can in [true, false] {
+            host.frame_showing(&e, can);
+            assert_eq!(host.root, shell);
+            assert!(!e.is_going(loader) && !e.is_going(shell));
+        }
+
+        // Another root still takes the window, the loader and shell going.
+        let new = root(&e);
+        replace_root(&e, shell, new).unwrap();
+        host.frame(&e);
+        assert_eq!(host.root, new);
+        assert!(e.is_going(loader) && e.is_going(shell));
+    }
+}
+
+#[test]
 fn a_shell_that_stays_shown_is_the_loaders_until_what_replaces_it_is_shown() {
     let e = engine();
     let (mut host, loader, shell) = loader_showing_its_shell(&e);

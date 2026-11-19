@@ -366,9 +366,13 @@ impl RootSwaps {
         } else {
             self.holder_of(old)
         };
+        // A root that stands for a window a host shows, or that let go of
+        // one still shown, is shown already: in its own window, that would
+        // make it what it replaces, and destroy it once there.
+        let stands_for = [self.presented(new), self.left_by(new)];
         let face = {
             let mut shown = self.shown.borrow_mut();
-            if shown.contains(&new) {
+            if shown.contains(&new) || stands_for.iter().flatten().any(|w| shown.contains(w)) {
                 return Err(RootError::Shown(new));
             }
             let window = holder.and_then(|h| self.presented(h));
