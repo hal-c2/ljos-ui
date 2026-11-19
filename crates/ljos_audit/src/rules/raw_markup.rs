@@ -119,7 +119,8 @@ fn tag_end(after: &str) -> Option<usize> {
 /// The tags in `text`, in order. Scanning resumes after each tag's `>`,
 /// so what is inside its attributes is never taken for a tag. In `prose`
 /// an opening tag must start a word: `Vec<String>` in plain text is
-/// words, while rich text parses `e<date>` as a tag all the same.
+/// words, while rich text parses `e<date>` as a tag all the same, and
+/// passes over comments.
 fn tags(text: &str, prose: bool) -> impl Iterator<Item = Tag<'_>> {
     let bytes = text.as_bytes();
     let mut from = 0;
@@ -128,6 +129,13 @@ fn tags(text: &str, prose: bool) -> impl Iterator<Item = Tag<'_>> {
             let at = from + found;
             from = at + 1;
             let rest = &text[at + 1..];
+            if !prose && let Some(comment) = rest.strip_prefix("!--") {
+                from = match comment.find("-->") {
+                    Some(close) => text.len() - comment.len() + close + 3,
+                    None => text.len(),
+                };
+                continue;
+            }
             let (rest, closing) = match rest.strip_prefix('/') {
                 Some(r) => (r, true),
                 None => (rest, false),
@@ -152,21 +160,26 @@ fn tags(text: &str, prose: bool) -> impl Iterator<Item = Tag<'_>> {
             let suffix = after.trim_start_matches(|c: char| c.is_ascii_whitespace());
             let selfclosing = suffix.starts_with("/>");
             let closes = suffix.starts_with('>') || selfclosing;
-            let attrs = spaced && tag_end(after).is_some_and(|end| after[..end].contains('='));
-            if !(closes || attrs) {
+            let end = tag_end(after);
+            let valued = spaced && end.is_some_and(|end| after[..end].contains('='));
+            // `<input disabled>`: an attribute of no value.
+            let valueless =
+                spaced && end.is_some() && suffix.starts_with(|c: char| c.is_ascii_alphabetic());
+            // A tag with no `>` (`<foo` at the end) is no tag.
+            let Some(stop) = end.map(|end| text.len() - after.len() + end + 1) else {
+                continue;
+            };
+            let whole = text[..at].trim().is_empty() && text[stop..].trim().is_empty();
+            // Prose keeps `<press any key>` amid words as words; on its own,
+            // or in rich text, it is a tag.
+            if !(closes || valued || (valueless && (whole || !prose))) {
                 continue;
             }
-            let end = tag_end(after).unwrap_or(0);
-            from = text.len() - after.len() + end + 1;
-            let whole = text
-                .trim()
-                .strip_prefix('<')
-                .and_then(|t| t.strip_suffix('>'))
-                == Some(name);
+            from = stop;
             return Some(Tag {
                 name,
                 closing,
-                marked: selfclosing || attrs || whole,
+                marked: selfclosing || valued || valueless || whole,
             });
         }
         None
@@ -277,6 +290,11 @@ mod tests {
         assert!(shown_markup("see <foo /> here", 0).is_some());
         assert!(shown_markup("<foo\tid=\"7\">", 0).is_some());
         assert!(shown_markup("<foo\n/> here", AUTO).is_some());
+        // An attribute of no value, the whole text, or in rich text.
+        assert!(shown_markup("<input disabled>", 0).is_some());
+        assert!(shown_markup("<b>Go</b> <foo bar>", RICH).is_some());
+        // A tag after a comment is still seen.
+        assert!(shown_markup("<b>Ready</b><!-- note --><date>", RICH).is_some());
     }
 
     #[test]
@@ -289,6 +307,22 @@ mod tests {
             shown_markup("<a title='<date>' href='help.html'>Help</a>", AUTO),
             None
         );
+    }
+
+    #[test]
+    fn comments_in_rich_text_are_no_tags() {
+        assert_eq!(shown_markup("<b>Ready</b><!-- <date> -->", RICH), None);
+        assert_eq!(shown_markup("<b>Ready</b><!-- <date>", RICH), None);
+        // Words in angle brackets amid prose stay words.
+        assert_eq!(shown_markup("Then <press any key> to go on", 0), None);
+    }
+
+    #[test]
+    fn an_unclosed_tag_is_no_tag() {
+        assert_eq!(shown_markup("<foo", 0), None);
+        assert_eq!(shown_markup("a <foo bar", 0), None);
+        assert_eq!(shown_markup("<b>x</b> <foo", RICH), None);
+        assert_eq!(shown_markup("<é", 0), None);
     }
 
     #[test]
