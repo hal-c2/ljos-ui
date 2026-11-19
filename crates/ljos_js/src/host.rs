@@ -1979,6 +1979,12 @@ impl JsHost {
         // `raw` is the context of this host, alive as long as `self.ctx`.
         // The `Ctx` does not escape `f`, whose lifetime is fresh.
         let ctx = unsafe { Ctx::from_raw(self.raw) };
+        // An outer run can last as long as a test function that waits, with
+        // the whole event loop nested inside it; values let go of meanwhile
+        // would otherwise pile up until it returns and fill the heap. Nothing
+        // here holds the handle tables, and what a caller restored from a
+        // dropped ref is its own reference, so freeing now is safe.
+        self.state.drain_handles();
         let scope = Scope {
             ctx: ctx.clone(),
             state: self.state.clone(),
