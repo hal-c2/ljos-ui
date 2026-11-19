@@ -120,6 +120,9 @@ struct Live {
     disk: Option<disk::Disk>,
     /// The user's directory of an application its users change.
     user: Option<user::User>,
+    /// (old, new) for each window of its own a reload made again, which
+    /// `windows` and `roots` are to follow.
+    remade: Rc<RefCell<Vec<(ObjectId, ObjectId)>>>,
     /// The `top` overlay; hidden unless a scenario shows it.
     top: ljos_dev::Top,
     /// The files given run code compiled ahead of time.
@@ -462,6 +465,7 @@ impl LjosBackend {
             reloads: None,
             disk: None,
             user: None,
+            remade: Rc::default(),
             top: ljos_dev::Top::new(),
             ahead: false,
             lowered: false,
@@ -743,6 +747,13 @@ impl Live {
         &mut self,
         act: impl FnOnce(&mut Driver<'_>) -> std::result::Result<R, DriveError>,
     ) -> Result<R> {
+        for (old, new) in self.remade.take() {
+            for r in self.windows.iter_mut().chain(self.roots.iter_mut()) {
+                if *r == old {
+                    *r = new;
+                }
+            }
+        }
         let mut host = Hosting {
             windows: &mut self.windows,
             roots: &mut self.roots,
@@ -814,6 +825,16 @@ impl Live {
         self.roots.push(obj);
         self.windows.push(obj);
         ljos_quick::roots::RootSwaps::of(&self.engine).shows(&self.engine, None, obj);
+        // As an application that opens windows beside the first: what a
+        // reload makes again of this one goes in its window.
+        let remade = Rc::clone(&self.remade);
+        self.engine
+            .remake_on_reload(obj, move |engine, old, new| {
+                ljos_quick::roots::adopt(engine, old, new);
+                ljos_quick::roots::RootSwaps::of(engine).shows(engine, Some(old), new);
+                remade.borrow_mut().push((old, new));
+            })
+            .map_err(failed)?;
         self.settle()
     }
 

@@ -394,7 +394,14 @@ pub(crate) struct ReloadState {
     /// Objects whose layout a reload in place is giving again, while it
     /// does: see [`Engine::reload_renewing`].
     pub(crate) renewing: RefCell<HashSet<ObjectId>>,
+    /// Roots a full reload makes again beside the ones its host gives, and
+    /// whom to tell: see [`Engine::remake_on_reload`].
+    remade: RefCell<Vec<(ObjectId, Remade)>>,
 }
+
+/// Told (old, new) when a reload made a root marked with
+/// [`Engine::remake_on_reload`] again.
+type Remade = Rc<RefCell<dyn FnMut(&Engine, ObjectId, ObjectId)>>;
 
 /// A native type's binding for a property it was not given.
 pub(crate) type DefaultBinding = Rc<dyn Fn(&Engine) -> Value>;
@@ -707,6 +714,68 @@ impl Engine {
         *self.inner.reload.pending.borrow_mut() = None;
     }
 
+    /// Asks that a reload make `root` again too, with the roots its host
+    /// gives: a root the application made with [`Engine::create_from_url`]
+    /// while tracking was on and keeps beside the one its host shows, as a
+    /// window of its own. A reload in place applies to it as it stands; a
+    /// full one makes it again and tells `replaced` (old, new) once every
+    /// new root stands, before the old ones go, where the application moves
+    /// whatever points at it (its window's content). The mark moves to the
+    /// new root. A root destroyed is let go of.
+    ///
+    /// With tracking off nothing is made again, and nothing is kept.
+    ///
+    /// # Errors
+    /// [`ReloadError::UnknownRoot`] when tracking is on and `root` is not
+    /// one a reload can make again.
+    pub fn remake_on_reload(
+        &self,
+        root: ObjectId,
+        replaced: impl FnMut(&Engine, ObjectId, ObjectId) + 'static,
+    ) -> Result<(), ReloadError> {
+        let st = &self.inner.reload;
+        if !st.tracking.get() {
+            return Ok(());
+        }
+        if self.reload_origin(root).is_none() {
+            return Err(ReloadError::UnknownRoot(root));
+        }
+        let replaced: Remade = Rc::new(RefCell::new(replaced));
+        let mut remade = st.remade.borrow_mut();
+        remade.retain(|(r, _)| *r != root);
+        remade.push((root, replaced));
+        Ok(())
+    }
+
+    /// What `root` was made from and where it stands, when a reload can
+    /// make it again.
+    fn reload_origin(&self, root: ObjectId) -> Option<(Request, Rc<str>)> {
+        let st = &self.inner.reload;
+        let origin = st
+            .asked
+            .borrow()
+            .get(&root)
+            .filter(|a| matches!(a.request.source, Source::Url(_)))
+            .map(|a| a.request.copy())?;
+        let path = st.info.borrow().get(&root).map(|i| i.path.clone())?;
+        self.is_alive(root).then_some((origin, path))
+    }
+
+    /// The roots marked with [`Engine::remake_on_reload`] that still stand
+    /// and are not among `given`; a mark whose root is gone is dropped.
+    fn reload_marked(&self, given: &[ObjectId]) -> Vec<ObjectId> {
+        let mut remade = self.inner.reload.remade.borrow_mut();
+        remade.retain(|(r, _)| {
+            self.flags(*r)
+                .is_some_and(|f| !f.contains(crate::ObjectFlags::PENDING_DELETE))
+        });
+        remade
+            .iter()
+            .map(|(r, _)| *r)
+            .filter(|r| !given.contains(r))
+            .collect()
+    }
+
     /// Applies `patch` as one transaction: every root in `roots` is made
     /// again from the patched files, takes over what its old objects
     /// held, and replaces the old root, which is destroyed. `swap` is
@@ -718,6 +787,9 @@ impl Engine {
     /// so that a full reload has it on record to make again. On `Err`
     /// nothing else has changed: the old objects, files and generation
     /// are as they were, and [`Engine::last_reload_error`] says why.
+    ///
+    /// Roots marked with [`Engine::remake_on_reload`] are made again with
+    /// them; [`ReloadOutcome::roots`] names only the ones given here.
     ///
     /// Call it between frames, outside any batch, with roots made by
     /// [`Engine::create_from_url`] while tracking was on.
@@ -737,22 +809,26 @@ impl Engine {
                 engine: st.generation.get(),
             });
         }
-        let mut plan: Vec<(ObjectId, Request, Rc<str>)> = Vec::with_capacity(roots.len());
+        let marked = self.reload_marked(roots);
+        let mut plan: Vec<(ObjectId, Request, Rc<str>)> =
+            Vec::with_capacity(roots.len() + marked.len());
         for &root in roots {
-            let origin = st
-                .asked
-                .borrow()
-                .get(&root)
-                .filter(|a| matches!(a.request.source, Source::Url(_)))
-                .map(|a| a.request.copy());
-            let path = st.info.borrow().get(&root).map(|i| i.path.clone());
-            match (origin, path) {
-                (Some(o), Some(p)) if self.is_alive(root) => plan.push((root, o, p)),
-                _ => return Err(ReloadError::UnknownRoot(root)),
+            match self.reload_origin(root) {
+                Some((o, p)) => plan.push((root, o, p)),
+                None => return Err(ReloadError::UnknownRoot(root)),
             }
         }
+        // A marked root was one a reload can make again when it was marked,
+        // and stays one while it stands.
+        for &root in &marked {
+            if let Some((o, p)) = self.reload_origin(root) {
+                plan.push((root, o, p));
+            }
+        }
+        let all: Vec<ObjectId> = plan.iter().map(|(root, ..)| *root).collect();
         *st.pending.borrow_mut() = None;
-        if let Some(done) = self.reload_in_place(patch, roots) {
+        if let Some(mut done) = self.reload_in_place(patch, &all) {
+            done.roots.truncate(roots.len());
             self.recount_modules();
             return Ok(done);
         }
@@ -824,7 +900,21 @@ impl Engine {
         phases.mark("scripted");
         for (old_root, new) in &made {
             self.singleton_scope_moved(*old_root, *new);
-            swap(self, *old_root, *new);
+            if roots.contains(old_root) {
+                swap(self, *old_root, *new);
+            }
+            // The mark moves before the application hears of the new root,
+            // which it may mark again or destroy.
+            let told = {
+                let mut remade = st.remade.borrow_mut();
+                remade.iter_mut().find(|(r, _)| r == old_root).map(|m| {
+                    m.0 = *new;
+                    Rc::clone(&m.1)
+                })
+            };
+            if let Some(told) = told {
+                (told.borrow_mut())(self, *old_root, *new);
+            }
         }
         phases.mark("swap");
         // An object that goes on is not told that it is destroyed; one
@@ -860,6 +950,7 @@ impl Engine {
         phases.done();
         let pending = st.pending.borrow();
         let p = pending.as_ref();
+        made.truncate(roots.len());
         Ok(ReloadOutcome {
             generation: patch.generation,
             roots: made,

@@ -597,6 +597,70 @@ fn the_host_swaps_the_roots_before_the_old_ones_go() {
     assert_eq!(r.h.engine.reload_counterpart(old), None);
 }
 
+#[test]
+fn a_root_marked_to_be_made_again_follows_the_ones_the_host_gives() {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    let second = r#"import QtQuick
+Item {
+  objectName: "second"
+  Rectangle { objectName: "card"; width: 10 }
+}
+"#;
+    let mut r = rig(&[("Main", COUNTER), ("Second", second)]);
+    let made = |r: &Rig| {
+        r.h.engine
+            .create_from_url("Second", None, Vec::new())
+            .expect("Second.qml creates")
+    };
+    let window = made(&r);
+    let told = Rc::new(RefCell::new(Vec::new()));
+    let heard = Rc::clone(&told);
+    r.h.engine
+        .remake_on_reload(window, move |e, was, now| {
+            heard
+                .borrow_mut()
+                .push((was, now, e.is_alive(was), e.is_alive(now)));
+        })
+        .unwrap();
+
+    // A value: applied where it stands, and no one is told of a new root.
+    let done = r
+        .edit("Second", &second.replace("width: 10", "width: 20"))
+        .unwrap();
+    assert_eq!(done.roots.len(), 1, "only the roots the host gave");
+    assert_eq!(r.h.num(r.h.find(window, "card"), "width"), 20.0);
+    assert!(told.borrow().is_empty());
+
+    // A signal added: the window's root is made again with the host's.
+    let done = r
+        .edit("Second", &remade(&second.replace("width: 10", "width: 30")))
+        .unwrap();
+    assert_eq!(done.roots.len(), 1, "only the roots the host gave");
+    let (was, now, ..) = told.borrow()[0];
+    assert_eq!(*told.borrow(), vec![(window, now, true, true)]);
+    assert!(!r.h.engine.is_alive(was));
+    assert_eq!(r.h.num(r.h.find(now, "card"), "width"), 30.0);
+
+    // The mark went with it: the signal taken away again.
+    r.edit("Second", second).unwrap();
+    assert_eq!(told.borrow().len(), 2);
+    assert_eq!(told.borrow()[1].0, now);
+    let now = told.borrow()[1].1;
+
+    // Destroyed, it is let go of.
+    r.h.engine.destroy(now);
+    r.edit("Second", &remade(second)).unwrap();
+    assert_eq!(told.borrow().len(), 2);
+
+    // Not one a reload can make: refused while tracking.
+    let plain = r.find("box");
+    assert_eq!(
+        r.h.engine.remake_on_reload(plain, |_, _, _| {}),
+        Err(ReloadError::UnknownRoot(plain))
+    );
+}
+
 const MODEL: &str = r#"import QtQuick
 import QtQml.Models
 Item {
