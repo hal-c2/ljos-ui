@@ -38,6 +38,8 @@ struct PollFd {
 const POLLIN: c_ushort = 0x1;
 const RTLD_NOW: c_int = 0x2;
 const RTLD_NOLOAD: c_int = 0x4;
+/// `G_PRIORITY_DEFAULT`, the priority glib keeps a context's wakeup at.
+const PRIORITY_DEFAULT: c_int = 0;
 
 unsafe extern "C" {
     fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void;
@@ -57,6 +59,7 @@ struct Fns {
     query: unsafe extern "C" fn(Context, c_int, *mut c_int, *mut PollFd, c_int) -> c_int,
     check: unsafe extern "C" fn(Context, c_int, *mut PollFd, c_int) -> c_int,
     dispatch: unsafe extern "C" fn(Context),
+    wakeup: unsafe extern "C" fn(Context),
 }
 
 impl std::fmt::Debug for Fns {
@@ -111,6 +114,7 @@ fn fns() -> Option<&'static Fns> {
                 query: sym(c"g_main_context_query")?,
                 check: sym(c"g_main_context_check")?,
                 dispatch: sym(c"g_main_context_dispatch")?,
+                wakeup: sym(c"g_main_context_wakeup")?,
             })
         }
     })
@@ -127,6 +131,8 @@ const BURST: usize = 8;
 pub(super) struct Glib {
     fns: &'static Fns,
     contexts: Vec<Context>,
+    /// Each context's wakeup descriptor, when it was found.
+    wakeups: Vec<Option<c_int>>,
     fds: Vec<PollFd>,
     /// What the first poll of an iteration found on each of `fds`.
     polled: Vec<c_ushort>,
@@ -172,12 +178,110 @@ impl Glib {
         // SAFETY: acquire is called on contexts glib gave, and a context
         // acquired is never released.
         contexts.retain(|&c| !c.is_null() && unsafe { (fns.acquire)(c) } != 0);
-        (!contexts.is_empty()).then(|| Self {
+        if contexts.is_empty() {
+            return None;
+        }
+        let mut glib = Self {
             fns,
             contexts,
+            wakeups: Vec::new(),
             fds: Vec::new(),
             polled: Vec::new(),
-        })
+        };
+        glib.wakeups = (0..glib.contexts.len())
+            .map(|i| glib.wakeup_of(glib.contexts[i]))
+            .collect();
+        Some(glib)
+    }
+
+    /// The descriptor of `context`'s wakeup, which glib makes ready when
+    /// another thread changes the context (adds a source to it, say) and
+    /// which a check reads: the one descriptor that waking the context
+    /// makes ready and the check after it makes not ready. None when no
+    /// try singles one out; the turns then go by what the checks read.
+    ///
+    /// Each try prepares, queries and checks `context` without waiting, and
+    /// dispatches nothing: a dispatch can send the wakeup again (glib 2.90
+    /// does), so beside a source ready by every check the next try would
+    /// find the wakeup ready already, every time. A source a try's check
+    /// finds ready stays ready to glib, and the first turn dispatches it.
+    ///
+    /// The tries query and check at the default priority or one less
+    /// urgent, never more: glib keeps its wakeup at the default priority,
+    /// and a query at a more urgent one (a high-priority source ready since
+    /// the last try's check, which prepare then reports) leaves it out.
+    fn wakeup_of(&mut self, context: Context) -> Option<c_int> {
+        let f = self.fns;
+        for _ in 0..4 {
+            let mut priority = 0;
+            let mut timeout = -1;
+            // SAFETY: this thread owns `context` (acquired), and every
+            // buffer glib and poll write is as long as they are told.
+            let found = unsafe {
+                (f.prepare)(context, &mut priority);
+                let priority = priority.max(PRIORITY_DEFAULT);
+                self.query(context, priority, &mut timeout);
+                #[cfg(test)]
+                if let Some(hook) = tests::AFTER_QUERY.take() {
+                    hook();
+                }
+                let n = self.fds.len();
+                poll(self.fds.as_mut_ptr(), n as c_ulong, 0);
+                self.polled.clear();
+                self.polled.extend(self.fds.iter().map(|p| p.revents));
+                (f.wakeup)(context);
+                poll(self.fds.as_mut_ptr(), n as c_ulong, 0);
+                let woken: Vec<c_int> = self
+                    .fds
+                    .iter()
+                    .zip(&self.polled)
+                    .filter(|&(p, &was)| was == 0 && p.revents != 0)
+                    .map(|(p, _)| p.fd)
+                    .collect();
+                (f.check)(context, priority, self.fds.as_mut_ptr(), n as c_int);
+                for p in &mut self.fds {
+                    p.revents = 0;
+                }
+                poll(self.fds.as_mut_ptr(), n as c_ulong, 0);
+                match woken[..] {
+                    [fd] if self.fds.iter().any(|p| p.fd == fd && p.revents == 0) => Some(fd),
+                    _ => None,
+                }
+            };
+            if found.is_some() {
+                return found;
+            }
+        }
+        None
+    }
+
+    /// Queries `context`, prepared at `priority`, into `self.fds`.
+    ///
+    /// # Safety
+    /// This thread owns `context`, which was just prepared.
+    unsafe fn query(&mut self, context: Context, priority: c_int, timeout: &mut c_int) {
+        self.fds
+            .resize(self.fds.capacity().max(8), PollFd::default());
+        loop {
+            // SAFETY: the caller's word on `context`; `self.fds` is as long
+            // as glib is told.
+            let n = unsafe {
+                (self.fns.query)(
+                    context,
+                    priority,
+                    timeout,
+                    self.fds.as_mut_ptr(),
+                    self.fds.len() as c_int,
+                )
+            };
+            let n = usize::try_from(n).unwrap_or(0);
+            if n > self.fds.len() {
+                self.fds.resize(n, PollFd::default());
+                continue;
+            }
+            self.fds.truncate(n);
+            break;
+        }
     }
 
     /// Dispatches what is ready, without waiting for anything: what to
@@ -186,6 +290,7 @@ impl Glib {
         let mut wait = Wait::default();
         let now = Instant::now();
         for i in 0..self.contexts.len() {
+            let wakeup = self.wakeups[i];
             let mut left = BURST;
             // The descriptors still ready after the last check, when it
             // dispatched nothing.
@@ -207,8 +312,11 @@ impl Glib {
                     // thread since that check: the next check reads it.
                     // And a check that read something, the wakeup most
                     // likely, may have left out descriptors added since
-                    // the query: the next query has them.
-                    if !read && ready().all(|p| held.contains(&p.fd)) {
+                    // the query: the next query has them. The wakeup ready
+                    // after a check was sent since it, even after two: a
+                    // check reads it every time, so it is never left out.
+                    let woken = || ready().any(|p| Some(p.fd) == wakeup);
+                    if !read && !woken() && ready().all(|p| held.contains(&p.fd)) {
                         wait.fds
                             .extend(self.fds.iter().filter(|p| p.revents == 0).copied());
                         if let Ok(ms @ 1..) = u64::try_from(timeout) {
@@ -241,24 +349,7 @@ impl Glib {
         // glib writes is as long as it is told.
         unsafe {
             (f.prepare)(context, &mut priority);
-            self.fds
-                .resize(self.fds.capacity().max(8), PollFd::default());
-            loop {
-                let n = (f.query)(
-                    context,
-                    priority,
-                    &mut timeout,
-                    self.fds.as_mut_ptr(),
-                    self.fds.len() as c_int,
-                );
-                let n = usize::try_from(n).unwrap_or(0);
-                if n > self.fds.len() {
-                    self.fds.resize(n, PollFd::default());
-                    continue;
-                }
-                self.fds.truncate(n);
-                break;
-            }
+            self.query(context, priority, &mut timeout);
             #[cfg(test)]
             if let Some(hook) = tests::AFTER_QUERY.take() {
                 hook();
@@ -674,6 +765,84 @@ mod tests {
         assert!(!wait.fds.is_empty(), "the wakeup is not waited on");
     }
 
+    /// The context's wakeup, read by a check and sent again before the
+    /// poll after it, is ready after two checks running that dispatched
+    /// nothing, as Chromium's task source is. When the second check read
+    /// a wakeup another thread sent by adding a source, the turn still
+    /// queries again and dispatches that source, rather than waiting
+    /// without the wakeup and without the source.
+    #[test]
+    fn a_wakeup_sent_again_after_every_check_is_not_taken_for_a_source_always_ready() {
+        static POLL: AtomicUsize = AtomicUsize::new(0);
+        static DISPATCHED: AtomicUsize = AtomicUsize::new(0);
+        unsafe extern "C" fn readable(_: Source) -> c_int {
+            let poll_fd = POLL.load(Ordering::SeqCst) as *const PollFd;
+            // SAFETY: the source's descriptor, which lives for good; glib
+            // wrote what the poll found before it checks.
+            c_int::from(unsafe { (*poll_fd).revents } != 0)
+        }
+        unsafe extern "C" fn dispatched(_: Source, _: *mut c_void, _: *mut c_void) -> c_int {
+            DISPATCHED.fetch_add(1, Ordering::SeqCst);
+            0
+        }
+        // SAFETY: glib's functions, as it documents them, on a context of
+        // this test's own.
+        let (context, wakeup) = unsafe {
+            let new: unsafe extern "C" fn() -> Context = sym(c"g_main_context_new").unwrap();
+            let wakeup: unsafe extern "C" fn(Context) = sym(c"g_main_context_wakeup").unwrap();
+            (new(), wakeup)
+        };
+        let mut glib = Glib::owning(vec![context]).expect("libcef's glib is in the process");
+        let (socket, other) = UnixStream::pair().unwrap();
+        (&other).write_all(&[1]).unwrap();
+        // SAFETY: libcef's glib is in the process.
+        let (source, poll_fd) =
+            unsafe { fd_source(socket.as_raw_fd(), readable, Some(dispatched)) };
+        POLL.store(std::ptr::from_ref(poll_fd) as usize, Ordering::SeqCst);
+        let (added, into) = (source as usize, context as usize);
+        // From another thread, as GDBus's worker wakes the context.
+        let wake = move || {
+            std::thread::spawn(move || {
+                // SAFETY: waking a context is thread-safe.
+                unsafe { wakeup(into as Context) }
+            })
+            .join()
+            .unwrap();
+        };
+        // SAFETY: a context glib made, which lives as long as the test.
+        unsafe { wakeup(context) };
+        // The first check reads that wakeup; another comes before the
+        // poll after it.
+        AFTER_CHECK.set(Some(Box::new(move || {
+            wake();
+            // The second iteration's query is before the source is added,
+            // and its check reads the wakeup the attach sent; another
+            // comes before the poll after it.
+            AFTER_QUERY.set(Some(Box::new(move || {
+                std::thread::spawn(move || {
+                    // SAFETY: attaching a source to a context is thread-safe.
+                    unsafe {
+                        let attach: unsafe extern "C" fn(Source, Context) -> u32 =
+                            sym(c"g_source_attach").unwrap();
+                        attach(added as Source, into as Context);
+                    }
+                })
+                .join()
+                .unwrap();
+                AFTER_CHECK.set(Some(Box::new(wake)));
+            })));
+        })));
+        let wait = glib.turn();
+        assert_eq!(
+            DISPATCHED.load(Ordering::SeqCst),
+            1,
+            "the source added was not dispatched"
+        );
+        assert_eq!(wait.due, None);
+        assert!(!wait.fds.is_empty(), "the wakeup is not waited on");
+        drop((socket, other));
+    }
+
     /// A descriptor ready after every check, which no source of the
     /// context dispatches (Chromium's task source), is left out of the
     /// wait, so it does not end at once, while the context's wakeup stays.
@@ -715,5 +884,111 @@ mod tests {
         assert!(!wait.block(woken.as_raw_fd()), "the wait ended at once");
         assert!(started.elapsed() >= Duration::from_millis(250));
         drop(stuck);
+    }
+
+    /// The wakeup is found beside a descriptor ready all along, whose
+    /// source is ready by every check: waking the context makes only the
+    /// wakeup ready, and the check makes it not ready again. That source
+    /// is left ready while the wakeup is looked for, and the first turn
+    /// dispatches it.
+    #[test]
+    fn the_wakeup_is_found_beside_a_source_ready_all_along() {
+        found_beside_a_ready_source(PRIORITY_DEFAULT);
+    }
+
+    /// So it is beside a high-priority source ready all along, which
+    /// prepare reports from the second try on: glib's wakeup, at the
+    /// default priority, is still queried.
+    #[test]
+    fn the_wakeup_is_found_beside_a_high_priority_source_ready_all_along() {
+        found_beside_a_ready_source(-100);
+    }
+
+    fn found_beside_a_ready_source(priority: c_int) {
+        thread_local! {
+            static DISPATCHED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+        }
+        unsafe extern "C" fn always(_: Source) -> c_int {
+            1
+        }
+        unsafe extern "C" fn kept(_: Source, _: *mut c_void, _: *mut c_void) -> c_int {
+            DISPATCHED.set(DISPATCHED.get() + 1);
+            1
+        }
+        let (ready, other) = UnixStream::pair().unwrap();
+        (&other).write_all(&[1]).unwrap();
+        // SAFETY: glib's functions, as it documents them, on a context of
+        // this test's own.
+        let context = unsafe {
+            let new: unsafe extern "C" fn() -> Context = sym(c"g_main_context_new").unwrap();
+            let attach: unsafe extern "C" fn(Source, Context) -> u32 =
+                sym(c"g_source_attach").unwrap();
+            let set_priority: unsafe extern "C" fn(Source, c_int) =
+                sym(c"g_source_set_priority").unwrap();
+            let context = new();
+            let (source, _) = fd_source(ready.as_raw_fd(), always, Some(kept));
+            set_priority(source, priority);
+            attach(source, context);
+            context
+        };
+        let mut glib = Glib::owning(vec![context]).expect("libcef's glib is in the process");
+        // The last try's query left the context's descriptors: the
+        // source's and glib's own wakeup.
+        let others: Vec<c_int> = glib
+            .fds
+            .iter()
+            .map(|p| p.fd)
+            .filter(|&fd| fd != ready.as_raw_fd())
+            .collect();
+        assert_eq!(others.len(), 1, "descriptors {:?}", glib.fds);
+        assert_eq!(glib.wakeups, vec![Some(others[0])]);
+        assert_eq!(
+            DISPATCHED.get(),
+            0,
+            "a source was dispatched while the wakeup was looked for"
+        );
+        glib.turn();
+        assert!(
+            DISPATCHED.get() > 0,
+            "the first turn did not dispatch the source ready by its check"
+        );
+        drop((ready, other));
+    }
+
+    /// Wakes `context` and arms itself again, so every query after it is
+    /// followed by a wakeup already sent before the poll.
+    fn wake_after_every_query(context: usize) {
+        // SAFETY: waking a context is thread-safe, and the test's context
+        // lives as long as it.
+        unsafe {
+            let wakeup: unsafe extern "C" fn(Context) = sym(c"g_main_context_wakeup").unwrap();
+            wakeup(context as Context);
+        }
+        AFTER_QUERY.set(Some(Box::new(move || wake_after_every_query(context))));
+    }
+
+    /// When the context is woken before every try polls, waking it again
+    /// makes nothing newly ready, so no descriptor is singled out: the
+    /// wakeup is not known, and a turn still waits on what glib asks.
+    #[test]
+    fn no_wakeup_is_singled_out_when_every_try_finds_it_ready_already() {
+        // SAFETY: glib's functions, as it documents them, on a context of
+        // this test's own.
+        let context = unsafe {
+            let new: unsafe extern "C" fn() -> Context = sym(c"g_main_context_new").unwrap();
+            new()
+        };
+        AFTER_QUERY.set(Some(Box::new(move || {
+            wake_after_every_query(context as usize);
+        })));
+        let mut glib = Glib::owning(vec![context]).expect("libcef's glib is in the process");
+        AFTER_QUERY.take();
+        assert_eq!(glib.wakeups, vec![None]);
+        let wait = glib.turn();
+        assert!(
+            !wait.fds.is_empty(),
+            "the context's wakeup is not waited on"
+        );
+        assert_eq!(wait.due, None);
     }
 }
