@@ -148,6 +148,8 @@ pub enum Code {
     UnknownSignal,
     /// Two objects of one component share an `id`.
     DuplicateId,
+    /// One object declares two members of one name, as Qt refuses.
+    DuplicateName,
     /// A `property alias` points at an id the component does not have.
     UnknownAliasTarget,
     /// A free name in a script that nothing in reach has.
@@ -255,6 +257,7 @@ impl Code {
             Code::UnknownProperty => "unknown-property",
             Code::UnknownSignal => "unknown-signal",
             Code::DuplicateId => "duplicate-id",
+            Code::DuplicateName => "duplicate-name",
             Code::UnknownAliasTarget => "unknown-alias-target",
             Code::UnresolvedName => "unresolved-name",
             Code::Semantic => "semantic",
@@ -307,6 +310,7 @@ impl From<qml_front::Code> for Code {
             qml_front::Code::UnknownProperty => Code::UnknownProperty,
             qml_front::Code::UnknownSignal => Code::UnknownSignal,
             qml_front::Code::DuplicateId => Code::DuplicateId,
+            qml_front::Code::DuplicateName => Code::DuplicateName,
             qml_front::Code::UnknownAliasTarget => Code::UnknownAliasTarget,
             qml_front::Code::UnresolvedName => Code::UnresolvedName,
             // A kind the front end has that this does not name yet.

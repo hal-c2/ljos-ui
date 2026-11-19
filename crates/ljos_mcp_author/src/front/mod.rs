@@ -25,6 +25,7 @@
 //! | `unknown-property` | error, warning | A binding names a property the object's type definitely does not have. Held back where the type chain is not fully known, including a component whose file did not parse whole. A warning where only Ljós's own table describes the type, as the compiler's is: that table may lack what Qt has. |
 //! | `unknown-signal` | error, warning | A handler (`onFoo`) for a signal the object's type definitely does not have (same holds and same severity as above). |
 //! | `duplicate-id` | error | Two objects of one component share an `id`. |
+//! | `duplicate-name` | error | One object declares two properties, two signals or two functions of one name, or a signal or function named as one of its properties' change signals (`pChanged`). A property and a method may share a name. |
 //! | `unknown-alias-target` | error | A `property alias` points at an id the component does not have. |
 //! | `unresolved-name` | warning | A free name in a binding that QML's lookup order cannot find, and that nothing else in the project provides. Warning, not error: a delegate's model role or a name the creating component supplies cannot be seen from one file. |
 //! | `semantic` | error | Any other error the front end's analysis raises that has no code of its own yet; the message says what. |
