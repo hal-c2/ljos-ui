@@ -1,11 +1,12 @@
 //! What the user does with the pointer, the keyboard and an input method.
 
 use cucumber::{given, when};
+use gherkin::Step;
 
 use crate::backend::{OtherButton, PointerStep, TouchFrame, WheelBy};
 use crate::world::LjosWorld;
 
-use super::StepResult;
+use super::{StepResult, docstring};
 
 #[when(regex = r#"^the user clicks the "([^"]+)" "([^"]+)"$"#)]
 fn user_clicks(w: &mut LjosWorld, role: String, name: String) -> StepResult {
@@ -139,6 +140,37 @@ fn two_fingers(steps: u32, ends: impl Fn(f64) -> [(f64, f64); 2]) -> Vec<TouchFr
     let mut frames = vec![start[..1].to_vec(), start];
     frames.extend((1..=steps).map(|k| frame(f64::from(k) / f64::from(steps))));
     frames
+}
+
+/// One frame a line: `none`, or the fingers down then as `id at x, y`
+/// joined by `;`. Ids are whole numbers from 0.
+fn finger_frames(text: &str) -> Result<Vec<TouchFrame>, String> {
+    let finger = |f: &str| -> Result<(u32, f64, f64), String> {
+        let bad = || format!("{f:?} is not `id at x, y`");
+        let (id, at) = f.split_once(" at ").ok_or_else(bad)?;
+        let (x, y) = at.split_once(',').ok_or_else(bad)?;
+        let n = |s: &str| s.trim().parse::<f64>().map_err(|_| bad());
+        Ok((id.trim().parse().map_err(|_| bad())?, n(x)?, n(y)?))
+    };
+    text.lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .map(|l| {
+            if l == "none" {
+                Ok(Vec::new())
+            } else {
+                l.split(';').map(|f| finger(f.trim())).collect()
+            }
+        })
+        .collect()
+}
+
+// Fingers as written, frame by frame; every finger is lifted after the
+// last frame.
+#[when(regex = r"^the user's fingers go through the frames:$")]
+fn user_finger_frames(w: &mut LjosWorld, step: &Step) -> StepResult {
+    let frames = finger_frames(&docstring(step)?)?;
+    w.each(|b| b.input()?.touch_frames(&frames))
 }
 
 // At most 4 pixels a finger a frame, as a quick pinch goes.
