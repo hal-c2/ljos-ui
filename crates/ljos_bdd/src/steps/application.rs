@@ -82,19 +82,24 @@ fn file_opened_in_window(w: &mut LjosWorld, name: String) -> StepResult {
 
 #[when(regex = r#"^the application puts an object of "([^"]+\.qml)" in the window of "([^"]+)"$"#)]
 fn put_in_window(w: &mut LjosWorld, name: String, old: String) -> StepResult {
-    w.each(|b| b.application()?.put_in_window(&name, &old))
+    w.each(|b| {
+        b.application()?
+            .put_in_window(&name, &old)?
+            .map_err(|why| BackendError::Failed(format!("the window refused {name}: {why}")))
+    })
 }
 
 #[then(
     regex = r#"^the application cannot put an object of "([^"]+\.qml)" in the window of "([^"]+)"$"#
 )]
 fn cannot_put_in_window(w: &mut LjosWorld, name: String, old: String) -> StepResult {
-    w.each(|b| match b.application()?.put_in_window(&name, &old) {
+    // Only the window refusing it counts: an object that could not be
+    // made, its file missing say, was never offered to the window.
+    w.each(|b| match b.application()?.put_in_window(&name, &old)? {
         Ok(()) => Err(BackendError::Failed(format!(
             "an object of {name} was put in the window of {old:?}"
         ))),
-        Err(BackendError::Failed(_)) => Ok(()),
-        Err(e) => Err(e),
+        Err(_) => Ok(()),
     })
 }
 

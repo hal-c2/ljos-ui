@@ -977,8 +977,14 @@ pub trait Application: Backend {
     }
 
     /// The application makes a root of the loaded file `name` and puts it
-    /// in the window of the root `old`, which goes.
-    fn put_in_window(&mut self, _name: &str, _old: &str) -> Result<()> {
+    /// in the window of the root `old`, which goes. The inner error is the
+    /// window refusing the root, with why; the outer one is the root not
+    /// made, or the step not done, which no scenario expects.
+    fn put_in_window(
+        &mut self,
+        _name: &str,
+        _old: &str,
+    ) -> Result<std::result::Result<(), String>> {
         Err(BackendError::NotImplemented("another root in a window"))
     }
 
