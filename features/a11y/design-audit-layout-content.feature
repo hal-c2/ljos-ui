@@ -1086,11 +1086,30 @@ Feature: The design audit checks layout and content in the live tree
           Item {
             anchors.fill: parent
             z: 1
-            TapHandler {}
+            TapHandler { gesturePolicy: TapHandler.WithinBounds }
           }
         }
         """
       Then the design audit reports "layout-occluded" at line 6
+
+    Scenario: A button under a layer whose tap and drag take the press only once it moves
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Rectangle {
+          width: 320; height: 200
+          color: "white"
+          Button { x: 20; y: 20; text: "Press me" }
+          Item {
+            anchors.fill: parent
+            z: 1
+            TapHandler {}
+            DragHandler {}
+          }
+        }
+        """
+      Then the design audit does not report "layout-occluded"
 
     Scenario: A narrow splitter the arrow keys move
       Given the QML:

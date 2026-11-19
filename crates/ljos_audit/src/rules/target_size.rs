@@ -19,9 +19,11 @@ pub(crate) fn check(cx: &mut Cx) {
         // A link sits in a line of text, and what a scroll bar does the
         // wheel, the keys and a drag of the content do too: neither is
         // held to the size (WCAG 2.5.8, "inline" and "equivalent"). A
-        // splitter that Tab stops at has its equivalent in the keys that
-        // move it, and is drawn narrow so as not to take presses from what
-        // is beside it.
+        // splitter that Tab stops at has its equivalent in the keys, and is
+        // drawn narrow so as not to take presses from what is beside it.
+        // The Tab stop stands for the keys: what a `Keys` handler does
+        // cannot be read, and a splitter is only made a Tab stop to be
+        // moved from the keyboard.
         let equivalent = matches!(data.qt_role, Role::Link | Role::ScrollBar)
             || (data.qt_role == Role::Splitter
                 && cx.item(*key).is_some_and(|i| on_tab(cx.engine, i)));
