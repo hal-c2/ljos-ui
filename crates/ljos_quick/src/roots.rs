@@ -440,12 +440,18 @@ impl RootSwaps {
                 // A holder whose window is shown still, as it let go of it
                 // for `skipped`, goes once `new` is shown, and keeps that
                 // window if `new` is not. One that never got the window
-                // goes now, as what was skipped does.
+                // goes now, as what was skipped does. `skipped` is that
+                // holder when it let go of the window to be shown itself:
+                // it stands for nothing then, so `holder` is not it.
                 let keeps = waiting.let_go_by == Some(skipped);
-                if let Some(h) = holder.filter(|h| *h != skipped || keeps)
-                    && !waiting.retire.contains(&h)
-                {
-                    waiting.retire.push(h);
+                let going = holder
+                    .filter(|h| *h != skipped || keeps)
+                    .into_iter()
+                    .chain(keeps.then_some(skipped));
+                for h in going {
+                    if !waiting.retire.contains(&h) {
+                        waiting.retire.push(h);
+                    }
                 }
                 waiting.retire.retain(|r| *r != new);
                 waiting.refused = Some(new);
