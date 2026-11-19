@@ -479,6 +479,23 @@ fn a_window_a_reload_made_again_keeps_the_size_the_window_has() {
 }
 
 #[test]
+fn a_root_fitted_to_one_that_is_gone_keeps_its_own_size() {
+    let e = engine_with_windows();
+    let (_host, old) = shown_at_300_by_240(&e);
+    let window = window(&e, Some(200.0), None);
+    let item = make::<Item>(&e, None);
+    e.set(item, Item::WIDTH, 50.0).unwrap();
+    e.set(item, Item::HEIGHT, 60.0).unwrap();
+    let own = (size(&e, window), size(&e, item));
+    assert!(e.destroy_now(old));
+    // A root that is gone has no size to give either of them.
+    fit(&e, old, window);
+    fit(&e, old, item);
+    assert_eq!((size(&e, window), size(&e, item)), own);
+    assert_eq!(own.1, (50.0, 60.0));
+}
+
+#[test]
 fn a_window_fitted_again_takes_the_size_the_window_has_then() {
     let e = engine_with_windows();
     let (_host, old) = shown_at_300_by_240(&e);
