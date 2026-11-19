@@ -265,9 +265,13 @@ struct Pending {
     /// that name an object of a root made after it.
     later: Vec<(ObjectId, PropIndex, Carried)>,
     /// A root's initial properties that name an object of a root made
-    /// after it, given once every root stands: (new root, them, as how).
-    later_given: Vec<(ObjectId, Vec<(String, Value)>, Initial)>,
+    /// after it, given once every root stands.
+    later_given: Vec<LaterGiven>,
 }
+
+/// A root made again, the initial properties that name an object of a
+/// root made after it, and how the root was asked for.
+type LaterGiven = (ObjectId, Vec<(String, Value)>, Initial);
 
 struct Overlay {
     installed: Rc<dyn ComponentSource>,
