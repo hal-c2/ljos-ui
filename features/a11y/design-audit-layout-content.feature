@@ -1139,7 +1139,7 @@ Feature: The design audit checks layout and content in the live tree
           Rectangle { width: 280; height: parent.height; color: "white" }
         }
         """
-      Then the design audit reports "a11y-target-size" at line 9
+      Then the design audit reports "a11y-target-size" at line 8
 
   Rule: Content, as the window says it
 

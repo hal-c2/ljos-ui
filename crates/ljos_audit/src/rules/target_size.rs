@@ -2,16 +2,30 @@
 
 use ljos_a11y::Role;
 
+use ljos_engine::{Engine, ObjectId};
+use ljos_quick::Item;
+
 use crate::cx::{Cx, acted_on, node_words, trim};
+
+fn on_tab(engine: &Engine, item: ObjectId) -> bool {
+    engine
+        .untrack(|| engine.read(item, Item::ACTIVE_FOCUS_ON_TAB.index))
+        .to_boolean()
+}
 
 pub(crate) fn check(cx: &mut Cx) {
     let least = cx.options.target_size;
     for (key, _, data) in cx.nodes().iter() {
         // A link sits in a line of text, and what a scroll bar does the
         // wheel, the keys and a drag of the content do too: neither is
-        // held to the size (WCAG 2.5.8, "inline" and "equivalent").
-        if !acted_on(data) || data.disabled || matches!(data.qt_role, Role::Link | Role::ScrollBar)
-        {
+        // held to the size (WCAG 2.5.8, "inline" and "equivalent"). A
+        // splitter that Tab stops at has its equivalent in the keys that
+        // move it, and is drawn narrow so as not to take presses from what
+        // is beside it.
+        let equivalent = matches!(data.qt_role, Role::Link | Role::ScrollBar)
+            || (data.qt_role == Role::Splitter
+                && cx.item(*key).is_some_and(|i| on_tab(cx.engine, i)));
+        if !acted_on(data) || data.disabled || equivalent {
             continue;
         }
         let (w, h) = (
