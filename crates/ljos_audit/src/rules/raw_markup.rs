@@ -7,16 +7,16 @@
 //! does not know. Plain text (and automatic text that is not taken as
 //! rich) prints every tag: one rich text knows (`<b>`) was meant to be
 //! read, and one with attributes or a closing tag (`<task-result id="7">`)
-//! is a program's; a lone `<date>` is a placeholder in prose, and is
-//! shown as it was written. Markdown text is left out; it reads all of
+//! is a program's, and so is one that is the whole text (a row reading
+//! `<default>` shows the program's stand-in, not a value); a `<date>`
+//! within a sentence is a placeholder in prose, shown as it was written. Markdown text is left out; it reads all of
 //! it. A field one types into is not looked at.
 
 use super::controls::shown_texts;
 use crate::cx::Cx;
 
-/// `Text.PlainText`, `Text.RichText`, `Text.AutoText`, `Text.MarkdownText`
+/// `Text.RichText`, `Text.AutoText`, `Text.MarkdownText`
 /// and `Text.StyledText`, as Qt documents the enumeration.
-const PLAIN: i64 = 0;
 const RICH: i64 = 1;
 const AUTO: i64 = 2;
 const MARKDOWN: i64 = 3;
@@ -86,8 +86,8 @@ const HTML: &[&str] = &[
 /// word.
 struct Tag<'a> {
     name: &'a str,
-    /// Its attributes, its closing tag or its own `/>` say it is markup,
-    /// not a word in angle brackets.
+    /// Its attributes, its closing tag, its own `/>`, or its being the
+    /// whole text say it is markup, not a word in angle brackets.
     markup: bool,
 }
 
@@ -123,7 +123,11 @@ fn tags(text: &str) -> impl Iterator<Item = Tag<'_>> {
         let attrs = after.starts_with(' ') && after.contains('>') && after.contains('=');
         (closes || attrs).then(|| Tag {
             name,
-            markup: closing || selfclosing || attrs || text.contains(&format!("</{name}>")),
+            markup: closing
+                || selfclosing
+                || attrs
+                || text.contains(&format!("</{name}>"))
+                || text.trim() == format!("<{name}>"),
         })
     })
 }
@@ -204,6 +208,8 @@ mod tests {
     #[test]
     fn markup_shown_as_characters_is_found() {
         assert!(shown_markup("<default>", RICH).is_some());
+        assert!(shown_markup("<default>", AUTO).is_some());
+        assert!(shown_markup(" <default> ", 0).is_some());
         assert!(shown_markup("<b>Done</b> for <date>", AUTO).is_some());
         assert!(shown_markup("<task-result id=\"7\">Done</task-result>", 0).is_some());
         assert!(shown_markup("<task-result>Done</task-result>", AUTO).is_some());
@@ -228,7 +234,6 @@ mod tests {
             "2 ** 8 = 256",
             "It's a `single backtick",
             "<- back",
-            "<default>",
             "Fix works on a maintenance/<date> branch",
         ] {
             assert_eq!(shown_markup(t, AUTO), None, "{t}");
