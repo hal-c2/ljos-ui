@@ -21,6 +21,12 @@ use skrifa::{FontRef, MetadataProvider};
 /// Liberation Sans Regular (SIL OFL 1.1), the font `ljos_text` bundles.
 const FONT: &[u8] = include_bytes!("../../ljos_text/fonts/LiberationSans-Regular.ttf");
 
+/// Ljos Color Test (features/text/fonts, made by make-color-test.py there): a
+/// colour bitmap font, as Noto Color Emoji is. Glyph 1 is a PNG of 20 by 20
+/// at 20 pixels per em, red above and blue below, 16 pixels above the
+/// baseline, with no outline.
+const COLOR_FONT: &[u8] = include_bytes!("../../../features/text/fonts/LjosColorTest-Regular.ttf");
+
 const WHITE_BG: RasterConfig = RasterConfig {
     background: Rgba::WHITE,
     text: TextMode::Skip,
@@ -58,6 +64,28 @@ fn run(text: &str, size: f32, baseline: f32) -> GlyphRun {
         f64::from(baseline + size),
     );
     GlyphRun::new(font(), size, glyphs, baseline, bounds)
+}
+
+fn color_font() -> FontData {
+    static DATA: OnceLock<FontData> = OnceLock::new();
+    DATA.get_or_init(|| FontData::new(Blob::new(Arc::new(COLOR_FONT)), 0))
+        .clone()
+}
+
+/// The colour glyph, once, with its origin on `baseline`.
+fn color_run(size: f32, baseline: f32) -> GlyphRun {
+    let glyphs = vec![PositionedGlyph {
+        id: 1,
+        x: 0.0,
+        y: baseline,
+    }];
+    let bounds = Rect::new(
+        -f64::from(size),
+        f64::from(baseline - size * 1.5),
+        f64::from(size * 2.0),
+        f64::from(baseline + size),
+    );
+    GlyphRun::new(color_font(), size, glyphs, baseline, bounds)
 }
 
 struct Scene {
@@ -353,6 +381,54 @@ fn r_draws_rotated_text() {
     let (x0, y0, x1, y1) = ink_box(&img, 128).unwrap();
     // An upright stem became a lying one.
     assert!(x1 - x0 > 20 && y1 - y0 < 8, "{:?}", (x0, y0, x1, y1));
+}
+
+/// A colour glyph is its picture, whatever the text's colour: a white
+/// text's emoji is not white.
+fn color_scene(size: f32, colour: Rgba, opacity: f32) -> Scene {
+    let mut s = Scene::new(60.0, 60.0);
+    let n = s.node(None, 0.0, 0.0, 60.0, 60.0);
+    s.tree.set_opacity(n, opacity);
+    s.paint(n, |b| {
+        b.glyphs(
+            Arc::new(color_run(size, 0.0)),
+            Vec2::new(10.0, 30.0),
+            colour,
+            Decorations::default(),
+        );
+    });
+    s
+}
+
+#[test]
+fn r_draws_colour_glyphs_as_their_pictures() {
+    for colour in [Rgba::BLACK, Rgba::WHITE, Rgba::TRANSPARENT] {
+        let img = color_scene(20.0, colour, 1.0).render(1.0);
+        // The picture: 20 by 20 from the origin's x, its top 16 above the
+        // baseline at row 30.
+        assert_eq!(img.pixel(19, 16), [255, 0, 0, 255], "{colour:?}");
+        assert_eq!(img.pixel(19, 31), [0, 0, 255, 255], "{colour:?}");
+        assert_eq!(img.pixel(19, 13), [255, 255, 255, 255], "{colour:?}");
+        assert_eq!(img.pixel(19, 34), [255, 255, 255, 255], "{colour:?}");
+        assert_eq!(img.pixel(9, 20), [255, 255, 255, 255], "{colour:?}");
+        assert_eq!(img.pixel(30, 20), [255, 255, 255, 255], "{colour:?}");
+    }
+    // Scaled with the text, and with the device pixel ratio.
+    let img = color_scene(40.0, Rgba::BLACK, 1.0).render(1.0);
+    assert_eq!(img.pixel(29, 0), [255, 0, 0, 255]);
+    assert_eq!(img.pixel(29, 37), [0, 0, 255, 255]);
+    assert_eq!(img.pixel(29, 40), [255, 255, 255, 255]);
+    let img = color_scene(20.0, Rgba::BLACK, 1.0).render(2.0);
+    assert_eq!(img.pixel(38, 30), [255, 0, 0, 255]);
+    assert_eq!(img.pixel(38, 66), [0, 0, 255, 255]);
+    assert_eq!(img.pixel(38, 69), [255, 255, 255, 255]);
+}
+
+#[test]
+fn colour_glyph_ink_is_its_picture() {
+    let boxes = glyph_ink_bounds(&color_run(20.0, 30.0));
+    let b = boxes[0].expect("a colour glyph has ink");
+    assert_eq!((b.x0, b.y0, b.x1, b.y1), (0.0, 14.0, 20.0, 34.0));
 }
 
 #[cfg(feature = "b0")]
@@ -887,6 +963,38 @@ mod b0 {
             assert!((126..=129).contains(&v.color.a()), "{:?}", v.color);
             assert!((126..=129).contains(&v.color.r()), "{:?}", v.color);
             assert_eq!((v.color.g(), v.color.b()), (0, 0));
+        }
+    }
+
+    /// A colour glyph is a picture: one textured quad over the picture's
+    /// box, in white so the text's colour does not tint it, faded by the
+    /// node's opacity alone.
+    #[test]
+    fn b0_draws_colour_glyphs_as_pictures() {
+        for scale in [1.0, 2.0] {
+            let mut s = color_scene(20.0, Rgba::BLACK, 0.5);
+            let ctx = Context::default();
+            let mut be = EpaintBackend::new();
+            let (shapes, stats) = frame(&mut s, &mut be, &ctx, scale);
+            assert_eq!(stats.warnings, 0);
+            let quads: Vec<_> = shapes
+                .iter()
+                .filter_map(|c| match &c.shape {
+                    Shape::Mesh(m) => Some(m),
+                    _ => None,
+                })
+                .flat_map(|m| m.vertices.as_chunks::<4>().0.iter())
+                .collect();
+            assert_eq!(quads.len(), 1, "scale {scale}: one picture, no outline");
+            let (tl, br) = (quads[0][0], quads[0][2]);
+            assert_eq!(
+                (tl.pos.x, tl.pos.y, br.pos.x, br.pos.y),
+                (10.0, 14.0, 30.0, 34.0)
+            );
+            for v in quads[0] {
+                assert!((126..=129).contains(&v.color.a()), "{:?}", v.color);
+                assert_eq!(v.color.r(), v.color.a(), "{:?}", v.color);
+            }
         }
     }
 
