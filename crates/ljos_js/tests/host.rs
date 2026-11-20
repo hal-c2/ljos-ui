@@ -1165,6 +1165,72 @@ fn a_dispatch_that_keeps_allocating_leaves_room_for_the_rest() {
     assert_eq!(other.unwrap(), (2 * 1024 * 1024) as f64);
 }
 
+#[test]
+fn a_promise_job_that_keeps_allocating_leaves_room_for_the_rest() {
+    let limit = 16 * 1024 * 1024;
+    let host = JsHost::new(JsConfig {
+        memory_limit: Some(limit),
+        ..JsConfig::default()
+    })
+    .unwrap();
+    let slice = Slice {
+        soft: Duration::from_secs(5),
+        hard: Duration::from_secs(10),
+    };
+    host.enter("queue", slice, |s| {
+        s.eval::<(), _>(
+            "globalThis.hog = []; globalThis.why = undefined; \
+             Promise.resolve() \
+                 .then(() => { for (;;) hog.push(new Array(100).fill(1)) }) \
+                 .catch(e => { why = String(e) })",
+        )
+    })
+    .unwrap();
+    let pumped = host.pump_jobs(Instant::now() + Duration::from_secs(5));
+    assert!(pumped.faults.is_empty(), "{:?}", pumped.faults);
+    // A callback that throws rejects its promise rather than failing the
+    // job, so the refusal reaches the script, not the pump.
+    let why = host
+        .enter("why", slice, |s| s.eval::<String, _>("String(why)"))
+        .unwrap();
+    assert!(why.contains("out of memory") || why == "null", "{why}");
+    let held = host.heap_bytes();
+    assert!(held < limit / 8 * 7, "the job holds {held} of {limit}");
+    let other = host.enter("other", slice, |s| {
+        s.eval::<f64, _>("'x'.repeat(2 * 1024 * 1024).length")
+    });
+    assert_eq!(other.unwrap(), (2 * 1024 * 1024) as f64);
+}
+
+#[test]
+fn an_error_thrown_after_a_caught_refusal_is_the_scripts_own() {
+    let host = JsHost::new(JsConfig {
+        memory_limit: Some(16 * 1024 * 1024),
+        ..JsConfig::default()
+    })
+    .unwrap();
+    let slice = Slice {
+        soft: Duration::from_secs(5),
+        hard: Duration::from_secs(10),
+    };
+    let err = host
+        .enter("caught", slice, |s| {
+            s.eval::<(), _>(
+                "let hog = []; \
+                 try { for (;;) hog.push(new Array(100).fill(1)) } catch (e) {} \
+                 hog = null; \
+                 throw new TypeError('load failed')",
+            )
+        })
+        .unwrap_err();
+    match err {
+        JsFault::JsException { message, .. } => {
+            assert!(message.contains("load failed"), "{message}")
+        }
+        other => panic!("told as {other:?}"),
+    }
+}
+
 /// A script that calls itself `n` deep: `n`, or -1 once a RangeError
 /// says the stack ran out.
 fn recurse(n: u32) -> String {
