@@ -228,10 +228,11 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
         self.layer.is_some()
     }
 
-    /// The files a user's directory holds: QML and JavaScript. Its other
-    /// files (a theme) are not compiled.
+    /// The files a user's directory holds: QML, JavaScript and the
+    /// `qmldir` that declares a module only the user has. Its other files
+    /// (a theme) are not compiled.
     fn users_file(name: &str) -> bool {
-        name.ends_with(".qml") || is_script(name)
+        name.ends_with(".qml") || is_script(name) || name.rsplit('/').next() == Some("qmldir")
     }
 
     /// Reads the user's directory again over the application's files.
@@ -741,6 +742,10 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
         // A directory an alias does not name now is none of the project's.
         let text = match self.mounts.iter().find(|m| path.starts_with(&m.dir)) {
             Some(_) => self.active_mounts().find_map(|m| m.key_of(path))?,
+            // A user's module is named from the modules' directory.
+            None if self.layer.is_some() => {
+                self.layer.as_ref().and_then(|l| l.dir.name_of(path).ok())?
+            }
             None => {
                 let relative = self
                     .roots
@@ -768,6 +773,9 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
         };
         if let Some(path) = self.mounts.iter().find_map(|m| m.path_of(&name)) {
             return Some(path);
+        }
+        if let Some(layer) = &self.layer {
+            return Some(layer.dir.path_of(&name));
         }
         let mut paths = self.roots.iter().map(|root| root.join(&name));
         let first = paths.next()?;

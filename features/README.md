@@ -495,6 +495,8 @@ their sources; the user's directory is a directory on the real disk. The steps c
 |---|---|
 | `Given the user's file "X":` + doc string | the user's directory has the file, before the application runs |
 | `Given the user's file "X" links to a file outside the user's directory` | the file is a link that leads out of the directory |
+| `Given the application keeps its user's modules in "qml"` | the directory in the user's whose files are named as on the application's import path (`UserQml::modules`): `qml/Lib/Badge.qml` is `Lib/Badge.qml`, and hides a file of that name beside the directory; give it before the application runs |
+| `Given the application reads its user's "theme.json" itself` | the user's `theme.json` is the application's to read, not a theme of `Ljos.Design` (`UserQml::theme(false)`): it is neither applied nor watched, and a save of it waits for nothing; give it before the application runs |
 | `When the application runs "Main.qml" built ahead, with the user's directory over it` | the scenario's files built ahead (`build::Options::with_sources`), run with the user's directory over them; the root is made of the entry in a window of its own |
 | `When the application runs "Main.qml" built ahead from an older "X.qml", with the user's directory over it:` + doc string | the same, with `X.qml` compiled from the doc string while the pack carries the scenario's text of it, as a build that was not redone after a change |
 | `When the application runs "App.qml" built ahead in a window of its own, with the user's directory over it` | the same, of every file given so far, with the root made of the entry with no parent and shown in a window of its own, as an application's first window is |

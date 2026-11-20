@@ -35,6 +35,16 @@ fn user_saves_link_out(w: &mut LjosWorld, name: String) -> StepResult {
     w.each(|b| b.application()?.user_qml_link_out(&name))
 }
 
+#[given(regex = r#"^the application keeps its user's modules in "([^"]+)"$"#)]
+fn keeps_modules(w: &mut LjosWorld, dir: String) -> StepResult {
+    w.each(|b| b.application()?.user_qml_modules(&dir))
+}
+
+#[given(regex = r#"^the application reads its user's "theme\.json" itself$"#)]
+fn reads_own_theme(w: &mut LjosWorld) -> StepResult {
+    w.each(|b| b.application()?.user_qml_own_theme())
+}
+
 #[when("the user's directory is removed and made again")]
 fn user_dir_made_again(w: &mut LjosWorld) -> StepResult {
     w.each(|b| b.application()?.user_qml_dir_made_again())
@@ -49,7 +59,11 @@ fn user_removes(w: &mut LjosWorld, name: String) -> StepResult {
     regex = r#"^the application runs "([^"]+\.qml)" built ahead, with the user's directory over it$"#
 )]
 fn runs_with_user_qml(w: &mut LjosWorld, entry: String) -> StepResult {
-    w.each(|b| b.application()?.run_with_user_qml(&entry, &[], true))
+    let files = w.staged()?;
+    w.each(|b| {
+        b.application()?
+            .run_with_user_qml(&files, &entry, &[], true)
+    })
 }
 
 #[when(regex = r#"^the application runs "([^"]+\.qml)" built ahead, without a user's directory$"#)]
@@ -69,7 +83,11 @@ fn runs_with_user_qml_in_window(w: &mut LjosWorld, entry: String) -> StepResult 
     regex = r#"^the application runs "([^"]+\.qml)" built ahead without its sources, with the user's directory over it$"#
 )]
 fn runs_without_sources(w: &mut LjosWorld, entry: String) -> StepResult {
-    w.each(|b| b.application()?.run_with_user_qml(&entry, &[], false))
+    let files = w.staged()?;
+    w.each(|b| {
+        b.application()?
+            .run_with_user_qml(&files, &entry, &[], false)
+    })
 }
 
 #[when(
@@ -82,9 +100,10 @@ fn runs_built_from_older(
     step: &Step,
 ) -> StepResult {
     let text = docstring(step)?;
+    let files = w.staged()?;
     w.each(|b| {
         b.application()?
-            .run_with_user_qml(&entry, &[(older.clone(), text.clone())], true)
+            .run_with_user_qml(&files, &entry, &[(older.clone(), text.clone())], true)
     })
 }
 
@@ -104,9 +123,12 @@ fn compiled(w: &mut LjosWorld) -> StepResult {
 #[then("the user's files are not compiled")]
 fn not_compiled(w: &mut LjosWorld) -> StepResult {
     seen(w, |s| {
-        (!s.active)
+        if s.active {
+            return Err("the user's files are compiled".to_owned());
+        }
+        (!s.compiling)
             .then_some(())
-            .ok_or_else(|| "the user's files are compiled".to_owned())
+            .ok_or_else(|| "the user's files are being compiled".to_owned())
     })
 }
 

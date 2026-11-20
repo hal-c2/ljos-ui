@@ -76,6 +76,8 @@ pub use ljos_a11y::AccessibleNode as A11yNode;
 pub struct UserSeen {
     /// The user's files are compiled and run.
     pub active: bool,
+    /// The user's files are being compiled, to run when they are.
+    pub compiling: bool,
     /// A watch is kept.
     pub watching: bool,
     /// Saves applied.
@@ -1036,12 +1038,26 @@ pub trait Application: Backend {
         Err(BackendError::NotImplemented("a user's directory"))
     }
 
+    /// The application keeps its user's modules in `dir`, a directory in
+    /// the user's (`UserQml::modules`); set before it runs.
+    fn user_qml_modules(&mut self, _dir: &str) -> Result<()> {
+        Err(BackendError::NotImplemented("a user's directory"))
+    }
+
+    /// The application reads its user's `theme.json` itself
+    /// (`UserQml::theme(false)`); set before it runs.
+    fn user_qml_own_theme(&mut self) -> Result<()> {
+        Err(BackendError::NotImplemented("a user's directory"))
+    }
+
     /// Runs `entry` of the given files built ahead into a pack that
     /// carries their sources (`sources`; else none), with the user's
-    /// directory over them. `built_from`: files the build compiled from
-    /// other texts than the sources it carries.
+    /// directory over them. `files`: what the application is built from,
+    /// a file given since the last load among them. `built_from`: files
+    /// the build compiled from other texts than the sources it carries.
     fn run_with_user_qml(
         &mut self,
+        _files: &[QmlFile],
         _entry: &str,
         _built_from: &[(String, String)],
         _sources: bool,

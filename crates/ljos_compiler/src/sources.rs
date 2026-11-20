@@ -41,14 +41,17 @@ pub enum SourcesError {
 }
 
 impl PackSources {
-    /// Whether `name` (a file's name) is one the sources carry.
+    /// Whether `name` (a file's name, or its `/`-separated path) is one
+    /// the sources carry. A module's `qmldir` is carried wherever the
+    /// module is, not only the root's.
     #[must_use]
     pub fn carries(name: &str) -> bool {
+        let base = name.rsplit('/').next().unwrap_or(name);
         name.ends_with(".qml")
             || qml_front::project::is_script(name)
             || crate::script::module::is_declarations(name)
-            || name == "qmldir"
-            || name == "CMakeLists.txt"
+            || base == "qmldir"
+            || base == "CMakeLists.txt"
     }
 
     /// The bytes for a pack's trailer, deflated when `deflate`.
@@ -187,6 +190,21 @@ mod tests {
                 name: "Fusion".to_owned(),
                 fallback: None,
             }),
+        }
+    }
+
+    #[test]
+    fn a_module_s_qmldir_is_carried_wherever_the_module_is() {
+        for name in [
+            "qmldir",
+            "Parts/qmldir",
+            "Ljos/Parts/qmldir",
+            "Parts/CMakeLists.txt",
+        ] {
+            assert!(PackSources::carries(name), "{name}");
+        }
+        for name in ["Parts/qmldir.bak", "Parts/notqmldir", "theme.json"] {
+            assert!(!PackSources::carries(name), "{name}");
         }
     }
 

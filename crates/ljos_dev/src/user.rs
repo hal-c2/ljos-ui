@@ -58,6 +58,8 @@ pub struct UserQml {
     dir: PathBuf,
     on_fault: Option<FaultHandler>,
     watch: bool,
+    modules: Option<String>,
+    theme: bool,
 }
 
 impl std::fmt::Debug for UserQml {
@@ -66,6 +68,8 @@ impl std::fmt::Debug for UserQml {
             .field("dir", &self.dir)
             .field("on_fault", &self.on_fault.is_some())
             .field("watch", &self.watch)
+            .field("modules", &self.modules)
+            .field("theme", &self.theme)
             .finish()
     }
 }
@@ -80,6 +84,8 @@ impl UserQml {
             dir: path.into(),
             on_fault: None,
             watch: true,
+            modules: None,
+            theme: true,
         }
     }
 
@@ -102,6 +108,30 @@ impl UserQml {
         self
     }
 
+    /// `dir`, a directory in the user's (`/`-separated), holds the
+    /// user's modules: its files have the names they would have on the
+    /// application's import path, so `qml/Lib/Badge.qml` under
+    /// `modules("qml")` is the application's `Lib/Badge.qml`, which
+    /// `import Lib` finds. The user's other files keep their names from
+    /// the user's directory; of two that come to one name, the one among
+    /// the modules is read. For an application whose users already keep
+    /// their modules there.
+    #[must_use]
+    pub fn modules(mut self, dir: impl Into<String>) -> Self {
+        self.modules = Some(dir.into());
+        self
+    }
+
+    /// Whether the directory's `theme.json` is a theme of `Ljos.Design`
+    /// (the default), read at the start and followed while the
+    /// application runs. Without, it is no file of the user's to Ljós:
+    /// for an application that reads a theme of its own there.
+    #[must_use]
+    pub fn theme(mut self, theme: bool) -> Self {
+        self.theme = theme;
+        self
+    }
+
     pub fn path(&self) -> &Path {
         &self.dir
     }
@@ -111,17 +141,18 @@ impl UserQml {
     }
 }
 
-/// Whether `name` is a file a user may change an application with.
-fn is_user_file(name: &str) -> bool {
-    name.ends_with(".qml") || qml_front::project::is_script(name) || name == THEME_FILE
+/// Whether `name` is a file a user may change an application with; its
+/// `theme.json` only while that is a theme of Ljós (`theme`).
+fn is_user_file(name: &str, theme: bool) -> bool {
+    name.ends_with(".qml") || qml_front::project::is_script(name) || (theme && name == THEME_FILE)
 }
 
 /// Whether the directory has a file of the user's in it. Only names are
 /// read.
-fn has_user_files(dir: &UserDir) -> bool {
+fn has_user_files(dir: &UserDir, theme: bool) -> bool {
     let found = Cell::new(false);
     let _ = dir.list(|name| {
-        if is_user_file(name) {
+        if is_user_file(name, theme) {
             found.set(true);
         }
         false
@@ -183,6 +214,8 @@ struct Making {
     /// Whether the user's files are read now; else the first build reads
     /// them.
     users: bool,
+    /// Whether the directory's `theme.json` is a theme of Ljós.
+    theme: bool,
 }
 
 type Make = Box<dyn FnOnce(Making) -> Built + Send>;
@@ -204,6 +237,7 @@ where
             sources,
             seeds,
             users,
+            theme: themed,
         } = making;
         let theme_path = dir.root().join(THEME_FILE);
         let mut reloader = if users {
@@ -217,7 +251,7 @@ where
             }
         }
         let mut faults = reloader.start_seeded();
-        let (seen, theme) = if users {
+        let (seen, theme) = if users && themed {
             match dir.read(&theme_path) {
                 Ok(text) => {
                     let theme = parse_theme(THEME_FILE, &text);
@@ -233,7 +267,10 @@ where
         } else {
             (None, None)
         };
-        reloader.watch_theme(THEME_FILE, Some(theme_path), seen);
+        // An application that reads the file itself follows it itself.
+        if themed {
+            reloader.watch_theme(THEME_FILE, Some(theme_path), seen);
+        }
         Built {
             layers: Box::new(Arc::new(Mutex::new(reloader))),
             faults,
@@ -464,6 +501,8 @@ pub struct UserSession {
     reloads: u64,
     /// Why the theme was refused, while it is.
     theme_fault: Option<ReloadFault>,
+    /// Whether the directory's `theme.json` is a theme of Ljós.
+    theme: bool,
     pictures: Arc<Mutex<Vec<PathBuf>>>,
 }
 
@@ -505,8 +544,13 @@ impl UserSession {
             dir,
             on_fault,
             watch,
+            modules,
+            theme,
         } = config;
-        let dir = UserDir::new(dir);
+        let dir = match modules {
+            Some(modules) => UserDir::new(dir).with_modules(&modules),
+            None => UserDir::new(dir),
+        };
         let mut dirs = BTreeSet::new();
         for key in pack.keys() {
             let mut at = key;
@@ -537,6 +581,7 @@ impl UserSession {
             settling: false,
             reloads: 0,
             theme_fault: None,
+            theme,
             pictures: Arc::default(),
         };
         if watch {
@@ -551,7 +596,7 @@ impl UserSession {
             shared,
         });
         let make: Later = Box::new(move |engine| maker(oracle(engine)));
-        if has_user_files(&dir) {
+        if has_user_files(&dir, theme) {
             match session.making(true) {
                 Ok(making) => {
                     let built = make(engine)(making);
@@ -593,6 +638,7 @@ impl UserSession {
             sources: Arc::new(sources),
             seeds,
             users,
+            theme: self.theme,
         })
     }
 
@@ -752,6 +798,12 @@ impl UserSession {
         matches!(self.state, State::Active { .. })
     }
 
+    /// Whether the user's files are being compiled, on the compiler's
+    /// thread: they run once a later [`pump`](Self::pump) takes them.
+    pub fn is_compiling(&self) -> bool {
+        matches!(self.state, State::Making)
+    }
+
     /// Whether a watch is kept: on the user's files once there are any,
     /// on the directory before.
     pub fn is_watching(&self) -> bool {
@@ -813,7 +865,7 @@ impl UserSession {
             return;
         }
         self.rearm(engine);
-        if !has_user_files(&self.dir) {
+        if !has_user_files(&self.dir, self.theme) {
             return;
         }
         let making = match self.making(false) {

@@ -35,6 +35,10 @@ pub(super) struct User {
     dir: tempfile::TempDir,
     /// Where a file outside the user's directory is, removed with it.
     outside: tempfile::TempDir,
+    /// The directory of the user's modules the application names.
+    pub(super) modules: Option<String>,
+    /// Whether the application reads its user's `theme.json` itself.
+    pub(super) own_theme: bool,
 }
 
 impl User {
@@ -51,12 +55,14 @@ impl User {
             told: Rc::default(),
             dir,
             outside,
+            modules: None,
+            own_theme: false,
         })
     }
 }
 
 impl Live {
-    fn user(&mut self) -> Result<&mut User> {
+    pub(super) fn user(&mut self) -> Result<&mut User> {
         if self.user.is_none() {
             self.user = Some(User::new()?);
         }
@@ -75,23 +81,13 @@ impl Live {
     }
 
     /// Runs `entry` of the scenario's files built ahead, with the user's
-    /// directory over them. `built_from`: files the build compiled from
-    /// other texts than the sources it carries; `with_sources`: whether
-    /// it carries them.
-    pub(super) fn run_with_user_qml(
-        &mut self,
-        entry: &str,
-        built_from: &[(String, String)],
-        with_sources: bool,
-    ) -> Result<()> {
-        self.run_with_user_qml_at(entry, &[], built_from, with_sources, false)
-    }
-
-    /// As [`run_with_user_qml`](Self::run_with_user_qml); `given`: files
-    /// the build carries over the loaded ones, given since the last load.
-    /// They go into the build only: the engine runs what the build makes,
-    /// at the generation the session starts from. `own_window`: the root
-    /// is made with no parent and shown in a window of its own.
+    /// directory over them. `given`: files the build carries over the
+    /// loaded ones, given since the last load. They go into the build
+    /// only: the engine runs what the build makes, at the generation the
+    /// session starts from. `built_from`: files the build compiled from
+    /// other texts than the sources it carries; `with_sources`: whether it
+    /// carries them. `own_window`: the root is made with no parent and
+    /// shown in a window of its own.
     pub(super) fn run_with_user_qml_at(
         &mut self,
         entry: &str,
@@ -129,9 +125,14 @@ impl Live {
         self.user()?;
         let user = self.user.as_mut().expect("made above");
         let told = Rc::clone(&user.told);
-        let config = UserQml::dir(user.dir.path()).on_fault(move |fault| {
-            told.borrow_mut().push(fault.to_string());
-        });
+        let mut config = UserQml::dir(user.dir.path())
+            .theme(!user.own_theme)
+            .on_fault(move |fault| {
+                told.borrow_mut().push(fault.to_string());
+            });
+        if let Some(modules) = &user.modules {
+            config = config.modules(modules);
+        }
         let session = UserSession::start(
             &self.engine,
             pack,
@@ -211,6 +212,12 @@ impl Live {
     /// application runs, waits for what the save brings and takes it.
     pub(super) fn user_qml_file(&mut self, name: &str, text: Option<&str>) -> Result<()> {
         let user = self.user()?;
+        let own_theme = user.own_theme && name == ljos_design::theme::FILE;
+        if own_theme {
+            // Every earlier wake was for something already taken; one left
+            // over would end the wait below before this save's came.
+            while user.woke.try_recv().is_ok() {}
+        }
         let path = user.dir.path().join(name);
         match text {
             Some(text) => super::disk::write(&path, text)?,
@@ -220,7 +227,27 @@ impl Live {
         if !user.session.as_ref().is_some_and(UserSession::is_watching) {
             return Ok(());
         }
+        // A theme the application reads itself brings no report, but it
+        // wakes a session still watching the directory: that wake is taken
+        // here, so that a check after the save sees what it started and
+        // the next save waits for its own.
+        if own_theme {
+            return self.take_user_wake(name);
+        }
         self.take_user_save(name)
+    }
+
+    /// Takes the wake a save brings when it brings no report: one wake is
+    /// enough, as the session takes every event it was woken for at once.
+    fn take_user_wake(&mut self, name: &str) -> Result<()> {
+        let user = self.user.as_ref().expect("written above");
+        if !user.session.as_ref().is_some_and(UserSession::is_active) {
+            user.woke
+                .recv_timeout(PATIENCE)
+                .map_err(|_| failed(format!("the application did not wake for {name}")))?;
+        }
+        self.pump_user()?;
+        self.settle()
     }
 
     /// Makes `name` in the user's directory a link to a file outside it.
@@ -297,6 +324,7 @@ impl Live {
             .ok_or_else(|| failed("the application does not run yet"))?;
         Ok(UserSeen {
             active: session.is_active(),
+            compiling: session.is_compiling(),
             watching: session.is_watching(),
             reloads: session.reloads(),
             told: user.told.borrow().clone(),

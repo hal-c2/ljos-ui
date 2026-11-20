@@ -7,7 +7,8 @@
 @ljos-only
 Feature: A shipped application its users change while it runs
   An application built ahead of time (`ljos::build`) that lets its users
-  change it names one directory for their files (`App::user_qml`). A
+  change it names one directory for their files (`App::user_qml`), and
+  how its users lay it out when they already keep files there. A
   user's file of a name the application has replaces the application's; a
   new one adds a type. Each save is applied as hot reload applies one, with
   the state of the application kept, and a file that does not compile
@@ -715,3 +716,194 @@ Feature: A shipped application its users change while it runs
       And the property "by" of "second-card" is "the user, again"
       And 1 save of the user's files has been applied
       And there is no reload error
+
+  Rule: An application whose users keep their files in a layout of its own names it
+
+    An application whose users already keep files in a directory of their
+    own, laid out its way, says how: a directory in it whose files have the
+    names they would have on the application's import path (its modules),
+    and a `theme.json` that is the application's to read, not a theme of
+    Ljós.
+
+    Scenario: A user's file in the directory of modules replaces the application's of that name
+      Given the application keeps its user's modules in "qml"
+      And the user's file "qml/Card.qml":
+        """qml
+        import QtQuick
+        Rectangle { property string by: "the user's module"; width: 30; height: 10 }
+        """
+      And the user's file "Shell.qml":
+        """qml
+        import QtQuick
+        Rectangle { objectName: "user-shell"; width: 50; height: 20 }
+        """
+      When the application runs "Main.qml" built ahead, with the user's directory over it
+      Then the user's files are compiled
+      And the property "by" of "card" is "the user's module"
+      And the object "loader/user-shell" exists
+      And the application was told of no fault
+
+    Scenario: A module in the user's directory of modules is the one its importers find
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
+        import Parts
+        Item {
+          objectName: "main"
+          Badge { objectName: "badge" }
+        }
+        """
+      And the file "Parts/qmldir":
+        """
+        module Parts
+        Badge 1.0 Badge.qml
+        """
+      And the file "Parts/Badge.qml":
+        """qml
+        import QtQuick
+        Rectangle { property string by: "the application"; width: 10; height: 10 }
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        Item { objectName: "root" }
+        """
+      And the application keeps its user's modules in "qml"
+      And the user's file "qml/Parts/Badge.qml":
+        """qml
+        import QtQuick
+        Rectangle { property string by: "the user's module"; width: 10; height: 10 }
+        """
+      When the application runs "Main.qml" built ahead, with the user's directory over it
+      Then the property "by" of "badge" is "the user's module"
+      And the application was told of no fault
+
+    Scenario: A save in the directory of modules is applied with what the user typed kept
+      Given the application keeps its user's modules in "qml"
+      When the application runs "Main.qml" built ahead, with the user's directory over it
+      And the user types "hello"
+      And the user saves the file "qml/Card.qml" as:
+        """qml
+        import QtQuick
+        Rectangle { property string by: "the user's module"; width: 30; height: 10 }
+        """
+      Then the property "by" of "card" is "the user's module"
+      And the property "text" of "field" is "hello"
+      And there is no reload error
+      And the application was told of no fault
+
+    Scenario: A user's file in the directory of modules removed gives way to the application's with what the user typed kept
+      Given the application keeps its user's modules in "qml"
+      And the user's file "qml/Card.qml":
+        """qml
+        import QtQuick
+        Rectangle { property string by: "the user's module"; width: 30; height: 10 }
+        """
+      When the application runs "Main.qml" built ahead, with the user's directory over it
+      And the user types "hello"
+      Then the property "by" of "card" is "the user's module"
+      When the user removes the file "qml/Card.qml"
+      Then the property "by" of "card" is "the application"
+      And the property "text" of "field" is "hello"
+      And there is no reload error
+      And the application was told of no fault
+
+    Scenario: A module only the user has, declared by its own qmldir, is found by the user's shell
+      Given the application keeps its user's modules in "qml"
+      And the user's file "qml/Parts/qmldir":
+        """
+        module Parts
+        Badge 1.0 Badge.qml
+        """
+      And the user's file "qml/Parts/Badge.qml":
+        """qml
+        import QtQuick
+        Rectangle { property string by: "the user's module"; width: 10; height: 10 }
+        """
+      And the user's file "Shell.qml":
+        """qml
+        import QtQuick
+        import Parts
+        Rectangle {
+          objectName: "user-shell"
+          width: 50; height: 20
+          Badge { objectName: "badge" }
+        }
+        """
+      When the application runs "Main.qml" built ahead, with the user's directory over it
+      Then the user's files are compiled
+      And the object "loader/user-shell" exists
+      And the property "by" of "badge" is "the user's module"
+      And the application was told of no fault
+
+    Scenario: A user's file beside the directory of modules is hidden by the module's of its name, and back once that is removed
+      Given the application keeps its user's modules in "qml"
+      And the user's file "Card.qml":
+        """qml
+        import QtQuick
+        Rectangle { property string by: "the user's own"; width: 20; height: 10 }
+        """
+      And the user's file "qml/Card.qml":
+        """qml
+        import QtQuick
+        Rectangle { property string by: "the user's module"; width: 30; height: 10 }
+        """
+      When the application runs "Main.qml" built ahead, with the user's directory over it
+      And the user types "hello"
+      Then the property "by" of "card" is "the user's module"
+      When the user removes the file "qml/Card.qml"
+      Then the property "by" of "card" is "the user's own"
+      And the property "text" of "field" is "hello"
+      And there is no reload error
+      And the application was told of no fault
+
+    Scenario: A user's file that links out of the directory, hidden by a module's of its name, is not read and not told
+      Given the application keeps its user's modules in "qml"
+      And the user's file "Card.qml" links to a file outside the user's directory
+      And the user's file "qml/Card.qml":
+        """qml
+        import QtQuick
+        Rectangle { property string by: "the user's module"; width: 30; height: 10 }
+        """
+      When the application runs "Main.qml" built ahead, with the user's directory over it
+      Then the property "by" of "card" is "the user's module"
+      And the object "outside" does not exist
+      And the application was told of no fault
+
+    Scenario: A theme the application reads itself is no theme of Ljós, and nothing is compiled for it
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
+        import Ljos.Blocks
+        import Ljos.Design
+        Item {
+          objectName: "main"
+          property bool dusk: String(Colors.accent) === "#9c4dc4"
+          property bool forest: String(Colors.accent) === "#2e7d32"
+          ShellLoader { objectName: "loader"; source: "Shell.qml"; fallback: "DefaultShell.qml" }
+        }
+        """
+      And the application reads its user's "theme.json" itself
+      And the user's file "theme.json":
+        """json
+        { "Colors": { "accent": "#9c4dc4" } }
+        """
+      When the application runs "Main.qml" built ahead, with the user's directory over it
+      Then the user's files are not compiled
+      And the property "dusk" of "main" is false
+      And the application was told of no fault
+      When the user saves the file "theme.json" as:
+        """json
+        { "Colors": { "accent": "#2e7d32" } }
+        """
+      Then the user's files are not compiled
+      When the user saves the file "Shell.qml" as:
+        """qml
+        import QtQuick
+        Rectangle { objectName: "user-shell"; width: 50; height: 20 }
+        """
+      Then the user's files are compiled
+      And the object "loader/user-shell" exists
+      And the property "dusk" of "main" is false
+      And the property "forest" of "main" is false
+      And the application was told of no fault
