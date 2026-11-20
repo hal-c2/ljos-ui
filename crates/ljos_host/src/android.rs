@@ -47,10 +47,25 @@ struct Requests {
 
 /// The activity's side: each `android_main` hands its [`AndroidApp`] to
 /// [`Attach::pump`]. Clones share the application.
-#[derive(Clone)]
 pub struct Attach<U: Send + 'static> {
     relay: Relay<NativeWindow, U>,
     requests: Arc<Mutex<Requests>>,
+}
+
+// By hand: a derive would ask the application's message type to be Clone.
+impl<U: Send + 'static> Clone for Attach<U> {
+    fn clone(&self) -> Self {
+        Self {
+            relay: self.relay.clone(),
+            requests: Arc::clone(&self.requests),
+        }
+    }
+}
+
+impl<U: Send + 'static> std::fmt::Debug for Attach<U> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Attach").finish_non_exhaustive()
+    }
 }
 
 /// A host for the application's thread and what each activity attaches
@@ -98,10 +113,11 @@ impl<U: Send + 'static> Attach<U> {
         };
         while keeps_pumping(pump.destroyed, pump.closed, pump.finishing) {
             // Sleeps until the activity has something or a request wakes it.
-            app.poll_events(None, |event| match event {
-                PollEvent::Main(main) => pump.main(main),
-                // A wake is a request; it is handled below.
-                _ => {}
+            // A wake is a request; it is handled below.
+            app.poll_events(None, |event| {
+                if let PollEvent::Main(main) = event {
+                    pump.main(main);
+                }
             });
             pump.input();
             let asked = std::mem::take(&mut lock(&self.requests).queue);
@@ -266,7 +282,6 @@ impl<U: Send + 'static> Pump<'_, U> {
                 let taken = call_activity(self.app, ActivityCall::Finish);
                 (self.closed, self.finishing) = exiting(taken);
             }
-            _ => {}
         }
     }
 }
