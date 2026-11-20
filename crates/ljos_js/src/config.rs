@@ -29,8 +29,10 @@ pub struct JsConfig {
     /// dispatch is refused room, as at the limit, and told as the heap
     /// running out ([`crate::JsFault::JsOutOfMemory`]); what is left stays for
     /// the rest of the application. One script that keeps allocating then
-    /// fails alone instead of filling the heap for every other. `None`
-    /// lets a dispatch take all the room there is.
+    /// fails alone instead of filling the heap for every other. Each
+    /// promise job [`crate::JsHost::pump_jobs`] runs is a dispatch of its
+    /// own, with its own share; a run nested in a dispatch shares its cap.
+    /// `None` lets a dispatch take all the room there is.
     pub dispatch_heap_share: Option<f32>,
 }
 
