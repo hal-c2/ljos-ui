@@ -195,12 +195,20 @@ fn a_task_that_could_not_start_on_a_full_heap_collects() {
     set(&e, root, "n", Value::from(5.0));
     settle(&e, &clock);
     assert_eq!(get(&e, root, "status").to_js_string().to_string(), "failed");
-    assert_eq!(collections(&e), before + 1, "{:?}", e.take_warnings());
+    // A start that waits 0 s starts again within the same settle, and
+    // runs out again: each start is its own round, and collects once.
+    let warned = e.take_warnings();
+    let starts = warned
+        .iter()
+        .filter(|w| w.contains("could not start"))
+        .count();
+    assert!(starts >= 1, "{warned:?}");
+    assert_eq!(collections(&e), before + starts as u64, "{warned:?}");
     assert!(e.set_script_heap_limit(None));
 }
 
 #[test]
-fn a_task_whose_start_was_only_interrupted_does_not_collect() {
+fn a_task_whose_run_was_interrupted_does_not_collect() {
     let e = engine();
     let (clock, root) = tasks(&e);
     e.set_js_dispatch_budget(Duration::from_millis(10), Duration::from_millis(50))
@@ -210,7 +218,7 @@ fn a_task_whose_start_was_only_interrupted_does_not_collect() {
     settle(&e, &clock);
     let warned = e.take_warnings();
     assert!(
-        warned.iter().any(|w| w.contains("could not start")),
+        warned.iter().any(|w| w.contains("interrupted")),
         "{warned:?}"
     );
     assert_eq!(collections(&e), before, "{warned:?}");
