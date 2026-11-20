@@ -57,6 +57,21 @@ const MAX_DIRS: usize = 20_000;
 
 /// The QML files of one project.
 ///
+/// What [`Project::hold`] put aside of a file, for
+/// [`Project::release`].
+#[must_use]
+pub(crate) enum Held {
+    /// A variant in a selector's directory, and its text before.
+    Variant { key: String, was: Option<String> },
+    /// A file, as it was written before, or the variant chosen in its
+    /// place.
+    File {
+        key: String,
+        was: Option<String>,
+        chosen: Option<String>,
+    },
+}
+
 /// A file names others by type only (`Button {}` is `Button.qml` beside it,
 /// or a type of a module the project describes), so a file is compiled
 /// against every file of its project.
@@ -259,6 +274,65 @@ impl<O: TypeOracle> Project<O> {
             .as_ref()
             .and_then(|lowering| lowering.written(key))
             .or_else(|| self.source(key))
+    }
+
+    /// Whether the project has a file of the key `key`: a file of its own,
+    /// a variant in a selector's directory, or a plain file a variant is in
+    /// the place of.
+    pub(crate) fn holds(&self, key: &str) -> bool {
+        self.sources.contains_key(key)
+            || self.variants.contains_key(key)
+            || self.chosen.contains_key(key)
+    }
+
+    /// Puts `text` in the place of the file `key` until
+    /// [`release`](Self::release) puts back what was there: the file as it
+    /// was written, or the variant the selectors chose in its place, with
+    /// the plain file that variant displaced left as it is.
+    pub(crate) fn hold(&mut self, key: &str, text: &str) -> Held {
+        let key = key.to_owned();
+        if plain_of(&key).is_some() {
+            let was = self.variants.get(&key).cloned();
+            self.add(&key, text);
+            return Held::Variant { key, was };
+        }
+        let chosen = self.chosen.remove(&key);
+        let was = match chosen {
+            Some(_) => None,
+            None => self.written(&key).map(str::to_owned),
+        };
+        self.put(&key, text.to_owned());
+        Held::File { key, was, chosen }
+    }
+
+    /// Puts back what [`hold`](Self::hold) put aside.
+    pub(crate) fn release(&mut self, held: Held) {
+        match held {
+            Held::Variant {
+                key,
+                was: Some(was),
+            } => self.add(&key, was),
+            Held::Variant { key, was: None } => self.remove(&key),
+            Held::File {
+                key,
+                chosen: Some(variant),
+                ..
+            } => {
+                let text = self.variants[&variant].clone();
+                self.chosen.insert(key.clone(), variant);
+                self.put(&key, text);
+            }
+            Held::File {
+                key,
+                was: Some(was),
+                chosen: None,
+            } => self.put(&key, was),
+            Held::File {
+                key,
+                was: None,
+                chosen: None,
+            } => self.forget(&key),
+        }
     }
 
     /// The project as the compat pass reads it: a file's types are the

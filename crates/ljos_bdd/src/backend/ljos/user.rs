@@ -39,12 +39,16 @@ pub(super) struct User {
     pub(super) modules: Option<String>,
     /// Whether the application reads its user's `theme.json` itself.
     pub(super) own_theme: bool,
+    /// The directory the application loads its plugins from while it
+    /// runs (`UserQml::loads_from`).
+    plugins: tempfile::TempDir,
 }
 
 impl User {
     fn new() -> Result<Self> {
         let dir = tempfile::tempdir().map_err(failed)?;
         let outside = tempfile::tempdir().map_err(failed)?;
+        let plugins = tempfile::tempdir().map_err(failed)?;
         let (tx, woke) = mpsc::channel();
         Ok(Self {
             session: None,
@@ -57,6 +61,7 @@ impl User {
             outside,
             modules: None,
             own_theme: false,
+            plugins,
         })
     }
 }
@@ -119,14 +124,13 @@ impl Live {
         };
         let pack = source.to_pack_with_trailer(&trailer).map_err(failed)?;
         let pack = MapSource::from_pack(&pack).map_err(failed)?;
-        // The user's files are on the real disk: the scenario's sandbox
-        // would look elsewhere for whatever they read beside themselves.
-        ljos_platform::Platform::of(&self.engine).set_env(ljos_platform::PathEnv::default());
+        self.ship();
         self.user()?;
         let user = self.user.as_mut().expect("made above");
         let told = Rc::clone(&user.told);
         let mut config = UserQml::dir(user.dir.path())
             .theme(!user.own_theme)
+            .loads_from(user.plugins.path())
             .on_fault(move |fault| {
                 told.borrow_mut().push(fault.to_string());
             });
@@ -188,6 +192,46 @@ impl Live {
         ljos_quick::add_data(&self.engine, self.driver, root).map_err(failed)?;
         self.roots.push(root);
         self.settle()
+    }
+
+    /// Writes the file `name` of the application's plugin directory.
+    pub(super) fn plugin_file(&mut self, name: &str, text: &str) -> Result<()> {
+        let path = self.user()?.plugins.path().join(name);
+        super::disk::write(&path, text)
+    }
+
+    pub(super) fn plugin_url(&mut self, name: &str) -> Result<String> {
+        let path = self.user()?.plugins.path().join(name);
+        Ok(ljos_engine::file_url(&path))
+    }
+
+    /// Makes the file `name` of the application's plugin directory a link
+    /// to the file `target` outside the application's directories.
+    pub(super) fn plugin_link_out(&mut self, name: &str, target: &str) -> Result<()> {
+        let user = self.user()?;
+        let link = user.plugins.path().join(name);
+        let target = user.outside.path().join(target);
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(&target, &link).map_err(failed)
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = (link, target);
+            Err(BackendError::NotImplemented("links on this system"))
+        }
+    }
+
+    /// Writes the file `name` in neither the user's directory nor one the
+    /// application loads from.
+    pub(super) fn outside_file(&mut self, name: &str, text: &str) -> Result<()> {
+        let path = self.user()?.outside.path().join(name);
+        super::disk::write(&path, text)
+    }
+
+    pub(super) fn outside_url(&mut self, name: &str) -> Result<String> {
+        let path = self.user()?.outside.path().join(name);
+        Ok(ljos_engine::file_url(&path))
     }
 
     /// One frame's worth of what the session brought, without waiting.
@@ -313,7 +357,17 @@ impl Live {
         self.settle()
     }
 
-    pub(super) fn user_qml_seen(&self) -> Result<UserSeen> {
+    pub(super) fn user_qml_seen(&mut self) -> Result<UserSeen> {
+        // What a script's text brought is told at the next frame, which a
+        // wake asks for.
+        let woke = self
+            .user
+            .as_ref()
+            .is_some_and(|u| u.session.is_some() && u.woke.try_iter().count() > 0);
+        if woke {
+            self.pump_user()?;
+            self.settle()?;
+        }
         let user = self
             .user
             .as_ref()
@@ -331,6 +385,7 @@ impl Live {
             dir: ljos_engine::file_url(user.dir.path())
                 .trim_end_matches('/')
                 .to_owned(),
+            texts: session.compiles_texts(),
         })
     }
 }
