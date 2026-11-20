@@ -311,13 +311,13 @@ Feature: Names of the component around
           component Probe: QtObject {
             objectName: "probe"
             property string label: "mine"
-            property string seen: typeof label === "string" ? "property" : "id"
+            property string seen: typeof label === "string" ? "property" : label.objectName
           }
           Probe { }
-          Item { id: label }
+          Item { id: label; objectName: "the file's" }
         }
         """
-      Then the property "seen" of "probe" is "id"
+      Then the property "seen" of "probe" is "the file's"
 
     Scenario: Under ComponentBehavior Bound the id is the one where the component is made
       Given the QML:
@@ -490,6 +490,24 @@ Feature: Names of the component around
       When the method "go" of "probe" is called
       Then the property "after" of "probe" is "written"
 
+    Scenario: Under ComponentBehavior Bound a function's own formal does not stand in for the id it writes
+      Given the QML:
+        """qml
+        pragma ComponentBehavior: Bound
+        import QtQuick
+        Item {
+          component Probe: QtObject {
+            objectName: "probe"
+            property var label: null
+            function go($m_label) { label = null; return label.objectName }
+            property string seen: go({ label: { objectName: "argument" } })
+          }
+          Probe { }
+          Item { id: label; objectName: "made" }
+        }
+        """
+      Then the property "seen" of "probe" is "made"
+
     @ljos-only
     Scenario: Under ComponentBehavior Bound a binding that reads an id where the component is made reads again when the id goes
       Given the QML:
@@ -510,7 +528,7 @@ Feature: Names of the component around
       When the object "source" is destroyed
       Then the property "present" of "probe" is false
 
-    Scenario: Under ComponentBehavior Bound the target of a PropertyChanges is looked for no further out than the file
+    Scenario: Under ComponentBehavior Bound a PropertyChanges reads an id of the file that uses the file where none is where the component is made
       Given the file "Panel.qml":
         """qml
         pragma ComponentBehavior: Bound
@@ -539,10 +557,10 @@ Feature: Names of the component around
           Panel { }
         }
         """
-      Then the property "seen" of "box" is "nothing"
+      Then the property "seen" of "box" is "outer"
 
     @ljos-only
-    Scenario: Under ComponentBehavior Bound a PropertyChanges reads Ljos.Core's name and not an id of the file that uses the file
+    Scenario: Under ComponentBehavior Bound a PropertyChanges reads Ljos.Core's name where no id of the name is around
       Given the file "Panel.qml":
         """qml
         pragma ComponentBehavior: Bound
@@ -568,7 +586,6 @@ Feature: Names of the component around
         """qml
         import Ljos.Ui
         Item {
-          Item { id: point }
           Panel { }
         }
         """
