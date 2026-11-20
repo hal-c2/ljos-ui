@@ -57,7 +57,7 @@ fn a_finger_reaches_an_area_that_refuses_the_mouse() {
     assert_eq!(engine.read_by_name(root, "pressed").to_number(), 0.0);
 
     assert!(window.touch(&[finger(TouchPhase::Begin, 50.0, 50.0, &window)]));
-    window.touch(&[finger(TouchPhase::End, 50.0, 50.0, &window)]);
+    assert!(window.touch(&[finger(TouchPhase::End, 50.0, 50.0, &window)]));
     assert_eq!(engine.read_by_name(root, "pressed").to_number(), 1.0);
     assert_eq!(engine.read_by_name(root, "released").to_number(), 1.0);
 }
