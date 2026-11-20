@@ -40,6 +40,8 @@ pub fn capabilities() -> Capabilities {
 struct Requests {
     queue: Vec<Request>,
     waker: Option<AndroidAppWaker>,
+    /// An activity's `android_main` has arrived and has not yet returned.
+    attached: bool,
 }
 
 /// The activity's side: each `android_main` hands its [`AndroidApp`] to
@@ -74,7 +76,11 @@ impl<U: Send + 'static> Attach<U> {
     /// Hands the activity's events to the application until the activity
     /// is destroyed. Call it from `android_main`, and return after it.
     pub fn pump(&self, app: &AndroidApp) {
-        lock(&self.requests).waker = Some(app.create_waker());
+        {
+            let mut requests = lock(&self.requests);
+            requests.attached = true;
+            requests.waker = Some(app.create_waker());
+        }
         let relay = self.relay.clone();
         *lock(&BACK) = Some(Box::new(move || {
             let _ = relay.send(Arrival::Window(WindowEvent::Back {
@@ -102,19 +108,32 @@ impl<U: Send + 'static> Attach<U> {
                 pump.request(request);
             }
         }
-        lock(&self.requests).waker = None;
+        {
+            let mut requests = lock(&self.requests);
+            requests.waker = None;
+            requests.attached = false;
+        }
         *lock(&BACK) = None;
         // The application lives on, without the activity.
         let _ = self.relay.send(Arrival::Detached);
     }
 
-    /// Runs `then` if no activity is pumping, and keeps one from starting
-    /// to until it returns. A quit asked with no activity attached has no
-    /// activity to finish and none to wait for: its process can end here.
+    /// An activity's `android_main` has started and will pump: call it
+    /// first thing there, so a quit from here on leaves the process's end
+    /// to that activity rather than ending it under its start.
+    pub fn arriving(&self) {
+        lock(&self.requests).attached = true;
+    }
+
+    /// Runs `then` if no activity has arrived (see [`Attach::arriving`]),
+    /// and keeps one from arriving until it returns. A quit asked with no
+    /// activity attached has no activity to finish and none to wait for:
+    /// its process can end here. An activity the system is still creating,
+    /// before its `android_main` arrives, is not seen; a quit in that
+    /// window ends the process under it, as the system's own kill would.
     pub fn when_detached<R>(&self, then: impl FnOnce() -> R) -> Option<R> {
         let requests = lock(&self.requests);
-        // A pump holds the waker from its start to its end.
-        requests.waker.is_none().then(then)
+        (!requests.attached).then(then)
     }
 }
 
@@ -246,10 +265,14 @@ impl<U: Send + 'static> Pump<'_, U> {
         match request {
             Request::Keyboard(true) => self.app.show_soft_input(false),
             Request::Keyboard(false) => self.app.hide_soft_input(false),
-            Request::Background => call_activity(self.app, ActivityCall::MoveTaskToBack),
+            Request::Background => {
+                call_activity(self.app, ActivityCall::MoveTaskToBack);
+            }
             Request::Exit => {
-                self.finishing = true;
-                call_activity(self.app, ActivityCall::Finish);
+                // A finish the activity did not take brings no Destroy to
+                // wait for: the pump then ends with the application, and
+                // `main` ends the process.
+                self.finishing = call_activity(self.app, ActivityCall::Finish);
             }
             _ => {}
         }
@@ -373,8 +396,8 @@ enum ActivityCall {
 }
 
 /// Calls the activity on this thread, which android-activity attached to
-/// the VM.
-fn call_activity(app: &AndroidApp, call: ActivityCall) {
+/// the VM; whether it took the call.
+fn call_activity(app: &AndroidApp, call: ActivityCall) -> bool {
     use jni::objects::{JObject, JValue};
     use jni::{jni_sig, jni_str};
     // SAFETY: android-activity keeps the VM and the activity alive while
@@ -400,9 +423,10 @@ fn call_activity(app: &AndroidApp, call: ActivityCall) {
         }
         Ok(())
     });
-    if let Err(e) = done {
+    if let Err(e) = &done {
         log::warn!("the activity did not take the call: {e}");
     }
+    done.is_ok()
 }
 
 #[cfg(test)]
@@ -425,5 +449,14 @@ mod tests {
     fn a_quit_with_no_activity_attached_is_handled_at_once() {
         let (_host, attach) = host::<Wake>();
         assert_eq!(attach.when_detached(|| 7), Some(7));
+    }
+
+    #[test]
+    fn a_quit_once_an_activity_has_arrived_is_left_to_it() {
+        let (_host, attach) = host::<Wake>();
+        attach.arriving();
+        let mut ran = false;
+        assert_eq!(attach.when_detached(|| ran = true), None);
+        assert!(!ran);
     }
 }

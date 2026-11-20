@@ -132,6 +132,9 @@ where
         }
         attach
     });
+    // Before anything else here: a quit from now on is this activity's to
+    // finish, not one to end the process under it.
+    attach.arriving();
     attach.pump(&app);
     // Not from the application's thread as its loop ends: the activity it
     // asked to finish would still be in front, and the process's exit
