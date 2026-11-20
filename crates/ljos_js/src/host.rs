@@ -1984,6 +1984,8 @@ impl JsHost {
         self.peak.mark();
         let heap_before = self.heap_bytes();
         self.interrupt.fired.set(false);
+        self.heap.take_over_share();
+        self.heap.set_cap(self.heap_cap());
         self.interrupt.stopped_in.take();
         self.state.stopped.set(false);
         let start = self.interrupt.now(Timing::Enter);
@@ -2012,6 +2014,8 @@ impl JsHost {
         let elapsed = self.interrupt.now(Timing::Leave) - start;
         let native = self.interrupt.native.get();
         self.interrupt.arm(start, None);
+        self.heap.set_cap(None);
+        self.heap.take_over_share();
         self.state.stopped.set(false);
         drop(guard);
 
@@ -2186,6 +2190,14 @@ impl JsHost {
         label: &str,
         elapsed: Duration,
     ) -> JsFault {
+        // Refused room past its share: whatever error that surfaced as,
+        // the heap was what ran out.
+        if self.heap.take_over_share() && !self.interrupt.fired.get() {
+            let _ = scope.ctx.catch();
+            return JsFault::JsOutOfMemory {
+                label: label.to_owned(),
+            };
+        }
         let mapper = self.state.mapper.borrow().clone();
         let text = self.state.text.borrow().clone();
         classify_error(
@@ -2812,6 +2824,16 @@ impl JsHost {
         self.rt.set_memory_limit(limit.unwrap_or(0));
         self.memory_limit.set(limit);
         true
+    }
+
+    /// The most the heap may hold before the dispatch beginning now is
+    /// stopped: what it holds plus its share of the room left.
+    fn heap_cap(&self) -> Option<usize> {
+        let limit = self.cfg.memory_limit.filter(|l| *l > 0)?;
+        let share = self.cfg.dispatch_heap_share?.clamp(0.0, 1.0);
+        let held = self.heap_bytes();
+        let room = limit.saturating_sub(held);
+        Some(held + (room as f64 * f64::from(share)) as usize)
     }
 
     /// Unconditional collection (memory pressure). Not available inside a run.
