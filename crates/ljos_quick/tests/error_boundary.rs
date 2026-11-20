@@ -603,7 +603,10 @@ fn a_loader_whose_item_runs_out_of_heap_again_waits_and_loads_again() {
 }
 
 /// Rows whose scripts run out of a heap full of what lives do not each
-/// collect it: a collection right after one finds nothing new to free.
+/// collect it: the faults delivered together are collected for once. The
+/// rows run out twice, loading and loading again, so twice in all, not
+/// once a row. A run that ran out may have let go of a cycle first, so
+/// the second batch is not refused for the first having found nothing.
 #[test]
 fn rows_that_run_out_of_a_full_heap_together_do_not_each_collect_it() {
     let (e, _clock) = timed();
@@ -629,7 +632,7 @@ fn rows_that_run_out_of_a_full_heap_together_do_not_each_collect_it() {
     let loader = find(&e, root, "loader");
     assert_eq!(num(&e, loader, "status"), 3.0);
     let collected = e.script_memory().unwrap().collections - before;
-    assert!(collected <= 1, "{collected} collections");
+    assert!(collected <= 2, "{collected} collections");
 }
 
 #[test]
@@ -745,20 +748,82 @@ fn loaders_that_run_out_of_heap_together_collect_once() {
         3,
         "{warned:?}"
     );
-    // Running out again with nothing made since: collecting again would
-    // free nothing new.
-    let cell = get(&e, loaders[0], "item").as_object().unwrap();
-    e.report_fault(Some(cell), ljos_runtime::Fault::JsOutOfMemory);
-    deliver(&e);
-    assert_eq!(e.script_memory().unwrap().collections, before + 1);
-    // A heap that grew after that collection is collected for again.
-    e.invoke_by_name(root, "litter", &[Value::from(20_000.0)])
-        .unwrap();
-    let cell = get(&e, loaders[1], "item").as_object().unwrap();
-    e.report_fault(Some(cell), ljos_runtime::Fault::JsOutOfMemory);
+    // Faults reported after that collection get one of their own, one
+    // for the two: whether the heap holds garbage is not guessed at.
+    for l in &loaders[..2] {
+        let cell = get(&e, *l, "item").as_object().unwrap();
+        e.report_fault(Some(cell), ljos_runtime::Fault::JsOutOfMemory);
+    }
     deliver(&e);
     assert_eq!(e.script_memory().unwrap().collections, before + 2);
 }
+
+const HELD: &str = r#"
+import QtQuick
+Item {
+    id: root
+    objectName: "root"
+    property bool on: false
+    property var inc: null
+    Component { id: comp; Item {} }
+    Loader { objectName: "loader"; active: root.on; source: "Row.qml" }
+    // An incubator a property holds, and a cycle only it holds.
+    function hold(n) {
+        const i = comp.incubateObject(root, {}, 1)
+        const big = []
+        for (let k = 0; k < n; k++) big.push(new Array(1000).fill(k))
+        big.owner = i
+        i.big = big
+        inc = i
+    }
+    function drop() { inc = null }
+}
+"#;
+
+/// A property let go of the script-owned object that held a cycle, and
+/// the heap is no bigger for it: the object is still held for the
+/// property until the properties are looked through. A Loader whose item
+/// then runs out of heap has them looked through and the heap collected,
+/// and loads into the room that freed.
+#[test]
+fn a_loader_out_of_heap_frees_what_a_cleared_property_held() {
+    let (e, _clock) = timed();
+    compile(&e, &[("Main", HELD), ("Row", &row())]);
+    let root = e.create_from_url("Main", None, Vec::new()).unwrap();
+    let loader = find(&e, root, "loader");
+    // About 2 MiB of arrays.
+    e.invoke_by_name(root, "hold", &[Value::from(128.0)])
+        .unwrap();
+    assert!(e.collect_garbage());
+    let kept = e.script_memory().unwrap().bytes;
+    e.invoke_by_name(root, "drop", &[]).unwrap();
+    let held = e.script_memory().unwrap().bytes;
+    assert!(
+        held < kept + 64 * 1024,
+        "the heap did not grow by the growth that collects: {kept} -> {held}"
+    );
+    assert!(e.set_script_heap_limit(Some(held + 4 * 1024)));
+    set(&e, root, "on", Value::Bool(true));
+    assert_eq!(num(&e, loader, "status"), 1.0);
+    assert!(
+        e.take_warnings()
+            .iter()
+            .any(|w| w.contains("JS heap limit exceeded"))
+    );
+    let mut s = scene(&e, root, 200.0, 200.0);
+    frame(&mut s, &e);
+    frame(&mut s, &e);
+    assert_eq!(num(&e, loader, "status"), 1.0);
+    let item = get(&e, loader, "item").as_object().unwrap();
+    assert_eq!(num(&e, item, "width"), 12.0, "its script loaded");
+    assert!(
+        e.script_memory().unwrap().bytes < held - MIB,
+        "the cycle went"
+    );
+    assert!(e.application_fault().is_none());
+}
+
+const MIB: usize = 1024 * 1024;
 
 #[test]
 fn a_loader_out_of_heap_soon_after_an_interrupt_does_not_say_again() {

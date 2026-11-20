@@ -238,9 +238,10 @@ pub(crate) struct HostState {
     entered: Cell<bool>,
     /// Something may have let go of a script value since the collector
     /// last ran, or since [`JsHost::may_hold_garbage`] last found nothing
-    /// had: a run that did not run out, or the host dropping a value it
-    /// held. What it let go of may be cycles only the collector frees,
-    /// with the heap no bigger for it.
+    /// had: a run that did not run out (one that did owes a collection
+    /// instead, [`JsHost::wants_idle_collect`]), or the host dropping a
+    /// value it held. What it let go of may be cycles only the collector
+    /// frees, with the heap no bigger for it.
     let_go: Cell<bool>,
     /// A run nested in this dispatch was interrupted: the dispatch is over,
     /// and the script that called back is stopped as it gets control back.
@@ -1684,6 +1685,9 @@ pub struct JsHost {
     /// collection ([`JsHost::may_hold_garbage`]).
     objects: ObjectDigest,
     collected: Cell<u64>,
+    /// [`JsHost::collections`] when a run last ran out of heap, `None`
+    /// before one did ([`JsHost::collected_since_ran_out`]).
+    ran_out_at: Cell<Option<u64>>,
     /// Loaded bytecode is read in place (QuickJS `ROM_DATA`): module code
     /// points into these buffers, so they must outlive the runtime. Declared
     /// last, so they are freed last.
@@ -1904,6 +1908,7 @@ impl JsHost {
             // SAFETY: as `peak`.
             objects: unsafe { ObjectDigest::of(rquickjs::qjs::JS_GetRuntime(raw.as_ptr())) },
             collected: Cell::new(0),
+            ran_out_at: Cell::new(None),
             bytecode: RefCell::default(),
         })
     }
@@ -2073,6 +2078,10 @@ impl JsHost {
                 );
             }
         }
+        // A run that ran out is not counted as letting go: rows that run
+        // out together would each see the other's failed run and collect
+        // again. It owes a collection instead, whatever it let go of
+        // ([`JsHost::wants_idle_collect`]).
         if !ran_out {
             self.state.let_go.set(true);
         }
@@ -2147,7 +2156,25 @@ impl JsHost {
         Err(fault)
     }
 
+    fn note_ran_out(&self, fault: &JsFault) {
+        if matches!(fault, JsFault::JsOutOfMemory { .. }) {
+            self.ran_out_at.set(Some(self.collections.get()));
+        }
+    }
+
     fn classify<'js>(
+        &self,
+        scope: &Scope<'js>,
+        err: rquickjs::Error,
+        label: &str,
+        elapsed: Duration,
+    ) -> JsFault {
+        let fault = self.classify_only(scope, err, label, elapsed);
+        self.note_ran_out(&fault);
+        fault
+    }
+
+    fn classify_only<'js>(
         &self,
         scope: &Scope<'js>,
         err: rquickjs::Error,
@@ -2589,6 +2616,7 @@ impl JsHost {
                             },
                         )
                     });
+                    self.note_ran_out(&fault);
                     pumped.faults.push(fault);
                 }
             }
@@ -2672,29 +2700,47 @@ impl JsHost {
 
     /// Whether [`JsHost::collect_if_idle`] would collect now: outside a
     /// run, the heap grew by the configured growth since the collector
-    /// last ran. Walks nothing, so a host may ask it each time it is
-    /// about to rest, and wake later to collect only when it is true.
+    /// last ran, or a run ran out of heap since. Walks nothing, so a host
+    /// may ask it each time it is about to rest, and wake later to collect
+    /// only when it is true. Runs that run out together are collected for
+    /// once, when the host rests, whatever they let go of.
     pub fn wants_idle_collect(&self) -> bool {
         !self.state.entered.get()
-            && self.heap_bytes()
+            && (self.heap_bytes()
                 >= self
                     .last_collect
                     .get()
                     .saturating_add(self.cfg.idle_collect_min_growth)
+                || self.ran_out_at.get() == Some(self.collections.get()))
     }
 
-    /// Whether collecting could free anything: the heap grew by the
+    /// Whether a run ran out of heap and a collection came after the last
+    /// one that did. False before any ran out. A fault that the heap ran
+    /// out needs no other collection when this is true, and nothing was let
+    /// go of since ([`JsHost::may_hold_garbage`]).
+    pub fn collected_since_ran_out(&self) -> bool {
+        self.ran_out_at
+            .get()
+            .is_some_and(|at| self.collections.get() > at)
+    }
+
+    /// Whether collecting is likely to free anything: the heap grew by the
     /// configured growth since the collector last ran, or a script value
-    /// was let go of since. A run that drops the last reference to a cycle
-    /// frees nothing, so neither the heap nor its peak tells; an object's
-    /// count does. So when a run that did not run out, or the host, may
-    /// have let go of something, this compares a digest of every object
-    /// and its count with the one the last collection left. A binding that
-    /// only reads leaves every count as it found it, and rows that run out
-    /// of one heap full of what lives do not each collect it again. A run
-    /// that ran out is not asked about: what it let go of before it did is
-    /// what its own retries meet. Walks the object list when something may
-    /// have let go since it last did, not what the objects hold.
+    /// was let go of since and some object's count changed. A run that
+    /// drops the last reference to a cycle frees nothing, so neither the
+    /// heap nor its peak tells; a count usually does. So when a run (one
+    /// that ran out too) or the host may have let go of something, this
+    /// compares a digest of every object and its count with the one the
+    /// last collection left. A binding that only reads leaves every count
+    /// as it found it. A false answer is a guess, not a proof: a script
+    /// that rewires references can leave every count as it was and a cycle
+    /// unreachable (`heap.rs`'s `ObjectDigest`). So it only decides
+    /// collections whose skipping costs nothing but time: the one right
+    /// after a run that ran out, ahead of the one owed for it
+    /// ([`JsHost::wants_idle_collect`], `ljos_engine`'s
+    /// `Engine::collect_for_full_heap`). Walks the object list when
+    /// something may have let go since it last did, not what the objects
+    /// hold.
     pub fn may_hold_garbage(&self) -> bool {
         if self.heap_bytes()
             >= self
@@ -2757,12 +2803,13 @@ impl JsHost {
     /// After a run: collects when the heap is past three quarters of its
     /// limit and grew a quarter of the room left since it was last
     /// collected, or at once when the run found no room and collecting
-    /// could free something ([`JsHost::may_hold_garbage`]), so the next
-    /// run has what garbage held: runs that run out of a heap full of what
-    /// lives do not each collect it again. QuickJS collects only when an
-    /// object is made
-    /// past its threshold, and a run of strings and arrays goes past the
-    /// limit without one. Warns once while it stays past three quarters
+    /// looks like it frees something ([`JsHost::may_hold_garbage`]), so the
+    /// next run has what garbage held: runs that run out of a heap full of
+    /// what lives do not each collect it again. Skipping it only puts the
+    /// collection off: one is owed until it runs
+    /// ([`JsHost::wants_idle_collect`]). QuickJS collects only when an
+    /// object is made past its threshold, and a run of strings and arrays
+    /// goes past the limit without one. Warns once while it stays past three quarters
     /// after collecting, naming the runs that grew it most, and again once
     /// it went below five eighths and came back.
     fn mind_heap(&self, ran_out: bool) {

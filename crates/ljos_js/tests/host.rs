@@ -265,6 +265,90 @@ fn a_run_out_after_a_run_that_only_dropped_cycles_collects_them() {
         .unwrap();
 }
 
+/// A run can make a cycle unreachable and leave every object's count as
+/// it was, by rewiring references. The digest the host compares cannot
+/// tell, but the run ran out, so a collection is owed for it all the same:
+/// the host wants one before it rests, and that one frees the cycle.
+#[test]
+fn a_run_out_after_rewiring_that_kept_every_count_is_still_collected_for() {
+    let host = small(16);
+    host.enter("tie", host.config().slice, |s| {
+        s.eval::<(), _>(
+            "globalThis.a = { next: { next: null, big: 'y'.repeat(9 * 1024 * 1024) } };\n\
+             globalThis.rewire = () => {\n\
+                 a.next.next = a.next; a.next = a; globalThis.a = null;\n\
+                 globalThis.s = 'x'.repeat(8 * 1024 * 1024);\n\
+             }",
+        )
+    })
+    .unwrap();
+    assert!(host.collect_now());
+    let held = host.heap_bytes();
+    // A call, not an eval: compiling one leaves what the compiler used.
+    let err = host
+        .enter("rewire", host.config().slice, |s| {
+            s.globals()
+                .get::<_, ljos_js::rquickjs::Function>("rewire")?
+                .call::<_, ()>(())
+        })
+        .unwrap_err();
+    assert!(matches!(err, JsFault::JsOutOfMemory { .. }), "{err:?}");
+    assert!(host.heap_bytes() >= held, "the cycles are still there");
+    assert!(
+        !host.may_hold_garbage(),
+        "every count is as it was: the digest cannot tell"
+    );
+    assert!(!host.collected_since_ran_out());
+    assert!(host.wants_idle_collect(), "a collection is owed");
+    assert!(host.collect_if_idle());
+    assert!(host.collected_since_ran_out());
+    assert!(!host.wants_idle_collect(), "and paid");
+    assert!(host.heap_bytes() < held / 2, "{}", host.heap_bytes());
+    host.enter("fill", host.config().slice, |s| {
+        s.eval::<(), _>("globalThis.s = 'x'.repeat(8 * 1024 * 1024)")
+    })
+    .unwrap();
+}
+
+/// A run that lets go of the root of a cycle and then fails a big
+/// allocation may have let go of something: the host owes a collection
+/// for it, paid when it rests, so the next run has the room.
+#[test]
+fn a_run_that_drops_a_cycle_and_then_runs_out_leaves_it_collected() {
+    let host = small(16);
+    keep(&host, 9);
+    host.enter("tie", host.config().slice, |s| {
+        s.eval::<(), _>(
+            "kept.self = kept;\n\
+             globalThis.dropAndFill = () => {\n\
+                 globalThis.kept = null;\n\
+                 globalThis.s = 'x'.repeat(8 * 1024 * 1024);\n\
+             }",
+        )
+    })
+    .unwrap();
+    assert!(host.collect_now());
+    let held = host.heap_bytes();
+    let collections = host.collections();
+    let err = host
+        .enter("dropAndFill", host.config().slice, |s| {
+            s.globals()
+                .get::<_, ljos_js::rquickjs::Function>("dropAndFill")?
+                .call::<_, ()>(())
+        })
+        .unwrap_err();
+    assert!(matches!(err, JsFault::JsOutOfMemory { .. }), "{err:?}");
+    assert!(host.wants_idle_collect(), "a collection is owed");
+    assert!(host.collect_if_idle());
+    assert_eq!(host.collections(), collections + 1, "collected after it");
+    assert!(!host.wants_idle_collect(), "and paid");
+    assert!(host.heap_bytes() < held / 2, "{}", host.heap_bytes());
+    host.enter("fill", host.config().slice, |s| {
+        s.eval::<(), _>("globalThis.s = 'x'.repeat(8 * 1024 * 1024)")
+    })
+    .unwrap();
+}
+
 /// The fault of a run that found no room names what grew the heap.
 #[test]
 fn running_out_of_heap_names_what_grew_it() {

@@ -81,12 +81,17 @@ impl MallocPeak {
 }
 
 /// A digest of the runtime's collectable objects and their reference
-/// counts. Equal digests mean, to a 64-bit hash, the same objects held as
-/// often: no script value was let go of, so no cycle became garbage. A run
-/// that drops the last reference to a cycle frees nothing, so neither the
-/// heap nor its peak tells; a count does. Walks the object list once, not
-/// what the objects hold, so it is far cheaper than a collection, but it is
-/// not free.
+/// counts. Equal digests mean, to a 64-bit hash, the same objects at the
+/// same addresses with the same counts, and nothing more: what references
+/// what is not in it. A run that drops the last reference to a cycle
+/// frees nothing, so neither the heap nor its peak tells, but a count
+/// usually changes. Not always: `a.next.next = a.next; a.next = a;
+/// globalThis.a = null` leaves both objects unreachable with the counts
+/// they had. So a changed digest says something may be garbage, and an
+/// equal one is only a good guess that nothing became garbage: it may put
+/// a collection off, never refuse one that is owed. Walks the object list
+/// once, not what the objects hold, so it is far cheaper than a
+/// collection, but it is not free.
 pub(crate) struct ObjectDigest(*mut rquickjs::qjs::JSRuntime);
 
 impl ObjectDigest {
