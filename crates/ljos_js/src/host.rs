@@ -3253,6 +3253,32 @@ pub(crate) fn classify_error<'js>(
             }
             fault
         }
+        // rquickjs words a call into QuickJS that gave nothing back, and
+        // threw nothing it would show, as unknown (a string turned into
+        // text, an atom, a big integer). Where that call ran out of heap,
+        // QuickJS left its "out of memory" pending, or a `null` where even
+        // that would not fit: the heap is told as having run out, so the
+        // boundary above waits for room and tries again instead of taking
+        // it for a bug. The pending exception is cleared either way, or the
+        // next run would find it.
+        rquickjs::Error::Unknown => {
+            let ran_out = if ctx.has_exception() {
+                let thrown = ctx.catch();
+                matches!(
+                    describe_exception(&thrown, label, sources),
+                    JsFault::JsOutOfMemory { .. }
+                )
+            } else {
+                heap_nearly_full(ctx, sources.peak.map_or(0, MallocPeak::get))
+            };
+            if ran_out {
+                JsFault::JsOutOfMemory {
+                    label: label.to_owned(),
+                }
+            } else {
+                JsFault::Internal(rquickjs::Error::Unknown.to_string())
+            }
+        }
         other => JsFault::Internal(other.to_string()),
     }
 }
