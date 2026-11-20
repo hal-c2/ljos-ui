@@ -284,6 +284,200 @@ fn observer_until(
     }
 }
 
+// The observer's window is given a size as a window manager or a page
+// holding it would: through its own inspector, the way an agent does.
+#[when(regex = r"^the observer's window is (\d+) by (\d+) pixels$")]
+fn observer_resized(w: &mut LjosWorld, width: u32, height: u32) -> StepResult {
+    w.each(|b| {
+        b.probes()?
+            .observer_call(
+                "app_resize",
+                serde_json::json!({ "width": width, "height": height }),
+            )
+            .map(|_| ())
+    })
+}
+
+// An item that runs past its window's edge is cut off there: its words are
+// clipped, not elided. Only across, as a list that scrolls holds rows
+// below its window's bottom on purpose.
+#[then(
+    regex = r#"^every "((?:[^"\\]|\\.)+)" in the observer lies within the width of its window$"#
+)]
+fn observer_within_width(w: &mut LjosWorld, locator: String) -> StepResult {
+    let locator = unquoted(&locator);
+    w.each(|b| {
+        observer_holds(b.probes()?, |probes| {
+            let status = probes.observer_call("app_status", serde_json::json!({}))?;
+            let width = status["window"]["width"].as_f64().ok_or_else(|| {
+                BackendError::Failed(format!("the observer's status gives no width: {status}"))
+            })?;
+            let past: Vec<String> = boxes(probes, &locator)?
+                .into_iter()
+                .filter(|m| m.at[0] < -EDGE || m.at[0] + m.at[2] > width + EDGE)
+                .map(|m| m.to_string())
+                .collect();
+            Ok((!past.is_empty())
+                .then(|| format!("in a window {width} wide, these run past its edge: {past:?}")))
+        })
+    })
+}
+
+// Two words drawn over each other can be read as neither.
+#[then(regex = r#"^no two "((?:[^"\\]|\\.)+)" in the observer overlap$"#)]
+fn observer_none_overlap(w: &mut LjosWorld, locator: String) -> StepResult {
+    let locator = unquoted(&locator);
+    w.each(|b| {
+        observer_holds(b.probes()?, |probes| {
+            let all = boxes(probes, &locator)?;
+            let mut over = Vec::new();
+            for (i, a) in all.iter().enumerate() {
+                for b in &all[i + 1..] {
+                    if a.overlaps(b) {
+                        over.push(format!("{a} and {b}"));
+                    }
+                }
+            }
+            Ok((!over.is_empty()).then(|| format!("these overlap: {over:?}")))
+        })
+    })
+}
+
+// Where one item lies from another says how a view is laid out (a list
+// beside its page, or above it) without a picture to compare.
+#[then(
+    regex = r#"^the observer's "((?:[^"\\]|\\.)+)" lies (above|left of) its "((?:[^"\\]|\\.)+)"$"#
+)]
+fn observer_lies(w: &mut LjosWorld, first: String, side: String, second: String) -> StepResult {
+    let (first, second) = (unquoted(&first), unquoted(&second));
+    w.each(|b| {
+        observer_holds(b.probes()?, |probes| {
+            let (Some(a), Some(b)) = (
+                boxes(probes, &first)?.into_iter().next(),
+                boxes(probes, &second)?.into_iter().next(),
+            ) else {
+                return Ok(Some(format!("it shows no {first} or no {second}")));
+            };
+            let lies = match side.as_str() {
+                "above" => a.at[1] + a.at[3] <= b.at[1] + EDGE,
+                _ => a.at[0] + a.at[2] <= b.at[0] + EDGE,
+            };
+            Ok((!lies).then(|| format!("{a} does not lie {side} {b}")))
+        })
+    })
+}
+
+/// How far a box may stand past another and still be beside it: layouts
+/// place items on fractions of a pixel.
+const EDGE: f64 = 0.5;
+
+/// An item the observer's window shows, where it shows it.
+struct Shown {
+    role: String,
+    name: String,
+    /// x, y, width and height in the window's logical pixels, before any
+    /// clipping.
+    at: [f64; 4],
+}
+
+impl Shown {
+    fn overlaps(&self, other: &Self) -> bool {
+        let [ax, ay, aw, ah] = self.at;
+        let [bx, by, bw, bh] = other.at;
+        // Something with no width or no height covers nothing.
+        aw > 0.0
+            && ah > 0.0
+            && bw > 0.0
+            && bh > 0.0
+            && ax + aw > bx + EDGE
+            && bx + bw > ax + EDGE
+            && ay + ah > by + EDGE
+            && by + bh > ay + EDGE
+    }
+}
+
+impl std::fmt::Display for Shown {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let [x, y, w, h] = self.at;
+        write!(f, "{} {:?} at {x},{y} {w}x{h}", self.role, self.name)
+    }
+}
+
+/// Everything `locator` finds in the observer's window. A locator that
+/// finds more than one answer holds is refused, so that a check never
+/// passes on a part of what it names.
+fn boxes(
+    probes: &mut dyn crate::backend::Probes,
+    locator: &str,
+) -> Result<Vec<Shown>, BackendError> {
+    const ALL: u64 = 200;
+    let found = probes.observer_call(
+        "app_find",
+        serde_json::json!({ "locator": locator, "limit": ALL }),
+    )?;
+    let total = found["total"].as_u64().unwrap_or(0);
+    if total > ALL {
+        return Err(BackendError::Failed(format!(
+            "{locator} finds {total} items in the observer, more than the {ALL} one look \
+             answers: name fewer"
+        )));
+    }
+    let matches = found["matches"].as_array().cloned().unwrap_or_default();
+    matches
+        .iter()
+        .map(|m| {
+            let at = m["bounds"]
+                .as_array()
+                .filter(|b| b.len() == 4)
+                .map(|b| std::array::from_fn(|i| b[i].as_f64().unwrap_or(f64::NAN)))
+                .ok_or_else(|| BackendError::Failed(format!("a match has no bounds: {m}")))?;
+            Ok(Shown {
+                role: m["role"].as_str().unwrap_or("").to_owned(),
+                name: m["name"].as_str().unwrap_or("").to_owned(),
+                at,
+            })
+        })
+        .collect()
+}
+
+/// Looks with `look` until it finds nothing wrong, or until
+/// [`OBSERVER_ANSWERS`] is over and the last thing it found is the
+/// failure. A resize is laid out, and an answer shown, in a frame, so the
+/// window is looked at again only after it ran one, never on a timer.
+fn observer_holds(
+    probes: &mut dyn crate::backend::Probes,
+    mut look: impl FnMut(&mut dyn crate::backend::Probes) -> Result<Option<String>, BackendError>,
+) -> StepResult {
+    let deadline = std::time::Instant::now() + OBSERVER_ANSWERS;
+    let told = probes.observer_call("app_watch", serde_json::json!({ "topics": ["frames"] }))?;
+    let mut frames = told["counts"]["frames"].as_u64();
+    loop {
+        let Some(wrong) = look(probes)? else {
+            return Ok(());
+        };
+        let left = deadline.saturating_duration_since(std::time::Instant::now());
+        let Some(since) = frames.filter(|_| !left.is_zero()) else {
+            return Err(BackendError::Failed(format!("the observer: {wrong}")));
+        };
+        let wait_ms = u64::try_from(left.as_millis()).unwrap_or(u64::MAX).max(1);
+        let told = probes.observer_call(
+            "app_watch",
+            serde_json::json!({
+                "since": { "frames": since },
+                "topics": ["frames"],
+                "wait_ms": wait_ms,
+                "settle_ms": 100,
+            }),
+        )?;
+        let now = told["counts"]["frames"].as_u64();
+        if now == frames {
+            // No frame in all the time left: what it shows is final.
+            return Err(BackendError::Failed(format!("the observer: {wrong}")));
+        }
+        frames = now.or(frames);
+    }
+}
+
 // The observer is itself an application with a window: the audit it
 // offers is held to its own rules.
 #[then("the observer passes its own audit")]
