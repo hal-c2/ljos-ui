@@ -665,11 +665,13 @@ fn wait_until(e: &Engine, me: ObjectId, due: Time, count: Count) {
     }
 }
 
-/// Loads again for a fault, noting it as `count` says.
+/// Loads again for a fault, noting it as `count` says. `at` dates an
+/// Elsewhere streak; the backoff notes when the load is, which is later
+/// than the fault when the fault was heard late.
 fn load_counted(e: &Engine, me: ObjectId, at: Time, count: Count) {
     let before = with_run(e, me, |r| {
         if let Count::Backoff = count {
-            r.backoff.loading(at);
+            r.backoff.loading(e.now());
         }
         r.generation
     });

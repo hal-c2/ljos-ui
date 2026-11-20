@@ -633,6 +633,32 @@ fn rows_that_run_out_of_a_full_heap_together_do_not_each_collect_it() {
 }
 
 #[test]
+fn a_loader_counts_a_late_fault_from_when_it_loaded_again() {
+    // The fault is heard long after it came: the load it sets off is the
+    // one the next fault comes soon after, not the fault.
+    let (e, clock) = timed();
+    let (root, loader) = out_of_room_on(&e, 0, 4 * 1024);
+    clock.advance(Duration::from_secs(30));
+    let mut s = scene(&e, root, 200.0, 200.0);
+    frame(&mut s, &e);
+    frame(&mut s, &e);
+    assert_eq!(num(&e, loader, "status"), 3.0);
+    let warned = e.take_warnings();
+    let at_once = warned
+        .iter()
+        .filter(|w| w.ends_with("Loader: its item ran out of script memory, loading again"))
+        .count();
+    assert_eq!(at_once, 1, "loaded at once only for the first: {warned:?}");
+    assert!(
+        warned.iter().any(|w| w.contains(
+            "Loader: its item ran out of script memory again, so it stays at Loader.Error and loads again in 1 s"
+        )),
+        "{warned:?}"
+    );
+    assert!(e.next_timer_deadline().is_some(), "it waits to load again");
+}
+
+#[test]
 fn a_loader_told_to_load_while_it_waits_loads_at_once_and_drops_the_wait() {
     let (e, clock) = timed();
     let (root, loader) = out_of_room_on(&e, 0, 4 * 1024);
