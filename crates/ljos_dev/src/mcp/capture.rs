@@ -534,6 +534,10 @@ pub(crate) fn secrets(engine: &Engine, scene: &QuickScene, redact_all: bool) -> 
 #[derive(Default)]
 pub(crate) struct SecretWatch {
     live: Rc<RefCell<Option<Watching>>>,
+    /// Items put in the scene and not yet watched: one placed while a
+    /// pass already holds `live` (watching an editor made another one go
+    /// in) waits here for that pass, which drains it before letting go.
+    pending: Rc<RefCell<Vec<ObjectId>>>,
     /// The engine whose new items are heard of: the engine keeps its
     /// listeners, so there is one for each engine, idle between watches.
     hooked: Option<Engine>,
@@ -586,31 +590,30 @@ impl SecretWatch {
             .as_ref()
             .is_some_and(|e| Engine::ptr_eq(e, engine))
         {
-            let live = Rc::clone(&self.live);
+            let (live, pending) = (Rc::clone(&self.live), Rc::clone(&self.pending));
             engine.on_visual_parent_changed(move |engine, obj, parent| {
-                if parent.is_some()
-                    && let Ok(mut live) = live.try_borrow_mut()
-                    && let Some(w) = live.as_mut()
-                {
-                    w.watch_below(engine, obj);
+                if parent.is_some() {
+                    placed(&live, &pending, engine, obj);
                 }
             });
             self.hooked = Some(engine.clone());
         }
-        let mut w = Watching {
+        *self.live.borrow_mut() = Some(Watching {
             heard: Rc::default(),
             nodes: Vec::new(),
             watched: HashSet::new(),
             redact_all,
-        };
+        });
+        // Watched the way an item put in later is, so one placed while the
+        // scene is first walked is not missed.
         if let Some(root) = scene.root() {
-            w.watch_below(engine, root);
+            placed(&self.live, &self.pending, engine, root);
         }
-        *self.live.borrow_mut() = Some(w);
     }
 
     /// Stops watching, and gives what was heard.
     pub(crate) fn stop(&mut self, engine: &Engine) -> HashSet<String> {
+        self.pending.borrow_mut().clear();
         let Some(w) = self.live.borrow_mut().take() else {
             return HashSet::new();
         };
@@ -618,6 +621,32 @@ impl SecretWatch {
             engine.stop_effect(n);
         }
         w.heard.take()
+    }
+}
+
+/// Watches what is below `obj`, put in the scene, and whatever is put in
+/// while it does. The pass that holds `live` watches each item queued in
+/// `pending`, its own and those placed under it, before it lets go.
+fn placed(
+    live: &RefCell<Option<Watching>>,
+    pending: &RefCell<Vec<ObjectId>>,
+    engine: &Engine,
+    obj: ObjectId,
+) {
+    pending.borrow_mut().push(obj);
+    // Held: by the pass this placing happened in, which drains the queue.
+    let Ok(mut live) = live.try_borrow_mut() else {
+        return;
+    };
+    let Some(w) = live.as_mut() else {
+        // No watch: nothing placed now is asked about.
+        pending.borrow_mut().clear();
+        return;
+    };
+    loop {
+        let next = pending.borrow_mut().pop();
+        let Some(obj) = next else { break };
+        w.watch_below(engine, obj);
     }
 }
 
@@ -640,4 +669,56 @@ pub(crate) fn secrets_below(engine: &Engine, root: ObjectId, redact_all: bool) -
         }
         out
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ljos_quick::{Item, TextInput};
+
+    fn made<T: ljos_engine::QmlType + Default>(engine: &Engine) -> ObjectId {
+        let obj = engine.create_native(T::default(), None).unwrap();
+        engine.complete(obj).unwrap();
+        obj
+    }
+
+    /// An editor placed while a pass already holds the watch (as one an
+    /// editor's watching made would be) is watched once that pass goes on,
+    /// not skipped.
+    #[test]
+    fn an_editor_placed_inside_a_pass_is_watched_by_it() {
+        let engine = Engine::new();
+        ljos_quick::register(&engine);
+        let root = made::<Item>(&engine);
+        let mut scene = QuickScene::new(ljos_render::kurbo::Size::new(100.0, 100.0));
+        scene.set_root(&engine, root).unwrap();
+        let mut watch = SecretWatch::default();
+        watch.start(&engine, &scene, true);
+
+        let inner = made::<TextInput>(&engine);
+        let outer = made::<TextInput>(&engine);
+        {
+            // The outer pass holds the watch while `inner` goes in.
+            let _pass = watch.live.borrow_mut();
+            engine.set_visual_parent(inner, Some(root)).unwrap();
+            assert_eq!(*watch.pending.borrow(), [inner], "kept for the pass");
+        }
+        placed(&watch.live, &watch.pending, &engine, outer);
+        engine.set_visual_parent(outer, Some(root)).unwrap();
+        assert!(watch.pending.borrow().is_empty());
+
+        engine
+            .write_by_name(inner, "text", Value::from("nested-pin"))
+            .unwrap();
+        engine
+            .write_by_name(inner, "text", Value::from(""))
+            .unwrap();
+        engine
+            .write_by_name(outer, "text", Value::from("outer-pin"))
+            .unwrap();
+        let heard = watch.stop(&engine);
+        assert!(heard.contains("nested-pin"), "{heard:?}");
+        assert!(heard.contains("outer-pin"), "{heard:?}");
+        assert!(watch.pending.borrow().is_empty());
+    }
 }
