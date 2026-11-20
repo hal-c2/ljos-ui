@@ -289,8 +289,10 @@ fn show_when_drawn(
 }
 
 /// Tells the QML window the size its platform window has, when that is
-/// another than it was last told (or `force`: the application wrote a
-/// size the platform did not give).
+/// another than it was last told, or the window was never told it
+/// (`size_untold`), or `force`: the application wrote a size the platform
+/// did not give. Until the platform says what size its window has, the
+/// window stays untold.
 fn note_size(slot: &mut Slot, engine: &Engine, sys: &WindowSystem, force: bool) {
     let (Some(surface), Some(painter)) = (slot.surface.as_mut(), slot.painter.as_mut()) else {
         return;
@@ -298,8 +300,9 @@ fn note_size(slot: &mut Slot, engine: &Engine, sys: &WindowSystem, force: bool) 
     let Some(size) = surface.fit(&slot.ctx, painter) else {
         return;
     };
-    if force || slot.told_size != Some(size) {
+    if force || slot.size_untold || slot.told_size != Some(size) {
         slot.told_size = Some(size);
+        slot.size_untold = false;
         if let Some(win) = slot.window {
             sys.resized(engine, win, size);
         }
@@ -738,7 +741,7 @@ impl<M: Send + 'static> Desktop<M> {
             }
         }
         let slot = &mut self.slots[0];
-        if std::mem::take(&mut slot.size_untold) {
+        if slot.size_untold {
             note_size(slot, engine, sys, true);
         }
 
