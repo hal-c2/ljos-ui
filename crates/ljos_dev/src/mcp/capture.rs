@@ -598,8 +598,16 @@ impl SecretWatch {
             });
             self.hooked = Some(engine.clone());
         }
+        // A watch still live is stopped first, so none of its effects are
+        // left running; what it heard is kept.
+        let heard = self.live.borrow_mut().take().map_or_else(Rc::default, |w| {
+            for n in w.nodes {
+                engine.stop_effect(n);
+            }
+            w.heard
+        });
         *self.live.borrow_mut() = Some(Watching {
-            heard: Rc::default(),
+            heard,
             nodes: Vec::new(),
             watched: HashSet::new(),
             redact_all,
@@ -720,5 +728,32 @@ mod tests {
         assert!(heard.contains("nested-pin"), "{heard:?}");
         assert!(heard.contains("outer-pin"), "{heard:?}");
         assert!(watch.pending.borrow().is_empty());
+    }
+
+    /// A second start stops the first watch's effects and keeps what it
+    /// heard: nothing written once the watch is stopped is heard.
+    #[test]
+    fn a_second_start_leaves_no_effect_of_the_first() {
+        let engine = Engine::new();
+        ljos_quick::register(&engine);
+        let root = made::<Item>(&engine);
+        let field = made::<TextInput>(&engine);
+        engine.set_visual_parent(field, Some(root)).unwrap();
+        let mut scene = QuickScene::new(ljos_render::kurbo::Size::new(100.0, 100.0));
+        scene.set_root(&engine, root).unwrap();
+        let mut watch = SecretWatch::default();
+        watch.start(&engine, &scene, true);
+        let first = Rc::clone(&watch.live.borrow().as_ref().unwrap().heard);
+        engine
+            .write_by_name(field, "text", Value::from("first-pin"))
+            .unwrap();
+        watch.start(&engine, &scene, true);
+        let heard = watch.stop(&engine);
+        assert!(heard.contains("first-pin"), "kept: {heard:?}");
+
+        engine
+            .write_by_name(field, "text", Value::from("after-pin"))
+            .unwrap();
+        assert!(first.borrow().is_empty(), "{:?}", first.borrow());
     }
 }
