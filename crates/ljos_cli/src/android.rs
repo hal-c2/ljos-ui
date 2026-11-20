@@ -317,7 +317,12 @@ fn connect(adb: &Adb, application_id: &str, out: &Path) -> anyhow::Result<String
     };
     // Whole, renamed into place: `attach` reads it again for every
     // message, and must not find it half written.
-    ljos_mcp_core::write_token_text(out, &here.to_text())?;
+    if let Err(e) = ljos_mcp_core::write_token_text(out, &here.to_text()) {
+        // No file records this forward, so no later connect would remove
+        // it: each retry would leave one more.
+        let _ = adb.output(&["forward", "--remove", &format!("tcp:{local}")]);
+        return Err(e.into());
+    }
     Ok(url)
 }
 
@@ -1042,6 +1047,10 @@ esac
             "{err:#}"
         );
         assert!(!out.exists());
+        // No file records the forward it made, so it is removed now: no
+        // later connect would.
+        let log = std::fs::read_to_string(dir.path().join("log")).unwrap();
+        assert!(log.contains("forward --remove tcp:39001"), "{log}");
     }
 
     #[cfg(unix)]
