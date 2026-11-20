@@ -458,6 +458,26 @@ fn a_host_write_after_a_change_that_does_not_get_through_lasts() {
     g.check_invariants().unwrap();
 }
 
+/// The run a host write makes first is a run like a read's: a loop it
+/// finds is told to the handler by the time the write returns, not at
+/// some later read.
+#[test]
+fn a_loop_the_run_before_a_host_write_finds_is_told_at_the_write() {
+    let g = Graph::new();
+    let got = log();
+    let s = got.clone();
+    g.set_diagnostic_handler(move |d| s.borrow_mut().push(d.clone()));
+    let a = g.property(g.root(), 5).unwrap();
+    g.bind(a, move |g| g.get(a) + 1).unwrap();
+    g.write(a, 240, WriteKind::Host).unwrap();
+    assert!(
+        matches!(got.borrow()[..], [Diagnostic::BindingLoop { node, .. }] if node == a),
+        "{:?}",
+        got.borrow()
+    );
+    assert_eq!(g.get(a), 240);
+}
+
 /// Nothing reads a binding nobody wrote over: a host write elsewhere runs
 /// nothing.
 #[test]

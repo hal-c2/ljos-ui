@@ -850,7 +850,31 @@ pub(crate) fn completed(e: &Engine, obj: ObjectId) {
 
 /// [`inherited`] from `p`'s change hook.
 fn told_inherited(e: &Engine, obj: ObjectId, p: PropIndex) {
+    if !recorded(e, obj) && is_completed(e, obj) {
+        // An item no scene has a record of yet, made by a script that goes
+        // on reading it, turned off: it is prepared as it would have been
+        // had it completed off, or a child recorded under it, whose own
+        // change took a cover from it, would never be told it turned on.
+        // One still being made is prepared as it completes, once what
+        // listens to its children is connected and can be told.
+        completed(e, obj);
+        return;
+    }
     inherited_as(e, obj, true, false, Some(p));
+}
+
+fn is_completed(e: &Engine, obj: ObjectId) -> bool {
+    e.flags(obj)
+        .is_some_and(|f| f.contains(ljos_engine::ObjectFlags::COMPLETED))
+}
+
+/// Whether a scene, or the pending records, keep inherited state of `obj`.
+fn recorded(e: &Engine, obj: ObjectId) -> bool {
+    let scenes = e.extension::<Scenes>();
+    scenes
+        .pending()
+        .is_some_and(|s| s.borrow().marks.contains(obj))
+        || scenes.live().iter().any(|s| s.borrow().marks.contains(obj))
 }
 
 /// `obj` was given another visual parent: it takes what the new one
@@ -913,9 +937,27 @@ fn inherited_as(e: &Engine, obj: ObjectId, down: bool, prepare: bool, told: Opti
                 run(&pending, true);
             }
         }
-    } else if pending_has {
-        run(pending.as_ref().unwrap(), true);
+    } else if let Some(pending) = pending.as_ref() {
+        // A child completes before its parent, so it may have a pending
+        // record beside the one a scene prepared, until adoption merges
+        // them. Its own change reaches only the scene's: a cover it put
+        // in the pending record would be one no pass of the scene takes
+        // off, and adoption would carry it there. A reparent still sets
+        // both right, so neither carries a cover the new parent lifts.
+        if pending_has && (live.is_empty() || told.is_none()) {
+            run(pending, true);
+        } else if down && !live.is_empty() && holds_a_child(e, obj, pending) {
+            // Its children's pending records may hold a cover it gave them
+            // before a scene had it; only a pass there takes that off.
+            pass_down(e, obj, pending, false, true);
+        }
     }
+}
+
+/// Whether `shared` has a record of one of `obj`'s visual children.
+fn holds_a_child(e: &Engine, obj: ObjectId, shared: &RefCell<Shared>) -> bool {
+    let s = shared.borrow();
+    e.visual_children(obj).iter().any(|&c| s.marks.contains(c))
 }
 
 /// Gives an item under an adopted parent its inheritance state before the
@@ -5485,6 +5527,23 @@ mod inheritance_tests {
         assert!(s.shared.borrow().marks.contains(child));
         s.frame(&e, Time::ZERO);
         assert!(!pending_has(&e, child));
+        assert!(!visible(&e, child));
+
+        set_visible(&e, hidden, true);
+        assert!(visible(&e, child));
+    }
+
+    #[test]
+    fn showing_a_parent_before_adoption_shows_its_child() {
+        let e = engine();
+        let root = item(&e, None);
+        let _s = scene(&e, root);
+        let hidden = incomplete_item(&e, root);
+        set_visible(&e, hidden, false);
+        let child = incomplete_item(&e, hidden);
+        e.complete(child).unwrap();
+        e.complete(hidden).unwrap();
+        assert!(pending_has(&e, child));
         assert!(!visible(&e, child));
 
         set_visible(&e, hidden, true);

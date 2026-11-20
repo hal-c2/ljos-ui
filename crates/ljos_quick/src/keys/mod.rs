@@ -19,6 +19,7 @@ mod standard;
 mod text_input;
 
 pub use attached::{KeyNavigation, KeyNavigationAttached, Keys, KeysAttached, priority};
+pub(crate) use dispatch::deliver_key_to;
 pub use dispatch::{KeyItem, deliver_key, register_key_item, tab_target};
 pub use event::KeyEventObject;
 pub use filter::{KeyFilter, KeyFilterId, add_key_filter, remove_key_filter};

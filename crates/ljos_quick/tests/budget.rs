@@ -735,3 +735,71 @@ fn a_box_of_fixed_children_costs_no_more_than_a_row_positioner() {
     assert!(ljos_more.0 <= qt_more.0, "{said}");
     assert!(ljos_more.1 <= qt_more.1, "{said}");
 }
+
+/// A hundred cells of a sprite sheet drawn from a script on a Canvas: a
+/// colour, `globalAlpha` and a one-pixel `fillRect` each. What the calls
+/// into the context cost, without the frames that put the pixels on screen.
+fn hundred_canvas_cells() -> Budget {
+    let e = engine();
+    let root = load(
+        &e,
+        r##"import QtQuick
+Canvas {
+  width: 20; height: 20
+  property var ctx: null
+  function cells() {
+    if (ctx === null) ctx = getContext("2d")
+    for (var p = 0; p < 100; p++) {
+      ctx.fillStyle = p % 2 ? "#e0a070" : "#30406a"
+      ctx.globalAlpha = 1
+      ctx.fillRect(p % 10, p / 10 | 0, 1, 1)
+    }
+  }
+}
+"##,
+    );
+    let mut s = scene(&e, root, 20.0, 20.0);
+    settle(&mut s, &e, 0);
+    // Warm: the first round makes the context and what every later call
+    // shares.
+    let cells = e.method_index(root, "cells").unwrap();
+    e.invoke(root, cells, &[]).unwrap();
+    settle(&mut s, &e, 1000);
+    let a = now(&e);
+    e.invoke(root, cells, &[]).unwrap();
+    between(a, now(&e))
+}
+
+// Every 2D-context call crosses from script to native. Each of the
+// hundred cells sets a style, an alpha and fills one pixel; the count
+// pins what that crossing allocates (2337 before #633 sent the
+// arguments of short calls one by one rather than as an array).
+#[test]
+fn hundred_canvas_cells_drawn_from_script() {
+    let _alone = alone();
+    let got = hundred_canvas_cells();
+    // The bytes are what the painter keeps of the cells it was given
+    // (18747 before #633 and after it), and the painter's buffers follow
+    // the machine: CI keeps 64 more. They are bounded, not pinned.
+    assert!(got.bytes <= 20_000, "{got:?}");
+    assert_eq!(
+        got,
+        Budget {
+            objects: 0,
+            graph: Census {
+                values: 0,
+                bindings: 0,
+                effects: 0,
+                scopes: 0,
+            },
+            lookups: Lookups {
+                members: 0,
+                types: 0,
+                names: 0,
+                atoms: 0,
+            },
+            allocations: 1537,
+            bytes: got.bytes,
+        }
+    );
+}
