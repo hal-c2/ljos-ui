@@ -1450,6 +1450,14 @@ impl Engine {
         if matches!(r, Err(JsFault::JsInterrupted { .. })) && js.host.interrupted() {
             self.note_js_stopped();
         }
+        // The binding or effect this run belongs to may not have read all
+        // it depends on; it must still wake when the rest changes, or it
+        // stays stale after the heap has room or time again.
+        if let Err(fault) = &r
+            && fault.is_resource()
+        {
+            self.inner.graph.cut_short();
+        }
         let stopped = began_in.and_then(|b| self.swap_js_stopped(b).flatten());
         (r, stopped)
     }
