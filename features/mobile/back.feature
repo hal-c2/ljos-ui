@@ -26,26 +26,17 @@ Feature: Back goes to the application's topmost Back handler
       import Ljos
       Item {
         id: root; objectName: "root"
-        property int depth: 3
-        property bool popupOpen: false; property bool sheetOpen: false
-        property string told: ""
+        property int depth: 3; property string told: ""
+        property bool popupOpen: false; property bool sheetOpen: false; property bool dialogOpen: false
         Back {
-          id: pages; objectName: "pages"
-          enabled: root.depth > 1
+          id: pages; objectName: "pages"; enabled: root.depth > 1
           onStarted: root.told += "started "
           onProgressed: root.told += "at " + progress + " "
           onCancelled: root.told += "cancelled "
           onInvoked: { root.told += "invoked "; root.depth-- }
         }
-        Item {
-          id: popup; visible: root.popupOpen
-          Back { objectName: "popupBack"; onInvoked: root.popupOpen = false }
-        }
-        Loader {
-          active: root.sheetOpen
-          sourceComponent: Item { Back { onInvoked: root.sheetOpen = false } }
-        }
-        property bool dialogOpen: false
+        Item { id: popup; visible: root.popupOpen; Back { objectName: "popupBack"; onInvoked: root.popupOpen = false } }
+        Loader { active: root.sheetOpen; sourceComponent: Item { Back { onInvoked: root.sheetOpen = false } } }
         Popup {
           visible: root.dialogOpen
           Back { objectName: "dialogBack"; onInvoked: root.dialogOpen = false }
