@@ -348,10 +348,12 @@ fn a_patch_that_is_not_acknowledged_is_offered_again_from_the_same_base() {
     assert_eq!(second.ops, first.ops);
 }
 
-/// Whether a text that makes a `Helper` compiles in `s`.
+/// Whether a text that makes a `Helper` compiles in `s` with no error.
+/// It imports nothing: without Qt's table an import of QtQuick stands in
+/// for any name, a `Helper` that is not there too.
 fn makes_helper(s: &mut ReloadSession<QtTypeOracle>) -> bool {
-    s.compile_text("inline", "import QtQuick\nHelper { }\n", &[])
-        .is_ok()
+    s.compile_text("inline", "Helper { }\n", &[])
+        .is_ok_and(|compiled| !compiled.has_errors())
 }
 
 fn with_helper() -> ReloadSession<QtTypeOracle> {

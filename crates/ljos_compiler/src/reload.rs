@@ -261,7 +261,14 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
     ) -> Result<crate::Compiled, Vec<Diagnostic>> {
         let mut held = Vec::new();
         let mut scripts = Vec::new();
-        for (at, ran) in &self.unrun {
+        // While a patch waits for its answer the application runs what it
+        // ran before it: the texts the patch noted are older than the ones
+        // noted since, and win.
+        let mut runs: BTreeMap<&String, &String> = self.unrun.iter().collect();
+        if let Some(pending) = &self.pending {
+            runs.extend(&pending.unrun);
+        }
+        for (at, ran) in runs {
             if is_script(at) {
                 let now = self.project.script(at).map(str::to_owned);
                 if now.as_deref() != Some(ran.as_str()) {
