@@ -15,6 +15,7 @@ use android_activity::input::{
 use android_activity::{AndroidApp, AndroidAppWaker, InputStatus, MainEvent, PollEvent};
 use ndk::native_window::NativeWindow;
 
+use crate::pump::{exiting, keeps_pumping};
 use crate::relay::{Arrival, Relay, RelayHost, Request};
 use crate::{
     AppState, BackPhase, ButtonState, Capabilities, Key, KeyEvent, TouchEvent, TouchPhase, Wake,
@@ -135,21 +136,6 @@ impl<U: Send + 'static> Attach<U> {
         let requests = lock(&self.requests);
         (!requests.attached).then(then)
     }
-}
-
-/// Whether the pump goes on. Once it has asked the activity to finish, it
-/// goes on after the application's loop has ended, until the activity is
-/// destroyed: what follows `android_main` must not race its teardown.
-fn keeps_pumping(destroyed: bool, closed: bool, finishing: bool) -> bool {
-    !destroyed && (!closed || finishing)
-}
-
-/// The pump's `closed` and `finishing` once the application asked to exit.
-/// The application is ending, so nothing more goes to it. A finish the
-/// activity did not take brings no Destroy to wait for: the pump ends now,
-/// not at the next event, and `main` ends the process.
-fn exiting(finish_taken: bool) -> (bool, bool) {
-    (false, finish_taken)
 }
 
 /// Where the activity's Back goes: to the application attached, if any.
@@ -438,27 +424,6 @@ fn call_activity(app: &AndroidApp, call: ActivityCall) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn an_exit_the_activity_did_not_finish_ends_the_pump() {
-        let (closed, finishing) = exiting(false);
-        assert!(!keeps_pumping(false, closed, finishing));
-        let (closed, finishing) = exiting(true);
-        assert!(keeps_pumping(false, closed, finishing));
-        assert!(!keeps_pumping(true, closed, finishing));
-    }
-
-    #[test]
-    fn a_pump_that_asked_for_finish_waits_for_destroy_after_the_application_ends() {
-        assert!(keeps_pumping(false, true, true));
-        assert!(!keeps_pumping(true, true, true));
-    }
-
-    #[test]
-    fn a_pump_ends_when_the_application_ends_without_a_finish() {
-        assert!(!keeps_pumping(false, true, false));
-        assert!(keeps_pumping(false, false, false));
-    }
 
     #[test]
     fn a_quit_with_no_activity_attached_is_handled_at_once() {

@@ -20,6 +20,9 @@
 #[cfg(all(feature = "android", target_os = "android"))]
 pub mod android;
 mod event;
+// Only the Android host uses it; it builds everywhere so its tests run.
+#[cfg_attr(not(all(feature = "android", target_os = "android")), allow(dead_code))]
+mod pump;
 pub mod relay;
 mod schedule;
 #[cfg(all(
