@@ -13,12 +13,20 @@
 //! against the application's own sources (its pack's
 //! [`PackSources`]), and takes every other file as the build compiled it.
 //!
+//! The same compiler makes what a script hands the engine while it runs:
+//! QML it holds as text (`Qt.createQmlObject`), and a file of a directory
+//! the application loads from ([`UserQml::loads_from`]). Each compiles
+//! against the user's files over the application's, or the application's
+//! own sources while the user has none; nothing is read for it until a
+//! script first asks. A text that does not compile is the script's error
+//! and is told, as a user's file is.
+//!
 //! Nothing here draws: a host shows what [`UserSession::pump`] tells it,
 //! as a [`DevSession`](crate::DevSession)'s host does.
 
 use std::{
     cell::{Cell, RefCell},
-    collections::{BTreeSet, HashSet},
+    collections::{BTreeSet, HashMap, HashSet},
     path::{Path, PathBuf},
     rc::Rc,
     sync::{
@@ -35,7 +43,8 @@ use ljos_compiler::{
 };
 use ljos_design::theme::Theme;
 use ljos_engine::{
-    ComponentSource, Engine, LogLevel, MapSource, ObjectId, OnDisk, ReloadError, ReloadFault,
+    ComponentSource, Engine, LogLevel, MapSource, ObjectId, OnDisk, QmlText, QmlTextCompiler,
+    QmlTextError, ReloadError, ReloadFault, WeakEngine,
 };
 use ljos_ir::{CompiledFile, ReloadPatch};
 use ljos_js::Bytecode;
@@ -60,6 +69,7 @@ pub struct UserQml {
     watch: bool,
     modules: Option<String>,
     theme: bool,
+    loads_from: Vec<PathBuf>,
 }
 
 impl std::fmt::Debug for UserQml {
@@ -70,6 +80,7 @@ impl std::fmt::Debug for UserQml {
             .field("watch", &self.watch)
             .field("modules", &self.modules)
             .field("theme", &self.theme)
+            .field("loads_from", &self.loads_from)
             .finish()
     }
 }
@@ -86,7 +97,25 @@ impl UserQml {
             watch: true,
             modules: None,
             theme: true,
+            loads_from: Vec::new(),
         }
+    }
+
+    /// A directory the application itself loads QML from while it runs,
+    /// as plugins it fetched: a file there is compiled when a script asks
+    /// for it (`Qt.createComponent`, a `Loader`), against the
+    /// application's types with the user's over them and the other files
+    /// of its directory beside it, and a text placed there
+    /// (`Qt.createQmlObject`) is not refused. A file there is read as a
+    /// user's file is: a link in it that leads out of it is refused and
+    /// told. A file that compiled is kept until the user's files change: a
+    /// version fetched again in the meantime is not read until then, and
+    /// is from then on. One that did not compile is read again the next
+    /// time a script asks for it.
+    #[must_use]
+    pub fn loads_from(mut self, dir: impl Into<PathBuf>) -> Self {
+        self.loads_from.push(dir.into());
+        self
     }
 
     /// Called on the UI thread for every fault of the user's files: one
@@ -169,6 +198,14 @@ trait Layers {
     /// Starts the watcher over the files, and asks it to read them now
     /// when `flush`.
     fn spawn(&self, sink: Sink, flush: bool) -> Result<Watcher, WatchError>;
+    /// Compiles `text` as the file `key` would be, against the files as
+    /// they stand with the files `beside` it.
+    fn text(
+        &self,
+        key: &str,
+        text: &str,
+        beside: &[(String, String)],
+    ) -> Result<CompiledFile, Vec<QmlTextError>>;
 }
 
 type Sink = Box<dyn FnMut(DevMsg) -> bool + Send>;
@@ -193,6 +230,15 @@ where
             let _ = watcher.flush();
         }
         Ok(watcher)
+    }
+
+    fn text(
+        &self,
+        key: &str,
+        text: &str,
+        beside: &[(String, String)],
+    ) -> Result<CompiledFile, Vec<QmlTextError>> {
+        crate::text::outcome(lock(self).compile_text(key, text, beside))
     }
 }
 
@@ -224,6 +270,24 @@ type Make = Box<dyn FnOnce(Making) -> Built + Send>;
 /// user has a file: reading the program's types is work at start-up an
 /// application whose user has none would do for nothing.
 type Later = Box<dyn FnOnce(&Engine) -> Make>;
+
+/// Reads the program's oracle from the engine.
+type ReadOracle<O> = Box<dyn FnOnce(&Engine) -> O>;
+
+/// The program's oracle, read from the engine once, by the first that
+/// needs it: the user's first file, or the first text a script makes.
+struct Oracle<O> {
+    make: Cell<Option<ReadOracle<O>>>,
+    made: std::cell::OnceCell<O>,
+}
+
+impl<O: Clone> Oracle<O> {
+    fn get(&self, engine: &Engine) -> O {
+        self.made
+            .get_or_init(|| (self.make.take().expect("read once"))(engine))
+            .clone()
+    }
+}
 
 /// The compiler over an oracle, made only when the user has a file.
 fn maker<O>(oracle: O) -> Make
@@ -279,6 +343,197 @@ where
     })
 }
 
+/// Compiles a text, or a file of a directory the application loads from,
+/// as the file of its key would be, with the files `beside` it; what does
+/// not compile is told.
+type Compile =
+    Rc<dyn Fn(QmlText<'_>, &[(String, String)]) -> Result<CompiledFile, Vec<QmlTextError>>>;
+
+/// [`Compile`] over the application's sources alone: key, text, beside.
+type BaseCompile =
+    Rc<dyn Fn(&str, &str, &[(String, String)]) -> Result<CompiledFile, Vec<QmlTextError>>>;
+
+/// What compiles the texts and the files of the directories the
+/// application loads from: the user's files over the application's once
+/// they run, the application's sources until then. Nothing is read before
+/// the first.
+fn compiler<O>(
+    engine: WeakEngine,
+    pack: Rc<MapSource>,
+    shared: Rc<Shared>,
+    oracle: Rc<Oracle<O>>,
+) -> Compile
+where
+    O: TypeOracle + Clone + Send + 'static,
+{
+    Rc::new(move |text: QmlText<'_>, beside: &[(String, String)]| {
+        shared.texts.set(true);
+        // Out of the borrow: compiling may load a file, which asks the
+        // source, which reads the layers.
+        let layers = shared.layers.borrow().clone();
+        let made = match layers {
+            Some(layers) => layers.text(text.key, text.text, beside),
+            None => {
+                let cached = shared.base.borrow().clone();
+                let base = match cached {
+                    Some(Ok(base)) => base,
+                    // Told when the first text found it so: it does not
+                    // change while the application runs.
+                    Some(Err(errors)) => return Err(errors),
+                    None => {
+                        let made = base_compiler(&engine, &pack, &oracle);
+                        *shared.base.borrow_mut() = Some(made.clone());
+                        match made {
+                            Ok(base) => base,
+                            Err(errors) => {
+                                shared.text_failed(text.url, &errors);
+                                return Err(errors);
+                            }
+                        }
+                    }
+                };
+                base(text.key, text.text, beside)
+            }
+        };
+        if let Err(errors) = &made {
+            shared.text_failed(text.url, errors);
+        }
+        made
+    })
+}
+
+/// What the engine asks to compile a text (`Qt.createQmlObject`) with: one
+/// placed in a directory the application loads from sees the files there.
+fn texts_compiler(compile: Compile, loads: Rc<[PathBuf]>, shared: Rc<Shared>) -> QmlTextCompiler {
+    Rc::new(move |text: QmlText<'_>| compile(text, &beside(&loads, text.url, text.key, &shared)))
+}
+
+/// The texts' compiler over the application's sources alone.
+fn base_compiler<O>(
+    engine: &WeakEngine,
+    pack: &MapSource,
+    oracle: &Oracle<O>,
+) -> Result<BaseCompile, Vec<QmlTextError>>
+where
+    O: TypeOracle + Clone + Send + 'static,
+{
+    let unloaded = |message: String| {
+        vec![QmlTextError {
+            line: 0,
+            column: 0,
+            message,
+        }]
+    };
+    let engine = engine
+        .upgrade()
+        .ok_or_else(|| unloaded("the application has stopped".to_owned()))?;
+    let sources = pack
+        .trailer()
+        .ok_or(ljos_compiler::sources::SourcesError::Missing)
+        .and_then(PackSources::decode)
+        .map_err(|e| unloaded(format!("the application's sources are not loaded: {e}")))?;
+    let project = RefCell::new(ljos_compiler::Project::load_texts(
+        &sources.files,
+        sources.style,
+        oracle.get(&engine),
+    ));
+    Ok(Rc::new(
+        move |key: &str, text: &str, beside: &[(String, String)]| {
+            crate::text::outcome(ljos_compiler::compile_text_beside(
+                &mut project.borrow_mut(),
+                key,
+                text,
+                beside,
+            ))
+        },
+    ))
+}
+
+/// The file at `url` when it is in a directory the application loads
+/// from: under it as written, with no step up.
+fn plugin_path<'a>(loads: &'a [PathBuf], url: &str) -> Option<(&'a Path, PathBuf)> {
+    let path = ljos_engine::url_path(url)?;
+    if path
+        .components()
+        .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+        return None;
+    }
+    let dir = loads
+        .iter()
+        .map(PathBuf::as_path)
+        .find(|dir| path.starts_with(dir))?;
+    Some((dir, path))
+}
+
+/// Why a file of a directory the application loads from is not loaded
+/// when a link leads out of that directory, after its address.
+const LINK_OUT_WHY: &str = "refused: a link that leads out of its directory";
+
+/// The other QML files and scripts of the directory of the file at `url`,
+/// keyed as the file `key` sees them, when it is a directory the
+/// application loads from: a plugin of more than one file sees the rest.
+/// They are read when a script asks for one of them, never before.
+/// Each is read as the file itself is ([`UserDir::read`] under that
+/// directory): one whose link leads out of it is refused and told.
+fn beside(loads: &[PathBuf], url: &str, key: &str, shared: &Shared) -> Vec<(String, String)> {
+    let found = plugin_path(loads, url).and_then(|(root, path)| {
+        let entries = std::fs::read_dir(path.parent()?).ok()?;
+        let (dir, _) = key.rsplit_once('/')?;
+        Some((UserDir::new(root), entries, dir.to_owned()))
+    });
+    let Some((root, entries, dir)) = found else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .filter_map(|entry| {
+            let name = entry.file_name().into_string().ok()?;
+            let at = match name.strip_suffix(".qml") {
+                Some(stem) => format!("{dir}/{stem}"),
+                None if qml_front::project::is_script(&name) => format!("{dir}/{name}"),
+                None => return None,
+            };
+            let path = entry.path();
+            if at == key || !path.is_file() {
+                return None;
+            }
+            match root.read(&path) {
+                Ok(text) => Some((at, text)),
+                Err(ReadError::Refused(_)) => {
+                    let shown = ljos_engine::file_url(&path);
+                    shared.refuse(&shown, Refusal::LinkOut(shown.clone()));
+                    None
+                }
+                Err(ReadError::Io(_)) => None,
+            }
+        })
+        .collect()
+}
+
+/// What the engine is told of a file that did not compile: its first
+/// error at a line after the file's address, as the engine puts it, and
+/// each other one with the address.
+fn said(url: &str, errors: &[QmlTextError]) -> String {
+    errors
+        .iter()
+        .enumerate()
+        .map(|(i, e)| {
+            let at = if i == 0 {
+                String::new()
+            } else {
+                format!("{url}:")
+            };
+            match e.line {
+                0 if i == 0 => e.message.clone(),
+                0 => format!("{url}: {}", e.message),
+                line => format!("{at}{line}:{}: {}", e.column, e.message),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// What the engine's source and the session share.
 struct Shared {
     layers: RefCell<Option<Rc<dyn Layers>>>,
@@ -286,10 +541,41 @@ struct Shared {
     /// program asking again is not told again.
     refused: RefCell<Vec<Refusal>>,
     told: RefCell<HashSet<String>>,
+    /// The texts and files a script asked for that did not compile, not
+    /// yet told.
+    faults: RefCell<Vec<CompileFault>>,
+    /// The texts' compiler over the application's sources alone, while the
+    /// user has no file: made at the first text, dropped when the user's
+    /// files run. Why it could not be made is kept, and told once.
+    base: RefCell<Option<Result<BaseCompile, Vec<QmlTextError>>>>,
+    /// The files of the directories the application loads from that a
+    /// script asked for, as they compiled: forgotten when the user's files
+    /// change, and one that did not compile once the engine was told.
+    plugins: RefCell<HashMap<String, Result<Arc<CompiledFile>, String>>>,
+    /// The keys of such files that compiled since the user's files last
+    /// changed: the engine may have loaded one, and is to forget it when
+    /// they change, so that a version fetched since is read.
+    fetched: RefCell<HashSet<String>>,
+    /// Whether a script has asked for a text or such a file yet.
+    texts: Cell<bool>,
     wake: WakeHook,
 }
 
 impl Shared {
+    /// Tells what was wrong with a text at the next pump, as well as the
+    /// script hearing of it.
+    fn text_failed(&self, url: &str, errors: &[QmlTextError]) {
+        self.faults
+            .borrow_mut()
+            .extend(errors.iter().map(|e| CompileFault {
+                file: url.to_owned(),
+                line: e.line,
+                column: e.column,
+                message: e.message.clone(),
+            }));
+        (self.wake)();
+    }
+
     fn refuse(&self, url: &str, why: Refusal) {
         if self.told.borrow_mut().insert(url.to_owned()) {
             self.refused.borrow_mut().push(why);
@@ -313,46 +599,136 @@ struct LayeredSource {
     /// Every directory of the application's files, by key (`parts`).
     dirs: BTreeSet<String>,
     user: UserDir,
+    /// The directories the application loads QML from while it runs
+    /// ([`UserQml::loads_from`]), from the root.
+    loads: Rc<[PathBuf]>,
+    /// The user's directory from the root.
+    user_root: PathBuf,
+    compile: Compile,
     shared: Rc<Shared>,
 }
 
 impl LayeredSource {
+    /// Whether `url` is a file of a directory the application loads from.
+    fn loaded_from(&self, url: &str) -> bool {
+        plugin_path(&self.loads, url).is_some()
+    }
+
     fn layers(&self) -> Option<Rc<dyn Layers>> {
         self.shared.layers.borrow().clone()
     }
+
+    /// The file `key` of a directory the application loads from, compiled
+    /// with the files beside it; `None` when it is not one, or not there.
+    fn plugin(&self, key: &str) -> Option<Result<Arc<CompiledFile>, String>> {
+        if let Some(made) = self.shared.plugins.borrow().get(key) {
+            return Some(made.clone());
+        }
+        let url = self.pack.url(key);
+        let (dir, path) = plugin_path(&self.loads, &url)?;
+        if !path.is_file() {
+            return None;
+        }
+        // Read as a user's file is, under the directory: what is read is
+        // the file the handle is, and a link that leads out is refused.
+        let made = match UserDir::new(dir).read(&path) {
+            Ok(text) => {
+                let text = QmlText {
+                    key,
+                    url: &url,
+                    text: &text,
+                };
+                (self.compile)(text, &beside(&self.loads, &url, key, &self.shared))
+                    .map(Arc::new)
+                    .map_err(|errors| said(&url, &errors))
+            }
+            Err(ReadError::Refused(_)) => {
+                self.shared.refuse(&url, Refusal::LinkOut(url.clone()));
+                Err(LINK_OUT_WHY.to_owned())
+            }
+            Err(ReadError::Io(e)) => {
+                let error = QmlTextError {
+                    line: 0,
+                    column: 0,
+                    message: e.to_string(),
+                };
+                self.shared.text_failed(&url, std::slice::from_ref(&error));
+                Err(error.message)
+            }
+        };
+        if made.is_ok() {
+            self.shared.fetched.borrow_mut().insert(key.to_owned());
+        }
+        self.shared
+            .plugins
+            .borrow_mut()
+            .insert(key.to_owned(), made.clone());
+        Some(made)
+    }
+
+    /// Why the file `key` is not loaded when no layer has it: a file of a
+    /// directory the application loads from that does not compile, or one
+    /// on the disk that is neither there nor the user's, refused. Else the
+    /// engine finds nothing, and says so.
+    fn missing(&self, key: &str) -> Option<String> {
+        let cached = self.shared.plugins.borrow().get(key).cloned();
+        match cached.or_else(|| self.plugin(key)) {
+            Some(Ok(_)) => return None,
+            Some(Err(why)) => {
+                // Forgotten once told: a script that asks again, the file
+                // fetched again, has it compiled again.
+                self.shared.plugins.borrow_mut().remove(key);
+                return Some(why);
+            }
+            None => {}
+        }
+        let url = self.pack.url(key);
+        let path = ljos_engine::url_path(&url)?;
+        if path.starts_with(&self.user_root) || !path.is_file() {
+            return None;
+        }
+        // A file the application did not name a directory of, however its
+        // key looks: the engine would read it from the disk.
+        self.shared.refuse(&url, Refusal::Outside(url.clone()));
+        Some(REFUSED_WHY.to_owned())
+    }
 }
+
+/// Why a refused address is not loaded, after it.
+const REFUSED_WHY: &str = "refused: not a file of the application or of its user's directory";
 
 impl ComponentSource for LayeredSource {
     fn load(&self, key: &str) -> Option<Arc<CompiledFile>> {
         if key.starts_with(REFUSED) {
             return None;
         }
-        match self.layers() {
-            Some(layers) => layers.provide(key)?.ok(),
+        let made = match self.layers() {
+            Some(layers) => layers.provide(key).and_then(Result::ok),
             None => self.pack.load(key),
-        }
+        };
+        made.or_else(|| self.plugin(key)?.ok())
     }
 
     fn contains(&self, key: &str) -> bool {
         if key.starts_with(REFUSED) {
             return false;
         }
-        match self.layers() {
+        let has = match self.layers() {
             Some(layers) => layers.provide(key).is_some_and(|f| f.is_ok()),
             None => self.pack.contains(key),
-        }
+        };
+        has || self.plugin(key).is_some_and(|f| f.is_ok())
     }
 
     fn failure(&self, key: &str) -> Option<String> {
         if let Some(url) = key.strip_prefix(REFUSED) {
-            return Some(format!(
-                "{url}: refused: not a file of the application or of its user's directory"
-            ));
+            return Some(format!("{url}: {REFUSED_WHY}"));
         }
-        match self.layers() {
-            Some(layers) => layers.provide(key)?.err(),
+        let failed = match self.layers() {
+            Some(layers) => layers.provide(key).and_then(Result::err),
             None => self.pack.failure(key),
-        }
+        };
+        failed.or_else(|| self.missing(key))
     }
 
     fn url(&self, key: &str) -> String {
@@ -378,7 +754,12 @@ impl ComponentSource for LayeredSource {
         // registered (`Ljos/Design/Colors`): it leads nowhere else.
         let named = !url.contains(':') && !url.starts_with('/');
         let dir = key.rsplit_once('/').map_or("", |(dir, _)| dir);
-        if named || dir.is_empty() || self.dirs.contains(dir) || self.user.has_dir(dir) {
+        if named
+            || dir.is_empty()
+            || self.dirs.contains(dir)
+            || self.user.has_dir(dir)
+            || self.loaded_from(url)
+        {
             return key;
         }
         self.shared.refuse(url, Refusal::Outside(url.to_owned()));
@@ -546,6 +927,7 @@ impl UserSession {
             watch,
             modules,
             theme,
+            loads_from,
         } = config;
         let dir = match modules {
             Some(modules) => UserDir::new(dir).with_modules(&modules),
@@ -564,6 +946,11 @@ impl UserSession {
             layers: RefCell::new(None),
             refused: RefCell::new(Vec::new()),
             told: RefCell::new(HashSet::new()),
+            faults: RefCell::new(Vec::new()),
+            base: RefCell::new(None),
+            plugins: RefCell::new(HashMap::new()),
+            fetched: RefCell::new(HashSet::new()),
+            texts: Cell::new(false),
             wake: wake.clone(),
         });
         let (inbox, handle) = UiInbox::channel_with_wake(INBOX, wake);
@@ -589,13 +976,29 @@ impl UserSession {
             // to a reload.
             prepare(engine);
         }
+        let oracle = Rc::new(Oracle {
+            make: Cell::new(Some(Box::new(oracle) as ReadOracle<O>)),
+            made: std::cell::OnceCell::new(),
+        });
+        // From the root, as the address of a file in one is.
+        let loads: Rc<[PathBuf]> = loads_from
+            .into_iter()
+            .map(|d| std::path::absolute(&d).unwrap_or(d))
+            .collect();
+        let compile = compiler(engine.downgrade(), pack.clone(), shared, oracle.clone());
         engine.set_component_source(LayeredSource {
             pack,
             dirs,
             user: dir.clone(),
-            shared,
+            loads: loads.clone(),
+            user_root: std::path::absolute(dir.root()).unwrap_or_else(|_| dir.root().to_owned()),
+            compile: compile.clone(),
+            shared: session.shared.clone(),
         });
-        let make: Later = Box::new(move |engine| maker(oracle(engine)));
+        // DECISION: the session's compiler replaces one a development
+        // host installed: a text sees the user's files only through it.
+        engine.set_qml_text_compiler(Some(texts_compiler(compile, loads, session.shared.clone())));
+        let make: Later = Box::new(move |engine| maker(oracle.get(engine)));
         if has_user_files(&dir, theme) {
             match session.making(true) {
                 Ok(making) => {
@@ -651,6 +1054,12 @@ impl UserSession {
         } = built;
         let layers: Rc<dyn Layers> = Rc::from(layers as Box<dyn Layers>);
         *self.shared.layers.borrow_mut() = Some(layers.clone());
+        // Texts and plugin files compile against the user's files from
+        // here on.
+        self.shared.base.take();
+        self.shared.plugins.borrow_mut().clear();
+        let fetched = std::mem::take(&mut *self.shared.fetched.borrow_mut());
+        engine.forget_loaded(fetched.iter().map(String::as_str));
         if let Some(theme) = theme {
             let generation = engine.reload_generation();
             if let Err(faults) = theme.and_then(|t| set_theme(engine, t.as_ref(), generation)) {
@@ -815,6 +1224,12 @@ impl UserSession {
         }
     }
 
+    /// Whether a compiler was made for QML a script holds as text, or for
+    /// a file of a directory the application loads from.
+    pub fn compiles_texts(&self) -> bool {
+        self.shared.texts.get()
+    }
+
     /// How many reloads were applied.
     pub fn reloads(&self) -> u64 {
         self.reloads
@@ -848,6 +1263,7 @@ impl UserSession {
         if let Some(layers) = self.shared.layers.borrow().clone() {
             refused.extend(layers.take_refused());
         }
+        refused.extend(self.shared.faults.borrow_mut().drain(..));
         if !refused.is_empty() {
             self.tell(engine, &refused);
             out.push(Report::Failed {
@@ -951,6 +1367,12 @@ impl UserSession {
                 quiet,
             } => {
                 let started = Instant::now();
+                // What a plugin file was compiled against changes, and the
+                // file may have been fetched again since: one the reload's
+                // new objects load is read and compiled against the edit.
+                self.shared.plugins.borrow_mut().clear();
+                let fetched = std::mem::take(&mut *self.shared.fetched.borrow_mut());
+                engine.forget_loaded(fetched.iter().map(String::as_str));
                 match self.reload(engine, host, &patch) {
                     Ok((kept, fresh, remounted)) => {
                         self.reloads += 1;
@@ -969,6 +1391,9 @@ impl UserSession {
                         }));
                     }
                     Err(fault) => {
+                        // Compiled while the edit was being applied, which
+                        // it was not: read again when next asked for.
+                        self.shared.plugins.borrow_mut().clear();
                         self.tell_one(engine, &fault);
                         out.push(Report::Failed { fault, more: 0 });
                     }
@@ -1060,5 +1485,158 @@ fn failed(faults: &[CompileFault]) -> Report {
             message: String::new(),
         }),
         more: faults.len().saturating_sub(1),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// What compiling was asked for: each file's key, with the keys
+    /// beside it.
+    type Asked = Rc<RefCell<Vec<(String, Vec<String>)>>>;
+
+    fn source(user: &Path, loads: &Path) -> (LayeredSource, Asked) {
+        let asked: Asked = Rc::default();
+        let seen = asked.clone();
+        let compile: Compile = Rc::new(move |text: QmlText<'_>, beside: &[(String, String)]| {
+            let mut keys: Vec<String> = beside.iter().map(|(k, _)| k.clone()).collect();
+            keys.sort();
+            seen.borrow_mut().push((text.key.to_owned(), keys));
+            Err(vec![QmlTextError {
+                line: 2,
+                column: 5,
+                message: "not a type".into(),
+            }])
+        });
+        let shared = Rc::new(Shared {
+            layers: RefCell::new(None),
+            refused: RefCell::new(Vec::new()),
+            told: RefCell::new(HashSet::new()),
+            faults: RefCell::new(Vec::new()),
+            base: RefCell::new(None),
+            plugins: RefCell::new(HashMap::new()),
+            fetched: RefCell::new(HashSet::new()),
+            texts: Cell::new(false),
+            wake: Arc::new(|| {}),
+        });
+        let source = LayeredSource {
+            pack: Rc::new(MapSource::new()),
+            dirs: BTreeSet::from(["Bricks".to_owned()]),
+            user: UserDir::new(user),
+            loads: Rc::from(vec![loads.to_owned()]),
+            user_root: user.to_owned(),
+            compile,
+            shared,
+        };
+        (source, asked)
+    }
+
+    fn write(path: &Path, text: &str) {
+        std::fs::create_dir_all(path.parent().expect("a directory")).expect("made");
+        std::fs::write(path, text).expect("written");
+    }
+
+    #[test]
+    fn a_file_on_the_disk_the_application_did_not_name_is_refused_however_its_key_looks() {
+        let root = tempfile::tempdir().expect("a directory");
+        let (user, plugins) = (root.path().join("user"), root.path().join("plugins"));
+        let (source, asked) = source(&user, &plugins);
+        let key = |path: &Path| source.pack.key(&ljos_engine::file_url(path));
+        // Found by the engine on the disk: a key the application has a
+        // directory of does not make it the application's.
+        let elsewhere = root.path().join("Bricks/Y.qml");
+        write(&elsewhere, "import QtQuick\nItem { }\n");
+        let at = key(&elsewhere);
+        assert_eq!(source.load(&at), None);
+        assert_eq!(source.failure(&at).as_deref(), Some(REFUSED_WHY));
+        assert_eq!(source.shared.refused.borrow().len(), 1, "told");
+        assert_eq!(source.failure(&at).as_deref(), Some(REFUSED_WHY));
+        assert_eq!(source.shared.refused.borrow().len(), 1, "told once");
+        // What is not there is not found, as before; the user's own file
+        // comes through the session.
+        assert_eq!(source.failure(&key(&root.path().join("Gone.qml"))), None);
+        let users = user.join("Card.qml");
+        write(&users, "import QtQuick\nItem { }\n");
+        assert_eq!(source.failure(&key(&users)), None);
+        assert!(asked.borrow().is_empty(), "nothing was compiled");
+    }
+
+    #[test]
+    fn a_plugin_file_is_compiled_with_the_files_beside_it_and_again_once_told() {
+        let root = tempfile::tempdir().expect("a directory");
+        let (user, plugins) = (root.path().join("user"), root.path().join("plugins"));
+        for (name, text) in [
+            ("Plugin.qml", "Helper { }\n"),
+            ("Helper.qml", "import QtQuick\nItem { }\n"),
+            ("lib.js", "function f() { return 1 }\n"),
+            ("notes.txt", "not QML\n"),
+        ] {
+            write(&plugins.join(name), text);
+        }
+        let (source, asked) = source(&user, &plugins);
+        let url = ljos_engine::file_url(&plugins.join("Plugin.qml"));
+        let key = source.key(&url);
+        assert!(
+            source.shared.refused.borrow().is_empty(),
+            "{key} is a plugin's"
+        );
+        let dir = key.rsplit_once('/').expect("a directory").0.to_owned();
+        assert_eq!(source.load(&key), None, "it does not compile");
+        assert_eq!(source.failure(&key).as_deref(), Some("2:5: not a type"));
+        assert_eq!(
+            *asked.borrow(),
+            vec![(
+                key.clone(),
+                vec![format!("{dir}/Helper"), format!("{dir}/lib.js")]
+            )],
+            "compiled once, with the rest of its directory"
+        );
+        assert_eq!(source.load(&key), None);
+        assert_eq!(asked.borrow().len(), 2, "asked again, compiled again");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_link_that_leads_out_of_a_plugin_s_directory_is_refused_and_one_that_stays_is_read() {
+        use std::os::unix::fs::symlink;
+        let root = tempfile::tempdir().expect("a directory");
+        let (user, plugins) = (root.path().join("user"), root.path().join("plugins"));
+        let outside = root.path().join("Outside.qml");
+        write(&outside, "import QtQuick\nItem { }\n");
+        write(&plugins.join("Plugin.qml"), "Helper { }\n");
+        write(&plugins.join("own/Kept.qml"), "import QtQuick\nItem { }\n");
+        symlink(&outside, plugins.join("Helper.qml")).expect("linked");
+        symlink(&outside, plugins.join("Out.qml")).expect("linked");
+        symlink(plugins.join("own/Kept.qml"), plugins.join("Kept.qml")).expect("linked");
+        let (source, asked) = source(&user, &plugins);
+        let key = |name: &str| source.key(&ljos_engine::file_url(&plugins.join(name)));
+        let out = key("Out.qml");
+        assert_eq!(source.load(&out), None);
+        assert_eq!(source.failure(&out).as_deref(), Some(LINK_OUT_WHY));
+        assert!(asked.borrow().is_empty(), "what leads out is not compiled");
+        let plugin = key("Plugin.qml");
+        let dir = plugin.rsplit_once('/').expect("a directory").0.to_owned();
+        assert_eq!(source.load(&plugin), None, "it does not compile");
+        assert_eq!(
+            *asked.borrow(),
+            vec![(plugin.clone(), vec![format!("{dir}/Kept")])],
+            "beside it, only the link that stays in its directory"
+        );
+        let told: Vec<String> = source
+            .shared
+            .refused
+            .borrow()
+            .iter()
+            .map(|r| r.fault().message)
+            .collect();
+        for name in ["Out.qml", "Helper.qml"] {
+            assert!(
+                told.iter().any(
+                    |m| m.ends_with(&format!("{name}: a link that leads out of its directory"))
+                ),
+                "{name} is told: {told:?}"
+            );
+        }
     }
 }

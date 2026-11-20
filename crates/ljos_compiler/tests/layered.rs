@@ -308,3 +308,31 @@ fn a_users_script_that_does_not_parse_leaves_alone_a_users_file_whose_scripts_on
         built(&[("Main", users), ("a.js", a), ("calc.js", CALC)])["Main"]
     );
 }
+
+/// A user's file that does not compile runs its seed, and a text sees the
+/// seed's text, also once a build finds nothing changed (review on #629).
+#[test]
+fn a_text_sees_the_seed_a_users_broken_file_runs_after_a_build_of_nothing() {
+    let files = [("Main", MAIN), ("Card", CARD)];
+    let pack = built(&files);
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("Card.qml"),
+        "import QtQuick\nRectangle { width: \n",
+    )
+    .unwrap();
+    let mut s = ReloadSession::layered(UserDir::new(dir.path()), base(&files), QtTypeOracle);
+    for (key, text) in files {
+        assert!(s.seed(key, text, Arc::clone(&pack[key])));
+    }
+    let faults = s.start_seeded();
+    assert!(!faults.is_empty(), "Card does not compile");
+    assert!(faults.iter().all(|f| f.file == "Card.qml"), "{faults:?}");
+    let makes_card = |s: &mut ReloadSession<QtTypeOracle>| {
+        s.compile_text("inline", "Card { }\n", &[])
+            .is_ok_and(|compiled| !compiled.has_errors())
+    };
+    assert!(makes_card(&mut s), "the seed runs");
+    assert!(s.build().expect("nothing to compile").is_none());
+    assert!(makes_card(&mut s), "the seed still runs");
+}
