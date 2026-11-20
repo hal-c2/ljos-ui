@@ -502,6 +502,7 @@ their sources; the user's directory is a directory on the real disk. The steps c
 | `When the application runs "App.qml" built ahead in a window of its own, with the user's directory over it` | the same, of every file given so far, with the root made of the entry with no parent and shown in a window of its own, as an application's first window is |
 | `When the application runs "Main.qml" built ahead, without a user's directory` | the scenario's files built ahead with their sources, run as an application built without `user-qml`: no compiler is installed |
 | `Given the application's plugin file "X":` + doc string | a file of the directory the application loads QML from while it runs (`UserQml::loads_from`), on the real disk |
+| `When the application fetches its plugin file "X" again:` + doc string | the application writes another version of the plugin directory's file while it runs, as a plugin fetched again is |
 | `Given the application's plugin file "X" links to the file "Y" outside the application's directories` | the plugin directory's file is a link that leads out of it, to a file given outside the application's directories |
 | `Given the file "X" outside the application's directories:` + doc string | a file on the real disk in neither the user's directory nor the plugin directory |
 | `When the application's plugin "X" is given to the method "M" of "obj"` / `When the file "X" outside the application's directories is given to the method "M" of "obj"` | the method is called with the file's `file://` address |

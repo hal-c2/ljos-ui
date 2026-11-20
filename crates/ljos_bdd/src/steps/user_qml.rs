@@ -82,6 +82,11 @@ fn plugin_file(w: &mut LjosWorld, name: String, step: &Step) -> StepResult {
     w.each(|b| b.application()?.plugin_file(&name, &text))
 }
 
+#[when(regex = r#"^the application fetches its plugin file "([^"]+)" again:$"#)]
+fn plugin_fetched_again(w: &mut LjosWorld, name: String, step: &Step) -> StepResult {
+    plugin_file(w, name, step)
+}
+
 #[given(
     regex = r#"^the application's plugin file "([^"]+)" links to the file "([^"]+)" outside the application's directories$"#
 )]

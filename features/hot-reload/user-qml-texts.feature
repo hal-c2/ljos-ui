@@ -194,6 +194,37 @@ Feature: A shipped application its users change makes QML of text and of files i
       Then the property "caught" of "main" is ""
       And the property "by" of "main/plugin" is "the user"
 
+    Scenario: A file of the plugin directory fetched again is read once the user's files change
+      Given the user's file "Card.qml":
+        """qml
+        import QtQuick
+        Rectangle { property string by: "the user"; width: 30; height: 10 }
+        """
+      And the application's plugin file "Plugin.qml":
+        """qml
+        import QtQuick
+        Item { objectName: "first"; property string by: "the first fetch" }
+        """
+      When the application runs "Main.qml" built ahead, with the user's directory over it
+      And the application's plugin "Plugin.qml" is given to the method "load" of "main"
+      And the application fetches its plugin file "Plugin.qml" again:
+        """qml
+        import QtQuick
+        Item { objectName: "second"; property string by: "the second fetch" }
+        """
+      And the application's plugin "Plugin.qml" is given to the method "load" of "main"
+      Then the property "by" of "main/first" is "the first fetch"
+      And the object "main/second" does not exist
+      When the user saves the file "Card.qml" as:
+        """qml
+        import QtQuick
+        Rectangle { property string by: "the user, again"; width: 30; height: 10 }
+        """
+      And the application's plugin "Plugin.qml" is given to the method "load" of "main"
+      Then the property "caught" of "main" is ""
+      And the property "by" of "main/second" is "the second fetch"
+      And the application was told of no fault
+
     Scenario: A text placed in the application's plugin directory is made, not refused
       When the application runs "Main.qml" built ahead, with the user's directory over it
       And the text "import Bricks; Brick { objectName: 'registered' }" is given to the method "makeAt" of "main" with the address of the application's plugin "Registry.qml"

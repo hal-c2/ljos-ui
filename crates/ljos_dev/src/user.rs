@@ -109,8 +109,9 @@ impl UserQml {
     /// (`Qt.createQmlObject`) is not refused. A file there is read as a
     /// user's file is: a link in it that leads out of it is refused and
     /// told. A file that compiled is kept until the user's files change: a
-    /// version fetched again in the meantime is not read. One that did not
-    /// compile is read again the next time a script asks for it.
+    /// version fetched again in the meantime is not read until then, and
+    /// is from then on. One that did not compile is read again the next
+    /// time a script asks for it.
     #[must_use]
     pub fn loads_from(mut self, dir: impl Into<PathBuf>) -> Self {
         self.loads_from.push(dir.into());
@@ -551,6 +552,10 @@ struct Shared {
     /// script asked for, as they compiled: forgotten when the user's files
     /// change, and one that did not compile once the engine was told.
     plugins: RefCell<HashMap<String, Result<Arc<CompiledFile>, String>>>,
+    /// The keys of such files that compiled since the user's files last
+    /// changed: the engine may have loaded one, and is to forget it when
+    /// they change, so that a version fetched since is read.
+    fetched: RefCell<HashSet<String>>,
     /// Whether a script has asked for a text or such a file yet.
     texts: Cell<bool>,
     wake: WakeHook,
@@ -651,6 +656,9 @@ impl LayeredSource {
                 Err(error.message)
             }
         };
+        if made.is_ok() {
+            self.shared.fetched.borrow_mut().insert(key.to_owned());
+        }
         self.shared
             .plugins
             .borrow_mut()
@@ -941,6 +949,7 @@ impl UserSession {
             faults: RefCell::new(Vec::new()),
             base: RefCell::new(None),
             plugins: RefCell::new(HashMap::new()),
+            fetched: RefCell::new(HashSet::new()),
             texts: Cell::new(false),
             wake: wake.clone(),
         });
@@ -1045,9 +1054,12 @@ impl UserSession {
         } = built;
         let layers: Rc<dyn Layers> = Rc::from(layers as Box<dyn Layers>);
         *self.shared.layers.borrow_mut() = Some(layers.clone());
-        // Texts compile against the user's files from here on.
+        // Texts and plugin files compile against the user's files from
+        // here on.
         self.shared.base.take();
         self.shared.plugins.borrow_mut().clear();
+        let fetched = std::mem::take(&mut *self.shared.fetched.borrow_mut());
+        engine.forget_loaded(fetched.iter().map(String::as_str));
         if let Some(theme) = theme {
             let generation = engine.reload_generation();
             if let Err(faults) = theme.and_then(|t| set_theme(engine, t.as_ref(), generation)) {
@@ -1355,9 +1367,12 @@ impl UserSession {
                 quiet,
             } => {
                 let started = Instant::now();
-                // What a plugin file was compiled against changes: one the
-                // reload's new objects load is compiled against the edit.
+                // What a plugin file was compiled against changes, and the
+                // file may have been fetched again since: one the reload's
+                // new objects load is read and compiled against the edit.
                 self.shared.plugins.borrow_mut().clear();
+                let fetched = std::mem::take(&mut *self.shared.fetched.borrow_mut());
+                engine.forget_loaded(fetched.iter().map(String::as_str));
                 match self.reload(engine, host, &patch) {
                     Ok((kept, fresh, remounted)) => {
                         self.reloads += 1;
@@ -1501,6 +1516,7 @@ mod tests {
             faults: RefCell::new(Vec::new()),
             base: RefCell::new(None),
             plugins: RefCell::new(HashMap::new()),
+            fetched: RefCell::new(HashSet::new()),
             texts: Cell::new(false),
             wake: Arc::new(|| {}),
         });
