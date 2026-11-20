@@ -337,3 +337,41 @@ QtObject {
     assert_eq!(rows(&h), "Opna|Nálægt,Loka0|Nálægt,Loka1");
     assert!(h.warnings().is_empty(), "{:?}", h.warnings());
 }
+
+/// `arg` with several values is Qt's multi-argument `QString::arg`: the
+/// distinct markers take the values lowest first, in one pass, each written
+/// as the one-value `arg` writes it but never localised.
+#[test]
+fn arg_takes_several_values_as_qt_does() {
+    let h = engine();
+    let root = h.load(
+        r#"
+import QtQuick
+Item {
+  property string title: qsTr("%1 — %2").arg("Settings", "HAL-C2")
+  property string reversed: "%2 - %1".arg("a", "b")
+  property string once: "%1 %2".arg("%2", "b")
+  property string gap: "%1 %3".arg("a", "b")
+  property string short: "%1 %2 %3".arg("a", "b")
+  property string mixed: "%1 %2 %3 %L4".arg(0.1 + 0.2, true, null, 1234.5)
+}
+"#,
+    );
+    assert_eq!(string(&h, root, "title"), "Settings — HAL-C2");
+    assert_eq!(string(&h, root, "reversed"), "b - a");
+    assert_eq!(string(&h, root, "once"), "%2 b");
+    assert_eq!(string(&h, root, "gap"), "a b");
+    assert_eq!(string(&h, root, "short"), "a b %3");
+    assert_eq!(string(&h, root, "mixed"), "0.3 1 null 1234.5");
+    assert!(h.warnings().is_empty(), "{:?}", h.warnings());
+
+    // A value left with no marker is warned of, and the rest still fill.
+    let extra = h.load(
+        r#"
+import QtQuick
+Item { property string s: "%1".arg("a", "b") }
+"#,
+    );
+    assert_eq!(string(&h, extra, "s"), "a");
+    assert_eq!(h.warnings().len(), 1);
+}

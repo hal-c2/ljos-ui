@@ -76,6 +76,37 @@ pub fn arg(template: &str, plain: &str, localized: &str) -> Option<String> {
     Some(out)
 }
 
+/// Replaces the markers as `QString::arg` with several values does: the
+/// distinct marker numbers, lowest first, take the values in order, all in
+/// one pass, so a value is never scanned for markers. `%LN` takes the plain
+/// value, as Qt's does. Markers past the last value stay. `None` when the
+/// string has no marker; otherwise the text and how many values found no
+/// marker, which Qt warns of.
+#[must_use]
+pub fn args(template: &str, values: &[&str]) -> Option<(String, usize)> {
+    let markers = markers(template);
+    let mut numbers: Vec<u8> = markers.iter().map(|m| m.number).collect();
+    numbers.sort_unstable();
+    numbers.dedup();
+    if numbers.is_empty() {
+        return None;
+    }
+    let mut out =
+        String::with_capacity(template.len() + values.iter().map(|v| v.len()).sum::<usize>());
+    let mut copied = 0;
+    for m in &markers {
+        let rank = numbers.binary_search(&m.number).unwrap_or(usize::MAX);
+        let Some(value) = values.get(rank) else {
+            continue;
+        };
+        out.push_str(&template[copied..m.start]);
+        out.push_str(value);
+        copied = m.end;
+    }
+    out.push_str(&template[copied..]);
+    Some((out, values.len().saturating_sub(numbers.len())))
+}
+
 /// How `arg` writes a number that is not localised: whole numbers that fit
 /// 32 bits in full, everything else to six significant digits, switching to
 /// an exponent when that is shorter (C's `%g`).
@@ -267,6 +298,28 @@ mod tests {
         let once = arg("%1%2", "%2", "%2").unwrap();
         assert_eq!(once, "%2%2");
         assert_eq!(arg(&once, "b", "b").as_deref(), Some("bb"));
+    }
+
+    #[test]
+    fn several_values_fill_the_markers_lowest_first_in_one_pass() {
+        let filled = |t: &str, v: &[&str]| args(t, v).map(|(s, _)| s);
+        assert_eq!(filled("%1 - %2", &["a", "b"]).as_deref(), Some("a - b"));
+        assert_eq!(filled("%2 - %1", &["a", "b"]).as_deref(), Some("b - a"));
+        assert_eq!(filled("%1 %2", &["%2", "b"]).as_deref(), Some("%2 b"));
+        assert_eq!(filled("%1 %3", &["a", "b"]).as_deref(), Some("a b"));
+        assert_eq!(filled("%10 %2", &["a", "b"]).as_deref(), Some("b a"));
+        assert_eq!(filled("%1 %2 %1", &["a", "b"]).as_deref(), Some("a b a"));
+        assert_eq!(
+            filled("%L1 %2", &["1234.5", "x"]).as_deref(),
+            Some("1234.5 x")
+        );
+        assert_eq!(filled("%100 %2", &["a", "b"]).as_deref(), Some("b0 a"));
+        assert_eq!(
+            args("%1 %2 %3", &["a", "b"]),
+            Some(("a b %3".to_owned(), 0))
+        );
+        assert_eq!(args("%L1 %1", &["a", "b"]), Some(("a a".to_owned(), 1)));
+        assert_eq!(args("none", &["a", "b"]), None);
     }
 
     #[test]
