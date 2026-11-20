@@ -3,7 +3,7 @@
 
 mod support;
 
-use ljos_engine::{EngineError, ObjectFlags, Value};
+use ljos_engine::{EngineError, ObjectFlags, QmlObject, QtObject, Value};
 use ljos_runtime::{Lane, ProcId};
 use support::engine;
 
@@ -708,4 +708,57 @@ fn the_engine_knows_the_modules_the_application_uses() {
     // Leaf's import, and the module of the type it makes.
     assert!(h.engine.uses_module("QtQml"));
     assert!(!h.engine.uses_module("QtQuick.Controls"));
+}
+
+/// A native type that cannot be made: its constructor panics, as native
+/// work that ran out of memory or met a bug would.
+#[derive(Debug, QmlObject)]
+#[qml(module = "QtQuick", name = "Text", extends = QtObject)]
+struct Dud {
+    #[qml(base)]
+    base: QtObject,
+}
+
+impl Default for Dud {
+    fn default() -> Self {
+        panic!("no Dud today")
+    }
+}
+
+#[test]
+fn a_job_that_panics_still_tells_whoever_waits_for_it() {
+    use std::cell::RefCell;
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+    use std::rc::Rc;
+
+    let h = engine();
+    h.engine
+        .register_module(ljos_engine::module!("QtQuick" 2.0 => [Dud]));
+    let root = h.load(
+        "import QtQuick\nItem {\n  Component { id: comp; Item { Text {} } }\n  property Component c: comp\n}\n",
+    );
+    let comp = h.get(root, "c").as_object().unwrap();
+    let before = h.engine.children(root);
+    let told: Rc<RefCell<Option<Result<(), String>>>> = Rc::default();
+    let t = told.clone();
+    let (job, handle) = h.engine.make_later(
+        ljos_engine::Request::component(comp).parent(Some(root)),
+        Lane::Visible,
+        ProcId::new(0, 0),
+    );
+    let mut job = job.on_done(move |_, r| {
+        *t.borrow_mut() = Some(r.as_ref().map(|_| ()).map_err(|e| e.to_string()));
+    });
+    let stepped = catch_unwind(AssertUnwindSafe(|| {
+        while let ljos_runtime::JobPoll::Yield = job.step(&|| true) {}
+    }));
+    // The panic goes on to the scheduler, which reports it to the owner.
+    assert!(stepped.is_err());
+    // And whoever waits for the object hears that it was not made.
+    let told = told.borrow().clone().expect("on_done was called");
+    let err = told.unwrap_err();
+    assert!(err.contains("no Dud today"), "{err}");
+    assert!(matches!(handle.result(), Some(Err(EngineError::Panic(_)))));
+    // Nothing half made is left under the root.
+    assert_eq!(h.engine.children(root), before);
 }

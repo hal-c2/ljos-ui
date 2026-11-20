@@ -82,6 +82,55 @@ fn a_null_thrown_on_a_full_heap_is_running_out_of_memory() {
     assert_eq!(eval_num(&host, "40 + 2").unwrap(), 42.0);
 }
 
+/// A heap at its limit with no room left for its own message:
+/// QuickJS throws an `InternalError` with no words, which is the heap
+/// running out (#670).
+#[test]
+fn an_unworded_internal_error_on_a_full_heap_is_running_out_of_memory() {
+    let host = JsHost::new(JsConfig {
+        memory_limit: Some(16 * 1024 * 1024),
+        ..JsConfig::default()
+    })
+    .unwrap();
+    let err = eval_num(&host, "throw new InternalError()").unwrap_err();
+    assert!(matches!(err, JsFault::JsException { .. }), "{err:?}");
+    host.collect_now();
+    let held = host.memory_stats().unwrap().malloc_size;
+    assert!(host.set_memory_limit(Some(held + 1024)));
+    let err = eval_num(&host, "throw new InternalError()").unwrap_err();
+    assert!(matches!(err, JsFault::JsOutOfMemory { .. }), "{err:?}");
+    assert!(host.set_memory_limit(None));
+    assert_eq!(eval_num(&host, "40 + 2").unwrap(), 42.0);
+}
+
+/// A string read out of a full heap has no room for its copy: rquickjs
+/// calls that an unknown error, and it is the heap running out (#670).
+#[test]
+fn a_string_that_cannot_be_read_out_of_a_full_heap_is_running_out_of_memory() {
+    let host = JsHost::new(JsConfig {
+        memory_limit: Some(16 * 1024 * 1024),
+        ..JsConfig::default()
+    })
+    .unwrap();
+    let read = |host: &JsHost| {
+        host.enter("read", host.config().slice, |s| {
+            s.eval::<String, _>("globalThis.wide")
+        })
+    };
+    host.enter("make", host.config().slice, |s| {
+        s.eval::<(), _>("globalThis.wide = '\\u00e9'.repeat(64 * 1024)")
+    })
+    .unwrap();
+    assert_eq!(read(&host).unwrap().chars().count(), 64 * 1024);
+    host.collect_now();
+    let held = host.memory_stats().unwrap().malloc_size;
+    assert!(host.set_memory_limit(Some(held + 16 * 1024)));
+    let err = read(&host).unwrap_err();
+    assert!(matches!(err, JsFault::JsOutOfMemory { .. }), "{err:?}");
+    assert!(host.set_memory_limit(None));
+    assert_eq!(read(&host).unwrap().chars().count(), 64 * 1024);
+}
+
 #[test]
 fn out_of_memory_is_reported_and_context_survives() {
     let host = JsHost::new(JsConfig {

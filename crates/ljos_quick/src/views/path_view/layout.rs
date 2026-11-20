@@ -47,6 +47,12 @@ impl ViewHost for Host {
         });
     }
 
+    fn again(&self, e: &Engine, _: usize) {
+        if let Some(st) = state_of(e, self.0) {
+            super::bump(e, &st);
+        }
+    }
+
     fn destroying(&self, e: &Engine, object: ObjectId) {
         strike(e, object);
         if e.is_alive(object) && is_item(e, object) {

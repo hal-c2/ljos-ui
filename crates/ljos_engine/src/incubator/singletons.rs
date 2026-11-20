@@ -35,9 +35,11 @@ use std::rc::Rc;
 
 use ljos_ir::{Arg, TypeRef};
 use ljos_js::JsValue;
+use ljos_reactive::NodeId;
 
 use super::Instance;
 use super::request::Request;
+use crate::backoff::{Backoff, seconds};
 use crate::engine::Engine;
 use crate::error::EngineError;
 use crate::ids::{ContextId, ObjectId};
@@ -143,6 +145,18 @@ enum State {
     },
     /// It did not load, which was reported once.
     Failed,
+    /// A fault that was not its own stopped it (a full heap, an
+    /// interrupted script, a panic in native work): it is made again at
+    /// the first lookup once the wait its [`Backoff`] says is over (`due`).
+    /// Until then a lookup gets nothing and depends on `woken`, which the
+    /// end of the wait bumps, so what read the name reads it again. Qt has
+    /// none of these faults; a singleton that failed for its own code stays
+    /// failed, as there.
+    Again {
+        backoff: Backoff,
+        due: bool,
+        woken: NodeId,
+    },
     /// A type that is one for each window, read where there is no
     /// window: reported once.
     Outside,
@@ -783,7 +797,15 @@ impl Engine {
                 }
                 State::Making(obj) => return *obj,
                 State::Failed | State::Keys(_) | State::Outside | State::Gone => return None,
-                State::Made { .. } | State::Unmade => None,
+                State::Again {
+                    due: false, woken, ..
+                } => {
+                    let woken = *woken;
+                    drop(entries);
+                    let _ = self.inner.graph.try_get(woken);
+                    return None;
+                }
+                State::Made { .. } | State::Unmade | State::Again { .. } => None,
             };
             if e.window && e.scope.is_none() {
                 let name = type_name(&e.ty).to_owned();
@@ -819,7 +841,17 @@ impl Engine {
             // as everything else made from the old files does.
             self.destroy(*obj);
         }
+        // Made again after a fault not its own: the next one waits longer.
+        let again = match &all.entries.borrow()[handle].state {
+            State::Again { backoff, woken, .. } => {
+                let mut backoff = *backoff;
+                backoff.trying(self.now());
+                Some((backoff, *woken))
+            }
+            _ => None,
+        };
         all.entries.borrow_mut()[handle].state = State::Making(None);
+        let faults = self.resource_faults_seen();
         // Whoever reads the name first does not depend on what making the
         // object reads.
         let made = self.untrack(|| match &kind {
@@ -853,6 +885,15 @@ impl Engine {
                 .map(|obj| (obj, None)),
             Kind::Keys(_) => unreachable!("returned above"),
         });
+        // Made, but its script did not load or a binding was cut short
+        // while it was made: not whole, and nothing would run it again.
+        let made = match made {
+            Ok((obj, _)) if let Some(e) = self.resource_fault_since(faults) => {
+                self.destroy(obj);
+                Err(e)
+            }
+            made => made,
+        };
         let (state, out) = match made {
             Ok((obj, file)) => (
                 State::Made {
@@ -862,6 +903,27 @@ impl Engine {
                 },
                 Some(obj),
             ),
+            Err(e) if e.is_resource_fault() => {
+                let (backoff, woken) = match again {
+                    Some(a) => a,
+                    None => match self
+                        .inner
+                        .graph
+                        .property(self.inner.graph.root(), Value::Int(0))
+                    {
+                        Ok(n) => (Backoff::default(), n),
+                        Err(_) => {
+                            self.warn(format!(
+                                "the singleton {} is not available: {e}",
+                                type_name(&ty)
+                            ));
+                            all.entries.borrow_mut()[handle].state = State::Failed;
+                            return None;
+                        }
+                    },
+                };
+                (self.singleton_again(handle, &ty, &e, backoff, woken), None)
+            }
             Err(e) => {
                 self.warn(format!(
                     "the singleton {} is not available: {e}",
@@ -883,6 +945,50 @@ impl Engine {
             }
         }
         out
+    }
+
+    /// The state of the entry `handle` after a fault not its own: made
+    /// again once the wait is over, when what read its name reads it again.
+    fn singleton_again(
+        &self,
+        handle: usize,
+        ty: &TypeRef,
+        err: &EngineError,
+        mut backoff: Backoff,
+        woken: NodeId,
+    ) -> State {
+        let now = self.now();
+        let wait = backoff.fault(now);
+        self.warn(format!(
+            "the singleton {} is not available: {err}; making it again in {}",
+            type_name(ty),
+            seconds(wait)
+        ));
+        let full = matches!(err, EngineError::JsOutOfMemory(_));
+        // Never at once: the lookup that failed is in a script, and every
+        // lookup in it would make the object again.
+        self.call_at(now + wait, move |e| {
+            let all = e.extension::<Singletons>();
+            match &mut all.entries.borrow_mut()[handle].state {
+                State::Again { due, .. } => *due = true,
+                _ => return,
+            }
+            // Timers run between scripts, where the heap can be.
+            if full {
+                e.collect_garbage();
+            }
+            let g = &e.inner.graph;
+            let next = match g.get_untracked(woken) {
+                Value::Int(i) => i.wrapping_add(1),
+                _ => 1,
+            };
+            g.set(woken, Value::Int(next));
+        });
+        State::Again {
+            backoff,
+            due: false,
+            woken,
+        }
     }
 
     fn tell_scoped(&self, what: &ScopedSingleton) {

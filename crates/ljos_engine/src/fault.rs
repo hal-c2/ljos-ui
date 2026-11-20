@@ -272,6 +272,7 @@ impl Engine {
             Fault::Panic(_) => self.inner.faults.unwound.take().or(origin),
             _ => origin,
         };
+        self.run_again_after(&fault);
         let (file, line) = self.declared_place(origin);
         let place = origin.and_then(|o| self.declared_at(o)).unwrap_or_default();
         self.warn(format!("{place}{fault}"));
@@ -340,6 +341,9 @@ impl Engine {
     /// the nested run an interrupt stopped in the dispatch, as its
     /// outermost run gave it back ([`Engine::swap_js_stopped`]).
     pub(crate) fn report_js_fault(&self, fault: &JsFault, stopped: Option<Stopped>) {
+        if !matches!(fault, JsFault::Panic { .. }) {
+            self.run_again_after(&fault.clone().into());
+        }
         let state = &self.inner.faults;
         let origin = state.origin.get();
         match fault {
@@ -548,7 +552,11 @@ impl Engine {
     /// by the same call.
     pub fn deliver_faults(&self) -> usize {
         let state = &self.inner.faults;
-        if state.delivering.get() || state.queue.borrow().is_empty() {
+        if state.delivering.get() {
+            return 0;
+        }
+        if state.queue.borrow().is_empty() {
+            self.drop_idle_run_again();
             return 0;
         }
         state.delivering.set(true);
@@ -581,6 +589,7 @@ impl Engine {
             }
         }
         state.delivering.set(false);
+        self.drop_idle_run_again();
         n
     }
 

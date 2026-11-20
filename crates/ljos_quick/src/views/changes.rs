@@ -177,6 +177,19 @@ impl ViewHost for Host {
         }
     }
 
+    fn again(&self, e: &Engine, _: usize) {
+        // Laid out again, which asks for the rows it shows.
+        let inc = e.extension::<Incubating>();
+        if inc.open.get() {
+            let mut due = inc.due.borrow_mut();
+            if !due.contains(&self.0) {
+                due.push(self.0);
+            }
+        } else {
+            pass::refresh(e, self.0);
+        }
+    }
+
     fn destroying(&self, e: &Engine, object: ObjectId) {
         let view = self.0;
         strike(e, object);

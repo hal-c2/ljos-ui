@@ -3024,6 +3024,17 @@ struct HandleState {
     progress: Cell<f64>,
     /// The root, from the moment it is allocated.
     root: Cell<Option<ObjectId>>,
+    /// The kind of the last resource fault one of the job's steps met: a
+    /// byte, not the error, since a view keeps a handle for each delegate.
+    fault: Cell<Option<Resource>>,
+}
+
+/// A kind of resource fault ([`EngineError::is_resource_fault`]).
+#[derive(Clone, Copy, Debug)]
+enum Resource {
+    OutOfMemory,
+    Interrupted,
+    Panic,
 }
 
 /// The result of a [`CreationJob`], readable once it is done, and the way
@@ -3069,6 +3080,20 @@ impl CreationHandle {
 
     pub fn is_cancelled(&self) -> bool {
         self.0.cancelled.get()
+    }
+
+    /// A resource fault (a full heap, an interrupted script, a panic in
+    /// native work) one of the job's steps met though the job went on: an
+    /// object made all the same may not be whole, its script not loaded or
+    /// a binding of it cut short while it was made.
+    pub fn resource_fault(&self) -> Option<EngineError> {
+        let kind = self.0.fault.get()?;
+        let why = "a resource fault while it was made".to_owned();
+        Some(match kind {
+            Resource::OutOfMemory => EngineError::JsOutOfMemory(why),
+            Resource::Interrupted => EngineError::JsInterrupted(why),
+            Resource::Panic => EngineError::Panic(why),
+        })
     }
 }
 
@@ -3236,13 +3261,23 @@ impl CreationJob {
         if let (Some(e), Ok(root), Some(record)) = (engine, &r, self.record.take()) {
             e.reload_note_asked(*root, record);
         }
-        *self.handle.0.result.borrow_mut() = Some(r.clone());
-        if let (Some(e), Some(f)) = (engine, self.done.take())
-            && !self.handle.is_cancelled()
-        {
-            f(e, &r);
-        }
+        *self.handle.0.result.borrow_mut() = Some(r);
         JobPoll::Done
+    }
+
+    /// Calls whoever waits once the job has ended, after the step that
+    /// ended it (so every fault the step filed is known), unless it was
+    /// called off.
+    fn tell(&mut self, e: &Engine) {
+        let Some(r) = self.handle.0.result.borrow().clone() else {
+            return;
+        };
+        if self.handle.is_cancelled() {
+            self.done = None;
+            return;
+        }
+        let Some(f) = self.done.take() else { return };
+        f(e, &r);
     }
 
     /// Ends a job nobody waits for any more: what it made goes away.
@@ -3296,9 +3331,62 @@ impl CreationJob {
         };
         // As for a creation made at once: its time is not a script's
         // that forced it.
-        let poll = e.not_script_time(|| self.run(&e, check));
+        // A panic in what the job runs ends the job as a failure, so that
+        // whoever waits on it is told; the panic then goes on to whoever
+        // runs the job (the scheduler reports it to the job's owner).
+        let faults = e.resource_faults_seen();
+        let run = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            e.not_script_time(|| self.run(&e, check))
+        }));
+        // Steps run one at a time, so what was met in between is this
+        // job's; told before whoever waits is.
+        if let Some(f) = e.resource_fault_since(faults) {
+            self.handle.0.fault.set(match f {
+                EngineError::JsOutOfMemory(_) => Some(Resource::OutOfMemory),
+                EngineError::JsInterrupted(_) => Some(Resource::Interrupted),
+                EngineError::Panic(_) => Some(Resource::Panic),
+                _ => None,
+            });
+        }
+        let poll = match run {
+            Ok(poll) => poll,
+            Err(payload) => {
+                let message = match (
+                    payload.downcast_ref::<&'static str>(),
+                    payload.downcast_ref::<String>(),
+                ) {
+                    (Some(s), _) => (*s).to_owned(),
+                    (_, Some(s)) => s.clone(),
+                    _ => "panic with a non-string payload".to_owned(),
+                };
+                // Unless it panicked after it ended (in whoever waited).
+                if self.handle.0.result.borrow().is_none() {
+                    // What the step was making went with the step's phase.
+                    if let Some(root) = self.handle.0.root.get()
+                        && e.is_alive(root)
+                    {
+                        e.destroy_now(root);
+                    }
+                    self.finish(
+                        Some(&e),
+                        Err(EngineError::Panic(format!(
+                            "a panic while an object was being made: {message}"
+                        ))),
+                    );
+                }
+                self.phase = Phase::Done;
+                self.tell(&e);
+                e.close_creation(errors);
+                std::panic::resume_unwind(payload);
+            }
+        };
         if matches!(poll, JobPoll::Done) {
+            // Whoever waits may panic: the creation is closed all the same.
+            let told = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.tell(&e)));
             e.close_creation(errors);
+            if let Err(payload) = told {
+                std::panic::resume_unwind(payload);
+            }
         } else {
             e.pause_creation(errors);
         }
@@ -3334,14 +3422,22 @@ impl CreationJob {
                     Err(err) => return self.finish(Some(&e), Err(err)),
                 },
                 Phase::Allocating(mut cr, mut a) => {
-                    let made = loop {
-                        match e.allocate_step(&mut cr, &mut a) {
-                            Ok(None) if check() => break Ok(None),
-                            Ok(None) => {}
-                            Ok(Some(inst)) => break Ok(Some(inst)),
-                            Err(err) => break Err(err),
+                    // The objects allocated so far are only `cr`'s: a panic
+                    // in a constructor gives them back before it goes on.
+                    let made = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        loop {
+                            match e.allocate_step(&mut cr, &mut a) {
+                                Ok(None) if check() => break Ok(None),
+                                Ok(None) => {}
+                                Ok(Some(inst)) => break Ok(Some(inst)),
+                                Err(err) => break Err(err),
+                            }
                         }
-                    };
+                    }));
+                    let made = made.unwrap_or_else(|payload| {
+                        e.discard_allocation(&cr);
+                        std::panic::resume_unwind(payload)
+                    });
                     let inst = match made {
                         Ok(Some(inst)) => inst,
                         Ok(None) => {

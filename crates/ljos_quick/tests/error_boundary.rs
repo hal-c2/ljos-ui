@@ -617,6 +617,7 @@ fn a_loader_told_to_load_while_it_waits_loads_at_once_and_drops_the_wait() {
     set(&e, root, "on", Value::Bool(true));
     assert_eq!(num(&e, loader, "status"), 1.0);
     let item = get(&e, loader, "item").as_object();
+    frame(&mut s, &e);
     assert_eq!(e.next_timer_deadline(), None, "the wait went with the load");
     clock.advance(Duration::from_secs(5));
     e.advance_timers(clock.now());

@@ -3225,6 +3225,19 @@ pub(crate) fn classify_error<'js>(
             }
             fault
         }
+        // rquickjs says no more than this when QuickJS gives it no string
+        // back (`JS_ToCStringLen`): there was no room to copy one into, and
+        // what QuickJS threw for that is pending.
+        rquickjs::Error::Unknown => {
+            let thrown = ctx.catch();
+            if out_of_memory_thrown(&thrown) {
+                JsFault::JsOutOfMemory {
+                    label: label.to_owned(),
+                }
+            } else {
+                JsFault::Internal(rquickjs::Error::Unknown.to_string())
+            }
+        }
         other => JsFault::Internal(other.to_string()),
     }
 }
@@ -3282,7 +3295,19 @@ fn describe_exception(
                 }
                 _ => message,
             };
-            let message = match o.get::<_, Option<String>>("name").ok().flatten() {
+            let name = o.get::<_, Option<String>>("name").ok().flatten();
+            // QuickJS throws "out of memory" as an InternalError, with no
+            // words when even those found no room: on a full heap, that is
+            // the heap running out.
+            if name.as_deref() == Some("InternalError")
+                && message.is_empty()
+                && heap_nearly_full(thrown.ctx())
+            {
+                return JsFault::JsOutOfMemory {
+                    label: label.to_owned(),
+                };
+            }
+            let message = match name {
                 // Heap exhaustion is told apart by its bare message below.
                 Some(name) if !name.is_empty() && name != "InternalError" => {
                     format!("{name}: {message}")
@@ -3334,6 +3359,28 @@ fn describe_exception(
         line,
         thrown: None,
     }
+}
+
+/// Whether `thrown` is what QuickJS throws when an allocation fails: its
+/// `InternalError: out of memory`, one with no words when even those found
+/// no room, or `null` when the error itself found none.
+fn out_of_memory_thrown(thrown: &Value<'_>) -> bool {
+    if thrown.is_null() {
+        return true;
+    }
+    let Some(e) = thrown
+        .as_object()
+        .and_then(|o| Exception::from_object(o.clone()))
+    else {
+        return false;
+    };
+    let name = e
+        .as_object()
+        .get::<_, Option<String>>("name")
+        .ok()
+        .flatten();
+    name.as_deref() == Some("InternalError")
+        && matches!(e.message().as_deref(), None | Some("" | "out of memory"))
 }
 
 /// Whether the heap is within a sixteenth of its limit: too full for
