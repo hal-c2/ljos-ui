@@ -572,6 +572,10 @@ pub fn markdown(report: &Report) -> String {
                 .as_ref()
                 .map_or(String::new(), |c| format!(" on CPUs {c}")),
         );
+        // Every run of a profile is held the same way; the first says how.
+        if let Some(e) = runs.iter().find_map(|r| r.enforcement.as_ref()) {
+            let _ = writeln!(out, "{}.\n", e.describe(&profile.name));
+        }
         let counted = |m: &&Metric| runs.iter().any(|r| (m.value)(r).is_some());
         for metric in METRICS.iter().chain(METRICS_3D.iter().filter(counted)) {
             let _ = writeln!(out, "### {}\n", metric.title);
@@ -673,6 +677,13 @@ pub fn markdown(report: &Report) -> String {
                 keys.push((&m.app, &m.profile));
             }
         }
+        let mut why: Vec<&str> = report
+            .min_memory
+            .iter()
+            .filter_map(|m| m.not_searched.as_deref())
+            .collect();
+        why.sort_unstable();
+        why.dedup();
         for (app, profile) in keys {
             let mut row = format!("| {app} | {profile} |");
             for rt in &runtimes {
@@ -682,11 +693,15 @@ pub fn markdown(report: &Report) -> String {
                     .find(|m| m.app == app && m.profile == profile && m.runtime == *rt);
                 let text = match m {
                     None => "—".to_owned(),
+                    Some(m) if m.not_searched.is_some() => "not searched".to_owned(),
                     Some(m) => m.mib.map_or("> max".to_owned(), |v| v.to_string()),
                 };
                 let _ = write!(row, " {text} |");
             }
             let _ = writeln!(out, "{row}");
+        }
+        for w in why {
+            let _ = writeln!(out, "\nNot searched: {w}.");
         }
     }
     out

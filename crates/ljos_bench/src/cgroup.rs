@@ -17,6 +17,26 @@ pub fn of_pid(root: &Path, pid: u32) -> std::io::Result<PathBuf> {
         .ok_or_else(|| std::io::Error::other(format!("process {pid} has no cgroup v2 path")))
 }
 
+/// Whether `path` is on a cgroup v2 filesystem. A directory that only
+/// looks like one (a test's stand-in) is not.
+#[must_use]
+pub fn is_cgroup2(path: &Path) -> bool {
+    const CGROUP2_SUPER_MAGIC: i64 = 0x6367_7270;
+    let Ok(c) = std::ffi::CString::new(path.as_os_str().as_encoded_bytes()) else {
+        return false;
+    };
+    // SAFETY: statfs(2) fills the zeroed struct for a NUL-terminated path
+    // that lives across the call.
+    unsafe {
+        let mut st: libc::statfs = std::mem::zeroed();
+        // `f_type`'s width differs between targets.
+        #[allow(clippy::unnecessary_cast, clippy::cast_lossless, trivial_numeric_casts)]
+        let ok =
+            libc::statfs(c.as_ptr(), &raw mut st) == 0 && st.f_type as i64 == CGROUP2_SUPER_MAGIC;
+        ok
+    }
+}
+
 /// A cgroup directory.
 #[derive(Clone, Debug)]
 pub struct Cgroup {
@@ -36,6 +56,33 @@ impl Cgroup {
     /// A `key value` line of a flat-keyed file.
     fn keyed(&self, file: &str, key: &str) -> Option<u64> {
         keyed(&self.read(file)?, key)
+    }
+
+    /// Writes one of the cgroup's files.
+    ///
+    /// # Errors
+    /// The file cannot be written: it is not there, the controller is not
+    /// enabled, or the value is refused.
+    pub fn write(&self, file: &str, value: &str) -> std::io::Result<()> {
+        fs::write(self.dir.join(file), value)
+    }
+
+    /// The controllers its parent hands it (`cgroup.controllers`).
+    #[must_use]
+    pub fn controllers(&self) -> Vec<String> {
+        self.words("cgroup.controllers")
+    }
+
+    /// The controllers it hands its children (`cgroup.subtree_control`).
+    #[must_use]
+    pub fn subtree_control(&self) -> Vec<String> {
+        self.words("cgroup.subtree_control")
+    }
+
+    fn words(&self, file: &str) -> Vec<String> {
+        self.read(file)
+            .map(|s| s.split_whitespace().map(str::to_owned).collect())
+            .unwrap_or_default()
     }
 
     #[must_use]

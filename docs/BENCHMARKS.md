@@ -138,10 +138,62 @@ tenth of a second.
 gate. The bench reads the scope's cgroup and lets the app run only if every limit is in place. If a
 limit is missing (for example, when the user manager may not delegate the `memory` or `cpu`
 controller), the bench stops with status 2 and says which limit. It never reports numbers measured
-outside a limit.
+outside a limit. Where `systemd-run` cannot start a scope at all, the limits are held another way,
+or the bench stops with status 2 (see [below](#without-a-systemd-scope-containers)).
 
 **Out of memory.** The kernel's OOM kill is read from the scope's `memory.events` and shown as
 `(OOM)` in the tables.
+
+### Without a systemd scope: containers
+
+A container has no systemd user manager, so it cannot start a scope, and its cgroup's controllers
+are seldom handed down. `--limit-by` says what else may hold a profile's limits. Every run's
+`enforcement` in `report.json`, the profile's section of `report.md` and a line on stderr say what
+held them, and what of them was not held.
+
+| `--limit-by` | Holds the limits by | Accounted from |
+|---|---|---|
+| `scope` | a transient systemd scope, as above | the scope's cgroup |
+| `cgroup` | a cgroup the bench makes for each run, under `--cgroup-parent` or its own | that cgroup |
+| `container` | the cgroup the bench already runs in, if it and those above it hold the application at or below the profile | the application's processes in `/proc` |
+| `process` | `RLIMIT_DATA` at `--memory-max`, CPU affinity, and a throttle that stops and continues the process group | the application's processes in `/proc` |
+| `auto` (the default) | the first of `scope`, `cgroup` and `container` that holds the limits | as above |
+
+`auto` never takes `process`, and it refuses with status 2, listing why each one could not hold
+the limits, when none could. Nothing is measured outside the limits unless `--limit-by process` asks
+for weaker ones.
+
+- **`cgroup`** needs a writable cgroup v2 tree whose `cgroup.controllers` includes `memory` and
+  `cpu`. Each run gets a cgroup of its own with `memory.max`, `memory.swap.max` 0 and `cpu.max`, and
+  `cpuset.cpus` when the `cpuset` controller is there (affinity otherwise). A cgroup with processes
+  cannot hand its controllers down, so when the bench is all its cgroup holds, or that cgroup is the
+  container's root, the bench moves those processes into `ljos-bench-leaf` below it first; they stay
+  there, under the same limits. If the controllers still cannot be handed down, it moves them back
+  and removes the leaf, and the error says whether that worked. In
+  rootless podman the tree is read-only unless the container runs with
+  `--security-opt unmask=/sys/fs/cgroup` (or `--systemd=always`).
+- **`container`** checks `memory.max`, `memory.swap.max` and `cpu.max` from the bench's cgroup up to
+  the root, takes the tightest of each, and refuses any that lets the application have more than the
+  profile: `podman run --memory=256m --memory-swap=256m --cpus=0.2`, for example, holds the default
+  `pi-zero` with one core of this machine and `--cpus 1 --cpu-factor 5`. Without `--memory-swap`,
+  podman and docker let a container swap as much again as its memory, which is refused. A tighter
+  container is measured, and `enforcement` reports its limits next to the profile's `limits`. The
+  limits are shared: whatever else runs in the container, the bench too, counts against them. A
+  kill for want of memory is counted only when it ended the application itself, and `--bisect`
+  cannot search below a limit that is not the bench's to change.
+- **`process`** holds memory for each process on its own, not for them together, and an
+  allocation over it fails instead of being killed. Swap is not held back where the machine has
+  swap. The CPU quota is an average held by stopping and continuing the process group every 10 ms,
+  not by the scheduler, and a process that leaves the group escapes it. `RLIMIT_AS` is not used,
+  because it counts address space a runtime reserves but never touches.
+
+Memory accounted from `/proc` is what the application's live processes hold resident: the page
+cache and kernel memory a cgroup also charges are missing, so it is less than a cgroup's count for
+the same application.
+
+`ljos bench --check-limits --profile pi-zero …` checks the limits without measuring anything. It
+holds a probe to each profile as a run would, prints what held it as JSON on stdout, and exits 0, or
+2 when nothing can. A harness can run it before an agent's work is measured.
 
 ## What is measured
 

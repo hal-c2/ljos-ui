@@ -6,11 +6,15 @@
 //! the cgroup's own accounting and `/proc`, the first frame from the
 //! compositor mapping the window, frames from the compositor's screencopy.
 //! An application is let start only once its cgroup is checked to have the
-//! limits asked for, so nothing is measured outside a limit.
+//! limits asked for, so nothing is measured outside a limit. Where no scope
+//! can be had, as in a container, the limit is held by a cgroup the bench
+//! makes, the container's own, or limits on the process when asked for by
+//! name ([`enforce`]); every run says which held it.
 
 pub mod cgroup;
 pub mod compare;
 pub mod counters;
+pub mod enforce;
 pub mod frames3d;
 pub mod gate;
 pub mod measure;
@@ -19,6 +23,8 @@ pub mod procfs;
 pub mod profile;
 pub mod report;
 pub mod sway;
+pub mod throttle;
+pub mod tree;
 pub mod wayland;
 
 use std::{
@@ -220,8 +226,8 @@ pub struct Plan {
 /// measured.
 ///
 /// # Errors
-/// An application was not inside its limit ([`Error::Refused`]), or one
-/// could not be started.
+/// An application was not inside its limit ([`Error::Refused`]), nothing
+/// could hold it ([`Error::Unheld`]), or one could not be started.
 pub fn run(
     setup: &Setup,
     plan: &Plan,
@@ -286,7 +292,10 @@ pub fn run(
                     app.id,
                     rt.name,
                     profile.name,
-                    m.mib.map_or("> max".to_owned(), |v| format!("{v} MiB"))
+                    match (&m.not_searched, m.mib) {
+                        (Some(why), _) => format!("not searched: {why}"),
+                        (None, mib) => mib.map_or("> max".to_owned(), |v| format!("{v} MiB")),
+                    }
                 );
                 report.min_memory.push(m);
                 progress(&report, &line);

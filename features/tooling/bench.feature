@@ -80,6 +80,8 @@ Feature: Measuring an application under a limit
       And the JSON file "out/report.json" has "/runs/0/input_ready_ms" equal to null
       And the JSON file "out/report.json" has "/runs/0/outcome" equal to "no-frame"
       And the JSON file "out/report.json" has "/runs/0/gesture" equal to "click"
+      And the JSON file "out/report.json" has "/runs/0/enforcement/mechanism" equal to "scope"
+      And the JSON file "out/report.json" has "/runs/0/enforcement/accounting" equal to "cgroup"
 
     Scenario Outline: The application is driven with <gesture> while it is measured under load
       When the author runs "ljos bench Main.qml --runtime ljos --profile pi-zero --memory-max 64M --cpus 4 --cpu-list 0-3 --launcher launcher.sh --cgroup-root cg --ljos app.sh --gesture <gesture> --settle 0 --idle 0 --load 0 --startup-timeout 1 --out out"
@@ -192,6 +194,132 @@ Feature: Measuring an application under a limit
       When the author runs "ljos bench Main.qml --runtime ljos --profile pi-zero --memory-max 32M --cpus 4 --cpu-list 0-3 --launcher launcher.sh --cgroup-root cg --ljos app.sh --settle 0 --idle 0 --load 0 --startup-timeout 1 --out out"
       Then the command exits with status 2
       And the command's output mentions "memory.max is 67108864, not 33554432"
+
+  Rule: Where no scope can be had, as in a container, the limit is held another way and the report says which
+
+    # A container has no systemd user manager to start a scope and seldom
+    # hands its cgroup's controllers down. A directory stands in for the
+    # container's cgroup tree here, which the bench reads only when told to
+    # (`--limit-by container`); asked to choose by itself it takes nothing
+    # but a cgroup v2 filesystem for one. On a real machine the application
+    # is in the container's cgroup, under the root of the tree.
+    Background:
+      Given the file "cg/memory.max":
+        """text
+        268435456
+        """
+      And the file "cg/memory.swap.max":
+        """text
+        0
+        """
+      And the file "cg/cpu.max":
+        """text
+        20000 100000
+        """
+      And the file "app.sh":
+        """sh
+        #!/bin/sh
+        grep Cpus_allowed_list /proc/self/status | cut -f2 > cpus
+        ulimit -d > data-limit
+        exec sleep 30
+        """
+
+    Scenario: A container already held to the profile's limit is measured in it
+      When the author runs "ljos bench Main.qml --runtime ljos --profile pi-zero --cpus 1 --cpu-list 0 --cpu-factor 5 --limit-by container --cgroup-root cg --ljos app.sh --settle 0 --idle 0 --load 0 --startup-timeout 1 --out out"
+      Then the command exits with status 0
+      And the command's output mentions "pi-zero is held by the container's cgroup"
+      And the JSON file "out/report.json" has "/runs/0/enforcement/mechanism" equal to "container"
+      And the JSON file "out/report.json" has "/runs/0/enforcement/memory_max" equal to 268435456
+      And the JSON file "out/report.json" has "/runs/0/enforcement/swap_max" equal to 0
+      And the JSON file "out/report.json" has "/runs/0/enforcement/cpu_max/0" equal to 20000
+      And the JSON file "out/report.json" has "/runs/0/enforcement/cpu_max/1" equal to 100000
+      And the JSON file "out/report.json" has "/runs/0/enforcement/cpus_by" equal to "affinity"
+      And the JSON file "out/report.json" has "/runs/0/enforcement/accounting" equal to "processes"
+
+    Scenario: The CPUs of a container are held by the application's affinity
+      When the author runs "ljos bench Main.qml --runtime ljos --profile pi-zero --cpus 1 --cpu-list 0 --cpu-factor 5 --limit-by container --cgroup-root cg --ljos app.sh --settle 0 --idle 0 --load 0 --startup-timeout 1 --out out"
+      Then the command exits with status 0
+      And the file "cpus" is:
+        """text
+        0
+        """
+
+    Scenario: A container held tighter than the profile is measured, and its own limit is reported
+      Given the file "cg/memory.max":
+        """text
+        134217728
+        """
+      When the author runs "ljos bench Main.qml --runtime ljos --profile pi-zero --cpus 1 --cpu-list 0 --cpu-factor 5 --limit-by container --cgroup-root cg --ljos app.sh --settle 0 --idle 0 --load 0 --startup-timeout 1 --out out"
+      Then the command exits with status 0
+      And the JSON file "out/report.json" has "/runs/0/limits/memory_max" equal to 268435456
+      And the JSON file "out/report.json" has "/runs/0/enforcement/memory_max" equal to 134217728
+
+    Scenario Outline: A container that lets the application have more than the profile is refused: <what>
+      Given the file "cg/<file>":
+        """text
+        <value>
+        """
+      When the author runs "ljos bench Main.qml --runtime ljos --profile pi-zero --cpus 1 --cpu-list 0 --cpu-factor 5 --limit-by container --cgroup-root cg --ljos app.sh --settle 0 --idle 0 --load 0 --startup-timeout 1 --out out"
+      Then the command exits with status 2
+      And the command's output mentions "<says>"
+      And the command's output does not mention "report.json"
+
+      Examples:
+        | what          | file            | value        | says                                                       |
+        | more memory   | memory.max      | 536870912    | memory.max is 536870912, above the 268435456 asked for     |
+        | no memory cap | memory.max      | max          | memory.max is max, not at most 268435456                   |
+        | swap          | memory.swap.max | 268435456    | memory.swap.max is 268435456, not 0                        |
+        | more CPU      | cpu.max         | 40000 100000 | cpu.max lets it use 40 % of one CPU, above the 20 % asked for |
+
+    Scenario: Limits on the process are used only when asked for, and the report says what they leave out
+      When the author runs "ljos bench Main.qml --runtime ljos --profile pi-zero --memory-max 64M --cpus 1 --cpu-list 0 --cpu-factor 5 --limit-by process --ljos app.sh --settle 0 --idle 0 --load 0 --startup-timeout 1 --out out"
+      Then the command exits with status 0
+      And the command's output mentions "pi-zero is held by limits on the process"
+      And the file "data-limit" is:
+        """text
+        65536
+        """
+      And the file "cpus" is:
+        """text
+        0
+        """
+      And the JSON file "out/report.json" has "/runs/0/enforcement/mechanism" equal to "process"
+      And the JSON file "out/report.json" has "/runs/0/enforcement/memory_max" equal to 67108864
+      And the JSON file "out/report.json" has "/runs/0/enforcement/accounting" equal to "processes"
+      And the JSON file "out/report.json" has "/runs/0/enforcement/not_enforced/0" equal to "memory is held for each process on its own (RLIMIT_DATA), not for the application's processes together, and an allocation over it fails rather than being killed for want of memory"
+
+    Scenario: Where neither a scope, a cgroup of the bench's own nor the container holds the limit, nothing is measured
+      Given the file "launcher.sh":
+        """sh
+        #!/bin/sh
+        echo "Failed to connect to user scope bus" >&2
+        exit 1
+        """
+      And the file "cg/memory.max":
+        """text
+        max
+        """
+      When the author runs "ljos bench Main.qml --runtime ljos --profile pi-zero --cpus 1 --cpu-list 0 --cpu-factor 5 --launcher launcher.sh --cgroup-root cg --ljos app.sh --settle 0 --idle 0 --load 0 --startup-timeout 1 --out out"
+      Then the command exits with status 2
+      And the command's output mentions "Failed to connect to user scope bus"
+      And the command's output mentions "is not a cgroup v2 filesystem"
+      And the command's output mentions "--limit-by process"
+      And the command's output does not mention "report.json"
+
+    Scenario: A harness asks how the limit would be held before it measures
+      When the author runs "ljos bench --check-limits --profile pi-zero --cpus 1 --cpu-list 0 --cpu-factor 5 --limit-by container --cgroup-root cg --out out"
+      Then the command exits with status 0
+      And the command's output mentions "pi-zero is held by the container's cgroup"
+      And the command's output mentions "\"mechanism\": \"container\""
+
+    Scenario: A harness is told when the limit cannot be held
+      Given the file "cg/memory.swap.max":
+        """text
+        max
+        """
+      When the author runs "ljos bench --check-limits --profile pi-zero --cpus 1 --cpu-list 0 --cpu-factor 5 --limit-by container --cgroup-root cg --out out"
+      Then the command exits with status 2
+      And the command's output mentions "memory.swap.max is max, not 0"
 
   Rule: Nothing is measured with motion reduced
 

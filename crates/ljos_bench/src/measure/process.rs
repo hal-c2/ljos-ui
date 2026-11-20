@@ -11,13 +11,20 @@ use std::{
 use super::Setup;
 use crate::{
     cgroup::Cgroup,
+    enforce::{CpusBy, affinity_of},
     profile::{Profile, cpu_set},
 };
 
 /// Checks that `cg` is a cgroup of its own with the profile's limits. A
 /// launcher that only starts the command leaves it in the bench's cgroup,
-/// which holds the bench too.
-pub(super) fn check_isolated(cg: &Path, pid: u32, profile: &Profile) -> Result<(), String> {
+/// which holds the bench too. The CPUs are the cgroup's cpuset or the
+/// process's affinity, as `cpus_by` says.
+pub(super) fn check_isolated(
+    cg: &Path,
+    pid: u32,
+    profile: &Profile,
+    cpus_by: CpusBy,
+) -> Result<(), String> {
     if !cg.is_dir() {
         return Err(format!("its cgroup {} does not exist", cg.display()));
     }
@@ -47,11 +54,19 @@ pub(super) fn check_isolated(cg: &Path, pid: u32, profile: &Profile) -> Result<(
         }
     }
     if let Some(want) = &l.cpus {
-        let have = c
-            .cpus()
-            .ok_or_else(|| unreadable("cpuset.cpus.effective"))?;
+        let (have, of) = match cpus_by {
+            CpusBy::Cpuset => (
+                c.cpus()
+                    .ok_or_else(|| unreadable("cpuset.cpus.effective"))?,
+                "cpuset.cpus.effective",
+            ),
+            CpusBy::Affinity => (
+                affinity_of(pid).ok_or("its CPU affinity cannot be read")?,
+                "its CPU affinity",
+            ),
+        };
         if cpu_set(&have) != cpu_set(want) {
-            return Err(format!("cpuset.cpus.effective is {have}, not {want}"));
+            return Err(format!("{of} is {have}, not {want}"));
         }
     }
     Ok(())

@@ -8,17 +8,19 @@ use std::{
     fs::File,
     path::{Path, PathBuf},
     process::{Child, Command, ExitStatus, Stdio},
-    sync::mpsc::{Receiver, RecvTimeoutError},
+    sync::{
+        Mutex,
+        mpsc::{Receiver, RecvTimeoutError},
+    },
     thread,
     time::{Duration, Instant},
 };
 
-use ljos_child::Reaped;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    cgroup::{self, Cgroup},
     counters,
+    enforce::{Enforcement, LimitBy, Mechanism},
     gate::Gate,
     procfs,
     profile::Profile,
@@ -26,11 +28,14 @@ use crate::{
     wayland::{self, FrameCounter, Keyboard, Pointer},
 };
 
+mod account;
 mod frames;
+mod place;
 mod process;
 
+use account::Accounting;
 use frames::frames;
-use process::{check_isolated, describe, stop, systemd_oom, unit};
+use process::{describe, stop, systemd_oom};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -40,6 +45,10 @@ pub enum Error {
     Refused(String),
     #[error("cannot start {0}")]
     Launch(String),
+    /// Nothing `--limit-by` allows can hold the profile's limit here, so
+    /// nothing was measured.
+    #[error("{0}")]
+    Unheld(String),
     #[error("{0}")]
     Io(#[from] std::io::Error),
 }
@@ -74,6 +83,33 @@ pub struct Setup {
     pub wayland: Option<PathBuf>,
     pub startup_timeout: Duration,
     pub isolation_timeout: Duration,
+    /// What may hold a profile's limit ([`crate::enforce`]).
+    pub limit_by: LimitBy,
+    /// Where the bench makes cgroups of its own, from the cgroup root;
+    /// the bench's own cgroup when `None`.
+    pub cgroup_parent: Option<PathBuf>,
+    /// What held each profile's limit the first time: every run of a
+    /// profile is held the same way, so its runs compare.
+    pub chosen: Mutex<BTreeMap<String, Mechanism>>,
+}
+
+impl Setup {
+    fn chosen(&self, profile: &str) -> Option<Mechanism> {
+        self.chosen
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(profile)
+            .copied()
+    }
+
+    /// Records what holds `profile`; true the first time.
+    fn choose(&self, profile: &str, m: Mechanism) -> bool {
+        self.chosen
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(profile.to_owned(), m)
+            .is_none()
+    }
 }
 
 /// How long each phase lasts.
@@ -334,6 +370,9 @@ pub struct Run {
     /// and the runtime wrote it ([`crate::frames3d`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub frames3d: Option<crate::frames3d::Frames3d>,
+    /// What held the limit, and what of it was not held.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enforcement: Option<Enforcement>,
     pub log: String,
 }
 
@@ -356,7 +395,7 @@ pub fn load_average() -> Option<f64> {
 /// What the run has seen while waiting.
 struct Watch<'a> {
     child: &'a mut Child,
-    cg: Cgroup,
+    cg: Accounting,
     oom: u64,
     peak: Option<u64>,
     exited: Option<ExitStatus>,
@@ -862,6 +901,27 @@ fn time_resize_answer(
     at.ok().flatten().filter(|_| w.exited.is_none())
 }
 
+/// What follows the gate's program: its fifo, what it sets and unsets
+/// for the application, where it starts it, and the application.
+fn gate_args(fifo: &Path, runtime: &Runtime, frames3d: Option<&Path>) -> Vec<OsString> {
+    let mut a: Vec<OsString> = vec!["bench-gate".into(), "--fifo".into(), fifo.into()];
+    let env = runtime.env.iter().map(|(k, v)| format!("{k}={v}"));
+    let frames3d = frames3d.map(|p| format!("{}={}", crate::frames3d::ENV, p.display()));
+    for kv in env.chain(frames3d) {
+        a.extend(["--env".into(), kv.into()]);
+    }
+    for k in &runtime.unset {
+        a.extend(["--unset".into(), k.into()]);
+    }
+    if let Some(dir) = &runtime.dir {
+        a.extend(["--dir".into(), dir.into()]);
+    }
+    a.push("--".into());
+    a.push(runtime.program.clone().into());
+    a.extend(runtime.args.iter().cloned());
+    a
+}
+
 /// Runs one application on one runtime under one profile.
 ///
 /// # Errors
@@ -918,17 +978,6 @@ fn run_once(
         None => None,
     };
 
-    let mut command = Command::new(&setup.launcher);
-    command
-        .args(profile.launcher_args())
-        .arg("--")
-        .arg(&setup.gate)
-        .arg("bench-gate")
-        .arg("--fifo")
-        .arg(gate.path());
-    for (k, v) in &runtime.env {
-        command.arg("--env").arg(format!("{k}={v}"));
-    }
     // A file of its own for each run, so no line is another run's.
     let frames3d = phases.frames3d.then(|| {
         setup.work.join(format!(
@@ -940,68 +989,31 @@ fn run_once(
     });
     if let Some(path) = &frames3d {
         let _ = std::fs::remove_file(path);
-        command
-            .arg("--env")
-            .arg(format!("{}={}", crate::frames3d::ENV, path.display()));
     }
-    for k in &runtime.unset {
-        command.arg("--unset").arg(k);
-    }
-    if let Some(dir) = &runtime.dir {
-        command.arg("--dir").arg(dir);
-    }
-    command
-        .arg("--")
-        .arg(&runtime.program)
-        .args(&runtime.args)
-        .stdin(Stdio::null())
-        .stdout(log.try_clone()?)
-        .stderr(log);
-    // Killed on every way out of here, a `?` as much as the end.
-    let mut child = Reaped::spawn(&mut command)
-        .map_err(|e| Error::Launch(format!("{}: {e}", setup.launcher.display())))?;
-    let pid = child.id();
-    let gate_exe = std::fs::canonicalize(&setup.gate).unwrap_or_else(|_| setup.gate.clone());
+    let gate_args = gate_args(gate.path(), runtime, frames3d.as_deref());
     let what = format!("{app} on {}", runtime.name);
-
-    // Not one instruction of the application runs until its cgroup is the
-    // one asked for.
-    let launched = Instant::now();
-    let deadline = launched + setup.isolation_timeout;
-    let cg = loop {
-        if let Ok(Some(status)) = child.try_wait() {
-            let said = std::fs::read_to_string(&log_path).unwrap_or_default();
-            return Err(Error::Launch(format!(
-                "{what}: the launcher ended ({}) before the application started: {}",
-                describe(status),
-                said.trim()
-            )));
-        }
-        // The gate first: the launcher moves itself before it execs the
-        // gate, so a cgroup read after the gate is seen is the final one.
-        // The gate is this program, and so is the child between its fork
-        // and the launcher's exec; its own fifo tells the gate apart.
-        let handed = procfs::exe(pid).is_some_and(|e| e == gate_exe)
-            && procfs::has_arg(pid, gate.path().as_os_str());
-        let cg = cgroup::of_pid(&setup.cgroup_root, pid)?;
-        match check_isolated(&cg, pid, profile) {
-            Ok(()) => break cg,
-            Err(reason) if handed || Instant::now() > deadline => {
-                let _ = child.stop();
-                return Err(Error::Refused(format!(
-                    "{what} is not inside the limit of {} {} ms after its launch{}: {reason}",
-                    profile.name,
-                    launched.elapsed().as_millis(),
-                    if handed { ", in the gate" } else { "" },
-                )));
-            }
-            Err(_) => thread::sleep(Duration::from_millis(5)),
-        }
-    };
-    let unit = unit(setup, &cg);
+    // Killed on every way out of here, a `?` as much as the end.
+    let place::Placed {
+        mut child,
+        acct,
+        enforcement,
+        unit,
+        made,
+    } = place::place(&place::Ask {
+        setup,
+        profile,
+        gate_args: &gate_args,
+        fifo: gate.path(),
+        log: &log,
+        log_path: &log_path,
+        what: &what,
+        tag: &format!("{}-{n}", std::process::id()),
+    })?;
+    let pid = child.id();
+    let shared = acct.shared();
     let mut w = Watch {
         child: &mut child,
-        cg: Cgroup { dir: cg.clone() },
+        cg: acct,
         oom: 0,
         peak: None,
         exited: None,
@@ -1011,6 +1023,7 @@ fn run_once(
     let opened_us = crate::frames3d::now_us();
     let (mut idle_window, mut load_window) = (None, None);
     gate.open()?;
+    w.cg.start();
 
     let deadline = t0 + setup.startup_timeout;
     let shown = match &windows {
@@ -1050,7 +1063,7 @@ fn run_once(
         first_frame_ms: shown.map(|at| at.duration_since(t0).as_secs_f64() * 1000.0),
         input_ready_ms: ready.map(|at| at.duration_since(t0).as_secs_f64() * 1000.0),
         startup_cpu_ms: startup_cpu.map(|c| ms(c.saturating_sub(cpu0))),
-        peak_memory: w.cg.peak().or(w.peak),
+        peak_memory: w.cg.peak().max(w.peak),
         settled: None,
         idle: None,
         idled: None,
@@ -1061,6 +1074,7 @@ fn run_once(
         gesture: phases.gesture,
         install: None,
         frames3d: None,
+        enforcement: Some(enforcement),
         log: log_path.display().to_string(),
     };
 
@@ -1142,8 +1156,11 @@ fn run_once(
     }
 
     w.sample();
+    // A stopped group cannot be asked to end.
+    w.cg.end();
     let ended = w.exited.or_else(|| stop(w.child));
     w.sample();
+    drop(made);
     out.frames3d = frames3d
         .as_deref()
         .and_then(|p| crate::frames3d::read(p, opened_us, idle_window, load_window));
@@ -1151,7 +1168,9 @@ fn run_once(
         out.exit = Some(describe(status));
         use std::os::unix::process::ExitStatusExt;
         let killed = status.signal() == Some(libc::SIGKILL);
-        let oom = w.oom > 0 || (killed && unit.as_deref().is_some_and(systemd_oom));
+        // A shared cgroup's kill may have been of another of its processes.
+        let oom = (w.oom > 0 && (killed || !shared))
+            || (killed && unit.as_deref().is_some_and(systemd_oom));
         out.oom_killed = oom;
         out.outcome = if oom {
             Outcome::OomKilled
@@ -1159,8 +1178,9 @@ fn run_once(
             Outcome::Exited
         };
     } else {
-        // Stopped by us: a kill for memory may still have happened before.
-        out.oom_killed = w.oom > 0;
+        // Stopped by us: a kill for memory may still have happened before,
+        // of the application's own processes when the cgroup is its own.
+        out.oom_killed = w.oom > 0 && !shared;
         if out.oom_killed {
             out.outcome = Outcome::OomKilled;
         }
@@ -1185,11 +1205,17 @@ pub struct MinMemory {
     pub mib: Option<u64>,
     /// Each limit tried, in MiB, and whether it started.
     pub probes: Vec<(u64, bool)>,
+    /// Why no limit was tried.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub not_searched: Option<String>,
 }
 
 /// Searches between `lo` and `hi` MiB, halving the ratio between the
 /// largest that failed and the smallest that worked until they are within
 /// 3 %.
+///
+/// Under a container's cgroup, which the bench cannot change, nothing is
+/// searched and `not_searched` says so.
 ///
 /// # Errors
 /// A probe was refused or could not start.
@@ -1211,6 +1237,23 @@ pub fn min_memory(
         instructions: false,
         frames3d: false,
     };
+    let held_by = match setup.chosen(&profile.name) {
+        Some(m) => m,
+        None => check_limits(setup, profile)?.mechanism,
+    };
+    if held_by == Mechanism::Container {
+        return Ok(MinMemory {
+            app: app.to_owned(),
+            runtime: runtime.name.clone(),
+            profile: profile.name.clone(),
+            mib: None,
+            probes: Vec::new(),
+            not_searched: Some(
+                "the container's cgroup holds the memory, and its limit is not the bench's to change"
+                    .to_owned(),
+            ),
+        });
+    }
     let mut probes = Vec::new();
     let mut probe = |mib: u64| -> Result<bool, Error> {
         let r = run(
@@ -1253,7 +1296,71 @@ pub fn min_memory(
         profile: profile.name.clone(),
         mib,
         probes,
+        not_searched: None,
     })
+}
+
+/// Holds a probe to `profile` as an application would be, without letting
+/// it start, and says what held it: whether, and how, the limits can be
+/// had here.
+///
+/// A probe a scope did not isolate is placed again, up to [`LAUNCHES`]
+/// times, as [`run`] launches an application again.
+///
+/// # Errors
+/// [`Error::Unheld`] when nothing `--limit-by` allows holds the limit,
+/// [`Error::Refused`] when no launch was isolated, or what else would stop
+/// a run.
+pub fn check_limits(setup: &Setup, profile: &Profile) -> Result<Enforcement, Error> {
+    let mut launch = 1;
+    loop {
+        match check_limits_once(setup, profile) {
+            Err(Error::Refused(why)) if launch < LAUNCHES => {
+                eprintln!("ljos bench: placing the probe again: {why}");
+                launch += 1;
+            }
+            other => return other,
+        }
+    }
+}
+
+fn check_limits_once(setup: &Setup, profile: &Profile) -> Result<Enforcement, Error> {
+    static COUNT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let n = COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    std::fs::create_dir_all(&setup.work)?;
+    let gate = Gate::new(&setup.work.join(format!("check-{}-{n}", std::process::id())))?;
+    let log_path = setup
+        .work
+        .join(format!("check-limits.{}.log", profile.name));
+    let log = File::create(&log_path)?;
+    let probe = Runtime {
+        name: "probe".to_owned(),
+        program: PathBuf::from("true"),
+        args: Vec::new(),
+        env: Vec::new(),
+        unset: Vec::new(),
+        dir: None,
+    };
+    let gate_args = gate_args(gate.path(), &probe, None);
+    let mut placed = place::place(&place::Ask {
+        setup,
+        profile,
+        gate_args: &gate_args,
+        fifo: gate.path(),
+        log: &log,
+        log_path: &log_path,
+        what: "a probe",
+        tag: &format!("check-{}-{n}", std::process::id()),
+    })?;
+    // Its gate never opens, so `true` never runs.
+    let _ = placed.child.stop();
+    if let Some(unit) = &placed.unit {
+        let _ = Command::new("systemctl")
+            .args(["--user", "reset-failed", unit])
+            .stderr(Stdio::null())
+            .status();
+    }
+    Ok(placed.enforcement)
 }
 
 #[cfg(test)]
