@@ -42,6 +42,18 @@ pub enum JsFault {
     Internal(String),
 }
 
+impl JsFault {
+    /// Whether the fault came from the room the script had (a full heap,
+    /// its time up) and not from the script itself: the same code may run
+    /// to the end once there is room again.
+    pub fn is_resource(&self) -> bool {
+        matches!(
+            self,
+            JsFault::JsOutOfMemory { .. } | JsFault::JsInterrupted { .. }
+        )
+    }
+}
+
 impl From<JsFault> for ljos_runtime::Fault {
     fn from(f: JsFault) -> Self {
         use ljos_runtime::{Fault, JsErrorInfo};

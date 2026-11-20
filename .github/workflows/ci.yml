@@ -15,11 +15,23 @@ on:
         description: "Run only what the change since this revision reaches, as a pull request would; empty runs everything"
         default: ""
 
-# Every run of main is kept to its end, so main is never left without a verdict; a pull
-# request's newer push replaces its older run.
+# A newer push replaces the older run, on a pull request and on main alike. Hosted runners can
+# queue for hours (on 2026-11-20 each stage of a main run waited hours, and main runs took
+# 6.5 h or more), so keeping every merge's run to its end only lengthens the line. A push to
+# main runs everything (`--mode full` below), so the newest commit's verdict covers the merges
+# before it, and a break one of them brought in turns the newest run red. That is why push runs
+# share one group per branch rather than one per commit. The running run is cancelled too, not
+# only the waiting one: runners are what is short, and a run of a superseded commit holds them
+# from the newest run and from pull requests. While merges land faster than a run takes, main
+# has no finished verdict and the cache is not saved; each merge was green on its pull request,
+# and the last merge of a burst runs to its end and saves the cache. A rerun gets a group of
+# its own, so rerunning an older commit cannot cancel the newest run. Scheduled and dispatched
+# runs keep a group per commit and no push cancels them: a push must not cut the nightly jobs
+# short. A run of theirs that has started runs to its end; one still waiting gives way to a
+# newer one of the same commit.
 concurrency:
-  group: ci-${{ github.event_name }}-${{ github.event.pull_request.number || github.sha }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ci-${{ github.event_name }}-${{ github.event_name == 'push' && (github.run_attempt == 1 && github.ref || github.run_id) || github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}
 
 permissions:
   contents: read

@@ -286,6 +286,12 @@ pub trait Backend: fmt::Debug {
     /// PNG bytes of the window.
     fn grab(&mut self) -> Result<Vec<u8>>;
 
+    /// The pixel at `x`, `y` in each picture of the window kept since
+    /// [`Environment::keep_pictures`], oldest first.
+    fn kept_pixels(&mut self, _x: u32, _y: u32) -> Result<Vec<[u8; 4]>> {
+        Err(BackendError::NotImplemented("the window's pictures kept"))
+    }
+
     fn as_input(&mut self) -> Option<&mut dyn Input> {
         None
     }
@@ -709,6 +715,21 @@ pub trait Environment: Backend {
         Err(BackendError::NotImplemented(
             "a clock for JavaScript's time limits",
         ))
+    }
+
+    /// Each reading of the application's clock moves it on by `cost`, so
+    /// that what the application spreads over time by that clock (making
+    /// delegates ahead) takes the time of several screen refreshes.
+    fn clock_reading(&mut self, _cost: std::time::Duration) -> Result<()> {
+        Err(BackendError::NotImplemented(
+            "a clock each reading of which takes time",
+        ))
+    }
+
+    /// From the first QML loaded on, a picture of the window is kept each
+    /// time the window is drawn ([`Backend::kept_pixels`]).
+    fn keep_pictures(&mut self) -> Result<()> {
+        Err(BackendError::NotImplemented("the window's pictures kept"))
     }
 
     /// A web view waits `wait` for the storage of a profile made a moment

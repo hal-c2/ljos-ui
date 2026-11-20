@@ -1393,6 +1393,19 @@ out="$(
 )"
 want="1 builds, prog $dir/bin/prog: build 1, build dir $dir/build, target $dir/bin/.target"
 if [ "$out" = "$want" ]; then ok "a run's programs are built once, with the build directory cargo says, into a target of the run's own that another checkout's build does not reach"; else bad "pin_programs gave:" "gave: $out" "not:  $want"; fi
+# A pin directory given relative (GALLERY_DIR=reports) still names its
+# programs absolutely: gallery:run changes directory before it runs one.
+# A CDPATH a user set makes cd print where it went, which is not the path.
+dir="$real/pin-relative"
+mkdir -p "$dir"
+out="$(
+  PATH="$pinfakes:$PATH" PIN_COUNT="$dir/count" PIN_BUILD_DIR="$dir/build" PIN_SHARED="$dir/shared" CARGO_TARGET_DIR="$dir/shared" CDPATH=.
+  export PATH PIN_COUNT PIN_BUILD_DIR PIN_SHARED CARGO_TARGET_DIR CDPATH
+  ljos_cargo_config=""
+  cd "$dir" && pin_programs "a b/bin" build --quiet 2>/dev/null || echo failed
+)"
+want="prog $dir/a b/bin/prog"
+if [ "$out" = "$want" ]; then ok "programs pinned into a relative directory are named by their absolute path"; else bad "pin_programs into a relative directory gave:" "gave: $out" "not:  $want"; fi
 
 # With the real cargo: a program built already in the shared target is
 # pinned from the same build (cargo finds it fresh in the build directory
@@ -1557,11 +1570,24 @@ done
 # name of the gallery's own: LJOS_BIN is a user's name for a built server
 # (mcp, features:run), and one left set in a shell would skip gallery:run's
 # build and its GALLERY_PROFILE without a word.
-if grep -q 'pin_programs' "$ljos_root/mise-tasks/gallery/drive" && grep -q 'GALLERY_LJOS' "$ljos_root/mise-tasks/gallery/drive" \
-  && grep -q 'GALLERY_LJOS' "$ljos_root/mise-tasks/gallery/run" && ! grep -vE '^[[:space:]]*#' "$ljos_root/mise-tasks/gallery/run" | grep -q 'LJOS_BIN'; then
+# Read as code, not comments: the drive exports what it pinned, and
+# gallery:run runs that.
+code() { grep -vE '^[[:space:]]*#' "$ljos_root/mise-tasks/$1"; }
+if code gallery/drive | grep -qF 'GALLERY_LJOS="$(pinned_program ljos "$programs")"' && code gallery/drive | grep -qE '^[[:space:]]*export GALLERY_LJOS$' \
+  && code gallery/run | grep -qF 'ljos="$GALLERY_LJOS"' && ! code gallery/run | grep -q 'LJOS_BIN'; then
   ok "gallery:drive pins its program once and gallery:run runs that one"
 else
   bad "gallery:drive does not pin its program once for every example gallery:run starts"
+fi
+# bench:egui measures the ljos a user gets. Built in one cargo run with
+# feed_egui, feature unification would hand that ljos the example's
+# eframe/default_fonts, so each is pinned by a build of its own.
+egui_pins="$(code bench/egui | grep -F 'pin_programs' || true)"
+if [ "$(grep -cF -- '-p ljos_cli' <<<"$egui_pins")" = 1 ] && [ "$(grep -cF -- '--example feed_egui' <<<"$egui_pins")" = 1 ] \
+  && ! grep -F -- '-p ljos_cli' <<<"$egui_pins" | grep -qF -- 'feed_egui'; then
+  ok "bench:egui builds ljos apart from its feed_egui example"
+else
+  bad "bench:egui does not build ljos and feed_egui in two builds of their own:" "$egui_pins"
 fi
 
 # --- Vulkan drivers --------------------------------------------------------------

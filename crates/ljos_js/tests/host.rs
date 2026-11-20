@@ -529,6 +529,38 @@ fn a_null_thrown_by_a_job_after_another_job_ran_out_is_its_own() {
     );
 }
 
+/// Turning a string into Rust text allocates (non-ASCII text grows as
+/// UTF-8). On a full heap QuickJS gives no string back, which rquickjs
+/// words as an unknown error; the heap ran out all the same.
+#[test]
+fn a_string_too_big_for_the_heap_left_is_running_out_of_memory() {
+    let host = JsHost::new(JsConfig {
+        memory_limit: Some(16 * 1024 * 1024),
+        ..JsConfig::default()
+    })
+    .unwrap();
+    host.collect_now();
+    let held = host.memory_stats().unwrap().malloc_size;
+    assert!(host.set_memory_limit(Some(held + 3 * 1024 * 1024)));
+    let slice = host.config().slice;
+    // 1.2 MB as JS holds it, 2.4 MB as UTF-8.
+    let err = host
+        .enter("text", slice, |s| {
+            s.eval::<String, _>("'\\u00e9'.repeat(1200000)")
+        })
+        .unwrap_err();
+    assert!(matches!(err, JsFault::JsOutOfMemory { .. }), "{err:?}");
+    // With room, the same text comes through, and nothing is left pending.
+    assert!(host.set_memory_limit(None));
+    let text = host
+        .enter("text", slice, |s| {
+            s.eval::<String, _>("'\\u00e9'.repeat(1200000)")
+        })
+        .unwrap();
+    assert_eq!(text.chars().count(), 1_200_000);
+    assert_eq!(eval_num(&host, "40 + 2").unwrap(), 42.0);
+}
+
 #[test]
 fn out_of_memory_is_reported_and_context_survives() {
     let host = JsHost::new(JsConfig {
@@ -1688,4 +1720,28 @@ fn faults_convert_for_the_supervisor() {
     };
     assert_eq!(info.to_string(), "Main.qml:7:0: x is not defined");
     assert_eq!(info.stack, None);
+}
+
+/// A call QuickJS words as unknown, with a script's exception pending, is
+/// that exception, and keeps the value thrown as a thrown one does. A
+/// script cannot reach this on purpose: the run's own code stands in for
+/// the QuickJS call that left it.
+#[test]
+fn an_exception_pending_behind_an_unknown_error_keeps_its_value() {
+    let host = plain();
+    let err = host
+        .enter("unknown", host.config().slice, |s| {
+            let v = s.eval::<ljos_js::rquickjs::Value, _>("new TypeError('mine')")?;
+            let _ = s.ctx().throw(v);
+            Err::<(), _>(ljos_js::rquickjs::Error::Unknown)
+        })
+        .unwrap_err();
+    let JsFault::JsException {
+        message, thrown, ..
+    } = err
+    else {
+        panic!("{err:?}")
+    };
+    assert!(message.contains("mine"), "{message}");
+    assert!(thrown.is_some(), "the value thrown is kept");
 }

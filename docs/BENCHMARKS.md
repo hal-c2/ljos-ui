@@ -4735,6 +4735,12 @@ LJOS=path/to/ljos mise run bench:js
 | math | 1 000 000 | 199 | 199 | 103 | 3.20 k | 3.21 k |
 | props | 1 000 000 | 359 | 367 | 252 | 6.73 k | 6.74 k |
 | model | 100 | 53 | 26 | 15 | 7.33 M | 3.69 M |
+| canvas | 50 | 260 | 230 | 46 | 74.9 M | 70.4 M |
+
+- **canvas**: a 64×64 Canvas with 2000 `fillStyle` + one-pixel `fillRect` pairs a round
+  (a sprite sheet), then `getImageData` so the pixels are drawn. Added with #608: `fillRect`
+  on whole pixels is a rectangle fill, not a path (260 → 230 ms). Most of what is left goes
+  to the call from script into the context, not to the fill (#633).
 
 **Ljós is faster than qml6 on bindings, strings and json.** It is slower on handlers (1.5×),
 math (1.9×), model (1.7×), props (1.5×) and arrays (1.3×).

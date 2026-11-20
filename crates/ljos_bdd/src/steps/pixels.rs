@@ -242,6 +242,29 @@ fn window_pixel_near(w: &mut LjosWorld, x: u32, y: u32, tolerance: u8, colour: &
     })
 }
 
+/// What was drawn at a place while the window changed: in no picture
+/// kept (`Given every picture of the window is kept`) is it `colour`.
+#[then(regex = r#"^the pixel at (\d+), (\d+) of the window is "(#\w{6})" in no picture kept$"#)]
+fn kept_pixel_never(w: &mut LjosWorld, x: u32, y: u32, colour: String) -> StepResult {
+    let unwanted = rgb(&colour)?;
+    w.each(|b| {
+        let kept = b.kept_pixels(x, y)?;
+        if kept.is_empty() {
+            return Err(BackendError::Failed(
+                "no picture of the window was kept".into(),
+            ));
+        }
+        match kept.iter().position(|p| over_black(*p) == unwanted) {
+            Some(i) => Err(BackendError::Failed(format!(
+                "the pixel at {x}, {y} is {colour} in picture {} of {}",
+                i + 1,
+                kept.len()
+            ))),
+            None => Ok(()),
+        }
+    })
+}
+
 /// For a picture whose exact colours depend on lighting the scenario does
 /// not pin: something was drawn there, over what would show otherwise.
 #[then(regex = r#"^the pixel at (\d+), (\d+) of the window is not "(#\w{6})"$"#)]

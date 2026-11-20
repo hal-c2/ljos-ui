@@ -309,7 +309,7 @@ pub(super) fn method_sig(arena: &mut Arena, receiver: Ty, method: Method) -> Opt
                 return Some(sig(vec![], None, Ty::STRING));
             }
             match name {
-                "arg" => sig(vec![param("value", primitive)], None, Ty::STRING),
+                "arg" => sig(vec![param("value", primitive)], Some(primitive), Ty::STRING),
                 "at" => sig(vec![number("index")], None, maybe_string),
                 "charAt" => sig(vec![number("index")], None, Ty::STRING),
                 "charCodeAt" => sig(vec![number("index")], None, Ty::NUMBER),

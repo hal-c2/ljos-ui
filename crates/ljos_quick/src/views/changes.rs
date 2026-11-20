@@ -139,6 +139,8 @@ impl ViewHost for Host {
             return;
         };
         enrol(e, object, view, Part::Row);
+        // Not drawn where it is until the view puts it somewhere.
+        super::cull::unplaced(e, object, true);
         // Before the delegate's bindings run, so `parent` and
         // `ListView.view` read right in them.
         e.batch(|| {
@@ -185,6 +187,7 @@ impl ViewHost for Host {
             let _ = tree::set_parent_item(e, object, None);
         }
         done_leaving(e, object);
+        super::cull::unplaced(e, object, false);
         let Some(st) = state_of(e, view) else {
             return;
         };
