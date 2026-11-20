@@ -104,7 +104,7 @@ pub enum AndroidCommand {
         /// capabilities (inspect, input, mutate, eval), as `ljos run --mcp`
         /// does; `ljos android connect` then reaches it. Builds the library
         /// with `ljos/mcp`; a debug package only.
-        #[arg(long, value_name = "CAPS", value_parser = CapSet::parse_list)]
+        #[arg(long, value_name = "CAPS", value_parser = crate::run::parse_caps)]
         mcp: Option<CapSet>,
     },
     /// Reach the inspector of an application running on the phone, one
@@ -261,27 +261,45 @@ fn connect(adb: &Adb, application_id: &str, out: &Path) -> anyhow::Result<String
         all.extend_from_slice(args);
         adb.output(&all)
     };
-    // Newest first: an inspector removes its file when it stops, and the
-    // newest of what a killed one left is the running one's.
-    let listed = run_as(&["ls", "-t", TOKEN_DIR]).with_context(|| {
-        format!(
-            "no inspector of {application_id} on the device: start it with \
-             `ljos android run --mcp=inspect` (a debug package; run-as reads only those)"
-        )
-    })?;
-    let Some(name) = listed
+    const START: &str = "start it with `ljos android run --mcp=inspect` \
+                         (a debug package; run-as reads only those)";
+    let listed = run_as(&["ls", "-t", TOKEN_DIR])
+        .with_context(|| format!("no inspector of {application_id} on the device: {START}"))?;
+    let names: Vec<&str> = listed
         .lines()
         .map(str::trim)
-        .find(|n| n.starts_with("mcp-") && n.ends_with(".json"))
-    else {
-        bail!(
-            "{application_id} serves no inspector: start it with \
-             `ljos android run --mcp=inspect`"
-        );
+        .filter(|n| n.starts_with("mcp-") && n.ends_with(".json"))
+        .collect();
+    if names.is_empty() {
+        bail!("{application_id} serves no inspector: {START}");
+    }
+    // An inspector removes its file when it stops, but one the system
+    // killed (`am start -S` kills the last run) leaves it: only the file of
+    // the process running now is the inspector's.
+    let running: Vec<u32> = adb
+        .output(&["shell", "pidof", application_id])
+        .map(|out| {
+            out.split_whitespace()
+                .filter_map(|p| p.parse().ok())
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut found = None;
+    for name in names {
+        let path = format!("{TOKEN_DIR}/{name}");
+        let text = run_as(&["cat", &path])?;
+        let body =
+            TokenFileBody::parse(&text).with_context(|| format!("{path} of {application_id}"))?;
+        if body.pid.is_none_or(|pid| running.contains(&pid)) {
+            found = Some(body);
+            break;
+        }
+        // Left by a process that is gone: no one else removes it.
+        let _ = run_as(&["rm", "-f", &path]);
+    }
+    let Some(body) = found else {
+        bail!("the inspector of {application_id} is not running: {START}");
     };
-    let text = run_as(&["cat", &format!("{TOKEN_DIR}/{name}")])?;
-    let body = TokenFileBody::parse(&text)
-        .with_context(|| format!("{TOKEN_DIR}/{name} of {application_id}"))?;
     let (port, rest) = loopback_port(&body.url)?;
     let forwarded = adb.output(&["forward", "tcp:0", &format!("tcp:{port}")])?;
     let local: u16 = forwarded
@@ -811,20 +829,33 @@ mod tests {
         assert!(loopback_port("http://127.0.0.1/mcp").is_err());
     }
 
-    /// An adb that answers as one device with an application serving its
-    /// inspector at port 4410 would, and logs what it was asked.
+    /// An adb that answers as one device whose application runs as process
+    /// 4321 and serves its inspector at port 4410 would, and logs what it
+    /// was asked. `stale` is a token file a killed process 1200 left,
+    /// listed first.
     #[cfg(unix)]
-    fn fake_adb(dir: &Path, token_file: &str) -> PathBuf {
+    fn fake_adb(dir: &Path, token_file: &str, stale: Option<&str>) -> PathBuf {
         use std::os::unix::fs::PermissionsExt;
         std::fs::write(dir.join("token.json"), token_file).unwrap();
+        std::fs::write(dir.join("stale.json"), stale.unwrap_or("")).unwrap();
+        let listed = if stale.is_some() {
+            r"mcp-1200.json\r\nmcp-4321.json\r\n"
+        } else {
+            r"mcp-4321.json\r\nmcp-1200.json\r\n"
+        };
         let script = format!(
             r#"#!/bin/sh
 echo "$*" >> '{log}'
 case "$*" in
   "-s phone shell run-as dev.ljos.hello ls -t files/target/ljos")
-    printf 'mcp-4321.json\r\nmcp-1200.json\r\n' ;;
+    printf '{listed}' ;;
   "-s phone shell run-as dev.ljos.hello cat files/target/ljos/mcp-4321.json")
     cat '{token}' ;;
+  "-s phone shell run-as dev.ljos.hello cat files/target/ljos/mcp-1200.json")
+    cat '{stale}' ;;
+  "-s phone shell run-as dev.ljos.hello rm -f files/target/ljos/mcp-1200.json") ;;
+  "-s phone shell pidof dev.ljos.hello")
+    printf '4321\r\n' ;;
   "-s phone forward tcp:0 tcp:4410")
     echo 39001 ;;
   *) echo "adb: unexpected $*" >&2; exit 1 ;;
@@ -832,6 +863,7 @@ esac
 "#,
             log = dir.join("log").display(),
             token = dir.join("token.json").display(),
+            stale = dir.join("stale.json").display(),
         );
         let adb = dir.join("adb");
         std::fs::write(&adb, script).unwrap();
@@ -839,20 +871,24 @@ esac
         adb
     }
 
+    fn on_phone(pid: u32, port: u16) -> TokenFileBody {
+        TokenFileBody {
+            url: format!("http://127.0.0.1:{port}/mcp"),
+            token: "ab".repeat(32),
+            pid: Some(pid),
+            capabilities: CapSet::parse_list("inspect").unwrap(),
+            calls_per_second: Some(50),
+        }
+    }
+
     #[cfg(unix)]
     #[test]
     fn connect_forwards_a_port_and_writes_a_token_file_here() {
         use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
-        let on_phone = TokenFileBody {
-            url: "http://127.0.0.1:4410/mcp".into(),
-            token: "ab".repeat(32),
-            pid: Some(4321),
-            capabilities: CapSet::parse_list("inspect").unwrap(),
-            calls_per_second: Some(50),
-        };
+        let on_phone = on_phone(4321, 4410);
         let adb = Adb {
-            program: fake_adb(dir.path(), &on_phone.to_text()),
+            program: fake_adb(dir.path(), &on_phone.to_text(), None),
             device: Some("phone".into()),
         };
         let out = dir.path().join("target/ljos/android-dev.ljos.hello.json");
@@ -874,7 +910,7 @@ esac
     fn connect_says_how_to_start_an_inspector_when_there_is_none() {
         let dir = tempfile::tempdir().unwrap();
         let adb = Adb {
-            program: fake_adb(dir.path(), ""),
+            program: fake_adb(dir.path(), "", None),
             device: Some("phone".into()),
         };
         let err = connect(&adb, "dev.ljos.other", &dir.path().join("out.json")).unwrap_err();
@@ -883,6 +919,58 @@ esac
             "{err:#}"
         );
         assert!(!dir.path().join("out.json").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn connect_passes_over_and_removes_what_a_killed_process_left() {
+        let dir = tempfile::tempdir().unwrap();
+        // The killed process listened at another port.
+        let stale = on_phone(1200, 4999).to_text();
+        let adb = Adb {
+            program: fake_adb(dir.path(), &on_phone(4321, 4410).to_text(), Some(&stale)),
+            device: Some("phone".into()),
+        };
+        let out = dir.path().join("out.json");
+        let url = connect(&adb, "dev.ljos.hello", &out).unwrap();
+        assert_eq!(url, "http://127.0.0.1:39001/mcp");
+        let log = std::fs::read_to_string(dir.path().join("log")).unwrap();
+        assert!(
+            log.contains("rm -f files/target/ljos/mcp-1200.json"),
+            "{log}"
+        );
+        assert!(!log.contains("tcp:4999"), "{log}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn connect_says_an_application_is_not_running_when_only_its_files_are_left() {
+        let dir = tempfile::tempdir().unwrap();
+        // Both files were left by the killed process 1200; 4321 serves none.
+        let stale = on_phone(1200, 4999).to_text();
+        let adb = Adb {
+            program: fake_adb(dir.path(), &stale, Some(&stale)),
+            device: Some("phone".into()),
+        };
+        let out = dir.path().join("out.json");
+        let err = connect(&adb, "dev.ljos.hello", &out).unwrap_err();
+        assert!(format!("{err:#}").contains("not running"), "{err:#}");
+        assert!(!out.exists());
+    }
+
+    #[test]
+    fn run_refuses_capabilities_of_the_authoring_server() {
+        use clap::Parser as _;
+        #[derive(clap::Parser)]
+        struct Line {
+            #[command(subcommand)]
+            android: AndroidCommand,
+        }
+        let parse = |caps: &str| Line::try_parse_from(["ljos-android", "run", caps]).map(|_| ());
+        assert!(parse("--mcp=inspect,input").is_ok());
+        for caps in ["--mcp=fs", "--mcp=run", "--mcp=inspect,fs"] {
+            assert!(parse(caps).is_err(), "{caps} is refused");
+        }
     }
 
     #[test]
