@@ -696,7 +696,8 @@ mod tests {
             micros,
             spline,
         };
-        assert_eq!(run.eased(0.0), 0.0);
+        // The spline is a table: its start is nothing to within its steps.
+        assert!(run.eased(0.0).abs() < 1e-6, "{}", run.eased(0.0));
         assert!((run.eased(1.0) - 1.0).abs() < 1e-9);
         let half = crate::flickable::physics::spline_way(0.5);
         assert_eq!(run.eased(0.5), half);

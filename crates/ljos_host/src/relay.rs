@@ -426,6 +426,20 @@ impl<S: Send + 'static, U: From<Wake> + Send + 'static> PlatformHost for RelayHo
                     Msg::User(u) => deliver(&mut state, Event::User(u)),
                     Msg::Arrival(arrival) => arrive(&mut state, &mut deliver, arrival),
                 }
+                // Right after what made the window, before a message that
+                // follows it in the same turn (a quit, say) is handled.
+                if state.window
+                    && let Some(insets) = state.insets.take()
+                {
+                    deliver(
+                        &mut state,
+                        Event::Window {
+                            id: WINDOW,
+                            event: WindowEvent::Insets(insets),
+                            raw: None,
+                        },
+                    );
+                }
                 taken += 1;
                 if state.exit || taken == TURN {
                     break;
@@ -434,18 +448,6 @@ impl<S: Send + 'static, U: From<Wake> + Send + 'static> PlatformHost for RelayHo
             }
             if state.exit {
                 break;
-            }
-            if state.window
-                && let Some(insets) = state.insets.take()
-            {
-                deliver(
-                    &mut state,
-                    Event::Window {
-                        id: WINDOW,
-                        event: WindowEvent::Insets(insets),
-                        raw: None,
-                    },
-                );
             }
             if state.window && state.told != Some((state.px, state.scale)) && state.px != [0, 0] {
                 state.told = Some((state.px, state.scale));
