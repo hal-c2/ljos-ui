@@ -35,6 +35,7 @@ use std::rc::Rc;
 
 use ljos_ir::{Arg, TypeRef};
 use ljos_js::JsValue;
+use ljos_runtime::Time;
 
 use super::Instance;
 use super::request::Request;
@@ -45,6 +46,7 @@ use crate::loader::LoadedFile;
 use crate::meta::{MetaObject, MetaRef};
 use crate::object::{QmlObject, QmlType};
 use crate::registry::Version;
+use crate::retry::{Backoff, ResourceFault, seconds};
 use crate::value::Value;
 
 /// How many objects a singleton type has.
@@ -143,6 +145,14 @@ enum State {
     },
     /// It did not load, which was reported once.
     Failed,
+    /// A resource fault took it: it is made again at the first lookup
+    /// from `after` on, and not before, so a full heap is not filled
+    /// again at once by every reader (ARCHITECTURE.md §9.4).
+    Retry {
+        after: Time,
+        backoff: Backoff,
+        cause: ResourceFault,
+    },
     /// A type that is one for each window, read where there is no
     /// window: reported once.
     Outside,
@@ -771,10 +781,17 @@ impl Engine {
         let sources = all.sources.get();
         // The object as it stands, and whether its file has to be looked
         // at again.
+        // The backoff of the tries a resource fault has cost so far.
+        let mut retry = None;
         let (ty, scope) = {
             let entries = all.entries.borrow();
             let e = &entries[handle];
             let stands = match &e.state {
+                State::Retry { after, .. } if self.now() < *after => return None,
+                State::Retry { backoff, cause, .. } => {
+                    retry = Some((*backoff, *cause));
+                    None
+                }
                 State::Made { obj, file, seen } if self.is_alive(*obj) => {
                     if file.is_none() || *seen == sources {
                         return Some(*obj);
@@ -820,6 +837,10 @@ impl Engine {
             self.destroy(*obj);
         }
         all.entries.borrow_mut()[handle].state = State::Making(None);
+        if let Some((_, ResourceFault::OutOfMemory)) = retry {
+            self.collect_garbage();
+        }
+        let before = self.faults_reported();
         // Whoever reads the name first does not depend on what making the
         // object reads.
         let made = self.untrack(|| match &kind {
@@ -853,6 +874,16 @@ impl Engine {
                 .map(|obj| (obj, None)),
             Kind::Keys(_) => unreachable!("returned above"),
         });
+        // Made, but with scripts the heap or the clock cut off: not what
+        // its code says, and nothing would make it again. Its faults are
+        // discarded with it.
+        let made = made.and_then(|(obj, file)| match self.resource_fault_in(before, obj) {
+            Some(cause) => {
+                self.destroy(obj);
+                Err(cause.error("a script in it was cut off while it was made"))
+            }
+            None => Ok((obj, file)),
+        });
         let (state, out) = match made {
             Ok((obj, file)) => (
                 State::Made {
@@ -862,13 +893,41 @@ impl Engine {
                 },
                 Some(obj),
             ),
-            Err(e) => {
-                self.warn(format!(
-                    "the singleton {} is not available: {e}",
-                    type_name(&ty)
-                ));
-                (State::Failed, None)
-            }
+            Err(e) => match e.resource_fault() {
+                // The heap or the clock, not the code: made again later.
+                Some(cause) => {
+                    let mut backoff = retry.map(|(b, _)| b).unwrap_or_default();
+                    let now = self.now();
+                    let wait = backoff.fault(now);
+                    backoff.loading(now + wait);
+                    self.warn(format!(
+                        "the singleton {} is not available: {e}; {}, so it is made again \
+                         at the first lookup {}",
+                        type_name(&ty),
+                        cause.describe(),
+                        if wait.is_zero() {
+                            "from now on".to_owned()
+                        } else {
+                            format!("in {}", seconds(wait))
+                        }
+                    ));
+                    (
+                        State::Retry {
+                            after: now + wait,
+                            backoff,
+                            cause,
+                        },
+                        None,
+                    )
+                }
+                None => {
+                    self.warn(format!(
+                        "the singleton {} is not available: {e}",
+                        type_name(&ty)
+                    ));
+                    (State::Failed, None)
+                }
+            },
         };
         all.entries.borrow_mut()[handle].state = state;
         if let (Some(obj), Some(scope), Kind::Native(native)) = (out, scope, &kind) {
