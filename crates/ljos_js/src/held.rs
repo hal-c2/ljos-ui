@@ -49,8 +49,21 @@ impl<'js> Scope<'js> {
         for group in groups {
             let mut bytes = 0;
             for r in group {
-                if let Ok(v) = self.restore(r) {
-                    stack.push(v);
+                if held.values >= budget {
+                    held.truncated = true;
+                    break;
+                }
+                // A value not made yet (an array a host handed over that no
+                // script has read) is not in the heap: making it to look
+                // would run the script's hook and grow what is measured.
+                if r.key().is_none() {
+                    continue;
+                }
+                match self.restore(r) {
+                    Ok(v) => stack.push(v),
+                    Err(_) => {
+                        let _ = self.ctx().catch();
+                    }
                 }
                 while let Some(v) = stack.pop() {
                     if held.values >= budget {
@@ -58,7 +71,10 @@ impl<'js> Scope<'js> {
                         stack.clear();
                         break;
                     }
-                    bytes += self.held_at(&v, &mut seen, &mut stack, &mut held.values);
+                    let room = budget - held.values;
+                    let (b, cut) = self.held_at(&v, room, &mut seen, &mut stack, &mut held.values);
+                    bytes += b;
+                    held.truncated |= cut;
                 }
             }
             held.bytes.push(bytes);
@@ -67,25 +83,27 @@ impl<'js> Scope<'js> {
     }
 
     /// What `v` itself holds, its first time; what it refers to goes on
-    /// `stack`.
+    /// `stack`, at most `room` of its properties in all, and true when it
+    /// had more.
     fn held_at(
         &self,
         v: &Value<'js>,
+        room: usize,
         seen: &mut HashSet<usize>,
         stack: &mut Vec<Value<'js>>,
         values: &mut usize,
-    ) -> usize {
+    ) -> (usize, bool) {
         let raw = v.as_raw();
         let ctx = self.ctx().as_raw().as_ptr();
         if !(v.is_object() || v.is_string()) {
             // Numbers, booleans and the like live in the slot that holds them.
-            return 0;
+            return (0, false);
         }
         // SAFETY: tagged as an object or a string, the payload is the
         // pointer to it, only compared here.
         let at = unsafe { qjs::JS_VALUE_GET_PTR(raw) } as usize;
         if !seen.insert(at) {
-            return 0;
+            return (0, false);
         }
         *values += 1;
         if v.is_string() {
@@ -95,7 +113,7 @@ impl<'js> Scope<'js> {
             if unsafe { qjs::JS_GetLength(ctx, raw, &mut len) } < 0 {
                 let _ = self.ctx().catch();
             }
-            return STRING + usize::try_from(len).unwrap_or(0);
+            return (STRING + usize::try_from(len).unwrap_or(0), false);
         }
         // SAFETY: `raw` is the live object `v` holds; the class is read off
         // its header.
@@ -109,7 +127,7 @@ impl<'js> Scope<'js> {
                 let _ = self.ctx().catch();
                 size = 0;
             }
-            return OBJECT + size as usize;
+            return (OBJECT + size as usize, false);
         }
         // Only these two classes: their own properties are plain slots, and
         // listing and reading them runs nothing a script or a host defined.
@@ -126,9 +144,13 @@ impl<'js> Scope<'js> {
             < 0
         {
             let _ = self.ctx().catch();
-            return OBJECT;
+            return (OBJECT, false);
         }
-        for i in 0..names.len as usize {
+        let len = names.len as usize;
+        // Each property read is counted against the budget, a number's too:
+        // an array of a million numbers is a million reads.
+        let cut = len > room;
+        for i in 0..len.min(room) {
             // SAFETY: `i` is within the table the engine filled in.
             let atom = unsafe { (*names.tab.add(i)).atom };
             let mut d = std::mem::MaybeUninit::<qjs::JSPropertyDescriptor>::uninit();
@@ -139,7 +161,11 @@ impl<'js> Scope<'js> {
                     1 => {
                         let d = d.assume_init();
                         for part in [d.value, d.getter, d.setter] {
-                            stack.push(Value::from_raw(self.ctx().clone(), part));
+                            let part = Value::from_raw(self.ctx().clone(), part);
+                            // Only what can hold more than its slot is walked.
+                            if part.is_object() || part.is_string() {
+                                stack.push(part);
+                            }
                         }
                     }
                     0 => {}
@@ -149,6 +175,6 @@ impl<'js> Scope<'js> {
                 }
             }
         }
-        OBJECT + names.len as usize * SLOT
+        (OBJECT + len * SLOT, cut)
     }
 }
