@@ -104,8 +104,12 @@ impl UserQml {
     /// A directory the application itself loads QML from while it runs,
     /// as plugins it fetched: a file there is compiled when a script asks
     /// for it (`Qt.createComponent`, a `Loader`), against the
-    /// application's types with the user's over them, and a text placed
-    /// there (`Qt.createQmlObject`) is not refused.
+    /// application's types with the user's over them and the other files
+    /// of its directory beside it, and a text placed there
+    /// (`Qt.createQmlObject`) is not refused. A file that compiled is kept
+    /// while the application runs, as the application's own are: a
+    /// version fetched again later is not read. One that did not compile
+    /// is read again the next time a script asks for it.
     #[must_use]
     pub fn loads_from(mut self, dir: impl Into<PathBuf>) -> Self {
         self.loads_from.push(dir.into());
