@@ -94,6 +94,7 @@ where
             panicked(info);
         }));
         let (host, attach) = ljos_host::android::host::<Message>();
+        let quit = attach.clone();
         let spawned = std::thread::Builder::new()
             .name(String::from("ljos-application"))
             .spawn(move || {
@@ -104,8 +105,16 @@ where
                 }));
                 match ran {
                     // The activity was asked to finish: the process ends on
-                    // the activity's thread once it has (see `main`).
-                    Ok(Ok(())) => QUITTING.store(true, Ordering::Release),
+                    // the activity's thread once it has (see `main`). With
+                    // none attached (a quit after Back, from a timer, say)
+                    // nothing would take that ask: the process ends here,
+                    // not at the next launch, which would open and close.
+                    Ok(Ok(())) => {
+                        QUITTING.store(true, Ordering::Release);
+                        quit.when_detached(|| {
+                            end_process(0);
+                        });
+                    }
                     Ok(Err(e)) => {
                         log::error!("the application's loop ended: {e}");
                         end_process(1);
@@ -127,7 +136,8 @@ where
     // Not from the application's thread as its loop ends: the activity it
     // asked to finish would still be in front, and the process's exit
     // would tear down what the activity's threads are still using. Here
-    // the activity has finished and its thread is back in `android_main`.
+    // the activity was destroyed (the pump waits for that once it has
+    // asked for a finish) and its thread is back in `android_main`.
     if QUITTING.load(Ordering::Acquire) {
         if let Some(thread) = crate::lock(&APPLICATION).take() {
             let _ = thread.join();

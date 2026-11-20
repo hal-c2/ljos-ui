@@ -87,8 +87,9 @@ impl<U: Send + 'static> Attach<U> {
             relay: &self.relay,
             destroyed: false,
             closed: false,
+            finishing: false,
         };
-        while !pump.destroyed && !pump.closed {
+        while keeps_pumping(pump.destroyed, pump.closed, pump.finishing) {
             // Sleeps until the activity has something or a request wakes it.
             app.poll_events(None, |event| match event {
                 PollEvent::Main(main) => pump.main(main),
@@ -106,6 +107,22 @@ impl<U: Send + 'static> Attach<U> {
         // The application lives on, without the activity.
         let _ = self.relay.send(Arrival::Detached);
     }
+
+    /// Runs `then` if no activity is pumping, and keeps one from starting
+    /// to until it returns. A quit asked with no activity attached has no
+    /// activity to finish and none to wait for: its process can end here.
+    pub fn when_detached<R>(&self, then: impl FnOnce() -> R) -> Option<R> {
+        let requests = lock(&self.requests);
+        // A pump holds the waker from its start to its end.
+        requests.waker.is_none().then(then)
+    }
+}
+
+/// Whether the pump goes on. Once it has asked the activity to finish, it
+/// goes on after the application's loop has ended, until the activity is
+/// destroyed: what follows `android_main` must not race its teardown.
+fn keeps_pumping(destroyed: bool, closed: bool, finishing: bool) -> bool {
+    !destroyed && (!closed || finishing)
 }
 
 /// Where the activity's Back goes: to the application attached, if any.
@@ -131,6 +148,8 @@ struct Pump<'a, U: Send + 'static> {
     destroyed: bool,
     /// The application's loop has ended.
     closed: bool,
+    /// The activity was asked to finish.
+    finishing: bool,
 }
 
 impl<U: Send + 'static> Pump<'_, U> {
@@ -228,7 +247,10 @@ impl<U: Send + 'static> Pump<'_, U> {
             Request::Keyboard(true) => self.app.show_soft_input(false),
             Request::Keyboard(false) => self.app.hide_soft_input(false),
             Request::Background => call_activity(self.app, ActivityCall::MoveTaskToBack),
-            Request::Exit => call_activity(self.app, ActivityCall::Finish),
+            Request::Exit => {
+                self.finishing = true;
+                call_activity(self.app, ActivityCall::Finish);
+            }
             _ => {}
         }
     }
@@ -380,5 +402,28 @@ fn call_activity(app: &AndroidApp, call: ActivityCall) {
     });
     if let Err(e) = done {
         log::warn!("the activity did not take the call: {e}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_pump_that_asked_for_finish_waits_for_destroy_after_the_application_ends() {
+        assert!(keeps_pumping(false, true, true));
+        assert!(!keeps_pumping(true, true, true));
+    }
+
+    #[test]
+    fn a_pump_ends_when_the_application_ends_without_a_finish() {
+        assert!(!keeps_pumping(false, true, false));
+        assert!(keeps_pumping(false, false, false));
+    }
+
+    #[test]
+    fn a_quit_with_no_activity_attached_is_handled_at_once() {
+        let (_host, attach) = host::<Wake>();
+        assert_eq!(attach.when_detached(|| 7), Some(7));
     }
 }
