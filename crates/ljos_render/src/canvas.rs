@@ -208,8 +208,9 @@ fn blur(values: &mut [f32], width: usize, height: usize, sigma: f64, reach: usiz
 }
 
 /// `rect` in canvas pixels when `transform` keeps it a rectangle with
-/// sides along the axes and on whole pixels.
-fn device_rect(rect: Rect, transform: Affine) -> Option<Rect> {
+/// sides along the axes and on whole pixels, and vello_cpu fills it as a
+/// rectangle exactly as it fills it as a path on `canvas`.
+fn device_rect(rect: Rect, transform: Affine, canvas: Rect) -> Option<Rect> {
     let [a, b, c, d, _, _] = transform.as_coeffs();
     if !((b == 0.0 && c == 0.0) || (a == 0.0 && d == 0.0)) {
         return None;
@@ -223,7 +224,16 @@ fn device_rect(rect: Rect, transform: Affine) -> Option<Rect> {
     let whole = [device.x0, device.y0, device.x1, device.y1]
         .iter()
         .all(|v| v.is_finite() && v.fract() == 0.0);
-    whole.then_some(device)
+    // Blended over what is there, a path that reaches the canvas's right
+    // or bottom edge comes out one step fainter in its last strip than the
+    // same rectangle (171 against 172 green at a = 100), on some sizes
+    // even when it only passes the edge, so only a rectangle inside the
+    // canvas goes as a rectangle.
+    let inside = device.x0 >= canvas.x0
+        && device.y0 >= canvas.y0
+        && device.x1 < canvas.x1
+        && device.y1 < canvas.y1;
+    (whole && inside).then_some(device)
 }
 
 fn is_plain(blend: BlendMode) -> bool {
@@ -583,7 +593,7 @@ impl CanvasPainter {
             area.apply_affine(st.transform);
             area
         };
-        let Some(device) = device_rect(rect, st.transform) else {
+        let Some(device) = device_rect(rect, st.transform, self.bounds()) else {
             self.fill(&outline(), FillRule::NonZero, paint, st);
             return;
         };
@@ -1030,6 +1040,8 @@ mod tests {
             Rect::new(1.25, 2.5, 7.75, 13.4),
             Rect::new(9.0, 9.0, 3.0, 4.0),
             Rect::new(-4.0, -2.0, 30.0, 6.5),
+            // Whole pixels past the canvas: it must come out as the path does.
+            Rect::new(-4.0, -2.0, 30.0, 6.0),
             Rect::new(4.0, 4.0, 4.0, 10.0),
         ];
         let transforms = [
@@ -1038,6 +1050,9 @@ mod tests {
             Affine::scale_non_uniform(2.0, 1.5),
             Affine::scale_non_uniform(-1.0, 1.0) * Affine::translate((-20.0, 0.0)),
             Affine::translate((20.0, 0.0)) * Affine::rotate(FRAC_PI_2),
+            // rotate(FRAC_PI_2) leaves a and d at 6e-17, so only an exact
+            // swap reaches the fast path's axis-swapped case.
+            Affine::new([0.0, 1.0, -1.0, 0.0, 20.0, 0.0]),
             Affine::translate((12.0, 0.0)) * Affine::rotate(0.4),
         ];
         use crate::display_list::{BrushGradient, GradientGeometry, GradientStop, Spread};
@@ -1100,11 +1115,22 @@ mod tests {
                                 area.apply_affine(transform);
                                 by_path.fill(&area, FillRule::NonZero, paint, &st);
                                 by_rect.fill_rect(rect, paint, &st);
+                                let (want, got) = (pixels(&mut by_path), pixels(&mut by_rect));
+                                let first =
+                                    want.chunks(4).zip(got.chunks(4)).position(|(w, g)| w != g);
                                 assert!(
-                                    pixels(&mut by_path) == pixels(&mut by_rect),
+                                    first.is_none(),
                                     "{rect:?} at {transform:?} with {paint:?}, \
-                                     {} clips, {blend:?}, alpha {alpha}",
+                                     {} clips, {blend:?}, alpha {alpha}: pixel {:?} \
+                                     is {:?} as a path, {:?} as a rect ({} differ)",
                                     clips.len(),
+                                    first.map(|i| (i % 24, i / 24)),
+                                    first.map(|i| &want[i * 4..i * 4 + 4]),
+                                    first.map(|i| &got[i * 4..i * 4 + 4]),
+                                    want.chunks(4)
+                                        .zip(got.chunks(4))
+                                        .filter(|(w, g)| w != g)
+                                        .count(),
                                 );
                             }
                         }
@@ -1133,6 +1159,39 @@ mod tests {
         by_path.fill(&area, FillRule::NonZero, &red(), &st);
         by_rect.fill_rect(rect, &red(), &st);
         assert!(pixels(&mut by_path) == pixels(&mut by_rect));
+    }
+
+    /// The edge rule holds on canvases of every size, not only on sizes
+    /// that are whole strip columns. The two differ only where the paint
+    /// blends over what is already there, hence the ground.
+    #[test]
+    fn a_rect_at_the_canvas_edges_has_the_pixels_of_its_path() {
+        let paint = CanvasPaint::Brush(Brush::Solid(Rgba::from_straight_u8(0, 128, 255, 100)));
+        let ground = CanvasPaint::Brush(Brush::Solid(Rgba::rgb(0, 200, 0)));
+        let st = DrawState::default();
+        for (width, height) in (17..=28u32).flat_map(|w| (9..=13u32).map(move |h| (w, h))) {
+            let (w, h) = (f64::from(width), f64::from(height));
+            let under = Rect::new(0.0, 0.0, w, h).to_path(0.1);
+            for x0 in [-3.0, 0.0, 1.0, w - 6.0] {
+                for x1 in (width - 5..=width + 3).map(f64::from) {
+                    for (y0, y1) in [(2.0, 7.0), (-2.0, h), (1.0, h + 2.0), (3.0, h - 1.0)] {
+                        let rect = Rect::new(x0, y0, x1, y1);
+                        let mut by_path = CanvasPainter::new(width, height);
+                        let mut by_rect = CanvasPainter::new(width, height);
+                        for p in [&mut by_path, &mut by_rect] {
+                            p.fill(&under, FillRule::NonZero, &ground, &st);
+                        }
+                        by_path.fill(&rect.to_path(0.1), FillRule::NonZero, &paint, &st);
+                        by_rect.fill_rect(rect, &paint, &st);
+                        let (want, got) = (by_path.picture(), by_rect.picture());
+                        assert!(
+                            want.as_ref().map(|i| i.data()) == got.as_ref().map(|i| i.data()),
+                            "{rect:?} on a canvas {width} by {height}",
+                        );
+                    }
+                }
+            }
+        }
     }
 
     #[test]
