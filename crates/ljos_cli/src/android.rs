@@ -306,28 +306,36 @@ fn connect(adb: &Adb, application_id: &str, out: &Path) -> anyhow::Result<String
     // and a client names the port of the address it was given: the port
     // here is the device's.
     let forward = format!("tcp:{port}");
-    let last = last_forward(adb, out);
-    let made = match &last {
-        // The last connect's forward reaches the same port already.
-        Some((here, there)) if *here == port && *there == forward => false,
-        _ => {
-            // Over the last connect's own forward at this port only: one at
-            // another port stays until this one is written, and a port that
-            // is not this device's forward is another's.
-            let ours = last.as_ref().is_some_and(|(here, _)| *here == port);
-            let mut args = vec!["forward"];
-            if !ours {
-                args.push("--no-rebind");
-            }
-            args.extend([forward.as_str(), forward.as_str()]);
-            adb.output(&args).with_context(|| {
-                format!(
-                    "port {port} of this computer could not be forwarded to the inspector: \
-                     the inspector answers only at its own port, so that port must be free here"
-                )
-            })?;
-            true
+    let listed = device_forwards(adb);
+    let goes = |local: &str| {
+        listed
+            .iter()
+            .find(|(here, _)| here == local)
+            .map(|(_, there)| there.as_str())
+    };
+    // The last connect's forward, while adb still lists it as this
+    // device's: after adb restarted, the port may be another's forward,
+    // and `--remove` names the port alone.
+    let last = last_port(out).filter(|old| goes(&format!("tcp:{old}")).is_some());
+    let made = if goes(&forward) == Some(forward.as_str()) {
+        // One reaches it already: the last connect's, even when its token
+        // file went with `target/`.
+        false
+    } else {
+        // Over the last connect's own forward at this port only: a port
+        // that is not this device's forward is another's.
+        let mut args = vec!["forward"];
+        if last != Some(port) {
+            args.push("--no-rebind");
         }
+        args.extend([forward.as_str(), forward.as_str()]);
+        adb.output(&args).with_context(|| {
+            format!(
+                "port {port} of this computer could not be forwarded to the inspector: \
+                 the inspector answers only at its own port, so that port must be free here"
+            )
+        })?;
+        true
     };
     let url = format!("http://127.0.0.1:{port}{rest}");
     // The process is the phone's, not one of this computer's.
@@ -340,8 +348,9 @@ fn connect(adb: &Adb, application_id: &str, out: &Path) -> anyhow::Result<String
     // message, and must not find it half written.
     if let Err(e) = ljos_mcp_core::write_token_text(out, &here.to_text()) {
         // No file records this forward, so no later connect would remove
-        // it: each retry would leave one more. The last connect's, which
-        // its file still names, stays.
+        // it: each retry would leave one more. The last connect's at
+        // another port, which its file still names, stays; one at this
+        // port the new forward has replaced already.
         if made {
             let _ = adb.output(&["forward", "--remove", &forward]);
         }
@@ -349,21 +358,23 @@ fn connect(adb: &Adb, application_id: &str, out: &Path) -> anyhow::Result<String
     }
     // Nothing names the last connect's forward now, and nothing else
     // removes it: adb keeps it until it restarts.
-    if let Some((old, _)) = last.filter(|(here, _)| *here != port) {
+    if let Some(old) = last.filter(|old| *old != port) {
         let _ = adb.output(&["forward", "--remove", &format!("tcp:{old}")]);
     }
     Ok(url)
 }
 
-/// The forward the last connect to `out` made, by its port here and where
-/// it goes on the device, while adb still lists it as this device's: after
-/// adb restarted, the port may be another's forward, and `--remove` names
-/// the port alone.
-fn last_forward(adb: &Adb, out: &Path) -> Option<(u16, String)> {
-    let old = std::fs::read_to_string(out)
+/// The port here of the forward the last connect to `out` made.
+fn last_port(out: &Path) -> Option<u16> {
+    std::fs::read_to_string(out)
         .ok()
         .and_then(|text| TokenFileBody::parse(&text).ok())
-        .and_then(|last| loopback_port(&last.url).ok().map(|(p, _)| p))?;
+        .and_then(|last| loopback_port(&last.url).ok().map(|(p, _)| p))
+}
+
+/// The forwards adb holds for this device, by their port here and where
+/// they go on it (`tcp:<port>` both); none when adb does not say.
+fn device_forwards(adb: &Adb) -> Vec<(String, String)> {
     let serial = match &adb.device {
         Some(device) => Some(device.clone()),
         None => adb
@@ -371,14 +382,21 @@ fn last_forward(adb: &Adb, out: &Path) -> Option<(u16, String)> {
             .ok()
             .map(|s| s.trim().to_owned()),
     };
-    let serial = serial.filter(|s| !s.is_empty())?;
-    let local = format!("tcp:{old}");
-    let listed = adb.output(&["forward", "--list"]).ok()?;
-    listed.lines().find_map(|line| {
-        let mut fields = line.split_whitespace();
-        (fields.next() == Some(serial.as_str()) && fields.next() == Some(local.as_str()))
-            .then(|| (old, fields.next().unwrap_or("").to_owned()))
-    })
+    let Some(serial) = serial.filter(|s| !s.is_empty()) else {
+        return Vec::new();
+    };
+    let Ok(listed) = adb.output(&["forward", "--list"]) else {
+        return Vec::new();
+    };
+    listed
+        .lines()
+        .filter_map(|line| {
+            let mut fields = line.split_whitespace();
+            (fields.next() == Some(serial.as_str()))
+                .then(|| Some((fields.next()?.to_owned(), fields.next()?.to_owned())))
+                .flatten()
+        })
+        .collect()
 }
 
 /// The processes of `application_id` on the device. `pidof` exits 1 when
@@ -997,9 +1015,16 @@ esac
     }
 
     /// A token file here that a connect wrote when the inspector's port on
-    /// this computer was 39001.
+    /// this computer was 39001, in a directory that is its owner's alone
+    /// unless it is there already, as connect makes it.
+    #[cfg(unix)]
     fn connected_before(out: &Path) {
-        std::fs::create_dir_all(out.parent().unwrap()).unwrap();
+        use std::os::unix::fs::DirBuilderExt;
+        std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(out.parent().unwrap())
+            .unwrap();
         let here = TokenFileBody {
             pid: None,
             ..on_phone(0, 39001)
@@ -1021,6 +1046,29 @@ esac
         let log = std::fs::read_to_string(dir.path().join("log")).unwrap();
         // The same port of the device, at the same port here: one forward.
         assert_eq!(log.matches("forward --no-rebind").count(), 1, "{log}");
+        assert!(!log.contains("--remove"), "{log}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn connect_takes_a_forward_that_reaches_the_inspector_already() {
+        let dir = tempfile::tempdir().unwrap();
+        let adb = Adb {
+            program: fake_adb(dir.path(), &on_phone(4321, 4410).to_text(), None),
+            device: Some("phone".into()),
+        };
+        // Its token file is gone with `target/`, but adb, not restarted
+        // since, keeps the forward the last connect made.
+        std::fs::write(dir.path().join("forwards"), "phone tcp:4410 tcp:4410\n").unwrap();
+        std::fs::write(dir.path().join("taken"), "").unwrap();
+        let out = dir.path().join("target/ljos/android-dev.ljos.hello.json");
+        let url = connect(&adb, "dev.ljos.hello", &out).unwrap();
+        assert_eq!(url, "http://127.0.0.1:4410/mcp");
+        let log = std::fs::read_to_string(dir.path().join("log")).unwrap();
+        assert!(
+            !log.contains("forward tcp:") && !log.contains("--no-rebind"),
+            "{log}"
+        );
         assert!(!log.contains("--remove"), "{log}");
     }
 
