@@ -29,7 +29,6 @@ Feature: A window shows the root put in it at once
       import QtQuick
       Window {
         objectName: "second-unsized"; visible: true; color: "#ffff00"
-        property bool sized: width > 0 && height > 0
         Rectangle { width: parent.width; height: parent.height; color: "#0000ff" }
       }
       """
@@ -87,6 +86,9 @@ Feature: A window shows the root put in it at once
       Window { objectName: "first-unsized"; visible: true; color: "#00ff00" }
       """
     Then the pixel at 100, 50 of the window is "#00ff00"
+    And the property "width" of "first-unsized" is 200
+    And the property "height" of "first-unsized" is 100
     When the property "source" of "loader" is set to "Unsized.qml"
-    Then the pixel at 100, 50 of the window is "#0000ff"
-    And the property "sized" of "second-unsized" is true
+    Then the pixel at 190, 90 of the window is "#0000ff"
+    And the property "width" of "second-unsized" is 200
+    And the property "height" of "second-unsized" is 100
