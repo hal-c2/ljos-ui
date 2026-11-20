@@ -22,6 +22,7 @@ Feature: Back goes to the application's topmost Back handler
     Given the QML:
       """qml
       import QtQuick
+      import QtQuick.Controls
       import Ljos
       Item {
         id: root; objectName: "root"
@@ -43,6 +44,11 @@ Feature: Back goes to the application's topmost Back handler
         Loader {
           active: root.sheetOpen
           sourceComponent: Item { Back { onInvoked: root.sheetOpen = false } }
+        }
+        property bool dialogOpen: false
+        Popup {
+          visible: root.dialogOpen
+          Back { objectName: "dialogBack"; onInvoked: root.dialogOpen = false }
         }
       }
       """
@@ -69,6 +75,17 @@ Feature: Back goes to the application's topmost Back handler
     When the user presses the system's Back
     Then the property "popupOpen" of "root" is false
     And the property "depth" of "root" is 2
+
+  Scenario: A handler declared in a closed popup does not take Back
+    When the user presses the system's Back
+    Then the property "depth" of "root" is 2
+
+  Scenario: A handler declared in an open popup takes Back
+    When the property "dialogOpen" of "root" is set to true
+    And the user presses the system's Back
+    Then the application took Back
+    And the property "dialogOpen" of "root" is false
+    And the property "depth" of "root" is 3
 
   Scenario: A cancelled back swipe goes nowhere
     When the user starts the back swipe

@@ -116,7 +116,9 @@ fn flag(engine: &Engine, o: ObjectId, p: ljos_engine::PropIndex) -> bool {
 }
 
 /// Whether the item a handler is declared in, and the items it is in, are
-/// shown. A handler in no item is shown.
+/// shown. A handler in no item is shown. An owner that is not an item but
+/// says whether it is visible (a `Popup` the handler is declared in)
+/// hides it as an item does.
 fn shown(engine: &Engine, handler: ObjectId) -> bool {
     let mut cur = engine.owner(handler);
     // Bounded so a corrupt parent cycle cannot hang.
@@ -128,7 +130,12 @@ fn shown(engine: &Engine, handler: ObjectId) -> bool {
                 }
                 cur = engine.visual_parent(o).or_else(|| engine.owner(o));
             }
-            Some(o) => cur = engine.owner(o),
+            Some(o) => {
+                if matches!(engine.read_by_name(o, "visible"), Value::Bool(false)) {
+                    return false;
+                }
+                cur = engine.owner(o);
+            }
             None => return true,
         }
     }
