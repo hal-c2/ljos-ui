@@ -314,9 +314,13 @@ fn connect(adb: &Adb, application_id: &str, out: &Path) -> anyhow::Result<String
             .map(|(_, there)| there.as_str())
     };
     // The last connect's forward, while adb still lists it as this
-    // device's: after adb restarted, the port may be another's forward,
-    // and `--remove` names the port alone.
-    let last = last_port(out).filter(|old| goes(&format!("tcp:{old}")).is_some());
+    // device's and going where that connect made it go: after adb
+    // restarted, or once rebound, the port may be another's forward, and
+    // `--remove` names the port alone.
+    let last = last_port(out).filter(|old| {
+        let local = format!("tcp:{old}");
+        goes(&local) == Some(local.as_str())
+    });
     let made = if goes(&forward) == Some(forward.as_str()) {
         // One reaches it already: the last connect's, even when its token
         // file went with `target/`.
@@ -357,8 +361,10 @@ fn connect(adb: &Adb, application_id: &str, out: &Path) -> anyhow::Result<String
         return Err(e.into());
     }
     // Nothing names the last connect's forward now, and nothing else
-    // removes it: adb keeps it until it restarts.
-    if let Some(old) = last.filter(|old| *old != port) {
+    // removes it: adb keeps it until it restarts. Unless another
+    // application's connect took it: its inspector got the port on the
+    // device the forward goes to.
+    if let Some(old) = last.filter(|old| *old != port && !named_beside(out, *old)) {
         let _ = adb.output(&["forward", "--remove", &format!("tcp:{old}")]);
     }
     Ok(url)
@@ -370,6 +376,22 @@ fn last_port(out: &Path) -> Option<u16> {
         .ok()
         .and_then(|text| TokenFileBody::parse(&text).ok())
         .and_then(|last| loopback_port(&last.url).ok().map(|(p, _)| p))
+}
+
+/// Whether a token file of another application's connect, beside `out`,
+/// names `port` here.
+fn named_beside(out: &Path, port: u16) -> bool {
+    let Some(entries) = out.parent().and_then(|dir| std::fs::read_dir(dir).ok()) else {
+        return false;
+    };
+    entries.flatten().map(|entry| entry.path()).any(|path| {
+        path != out
+            && path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("android-") && name.ends_with(".json"))
+            && last_port(&path) == Some(port)
+    })
 }
 
 /// The forwards adb holds for this device, by their port here and where
@@ -1082,7 +1104,7 @@ esac
         };
         let out = dir.path().join("target/ljos/android-dev.ljos.hello.json");
         connected_before(&out);
-        std::fs::write(dir.path().join("forwards"), "phone tcp:39001 tcp:4410\n").unwrap();
+        std::fs::write(dir.path().join("forwards"), "phone tcp:39001 tcp:39001\n").unwrap();
         connect(&adb, "dev.ljos.hello", &out).unwrap();
         let log = std::fs::read_to_string(dir.path().join("log")).unwrap();
         let made = log.find("forward --no-rebind").expect(&log);
@@ -1100,7 +1122,7 @@ esac
         };
         let out = dir.path().join("target/ljos/android-dev.ljos.hello.json");
         connected_before(&out);
-        std::fs::write(dir.path().join("forwards"), "phone tcp:39001 tcp:4410\n").unwrap();
+        std::fs::write(dir.path().join("forwards"), "phone tcp:39001 tcp:39001\n").unwrap();
         // The inspector's port is another's on this computer.
         std::fs::write(dir.path().join("taken"), "").unwrap();
         let err = connect(&adb, "dev.ljos.hello", &out).unwrap_err();
@@ -1124,6 +1146,44 @@ esac
         connected_before(&out);
         // adb restarted since, and the port is another device's forward.
         std::fs::write(dir.path().join("forwards"), "tablet tcp:39001 tcp:5000\n").unwrap();
+        connect(&adb, "dev.ljos.hello", &out).unwrap();
+        let log = std::fs::read_to_string(dir.path().join("log")).unwrap();
+        assert!(!log.contains("--remove"), "{log}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn connect_leaves_the_last_connects_port_once_it_goes_elsewhere() {
+        let dir = tempfile::tempdir().unwrap();
+        let adb = Adb {
+            program: fake_adb(dir.path(), &on_phone(4321, 4410).to_text(), None),
+            device: Some("phone".into()),
+        };
+        let out = dir.path().join("target/ljos/android-dev.ljos.hello.json");
+        connected_before(&out);
+        // Rebound since to another of the device's ports: not the forward
+        // the last connect made.
+        std::fs::write(dir.path().join("forwards"), "phone tcp:39001 tcp:5000\n").unwrap();
+        connect(&adb, "dev.ljos.hello", &out).unwrap();
+        let log = std::fs::read_to_string(dir.path().join("log")).unwrap();
+        assert!(!log.contains("--remove"), "{log}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn connect_leaves_the_last_connects_forward_to_another_application_that_took_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let adb = Adb {
+            program: fake_adb(dir.path(), &on_phone(4321, 4410).to_text(), None),
+            device: Some("phone".into()),
+        };
+        let out = dir.path().join("target/ljos/android-dev.ljos.hello.json");
+        connected_before(&out);
+        std::fs::write(dir.path().join("forwards"), "phone tcp:39001 tcp:39001\n").unwrap();
+        // The inspector the forward reached stopped, another application's
+        // took its port on the device, and that one's connect took the
+        // forward as it was.
+        connected_before(&dir.path().join("target/ljos/android-dev.ljos.other.json"));
         connect(&adb, "dev.ljos.hello", &out).unwrap();
         let log = std::fs::read_to_string(dir.path().join("log")).unwrap();
         assert!(!log.contains("--remove"), "{log}");
@@ -1163,7 +1223,7 @@ esac
         };
         let out = open.join("out.json");
         connected_before(&out);
-        std::fs::write(dir.path().join("forwards"), "phone tcp:39001 tcp:4410\n").unwrap();
+        std::fs::write(dir.path().join("forwards"), "phone tcp:39001 tcp:39001\n").unwrap();
         let err = connect(&adb, "dev.ljos.hello", &out).unwrap_err();
         assert!(
             format!("{err:#}").contains(&open.display().to_string()),
