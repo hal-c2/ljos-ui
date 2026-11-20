@@ -167,8 +167,7 @@ impl Boundary for Behaviour {
         drop_item(e, me);
         let why = describe(report);
         warn(e, format!("ShellLoader: {why}"));
-        show_fallback(e, me, why);
-        if is_resource(&report.fault) {
+        if show_fallback(e, me, why) || is_resource(&report.fault) {
             again_after(e, me);
         }
     }
@@ -222,7 +221,9 @@ fn load(e: &Engine, me: ObjectId) {
     drop_item(e, me);
     let source = url(e, me, ShellLoader::SOURCE.index);
     if source.is_empty() {
-        show_fallback(e, me, String::new());
+        if show_fallback(e, me, String::new()) {
+            again_after(e, me);
+        }
         return;
     }
     match make(e, me, &source) {
@@ -234,8 +235,7 @@ fn load(e: &Engine, me: ObjectId) {
         }
         Err(Failed { why, resource }) => {
             warn(e, format!("ShellLoader: {why}"));
-            show_fallback(e, me, why);
-            if resource {
+            if show_fallback(e, me, why) || resource {
                 again_after(e, me);
             }
         }
@@ -283,8 +283,11 @@ struct Failed {
 }
 
 /// Shows the fallback's shell in place of the source's, which did not
-/// work for `why` (empty when there is no source).
-fn show_fallback(e: &Engine, me: ObjectId, why: String) {
+/// work for `why` (empty when there is no source). Returns whether the
+/// fallback could not be made for want of room, so the caller tries the
+/// source again: it calls [`again_after`] once per failed try, as each
+/// call raises the backoff.
+fn show_fallback(e: &Engine, me: ObjectId, why: String) -> bool {
     let fallback = url(e, me, ShellLoader::FALLBACK.index);
     if fallback.is_empty() {
         let status = if why.is_empty() {
@@ -294,7 +297,7 @@ fn show_fallback(e: &Engine, me: ObjectId, why: String) {
         };
         set(e, me, ShellLoader::ERROR.index, why.as_str().into());
         set(e, me, ShellLoader::STATUS.index, status.into());
-        return;
+        return false;
     }
     with_run(e, me, |r| r.making_fallback = true);
     let made = make(e, me, &fallback);
@@ -330,9 +333,7 @@ fn show_fallback(e: &Engine, me: ObjectId, why: String) {
     with_run(e, me, |r| r.making_fallback = false);
     // Nothing could be shown for want of room: the source is tried again,
     // and the fallback with it.
-    if again {
-        again_after(e, me);
-    }
+    again
 }
 
 /// Makes the shell at `url`, or says why it could not: it did not
@@ -415,8 +416,7 @@ fn judge_again(e: &Engine, me: ObjectId, obj: ObjectId, told: &[FaultReport]) {
     drop_item(e, me);
     warn(e, format!("ShellLoader: {why}"));
     let resource = is_resource(&report.fault);
-    show_fallback(e, me, why);
-    if resource {
+    if show_fallback(e, me, why) || resource {
         again_after(e, me);
     }
 }
