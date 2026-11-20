@@ -6,7 +6,7 @@
 
 mod support;
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use ljos_engine::{
@@ -660,4 +660,150 @@ Item {
         "no second delegate"
     );
     *host.delegates.borrow_mut() = None;
+}
+
+/// A view of `rows` labels shown by `delegate`, told to `host`.
+fn view_with(rows: usize, delegate: &str, host: Rc<dyn ViewHost>) -> (Harness, ViewDelegates) {
+    let h = engine();
+    let root = h.load(&format!(
+        "import QtQuick\nItem {{\n  property Component c: Component {{\n    {delegate}\n  }}\n}}\n"
+    ));
+    let Value::Object(component) = h.get(root, "c") else {
+        panic!("no component");
+    };
+    let labels = Labels::of(rows);
+    let holder = model_object(&h, root, &labels);
+    let delegates = ViewDelegates::new(root, host);
+    let model = h.engine.object_model(holder);
+    delegates.set_source(&h.engine, model, Some(component));
+    (h, delegates)
+}
+
+#[test]
+fn a_delegate_a_full_heap_cut_short_is_told_gone_before_it_goes() {
+    let host = Rc::new(Told::default());
+    let (h, delegates) = view_with(
+        3,
+        "QtObject { property int row: index; Component.onCompleted: { \
+         const a = []; for (let i = 0; i < 200000; i++) a.push({ i: i, s: 'x' + i }) } }",
+        host.clone(),
+    );
+    let e = &h.engine;
+    e.eval_js("1").expect("scripts run");
+    assert!(e.collect_garbage());
+    let held = e.script_memory().expect("scripts run").bytes;
+    assert!(e.set_script_heap_limit(Some(held + 64 * 1024)));
+    assert_eq!(delegates.request(e, 1, Urgency::Now), None);
+    assert_eq!(delegates.request(e, 2, Urgency::Later), None);
+    run_incubation(&h);
+    // The view was told of each one when it was allocated, so it hears
+    // that each goes, made at once or later.
+    let told = std::mem::take(&mut *host.log.borrow_mut());
+    assert_eq!(told, ["alloc1", "destroy", "alloc2", "destroy"]);
+    assert!(e.set_script_heap_limit(None));
+    h.warnings();
+}
+
+/// Panics the first time it is told of a delegate, as a view's own code
+/// with a bug in it would.
+#[derive(Default)]
+struct PanicsOnce {
+    panicked: Cell<bool>,
+    allocated: Cell<Option<ObjectId>>,
+}
+
+impl ViewHost for PanicsOnce {
+    fn allocated(&self, _: &Engine, index: usize, obj: ObjectId) {
+        self.allocated.set(Some(obj));
+        if !self.panicked.replace(true) {
+            panic!("no row {index} today");
+        }
+    }
+    fn changed(&self, _: &Engine, _: &ModelChange, _: &[(usize, ObjectId)]) {}
+}
+
+const ROW: &str = "QtObject { property int row: index }";
+
+#[test]
+fn a_delegate_whose_make_panicked_is_made_again_later() {
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+
+    let host = Rc::new(PanicsOnce::default());
+    let (h, delegates) = view_with(3, ROW, host.clone());
+    let e = &h.engine;
+    assert_eq!(e.next_timer_deadline(), None);
+    let asked = catch_unwind(AssertUnwindSafe(|| delegates.request(e, 1, Urgency::Now)));
+    assert!(asked.is_err(), "the panic goes on");
+    let half = host.allocated.get().expect("it was allocated");
+    assert!(e.is_going(half), "what was made of it goes");
+    assert!(
+        e.next_timer_deadline().is_some(),
+        "it is made again, not never"
+    );
+    h.pass_ms(60_000);
+    let (made, how) = delegates.request(e, 1, Urgency::Now).expect("row 1");
+    assert_eq!(how, Made::Created);
+    assert_eq!(h.num(made, "row"), 1.0);
+    h.warnings();
+}
+
+#[test]
+fn a_delegate_made_later_whose_view_panicked_leaves_nothing_behind() {
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+
+    let host = Rc::new(PanicsOnce::default());
+    let (h, delegates) = view_with(3, ROW, host.clone());
+    let e = &h.engine;
+    assert_eq!(delegates.request(e, 1, Urgency::Later), None);
+    let stepped = catch_unwind(AssertUnwindSafe(|| run_incubation(&h)));
+    assert!(stepped.is_err(), "the panic goes on");
+    let half = host.allocated.get().expect("it was allocated");
+    // Told of after the root existed: the step's unwind destroys it.
+    assert!(!e.is_alive(half), "what was made of it went");
+    h.warnings();
+}
+
+#[test]
+fn a_delegate_forced_through_a_panic_still_tells_the_view_of_the_next() {
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+
+    let host = Rc::new(PanicsOnce::default());
+    let told = Rc::new(Told::default());
+    let both: Rc<dyn ViewHost> = Rc::new(Both(host.clone(), told.clone()));
+    let (h, delegates) = view_with(3, ROW, both);
+    let e = &h.engine;
+    assert_eq!(delegates.request(e, 1, Urgency::Later), None);
+    // Needed now: the job is finished early, and it panics.
+    let asked = catch_unwind(AssertUnwindSafe(|| delegates.request(e, 1, Urgency::Now)));
+    assert!(asked.is_err(), "the panic goes on");
+    told.log.borrow_mut().clear();
+    // A later delegate made in the queue is told ready, as it is when
+    // nothing was forced.
+    assert_eq!(delegates.request(e, 2, Urgency::Later), None);
+    run_incubation(&h);
+    assert!(
+        told.log.borrow().contains(&"ready2".to_string()),
+        "{:?}",
+        told.log.borrow()
+    );
+    h.warnings();
+}
+
+/// Tells two hosts.
+struct Both(Rc<PanicsOnce>, Rc<Told>);
+
+impl ViewHost for Both {
+    fn allocated(&self, e: &Engine, index: usize, obj: ObjectId) {
+        self.1.allocated(e, index, obj);
+        self.0.allocated(e, index, obj);
+    }
+    fn ready(&self, e: &Engine, index: usize, obj: ObjectId) {
+        self.1.ready(e, index, obj);
+    }
+    fn changed(&self, e: &Engine, change: &ModelChange, gone: &[(usize, ObjectId)]) {
+        self.1.changed(e, change, gone);
+    }
+    fn destroying(&self, e: &Engine, obj: ObjectId) {
+        self.1.destroying(e, obj);
+    }
 }

@@ -803,3 +803,53 @@ fn a_job_that_panics_closes_its_creation_when_whoever_waits_panics_too() {
     let warned = h.warnings();
     assert!(warned.iter().any(|w| w.contains("nowhere")), "{warned:?}");
 }
+
+#[test]
+fn a_job_that_panics_leaves_no_context_behind() {
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+
+    let h = engine();
+    h.engine
+        .register_module(ljos_engine::module!("QtQuick" 2.0 => [Dud]));
+    let root = h.load(
+        "import QtQuick\nItem {\n  Component { id: comp; Item { Item { Text {} } } }\n  property Component c: comp\n}\n",
+    );
+    let comp = h.get(root, "c").as_object().unwrap();
+    let attempt = || {
+        let (mut job, _handle) = h.engine.make_later(
+            ljos_engine::Request::component(comp).parent(Some(root)),
+            Lane::Visible,
+            ProcId::new(0, 0),
+        );
+        let stepped = catch_unwind(AssertUnwindSafe(|| {
+            while let ljos_runtime::JobPoll::Yield = job.step(&|| true) {}
+        }));
+        assert!(stepped.is_err());
+        h.warnings();
+    };
+    // The first attempt may keep what any later one shares.
+    attempt();
+    let before = h.engine.context_count();
+    attempt();
+    // The component's context was made before its first object and is
+    // given to none of them until all exist.
+    assert_eq!(h.engine.context_count(), before);
+}
+
+#[test]
+fn a_component_that_cannot_be_made_leaves_no_context_behind() {
+    let h = engine();
+    h.files(&[
+        ("Inner", "import QtQuick\nItem { Item {} }\n"),
+        ("Main", "import QtQuick\nItem { Inner { Main {} } }\n"),
+    ]);
+    let attempt = || {
+        let made = h.engine.create_from_url("Main", None, Vec::new());
+        assert!(made.is_err(), "it instantiates itself");
+        h.warnings();
+    };
+    attempt();
+    let before = h.engine.context_count();
+    attempt();
+    assert_eq!(h.engine.context_count(), before);
+}
