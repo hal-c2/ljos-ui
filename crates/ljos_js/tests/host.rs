@@ -1202,6 +1202,26 @@ fn a_promise_job_that_keeps_allocating_leaves_room_for_the_rest() {
     assert_eq!(other.unwrap(), (2 * 1024 * 1024) as f64);
 }
 
+/// A dispatch's share is of the room under the limit the heap has now,
+/// not the one it started with.
+#[test]
+fn a_dispatch_shares_the_room_under_a_limit_set_later() {
+    let host = JsHost::new(JsConfig {
+        memory_limit: Some(16 * 1024 * 1024),
+        ..JsConfig::default()
+    })
+    .unwrap();
+    assert!(host.set_memory_limit(Some(64 * 1024 * 1024)));
+    let slice = Slice {
+        soft: Duration::from_secs(5),
+        hard: Duration::from_secs(10),
+    };
+    let big = host.enter("big", slice, |s| {
+        s.eval::<f64, _>("globalThis.big = 'x'.repeat(20 * 1024 * 1024); big.length")
+    });
+    assert_eq!(big.unwrap(), (20 * 1024 * 1024) as f64);
+}
+
 #[test]
 fn an_error_thrown_after_a_caught_refusal_is_the_scripts_own() {
     let host = JsHost::new(JsConfig {
