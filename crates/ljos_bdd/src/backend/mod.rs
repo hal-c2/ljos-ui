@@ -82,6 +82,8 @@ pub struct UserSeen {
     pub reloads: u64,
     /// What the application's fault handler was told.
     pub told: Vec<String>,
+    /// The user's directory, as a `file:` URL with no `/` at its end.
+    pub dir: String,
 }
 
 /// Why a changed file was not applied.
@@ -1054,6 +1056,13 @@ pub trait Application: Backend {
     /// them.
     fn run_with_user_qml_in_window(&mut self, _files: &[QmlFile], _entry: &str) -> Result<()> {
         Err(BackendError::NotImplemented("a user's directory"))
+    }
+
+    /// Runs `entry` of the given files built ahead into a pack, as an
+    /// application built without `user-qml` runs: no user's directory and
+    /// no compiler.
+    fn run_built_ahead(&mut self, _entry: &str) -> Result<()> {
+        Err(BackendError::NotImplemented("an application built ahead"))
     }
 
     /// Each `Window` is a platform window of its own, as where the

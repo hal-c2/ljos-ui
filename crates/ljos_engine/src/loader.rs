@@ -53,6 +53,16 @@ pub trait ComponentSource {
         None
     }
 
+    /// Where on the disk a file the source lacks is, for `url` (its
+    /// address, as a script or the host asked for it): Qt loads whatever
+    /// file is at an address. The default is the address's own path. A
+    /// source whose addresses are not the disk's says where its files
+    /// are, and whether the engine may read one there; a source that
+    /// wraps another passes the question on.
+    fn on_disk(&self, _key: &str, url: &str) -> OnDisk {
+        OnDisk::at(url)
+    }
+
     /// `rel` as the document at `base` writes it, with a step up (`..`),
     /// before it is resolved: `Some` refuses it and is the address to
     /// load instead, one no file has. Resolving folds a step up at the
@@ -99,6 +109,33 @@ pub trait ComponentSource {
     /// }
     /// ```
     fn refuse_step_up(&self, base: &str, rel: &str) -> Option<String>;
+}
+
+/// Where a file a source lacks is on the disk: [`ComponentSource::on_disk`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OnDisk {
+    /// The file at this path is read, when it is there.
+    Read(std::path::PathBuf),
+    /// Nothing is read: the source reads its files itself, and has none
+    /// of the key. A message names the file at this path, where it would
+    /// be.
+    Missing(std::path::PathBuf),
+    /// Nothing is read: the address is the source's own name for a file
+    /// it has not got, not a place on the disk (a pack's). A message
+    /// names the file by this name, as the application does.
+    Absent(String),
+    /// The address is not on the disk: the source's reason stands.
+    Unknown,
+}
+
+impl OnDisk {
+    /// The file at the address's own path, as Qt reads it.
+    fn at(url: &str) -> Self {
+        match url_path(url) {
+            Some(path) => Self::Read(path),
+            None => Self::Unknown,
+        }
+    }
 }
 
 /// Whether `rel`, an address with no scheme, takes a step up.
@@ -330,6 +367,9 @@ pub struct MapSource {
     urls: HashMap<String, String>,
     keys_by_url: HashMap<String, String>,
     trailer: Option<Trailer>,
+    /// Read from a pack ([`from_pack`](Self::from_pack)): the files of a
+    /// shipped program, named by their keys and on no disk.
+    packed: bool,
 }
 
 /// The trailer of a pack: what follows its files, without the length
@@ -502,6 +542,7 @@ impl MapSource {
                 .map_err(|e| EngineError::Load(format!("{key}: {e}")))?;
             source.insert(key, file);
         }
+        source.packed = true;
         Ok((source, rest))
     }
 }
@@ -575,6 +616,36 @@ impl ComponentSource for MapSource {
     /// A map's files reach wherever a step up resolves to.
     fn refuse_step_up(&self, _base: &str, _rel: &str) -> Option<String> {
         None
+    }
+
+    fn on_disk(&self, key: &str, url: &str) -> OnDisk {
+        if self.names_by_key(key, url) {
+            return OnDisk::Absent(format!("{key}.qml"));
+        }
+        OnDisk::at(url)
+    }
+}
+
+impl MapSource {
+    /// Whether `url` is this pack's name for `key`, a file beside its own
+    /// that it has not got. A pack with no base names its files by their
+    /// keys (`file:///{key}.qml`): a key in a directory of its files is one
+    /// of them, and not a place on the disk. An address elsewhere (a file
+    /// written since the program was built, given by its path) is the
+    /// disk's. A map given its files as text keeps Qt's words, the
+    /// address, as a directory compiled into one does.
+    fn names_by_key(&self, key: &str, url: &str) -> bool {
+        fn dir(key: &str) -> &str {
+            key.rsplit_once('/').map_or("", |(dir, _)| dir)
+        }
+        self.packed
+            && self.base.is_none()
+            && url == format!("file:///{key}.qml")
+            && self
+                .files
+                .keys()
+                .chain(self.failures.keys())
+                .any(|own| !self.urls.contains_key(own) && dir(own) == dir(key))
     }
 }
 
@@ -1039,15 +1110,35 @@ impl Engine {
         why: String,
     ) -> Result<Rc<LoadedFile>, EngineError> {
         let url = strip_query(url);
-        let Some(path) = url_path(url) else {
-            return Err(EngineError::Load(why));
+        let source = self.inner.loader.borrow().source.clone();
+        let found = match &source {
+            Some(source) => source.on_disk(key, url),
+            None => OnDisk::at(url),
+        };
+        // Named where it is looked for: a source's addresses need not be
+        // the disk's (a user's directory over a pack).
+        let missing = |path: &std::path::Path| {
+            let named = if url_path(url).as_deref() == Some(path) {
+                url.to_owned()
+            } else {
+                file_url(path)
+            };
+            EngineError::Load(format!("{named}: No such file or directory"))
+        };
+        let path = match found {
+            OnDisk::Read(path) => path,
+            OnDisk::Missing(path) => return Err(missing(&path)),
+            OnDisk::Absent(name) => {
+                return Err(EngineError::Load(format!(
+                    "{name}: No such file or directory"
+                )));
+            }
+            OnDisk::Unknown => return Err(EngineError::Load(why)),
         };
         // Only a file that is there is read: one stat, and only for an
         // address the source does not know.
         if !path.is_file() {
-            return Err(EngineError::Load(format!(
-                "{url}: No such file or directory"
-            )));
+            return Err(missing(&path));
         }
         let Some(compiled) = self.compile_from_disk(key, url, &path) else {
             return Err(EngineError::Load(format!(
@@ -1430,6 +1521,33 @@ mod tests {
                 "cut by {cut}"
             );
         }
+    }
+
+    #[test]
+    fn a_file_a_pack_lacks_beside_its_own_is_on_no_disk() {
+        let mut given = MapSource::new();
+        given.insert("Main", standing_in("QtQuick", None));
+        given.insert("parts/Card", standing_in("QtQuick", None));
+        let pack = MapSource::from_pack(&given.to_pack().unwrap()).unwrap();
+        let shell = pack.url("Shell");
+        assert_eq!(
+            pack.on_disk("Shell", &shell),
+            OnDisk::Absent("Shell.qml".into())
+        );
+        assert_eq!(
+            pack.on_disk("parts/Edge", "file:///parts/Edge.qml"),
+            OnDisk::Absent("parts/Edge.qml".into())
+        );
+        // A file given by its path, written since the program was built.
+        assert_eq!(
+            pack.on_disk("home/u/Late", "file:///home/u/Late.qml"),
+            OnDisk::Read("/home/u/Late.qml".into())
+        );
+        // Files given as text keep Qt's words: the address is read.
+        assert_eq!(
+            given.on_disk("Shell", &shell),
+            OnDisk::Read("/Shell.qml".into())
+        );
     }
 
     #[test]

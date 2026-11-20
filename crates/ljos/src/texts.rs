@@ -385,6 +385,10 @@ impl ComponentSource for Fallback {
     fn refuse_step_up(&self, base: &str, rel: &str) -> Option<String> {
         self.source.refuse_step_up(base, rel)
     }
+
+    fn on_disk(&self, key: &str, url: &str) -> ljos_engine::OnDisk {
+        self.source.on_disk(key, url)
+    }
 }
 
 /// The errors of a text, and of the modules it reaches (`Some` with the

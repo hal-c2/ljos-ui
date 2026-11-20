@@ -341,6 +341,10 @@ impl ComponentSource for PatchedSource {
         // Where a file may reach is the application's rule, edited or not.
         self.base.refuse_step_up(base, rel)
     }
+
+    fn on_disk(&self, key: &str, url: &str) -> crate::OnDisk {
+        self.base.on_disk(key, url)
+    }
 }
 
 type MetaCache = rustc_hash::FxHashMap<(u32, u32), MetaRef>;

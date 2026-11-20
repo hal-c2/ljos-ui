@@ -227,7 +227,12 @@ fn signal_fired_once(w: &mut LjosWorld, signal: String, object: String) -> StepR
     })
 }
 
-fn log_matches(w: &mut LjosWorld, pattern: &str, level: LogLevel, want: bool) -> StepResult {
+pub(super) fn log_matches(
+    w: &mut LjosWorld,
+    pattern: &str,
+    level: LogLevel,
+    want: bool,
+) -> StepResult {
     let re = Regex::new(pattern).map_err(|e| format!("bad pattern {pattern:?}: {e}"))?;
     w.each(|b| {
         let log = b.log()?;

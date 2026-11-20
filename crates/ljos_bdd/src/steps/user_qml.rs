@@ -52,6 +52,11 @@ fn runs_with_user_qml(w: &mut LjosWorld, entry: String) -> StepResult {
     w.each(|b| b.application()?.run_with_user_qml(&entry, &[], true))
 }
 
+#[when(regex = r#"^the application runs "([^"]+\.qml)" built ahead, without a user's directory$"#)]
+fn runs_built_ahead(w: &mut LjosWorld, entry: String) -> StepResult {
+    w.each(|b| b.application()?.run_built_ahead(&entry))
+}
+
 #[when(
     regex = r#"^the application runs "([^"]+\.qml)" built ahead in a window of its own, with the user's directory over it$"#
 )]
@@ -130,6 +135,22 @@ fn saves_applied(w: &mut LjosWorld, want: u64) -> StepResult {
             .then_some(())
             .ok_or_else(|| format!("{} saves were applied, not {want}", s.reloads))
     })
+}
+
+/// `<dir>` in the pattern is the user's directory, as a `file:` URL: a
+/// message names a user's file where the user has it, or would.
+#[then(
+    regex = r#"^the log has a warning matching "([^"]+)" with "<dir>" for the user's directory$"#
+)]
+fn log_warning_in_users_dir(w: &mut LjosWorld, pattern: String) -> StepResult {
+    // `seen` takes a `Fn`, as it asks every backend.
+    let dir = std::cell::RefCell::new(String::new());
+    seen(w, |s| {
+        dir.replace(s.dir.clone());
+        Ok(())
+    })?;
+    let pattern = pattern.replace("<dir>", &regex::escape(&dir.into_inner()));
+    super::scene::log_matches(w, &pattern, crate::backend::LogLevel::Warning, true)
 }
 
 #[then(regex = r#"^the application was told of a fault matching "(.+)"$"#)]
