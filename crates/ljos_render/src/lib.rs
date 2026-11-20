@@ -46,7 +46,9 @@ pub use display_list::{
     Paint, PaintContent, PaintCx, PathStyle, PositionedGlyph, ShapeStyle, Spread, TextAlign,
     TileMode, fill_area,
 };
-pub use glyph::{FontTables, Os2Table, font_tables, glyph_advances, glyph_ink_bounds};
+pub use glyph::{
+    FontTables, Os2Table, font_tables, glyph_advances, glyph_ink_bounds, run_has_color_glyphs,
+};
 pub use image::{
     ImageAlign, ImageBlit, ImageEncoding, ImageError, ImageFit, ImageHandle, ImagePlacement,
     MakeAgain, PixelData, WeakImage, image_blit, nine_patch_blits, painted_size, place_image,

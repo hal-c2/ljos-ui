@@ -1579,11 +1579,12 @@ pub(crate) fn paint(
     if let Some(d) = &t.rich {
         return rich::paint(te, t, d, size, out);
     }
-    // A transparent text is still painted: its colour glyphs (emoji) are
-    // drawn in their own colours, and the renderers skip the rest.
     if t.text.is_empty() {
         return;
     }
+    // A transparent text shows only its colour glyphs (emoji), which are
+    // drawn in their own colours: Qt draws them too.
+    let clear = t.color.a == 0;
     // The request polish made, so this is a cache hit unless the item was
     // off screen long enough for the layout to be dropped.
     let l = t.layout(te);
@@ -1596,6 +1597,9 @@ pub(crate) fn paint(
     for line in &l.lines {
         let left = pad_l + horizontal_offset(t.h_align, l.rtl, avail_w, line);
         for run in &line.runs {
+            if clear && !ljos_render::run_has_color_glyphs(&run.glyphs) {
+                continue;
+            }
             for by in style_offsets(t.text_style) {
                 out.glyphs(
                     Arc::clone(&run.glyphs),

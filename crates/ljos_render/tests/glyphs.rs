@@ -425,6 +425,12 @@ fn r_draws_colour_glyphs_as_their_pictures() {
 }
 
 #[test]
+fn runs_say_whether_they_hold_colour_glyphs() {
+    assert!(ljos_render::run_has_color_glyphs(&color_run(20.0, 0.0)));
+    assert!(!ljos_render::run_has_color_glyphs(&run("Hx", 20.0, 0.0)));
+}
+
+#[test]
 fn colour_glyph_ink_is_its_picture() {
     let boxes = glyph_ink_bounds(&color_run(20.0, 30.0));
     let b = boxes[0].expect("a colour glyph has ink");

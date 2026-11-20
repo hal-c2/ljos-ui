@@ -411,6 +411,19 @@ pub fn font_tables(font: &FontData) -> Option<FontTables> {
     })
 }
 
+/// Whether any glyph of `run` is a colour picture (an emoji of a bitmap
+/// font), which is drawn in its own colours: a run in a transparent colour
+/// still shows those.
+pub fn run_has_color_glyphs(run: &GlyphRun) -> bool {
+    let Ok(font) = FontRef::from_index(run.font.data.as_ref(), run.font.index) else {
+        return false;
+    };
+    let size = f64::from(run.font_size);
+    run.glyphs
+        .iter()
+        .any(|g| color_bitmap(&font, g.id, size).is_some())
+}
+
 /// The ink box of every glyph of `run`, in the run's own coordinates (the
 /// ones its glyph positions use), with the run's synthetic bold and slant
 /// applied. `None` for a glyph without ink, such as a space.
