@@ -407,6 +407,29 @@ ApplicationWindow {
         return (n / (1024 * 1024)).toFixed(1) + " MiB"
     }
 
+    // The room left in a one-row Flow once its other items are in, for
+    // `gap` to take so that the items after it end at the row's end. When
+    // they do not fit one row, the gap takes a whole row, so that the items
+    // after it start a row of their own together rather than one of them
+    // trailing the words. It reads the items' implicit widths, never their
+    // places, so it does not depend on itself.
+    function spare(flow, gap) {
+        var used = 0
+        var shown = 0
+        for (var i = 0; i < flow.children.length; ++i) {
+            var item = flow.children[i]
+            if (!item.visible)
+                continue
+            shown += 1
+            if (item !== gap)
+                used += item.implicitWidth
+        }
+        used += flow.spacing * Math.max(0, shown - 1)
+        // A pixel to spare, so that rounding never wraps the last item.
+        var left = flow.width - used - 1
+        return left >= 0 ? left : flow.width
+    }
+
     function stateColor(state) {
         if (state === "running" || state === "busy")
             return theme.warn
@@ -415,126 +438,183 @@ ApplicationWindow {
         return theme.good
     }
 
-    RowLayout {
+    // Below this width the list of pages folds into tabs above the page,
+    // so that the page has the whole width: the window may be a dock
+    // beside a page or a sheet on a phone, not only a window of its own.
+    readonly property bool compact: width < 900
+
+    // A page's header: its words stand as tall as its buttons, so that
+    // a row of both shares one centre line.
+    readonly property real headHeight: headProbe.implicitHeight
+    readonly property real titleHeight: headTitleProbe.implicitHeight
+    Button { id: headProbe; visible: false; text: "Clear" }
+    Text { id: headTitleProbe; visible: false; text: "Mailboxes"; font.pixelSize: 19; font.bold: true }
+
+    GridLayout {
         anchors.fill: parent
-        spacing: 0
+        columns: window.compact ? 1 : 2
+        rowSpacing: 0
+        columnSpacing: 0
 
         // ----- The pages, and whom the window observes ------------------
         Rectangle {
-            Layout.fillHeight: true
+            Layout.fillHeight: !window.compact
+            Layout.fillWidth: window.compact
             Layout.preferredWidth: 210
+            Layout.preferredHeight: window.compact ? nav.implicitHeight + 2 * nav.anchors.margins : -1
             color: theme.side
 
             ColumnLayout {
+                id: nav
                 anchors.fill: parent
-                anchors.margins: 14
-                spacing: 2
+                anchors.margins: window.compact ? 8 : 14
+                spacing: window.compact ? 6 : 2
 
                 Text {
+                    visible: !window.compact
                     text: "Observer"
                     color: theme.text
                     font.pixelSize: 21
                     font.bold: true
                 }
                 Text {
+                    visible: !window.compact
                     Layout.bottomMargin: 18
                     text: processes.process ? "pid " + processes.process.pid : "ljos observe"
                     color: theme.subtle
                 }
 
-                Repeater {
-                    model: window.pages
-                    delegate: Rectangle {
-                        required property string modelData
-                        required property int index
-                        Layout.fillWidth: true
-                        height: 34
-                        radius: 7
-                        color: window.page === index ? theme.accentSoft
-                             : hover.containsMouse ? Qt.rgba(theme.text.r, theme.text.g, theme.text.b, 0.05)
-                             : "transparent"
-                        Rectangle {
-                            visible: window.page === index
-                            width: 3; height: 16; radius: 2
-                            anchors.left: parent.left
-                            anchors.verticalCenter: parent.verticalCenter
-                            color: theme.accent
-                        }
-                        Text {
-                            anchors.left: parent.left
-                            anchors.leftMargin: 14
-                            anchors.verticalCenter: parent.verticalCenter
-                            text: modelData
-                            color: window.page === index ? theme.accent : theme.text
-                            font.bold: window.page === index
-                        }
-                        Text {
-                            anchors.right: parent.right
-                            anchors.rightMargin: 10
-                            anchors.verticalCenter: parent.verticalCenter
-                            visible: (index === 4 && logs.unread > 0) || (index === 5 && trace.unread > 0)
-                            text: index === 4 ? logs.unread : trace.unread
-                            color: theme.subtle
-                            font.pixelSize: 11
-                        }
-                        MouseArea {
-                            id: hover
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            Accessible.role: Accessible.PageTab
-                            Accessible.name: modelData
-                            onClicked: {
-                                window.page = index
-                                window.refresh()
+                // One list of tabs for both forms: beside the page each is
+                // as wide as the list, above it each is as wide as its name
+                // and they wrap, so that every page is one press away.
+                Flow {
+                    id: tabs
+                    Layout.fillWidth: true
+                    spacing: window.compact ? 4 : 2
+                    Repeater {
+                        model: window.pages
+                        delegate: Rectangle {
+                            id: tab
+                            required property string modelData
+                            required property int index
+                            readonly property bool shown: window.page === index
+                            width: window.compact
+                                   ? label.implicitWidth + 20 + (unread.visible ? unread.implicitWidth + 6 : 0)
+                                   : tabs.width
+                            height: window.compact ? 28 : 34
+                            radius: 7
+                            color: shown ? theme.accentSoft
+                                 : hover.containsMouse ? Qt.rgba(theme.text.r, theme.text.g, theme.text.b, 0.05)
+                                 : "transparent"
+                            // Which page is shown: a bar at the start of a
+                            // row of the list, under the name of a tab.
+                            Rectangle {
+                                visible: tab.shown
+                                x: window.compact ? 8 : 0
+                                y: window.compact ? tab.height - 3 : (tab.height - height) / 2
+                                width: window.compact ? tab.width - 16 : 3
+                                height: window.compact ? 2 : 16
+                                radius: 2
+                                color: theme.accent
+                            }
+                            Text {
+                                id: label
+                                anchors.left: parent.left
+                                anchors.leftMargin: window.compact ? 10 : 14
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: tab.modelData
+                                color: tab.shown ? theme.accent : theme.text
+                                font.bold: tab.shown
+                            }
+                            Text {
+                                id: unread
+                                anchors.right: parent.right
+                                anchors.rightMargin: 10
+                                anchors.verticalCenter: parent.verticalCenter
+                                visible: (tab.index === 4 && logs.unread > 0) || (tab.index === 5 && trace.unread > 0)
+                                text: tab.index === 4 ? logs.unread : trace.unread
+                                color: theme.subtle
+                                font.pixelSize: 11
+                            }
+                            MouseArea {
+                                id: hover
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                Accessible.role: Accessible.PageTab
+                                Accessible.name: tab.modelData
+                                onClicked: {
+                                    window.page = tab.index
+                                    window.refresh()
+                                }
                             }
                         }
                     }
                 }
 
-                Item { Layout.fillHeight: true }
+                Item {
+                    visible: !window.compact
+                    Layout.fillHeight: true
+                }
 
-                RowLayout {
+                // Whom the window follows, and how: below the list, or in
+                // one row under the tabs.
+                GridLayout {
                     Layout.fillWidth: true
-                    spacing: 8
-                    Rectangle {
-                        width: 9; height: 9; radius: 5
-                        color: !client.connected ? theme.bad
-                             : watcher.live ? theme.good : theme.subtle
+                    columns: window.compact ? 2 : 1
+                    columnSpacing: 8
+                    rowSpacing: 2
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 8
+                        Rectangle {
+                            width: 9; height: 9; radius: 5
+                            color: !client.connected ? theme.bad
+                                 : watcher.live ? theme.good : theme.subtle
+                        }
+                        Text {
+                            Layout.fillWidth: true
+                            elide: Text.ElideRight
+                            text: !client.connected ? "not connected"
+                                : !watcher.live ? "paused"
+                                : watcher.quietSince !== "" ? "idle since " + watcher.quietSince
+                                : "live"
+                            color: theme.subtle
+                        }
                     }
+                    // The window's title names it too, which is where a
+                    // narrow window leaves it.
                     Text {
+                        visible: !window.compact
                         Layout.fillWidth: true
-                        elide: Text.ElideRight
-                        text: !client.connected ? "not connected"
-                            : !watcher.live ? "paused"
-                            : watcher.quietSince !== "" ? "idle since " + watcher.quietSince
-                            : "live"
+                        text: client.url
+                        elide: Text.ElideMiddle
                         color: theme.subtle
+                        font.pixelSize: 11
                     }
-                }
-                Text {
-                    Layout.fillWidth: true
-                    text: client.url
-                    elide: Text.ElideMiddle
-                    color: theme.subtle
-                    font.pixelSize: 11
-                }
-                RowLayout {
-                    Layout.topMargin: 6
-                    Button {
-                        Layout.fillWidth: true
-                        text: watcher.live ? "Pause" : "Follow"
-                        onClicked: watcher.live = !watcher.live
-                    }
-                    Button {
-                        Layout.fillWidth: true
-                        text: "Refresh"
-                        onClicked: window.refresh()
+                    RowLayout {
+                        Layout.topMargin: window.compact ? 0 : 6
+                        Layout.fillWidth: !window.compact
+                        Button {
+                            Layout.fillWidth: true
+                            text: watcher.live ? "Pause" : "Follow"
+                            onClicked: watcher.live = !watcher.live
+                        }
+                        Button {
+                            Layout.fillWidth: true
+                            text: "Refresh"
+                            onClicked: window.refresh()
+                        }
                     }
                 }
             }
+            // The rule between the list and the page: on its right
+            // beside the page, along its bottom above it.
             Rectangle {
-                anchors.right: parent.right
-                width: 1; height: parent.height
+                x: window.compact ? 0 : parent.width - 1
+                y: window.compact ? parent.height - 1 : 0
+                width: window.compact ? parent.width : 1
+                height: window.compact ? 1 : parent.height
                 color: theme.rule
             }
         }
@@ -548,387 +628,430 @@ ApplicationWindow {
                 currentIndex: window.page
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                Layout.margins: 18
+                Layout.margins: window.compact ? 12 : 18
                 // A page is as wide as the window leaves it, not as the
                 // widest page wants: the one shown makes do, each in its
                 // own way, and nothing goes past the window's edge.
                 Layout.minimumWidth: 0
 
                 // ----- Overview ----------------------------------------
-                ColumnLayout {
-                    id: overview
-                    spacing: 12
+                // The page scrolls when the window is too short for its
+                // figures and charts, as on a phone, rather than squeeze
+                // the charts below what they can show.
+                Flickable {
+                    id: overviewScroll
+                    clip: true
+                    contentWidth: width
+                    contentHeight: Math.max(height, overview.implicitHeight)
+                    interactive: contentHeight > height
+                    boundsBehavior: Flickable.StopAtBounds
+                    ScrollBar.vertical: ScrollBar {}
 
-                    // One point per answer of the watch: what moved since
-                    // the point before, kept as one list per chart so
-                    // that a chart reads its own without going through
-                    // every point.
-                    property var series: ({ frameMs: [], drawn: [], skipped: [], rss: [], wakeups: [], inbox: [] })
-                    property int version: 0
-                    property var last: null
-                    property var parts: ({})
-                    property var latest: ({})
-                    // What the platform does not measure, by figure.
-                    property var unmeasured: ({})
+                    ColumnLayout {
+                        id: overview
+                        width: overviewScroll.width
+                        height: overviewScroll.contentHeight
+                        spacing: 12
 
-                    function sample() {
-                        parts = {}
-                        window.ask("app_metrics", {}, "sample-metrics")
-                    }
+                        // One point per answer of the watch: what moved since
+                        // the point before, kept as one list per chart so
+                        // that a chart reads its own without going through
+                        // every point.
+                        property var series: ({ frameMs: [], drawn: [], skipped: [], rss: [], wakeups: [], inbox: [] })
+                        property int version: 0
+                        property var last: null
+                        property var parts: ({})
+                        property var latest: ({})
+                        // What the platform does not measure, by figure.
+                        property var unmeasured: ({})
 
-                    function part(name, s) {
-                        var next = parts
-                        next[name] = s
-                        parts = next
-                        // The threads are asked once the metrics are
-                        // answered. Their mailboxes are counted after the
-                        // UI thread answered, so that the depth is not
-                        // this window's own questions waiting.
-                        if (name === "metrics")
-                            window.ask("app_processes", {}, "sample-threads")
-                        else if (parts.metrics)
-                            add(parts.metrics, s, s)
-                    }
+                        function sample() {
+                            parts = {}
+                            window.ask("app_metrics", {}, "sample-metrics")
+                        }
 
-                    function add(m, t, b) {
-                        if (t.process)
-                            processes.process = t.process
-                        var now = Date.now()
-                        // The process's own count where the platform
-                        // keeps one, else its threads' added up; neither
-                        // is unknown, not 0.
-                        var wakeups = window.measured(t.process, "wakeups") ? t.process.wakeups : null
-                        var counted = 0
-                        var everyCounted = true
-                        var threadCount = 0
-                        for (var i = 0; i < t.processes.length; ++i) {
-                            var th = t.processes[i]
-                            if (th.kind !== "thread")
-                                continue
-                            threadCount += 1
-                            if (typeof th.wakeups === "number")
-                                counted += th.wakeups
-                            else
-                                everyCounted = false
+                        function part(name, s) {
+                            var next = parts
+                            next[name] = s
+                            parts = next
+                            // The threads are asked once the metrics are
+                            // answered. Their mailboxes are counted after the
+                            // UI thread answered, so that the depth is not
+                            // this window's own questions waiting.
+                            if (name === "metrics")
+                                window.ask("app_processes", {}, "sample-threads")
+                            else if (parts.metrics)
+                                add(parts.metrics, s, s)
                         }
-                        if (wakeups === null && threadCount > 0 && everyCounted)
-                            wakeups = counted
-                        var rss = window.measured(t.process, "rss_bytes") ? t.process.rss_bytes : null
-                        var threads = window.measured(t.process, "threads") ? t.process.threads
-                            : t.process ? null : threadCount
-                        unmeasured = { rss: rss === null, wakeups: wakeups === null, threads: threads === null }
-                        var depth = 0
-                        var boxes = b.mailboxes || []
-                        for (var j = 0; j < boxes.length; ++j)
-                            depth += boxes[j].depth
-                        var p = m.paint || {}
-                        var here = {
-                            t: now,
-                            frames: m.frames.count,
-                            frameTotal: m.frames.total_us,
-                            drawn: (p.presented || 0) + (p.presented_in_part || 0),
-                            skipped: p.unchanged || 0,
-                            wakeups: wakeups,
-                        }
-                        var point = {
-                            frameMs: 0, drawn: 0, skipped: 0, wakeups: 0,
-                            rss: rss === null ? 0 : rss / (1024 * 1024),
-                            inbox: depth,
-                        }
-                        if (last !== null) {
-                            var secs = Math.max(0.001, (now - last.t) / 1000)
-                            var frames = here.frames - last.frames
-                            point.frameMs = frames > 0 ? (here.frameTotal - last.frameTotal) / frames / 1000 : 0
-                            point.drawn = here.drawn - last.drawn
-                            point.skipped = here.skipped - last.skipped
-                            if (here.wakeups !== null && last.wakeups !== null)
-                                point.wakeups = (here.wakeups - last.wakeups) / secs
-                        }
-                        last = here
-                        latest = {
-                            frames: m.frames.count,
-                            overruns: m.frames.overruns,
-                            objects: m.objects,
-                            threads: threads,
-                            rss: rss,
-                            drawn: here.drawn,
-                            skipped: here.skipped,
-                            painter: p.painter || "",
-                        }
-                        var next = {}
-                        for (var key in point) {
-                            var was = series[key]
-                            var kept = was.slice(Math.max(0, was.length - 119))
-                            kept.push(point[key])
-                            next[key] = kept
-                        }
-                        // The version first: a chart reads it to
-                        // number the values it is given.
-                        version += 1
-                        series = next
-                        // The count comes after the change that made
-                        // the objects, and an application at rest tells
-                        // of no other.
-                        if (window.page === 3)
-                            objects.follow(false)
-                    }
 
-                    RowLayout {
-                        Layout.fillWidth: true
-                        Text { text: "Overview"; color: theme.text; font.pixelSize: 19; font.bold: true }
-                        Item { Layout.fillWidth: true }
-                        Text {
-                            color: theme.subtle
-                            text: "one point each time the application changed"
+                        function add(m, t, b) {
+                            if (t.process)
+                                processes.process = t.process
+                            var now = Date.now()
+                            // The process's own count where the platform
+                            // keeps one, else its threads' added up; neither
+                            // is unknown, not 0.
+                            var wakeups = window.measured(t.process, "wakeups") ? t.process.wakeups : null
+                            var counted = 0
+                            var everyCounted = true
+                            var threadCount = 0
+                            for (var i = 0; i < t.processes.length; ++i) {
+                                var th = t.processes[i]
+                                if (th.kind !== "thread")
+                                    continue
+                                threadCount += 1
+                                if (typeof th.wakeups === "number")
+                                    counted += th.wakeups
+                                else
+                                    everyCounted = false
+                            }
+                            if (wakeups === null && threadCount > 0 && everyCounted)
+                                wakeups = counted
+                            var rss = window.measured(t.process, "rss_bytes") ? t.process.rss_bytes : null
+                            var threads = window.measured(t.process, "threads") ? t.process.threads
+                                : t.process ? null : threadCount
+                            unmeasured = { rss: rss === null, wakeups: wakeups === null, threads: threads === null }
+                            var depth = 0
+                            var boxes = b.mailboxes || []
+                            for (var j = 0; j < boxes.length; ++j)
+                                depth += boxes[j].depth
+                            var p = m.paint || {}
+                            var here = {
+                                t: now,
+                                frames: m.frames.count,
+                                frameTotal: m.frames.total_us,
+                                drawn: (p.presented || 0) + (p.presented_in_part || 0),
+                                skipped: p.unchanged || 0,
+                                wakeups: wakeups,
+                            }
+                            var point = {
+                                frameMs: 0, drawn: 0, skipped: 0, wakeups: 0,
+                                rss: rss === null ? 0 : rss / (1024 * 1024),
+                                inbox: depth,
+                            }
+                            if (last !== null) {
+                                var secs = Math.max(0.001, (now - last.t) / 1000)
+                                var frames = here.frames - last.frames
+                                point.frameMs = frames > 0 ? (here.frameTotal - last.frameTotal) / frames / 1000 : 0
+                                point.drawn = here.drawn - last.drawn
+                                point.skipped = here.skipped - last.skipped
+                                if (here.wakeups !== null && last.wakeups !== null)
+                                    point.wakeups = (here.wakeups - last.wakeups) / secs
+                            }
+                            last = here
+                            latest = {
+                                frames: m.frames.count,
+                                overruns: m.frames.overruns,
+                                objects: m.objects,
+                                threads: threads,
+                                rss: rss,
+                                drawn: here.drawn,
+                                skipped: here.skipped,
+                                painter: p.painter || "",
+                            }
+                            var next = {}
+                            for (var key in point) {
+                                var was = series[key]
+                                var kept = was.slice(Math.max(0, was.length - 119))
+                                kept.push(point[key])
+                                next[key] = kept
+                            }
+                            // The version first: a chart reads it to
+                            // number the values it is given.
+                            version += 1
+                            series = next
+                            // The count comes after the change that made
+                            // the objects, and an application at rest tells
+                            // of no other.
+                            if (window.page === 3)
+                                objects.follow(false)
                         }
-                    }
 
-                    // The figures now.
-                    RowLayout {
-                        Layout.fillWidth: true
-                        spacing: 10
-                        Repeater {
-                            model: [
-                                ["Frames", "frames"], ["Over budget", "overruns"], ["Objects", "objects"],
-                                ["Threads", "threads"], ["Resident", "rss"], ["Passes drawn", "drawn"],
-                                ["Passes skipped", "skipped"]
-                            ]
-                            delegate: Rectangle {
-                                required property var modelData
+                        RowLayout {
+                            Layout.fillWidth: true
+                            Text { text: "Overview"; color: theme.text; font.pixelSize: 19; font.bold: true }
+                            Text {
                                 Layout.fillWidth: true
-                                height: 62
-                                radius: 9
-                                color: theme.card
-                                border.color: theme.rule
-                                Column {
-                                    anchors.fill: parent
-                                    anchors.margins: 10
-                                    spacing: 2
-                                    Text {
-                                        text: modelData[0]
-                                        color: theme.subtle
-                                        font.pixelSize: 11
-                                    }
-                                    Text {
-                                        property var v: overview.latest[modelData[1]]
-                                        readonly property bool unknown: overview.unmeasured[modelData[1]] === true
-                                        width: parent.width
-                                        text: unknown ? "not measured on this platform"
-                                            : v === undefined || v === null ? "—"
-                                            : modelData[1] === "rss" ? window.bytes(v) : v
-                                        color: unknown ? theme.subtle
-                                            : modelData[1] === "overruns" && v > 0 ? theme.bad : theme.text
-                                        font.pixelSize: unknown ? 12 : 19
-                                        font.bold: !unknown
-                                        wrapMode: unknown ? Text.WordWrap : Text.NoWrap
-                                        maximumLineCount: 2
-                                        elide: Text.ElideRight
+                                Layout.minimumWidth: 0
+                                horizontalAlignment: Text.AlignRight
+                                elide: Text.ElideRight
+                                color: theme.subtle
+                                text: "one point each time the application changed"
+                            }
+                        }
+
+                        // The figures now: in one row when there is room
+                        // for them, else in as many columns as there is room
+                        // for, each wide enough for its name.
+                        GridLayout {
+                            Layout.fillWidth: true
+                            columns: Math.max(1, Math.min(7, Math.floor((width + columnSpacing) / 130)))
+                            columnSpacing: 10
+                            rowSpacing: 10
+                            Repeater {
+                                model: [
+                                    ["Frames", "frames"], ["Over budget", "overruns"], ["Objects", "objects"],
+                                    ["Threads", "threads"], ["Resident", "rss"], ["Passes drawn", "drawn"],
+                                    ["Passes skipped", "skipped"]
+                                ]
+                                delegate: Rectangle {
+                                    required property var modelData
+                                    Layout.fillWidth: true
+                                    // Two lines of "not measured" are taller
+                                    // than one figure.
+                                    Layout.preferredHeight: Math.max(62, figure.implicitHeight + 20)
+                                    radius: 9
+                                    color: theme.card
+                                    border.color: theme.rule
+                                    Column {
+                                        id: figure
+                                        anchors.fill: parent
+                                        anchors.margins: 10
+                                        spacing: 2
+                                        Text {
+                                            width: parent.width
+                                            elide: Text.ElideRight
+                                            text: modelData[0]
+                                            color: theme.subtle
+                                            font.pixelSize: 11
+                                        }
+                                        Text {
+                                            property var v: overview.latest[modelData[1]]
+                                            readonly property bool unknown: overview.unmeasured[modelData[1]] === true
+                                            width: parent.width
+                                            text: unknown ? "not measured on this platform"
+                                                : v === undefined || v === null ? "—"
+                                                : modelData[1] === "rss" ? window.bytes(v) : v
+                                            color: unknown ? theme.subtle
+                                                : modelData[1] === "overruns" && v > 0 ? theme.bad : theme.text
+                                            font.pixelSize: unknown ? 12 : 19
+                                            font.bold: !unknown
+                                            wrapMode: unknown ? Text.WordWrap : Text.NoWrap
+                                            maximumLineCount: 2
+                                            elide: Text.ElideRight
+                                        }
                                     }
                                 }
                             }
                         }
-                    }
 
-                    GridLayout {
-                        Layout.fillWidth: true
-                        Layout.fillHeight: true
-                        columns: 2
-                        columnSpacing: 12
-                        rowSpacing: 12
+                        GridLayout {
+                            id: charts
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+                            // Side by side only where a chart keeps room for
+                            // the line it draws.
+                            columns: width >= 560 ? 2 : 1
+                            columnSpacing: 12
+                            rowSpacing: 12
 
-                        Repeater {
-                            model: [
-                                { title: "Frame time", key: "frameMs", unit: "ms", tone: "accent" },
-                                { title: "Passes drawn and skipped", key: "drawn", second: "skipped", unit: "", tone: "good" },
-                                { title: "Memory, resident", key: "rss", unit: "MiB", tone: "violet" },
-                                { title: "Wakeups per second, all threads", key: "wakeups", unit: "/s", tone: "warn" },
-                                { title: "Messages waiting in the mailboxes", key: "inbox", unit: "", tone: "bad" }
-                            ]
-                            delegate: Rectangle {
-                                id: chart
-                                required property var modelData
-                                required property int index
-                                readonly property color tone: theme[modelData.tone]
-                                Layout.fillWidth: true
-                                Layout.fillHeight: true
-                                Layout.columnSpan: index === 4 ? 2 : 1
-                                Layout.minimumHeight: 120
-                                radius: 9
-                                color: theme.card
-                                border.color: theme.rule
+                            Repeater {
+                                model: [
+                                    { title: "Frame time", key: "frameMs", unit: "ms", tone: "accent" },
+                                    { title: "Passes drawn and skipped", key: "drawn", second: "skipped", unit: "", tone: "good" },
+                                    { title: "Memory, resident", key: "rss", unit: "MiB", tone: "violet" },
+                                    { title: "Wakeups per second, all threads", key: "wakeups", unit: "/s", tone: "warn" },
+                                    { title: "Messages waiting in the mailboxes", key: "inbox", unit: "", tone: "bad" }
+                                ]
+                                delegate: Rectangle {
+                                    id: chart
+                                    required property var modelData
+                                    required property int index
+                                    readonly property color tone: theme[modelData.tone]
+                                    Layout.fillWidth: true
+                                    Layout.fillHeight: true
+                                    // The last one alone fills its row.
+                                    Layout.columnSpan: index === 4 ? charts.columns : 1
+                                    Layout.minimumHeight: 120
+                                    radius: 9
+                                    color: theme.card
+                                    border.color: theme.rule
 
-                                readonly property var values: overview.series[modelData.key]
-                                readonly property var seconds: modelData.second ? overview.series[modelData.second] : []
-                                readonly property real now: values.length === 0 ? 0 : values[values.length - 1]
-                                readonly property bool unknown: overview.unmeasured[modelData.key] === true
+                                    readonly property var values: overview.series[modelData.key]
+                                    readonly property var seconds: modelData.second ? overview.series[modelData.second] : []
+                                    readonly property real now: values.length === 0 ? 0 : values[values.length - 1]
+                                    readonly property bool unknown: overview.unmeasured[modelData.key] === true
+                                    // The value goes under the title when the
+                                    // two do not fit on one line, and either
+                                    // elides rather than run into the other or
+                                    // past the chart.
+                                    readonly property bool stacked:
+                                        chartTitle.implicitWidth + chartValue.implicitWidth + 36 > width
 
-                                Text {
-                                    x: 12; y: 10
-                                    text: chart.modelData.title
-                                    color: theme.subtle
-                                }
-                                Text {
-                                    anchors.right: parent.right
-                                    anchors.rightMargin: 12
-                                    y: 8
-                                    text: chart.unknown ? "not measured on this platform"
-                                        : chart.values.length === 0 ? "—"
-                                        : (Math.round(chart.now * 10) / 10) + (chart.modelData.unit === "" ? "" : " " + chart.modelData.unit)
-                                          + (chart.modelData.second && chart.seconds.length > 0
-                                             ? " drawn  ·  " + chart.seconds[chart.seconds.length - 1] + " skipped" : "")
-                                    color: theme.text
-                                    font.bold: true
-                                }
-                                // Lines, not a canvas: a canvas keeps a
-                                // picture of itself the size of the chart and
-                                // draws its text through the canvas's own
-                                // path, which cost more memory than the rest
-                                // of the page and took the first frame over
-                                // its budget.
-                                Item {
-                                    id: plot
-                                    anchors.fill: parent
-                                    anchors.topMargin: 34
-                                    anchors.margins: 12
-                                    visible: !chart.unknown
-                                    // A point stays where it was drawn and
-                                    // the lines move left under the plot, so
-                                    // a sample makes one point per line, not
-                                    // all of them again: making them all was
-                                    // most of what a sample cost. They are
-                                    // made again when the scale or the size
-                                    // changes, and the scale moves in steps
-                                    // so that it seldom does.
-                                    property real top: 1
-                                    property var line: []
-                                    property var second: []
-                                    readonly property real step: width / 119
-                                    // Where the newest point is drawn in the
-                                    // lines' own frame.
-                                    readonly property real head: (overview.version - 1) * step
-
-                                    onWidthChanged: refresh(true)
-                                    onHeightChanged: refresh(true)
-                                    Component.onCompleted: refresh(true)
-                                    Connections {
-                                        target: chart
-                                        function onValuesChanged() { plot.refresh(false) }
-                                        function onSecondsChanged() { plot.refresh(false) }
-                                    }
-
-                                    function refresh(whole) {
-                                        // Nothing to number points by before
-                                        // the plot has a width.
-                                        if (!(step > 0)) {
-                                            line = []
-                                            second = []
-                                            return
-                                        }
-                                        var t = scaleOf(chart.values, chart.seconds)
-                                        if (t !== top) {
-                                            top = t
-                                            whole = true
-                                        }
-                                        var l = follow(whole ? [] : line, chart.values)
-                                        if (l !== line)
-                                            line = l
-                                        var s = follow(whole ? [] : second, chart.seconds)
-                                        if (s !== second)
-                                            second = s
-                                    }
-                                    // One of 1, 1.5, 2, 3, 4, 5, 6 or 8
-                                    // times a power of ten, above the
-                                    // highest value.
-                                    function scaleOf(a, b) {
-                                        var most = 0
-                                        for (var i = 0; i < a.length; ++i)
-                                            most = Math.max(most, a[i])
-                                        for (var k = 0; k < b.length; ++k)
-                                            most = Math.max(most, b[k])
-                                        if (!(most > 0))
-                                            return 1
-                                        var p = Math.pow(10, Math.floor(Math.log10(most * 1.1)))
-                                        var f = most * 1.1 / p
-                                        var nice = [1, 1.5, 2, 3, 4, 5, 6, 8, 10]
-                                        var n = 0
-                                        while (nice[n] < f)
-                                            n += 1
-                                        return nice[n] * p
-                                    }
-                                    // `had` with the points that fell off
-                                    // the left taken away and those for new
-                                    // values added; the overview's version
-                                    // numbers the newest value.
-                                    function follow(had, vs) {
-                                        var first = overview.version - vs.length
-                                        var from = had.length > 0 ? Math.round(had[0].x / step) : first
-                                        var to = from + had.length
-                                        if (from > first || to < first)
-                                            return follow([], vs)
-                                        if (from === first && to === overview.version)
-                                            return had
-                                        var out = had.slice(first - from)
-                                        for (var n = Math.max(to, first); n < overview.version; ++n)
-                                            out.push(Qt.point(n * step, height - vs[n - first] / top * height))
-                                        return out
-                                    }
-
-                                    Rectangle { width: plot.width; height: 1; color: theme.rule }
-                                    Rectangle { y: Math.round(plot.height / 2); width: plot.width; height: 1; color: theme.rule }
-                                    Rectangle { y: plot.height - 1; width: plot.width; height: 1; color: theme.rule }
-                                    Shape {
-                                        x: plot.width - plot.head
-                                        width: Math.max(0, plot.head)
-                                        height: plot.height
-                                        // The line taken down to the bottom
-                                        // and filled under. The same points,
-                                        // not a copy with two more: a copy
-                                        // cost as much again to make and to
-                                        // hand over. Less than two points
-                                        // enclose nothing.
-                                        ShapePath {
-                                            strokeWidth: -1
-                                            fillColor: plot.line.length < 2 ? "transparent"
-                                                : Qt.rgba(chart.tone.r, chart.tone.g, chart.tone.b, 0.14)
-                                            PathPolyline { path: plot.line }
-                                            PathLine { x: plot.head; y: plot.height }
-                                            PathLine { x: plot.line.length > 0 ? plot.line[0].x : 0; y: plot.height }
-                                        }
-                                        ShapePath {
-                                            strokeColor: theme.accent
-                                            strokeWidth: 2
-                                            fillColor: "transparent"
-                                            PathPolyline { path: plot.second }
-                                        }
-                                        ShapePath {
-                                            strokeColor: chart.tone
-                                            strokeWidth: 2
-                                            fillColor: "transparent"
-                                            PathPolyline { path: plot.line }
-                                        }
-                                    }
-                                    // A single point is no line.
-                                    Rectangle {
-                                        visible: chart.values.length === 1
-                                        x: plot.width - 2
-                                        y: plot.line.length === 1 ? plot.line[0].y - 2 : 0
-                                        width: 4; height: 4
-                                        color: chart.tone
+                                    Text {
+                                        id: chartTitle
+                                        x: 12; y: 10
+                                        width: Math.max(0, chart.stacked ? chart.width - 24
+                                                                          : chart.width - 36 - chartValue.width)
+                                        elide: Text.ElideRight
+                                        text: chart.modelData.title
+                                        color: theme.subtle
                                     }
                                     Text {
-                                        x: 2
-                                        visible: chart.values.length > 0
-                                        text: String(Math.round(plot.top * 10) / 10)
-                                        color: theme.subtle
-                                        font.pixelSize: 10
+                                        id: chartValue
+                                        x: chart.stacked ? 12 : chart.width - 12 - width
+                                        y: chart.stacked ? 30 : 8
+                                        width: Math.max(0, Math.min(implicitWidth, chart.width - 24))
+                                        elide: Text.ElideRight
+                                        text: chart.unknown ? "not measured on this platform"
+                                            : chart.values.length === 0 ? "—"
+                                            : (Math.round(chart.now * 10) / 10) + (chart.modelData.unit === "" ? "" : " " + chart.modelData.unit)
+                                              + (chart.modelData.second && chart.seconds.length > 0
+                                                 ? " drawn  ·  " + chart.seconds[chart.seconds.length - 1] + " skipped" : "")
+                                        color: theme.text
+                                        font.bold: true
                                     }
-                                    Text {
-                                        x: 4
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        visible: chart.values.length === 0
-                                        text: "waiting for the application to change"
-                                        color: theme.subtle
-                                        font.pixelSize: 12
+                                    // Lines, not a canvas: a canvas keeps a
+                                    // picture of itself the size of the chart and
+                                    // draws its text through the canvas's own
+                                    // path, which cost more memory than the rest
+                                    // of the page and took the first frame over
+                                    // its budget.
+                                    Item {
+                                        id: plot
+                                        anchors.fill: parent
+                                        anchors.topMargin: chart.stacked ? 52 : 34
+                                        anchors.margins: 12
+                                        visible: !chart.unknown
+                                        // A point stays where it was drawn and
+                                        // the lines move left under the plot, so
+                                        // a sample makes one point per line, not
+                                        // all of them again: making them all was
+                                        // most of what a sample cost. They are
+                                        // made again when the scale or the size
+                                        // changes, and the scale moves in steps
+                                        // so that it seldom does.
+                                        property real top: 1
+                                        property var line: []
+                                        property var second: []
+                                        readonly property real step: width / 119
+                                        // Where the newest point is drawn in the
+                                        // lines' own frame.
+                                        readonly property real head: (overview.version - 1) * step
+
+                                        onWidthChanged: refresh(true)
+                                        onHeightChanged: refresh(true)
+                                        Component.onCompleted: refresh(true)
+                                        Connections {
+                                            target: chart
+                                            function onValuesChanged() { plot.refresh(false) }
+                                            function onSecondsChanged() { plot.refresh(false) }
+                                        }
+
+                                        function refresh(whole) {
+                                            // Nothing to number points by before
+                                            // the plot has a width.
+                                            if (!(step > 0)) {
+                                                line = []
+                                                second = []
+                                                return
+                                            }
+                                            var t = scaleOf(chart.values, chart.seconds)
+                                            if (t !== top) {
+                                                top = t
+                                                whole = true
+                                            }
+                                            var l = follow(whole ? [] : line, chart.values)
+                                            if (l !== line)
+                                                line = l
+                                            var s = follow(whole ? [] : second, chart.seconds)
+                                            if (s !== second)
+                                                second = s
+                                        }
+                                        // One of 1, 1.5, 2, 3, 4, 5, 6 or 8
+                                        // times a power of ten, above the
+                                        // highest value.
+                                        function scaleOf(a, b) {
+                                            var most = 0
+                                            for (var i = 0; i < a.length; ++i)
+                                                most = Math.max(most, a[i])
+                                            for (var k = 0; k < b.length; ++k)
+                                                most = Math.max(most, b[k])
+                                            if (!(most > 0))
+                                                return 1
+                                            var p = Math.pow(10, Math.floor(Math.log10(most * 1.1)))
+                                            var f = most * 1.1 / p
+                                            var nice = [1, 1.5, 2, 3, 4, 5, 6, 8, 10]
+                                            var n = 0
+                                            while (nice[n] < f)
+                                                n += 1
+                                            return nice[n] * p
+                                        }
+                                        // `had` with the points that fell off
+                                        // the left taken away and those for new
+                                        // values added; the overview's version
+                                        // numbers the newest value.
+                                        function follow(had, vs) {
+                                            var first = overview.version - vs.length
+                                            var from = had.length > 0 ? Math.round(had[0].x / step) : first
+                                            var to = from + had.length
+                                            if (from > first || to < first)
+                                                return follow([], vs)
+                                            if (from === first && to === overview.version)
+                                                return had
+                                            var out = had.slice(first - from)
+                                            for (var n = Math.max(to, first); n < overview.version; ++n)
+                                                out.push(Qt.point(n * step, height - vs[n - first] / top * height))
+                                            return out
+                                        }
+
+                                        Rectangle { width: plot.width; height: 1; color: theme.rule }
+                                        Rectangle { y: Math.round(plot.height / 2); width: plot.width; height: 1; color: theme.rule }
+                                        Rectangle { y: plot.height - 1; width: plot.width; height: 1; color: theme.rule }
+                                        Shape {
+                                            x: plot.width - plot.head
+                                            width: Math.max(0, plot.head)
+                                            height: plot.height
+                                            // The line taken down to the bottom
+                                            // and filled under. The same points,
+                                            // not a copy with two more: a copy
+                                            // cost as much again to make and to
+                                            // hand over. Less than two points
+                                            // enclose nothing.
+                                            ShapePath {
+                                                strokeWidth: -1
+                                                fillColor: plot.line.length < 2 ? "transparent"
+                                                    : Qt.rgba(chart.tone.r, chart.tone.g, chart.tone.b, 0.14)
+                                                PathPolyline { path: plot.line }
+                                                PathLine { x: plot.head; y: plot.height }
+                                                PathLine { x: plot.line.length > 0 ? plot.line[0].x : 0; y: plot.height }
+                                            }
+                                            ShapePath {
+                                                strokeColor: theme.accent
+                                                strokeWidth: 2
+                                                fillColor: "transparent"
+                                                PathPolyline { path: plot.second }
+                                            }
+                                            ShapePath {
+                                                strokeColor: chart.tone
+                                                strokeWidth: 2
+                                                fillColor: "transparent"
+                                                PathPolyline { path: plot.line }
+                                            }
+                                        }
+                                        // A single point is no line.
+                                        Rectangle {
+                                            visible: chart.values.length === 1
+                                            x: plot.width - 2
+                                            y: plot.line.length === 1 ? plot.line[0].y - 2 : 0
+                                            width: 4; height: 4
+                                            color: chart.tone
+                                        }
+                                        Text {
+                                            x: 2
+                                            visible: chart.values.length > 0
+                                            text: String(Math.round(plot.top * 10) / 10)
+                                            color: theme.subtle
+                                            font.pixelSize: 10
+                                        }
+                                        Text {
+                                            x: 4
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            visible: chart.values.length === 0
+                                            text: "waiting for the application to change"
+                                            color: theme.subtle
+                                            font.pixelSize: 12
+                                        }
                                     }
                                 }
                             }
@@ -1060,16 +1183,46 @@ ApplicationWindow {
                         return Math.max(120, total - rest - 16)
                     }
 
-                    RowLayout {
+                    // A table narrower than its columns lays each row out
+                    // over more lines: kind and name on the first, the rest
+                    // under them. The heads wrap as the rows do, so each
+                    // value stays under its head.
+                    function column(i, line) {
+                        var rest = widths[2] + widths[3] + widths[4]
+                        if (!procTable.narrow)
+                            return i === 1 ? nameWidth(line + 16) : widths[i]
+                        if (i === 1)
+                            return Math.max(0, line - widths[0])
+                        if (i === 5)
+                            return line - rest >= 120 ? line - rest : line
+                        return widths[i]
+                    }
+
+                    // In one row while it fits, the kinds at its end;
+                    // wrapped onto more where it does not.
+                    Flow {
+                        id: processesHead
                         Layout.fillWidth: true
-                        Text { text: "Processes"; color: theme.text; font.pixelSize: 19; font.bold: true }
+                        spacing: 10
                         Text {
-                            Layout.leftMargin: 12
+                            height: window.headHeight
+                            verticalAlignment: Text.AlignVCenter
+                            text: "Processes"; color: theme.text; font.pixelSize: 19; font.bold: true
+                        }
+                        Text {
+                            width: Math.min(implicitWidth, processesHead.width)
+                            height: window.headHeight
+                            verticalAlignment: Text.AlignVCenter
+                            elide: Text.ElideRight
                             visible: processes.process !== null
                             color: theme.subtle
                             text: processes.summary(processes.process)
                         }
-                        Item { Layout.fillWidth: true }
+                        Item {
+                            id: processesGap
+                            width: window.spare(processesHead, processesGap)
+                            height: 1
+                        }
                         Repeater {
                             model: [["All", ""], ["Threads", "thread"], ["Timers", "timer"],
                                     ["Animations", "animation"], ["Owners", "owner"]]
@@ -1087,26 +1240,31 @@ ApplicationWindow {
                     }
 
                     Rectangle {
+                        id: procTable
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         radius: 9
                         color: theme.card
                         border.color: theme.rule
                         clip: true
+                        readonly property real line: width - 16
+                        // The columns past the name, and the least a name has.
+                        readonly property bool narrow: line < 640 + 120
+                        readonly property real lineHeight: narrow ? 24 : 32
 
                         // Column heads, laid out as the rows are.
-                        Row {
+                        Flow {
                             id: heads
                             x: 8
                             y: 0
-                            height: 32
+                            width: procTable.line
                             Repeater {
                                 model: ["Kind", "Name", "State", "Work", "Wakeups", "Detail"]
                                 delegate: Text {
                                     required property string modelData
                                     required property int index
-                                    width: index === 1 ? processes.nameWidth(heads.parent.width) : processes.widths[index]
-                                    height: 32
+                                    width: processes.column(index, procTable.line)
+                                    height: procTable.lineHeight
                                     verticalAlignment: Text.AlignVCenter
                                     horizontalAlignment: index === 3 || index === 4 ? Text.AlignRight : Text.AlignLeft
                                     rightPadding: index === 3 || index === 4 ? 12 : 0
@@ -1117,14 +1275,16 @@ ApplicationWindow {
                                 }
                             }
                         }
-                        Rectangle { y: 32; width: parent.width; height: 1; color: theme.rule }
+                        Rectangle { y: heads.height; width: parent.width; height: 1; color: theme.rule }
 
                         // Where the platform lists no threads, the table
                         // says so rather than leaving them out unsaid.
                         Text {
                             id: noThreads
                             x: 8
-                            y: 33
+                            y: heads.height + 1
+                            width: procTable.line
+                            elide: Text.ElideRight
                             visible: processes.threadsUnmeasured
                                 && (processes.kind === "" || processes.kind === "thread")
                             height: visible ? 32 : 0
@@ -1135,7 +1295,7 @@ ApplicationWindow {
 
                         ListView {
                             anchors.fill: parent
-                            anchors.topMargin: 33 + noThreads.height
+                            anchors.topMargin: heads.height + 1 + noThreads.height
                             clip: true
                             // A page out of sight lets its rows go: they
                             // are most of what a page costs to hold.
@@ -1155,21 +1315,22 @@ ApplicationWindow {
                                 required property string handle
                                 required property bool pickable
                                 width: ListView.view.width
-                                height: 32
+                                height: procTable.narrow ? procCells.height : 32
                                 color: rowHover.containsMouse ? theme.accentSoft
                                      : index % 2 ? theme.cardAlt : "transparent"
-                                Row {
+                                Flow {
+                                    id: procCells
                                     x: 8
-                                    height: parent.height
+                                    width: procTable.line
                                     Text {
-                                        width: processes.widths[0]; height: parent.height
+                                        width: processes.column(0, procTable.line); height: procTable.lineHeight
                                         verticalAlignment: Text.AlignVCenter
                                         text: prow.what
                                         color: theme.subtle
                                         elide: Text.ElideRight
                                     }
                                     Text {
-                                        width: processes.nameWidth(prow.width); height: parent.height
+                                        width: processes.column(1, procTable.line); height: procTable.lineHeight
                                         verticalAlignment: Text.AlignVCenter
                                         text: prow.name + (prow.truncated ? "…" : "")
                                         color: prow.pickable ? theme.accent : theme.text
@@ -1177,7 +1338,7 @@ ApplicationWindow {
                                         font.bold: prow.name === "UI thread"
                                     }
                                     Item {
-                                        width: processes.widths[2]; height: parent.height
+                                        width: processes.column(2, procTable.line); height: procTable.lineHeight
                                         Rectangle {
                                             id: dot
                                             visible: prow.hasStatus
@@ -1194,7 +1355,7 @@ ApplicationWindow {
                                         }
                                     }
                                     Text {
-                                        width: processes.widths[3]; height: parent.height
+                                        width: processes.column(3, procTable.line); height: procTable.lineHeight
                                         verticalAlignment: Text.AlignVCenter
                                         horizontalAlignment: Text.AlignRight
                                         rightPadding: 12
@@ -1203,7 +1364,7 @@ ApplicationWindow {
                                         font.family: theme.mono
                                     }
                                     Text {
-                                        width: processes.widths[4]; height: parent.height
+                                        width: processes.column(4, procTable.line); height: procTable.lineHeight
                                         verticalAlignment: Text.AlignVCenter
                                         horizontalAlignment: Text.AlignRight
                                         rightPadding: 12
@@ -1212,7 +1373,7 @@ ApplicationWindow {
                                         font.family: theme.mono
                                     }
                                     Text {
-                                        width: processes.widths[5]; height: parent.height
+                                        width: processes.column(5, procTable.line); height: procTable.lineHeight
                                         verticalAlignment: Text.AlignVCenter
                                         elide: Text.ElideRight
                                         color: theme.subtle
@@ -1295,10 +1456,18 @@ ApplicationWindow {
                         window.ask("app_processes", { kind: "mailbox", peek: 5 }, "mailboxes")
                     }
 
-                    RowLayout {
+                    Flow {
+                        id: mailboxesHead
+                        Layout.fillWidth: true
+                        spacing: 12
                         Text { text: "Mailboxes"; color: theme.text; font.pixelSize: 19; font.bold: true }
                         Text {
-                            Layout.leftMargin: 12
+                            width: Math.min(implicitWidth, mailboxesHead.width)
+                            // Beside the title's centre in one line; below
+                            // it, wrapped, where there is no room.
+                            height: Math.max(implicitHeight, window.titleHeight)
+                            verticalAlignment: Text.AlignVCenter
+                            wrapMode: Text.WordWrap
                             text: "counted since the inspector started · kinds only, never contents"
                             color: theme.subtle
                         }
@@ -2751,17 +2920,28 @@ ApplicationWindow {
                         }
                     }
 
-                    RowLayout {
+                    Flow {
+                        id: logsHead
                         Layout.fillWidth: true
                         spacing: 10
-                        Text { text: "Logs"; color: theme.text; font.pixelSize: 19; font.bold: true }
                         Text {
+                            height: window.headHeight
+                            verticalAlignment: Text.AlignVCenter
+                            text: "Logs"; color: theme.text; font.pixelSize: 19; font.bold: true
+                        }
+                        Text {
+                            height: window.headHeight
+                            verticalAlignment: Text.AlignVCenter
                             text: shownLines.count + " of " + logs.entries.length + " lines"
                             color: theme.subtle
                         }
-                        Item { Layout.fillWidth: true }
+                        Item {
+                            id: logsGap
+                            width: window.spare(logsHead, logsGap)
+                            height: 1
+                        }
                         TextField {
-                            Layout.preferredWidth: 260
+                            width: Math.min(260, logsHead.width)
                             placeholderText: "Filter text or category"
                             Accessible.name: "Filter logs"
                             onTextChanged: logs.filter = text
@@ -2989,18 +3169,31 @@ ApplicationWindow {
                         }
                     }
 
-                    RowLayout {
+                    Flow {
+                        id: traceHead
                         Layout.fillWidth: true
                         spacing: 10
-                        Text { text: "Trace"; color: theme.text; font.pixelSize: 19; font.bold: true }
                         Text {
+                            height: window.headHeight
+                            verticalAlignment: Text.AlignVCenter
+                            text: "Trace"; color: theme.text; font.pixelSize: 19; font.bold: true
+                        }
+                        Text {
+                            width: Math.min(implicitWidth, traceHead.width)
+                            height: window.headHeight
+                            verticalAlignment: Text.AlignVCenter
+                            elide: Text.ElideRight
                             text: traceLines.count + " events"
                                   + (trace.dropped > 0 ? " · " + trace.dropped + " older gave way" : "")
                             color: theme.subtle
                         }
-                        Item { Layout.fillWidth: true }
+                        Item {
+                            id: traceGap
+                            width: window.spare(traceHead, traceGap)
+                            height: 1
+                        }
                         TextField {
-                            Layout.preferredWidth: 230
+                            width: Math.min(230, traceHead.width)
                             placeholderText: "Only these names (blank: all)"
                             Accessible.name: "Trace only these properties and signals"
                             onTextChanged: trace.only = text
@@ -3018,10 +3211,13 @@ ApplicationWindow {
 
                     // Whom the trace follows: Stop on each.
                     Flow {
+                        id: tracedFlow
                         Layout.fillWidth: true
                         spacing: 6
                         Text {
                             visible: trace.tracing.length === 0
+                            width: Math.min(implicitWidth, tracedFlow.width)
+                            wrapMode: Text.WordWrap
                             text: "Nothing is traced. Pick an object on the Objects page and press Trace; "
                                   + "a traced object's bindings are followed with + bindings."
                             color: theme.subtle
@@ -3259,34 +3455,54 @@ ApplicationWindow {
                         objects.pick(handle, name)
                     }
 
-                    RowLayout {
+                    Flow {
+                        id: supervisionHead
+                        Layout.fillWidth: true
+                        spacing: 12
                         Text { text: "Supervision"; color: theme.text; font.pixelSize: 19; font.bold: true }
                         Text {
-                            Layout.leftMargin: 12
+                            width: Math.min(implicitWidth, supervisionHead.width)
+                            // Beside the title's centre in one line; below
+                            // it, wrapped, where there is no room.
+                            height: Math.max(implicitHeight, window.titleHeight)
+                            verticalAlignment: Text.AlignVCenter
+                            wrapMode: Text.WordWrap
                             text: "every boundary, from when it is made · the last 32 faults"
                             color: theme.subtle
                         }
                     }
 
                     Rectangle {
+                        id: supTable
                         Layout.fillWidth: true
                         // Up to ten rows; more scroll. A height taken from
                         // the page's would lay the page out again.
-                        Layout.preferredHeight: 33 + Math.min(10, Math.max(1, supRows.count)) * 30
+                        Layout.preferredHeight: supHeads.height + 1 + Math.min(10, Math.max(1, supRows.count)) * rowHeight
                         radius: 9
                         color: theme.card
                         border.color: theme.rule
                         clip: true
-                        Row {
+                        // Narrower than its columns, a row is laid out over
+                        // more lines, the supervisor on the first; the heads
+                        // wrap as the rows do.
+                        readonly property real line: width - 16
+                        readonly property bool narrow: line < 720
+                        readonly property real lineHeight: narrow ? 24 : 30
+                        readonly property real rowHeight: narrow ? supHeads.height : 30
+                        function column(i) {
+                            return i === 0 ? (narrow ? line : Math.max(160, line - 560)) : [0, 120, 170, 110, 160][i]
+                        }
+                        Flow {
+                            id: supHeads
                             x: 8
-                            height: 32
+                            width: supTable.line
                             Repeater {
                                 model: ["Supervisor", "Strategy", "Restarts used", "State", "Content"]
                                 delegate: Text {
                                     required property string modelData
                                     required property int index
-                                    width: [Math.max(160, supervision.width - 560), 120, 170, 110, 160][index]
-                                    height: 32
+                                    width: supTable.column(index)
+                                    height: supTable.narrow ? supTable.lineHeight : 32
                                     verticalAlignment: Text.AlignVCenter
                                     text: modelData
                                     color: theme.subtle
@@ -3295,10 +3511,10 @@ ApplicationWindow {
                                 }
                             }
                         }
-                        Rectangle { y: 32; width: parent.width; height: 1; color: theme.rule }
+                        Rectangle { y: supHeads.height; width: parent.width; height: 1; color: theme.rule }
                         ListView {
                             anchors.fill: parent
-                            anchors.topMargin: 33
+                            anchors.topMargin: supHeads.height + 1
                             clip: true
                             model: window.page === 6 ? supRows : null
                             ScrollBar.vertical: ScrollBar {}
@@ -3313,14 +3529,14 @@ ApplicationWindow {
                                 required property string content
                                 required property string handle
                                 width: ListView.view.width
-                                height: 30
+                                height: supTable.rowHeight
                                 color: supHover.containsMouse ? theme.accentSoft
                                      : index % 2 ? theme.cardAlt : "transparent"
-                                Row {
+                                Flow {
                                     x: 8
-                                    height: parent.height
+                                    width: supTable.line
                                     Text {
-                                        width: Math.max(160, supervision.width - 560); height: parent.height
+                                        width: supTable.column(0); height: supTable.lineHeight
                                         verticalAlignment: Text.AlignVCenter
                                         leftPadding: srow.depth * 18
                                         text: srow.name
@@ -3328,20 +3544,20 @@ ApplicationWindow {
                                         elide: Text.ElideMiddle
                                     }
                                     Text {
-                                        width: 120; height: parent.height
+                                        width: supTable.column(1); height: supTable.lineHeight
                                         verticalAlignment: Text.AlignVCenter
                                         text: srow.strategy
                                         color: theme.subtle
                                     }
                                     Text {
-                                        width: 170; height: parent.height
+                                        width: supTable.column(2); height: supTable.lineHeight
                                         verticalAlignment: Text.AlignVCenter
                                         text: srow.used
                                         color: theme.text
                                         font.family: theme.mono
                                     }
                                     Item {
-                                        width: 110; height: parent.height
+                                        width: supTable.column(3); height: supTable.lineHeight
                                         Rectangle {
                                             id: supDot
                                             width: 8; height: 8; radius: 4
@@ -3357,7 +3573,7 @@ ApplicationWindow {
                                         }
                                     }
                                     Text {
-                                        width: 160; height: parent.height
+                                        width: supTable.column(4); height: supTable.lineHeight
                                         verticalAlignment: Text.AlignVCenter
                                         text: srow.content
                                         color: srow.content.indexOf("stopped") === 0 ? theme.bad : theme.subtle
@@ -3510,8 +3726,10 @@ ApplicationWindow {
                     property int dropped: 0
                     property var summary: null
                     // The longest frame since Clear, and never less than a
-                    // frame of a 60 Hz display, so that bars compare.
-                    property real scale: 16667
+                    // frame of a 60 Hz display, so that bars compare. Not
+                    // `scale`, which is the item's own and would draw the
+                    // whole page at that size.
+                    property real barScale: 16667
                     // Every frame kept, shown or not: the frames this
                     // window's own requests alone woke are hidden while
                     // `hideOwn`, and come back when it is turned off.
@@ -3642,7 +3860,7 @@ ApplicationWindow {
                         if (row.own)
                             ownCount += 1
                         if (!(hideOwn && row.own)) {
-                            scale = Math.max(scale, row.total)
+                            barScale = Math.max(barScale, row.total)
                             frameRows.append(row)
                         }
                     }
@@ -3653,7 +3871,7 @@ ApplicationWindow {
                             var row = kept[i]
                             if (hideOwn && row.own)
                                 continue
-                            scale = Math.max(scale, row.total)
+                            barScale = Math.max(barScale, row.total)
                             frameRows.append(row)
                         }
                         frameView.positionViewAtEnd()
@@ -3664,7 +3882,7 @@ ApplicationWindow {
                         kept = []
                         ownCount = 0
                         summary = null
-                        scale = 16667
+                        barScale = 16667
                     }
 
                     // "p50 · p95 · max" of a part, as the last answer
@@ -3684,11 +3902,22 @@ ApplicationWindow {
 
                     ListModel { id: frameRows }
 
-                    RowLayout {
+                    // In one row while it fits, the controls at its end;
+                    // wrapped onto more where it does not.
+                    Flow {
+                        id: framesHead
                         Layout.fillWidth: true
                         spacing: 10
-                        Text { text: "Frames"; color: theme.text; font.pixelSize: 19; font.bold: true }
                         Text {
+                            height: recordButton.implicitHeight
+                            verticalAlignment: Text.AlignVCenter
+                            text: "Frames"; color: theme.text; font.pixelSize: 19; font.bold: true
+                        }
+                        Text {
+                            width: Math.min(implicitWidth, framesHead.width)
+                            height: recordButton.implicitHeight
+                            verticalAlignment: Text.AlignVCenter
+                            elide: Text.ElideRight
                             text: (timeline.recording ? "recording" : "not recording") + " · "
                                   + frameRows.count + " frames"
                                   + (timeline.hideOwn && timeline.ownCount > 0
@@ -3696,7 +3925,11 @@ ApplicationWindow {
                                   + (timeline.dropped > 0 ? " · " + timeline.dropped + " older gave way" : "")
                             color: timeline.recording ? theme.good : theme.subtle
                         }
-                        Item { Layout.fillWidth: true }
+                        Item {
+                            id: framesGap
+                            width: window.spare(framesHead, framesGap)
+                            height: 1
+                        }
                         // This window asks the application too; what only
                         // its asking woke is not the application's work.
                         CheckBox {
@@ -3705,6 +3938,7 @@ ApplicationWindow {
                             onToggled: timeline.hideOwn = checked
                         }
                         Button {
+                            id: recordButton
                             text: timeline.recording ? "Stop" : "Record"
                             onClicked: timeline.record(!timeline.recording)
                         }
@@ -3807,9 +4041,14 @@ ApplicationWindow {
                                 required property int runs
                                 required property real text
                                 required property int layouts
-                                readonly property real barWidth: Math.max(40, width - 630)
+                                // Below this width a row takes two lines:
+                                // the frame, what woke it and its time,
+                                // then when it ran, its bar and what it ran.
+                                readonly property bool narrow: width < 680
+                                readonly property real barWidth: narrow ? Math.max(40, width - 12 - 270)
+                                                                        : Math.max(40, width - 630)
                                 width: ListView.view.width
-                                height: 24
+                                height: narrow ? 46 : 24
                                 Accessible.role: Accessible.ListItem
                                 Accessible.name: "frame " + seq + " of " + (win === "main" ? "the main window" : win)
                                                  + ", woke by " + (woke === "" ? "nothing" : woke)
@@ -3818,80 +4057,87 @@ ApplicationWindow {
                                     anchors.fill: parent
                                     color: frameRow.index % 2 ? theme.cardAlt : "transparent"
                                 }
-                                Row {
+                                // Placed by hand, not in a Row, so that one
+                                // set of cells takes either form.
+                                Text {
                                     x: 6
-                                    height: parent.height
-                                    spacing: 10
-                                    Text {
-                                        width: 50
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        horizontalAlignment: Text.AlignRight
-                                        text: frameRow.seq
-                                        color: theme.subtle
-                                        font.family: theme.mono
-                                        font.pixelSize: 12
-                                    }
-                                    Text {
-                                        width: 70
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        horizontalAlignment: Text.AlignRight
-                                        text: frameRow.at
-                                        color: theme.subtle
-                                        font.family: theme.mono
-                                        font.pixelSize: 12
-                                    }
-                                    // Which window's scene ran it.
-                                    Text {
-                                        width: 60
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        text: frameRow.win
-                                        color: frameRow.win === "main" ? theme.subtle : theme.accent
-                                        elide: Text.ElideRight
-                                        font.family: theme.mono
-                                        font.pixelSize: 12
-                                    }
-                                    Text {
-                                        width: 140
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        text: frameRow.woke === "" ? "—" : frameRow.woke
-                                        color: timeline.wokeTone(frameRow.woke)
-                                        elide: Text.ElideRight
-                                        font.pixelSize: 12
-                                    }
-                                    Text {
-                                        width: 70
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        horizontalAlignment: Text.AlignRight
-                                        text: window.ms(frameRow.total)
-                                        color: theme.text
-                                        font.family: theme.mono
-                                        font.pixelSize: 12
-                                    }
-                                    // The passes, then painting, to one
-                                    // scale for every row.
-                                    Row {
-                                        width: frameRow.barWidth
-                                        height: 12
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        Repeater {
-                                            model: timeline.parts
-                                            delegate: Rectangle {
-                                                required property var modelData
-                                                height: 12
-                                                width: frameRow.barWidth * frameRow[modelData.key] / timeline.scale
-                                                color: modelData.tone
-                                            }
+                                    width: 50; height: 24
+                                    verticalAlignment: Text.AlignVCenter
+                                    horizontalAlignment: Text.AlignRight
+                                    text: frameRow.seq
+                                    color: theme.subtle
+                                    font.family: theme.mono
+                                    font.pixelSize: 12
+                                }
+                                Text {
+                                    x: frameRow.narrow ? 6 : 66
+                                    y: frameRow.narrow ? 22 : 0
+                                    width: 70; height: 24
+                                    verticalAlignment: Text.AlignVCenter
+                                    horizontalAlignment: Text.AlignRight
+                                    text: frameRow.at
+                                    color: theme.subtle
+                                    font.family: theme.mono
+                                    font.pixelSize: 12
+                                }
+                                // Which window's scene ran it.
+                                Text {
+                                    x: frameRow.narrow ? 66 : 146
+                                    width: 60; height: 24
+                                    verticalAlignment: Text.AlignVCenter
+                                    text: frameRow.win
+                                    color: frameRow.win === "main" ? theme.subtle : theme.accent
+                                    elide: Text.ElideRight
+                                    font.family: theme.mono
+                                    font.pixelSize: 12
+                                }
+                                Text {
+                                    x: frameRow.narrow ? 136 : 216
+                                    width: frameRow.narrow ? Math.max(0, frameRow.width - 6 - 70 - 10 - 136) : 140
+                                    height: 24
+                                    verticalAlignment: Text.AlignVCenter
+                                    text: frameRow.woke === "" ? "—" : frameRow.woke
+                                    color: timeline.wokeTone(frameRow.woke)
+                                    elide: Text.ElideRight
+                                    font.pixelSize: 12
+                                }
+                                Text {
+                                    x: frameRow.narrow ? frameRow.width - 6 - 70 : 366
+                                    width: 70; height: 24
+                                    verticalAlignment: Text.AlignVCenter
+                                    horizontalAlignment: Text.AlignRight
+                                    text: window.ms(frameRow.total)
+                                    color: theme.text
+                                    font.family: theme.mono
+                                    font.pixelSize: 12
+                                }
+                                // The passes, then painting, to one scale
+                                // for every row.
+                                Row {
+                                    x: frameRow.narrow ? 86 : 446
+                                    y: (frameRow.narrow ? 22 : 0) + 6
+                                    width: frameRow.barWidth
+                                    height: 12
+                                    Repeater {
+                                        model: timeline.parts
+                                        delegate: Rectangle {
+                                            required property var modelData
+                                            height: 12
+                                            width: frameRow.barWidth * frameRow[modelData.key] / timeline.barScale
+                                            color: modelData.tone
                                         }
                                     }
-                                    Text {
-                                        width: 180
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        text: "bindings " + window.ms(frameRow.bindings) + " (" + frameRow.runs + ")"
-                                              + " · text " + window.ms(frameRow.text) + " (" + frameRow.layouts + ")"
-                                        color: theme.subtle
-                                        elide: Text.ElideRight
-                                        font.pixelSize: 11
-                                    }
+                                }
+                                Text {
+                                    x: frameRow.narrow ? frameRow.width - 6 - 180 : 456 + frameRow.barWidth
+                                    y: frameRow.narrow ? 22 : 0
+                                    width: 180; height: 24
+                                    verticalAlignment: Text.AlignVCenter
+                                    text: "bindings " + window.ms(frameRow.bindings) + " (" + frameRow.runs + ")"
+                                          + " · text " + window.ms(frameRow.text) + " (" + frameRow.layouts + ")"
+                                    color: theme.subtle
+                                    elide: Text.ElideRight
+                                    font.pixelSize: 11
                                 }
                             }
                         }
@@ -4086,12 +4332,21 @@ ApplicationWindow {
                     ListModel { id: typeRows }
                     ListModel { id: windowRows }
 
-                    RowLayout {
+                    // In one row while it fits, the controls at its end;
+                    // wrapped onto more where it does not.
+                    Flow {
+                        id: memoryHead
                         Layout.fillWidth: true
                         spacing: 10
-                        Text { text: "Memory"; color: theme.text; font.pixelSize: 19; font.bold: true }
                         Text {
-                            Layout.fillWidth: true
+                            height: window.headHeight
+                            verticalAlignment: Text.AlignVCenter
+                            text: "Memory"; color: theme.text; font.pixelSize: 19; font.bold: true
+                        }
+                        Text {
+                            width: Math.min(implicitWidth, memoryHead.width)
+                            height: window.headHeight
+                            verticalAlignment: Text.AlignVCenter
                             elide: Text.ElideRight
                             text: !memory.last ? ""
                                 : (memory.last.process
@@ -4104,6 +4359,11 @@ ApplicationWindow {
                                        + " not attributed (" + Math.round(memory.last.reconciled.not_attributed_share * 100) + " %)"
                                      : "")
                             color: theme.subtle
+                        }
+                        Item {
+                            id: memoryGap
+                            width: window.spare(memoryHead, memoryGap)
+                            height: 1
                         }
                         Button {
                             text: "Refresh"
@@ -4485,15 +4745,29 @@ ApplicationWindow {
                                    "model-edited")
                     }
 
-                    RowLayout {
+                    // In one row while it fits, the controls at its end;
+                    // wrapped onto more where it does not.
+                    Flow {
+                        id: modelsHead
                         Layout.fillWidth: true
                         spacing: 10
-                        Text { text: "Models"; color: theme.text; font.pixelSize: 19; font.bold: true }
                         Text {
-                            Layout.fillWidth: true
+                            height: window.headHeight
+                            verticalAlignment: Text.AlignVCenter
+                            text: "Models"; color: theme.text; font.pixelSize: 19; font.bold: true
+                        }
+                        Text {
+                            width: Math.min(implicitWidth, modelsHead.width)
+                            height: window.headHeight
+                            verticalAlignment: Text.AlignVCenter
                             elide: Text.ElideRight
                             text: models.list.length + (models.list.length === 1 ? " model" : " models")
                             color: theme.subtle
+                        }
+                        Item {
+                            id: modelsGap
+                            width: window.spare(modelsHead, modelsGap)
+                            height: 1
                         }
                         Button {
                             text: "Refresh"
@@ -4501,15 +4775,23 @@ ApplicationWindow {
                         }
                     }
 
-                    RowLayout {
+                    // Beside the rows on a wide page, above them on a
+                    // narrow one, where the rows need the whole width.
+                    GridLayout {
+                        id: modelsBody
+                        readonly property bool narrow: width < 560
                         Layout.fillWidth: true
                         Layout.fillHeight: true
-                        spacing: 10
+                        columns: narrow ? 1 : 2
+                        columnSpacing: 10
+                        rowSpacing: 10
 
                         // The models, each with what has it and its rows.
                         Rectangle {
-                            Layout.preferredWidth: Math.max(180, Math.min(300, models.width * 0.3))
-                            Layout.fillHeight: true
+                            Layout.preferredWidth: modelsBody.narrow ? -1 : Math.max(180, Math.min(300, models.width * 0.3))
+                            Layout.fillWidth: modelsBody.narrow
+                            Layout.preferredHeight: modelsBody.narrow ? 160 : -1
+                            Layout.fillHeight: !modelsBody.narrow
                             radius: 9
                             color: theme.card
                             border.color: theme.rule
@@ -4601,11 +4883,16 @@ ApplicationWindow {
                             Layout.fillHeight: true
                             spacing: 6
 
-                            RowLayout {
+                            // In one row while it fits, the buttons at its
+                            // end; wrapped onto more where it does not.
+                            Flow {
+                                id: rowsHead
                                 Layout.fillWidth: true
                                 spacing: 8
                                 Text {
-                                    Layout.fillWidth: true
+                                    width: Math.min(implicitWidth, rowsHead.width)
+                                    height: window.headHeight
+                                    verticalAlignment: Text.AlignVCenter
                                     elide: Text.ElideRight
                                     color: theme.subtle
                                     text: !models.table
@@ -4614,6 +4901,11 @@ ApplicationWindow {
                                         : models.table.type + " · rows " + models.table.offset + " to "
                                           + (models.table.offset + models.table.rows.length - 1) + " of " + models.table.count
                                           + (models.table.writable ? " · click a cell to edit it" : "")
+                                }
+                                Item {
+                                    id: rowsGap
+                                    width: window.spare(rowsHead, rowsGap)
+                                    height: 1
                                 }
                                 // The views that draw it, each opening on Objects.
                                 Repeater {
@@ -4971,15 +5263,23 @@ ApplicationWindow {
 
                     ListModel { id: wakeRows }
 
-                    RowLayout {
+                    // In one row while it fits, the controls at its end;
+                    // wrapped onto more where it does not.
+                    Flow {
+                        id: wakesHead
                         Layout.fillWidth: true
                         spacing: 10
-                        Text { text: "Wakes"; color: theme.text; font.pixelSize: 19; font.bold: true }
-                        // Takes what the buttons leave, so that a narrow
-                        // window cuts the summary, never a button.
                         Text {
-                            Layout.fillWidth: true
-                            Layout.minimumWidth: 0
+                            height: window.headHeight
+                            verticalAlignment: Text.AlignVCenter
+                            text: "Wakes"; color: theme.text; font.pixelSize: 19; font.bold: true
+                        }
+                        // Elided where the row is narrower than it; the
+                        // buttons go onto a row of their own then.
+                        Text {
+                            width: Math.min(implicitWidth, wakesHead.width)
+                            height: window.headHeight
+                            verticalAlignment: Text.AlignVCenter
                             elide: Text.ElideRight
                             text: (wakes.recording ? "keeping" : "not keeping") + " · "
                                   + wakeRows.count + " wakes"
@@ -4987,6 +5287,11 @@ ApplicationWindow {
                                      ? " · " + wakes.ownCount + " woken by this window hidden" : "")
                                   + (wakes.dropped > 0 ? " · " + wakes.dropped + " older gave way" : "")
                             color: wakes.recording ? theme.good : theme.subtle
+                        }
+                        Item {
+                            id: wakesGap
+                            width: window.spare(wakesHead, wakesGap)
+                            height: 1
                         }
                         CheckBox {
                             text: "Hide this window's requests"
@@ -5408,16 +5713,30 @@ ApplicationWindow {
                         shown = s
                     }
 
-                    RowLayout {
+                    // In one row while it fits, the controls at its end;
+                    // wrapped onto more where it does not.
+                    Flow {
+                        id: componentsHead
                         Layout.fillWidth: true
                         spacing: 10
-                        Text { text: "Components"; color: theme.text; font.pixelSize: 19; font.bold: true }
                         Text {
-                            Layout.fillWidth: true
+                            height: window.headHeight
+                            verticalAlignment: Text.AlignVCenter
+                            text: "Components"; color: theme.text; font.pixelSize: 19; font.bold: true
+                        }
+                        Text {
+                            width: Math.min(implicitWidth, componentsHead.width)
+                            height: window.headHeight
+                            verticalAlignment: Text.AlignVCenter
                             elide: Text.ElideRight
                             text: components.list.length + " loaded · " + components.live + " instances live"
                                   + (components.leftOut > 0 ? " · " + components.leftOut + " not listed" : "")
                             color: theme.subtle
+                        }
+                        Item {
+                            id: componentsGap
+                            width: window.spare(componentsHead, componentsGap)
+                            height: 1
                         }
                         Button {
                             text: "Mark"
@@ -5516,10 +5835,16 @@ ApplicationWindow {
                         }
                     }
 
-                    RowLayout {
+                    // Beside the instances on a wide page, above them on a
+                    // narrow one, where both need the whole width.
+                    GridLayout {
+                        id: componentsBody
+                        readonly property bool narrow: width < 560
                         Layout.fillWidth: true
                         Layout.fillHeight: true
-                        spacing: 10
+                        columns: narrow ? 1 : 2
+                        columnSpacing: 10
+                        rowSpacing: 10
 
                         Rectangle {
                             Layout.fillWidth: true
@@ -5628,7 +5953,8 @@ ApplicationWindow {
                         // The instances of the one picked; each opens on
                         // the Objects page.
                         Rectangle {
-                            Layout.preferredWidth: 300
+                            Layout.preferredWidth: componentsBody.narrow ? -1 : 300
+                            Layout.fillWidth: componentsBody.narrow
                             Layout.fillHeight: true
                             radius: 9
                             color: theme.card
@@ -5766,12 +6092,21 @@ ApplicationWindow {
                         objects.pick(handle, name)
                     }
 
-                    RowLayout {
+                    // In one row while it fits, the controls at its end;
+                    // wrapped onto more where it does not.
+                    Flow {
+                        id: bindingsHead
                         Layout.fillWidth: true
                         spacing: 10
-                        Text { text: "Bindings"; color: theme.text; font.pixelSize: 19; font.bold: true }
                         Text {
-                            Layout.fillWidth: true
+                            height: window.headHeight
+                            verticalAlignment: Text.AlignVCenter
+                            text: "Bindings"; color: theme.text; font.pixelSize: 19; font.bold: true
+                        }
+                        Text {
+                            width: Math.min(implicitWidth, bindingsHead.width)
+                            height: window.headHeight
+                            verticalAlignment: Text.AlignVCenter
                             elide: Text.ElideRight
                             text: (hot.recording ? "profiling for " + (hot.windowMs / 1000).toFixed(1) + " s"
                                                  : "not profiling")
@@ -5779,6 +6114,11 @@ ApplicationWindow {
                                   + (hot.rows.length < hot.count ? " · " + hot.rows.length + " shown" : "")
                                   + (hot.dropped > 0 ? " · " + hot.dropped + " runs not told apart" : "")
                             color: hot.recording ? theme.good : theme.subtle
+                        }
+                        Item {
+                            id: bindingsGap
+                            width: window.spare(bindingsHead, bindingsGap)
+                            height: 1
                         }
                         Button {
                             text: hot.recording ? "Stop" : "Record"
@@ -5791,22 +6131,39 @@ ApplicationWindow {
                     }
 
                     Rectangle {
+                        id: hotTable
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         radius: 9
                         color: theme.card
                         border.color: theme.rule
                         clip: true
+                        // Narrower than its columns, a row is laid out over
+                        // more lines: the binding on the first, its numbers
+                        // on the next, where it is and what set it off
+                        // under them. The heads wrap as the rows do.
+                        readonly property real line: width - 24
+                        readonly property bool narrow: line < 808
+                        readonly property real lineHeight: narrow ? 20 : 22
+                        function column(name) {
+                            if (name === "binding")
+                                return narrow ? line : 260
+                            if (name === "where")
+                                return 150
+                            // What set it off takes what is left of its line.
+                            return narrow ? Math.max(120, line - 160) : -1
+                        }
 
                         // The headings: a number's sorts by it.
-                        Row {
+                        Flow {
                             id: hotHead
                             x: 12; y: 8
-                            height: 22
+                            width: hotTable.line
                             spacing: 10
                             Text {
-                                width: 260
-                                anchors.verticalCenter: parent.verticalCenter
+                                width: hotTable.column("binding")
+                                height: hotTable.lineHeight
+                                verticalAlignment: Text.AlignVCenter
                                 text: "binding or handler"
                                 color: theme.subtle
                                 font.pixelSize: 11
@@ -5817,7 +6174,8 @@ ApplicationWindow {
                                 delegate: Text {
                                     required property var modelData
                                     width: modelData.width
-                                    anchors.verticalCenter: parent.verticalCenter
+                                    height: hotTable.lineHeight
+                                    verticalAlignment: Text.AlignVCenter
                                     horizontalAlignment: Text.AlignRight
                                     text: modelData.name + (hot.sort === modelData.key ? " ▾" : "")
                                     color: hot.sort === modelData.key ? theme.accent : theme.subtle
@@ -5832,16 +6190,19 @@ ApplicationWindow {
                                 }
                             }
                             Text {
-                                width: 150
+                                width: hotTable.column("where")
+                                height: hotTable.lineHeight
+                                verticalAlignment: Text.AlignVCenter
                                 leftPadding: 14
-                                anchors.verticalCenter: parent.verticalCenter
                                 text: "where"
                                 color: theme.subtle
                                 font.pixelSize: 11
                                 font.bold: true
                             }
                             Text {
-                                anchors.verticalCenter: parent.verticalCenter
+                                width: hotTable.narrow ? hotTable.column("cause") : implicitWidth
+                                height: hotTable.lineHeight
+                                verticalAlignment: Text.AlignVCenter
                                 text: "set off by"
                                 color: theme.subtle
                                 font.pixelSize: 11
@@ -5852,7 +6213,7 @@ ApplicationWindow {
                         ListView {
                             anchors.fill: parent
                             anchors.margins: 6
-                            anchors.topMargin: 34
+                            anchors.topMargin: hotHead.height + 12
                             clip: true
                             model: window.page === 12 ? hot.rows : []
                             ScrollBar.vertical: ScrollBar {}
@@ -5863,7 +6224,7 @@ ApplicationWindow {
                                 readonly property real share: (modelData[hot.sort + "_us"] !== undefined
                                                                ? modelData[hot.sort + "_us"] : modelData.runs) / hot.most
                                 width: ListView.view.width
-                                height: 26
+                                height: hotTable.narrow ? hotCells.height + 6 : 26
                                 Rectangle {
                                     anchors.fill: parent
                                     radius: 4
@@ -5877,13 +6238,16 @@ ApplicationWindow {
                                     color: hotRow.modelData.kind === "handler" ? theme.violet : theme.accent
                                     opacity: 0.6
                                 }
-                                Row {
+                                Flow {
+                                    id: hotCells
                                     x: 6
-                                    height: parent.height
+                                    y: hotTable.narrow ? 2 : (parent.height - hotTable.lineHeight) / 2
+                                    width: hotTable.line
                                     spacing: 10
                                     Text {
-                                        width: 260
-                                        anchors.verticalCenter: parent.verticalCenter
+                                        width: hotTable.column("binding")
+                                        height: hotTable.lineHeight
+                                        verticalAlignment: Text.AlignVCenter
                                         elide: Text.ElideRight
                                         text: hotRow.modelData.type + "." + hotRow.modelData.name
                                               + "  " + hotRow.modelData.object
@@ -5892,7 +6256,8 @@ ApplicationWindow {
                                     }
                                     Text {
                                         width: 60
-                                        anchors.verticalCenter: parent.verticalCenter
+                                        height: hotTable.lineHeight
+                                        verticalAlignment: Text.AlignVCenter
                                         horizontalAlignment: Text.AlignRight
                                         text: hotRow.modelData.runs
                                         color: theme.text
@@ -5904,7 +6269,8 @@ ApplicationWindow {
                                         delegate: Text {
                                             required property string modelData
                                             width: 76
-                                            anchors.verticalCenter: parent.verticalCenter
+                                            height: hotTable.lineHeight
+                                            verticalAlignment: Text.AlignVCenter
                                             horizontalAlignment: Text.AlignRight
                                             text: window.ms(hotRow.modelData[modelData])
                                             color: theme.text
@@ -5913,17 +6279,19 @@ ApplicationWindow {
                                         }
                                     }
                                     Text {
-                                        width: 150
+                                        width: hotTable.column("where")
+                                        height: hotTable.lineHeight
+                                        verticalAlignment: Text.AlignVCenter
                                         leftPadding: 14
-                                        anchors.verticalCenter: parent.verticalCenter
                                         elide: Text.ElideLeft
                                         text: hot.place(hotRow.modelData.at)
                                         color: theme.subtle
                                         font.pixelSize: 11
                                     }
                                     Text {
-                                        width: Math.max(60, hotRow.width - 790)
-                                        anchors.verticalCenter: parent.verticalCenter
+                                        width: hotTable.narrow ? hotTable.column("cause") : Math.max(60, hotRow.width - 790)
+                                        height: hotTable.lineHeight
+                                        verticalAlignment: Text.AlignVCenter
                                         elide: Text.ElideRight
                                         text: hot.causes(hotRow.modelData) || "—"
                                         color: theme.subtle
@@ -6041,18 +6409,32 @@ ApplicationWindow {
                         list = s.components
                     }
 
-                    RowLayout {
+                    // In one row while it fits, the controls at its end;
+                    // wrapped onto more where it does not.
+                    Flow {
+                        id: growthHead
                         Layout.fillWidth: true
                         spacing: 10
-                        Text { text: "Growth"; color: theme.text; font.pixelSize: 19; font.bold: true }
                         Text {
-                            Layout.fillWidth: true
+                            height: window.headHeight
+                            verticalAlignment: Text.AlignVCenter
+                            text: "Growth"; color: theme.text; font.pixelSize: 19; font.bold: true
+                        }
+                        Text {
+                            width: Math.min(implicitWidth, growthHead.width)
+                            height: window.headHeight
+                            verticalAlignment: Text.AlignVCenter
                             elide: Text.ElideRight
                             text: (growth.recording ? "sampling for " + (growth.windowMs / 1000).toFixed(1) + " s · "
                                                       + growth.samples + " samples"
                                                     : "not sampling")
                                   + " · " + growth.growing + " of " + growth.count + " keep growing"
                             color: growth.growing > 0 ? theme.bad : growth.recording ? theme.good : theme.subtle
+                        }
+                        Item {
+                            id: growthGap
+                            width: window.spare(growthHead, growthGap)
+                            height: 1
                         }
                         Button {
                             text: growth.recording ? "Stop" : "Record"
@@ -6307,14 +6689,23 @@ ApplicationWindow {
                                   ? "; " + report.notChecked.length + " acting checks skipped" : "")
                     }
 
-                    RowLayout {
+                    // In one row while it fits, the controls at its end;
+                    // wrapped onto more where it does not.
+                    Flow {
+                        id: auditHead
                         Layout.fillWidth: true
                         spacing: 10
-                        Text { text: "Audit"; color: theme.text; font.pixelSize: 19; font.bold: true }
+                        Text {
+                            height: window.headHeight
+                            verticalAlignment: Text.AlignVCenter
+                            text: "Audit"; color: theme.text; font.pixelSize: 19; font.bold: true
+                        }
                         Text {
                             Accessible.role: Accessible.StaticText
                             Accessible.name: text
-                            Layout.fillWidth: true
+                            width: Math.min(implicitWidth, auditHead.width)
+                            height: window.headHeight
+                            verticalAlignment: Text.AlignVCenter
                             elide: Text.ElideRight
                             text: audit.summary()
                             color: audit.report && (audit.report.counts.error > 0) ? theme.bad : theme.subtle
