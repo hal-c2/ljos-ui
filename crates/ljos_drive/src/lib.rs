@@ -76,6 +76,7 @@ use std::sync::Arc;
 
 use ljos_a11y::{AccessibleNode, NodeKey};
 use ljos_engine::{Engine, ObjectId, Value};
+use ljos_quick::touch::TouchEvent;
 use ljos_quick::{
     InputOrigin, KeyEvent, Modifiers, MouseButtons, PointerEvent, PointerId, QuickScene, WheelEvent,
 };
@@ -300,6 +301,16 @@ impl<'a> Driver<'a> {
         self.scene
             .with_input_origin(InputOrigin::Synthetic, |scene| {
                 scene.wheel_event(engine, ev)
+            })
+    }
+
+    /// Hands the scene one frame of touch points, as a touch screen
+    /// reports them, and nothing more. Whether something took one.
+    pub fn send_touch(&mut self, events: &[TouchEvent]) -> bool {
+        let engine = self.engine;
+        self.scene
+            .with_input_origin(InputOrigin::Synthetic, |scene| {
+                scene.touch_event(engine, events)
             })
     }
 
