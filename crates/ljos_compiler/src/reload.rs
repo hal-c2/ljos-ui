@@ -1209,9 +1209,11 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
                 .all(|((ka, a), (kb, b))| ka == kb && (Arc::ptr_eq(a, b) || a == b))
         {
             // The files compile to what runs: a text compiled against them
-            // is what it would be against what runs.
+            // is what it would be against what runs, but for a file that
+            // runs its seed, whose saved text does not compile.
             self.pending = None;
-            self.unrun.clear();
+            let reverted = &self.reverted;
+            self.unrun.retain(|key, _| reverted.contains(key));
             return Ok(None);
         }
         self.last += 1;
