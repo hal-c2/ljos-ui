@@ -129,9 +129,9 @@ jobs:
   # ljos_js for Android from the bindings bundled in the vendored rquickjs-sys, and those
   # bindings held to what bindgen makes of the NDK sysroot (#612,
   # docs/spikes/02-rquickjs-android-bindgen.md): the build needs the NDK and rustup
-  # targets only, never libclang; libclang here serves the regeneration alone. Not the
-  # setup action: it removes the runner's Android directories and installs what only the
-  # desktop build needs.
+  # targets only, never libclang, and the regeneration uses the NDK's own libclang, so
+  # nothing comes from the runner's distribution. Not the setup action: it removes the
+  # runner's Android directories and installs what only the desktop build needs.
   android-bindings:
     needs: changes
     if: needs.changes.outputs.android == 'true'
@@ -157,7 +157,6 @@ jobs:
         with:
           ndk-version: r27c
           add-to-path: false
-      - run: sudo apt-get update && sudo apt-get install -y libclang-dev
       - run: bash scripts/android-bindings.sh check
         env:
           ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
