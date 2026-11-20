@@ -27,6 +27,8 @@ objc2-core-foundation = { workspace = true, features = ["CFDictionary", "CFData"
 # The Android Keystore, through the application's Java side.
 [target.'cfg(target_os = "android")'.dependencies]
 ljos_jni = { path = "../ljos_jni" }
+# Named here as well: `jni_str!` and `jni_sig!` expand to paths in `::jni`.
+jni.workspace = true
 
 # The Credential Manager.
 [target.'cfg(target_os = "windows")'.dependencies]

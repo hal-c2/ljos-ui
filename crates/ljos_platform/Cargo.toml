@@ -40,6 +40,8 @@ rustls = { workspace = true, optional = true }
 # The system's services on Android, through the application's Java side.
 [target.'cfg(target_os = "android")'.dependencies]
 ljos_jni = { path = "../ljos_jni" }
+# Named here as well: `jni_str!` and `jni_sig!` expand to paths in `::jni`.
+jni.workspace = true
 log.workspace = true
 
 [build-dependencies]

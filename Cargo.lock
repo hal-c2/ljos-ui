@@ -4722,6 +4722,7 @@ version = "0.0.0"
 dependencies = [
  "arboard",
  "futures",
+ "jni",
  "ljos_a11y",
  "ljos_compiler",
  "ljos_controls",
@@ -4890,6 +4891,7 @@ name = "ljos_secrets"
 version = "0.0.0"
 dependencies = [
  "blocking",
+ "jni",
  "ljos_jni",
  "objc2-core-foundation",
  "tempfile",

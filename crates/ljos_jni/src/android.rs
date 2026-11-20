@@ -100,10 +100,7 @@ pub fn take_exception(env: &mut Env<'_>) -> Option<String> {
     if !env.exception_check() {
         return None;
     }
-    let thrown: JThrowable<'_> = match env.exception_occurred() {
-        Some(thrown) => thrown,
-        None => return None,
-    };
+    let thrown: JThrowable<'_> = env.exception_occurred()?;
     env.exception_clear();
     let text = env
         .call_method(
