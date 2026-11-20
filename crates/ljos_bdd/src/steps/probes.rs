@@ -447,7 +447,7 @@ fn boxes(
 fn observer_holds(
     probes: &mut dyn crate::backend::Probes,
     mut look: impl FnMut(&mut dyn crate::backend::Probes) -> Result<Option<String>, BackendError>,
-) -> StepResult {
+) -> Result<(), BackendError> {
     let deadline = std::time::Instant::now() + OBSERVER_ANSWERS;
     let told = probes.observer_call("app_watch", serde_json::json!({ "topics": ["frames"] }))?;
     let mut frames = told["counts"]["frames"].as_u64();
