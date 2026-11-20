@@ -1645,3 +1645,36 @@ fn what_each_group_holds_is_counted_once_without_running_getters() {
     assert!(cut.truncated);
     assert_eq!(cut.values, 100);
 }
+
+#[test]
+fn reading_numbers_counts_against_the_walk_budget() {
+    let host = plain();
+    let nums = host
+        .enter("make", host.config().slice, |s| {
+            let v = s.eval::<rquickjs::Value, _>("Array.from({ length: 1000 }, (_, i) => i)")?;
+            Ok(s.keep(v))
+        })
+        .unwrap();
+    let held = host
+        .enter("walk", host.config().slice, |s| Ok(s.held_by([vec![&nums]], 2)))
+        .unwrap();
+    assert!(held.truncated, "{held:?}");
+}
+
+#[test]
+fn an_array_no_script_has_read_is_not_made_to_be_measured() {
+    let host = plain();
+    eval_num(
+        &host,
+        "globalThis.made = 0; globalThis.__ljos_arrayMade = () => { made++ }; 0",
+    )
+    .unwrap();
+    let pending = ljos_js::JsRef::array_of_kind(vec![JsValue::Number(1.0)], "rows");
+    let held = host
+        .enter("walk", host.config().slice, |s| {
+            Ok(s.held_by([vec![&pending]], usize::MAX))
+        })
+        .unwrap();
+    assert_eq!(held.bytes, [0], "{held:?}");
+    assert_eq!(eval_num(&host, "made").unwrap(), 0.0, "nothing was made");
+}
