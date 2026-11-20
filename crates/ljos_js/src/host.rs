@@ -89,6 +89,9 @@ struct InterruptState {
     polled: Cell<Option<(Instant, Instant)>>,
     /// The time off the processor excused since `polled`.
     excused: Cell<Duration>,
+    /// How many times QuickJS has polled the handler: once per 10k jumps
+    /// and calls, a count of script work that no clock moves.
+    polls: Cell<u64>,
 }
 
 /// What the time is, for the limits on a run of JavaScript; a test sets
@@ -1728,6 +1731,7 @@ impl JsHost {
             // QuickJS calls this about every 10k opcodes (roughly 266 us), so
             // one clock read per call costs well under 0.5 %.
             rt.set_interrupt_handler(Some(Box::new(move || {
+                st.polls.set(st.polls.get().wrapping_add(1));
                 let overdue = st.overdue();
                 if overdue {
                     st.fired.set(true);
@@ -2558,6 +2562,19 @@ impl JsHost {
     /// a run.
     pub fn heap_bytes(&self) -> usize {
         self.heap.bytes()
+    }
+
+    /// The script work done so far: one per 10k jumps and calls the
+    /// interpreter ran. The same scripts do the same work on every run,
+    /// whatever the machine or its load, so a difference of two readings
+    /// measures what ran between them without a clock.
+    pub fn work(&self) -> u64 {
+        self.interrupt.polls.get()
+    }
+
+    /// The most the runtime may hold, if it is capped.
+    pub fn memory_limit(&self) -> Option<usize> {
+        self.cfg.memory_limit
     }
 
     /// Unconditional collection (memory pressure). Not available inside a run.

@@ -149,6 +149,33 @@ pub mod audit {
     pub const VISIBLE_CHANGE_MIN_PX: usize = 8;
 }
 
+/// How the application runs while it is audited (the `health-*` rules).
+pub mod health {
+    /// The script work one turn may do, in the interpreter's polls (one
+    /// per 10k jumps and calls: a loop's turns, a function's calls): about
+    /// 110 ms of script in an optimised build, just past a turn's budget
+    /// (`ljos_engine::DEFAULT_TURN_BUDGET`). Counted, not timed, so a turn
+    /// over it is over it on any machine.
+    pub const TURN_WORK_MAX: u64 = 750;
+    /// About how long one poll of plain script takes in an optimised
+    /// build, in milliseconds: what a finding says the work comes to. A
+    /// debug build takes three to four times as long.
+    pub const POLL_MS: f64 = 0.15;
+    /// At least this share of the script heap's cap stays free after a
+    /// collection.
+    pub const HEAP_HEADROOM_MIN: f64 = 0.25;
+    /// The application is let run this many windows of this long, the heap
+    /// sampled after a collection before the first and after each.
+    pub const HEAP_WINDOWS: u32 = 4;
+    pub const HEAP_WINDOW_MS: u32 = 1000;
+    /// The heap leaks when it grew after every window and by at least this
+    /// much in all: less is a cache filling.
+    pub const HEAP_GROWTH_MIN_BYTES: usize = 1024 * 1024;
+    /// A scene with nothing animating that is framed this often or more in
+    /// a second of the last window is doing work every frame.
+    pub const IDLE_FRAMES_MAX: u32 = 30;
+}
+
 /// Content that moves this far or more after it was shown counts as a
 /// layout shift.
 pub const LAYOUT_SHIFT_MIN_PX: f32 = 4.0;

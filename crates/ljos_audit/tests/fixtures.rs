@@ -170,6 +170,7 @@ fn run(source: &str, point: Option<MatrixPoint>) -> Result<Report, String> {
     let e = engine();
     let clock = Arc::new(VirtualClock::new());
     e.set_clock(Rc::new(Arc::clone(&clock)));
+    ljos_audit::watch(&e);
     let root = load(&e, source)?;
     let size = |p| e.read(root, p).to_number();
     let (mut w, mut h) = (size(Item::WIDTH.index), size(Item::HEIGHT.index));
@@ -194,6 +195,7 @@ fn run(source: &str, point: Option<MatrixPoint>) -> Result<Report, String> {
         // A fixture is the test's own scene; the acting checks have
         // fixtures of their own.
         act: true,
+        clock: (*clock).clone().into(),
         ..Options::desktop()
     };
     Ok(audit(&e, &mut s, clock.now(), &options))

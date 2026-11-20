@@ -1256,9 +1256,11 @@ fn an_audit_not_let_act_runs_no_handler_and_says_what_it_did_not_check() {
             .all(|c| !report.codes().contains(c)),
         "\n{report}"
     );
+    // The checks that act, and those that let the application run.
     let mut acting: Vec<&str> = crate::rules::ACTS
         .iter()
         .flat_map(|c| c.codes.iter().copied())
+        .chain(crate::health::RUNNING.iter().copied())
         .collect();
     acting.sort_unstable();
     assert_eq!(report.not_checked, acting);
@@ -1283,9 +1285,12 @@ fn an_audit_not_let_act_runs_no_handler_and_says_what_it_did_not_check() {
         ["motion-duration"]
     );
 
+    // With no clock to let it run on, the application is not let run.
     let report = audit(&e, &mut s, Time::ZERO, &Options::desktop());
     assert!(ran() > 0.0, "the acting checks toggled the box");
-    assert!(report.not_checked.is_empty());
+    let mut running = crate::health::RUNNING.to_vec();
+    running.sort_unstable();
+    assert_eq!(report.not_checked, running);
 }
 
 /// The findings of an audit of only `part` of `source` (a property of

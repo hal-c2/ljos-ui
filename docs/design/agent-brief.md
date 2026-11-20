@@ -112,6 +112,13 @@ Follow every line. `[code]` is the rule that finds the mistake; its section is `
 - Write toasts with what, how many and an undo; title settings pages one way.
 - Show a row's state on the row; never mention features the build lacks; avoid ambiguous one-word statuses.
 
+## Health
+- Keep a turn's script under about 200 ms; apply what changed, not the whole value. [health-turn-over-budget] [health-turn-slow]
+- Guard handlers against data that is not there yet; a fault leaves work half done. [health-fault]
+- Leave no Loader at `Loader.Error` or active with nothing made. [health-loader-failed]
+- Keep the script heap well under its cap, and keep nothing per update. [health-heap-headroom] [health-heap-growth]
+- Draw nothing while idle: no repeating timer that moves things. [health-never-settles]
+
 ## Sources
 - The full guide and its sources: docs/design/README.md
 - WCAG 2.2: https://www.w3.org/TR/WCAG22/

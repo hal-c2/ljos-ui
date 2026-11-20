@@ -229,6 +229,12 @@ impl Picture {
     pub fn now(&self) -> ljos_runtime::Time {
         ljos_runtime::Clock::now(&*self.clock)
     }
+
+    /// The picture's clock, which an installed engine's timers run on: a
+    /// clone on the same timeline.
+    pub fn clock(&self) -> VirtualClock {
+        (*self.clock).clone()
+    }
 }
 
 /// A PNG of the scene: on white, or on nothing for a window, which

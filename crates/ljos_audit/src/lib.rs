@@ -25,6 +25,7 @@ mod apply;
 mod cx;
 mod finding;
 mod focus_walk;
+mod health;
 mod matrix;
 mod motion_watch;
 mod pixels;
@@ -49,7 +50,7 @@ pub use shift::Placement;
 pub enum AuditError {
     #[error(
         "`{0}` is neither a rule the audit checks nor an area (a11y, color, text, layout, \
-         focus, motion, content)"
+         focus, motion, content, health)"
     )]
     UnknownRule(String),
 }
@@ -87,6 +88,40 @@ pub struct Options {
     /// running application turns them on only when its user asks. Off,
     /// [`Report::not_checked`] names the codes they would have checked.
     pub act: bool,
+    /// The application's own clock, which its timers run on: given, and
+    /// with [`Options::act`], the health checks let the application run
+    /// on it for a few seconds of its time to see its heap and its frames
+    /// ([`watch`]). Not given, [`Report::not_checked`] names those codes.
+    pub clock: AppClock,
+}
+
+/// The clock an application's timers run on, for [`Options::clock`].
+#[derive(Clone, Debug, Default)]
+pub struct AppClock(pub Option<ljos_runtime::VirtualClock>);
+
+impl PartialEq for AppClock {
+    /// The same clock: clones of one timeline.
+    fn eq(&self, other: &Self) -> bool {
+        match (&self.0, &other.0) {
+            (Some(a), Some(b)) => a.same_timeline(b),
+            (None, None) => true,
+            _ => false,
+        }
+    }
+}
+
+impl From<ljos_runtime::VirtualClock> for AppClock {
+    fn from(clock: ljos_runtime::VirtualClock) -> Self {
+        AppClock(Some(clock))
+    }
+}
+
+/// Starts recording what the application's turns do, for the health
+/// checks to judge: call it before the application loads, so its startup
+/// is judged too. An audit of an engine that was not watched records from
+/// the audit on.
+pub fn watch(engine: &Engine) {
+    engine.record_turns(true);
 }
 
 impl Options {
@@ -104,6 +139,7 @@ impl Options {
             // (a test, a fixture, `ljos audit`'s own instance); a live
             // host (app_audit, the observer) turns it off.
             act: true,
+            clock: AppClock::default(),
         }
     }
 
@@ -156,6 +192,7 @@ pub fn area_word(area: Area) -> &'static str {
         Area::Focus => "focus",
         Area::Motion => "motion",
         Area::Content => "content",
+        Area::Health => "health",
         Area::Meta => "meta",
     }
 }
@@ -225,6 +262,7 @@ fn merge(all: &mut Vec<Finding>, found: Vec<Finding>, point: MatrixPoint, many: 
 /// the length of the audit when it is off, and a frame is run when the
 /// scene has none to show or is waiting for one.
 pub fn audit(engine: &Engine, scene: &mut QuickScene, now: Time, options: &Options) -> Report {
+    watch(engine);
     let was_active = scene.accessibility_active();
     if !was_active {
         scene.set_accessibility_active(engine, true);
@@ -284,11 +322,31 @@ pub fn audit(engine: &Engine, scene: &mut QuickScene, now: Time, options: &Optio
     if let Some(h) = held {
         apply::restore(engine, scene, at, h);
     }
+    // How the application runs, once: what the checks above set off is
+    // part of it.
+    let ran = walked.is_ok().then(|| {
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            health::run(engine, scene, at, options)
+        }))
+    });
     if !was_active {
         scene.set_accessibility_active(engine, false);
     }
     if let Err(panic) = walked {
         std::panic::resume_unwind(panic);
+    }
+    match ran {
+        Some(Ok((found, reached))) => {
+            at = reached;
+            findings.extend(found.into_iter().filter(|f| {
+                options.wants(f.code)
+                    && options
+                        .within
+                        .is_none_or(|root| f.item.is_some_and(|i| cx::belongs_to(engine, i, root)))
+            }));
+        }
+        Some(Err(panic)) => std::panic::resume_unwind(panic),
+        None => {}
     }
     let mut left_out = 0;
     if let Some(max) = options.max_findings
@@ -310,14 +368,15 @@ pub fn audit(engine: &Engine, scene: &mut QuickScene, now: Time, options: &Optio
 /// The codes only the acting checks look for that `options` asked for,
 /// when it did not let them act.
 fn not_checked(options: &Options) -> Vec<&'static str> {
-    if options.act {
-        return Vec::new();
-    }
-    let mut out: Vec<&'static str> = rules::ACTS
+    let acts = rules::ACTS
         .iter()
         .flat_map(|c| c.codes.iter().copied())
-        .filter(|c| options.wants(c))
-        .collect();
+        .filter(|_| !options.act);
+    let running = health::RUNNING
+        .iter()
+        .copied()
+        .filter(|_| !options.act || options.clock.0.is_none());
+    let mut out: Vec<&'static str> = acts.chain(running).filter(|c| options.wants(c)).collect();
     out.sort_unstable();
     out.dedup();
     out

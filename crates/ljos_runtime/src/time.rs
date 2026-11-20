@@ -149,6 +149,11 @@ impl VirtualClock {
         self.advance(Duration::from_millis(ms));
     }
 
+    /// Whether `other` is a clone of this clock, on the same timeline.
+    pub fn same_timeline(&self, other: &VirtualClock) -> bool {
+        Arc::ptr_eq(&self.now, &other.now)
+    }
+
     /// Jumps forward to `t`. Time never runs backwards: an earlier `t` is ignored.
     pub fn set(&self, t: Time) {
         self.now.fetch_max(t.0, Ordering::AcqRel);

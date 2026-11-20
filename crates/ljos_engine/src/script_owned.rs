@@ -240,4 +240,23 @@ impl Engine {
             objects: stats.object_count,
         })
     }
+
+    /// The script work done so far, in the interpreter's polls (one per
+    /// about 10k jumps and calls): the same on every run of the same scripts, so
+    /// two readings measure the work between them on any clock. Zero
+    /// before a script ran.
+    pub fn script_work(&self) -> u64 {
+        if !self.js_started() {
+            return 0;
+        }
+        self.js().map_or(0, |js| js.host.work())
+    }
+
+    /// The most the script heap may hold, if it is capped.
+    pub fn script_memory_limit(&self) -> Option<usize> {
+        if !self.js_started() {
+            return None;
+        }
+        self.js().ok()?.host.memory_limit()
+    }
 }
