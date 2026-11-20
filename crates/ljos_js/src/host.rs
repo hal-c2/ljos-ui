@@ -1662,6 +1662,9 @@ pub struct JsHost {
     interrupt: Rc<InterruptState>,
     cfg: JsConfig,
     last_collect: Cell<usize>,
+    /// Full collections run, by [`JsHost::collect_now`] and
+    /// [`JsHost::collect_if_idle`].
+    collections: Cell<u64>,
     heap: HeapCount,
     /// Loaded bytecode is read in place (QuickJS `ROM_DATA`): module code
     /// points into these buffers, so they must outlive the runtime. Declared
@@ -1817,6 +1820,7 @@ impl JsHost {
             interrupt,
             cfg,
             last_collect: Cell::new(0),
+            collections: Cell::new(0),
             heap,
             bytecode: RefCell::default(),
         })
@@ -1883,6 +1887,7 @@ impl JsHost {
         }
         self.state.entered.set(true);
         let guard = EnterGuard(&self.state.entered);
+        self.heap.mark();
         self.state.drain_handles();
         self.interrupt.fired.set(false);
         self.interrupt.stopped_in.take();
@@ -2004,13 +2009,19 @@ impl JsHost {
         }
         st.deadline.set(Some(start + slice.hard));
         st.settle();
+        // A nested run judges a thrown `null` against its own peak: the
+        // outer one may have filled the heap long before and been
+        // collected since.
+        let outer_peak = self.heap.mark();
         let r = f(&scope);
         let took = st.now(Timing::Leave) - start;
         st.deadline.set(st.outer.borrow_mut().pop());
         st.give_back(took, before, false);
-        let fault = match r {
+        let fault = r.map_err(|e| self.classify(&scope, e, label, took));
+        self.heap.resume(outer_peak);
+        let fault = match fault {
             Ok(v) => return Ok(v),
-            Err(e) => self.classify(&scope, e, label, took),
+            Err(fault) => fault,
         };
         if matches!(fault, JsFault::JsInterrupted { .. }) {
             self.state.stopped.set(true);
@@ -2046,6 +2057,7 @@ impl JsHost {
             Sources {
                 mapper: mapper.as_deref(),
                 text: text.as_deref(),
+                heap: Some(&self.heap),
             },
         )
     }
@@ -2419,6 +2431,7 @@ impl JsHost {
             return Pumped::default();
         }
         let guard = EnterGuard(&self.state.entered);
+        self.heap.mark();
         self.interrupt.fired.set(false);
         self.state.stopped.set(false);
         // A job's deadline is the pump's, and so is the ceiling: nested runs
@@ -2454,6 +2467,7 @@ impl JsHost {
                             Sources {
                                 mapper: mapper.as_deref(),
                                 text: text.as_deref(),
+                                heap: Some(&self.heap),
                             },
                         )
                     });
@@ -2535,6 +2549,7 @@ impl JsHost {
         }
         self.rt.run_gc();
         self.last_collect.set(self.heap_bytes());
+        self.collections.set(self.collections.get() + 1);
         self.flush_released();
         true
     }
@@ -2579,8 +2594,14 @@ impl JsHost {
         }
         self.rt.run_gc();
         self.last_collect.set(self.heap_bytes());
+        self.collections.set(self.collections.get() + 1);
         self.flush_released();
         true
+    }
+
+    /// How many full collections ran, for a tool that watches memory.
+    pub fn collections(&self) -> u64 {
+        self.collections.get()
     }
 
     /// Whether JS is running: a native function called from a script, or
@@ -3186,6 +3207,8 @@ fn callback_scope<'js>(
 pub(crate) struct Sources<'a> {
     pub(crate) mapper: Option<&'a SourceMapper>,
     pub(crate) text: Option<&'a SourceText>,
+    /// The run's heap, for how full it was at its fullest.
+    pub(crate) heap: Option<&'a HeapCount>,
 }
 
 /// Turns an rquickjs error into a [`JsFault`], draining the pending exception.
@@ -3232,7 +3255,7 @@ pub(crate) fn classify_error<'js>(
 fn describe_exception(
     thrown: &Value<'_>,
     label: &str,
-    Sources { mapper, text }: Sources<'_>,
+    Sources { mapper, text, heap }: Sources<'_>,
 ) -> JsFault {
     let as_text = |v: &Value<'_>| {
         v.get::<rquickjs::convert::Coerced<String>>()
@@ -3294,8 +3317,10 @@ fn describe_exception(
         // QuickJS throws `null` when it cannot make the error it meant to
         // throw (quickjs.c `JS_ThrowError2`): the heap is out, and that
         // `null` is all that is left of an "out of memory". A script's own
-        // `throw null` is told apart by the heap having room.
-        None if thrown.is_null() && heap_nearly_full(thrown.ctx()) => {
+        // `throw null` is told apart by the heap having had room all run.
+        None if thrown.is_null()
+            && heap_nearly_full(thrown.ctx(), heap.map_or(0, HeapCount::freed_since_peak)) =>
+        {
             return JsFault::JsOutOfMemory {
                 label: label.to_owned(),
             };
@@ -3340,7 +3365,7 @@ fn describe_exception(
 /// QuickJS to have made an error object, after what unwinding the failed
 /// run let go of. False with no limit. Walks the heap, which only a thrown
 /// `null` asks for.
-fn heap_nearly_full(ctx: &Ctx<'_>) -> bool {
+fn heap_nearly_full(ctx: &Ctx<'_>, freed: usize) -> bool {
     // SAFETY: the context is live while `ctx` is, and so its runtime.
     let usage = unsafe {
         let rt = rquickjs::qjs::JS_GetRuntime(ctx.as_raw().as_ptr());
@@ -3349,7 +3374,11 @@ fn heap_nearly_full(ctx: &Ctx<'_>) -> bool {
         usage.assume_init()
     };
     let limit = u64::try_from(usage.malloc_limit).unwrap_or(0);
-    let size = u64::try_from(usage.malloc_size).unwrap_or(0);
+    // The locals of the functions the exception left are freed by now:
+    // the heap is judged as it was at its fullest.
+    let size = u64::try_from(usage.malloc_size)
+        .unwrap_or(0)
+        .saturating_add(u64::try_from(freed).unwrap_or(u64::MAX));
     // No limit is 0.
     limit > 0 && size.saturating_add(limit / 16) >= limit
 }

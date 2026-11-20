@@ -10,21 +10,53 @@ use std::{cell::Cell, rc::Rc};
 
 use rquickjs::allocator::Allocator;
 
-/// Bytes the runtime holds from the system, shared with the host.
+/// Bytes the runtime holds from the system, shared with the host, and the
+/// most it held since [`HeapCount::mark`].
 #[derive(Debug, Clone, Default)]
-pub(crate) struct HeapCount(Rc<Cell<usize>>);
+pub(crate) struct HeapCount(Rc<Count>);
+
+#[derive(Debug, Default)]
+struct Count {
+    bytes: Cell<usize>,
+    peak: Cell<usize>,
+}
 
 impl HeapCount {
     pub(crate) fn bytes(&self) -> usize {
-        self.0.get()
+        self.0.bytes.get()
+    }
+
+    /// Starts the high-water mark again from what is held now; a host
+    /// does this as a run begins. Returns the mark it replaces, for a
+    /// nested run to hand back with [`HeapCount::resume`].
+    pub(crate) fn mark(&self) -> usize {
+        self.0.peak.replace(self.bytes())
+    }
+
+    /// Goes back to the run a nested one interrupted: its mark `outer`,
+    /// or the nested run's if that went higher, since the outer run held
+    /// the heap then too.
+    pub(crate) fn resume(&self, outer: usize) {
+        self.0.peak.set(self.0.peak.get().max(outer));
+    }
+
+    /// How much was let go since the most the heap held after the last
+    /// [`HeapCount::mark`]: what a function that ran out held in its
+    /// locals is freed as its exception unwinds it.
+    pub(crate) fn freed_since_peak(&self) -> usize {
+        self.0.peak.get().saturating_sub(self.bytes())
     }
 
     fn add(&self, bytes: usize) {
-        self.0.set(self.0.get().saturating_add(bytes));
+        let held = self.bytes().saturating_add(bytes);
+        self.0.bytes.set(held);
+        if held > self.0.peak.get() {
+            self.0.peak.set(held);
+        }
     }
 
     fn sub(&self, bytes: usize) {
-        self.0.set(self.0.get().saturating_sub(bytes));
+        self.0.bytes.set(self.bytes().saturating_sub(bytes));
     }
 }
 

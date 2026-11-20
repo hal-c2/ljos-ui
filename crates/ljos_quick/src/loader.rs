@@ -170,6 +170,8 @@ struct Run {
     /// told to load before it: its timer, when it is due, and how it is
     /// counted.
     waiting: Option<(ljos_runtime::TimerId, Time, Count)>,
+    /// What stopped the script of the last fault [`Backoff`] counted.
+    last_cut: Option<Cut>,
     /// When a script an item set off elsewhere by itself was last
     /// interrupted, how many were in a row, and the generation of the item
     /// that loaded again for it: an item any other load made starts anew.
@@ -456,7 +458,13 @@ impl Boundary for LoaderBoundary {
             // could run out again, so it is counted as an interrupt made
             // while the item was made.
             Fault::JsOutOfMemory => {
-                e.collect_garbage();
+                // Rows run out together: the first Loader told collects,
+                // and the rest, whose faults came before it, load into
+                // what it freed.
+                let collected = e.extension::<CollectedThrough>();
+                if report.seq > collected.0.get() && e.collect_garbage() {
+                    collected.0.set(e.faults_reported());
+                }
                 load_again(e, me, report.at, Again::Counted, Cut::OutOfMemory);
             }
             _ => {}
@@ -489,8 +497,13 @@ enum Again {
     Elsewhere { made_in: u64 },
 }
 
+/// [`Engine::faults_reported`] when a Loader last collected the garbage
+/// for a full heap: a fault reported by then needs no other collection.
+#[derive(Default)]
+struct CollectedThrough(std::cell::Cell<u64>);
+
 /// What stopped a script a Loader loads again for.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Cut {
     /// The run was interrupted.
     Interrupted,
@@ -567,19 +580,26 @@ fn load_again(e: &Engine, me: ObjectId, at: Time, again: Again, cut: Cut) {
         return;
     }
     let place = e.declared_at(me).unwrap_or_default();
-    let what = match cut {
+    let what = |cut| match cut {
         Cut::Interrupted => "a script was interrupted",
         Cut::OutOfMemory => "its item ran out of script memory",
     };
     let (wait, count, message) = if again == Again::Counted {
-        let Some(wait) = with_run(e, me, |r| r.backoff.fault(at)) else {
+        let Some((wait, was)) = with_run(e, me, |r| (r.backoff.fault(at), r.last_cut.replace(cut)))
+        else {
             return;
         };
         let message = if wait.is_zero() {
-            format!("{place}Loader: {what}, loading again")
+            format!("{place}Loader: {}, loading again", what(cut))
         } else {
+            // The fault before it was another kind: not "again".
+            let after = match was {
+                Some(was) if was != cut => format!(" soon after {}", what(was)),
+                _ => " again".to_owned(),
+            };
             format!(
-                "{place}Loader: {what} again, so it stays at Loader.Error and loads again in {}",
+                "{place}Loader: {}{after}, so it stays at Loader.Error and loads again in {}",
+                what(cut),
                 seconds(wait)
             )
         };
