@@ -204,6 +204,16 @@ impl<O: TypeOracle + Clone> Reloader<O> {
         self.session.take_refused()
     }
 
+    /// [`ReloadSession::compile_text`].
+    pub fn compile_text(
+        &mut self,
+        key: &str,
+        text: &str,
+        beside: &[(String, String)],
+    ) -> Result<ljos_compiler::Compiled, Vec<ljos_compiler::Diagnostic>> {
+        self.session.compile_text(key, text, beside)
+    }
+
     /// [`ReloadSession::refuse`].
     pub fn refuse(&mut self, why: Refusal) {
         self.session.refuse(why);

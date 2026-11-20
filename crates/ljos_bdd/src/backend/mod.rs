@@ -86,6 +86,9 @@ pub struct UserSeen {
     pub told: Vec<String>,
     /// The user's directory, as a `file:` URL with no `/` at its end.
     pub dir: String,
+    /// A compiler was made for QML a script holds as text, or for a file
+    /// the application was not built with.
+    pub texts: bool,
 }
 
 /// Why a changed file was not applied.
@@ -1079,6 +1082,36 @@ pub trait Application: Backend {
     /// no compiler.
     fn run_built_ahead(&mut self, _entry: &str) -> Result<()> {
         Err(BackendError::NotImplemented("an application built ahead"))
+    }
+
+    /// The file `name` of the directory the application loads its
+    /// plugins from while it runs (`UserQml::loads_from`) is `text`.
+    fn plugin_file(&mut self, _name: &str, _text: &str) -> Result<()> {
+        Err(BackendError::NotImplemented("a plugin directory"))
+    }
+
+    /// The address of the file `name` of the application's plugin
+    /// directory, as a script is given it.
+    fn plugin_url(&mut self, _name: &str) -> Result<String> {
+        Err(BackendError::NotImplemented("a plugin directory"))
+    }
+
+    /// The file `name` of the application's plugin directory is a link
+    /// to the file `target` outside the application's directories.
+    fn plugin_link_out(&mut self, _name: &str, _target: &str) -> Result<()> {
+        Err(BackendError::NotImplemented("a plugin directory"))
+    }
+
+    /// The file `name` in neither the user's directory nor one the
+    /// application loads from is `text`.
+    fn outside_file(&mut self, _name: &str, _text: &str) -> Result<()> {
+        Err(BackendError::NotImplemented("a plugin directory"))
+    }
+
+    /// The address of the file `name` outside the application's
+    /// directories, as a script is given it.
+    fn outside_url(&mut self, _name: &str) -> Result<String> {
+        Err(BackendError::NotImplemented("a plugin directory"))
     }
 
     /// Each `Window` is a platform window of its own, as where the

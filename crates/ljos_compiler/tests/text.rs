@@ -3,7 +3,7 @@
 
 mod oracle;
 
-use ljos_compiler::{Project, Severity, compile_file, compile_text};
+use ljos_compiler::{Project, Severity, compile_file, compile_text, compile_text_beside};
 use oracle::Runtime;
 
 fn project() -> Project<Runtime> {
@@ -44,6 +44,67 @@ fn a_text_under_the_key_of_a_file_leaves_the_file() {
     assert_eq!(project.source("Main").map(str::to_owned), main);
     let file = compile_file(&project, "Main").expect("compiles").file;
     assert_eq!(file.components[0].objects.len(), 2, "Main has its Panel");
+}
+
+#[test]
+fn a_text_sees_the_files_beside_it_and_leaves_the_project_as_it_was() {
+    let mut project = project();
+    let before = keys(&project);
+    let panel = project.source("Panel").map(str::to_owned);
+    let beside = [
+        (
+            "plugins/Helper".to_owned(),
+            "import QtQuick\nItem { property int n: 3 }\n".to_owned(),
+        ),
+        // Beside it, a file of a key the project has: the project's is
+        // the one seen, and is left as it was.
+        (
+            "Panel".to_owned(),
+            "import QtQuick\nItem { property int n: 4 }\n".to_owned(),
+        ),
+    ];
+    let compiled = compile_text_beside(
+        &mut project,
+        "plugins/Plugin",
+        "import QtQuick\nHelper { }\n",
+        &beside,
+    )
+    .expect("compiles");
+    assert!(!compiled.has_errors(), "{:?}", compiled.diagnostics);
+    // Without them, the plugin's own directory is not the project's.
+    let alone = compile_text(
+        &mut project,
+        "plugins/Plugin",
+        "import QtQuick\nHelper { }\n",
+    )
+    .expect("in part");
+    assert!(alone.has_errors());
+    assert_eq!(keys(&project), before);
+    assert_eq!(project.source("Panel").map(str::to_owned), panel);
+}
+
+#[test]
+fn a_text_under_the_key_of_a_file_a_selector_replaces_leaves_both() {
+    let (one, two) = (
+        "import QtQuick\nItem { property int n: 1 }\n",
+        "import QtQuick\nItem { property int n: 2 }\n",
+    );
+    let mut project = Project::new(Runtime::new());
+    project.set_controls_style(Some(qml_front::project::ControlsStyle {
+        name: "Material".to_owned(),
+        fallback: None,
+    }));
+    project.add("Panel", one);
+    project.add("+Material/Panel", two);
+    assert_eq!(project.source("Panel"), Some(two));
+    // The text is what compiles, not the variant in the file's place.
+    let compiled = compile_text(&mut project, "Panel", "import QtQuick\nItem { Item { } }\n")
+        .expect("compiles");
+    assert_eq!(compiled.file.components[0].objects.len(), 2);
+    assert_eq!(project.source("Panel"), Some(two));
+    // The file the variant was in the place of is the file it was.
+    project.remove("+Material/Panel");
+    assert_eq!(project.source("Panel"), Some(one));
 }
 
 #[test]
