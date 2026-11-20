@@ -783,20 +783,73 @@ Feature: A shipped application its users change while it runs
       And there is no reload error
       And the application was told of no fault
 
+    Scenario: A user's file beside the directory of modules is hidden by the module's of its name, and back once that is removed
+      Given the application keeps its user's modules in "qml"
+      And the user's file "Card.qml":
+        """qml
+        import QtQuick
+        Rectangle { property string by: "the user's own"; width: 20; height: 10 }
+        """
+      And the user's file "qml/Card.qml":
+        """qml
+        import QtQuick
+        Rectangle { property string by: "the user's module"; width: 30; height: 10 }
+        """
+      When the application runs "Main.qml" built ahead, with the user's directory over it
+      And the user types "hello"
+      Then the property "by" of "card" is "the user's module"
+      When the user removes the file "qml/Card.qml"
+      Then the property "by" of "card" is "the user's own"
+      And the property "text" of "field" is "hello"
+      And there is no reload error
+      And the application was told of no fault
+
+    Scenario: A user's file that links out of the directory, hidden by a module's of its name, is not read and not told
+      Given the application keeps its user's modules in "qml"
+      And the user's file "Card.qml" links to a file outside the user's directory
+      And the user's file "qml/Card.qml":
+        """qml
+        import QtQuick
+        Rectangle { property string by: "the user's module"; width: 30; height: 10 }
+        """
+      When the application runs "Main.qml" built ahead, with the user's directory over it
+      Then the property "by" of "card" is "the user's module"
+      And the object "outside" does not exist
+      And the application was told of no fault
+
     Scenario: A theme the application reads itself is no theme of Ljós, and nothing is compiled for it
-      Given the application reads its user's "theme.json" itself
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
+        import Ljos.Blocks
+        import Ljos.Design
+        Item {
+          objectName: "main"
+          property bool dusk: String(Colors.accent) === "#9c4dc4"
+          property bool forest: String(Colors.accent) === "#2e7d32"
+          ShellLoader { objectName: "loader"; source: "Shell.qml"; fallback: "DefaultShell.qml" }
+        }
+        """
+      And the application reads its user's "theme.json" itself
       And the user's file "theme.json":
         """json
-        { "version": 1, "name": "Dusk", "colors": { "accent": "#9c4dc4" } }
+        { "Colors": { "accent": "#9c4dc4" } }
         """
       When the application runs "Main.qml" built ahead, with the user's directory over it
       Then the user's files are not compiled
+      And the property "dusk" of "main" is false
       And the application was told of no fault
-      When the user saves the file "Shell.qml" as:
+      When the user saves the file "theme.json" as:
+        """json
+        { "Colors": { "accent": "#2e7d32" } }
+        """
+      And the user saves the file "Shell.qml" as:
         """qml
         import QtQuick
         Rectangle { objectName: "user-shell"; width: 50; height: 20 }
         """
       Then the user's files are compiled
       And the object "loader/user-shell" exists
+      And the property "dusk" of "main" is false
+      And the property "forest" of "main" is false
       And the application was told of no fault
