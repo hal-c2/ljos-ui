@@ -115,10 +115,7 @@ fn errors<'a>(
             Some(module) => QmlTextError {
                 line: 0,
                 column: 0,
-                message: format!(
-                    "{module}:{}:{}: {}",
-                    d.span.line, d.span.column, d.message
-                ),
+                message: format!("{module}:{}:{}: {}", d.span.line, d.span.column, d.message),
             },
         })
         .collect()
@@ -180,7 +177,10 @@ mod tests {
         };
         let mut compiled =
             compile_text(&mut project, "inline", "import QtQuick\nItem { }\n").expect("compiles");
-        assert!(outcome(Ok(compiled.clone())).is_ok(), "nothing is wrong yet");
+        assert!(
+            outcome(Ok(compiled.clone())).is_ok(),
+            "nothing is wrong yet"
+        );
         compiled.modules.push(ljos_compiler::CheckedModule {
             key: "content/filter.ts".into(),
             diagnostics: broken,

@@ -424,6 +424,8 @@ pub fn compile_text<O: TypeOracle>(
 /// [`compile_text`], with the files `beside` (key and text: a QML file's
 /// key, or a script's path) in the project while it compiles, as files of
 /// a directory the project does not hold are beside a file read from it.
+/// A file the project has at one of those keys is the one seen, as the
+/// engine loads the project's file of a key before it looks on the disk.
 /// The project is left as it was.
 pub fn compile_text_beside<O: TypeOracle>(
     project: &mut Project<O>,
@@ -431,29 +433,26 @@ pub fn compile_text_beside<O: TypeOracle>(
     text: &str,
     beside: &[(String, String)],
 ) -> Result<Compiled, Vec<Diagnostic>> {
-    let mut before = Vec::with_capacity(beside.len());
+    let mut added = Vec::with_capacity(beside.len());
     for (at, source) in beside.iter().filter(|(at, _)| at != key) {
         if qml_front::project::is_script(at) {
-            before.push((at.as_str(), true, project.script(at).map(str::to_owned)));
-            project.add_script(at, source.clone());
-        } else {
-            before.push((at.as_str(), false, project.source(at).map(str::to_owned)));
+            if project.script(at).is_none() {
+                project.add_script(at, source.clone());
+                added.push((at.as_str(), true));
+            }
+        } else if !project.holds(at) {
             project.add(at, source.clone());
+            added.push((at.as_str(), false));
         }
     }
-    let own = project.source(key).map(str::to_owned);
-    project.add(key, text);
+    let held = project.hold(key, text);
     let compiled = compile_file(project, key);
-    match own {
-        Some(source) => project.add(key, source),
-        None => project.remove(key),
-    }
-    for (at, script, source) in before.into_iter().rev() {
-        match (script, source) {
-            (true, Some(source)) => project.add_script(at, source),
-            (true, None) => project.remove_script(at),
-            (false, Some(source)) => project.add(at, source),
-            (false, None) => project.remove(at),
+    project.release(held);
+    for (at, script) in added.into_iter().rev() {
+        if script {
+            project.remove_script(at);
+        } else {
+            project.remove(at);
         }
     }
     compiled
