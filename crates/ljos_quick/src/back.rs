@@ -143,7 +143,7 @@ fn shown(engine: &Engine, handler: ObjectId) -> bool {
 }
 
 /// The handler Back goes to now: the last made one that is enabled
-/// and shown. A tracked read, so a host can follow it.
+/// and shown.
 fn topmost(engine: &Engine) -> Option<ObjectId> {
     let router = engine.extension::<Router>();
     router.all.borrow_mut().retain(|(_, o)| engine.is_alive(*o));
@@ -154,10 +154,12 @@ fn topmost(engine: &Engine) -> Option<ObjectId> {
         .find(|b| flag(engine, *b, Back::ENABLED.index) && shown(engine, *b))
 }
 
-/// Whether the application takes Back now. A tracked read: a host that
-/// reads it in an effect hears when the answer changes, and can tell the
+/// Whether the application takes Back now, for a host to tell the
 /// platform before the user swipes (Android plays its own animation only
-/// for an application that does not take Back).
+/// for an application that does not take Back). Not a tracked read: a
+/// handler made later adds itself to no property, so an effect would miss
+/// it. A host asks again each time its loop is about to wait, after
+/// whatever could have made or changed a handler.
 pub fn wants_back(engine: &Engine) -> bool {
     topmost(engine).is_some()
 }

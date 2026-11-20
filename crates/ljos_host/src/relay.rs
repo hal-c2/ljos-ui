@@ -377,8 +377,21 @@ impl<S: Send + 'static, U: From<Wake> + Send + 'static> PlatformHost for RelayHo
             capabilities,
             requests,
         };
+        // Insets kept until there was a window are told right after what
+        // made it, whatever that was (a message, or the wait that follows a
+        // turn), and so before any newer ones.
         let mut deliver = |state: &mut State<S>, event: Event<'static, (), U>| {
             app.event(&mut RelayControl { state }, event);
+            if state.window
+                && let Some(insets) = state.insets.take()
+            {
+                let told = Event::Window {
+                    id: WINDOW,
+                    event: WindowEvent::Insets(insets),
+                    raw: None,
+                };
+                app.event(&mut RelayControl { state }, told);
+            }
         };
         loop {
             // The first message: sleep until one comes, or the time asked
@@ -425,20 +438,6 @@ impl<S: Send + 'static, U: From<Wake> + Send + 'static> PlatformHost for RelayHo
                     }
                     Msg::User(u) => deliver(&mut state, Event::User(u)),
                     Msg::Arrival(arrival) => arrive(&mut state, &mut deliver, arrival),
-                }
-                // Right after what made the window, before a message that
-                // follows it in the same turn (a quit, say) is handled.
-                if state.window
-                    && let Some(insets) = state.insets.take()
-                {
-                    deliver(
-                        &mut state,
-                        Event::Window {
-                            id: WINDOW,
-                            event: WindowEvent::Insets(insets),
-                            raw: None,
-                        },
-                    );
                 }
                 taken += 1;
                 if state.exit || taken == TURN {
