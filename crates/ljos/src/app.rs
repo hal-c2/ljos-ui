@@ -841,6 +841,50 @@ impl<M> App<M> {
     where
         M: Send + 'static,
     {
+        let (config, setup) = self.prepared(setup)?;
+        let ran = match launch {
+            Launch::Desktop => crate::run(config, setup),
+            Launch::Headless => crate::run_headless(config, setup),
+        };
+        // The last lines logged are written before the program goes on
+        // to end, unless stderr does not take them.
+        ljos_runtime::stderr::flush();
+        ran
+    }
+
+    /// The root the builder names, as [`run_root`](App::run_root) makes
+    /// it, for a shell that is not started here.
+    #[cfg(all(feature = "android", target_os = "android"))]
+    fn root_setup(&self) -> Result<RootSetup<M>, crate::ShellError> {
+        let Some(root) = self.root.clone() else {
+            return Err(crate::ShellError::Setup(
+                "the application names no root component (App::root)".into(),
+            ));
+        };
+        Ok(Box::new(move |setup: &mut crate::Setup<'_, M>| {
+            setup
+                .engine()
+                .create_from_url(&root, None, Vec::new())
+                .map_err(|e| -> crate::SetupError { e.to_string().into() })
+        }))
+    }
+
+    /// The window's configuration and the shell's setup: the builder's
+    /// part, then `setup`.
+    #[cfg(feature = "shell")]
+    fn prepared(
+        self,
+        setup: impl FnOnce(&mut crate::Setup<'_, M>) -> Result<ObjectId, crate::SetupError> + 'static,
+    ) -> Result<
+        (
+            crate::ShellConfig,
+            impl FnOnce(&mut crate::Setup<'_, M>) -> Result<ObjectId, crate::SetupError> + 'static,
+        ),
+        crate::ShellError,
+    >
+    where
+        M: Send + 'static,
+    {
         let Self {
             title,
             size,
@@ -909,15 +953,56 @@ impl<M> App<M> {
             }
             setup(s)
         };
-        let ran = match launch {
-            Launch::Desktop => crate::run(config, setup),
-            Launch::Headless => crate::run_headless(config, setup),
-        };
-        // The last lines logged are written before the program goes on
-        // to end, unless stderr does not take them.
-        ljos_runtime::stderr::flush();
-        ran
+        Ok((config, setup))
     }
+}
+
+/// The root's half of the setup, made before the shell that runs it.
+#[cfg(all(feature = "android", target_os = "android"))]
+type RootSetup<M> =
+    Box<dyn FnOnce(&mut crate::Setup<'_, M>) -> Result<ObjectId, crate::SetupError>>;
+
+/// Runs an application in an Android activity: call it from the
+/// application library's `android_main`, and return after it.
+///
+/// `build` makes the builder, once per process, on the application's own
+/// thread: the application outlives every activity (a rotation, Back, the
+/// system ending a hidden one), and each later activity only lends it a
+/// screen again. The QML root fills the screen; there is one window.
+///
+/// ```ignore
+/// #[unsafe(no_mangle)]
+/// fn android_main(app: ljos::android::AndroidApp) {
+///     ljos::run_android(app, || {
+///         ljos::App::new("Hello")
+///             .source(ljos::include_qml!("qml.pack"))
+///             .root("Main")
+///     });
+/// }
+/// ```
+#[cfg(all(feature = "android", target_os = "android"))]
+pub fn run_android<M: Send + 'static>(
+    app: crate::android::AndroidApp,
+    build: impl FnOnce() -> App<M> + Send + 'static,
+) {
+    ljos_shell::android::main::<M, RootSetup<M>>(app, move || {
+        let mut app = build();
+        // Unless the application chose, its log goes to logcat: stderr
+        // goes nowhere on Android.
+        if app.log.is_none() {
+            app.log = Some(Log::Handler(Box::new(ljos_shell::android::log_entry)));
+        }
+        let made = app.root_setup().and_then(|root| app.prepared(root));
+        match made {
+            Ok((config, setup)) => (config, Box::new(setup) as RootSetup<M>),
+            Err(e) => {
+                let config = crate::ShellConfig::new(String::new());
+                let failed: RootSetup<M> =
+                    Box::new(move |_| Err(crate::SetupError::from(e.to_string())));
+                (config, failed)
+            }
+        }
+    });
 }
 
 /// Which of the shell's loops an [`App`] runs in.

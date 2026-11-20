@@ -1,0 +1,62 @@
+//! What the user and the system do to an application on a phone
+//! (`mobile/`): the home screen, turning the phone, Back, and the system
+//! ending a hidden application's screen.
+
+use cucumber::{then, when};
+
+use crate::backend::BackendError;
+use crate::world::LjosWorld;
+
+use super::StepResult;
+
+#[when("the user goes to the home screen")]
+fn home(w: &mut LjosWorld) -> StepResult {
+    w.each(|b| b.device()?.leave_for_home())
+}
+
+#[when("the user opens the application again")]
+fn open_again(w: &mut LjosWorld) -> StepResult {
+    w.each(|b| b.device()?.open_again())
+}
+
+#[when(regex = r"^the user turns the phone to (landscape|portrait)$")]
+fn turn(w: &mut LjosWorld, to: String) -> StepResult {
+    w.each(|b| b.device()?.turn(to == "landscape"))
+}
+
+#[when("the user presses Back")]
+fn back(w: &mut LjosWorld) -> StepResult {
+    w.each(|b| b.device()?.back())
+}
+
+#[when("the system ends the application's screen")]
+fn end_screen(w: &mut LjosWorld) -> StepResult {
+    w.each(|b| b.device()?.end_screen())
+}
+
+#[then(regex = r"^the application is (in front|in the background)$")]
+fn in_front(w: &mut LjosWorld, where_: String) -> StepResult {
+    let want = where_ == "in front";
+    w.each(|b| {
+        if b.device()?.in_front()? == want {
+            Ok(())
+        } else {
+            Err(BackendError::Failed(format!(
+                "the application is not {where_}"
+            )))
+        }
+    })
+}
+
+#[then("the system has not found the application unresponsive")]
+fn responding(w: &mut LjosWorld) -> StepResult {
+    w.each(|b| {
+        if b.device()?.not_responding()? {
+            Err(BackendError::Failed(
+                "the system found the application not responding".into(),
+            ))
+        } else {
+            Ok(())
+        }
+    })
+}

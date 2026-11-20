@@ -38,6 +38,8 @@ pub use ljos_dev::{UserQml, UserSession};
 #[cfg(feature = "mcp")]
 pub use tools::{InspectorAccess, InspectorAddress, InspectorOptions};
 
+#[cfg(all(feature = "android", target_os = "android"))]
+pub mod android;
 #[cfg(target_os = "macos")]
 mod appkit_drag;
 #[cfg(target_os = "macos")]

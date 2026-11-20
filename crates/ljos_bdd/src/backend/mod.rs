@@ -318,6 +318,10 @@ pub trait Backend: fmt::Debug {
     fn as_tooling(&mut self) -> Option<&mut dyn Tooling> {
         None
     }
+
+    fn as_device(&mut self) -> Option<&mut dyn Device> {
+        None
+    }
 }
 
 /// A capability the backend lacks: not yet written, or, for Ljós's own
@@ -424,6 +428,67 @@ impl dyn Backend + '_ {
         let backend = self.name();
         self.as_tooling()
             .ok_or_else(|| lacks(backend, "Ljós's own tooling", true))
+    }
+
+    /// What the backend can do as [`Device`].
+    ///
+    /// # Errors
+    /// It cannot.
+    pub fn device(&mut self) -> Result<&mut dyn Device> {
+        let backend = self.name();
+        self.as_device()
+            .ok_or_else(|| lacks(backend, "a phone the application runs on", false))
+    }
+}
+
+/// What the user and the system do to an application on a phone, which
+/// owns its screen, takes it away and gives it back, and ends a hidden
+/// application's screen to save memory (ARCHITECTURE.md §10.2).
+pub trait Device: Backend {
+    /// The user goes to the home screen; the application stays running.
+    fn leave_for_home(&mut self) -> Result<()> {
+        Err(BackendError::NotImplemented("going to the home screen"))
+    }
+
+    /// The user opens the application again, from its icon or the
+    /// recent applications.
+    fn open_again(&mut self) -> Result<()> {
+        Err(BackendError::NotImplemented(
+            "opening the application again",
+        ))
+    }
+
+    /// The user turns the phone a quarter turn, to `landscape` or back to
+    /// `portrait`.
+    fn turn(&mut self, _landscape: bool) -> Result<()> {
+        Err(BackendError::NotImplemented("turning the phone"))
+    }
+
+    /// The user presses or swipes Back.
+    fn back(&mut self) -> Result<()> {
+        Err(BackendError::NotImplemented("Back"))
+    }
+
+    /// The system ends the screen of the hidden application, keeping the
+    /// application (Android's activity, destroyed; its process kept).
+    fn end_screen(&mut self) -> Result<()> {
+        Err(BackendError::NotImplemented(
+            "the system ending the application's screen",
+        ))
+    }
+
+    /// The application is the one the user sees.
+    fn in_front(&mut self) -> Result<bool> {
+        Err(BackendError::NotImplemented(
+            "which application is in front",
+        ))
+    }
+
+    /// The system thinks the application stopped answering.
+    fn not_responding(&mut self) -> Result<bool> {
+        Err(BackendError::NotImplemented(
+            "an application not responding",
+        ))
     }
 }
 

@@ -14,6 +14,13 @@ publish = false
 # Shared version pins. Crates take these with `foo.workspace = true`.
 # egui tracks the latest release (ARCHITECTURE.md D9); upgrade in one PR per release.
 [workspace.dependencies]
+# Android (ljos_host's `android` feature): GameActivity, driven directly.
+android-activity = { version = "0.6.1", default-features = false, features = ["game-activity"] }
+ndk = { version = "0.9.0", default-features = false, features = ["rwh_06"] }
+jni = "0.22.4"
+log = "0.4.34"
+# Where Android's `log` lines and panics go: logcat.
+android_logger = { version = "0.15.1", default-features = false }
 # Parser (vendored fork of oxc_parser 0.144 with the QML mode, see vendor/FORK.md).
 # The fork is a package of its own, so a crate that depends on Ljós gets it
 # by path and needs no `[patch]` of its own; the code still says `oxc_parser`.

@@ -22,6 +22,9 @@ winit = [
     "dep:objc2-app-kit",
     "dep:objc2-foundation",
 ]
+# `AndroidHost`: GameActivity's events relayed to an application that
+# outlives each activity. Only does anything on Android.
+android = ["dep:android-activity", "dep:ndk", "dep:jni", "dep:log"]
 
 [dependencies]
 thiserror.workspace = true
@@ -55,6 +58,15 @@ objc2-app-kit = { workspace = true, optional = true, features = [
     "NSWindow",
 ] }
 objc2-foundation = { workspace = true, optional = true, features = ["NSArray", "NSEnumerator", "NSGeometry"] }
+
+[target.'cfg(target_os = "android")'.dependencies]
+# winit's Android backend does not run (AndroidHost drives the activity),
+# but it compiles only with an activity chosen: the same GameActivity.
+winit = { version = "0.30.13", optional = true, features = ["android-game-activity"] }
+android-activity = { workspace = true, optional = true }
+ndk = { workspace = true, optional = true }
+jni = { workspace = true, optional = true }
+log = { workspace = true, optional = true }
 
 [lints]
 workspace = true

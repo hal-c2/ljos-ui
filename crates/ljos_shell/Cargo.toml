@@ -25,9 +25,10 @@ ljos_media = { path = "../ljos_media", optional = true, default-features = false
 # Only with `webengine`: QtWebEngine on CEF, registered beside the
 # standard modules.
 ljos_webengine = { path = "../ljos_webengine", optional = true }
-# The desktop's own clipboard, dialogs and HTTP fetcher, which only the
-# shell's loop installs; the other hosts keep the in-process ones.
-ljos_platform = { path = "../ljos_platform", features = ["native", "http"] }
+# The HTTP fetcher, and (below, off Android) the desktop's own clipboard
+# and dialogs, which only the shell's loop installs; the other hosts keep
+# the in-process ones.
+ljos_platform = { path = "../ljos_platform", features = ["http"] }
 egui.workspace = true
 # The loop is the shell's own (ARCHITECTURE.md §7.3): winit through
 # ljos_host, egui's input translation and its painters. Not in the
@@ -132,8 +133,23 @@ x11rb.workspace = true
 # painter's own context, so a window with a 3D view still has one driver.
 wgpu = { workspace = true, optional = true, features = ["gles"] }
 
+# arboard and rfd have no Android side: a phone's clipboard and pickers
+# are the system's, reached through Java.
+[target.'cfg(not(target_os = "android"))'.dependencies]
+ljos_platform = { path = "../ljos_platform", features = ["native"] }
+
+[target.'cfg(target_os = "android")'.dependencies]
+android-activity = { workspace = true, optional = true }
+ndk = { workspace = true, optional = true }
+log = { workspace = true, optional = true }
+raw-window-handle = { workspace = true, optional = true }
+android_logger = { workspace = true, optional = true }
+
 [features]
 default = ["media", "media-audio"]
+# The Android shell (src/android.rs): the application on a thread of its
+# own, lent a surface by each activity. Only does anything on Android.
+android = ["ljos_host/android", "dep:android-activity", "dep:ndk", "dep:log", "dep:raw-window-handle", "dep:android_logger"]
 # QtMultimedia: video through the render tree, sound to a null sink
 # unless `media-audio` is on too.
 media = ["dep:ljos_media"]

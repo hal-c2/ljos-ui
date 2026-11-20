@@ -13,9 +13,14 @@
 //! [`HostControl::wake_at`] arrives.
 //!
 //! [`WinitHost`] (feature `winit`, on by default) is the host for the
-//! desktop.
+//! desktop. [`relay::RelayHost`] is a host whose platform loop runs on
+//! another thread than the application, as Android's does; `AndroidHost`
+//! (feature `android`, on Android) is one.
 
+#[cfg(all(feature = "android", target_os = "android"))]
+pub mod android;
 mod event;
+pub mod relay;
 mod schedule;
 #[cfg(all(
     feature = "winit",
