@@ -625,7 +625,9 @@ pub trait Input: Backend {
     /// selection and the part of it still being composed, in UTF-16
     /// units (Android's GameTextInput).
     fn input_method_holds(&mut self, _held: &HeldText) -> Result<()> {
-        Err(BackendError::NotImplemented("an input method that tells all it holds"))
+        Err(BackendError::NotImplemented(
+            "an input method that tells all it holds",
+        ))
     }
 }
 

@@ -84,7 +84,10 @@ mod tests {
     #[test]
     fn prose_is_capitalised_and_corrected_and_done_with() {
         let (t, a, o) = editor_info(&EditorKind::default());
-        assert_eq!(t, CLASS_TEXT | TEXT_FLAG_CAP_SENTENCES | TEXT_FLAG_AUTO_CORRECT);
+        assert_eq!(
+            t,
+            CLASS_TEXT | TEXT_FLAG_CAP_SENTENCES | TEXT_FLAG_AUTO_CORRECT
+        );
         assert_eq!(a, ACTION_DONE);
         assert_eq!(o, FLAG_NO_FULLSCREEN | FLAG_NO_EXTRACT_UI);
     }
@@ -122,10 +125,22 @@ mod tests {
 
     #[test]
     fn kinds_pick_their_keyboards() {
-        let of = |kind| editor_info(&EditorKind { kind, ..EditorKind::default() }).0;
+        let of = |kind| {
+            editor_info(&EditorKind {
+                kind,
+                ..EditorKind::default()
+            })
+            .0
+        };
         assert_eq!(of(TextKind::Phone), CLASS_PHONE);
-        assert_eq!(of(TextKind::Number), CLASS_NUMBER | NUMBER_FLAG_SIGNED | NUMBER_FLAG_DECIMAL);
-        assert_eq!(of(TextKind::Email), CLASS_TEXT | TEXT_VARIATION_EMAIL_ADDRESS);
+        assert_eq!(
+            of(TextKind::Number),
+            CLASS_NUMBER | NUMBER_FLAG_SIGNED | NUMBER_FLAG_DECIMAL
+        );
+        assert_eq!(
+            of(TextKind::Email),
+            CLASS_TEXT | TEXT_VARIATION_EMAIL_ADDRESS
+        );
         assert_eq!(of(TextKind::Url), CLASS_TEXT | TEXT_VARIATION_URI);
     }
 }

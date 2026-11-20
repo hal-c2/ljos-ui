@@ -267,7 +267,8 @@ impl QuickScene {
                 client.commit(engine, item, &typed);
             }
         } else if edits {
-            let at_cursor = around.anchor == around.cursor && range == (around.cursor..around.cursor);
+            let at_cursor =
+                around.anchor == around.cursor && range == (around.cursor..around.cursor);
             if at_cursor {
                 // Typed as the user types: a validator and `maximumLength`
                 // have their say.

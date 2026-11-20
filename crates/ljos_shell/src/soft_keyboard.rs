@@ -164,13 +164,15 @@ mod tests {
     fn hints_pick_the_keyboard() {
         assert_eq!(editor_kind(0), EditorKind::default());
         assert_eq!(editor_kind(hint::DIGITS_ONLY).kind, TextKind::Digits);
-        assert_eq!(editor_kind(hint::FORMATTED_NUMBERS_ONLY).kind, TextKind::Number);
+        assert_eq!(
+            editor_kind(hint::FORMATTED_NUMBERS_ONLY).kind,
+            TextKind::Number
+        );
         assert_eq!(editor_kind(DIALABLE_CHARACTERS_ONLY).kind, TextKind::Phone);
         assert_eq!(editor_kind(EMAIL_CHARACTERS_ONLY).kind, TextKind::Email);
         assert_eq!(editor_kind(URL_CHARACTERS_ONLY).kind, TextKind::Url);
-        let password = editor_kind(
-            hint::HIDDEN_TEXT | hint::SENSITIVE_DATA | hint::NO_PREDICTIVE_TEXT,
-        );
+        let password =
+            editor_kind(hint::HIDDEN_TEXT | hint::SENSITIVE_DATA | hint::NO_PREDICTIVE_TEXT);
         assert!(password.hidden && password.private && password.no_suggestions);
         assert!(editor_kind(hint::MULTI_LINE).multi_line);
     }
