@@ -76,6 +76,9 @@ const NO_CLOCK: &str = "these let the application run on its own clock for a few
                         runs on time no audit can let pass)";
 /// Why one did not: the run stopped first.
 const CUT_SHORT: &str = "the application's run stopped before this could be judged";
+/// Why growth was not judged: no heap before the run's first windows.
+const STARTED_LATE: &str = "the application's first script ran after its run began, so the \
+                            heap could not be read after every window";
 /// Why the heap's headroom was not checked.
 const NOT_COLLECTED: &str = "the heap is judged after a collection, which can run the \
                              application's destruction handlers, and this audit was not asked \
@@ -456,7 +459,13 @@ fn heap(cx: &mut Cx, ran: Option<&Ran>, not_checked: &mut Vec<(&'static str, &'s
         return;
     }
     // No script ever ran: there is no heap to grow.
+    if ran.heap.is_empty() {
+        return;
+    }
+    // The first script ran after the run began: the windows before it
+    // have no sample.
     if ran.heap.len() <= HEAP_WINDOWS as usize {
+        not_checked.push(("health-heap-growth", STARTED_LATE));
         return;
     }
     let grew = samples.windows(2).all(|w| w[1] > w[0]);
@@ -540,6 +549,16 @@ mod tests {
         assert_eq!(
             unjudged(2, vec![1 << 20; 3]),
             [("health-heap-growth", CUT_SHORT)]
+        );
+    }
+
+    /// The first script ran after the first window: growth over the
+    /// windows after it is not every window's, and is said not judged.
+    #[test]
+    fn a_heap_that_starts_after_the_first_window_is_not_judged_silently() {
+        assert_eq!(
+            unjudged(HEAP_WINDOWS, vec![1 << 20; 3]),
+            [("health-heap-growth", STARTED_LATE)]
         );
     }
 

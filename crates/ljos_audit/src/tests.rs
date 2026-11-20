@@ -2092,6 +2092,29 @@ Item {
     assert!(report.is_clean(), "\n{report}");
 }
 
+/// A scene whose first script runs after the first window cannot have its
+/// heap's growth judged over every window, and says so.
+#[test]
+fn a_scene_whose_first_script_runs_late_says_growth_was_not_judged() {
+    let source = "import QtQuick
+Item {
+    id: root
+    width: 200; height: 100
+    property int n: 0
+    Timer { interval: 1500; running: true; onTriggered: root.n = root.n + 1 }
+}
+";
+    let (report, e) = audit_running(source, &["health-heap-growth"], false);
+    assert!(e.script_memory().is_some(), "no script ran");
+    assert!(report.is_clean(), "\n{report}");
+    assert_eq!(report.not_checked, ["health-heap-growth"], "\n{report}");
+    assert!(
+        report.by_rule("").contains("first script ran after"),
+        "{}",
+        report.by_rule("")
+    );
+}
+
 /// A scene that never ran a script has no heap to grow: the run was not
 /// cut short, so nothing is listed as unjudged.
 #[test]

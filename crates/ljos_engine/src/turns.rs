@@ -625,11 +625,9 @@ impl Engine {
             return;
         };
         let took = started.elapsed();
-        if self.recording_turn() {
-            // Not borrowed while the turn is named: that can start another.
-            let cause = t.cause.borrow().clone();
-            self.end_recorded_turn(took, &cause);
-        }
+        // This turn's state is taken before it is named, which can start
+        // another turn that sets its own.
+        let mut c = t.cause.take();
         let reported = match t.marker.get() {
             Some(m) => {
                 m.end();
@@ -637,6 +635,9 @@ impl Engine {
             }
             None => false,
         };
+        if self.recording_turn() {
+            self.end_recorded_turn(took, &c);
+        }
         let over = t.budget.get().is_some_and(|b| took > b);
         if !(over || reported) {
             return;
@@ -651,7 +652,6 @@ impl Engine {
             return;
         }
         t.last_warned.set(Some(now));
-        let mut c = t.cause.take();
         if let Some(o) = c.origin {
             let (ty, place) = self.type_and_place(o);
             // The whole label now, which a turn could not afford to make.
