@@ -24,6 +24,8 @@ cd "$root"
 table() {
   cat <<'EOF_TABLE'
 accesskit:diff|run|--brief|
+android:check|dry||needs the Android NDK and the Android Rust targets, which CI does not have
+android:test|dry||needs the Android NDK, the Android Rust targets and a running emulator or device
 bench|dry||release builds measured on Ljós and qml6 in the headless sandbox, minutes long and wanting a quiet machine
 bench:3d|dry||release builds measured on Ljós and qml6 in the headless sandbox, with the corpus's 3D apps
 bench:cross|dry||needs an aarch64 linker and a board's sysroot, which CI does not have

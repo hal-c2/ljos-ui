@@ -271,14 +271,15 @@ pub mod keys {
 /// Input for a live window and input seen in an item, the user's or not
 /// (ARCHITECTURE.md goal 2): [`input::post_input`] hands a window a
 /// pointer, key or wheel event through the path the window system's takes,
-/// and [`input::watch_input`] tells of each one routed into an item, with
-/// who gave it.
+/// [`input::send_input`] hands one item an event at once and says whether
+/// it was taken, and [`input::watch_input`] tells of each one routed into
+/// an item, with who gave it.
 #[cfg(not(target_arch = "wasm32"))]
 pub mod input {
     pub use ljos_quick::{
         Input, InputOrigin, InputWatch, KeyEvent, KeyKind, Modifiers, MouseButtons, PointerEvent,
         PointerKind, PointerSource, PostInputError, WatchedInput, WheelEvent, post_input,
-        unwatch_input, watch_input,
+        send_input, unwatch_input, watch_input,
     };
 }
 
