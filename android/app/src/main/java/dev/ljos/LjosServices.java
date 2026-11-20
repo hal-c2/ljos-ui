@@ -6,6 +6,7 @@ import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.security.keystore.KeyGenParameterSpec;
@@ -101,6 +102,24 @@ public final class LjosServices {
                 throw new IllegalStateException("no clipboard service");
             }
             clipboard.setPrimaryClip(ClipData.newPlainText(null, text));
+            return null;
+        });
+    }
+
+    /** Empties the clipboard. */
+    public static void clearClipboard(Context context) throws Exception {
+        onMain(() -> {
+            ClipboardManager clipboard = context.getSystemService(ClipboardManager.class);
+            if (clipboard == null) {
+                throw new IllegalStateException("no clipboard service");
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                clipboard.clearPrimaryClip();
+            } else {
+                // Before Android 9 a clip cannot be taken away, only
+                // replaced: an empty text is what a paste then gets.
+                clipboard.setPrimaryClip(ClipData.newPlainText(null, ""));
+            }
             return null;
         });
     }

@@ -69,6 +69,23 @@ impl ClipboardService for AndroidClipboard {
         .map_err(|e| ClipboardError::Other(e.to_string()))
     }
 
+    fn clear(&self, mode: ClipboardMode) -> Result<(), ClipboardError> {
+        if mode != ClipboardMode::Clipboard {
+            return Err(ClipboardError::Unavailable);
+        }
+        with_java(|env, context| {
+            let class = services(env, context)?;
+            env.call_static_method(
+                &class,
+                jni_str!("clearClipboard"),
+                jni_sig!("(Landroid/content/Context;)V"),
+                &[JValue::Object(context)],
+            )?;
+            Ok(())
+        })
+        .map_err(|e| ClipboardError::Other(e.to_string()))
+    }
+
     fn html(&self) -> Option<String> {
         None
     }
@@ -139,5 +156,27 @@ pub fn app_directories() -> Option<(PathBuf, PathBuf)> {
             log::warn!("the application's directories are not known: {e}");
             None
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn android_has_no_selection_to_clear() {
+        assert_eq!(
+            AndroidClipboard.clear(ClipboardMode::Selection),
+            Err(ClipboardError::Unavailable)
+        );
+    }
+
+    #[test]
+    fn a_clear_without_the_java_side_says_it_did_not_happen() {
+        // A test binary has no application, so no Java side to ask.
+        assert!(matches!(
+            AndroidClipboard.clear(ClipboardMode::Clipboard),
+            Err(ClipboardError::Other(_))
+        ));
     }
 }
