@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+#MISE description="cargo test on an Android device or emulator over adb, built with the NDK's compiler: android:test [--abi ABI] [cargo test args, default -p ljos_js]"
+#MISE dir="{{config_root}}"
+#USAGE flag "--abi <abi>" help="The ABI to build (arm64-v8a or x86_64); default the device's"
+#USAGE arg "[args]..." var=#true help="What to test (default -p ljos_js, whose tests call QuickJS through its C ABI)"
+set -euo pipefail
+# shellcheck source-path=SCRIPTDIR source=../_lib/env.sh
+. "$(dirname "$0")/../_lib/env.sh"
+# shellcheck source-path=SCRIPTDIR source=../_lib/android.sh
+. "$(dirname "$0")/../_lib/android.sh"
+cd "$ljos_root"
+need_pinned_rust
+adb="$(android_adb)"
+# One device: ANDROID_SERIAL picks it when more than one is attached.
+devices="$("$adb" devices | awk 'NR > 1 && $2 == "device" { print $1 }')"
+[ -n "$devices" ] ||
+  die "$(task_name) needs a running emulator or a device with USB debugging on (adb devices lists none)"
+if [ -z "${ANDROID_SERIAL:-}" ] && [ "$(printf '%s\n' "$devices" | wc -l)" -gt 1 ]; then
+  die "$(task_name): more than one device is attached; set ANDROID_SERIAL to one of: $(printf '%s\n' "$devices" | tr '\n' ' ')"
+fi
+abi=""
+if [ "${1:-}" = "--abi" ]; then
+  abi="${2:?--abi needs an ABI}"
+  shift 2
+fi
+[ -n "$abi" ] || abi="$("$adb" shell getprop ro.product.cpu.abi | tr -d '\r')"
+triple="$(android_rust_target "$abi")"
+need_rust_target "$triple"
+[ $# -gt 0 ] || set -- -p ljos_js
+android_cross_env "$triple"
+var="$(printf '%s' "$triple" | tr '[:lower:]-' '[:upper:]_')"
+export "CARGO_TARGET_${var}_RUNNER=$ljos_root/mise-tasks/_lib/adb-run"
+export ADB="$adb"
+cargo test --target "$triple" "$@"
