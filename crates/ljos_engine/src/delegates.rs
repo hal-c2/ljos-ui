@@ -163,17 +163,33 @@ impl Again {
 /// is destroyed and the fault is the result, so the delegate is made again
 /// as for one that failed for it. A binding interrupted for its time is
 /// not such a fault: the delegate is shown, and the binding runs again.
+/// `discarded` hears of the object first, while it is still there: a view
+/// was told of it when it was allocated.
 fn whole(
     engine: &Engine,
     made: Result<ObjectId, EngineError>,
     fault: Option<EngineError>,
+    discarded: impl FnOnce(ObjectId),
 ) -> Result<ObjectId, EngineError> {
     match (made, fault) {
         (Ok(obj), Some(f)) => {
+            discarded(obj);
             engine.destroy(obj);
             Err(f)
         }
         (made, _) => made,
+    }
+}
+
+/// What a panic said, as the incubator reports it.
+fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
+    match (
+        payload.downcast_ref::<&'static str>(),
+        payload.downcast_ref::<String>(),
+    ) {
+        (Some(s), _) => (*s).to_owned(),
+        (_, Some(s)) => s.clone(),
+        _ => "panic with a non-string payload".to_owned(),
     }
 }
 
@@ -608,7 +624,7 @@ impl Shared {
                         .delegate(setup),
                 )
                 .map(|(root, _)| root);
-            let r = whole(engine, r, engine.resource_fault_since(faults));
+            let r = whole(engine, r, engine.resource_fault_since(faults), |_| {});
             Shared::finish_row(s, engine, id, component, r);
             return;
         }
@@ -633,7 +649,7 @@ impl Shared {
             if let Some(s) = weak.upgrade()
                 && e.is_alive(s.owner)
             {
-                let r = whole(e, r.clone(), faulted.resource_fault());
+                let r = whole(e, r.clone(), faulted.resource_fault(), |_| {});
                 Shared::finish_row(&s, e, id, component, r);
             }
         }));
@@ -1755,9 +1771,16 @@ impl ViewDelegates {
                 if urgency == Urgency::Later {
                     return None;
                 }
-                let was = s.forcing.replace(true);
+                // Put back however the job ends: a panic in it must not
+                // leave every later delegate's end untold.
+                struct Forcing<'a>(&'a Cell<bool>, bool);
+                impl Drop for Forcing<'_> {
+                    fn drop(&mut self) {
+                        self.0.set(self.1);
+                    }
+                }
+                let _forcing = Forcing(&s.forcing, s.forcing.replace(true));
                 job.force();
-                s.forcing.set(was);
                 let st = s.state.borrow();
                 let made = st.live.iter().find(|h| h.id == id).and_then(|h| h.object);
                 return made.map(|o| (o, Made::Created));
@@ -1817,14 +1840,34 @@ impl ViewDelegates {
         match urgency {
             Urgency::Now => {
                 let faults = engine.resource_faults_seen();
-                let r = engine
-                    .make(
+                let made = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    engine.make(
                         Request::component(component)
                             .parent(Some(s.owner))
                             .delegate(setup),
                     )
-                    .map(|(root, _)| root);
-                let r = whole(engine, r, engine.resource_fault_since(faults));
+                }));
+                let r = match made {
+                    Ok(r) => r.map(|(root, _)| root),
+                    Err(payload) => {
+                        // As a job that panics: what was made goes, and the
+                        // row is made again later instead of never.
+                        let root = s.held_root(id).filter(|r| engine.is_alive(*r));
+                        if let Some(root) = root {
+                            s.discarded(engine, root);
+                            engine.destroy(root);
+                        }
+                        let message = panic_message(payload.as_ref());
+                        let err = EngineError::Panic(format!(
+                            "a panic while an object was being made: {message}"
+                        ));
+                        ViewShared::finish(s, engine, id, component, Err(err), false);
+                        std::panic::resume_unwind(payload);
+                    }
+                };
+                let r = whole(engine, r, engine.resource_fault_since(faults), |o| {
+                    s.discarded(engine, o);
+                });
                 ViewShared::finish(s, engine, id, component, r, false).map(|o| (o, Made::Created))
             }
             Urgency::Later => {
@@ -1845,7 +1888,9 @@ impl ViewDelegates {
                             && e.is_alive(s.owner)
                         {
                             let tell = !s.forcing.get();
-                            let r = whole(e, r.clone(), faulted.resource_fault());
+                            let r = whole(e, r.clone(), faulted.resource_fault(), |o| {
+                                s.discarded(e, o);
+                            });
                             ViewShared::finish(&s, e, id, component, r, tell);
                         }
                     })
@@ -2015,6 +2060,22 @@ impl ViewShared {
                 m.delegate_gone(engine, obj);
             }
             engine.destroy(obj);
+        }
+    }
+
+    /// The root that setup gave the entry `id`, made or half made.
+    fn held_root(&self, id: u64) -> Option<ObjectId> {
+        let st = self.state.borrow();
+        st.live.iter().find(|h| h.id == id).and_then(|h| h.root)
+    }
+
+    /// Tells the view and the model that `obj`, allocated for a row, goes
+    /// before it was whole.
+    fn discarded(&self, engine: &Engine, obj: ObjectId) {
+        self.host.destroying(engine, obj);
+        let model = self.state.borrow().model.clone();
+        if let Some(m) = model {
+            m.delegate_gone(engine, obj);
         }
     }
 

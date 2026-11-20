@@ -489,7 +489,7 @@ impl Engine {
             }
         };
         if made.is_err() {
-            self.discard_allocation(cr);
+            self.discard_allocation(cr, &a);
         }
         made
     }
@@ -3295,7 +3295,7 @@ impl CreationJob {
     fn unmake(&self, engine: Option<&Engine>) {
         let Some(e) = engine else { return };
         match &self.phase {
-            Phase::Allocating(cr, _) => e.discard_allocation(cr),
+            Phase::Allocating(cr, a) => e.discard_allocation(cr, a),
             Phase::Making(m) => {
                 e.destroy_now(m.root());
             }
@@ -3436,7 +3436,7 @@ impl CreationJob {
                         }
                     }));
                     let made = made.unwrap_or_else(|payload| {
-                        e.discard_allocation(&cr);
+                        e.discard_allocation(&cr, &a);
                         std::panic::resume_unwind(payload)
                     });
                     let inst = match made {
@@ -3446,7 +3446,7 @@ impl CreationJob {
                             return JobPoll::Yield;
                         }
                         Err(err) => {
-                            e.discard_allocation(&cr);
+                            e.discard_allocation(&cr, &a);
                             return self.finish(Some(&e), Err(err));
                         }
                     };
@@ -3456,10 +3456,12 @@ impl CreationJob {
                             if let Some(ctx) = self.scope_ctx.take() {
                                 e.add_context(root, ctx);
                             }
+                            // Before `allocated`: if it panics, the step's
+                            // unwind finds the root to destroy.
+                            self.handle.0.root.set(Some(root));
                             if let (Some(allocated), Some(top)) = (self.allocated.take(), &cr.top) {
                                 allocated(&e, root, top.context);
                             }
-                            self.handle.0.root.set(Some(root));
                             let scripted =
                                 self.record.as_ref().is_some_and(Request::remade_as_script);
                             e.reload_assign(&cr, root, scripted);
@@ -3471,7 +3473,7 @@ impl CreationJob {
                             ));
                         }
                         Err(err) => {
-                            e.discard_allocation(&cr);
+                            e.discard_allocation(&cr, &a);
                             return self.finish(Some(&e), Err(err));
                         }
                     }
