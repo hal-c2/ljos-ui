@@ -3657,6 +3657,15 @@ impl Engine {
                 return Ok(*a);
             }
         }
+        // Made on a binding's first read of it (`Screen.devicePixelRatio`):
+        // what its making and its listeners bind and write runs here, and
+        // what was queued before waits until the binding has its value. Run
+        // inside it, a change handler queued earlier could change what the
+        // binding reads and make it its own cause; qml6 has none waiting.
+        let _own = self
+            .graph()
+            .binding_evaluating()
+            .then(|| self.own_queue(self.changes_so_far()));
         let a = self.create(make(), Some(obj))?;
         self.inner.store.borrow_mut().objects[obj]
             .attached
