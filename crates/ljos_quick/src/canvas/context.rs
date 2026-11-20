@@ -1,8 +1,8 @@
 //! The native half of a canvas's 2D context.
 //!
 //! Script sees an object made by `context.js` whose properties and methods
-//! call three methods here: `read` and `write` for the state, `op` for
-//! everything else. Gradient and pattern objects live in script; what they
+//! call methods here: `read` and `write` for the state, `op` (or `op6`,
+//! for up to six arguments) for everything else. Gradient and pattern objects live in script; what they
 //! describe arrives here as a list when one becomes a style.
 //!
 //! The path is kept in canvas pixels: each point goes through the transform
@@ -238,21 +238,29 @@ impl Context2D {
         }
         let mut c = ctx.borrow_mut();
         let gs = &mut c.gs;
-        let n = value.to_number();
-        let positive = n.is_finite() && n > 0.0;
+        if NUMBERS.contains(&name) {
+            let n = value.to_number();
+            let positive = n.is_finite() && n > 0.0;
+            match name {
+                "lineWidth" if positive => gs.line_width = n,
+                "miterLimit" if positive => gs.miter = n,
+                "lineDashOffset" if n.is_finite() => gs.dash_offset = n,
+                "globalAlpha" if (0.0..=1.0).contains(&n) => gs.alpha = n,
+                // Qt ignores a blur of zero as it does a negative one
+                // (measured); only `reset()` brings it back to zero.
+                "shadowBlur" if positive => gs.shadow_blur = n,
+                "shadowOffsetX" if n.is_finite() => gs.shadow_x = n,
+                "shadowOffsetY" if n.is_finite() => gs.shadow_y = n,
+                "fillRule" if n == 0.0 || n == 1.0 => gs.fill_rule = n as i32,
+                _ => return false,
+            }
+            return true;
+        }
+        // Only now as text: a number written as text is most of what
+        // setting `globalAlpha` used to cost (#633).
         let text = value.to_js_string();
         let text = text.as_str();
         match name {
-            "lineWidth" if positive => gs.line_width = n,
-            "miterLimit" if positive => gs.miter = n,
-            "lineDashOffset" if n.is_finite() => gs.dash_offset = n,
-            "globalAlpha" if (0.0..=1.0).contains(&n) => gs.alpha = n,
-            // Qt ignores a blur of zero as it does a negative one
-            // (measured); only `reset()` brings it back to zero.
-            "shadowBlur" if positive => gs.shadow_blur = n,
-            "shadowOffsetX" if n.is_finite() => gs.shadow_x = n,
-            "shadowOffsetY" if n.is_finite() => gs.shadow_y = n,
-            "fillRule" if n == 0.0 || n == 1.0 => gs.fill_rule = n as i32,
             "lineCap" => match text {
                 "butt" => gs.cap = Cap::Butt,
                 "round" => gs.cap = Cap::Round,
@@ -313,33 +321,71 @@ impl Context2D {
     /// that gives nothing back, which script turns into the context.
     #[qml(invokable)]
     fn op(cx: &Cx, name: Value, args: Value) -> Value {
-        let Some((canvas, run, ctx)) = parts(cx) else {
-            return Value::Undefined;
-        };
         let args: Vec<Value> = match args {
             Value::List(l) => l.as_ref().clone(),
             _ => Vec::new(),
         };
-        let name = name.to_js_string();
-        let op = Op {
-            e: cx.engine,
-            canvas,
-            run: &run,
-            ctx: &ctx,
-            args: &args,
-        };
-        let (out, drew) = op.run(name.as_str());
-        if drew {
-            let in_paint = run.borrow().in_paint;
-            if in_paint {
-                run.borrow_mut().drawn = true;
-            } else {
-                drawn_outside_paint(cx.engine, &run);
-            }
-        }
-        out
+        run_op(cx, &name, &args)
+    }
+
+    /// `op` with its first `count` (at most six) arguments passed one by
+    /// one. A list costs a script array, and reading that array back,
+    /// which is more than most ops cost themselves (#633).
+    #[qml(invokable, name = "op6")]
+    #[allow(clippy::too_many_arguments)]
+    fn op6(
+        cx: &Cx,
+        name: Value,
+        count: Value,
+        a: Value,
+        b: Value,
+        c: Value,
+        d: Value,
+        e: Value,
+        f: Value,
+    ) -> Value {
+        let args = [a, b, c, d, e, f];
+        let count = (count.to_number().max(0.0) as usize).min(args.len());
+        run_op(cx, &name, &args[..count])
     }
 }
+
+/// Runs the op `name` with `args`, and has the canvas drawn when it drew.
+fn run_op(cx: &Cx, name: &Value, args: &[Value]) -> Value {
+    let Some((canvas, run, ctx)) = parts(cx) else {
+        return Value::Undefined;
+    };
+    let name = name.to_js_string();
+    let op = Op {
+        e: cx.engine,
+        canvas,
+        run: &run,
+        ctx: &ctx,
+        args,
+    };
+    let (out, drew) = op.run(name.as_str());
+    if drew {
+        let in_paint = run.borrow().in_paint;
+        if in_paint {
+            run.borrow_mut().drawn = true;
+        } else {
+            drawn_outside_paint(cx.engine, &run);
+        }
+    }
+    out
+}
+
+/// The state properties that are numbers.
+const NUMBERS: [&str; 8] = [
+    "lineWidth",
+    "miterLimit",
+    "lineDashOffset",
+    "globalAlpha",
+    "shadowBlur",
+    "shadowOffsetX",
+    "shadowOffsetY",
+    "fillRule",
+];
 
 fn style_value(s: &Style) -> Value {
     match s {
