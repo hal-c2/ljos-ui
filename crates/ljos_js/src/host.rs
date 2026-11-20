@@ -3261,17 +3261,13 @@ pub(crate) fn classify_error<'js>(
         // boundary above waits for room and tries again instead of taking
         // it for a bug. The pending exception is cleared either way, or the
         // next run would find it.
+        // A pending exception that is not running out of memory is the
+        // script's own, and is told as one rather than as a bug.
+        rquickjs::Error::Unknown if ctx.has_exception() => {
+            describe_exception(&ctx.catch(), label, sources)
+        }
         rquickjs::Error::Unknown => {
-            let ran_out = if ctx.has_exception() {
-                let thrown = ctx.catch();
-                matches!(
-                    describe_exception(&thrown, label, sources),
-                    JsFault::JsOutOfMemory { .. }
-                )
-            } else {
-                heap_nearly_full(ctx, sources.peak.map_or(0, MallocPeak::get))
-            };
-            if ran_out {
+            if heap_nearly_full(ctx, sources.peak.map_or(0, MallocPeak::get)) {
                 JsFault::JsOutOfMemory {
                     label: label.to_owned(),
                 }
