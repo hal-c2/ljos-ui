@@ -27,6 +27,13 @@
 //! the engine's supervisor tree ([`ljos_engine::Boundary`]); this file
 //! only says how the content is stopped and started.
 //!
+//! A full script heap or an interrupted script is not the content's bug:
+//! the fallback is shown as for any fault, and the content is made again
+//! by itself after a wait ([`ljos_engine::retry`]: at once, then from a
+//! second doubling to a minute while it keeps faulting soon after), never
+//! counted against the intensity and never handed further out. `retry()`
+//! or a new `content` makes it at once.
+//!
 //! The content is always made from the component, never repaired. State a
 //! native type declares worth keeping (`ljos_engine::Migrate`) is taken
 //! from the old item and given to the new one.
@@ -34,6 +41,7 @@
 use std::rc::Rc;
 use std::time::Duration;
 
+use ljos_engine::retry::{ResourceFault, Retry, seconds};
 use ljos_engine::{
     Atom, Boundary, BoundaryConfig, Cx, Engine, EngineError, FaultReport, LogLevel, ObjectId,
     PropIndex, QmlObject, QmlType, SubtreeSnapshot, Url, Value, WriteKind, qml_impl,
@@ -131,6 +139,8 @@ struct Run {
     making_fallback: bool,
     /// What the stopped content's natives wanted kept.
     kept: Option<SubtreeSnapshot>,
+    /// The content a resource fault stopped is made again by this.
+    retry: Retry,
 }
 
 /// The flattened indices of the `fault.*` leaves.
@@ -164,8 +174,10 @@ impl ErrorBoundary {
     fn completed(cx: &Cx) -> Result<(), EngineError> {
         let (e, me) = (cx.engine, cx.this);
         e.watch(me, ErrorBoundary::CONTENT.index, move |e, _| {
-            // A failed boundary takes the new content at `retry()`.
-            if !failed(e, me) {
+            // A failed boundary takes the new content at `retry()`, but
+            // one that only waits out a resource fault takes it now.
+            if !failed(e, me) || waiting(e, me) {
+                cancel_retry(e, me);
                 drop_item(e, me);
                 start_content(e, me);
             }
@@ -190,11 +202,17 @@ impl ErrorBoundary {
         if !failed(e, me) {
             return;
         }
-        drop_item(e, me);
-        publish(e, me, None);
-        bump_restarts(e, me);
-        start_content(e, me);
+        cancel_retry(e, me);
+        restart(e, me);
     }
+}
+
+/// Takes the fallback away and makes the content again.
+fn restart(e: &Engine, me: ObjectId) {
+    drop_item(e, me);
+    publish(e, me, None);
+    bump_restarts(e, me);
+    start_content(e, me);
 }
 
 /// Registers module `Ljos` and what makes an `ErrorBoundary` a boundary.
@@ -244,33 +262,95 @@ impl Boundary for Behaviour {
     }
 
     fn start(&self, e: &Engine, me: ObjectId) -> Result<(), Fault> {
-        let fallback = e
-            .read(me, ErrorBoundary::FALLBACK.index)
-            .as_object()
-            .filter(|f| e.is_alive(*f));
-        let Some(fallback) = fallback else {
-            bump_restarts(e, me);
-            return make_content(e, me).map_err(Fault::Startup);
-        };
-        with_run(e, me, |r| r.making_fallback = true);
-        let made = e.component_create_owned(fallback, me, place);
-        with_run(e, me, |r| r.making_fallback = false);
-        match made {
-            Ok(obj) if e.is_alive(me) => {
-                with_run(e, me, |r| r.fallback_item = Some(obj));
-                set(e, me, ErrorBoundary::ITEM.index, Value::Object(obj));
-                Ok(())
+        match show_fallback(e, me) {
+            Some(shown) => shown,
+            None => {
+                bump_restarts(e, me);
+                make_content(e, me).map_err(|err| Fault::Startup(err.to_string()))
             }
-            Ok(_) => Ok(()),
-            // With nothing to show in the content's place the boundary
-            // cannot contain the fault.
-            Err(err) => Err(Fault::Startup(format!("fallback: {err}"))),
         }
     }
 
     fn failed(&self, e: &Engine, me: ObjectId) -> bool {
         failed(e, me)
     }
+
+    fn recover(
+        &self,
+        e: &Engine,
+        me: ObjectId,
+        report: &FaultReport,
+        cause: ResourceFault,
+    ) -> bool {
+        self.stop(e, me, report);
+        stand_in(e, me, cause);
+        true
+    }
+}
+
+/// Shows the fallback while the content waits to be made again after
+/// `cause`, and makes it again after the wait.
+fn stand_in(e: &Engine, me: ObjectId, cause: ResourceFault) {
+    if let Some(Err(fault)) = show_fallback(e, me) {
+        // Nothing stands in, but the content still comes back.
+        warn(e, format!("ErrorBoundary: {fault}"));
+    }
+    let wait = with_run(e, me, |r| {
+        r.retry.schedule(e, cause, move |e| {
+            with_run(e, me, |r| r.retry.ran());
+            // `retry()` or a new `content` made it already.
+            if e.is_alive(me) && failed(e, me) {
+                restart(e, me);
+            }
+        })
+    });
+    if let Some(wait) = wait {
+        let when = if wait.is_zero() {
+            "at once".to_owned()
+        } else {
+            format!("in {}", seconds(wait))
+        };
+        warn(
+            e,
+            format!(
+                "ErrorBoundary: {}, so its content is made again {when}",
+                cause.describe()
+            ),
+        );
+    }
+}
+
+/// Shows an item of `fallback` in the content's place: `None` when there
+/// is no fallback, an error when it could not be made.
+fn show_fallback(e: &Engine, me: ObjectId) -> Option<Result<(), Fault>> {
+    let fallback = e
+        .read(me, ErrorBoundary::FALLBACK.index)
+        .as_object()
+        .filter(|f| e.is_alive(*f))?;
+    with_run(e, me, |r| r.making_fallback = true);
+    let made = e.component_create_owned(fallback, me, place);
+    with_run(e, me, |r| r.making_fallback = false);
+    Some(match made {
+        Ok(obj) if e.is_alive(me) => {
+            with_run(e, me, |r| r.fallback_item = Some(obj));
+            set(e, me, ErrorBoundary::ITEM.index, Value::Object(obj));
+            Ok(())
+        }
+        Ok(_) => Ok(()),
+        // With nothing to show in the content's place the boundary
+        // cannot contain the fault.
+        Err(err) => Err(Fault::Startup(format!("fallback: {err}"))),
+    })
+}
+
+/// Whether the content waits to be made again after a resource fault.
+fn waiting(e: &Engine, me: ObjectId) -> bool {
+    e.with(me, |b: &ErrorBoundary| b.run.retry.waiting())
+        .unwrap_or(false)
+}
+
+fn cancel_retry(e: &Engine, me: ObjectId) {
+    with_run(e, me, |r| r.retry.cancel(e));
 }
 
 fn with_run<R>(e: &Engine, me: ObjectId, f: impl FnOnce(&mut Run) -> R) -> Option<R> {
@@ -307,7 +387,6 @@ fn bump_restarts(e: &Engine, me: ObjectId) {
 
 /// Shows `report` in `fault`, or nothing.
 fn publish(e: &Engine, me: ObjectId, report: Option<&FaultReport>) {
-    let p = fault_props();
     let (kind, message, file, line) = match report {
         Some(r) => (
             r.kind(),
@@ -317,6 +396,11 @@ fn publish(e: &Engine, me: ObjectId, report: Option<&FaultReport>) {
         ),
         None => ("", String::new(), String::new(), 0),
     };
+    publish_parts(e, me, kind, message, file, line);
+}
+
+fn publish_parts(e: &Engine, me: ObjectId, kind: &str, message: String, file: String, line: u32) {
+    let p = fault_props();
     e.batch(|| {
         set(e, me, p.kind, kind.into());
         set(e, me, p.message, message.as_str().into());
@@ -335,12 +419,25 @@ fn publish(e: &Engine, me: ObjectId, report: Option<&FaultReport>) {
 fn start_content(e: &Engine, me: ObjectId) {
     match make_content(e, me) {
         Ok(()) => set(e, me, ErrorBoundary::FAILED.index, false.into()),
-        Err(message) => e.report_boundary_fault(me, Fault::Startup(message)),
+        Err(err) => match err.resource_fault() {
+            // Not the content's bug: shown, and made again later.
+            Some(cause) => {
+                warn(e, format!("ErrorBoundary: {err}"));
+                let kind = match cause {
+                    ResourceFault::Interrupted => "JsInterrupted",
+                    ResourceFault::OutOfMemory => "JsOutOfMemory",
+                };
+                publish_parts(e, me, kind, err.to_string(), String::new(), 0);
+                set(e, me, ErrorBoundary::FAILED.index, true.into());
+                stand_in(e, me, cause);
+            }
+            None => e.report_boundary_fault(me, Fault::Startup(err.to_string())),
+        },
     }
 }
 
 /// Makes an item of `content` and shows it.
-fn make_content(e: &Engine, me: ObjectId) -> Result<(), String> {
+fn make_content(e: &Engine, me: ObjectId) -> Result<(), EngineError> {
     if !e.is_alive(me) || with_run(e, me, |r| r.completed) != Some(true) {
         return Ok(());
     }
@@ -353,9 +450,7 @@ fn make_content(e: &Engine, me: ObjectId) -> Result<(), String> {
         set(e, me, ErrorBoundary::FAILED.index, false.into());
         return Ok(());
     };
-    let made = e
-        .component_create_owned(content, me, place)
-        .map_err(|err| err.to_string())?;
+    let made = e.component_create_owned(content, me, place)?;
     if !e.is_alive(me) {
         return Ok(());
     }

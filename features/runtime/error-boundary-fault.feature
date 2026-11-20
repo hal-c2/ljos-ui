@@ -48,7 +48,12 @@ Feature: ErrorBoundary says what went wrong
     And the property "fault.message" of "boundary" is "TypeError: not a page"
     And the property "fault.line" of "boundary" is 12
 
+  # An interrupt is not the content's bug: the content is made again at
+  # once the first time (error-boundary-interrupted.feature), so the
+  # fault shows while the second waits.
   Scenario: A handler that never returns is a fault of the kind JsInterrupted
+    When the method "spin" of "content" is called
+    Then the property "failed" of "boundary" is false
     When the method "spin" of "content" is called
     Then the property "fault.kind" of "boundary" is "JsInterrupted"
     And the property "failed" of "boundary" is true
