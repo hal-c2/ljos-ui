@@ -1732,6 +1732,10 @@ impl Application for LjosBackend {
             .run_with_user_qml_at(entry, files, &[], true, true)
     }
 
+    fn run_built_ahead(&mut self, entry: &str) -> Result<()> {
+        self.live()?.run_built_ahead(entry)
+    }
+
     fn windows_of_their_own(&mut self) -> Result<()> {
         self.windows_of_their_own = true;
         if let Some(live) = self.live.as_ref() {

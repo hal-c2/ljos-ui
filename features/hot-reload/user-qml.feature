@@ -67,6 +67,12 @@ Feature: A shipped application its users change while it runs
       And the log has a warning matching "^ShellLoader: <dir>/Shell\.qml: No such file or directory$" with "<dir>" for the user's directory
       And the log has no warning matching "file:///Shell\.qml"
 
+    Scenario: A shell an application built without a user's directory lacks is named as the application names it
+      When the application runs "Main.qml" built ahead, without a user's directory
+      Then the object "loader/default-shell" exists
+      And the log has a warning matching "^ShellLoader: Shell\.qml: No such file or directory$"
+      And the log has no warning matching "file:///"
+
   Rule: A user's file replaces the application's, or adds a type
 
     Scenario: A user's file of a name the application has replaces the application's

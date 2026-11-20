@@ -1058,6 +1058,13 @@ pub trait Application: Backend {
         Err(BackendError::NotImplemented("a user's directory"))
     }
 
+    /// Runs `entry` of the given files built ahead into a pack, as an
+    /// application built without `user-qml` runs: no user's directory and
+    /// no compiler.
+    fn run_built_ahead(&mut self, _entry: &str) -> Result<()> {
+        Err(BackendError::NotImplemented("an application built ahead"))
+    }
+
     /// Each `Window` is a platform window of its own, as where the
     /// application runs on a desktop: a tree of its own wherever it is
     /// declared. Given before anything is loaded.

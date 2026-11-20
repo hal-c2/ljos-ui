@@ -163,6 +163,32 @@ impl Live {
         self.settle()
     }
 
+    /// What a shipped application is: its files and its user's on the
+    /// real disk, which the scenario's sandbox would look elsewhere for,
+    /// and no compiler of its own. Only what `user-qml` brings compiles.
+    fn ship(&mut self) {
+        ljos_platform::Platform::of(&self.engine).set_env(ljos_platform::PathEnv::default());
+        self.engine.set_qml_text_compiler(None);
+    }
+
+    /// Runs `entry` of the scenario's files built ahead into a pack, as
+    /// an application built without `user-qml` runs it.
+    pub(super) fn run_built_ahead(&mut self, entry: &str) -> Result<()> {
+        let files = self.application_files();
+        let source = compile(&files, self.controls_style.as_ref(), self.lowered)?;
+        let pack = source.to_pack_with_trailer(&[]).map_err(failed)?;
+        let pack = MapSource::from_pack(&pack).map_err(failed)?;
+        self.ship();
+        self.engine.set_component_source(pack);
+        let root = self
+            .engine
+            .create_from_url(key_of(entry), Some(self.driver), Vec::new())
+            .map_err(|e| failed(format!("cannot make {entry}: {e}")))?;
+        ljos_quick::add_data(&self.engine, self.driver, root).map_err(failed)?;
+        self.roots.push(root);
+        self.settle()
+    }
+
     /// One frame's worth of what the session brought, without waiting.
     fn pump_user(&mut self) -> Result<Vec<ljos_dev::Report>> {
         let user = self

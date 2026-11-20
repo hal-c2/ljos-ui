@@ -52,6 +52,11 @@ fn runs_with_user_qml(w: &mut LjosWorld, entry: String) -> StepResult {
     w.each(|b| b.application()?.run_with_user_qml(&entry, &[], true))
 }
 
+#[when(regex = r#"^the application runs "([^"]+\.qml)" built ahead, without a user's directory$"#)]
+fn runs_built_ahead(w: &mut LjosWorld, entry: String) -> StepResult {
+    w.each(|b| b.application()?.run_built_ahead(&entry))
+}
+
 #[when(
     regex = r#"^the application runs "([^"]+\.qml)" built ahead in a window of its own, with the user's directory over it$"#
 )]
