@@ -38,9 +38,17 @@ impl HeapCount {
         self.0.cap.set(cap);
     }
 
-    /// Whether room was refused for being past the cap since last asked.
-    pub(crate) fn take_over_share(&self) -> bool {
-        self.0.over_share.replace(false)
+    /// Whether room was refused for being past the cap since it was last
+    /// cleared ([`HeapCount::clear_over_share`]).
+    pub(crate) fn over_share(&self) -> bool {
+        self.0.over_share.get()
+    }
+
+    /// Forgets a refusal: done where a dispatch or a job begins and ends,
+    /// and never while one runs, so that a nested run that fails for its
+    /// own reason leaves the dispatch around it knowing it was refused.
+    pub(crate) fn clear_over_share(&self) {
+        self.0.over_share.set(false);
     }
 
     /// Whether growing by `more` bytes would pass the cap; noted if so.
