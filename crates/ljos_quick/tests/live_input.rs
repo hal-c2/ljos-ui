@@ -629,7 +629,13 @@ fn a_sent_key_is_heard_where_the_item_was() {
 import QtQuick
 Item {
     width: 100; height: 100
-    Item { objectName: "here"; Item { id: t; objectName: "t"; Keys.onPressed: t.parent = there } }
+    Item {
+        objectName: "here"
+        Item {
+            id: t; objectName: "t"
+            Keys.onPressed: (event) => { t.parent = there; event.accepted = true }
+        }
+    }
     Item { id: there; objectName: "there" }
 }
 "#,
