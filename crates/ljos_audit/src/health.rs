@@ -50,6 +50,8 @@ struct Ran {
     /// The heap after a collection: before the first window and after
     /// each.
     heap: Vec<usize>,
+    /// The windows the application ran to the end.
+    windows: u32,
     /// The frames that showed something new in the last whole window
     /// while nothing animated.
     idle_frames: Option<u64>,
@@ -136,6 +138,7 @@ fn run_windows(
             // clock) is no finding of these rules.
             Err(_) => break,
         }
+        ran.windows += 1;
         ran.heap.extend(heap_now(engine));
         ran.idle_frames = Some(idle);
     }
@@ -448,8 +451,12 @@ fn heap(cx: &mut Cx, ran: Option<&Ran>, not_checked: &mut Vec<(&'static str, &'s
         return;
     };
     // Growth is judged over every window, or not at all.
-    if ran.heap.len() <= HEAP_WINDOWS as usize {
+    if ran.windows < HEAP_WINDOWS {
         not_checked.push(("health-heap-growth", CUT_SHORT));
+        return;
+    }
+    // No script ever ran: there is no heap to grow.
+    if ran.heap.len() <= HEAP_WINDOWS as usize {
         return;
     }
     let grew = samples.windows(2).all(|w| w[1] > w[0]);
@@ -493,5 +500,53 @@ fn settles(cx: &mut Cx, ran: &Ran, not_checked: &mut Vec<(&'static str, &'static
         );
         cx.report("health-never-settles", root, message).measured =
             Some(format!("{frames} frames >= {IDLE_FRAMES_MAX}"));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tests::{engine, mount};
+
+    /// What a run that stopped after `windows` windows leaves unjudged.
+    fn unjudged(windows: u32, samples: Vec<usize>) -> Vec<(&'static str, &'static str)> {
+        let e = engine();
+        let s = mount(&e, "import QtQuick\nItem { width: 200; height: 100 }\n");
+        let options = Options::desktop();
+        let mut cx = Cx::new(&e, &s, &options);
+        let ran = Ran {
+            heap: samples,
+            windows,
+            idle_frames: (windows > 0).then_some(0),
+            unsettled: None,
+        };
+        let mut not_checked = Vec::new();
+        heap(&mut cx, Some(&ran), &mut not_checked);
+        settles(&mut cx, &ran, &mut not_checked);
+        assert!(cx.out.is_empty());
+        not_checked
+    }
+
+    /// A run cut short says what it did not judge, and why.
+    #[test]
+    fn a_run_cut_short_says_what_it_did_not_judge() {
+        assert_eq!(
+            unjudged(0, vec![1 << 20]),
+            [
+                ("health-heap-growth", CUT_SHORT),
+                ("health-never-settles", CUT_SHORT)
+            ]
+        );
+        assert_eq!(
+            unjudged(2, vec![1 << 20; 3]),
+            [("health-heap-growth", CUT_SHORT)]
+        );
+    }
+
+    /// Every window ran: what had no heap to read is not called cut short.
+    #[test]
+    fn a_whole_run_with_no_script_heap_leaves_nothing_unjudged() {
+        assert_eq!(unjudged(HEAP_WINDOWS, Vec::new()), []);
+        assert_eq!(unjudged(HEAP_WINDOWS, vec![1 << 20; 5]), []);
     }
 }

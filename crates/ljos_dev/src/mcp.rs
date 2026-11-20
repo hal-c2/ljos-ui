@@ -1235,6 +1235,12 @@ impl Inspector {
             return;
         }
         if let Kind::Audit(args) = &kind {
+            // A finding can repeat what the application threw, which may
+            // hold what a field holds now.
+            if capture.is_none() {
+                let now = capture::secrets(engine, scene, self.cfg.redact_all);
+                self.logs.borrow_mut().learn(&now);
+            }
             let answer = args.options().and_then(|mut options| {
                 // An application on a clock a test moves may be let run on
                 // it; one on the wall clock may not.
@@ -1269,6 +1275,22 @@ impl Inspector {
                     self.pointer_lines,
                 )));
             }
+            // Masked as what the application logged or threw is.
+            let book = self.logs.borrow();
+            let book = book.book();
+            let answer = match answer {
+                Ok(mut r) => {
+                    book.mask_json(&mut r.structured);
+                    if let Some(text) = r.text.as_mut() {
+                        book.mask_text(text);
+                    }
+                    Ok(r)
+                }
+                Err(mut e) => {
+                    book.mask_error(&mut e);
+                    Err(e)
+                }
+            };
             let _ = reply.send(answer);
             return;
         }

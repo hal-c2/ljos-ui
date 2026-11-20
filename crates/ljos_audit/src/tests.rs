@@ -8,7 +8,7 @@ use ljos_runtime::Time;
 
 use super::{Options, Report, audit};
 
-fn engine() -> Engine {
+pub(super) fn engine() -> Engine {
     let e = Engine::new();
     ljos_quick::register(&e);
     ljos_controls::register(&e);
@@ -29,7 +29,7 @@ fn load(e: &Engine, source: &str) -> ObjectId {
         .unwrap_or_else(|err| panic!("Main.qml: {err}"))
 }
 
-fn mount(e: &Engine, source: &str) -> QuickScene {
+pub(super) fn mount(e: &Engine, source: &str) -> QuickScene {
     let root = load(e, source);
     let mut s = QuickScene::new(kurbo::Size::new(640.0, 480.0));
     s.set_root(e, root).unwrap();
@@ -2092,23 +2092,20 @@ Item {
     assert!(report.is_clean(), "\n{report}");
 }
 
-/// A run cut short says what it could not judge, rather than nothing.
+/// A scene that never ran a script has no heap to grow: the run was not
+/// cut short, so nothing is listed as unjudged.
 #[test]
-fn a_run_cut_short_says_what_it_did_not_judge() {
+fn a_scene_with_no_script_heap_is_not_called_cut_short() {
     let source = "import QtQuick
-Item {
-    width: 200; height: 100
-    // A timer with no interval: time cannot be let pass past it.
-    Timer { interval: 0; repeat: true; running: true }
-}
+Item { width: 200; height: 100 }
 ";
-    let (report, _) = audit_running(source, &["health-heap-growth"], false);
+    let (report, e) = audit_running(source, &["health-heap-growth"], false);
+    assert!(e.script_memory().is_none(), "the scene ran a script");
     assert!(report.is_clean(), "\n{report}");
-    assert_eq!(report.not_checked, ["health-heap-growth"]);
     assert!(
-        report.by_rule("").contains("run stopped before"),
-        "{}",
-        report.by_rule("")
+        report.not_checked.is_empty(),
+        "{:?}",
+        report.why_not_checked
     );
 }
 
