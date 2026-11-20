@@ -92,8 +92,9 @@ pub trait Boundary {
 
     /// Whether `report`, a resource fault in the content
     /// ([`crate::backoff::is_resource_fault`]), leaves the content shown:
-    /// the boundary takes it and does nothing more, and the fault is on
-    /// record as [`TakenBy::Kept`]. A script of the content stopped for
+    /// the boundary takes it, may note it where its users can see it (an
+    /// `ErrorBoundary`'s `fault`), and stops and starts nothing; the fault
+    /// is on record as [`TakenBy::Kept`]. A script of the content stopped for
     /// its time is one: the engine runs the binding it cut short again,
     /// and content made again would run over again. `false`, the default,
     /// asks [`Boundary::resource_fault`] next.

@@ -372,8 +372,8 @@ Item {
 
 /// A handler of the content that runs over its time is cut short and
 /// nothing more: the content stays shown, the same item, it is not made
-/// again, and the fault is on record as taken by the boundary that kept
-/// its content.
+/// again, the fault is on record as taken by the boundary that kept its
+/// content, and its `fault` says what happened.
 #[test]
 fn a_handler_of_the_content_that_ran_over_its_time_leaves_the_content_shown() {
     let e = engine();
@@ -408,6 +408,11 @@ fn a_handler_of_the_content_that_ran_over_its_time_leaves_the_content_shown() {
     assert_eq!(get(&e, boundary, "item").as_object(), Some(content));
     assert!(e.is_alive(content));
     assert!(!get(&e, boundary, "failed").to_boolean());
+    assert_eq!(
+        get(&e, boundary, "fault.kind").to_js_string().to_string(),
+        "JsInterrupted",
+        "the boundary still says what was cut short"
+    );
     assert_eq!(num(&e, boundary, "restarts"), restarts);
     assert_eq!(num(&e, root, "made"), 1.0, "not made again");
     assert!(e.application_fault().is_none());

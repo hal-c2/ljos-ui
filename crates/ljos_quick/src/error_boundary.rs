@@ -34,7 +34,8 @@
 //! it faults again soon after, up to a minute), for as long as it takes.
 //! `retry()` or a new `content` makes it at once. A script of the content
 //! stopped for its time leaves it shown: the engine runs the binding it
-//! cut short again.
+//! cut short again. `fault` still says what happened, while `failed`
+//! stays false.
 //!
 //! The content is always made from the component, never repaired. State a
 //! native type declares worth keeping (`ljos_engine::Migrate`) is taken
@@ -111,8 +112,10 @@ impl Default for ErrorBoundary {
     }
 }
 
-/// The `fault` group of [`ErrorBoundary`]: the last fault of its content.
-/// Empty while there was none and after `retry()`.
+/// The `fault` group of [`ErrorBoundary`]: the last fault of its content,
+/// also one it kept the content shown through (a script stopped for its
+/// time). Empty while there was none, after `retry()` and for new
+/// `content`.
 #[derive(Debug, Default, QmlObject)]
 #[qml(name = "ErrorBoundaryFault", uncreatable)]
 pub struct BoundaryFault {
@@ -180,9 +183,7 @@ impl ErrorBoundary {
         e.watch(me, ErrorBoundary::CONTENT.index, move |e, _| {
             // New content is tried at once, whatever stopped the old.
             stop_waiting(e, me);
-            if failed(e, me) {
-                publish(e, me, None);
-            }
+            publish(e, me, None);
             drop_item(e, me);
             start_content(e, me);
         })?;
@@ -320,13 +321,20 @@ impl Boundary for Behaviour {
         failed(e, me)
     }
 
-    fn keeps(&self, _: &Engine, me: ObjectId, report: &FaultReport) -> bool {
+    fn keeps(&self, e: &Engine, me: ObjectId, report: &FaultReport) -> bool {
         // A script of the content stopped for its time leaves the content
         // whole: the binding cut short runs again by itself
         // (`run_again_after`), and content made again would run over
         // again, without end. Content that could not be made at all (the
         // boundary's own fault) is made again after a wait.
-        matches!(report.fault, Fault::JsInterrupted { .. }) && report.origin != Some(me)
+        let keeps =
+            matches!(report.fault, Fault::JsInterrupted { .. }) && report.origin != Some(me);
+        if keeps {
+            // Kept, not hidden: a handler of `fault` or the content can
+            // still see what was cut short.
+            publish(e, me, Some(report));
+        }
+        keeps
     }
 
     fn resource_fault(&self, e: &Engine, me: ObjectId, report: &FaultReport) -> bool {
