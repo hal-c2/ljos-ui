@@ -26,7 +26,7 @@ Feature: Back goes to the application's topmost Back handler
       Item {
         id: root; objectName: "root"
         property int depth: 3
-        property bool popupOpen: false
+        property bool popupOpen: false; property bool sheetOpen: false
         property string told: ""
         Back {
           id: pages; objectName: "pages"
@@ -39,6 +39,10 @@ Feature: Back goes to the application's topmost Back handler
         Item {
           id: popup; visible: root.popupOpen
           Back { objectName: "popupBack"; onInvoked: root.popupOpen = false }
+        }
+        Loader {
+          active: root.sheetOpen
+          sourceComponent: Item { Back { onInvoked: root.sheetOpen = false } }
         }
       }
       """
@@ -92,3 +96,11 @@ Feature: Back goes to the application's topmost Back handler
     And the user completes the back swipe
     Then the property "depth" of "root" is 2
     And the property "popupOpen" of "root" is true
+
+  Scenario: A swipe whose handler is gone goes back where Back goes now
+    When the property "sheetOpen" of "root" is set to true
+    And the user starts the back swipe
+    And the property "sheetOpen" of "root" is set to false
+    And the user completes the back swipe
+    Then the application took Back
+    And the property "depth" of "root" is 2

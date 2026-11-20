@@ -207,7 +207,7 @@ struct Phone<M, S> {
     insets: Insets,
     /// What the activity was last told about Back: whether the
     /// application takes it.
-    back_taken: Option<bool>,
+    back_taken: crate::back_told::BackTold,
     /// Frames tried again since one was last drawn.
     retries: u32,
 }
@@ -266,7 +266,7 @@ where
             waker,
             focused: true,
             insets: Insets::default(),
-            back_taken: None,
+            back_taken: crate::back_told::BackTold::default(),
             retries: 0,
         }
     }
@@ -327,6 +327,8 @@ where
         let Some(window) = host.surface().cloned() else {
             return;
         };
+        // The activity may be a new one, which takes Back until told.
+        self.back_taken.surface_came();
         if let Err(e) = self.make_surface(&window) {
             log::error!("nothing can be drawn: {e}");
             return;
@@ -436,8 +438,7 @@ where
             return;
         };
         let taken = ljos_quick::wants_back(app.engine());
-        if self.back_taken != Some(taken) {
-            self.back_taken = Some(taken);
+        if let Some(taken) = self.back_taken.tell(taken) {
             host.request(Request::BackTaken(taken));
         }
     }

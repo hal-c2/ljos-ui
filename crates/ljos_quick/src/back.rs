@@ -1,8 +1,9 @@
 //! `Back` (Ljos): where the system's Back goes (ARCHITECTURE.md §10.3,
 //! "the `Ljos.Back` router"). Qt has no such type.
 //!
-//! Every `Back` of an engine is in one list, in the order they completed.
-//! The system's Back goes to the last one that is enabled and whose item
+//! Every `Back` of an engine is in one list, in the order they were made
+//! (not completed: a component completes the last made first). The
+//! system's Back goes to the last one that is enabled and whose item
 //! is shown: a page pushed on another, a popup over a page. While none is,
 //! Back is the platform's to do ([`wants_back`] tells a host so, ahead of
 //! time, which a phone needs to play its own animation for it).
@@ -16,6 +17,7 @@
 //! Pinned by `features/mobile/back.feature`.
 
 use std::cell::{Cell, RefCell};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use ljos_engine::qml_impl;
 use ljos_engine::{Cx, Engine, EngineError, ObjectId, QmlObject, QtObject, Value, WriteKind};
@@ -38,6 +40,15 @@ pub struct Back {
     /// How far the swipe has come, from 0 to 1; 0 when there is none.
     #[qml(notify, readonly)]
     pub progress: f64,
+    /// When it was made, among every `Back`: the router's order.
+    #[qml(skip)]
+    made: u64,
+}
+
+/// The next `Back`'s [`Back::made`].
+fn next_made() -> u64 {
+    static MADE: AtomicU64 = AtomicU64::new(0);
+    MADE.fetch_add(1, Ordering::Relaxed)
 }
 
 impl Default for Back {
@@ -47,6 +58,7 @@ impl Default for Back {
             enabled: true,
             active: false,
             progress: 0.0,
+            made: next_made(),
         }
     }
 }
@@ -68,8 +80,11 @@ impl Back {
 
     #[qml(on_complete)]
     fn completed(cx: &Cx) -> Result<(), EngineError> {
+        let made = cx.engine.with_mut(cx.this, |b: &mut Back| b.made)?;
         let router = cx.engine.extension::<Router>();
-        router.all.borrow_mut().push(cx.this);
+        let mut all = router.all.borrow_mut();
+        let at = all.partition_point(|(m, _)| *m < made);
+        all.insert(at, (made, cx.this));
         Ok(())
     }
 }
@@ -89,9 +104,9 @@ pub enum BackStep {
 
 #[derive(Default)]
 struct Router {
-    /// Every completed `Back`, in the order they completed; the dead ones
-    /// are dropped as Back is next looked for.
-    all: RefCell<Vec<ObjectId>>,
+    /// Every completed `Back` with when it was made, in that order; the
+    /// dead ones are dropped as Back is next looked for.
+    all: RefCell<Vec<(u64, ObjectId)>>,
     /// The handler a swipe under way started at.
     swiping: Cell<Option<ObjectId>>,
 }
@@ -120,14 +135,15 @@ fn shown(engine: &Engine, handler: ObjectId) -> bool {
     true
 }
 
-/// The handler Back goes to now: the last completed one that is enabled
+/// The handler Back goes to now: the last made one that is enabled
 /// and shown. A tracked read, so a host can follow it.
 fn topmost(engine: &Engine) -> Option<ObjectId> {
     let router = engine.extension::<Router>();
-    router.all.borrow_mut().retain(|o| engine.is_alive(*o));
+    router.all.borrow_mut().retain(|(_, o)| engine.is_alive(*o));
     let all = router.all.borrow().clone();
     all.into_iter()
         .rev()
+        .map(|(_, b)| b)
         .find(|b| flag(engine, *b, Back::ENABLED.index) && shown(engine, *b))
 }
 
@@ -172,8 +188,13 @@ pub fn deliver_back(engine: &Engine, step: BackStep, progress: f64) -> bool {
         }
         BackStep::Progressed => router.swiping.get(),
         BackStep::Cancelled => router.swiping.take(),
-        // A swipe ends where it started; a lone Back goes to the topmost.
-        BackStep::Invoked => router.swiping.take().or_else(|| topmost(engine)),
+        // A swipe ends where it started, unless that handler is gone; a
+        // lone Back goes to the topmost.
+        BackStep::Invoked => router
+            .swiping
+            .take()
+            .filter(|b| engine.is_alive(*b))
+            .or_else(|| topmost(engine)),
     });
     let Some(b) = target.filter(|b| engine.is_alive(*b)) else {
         return false;
