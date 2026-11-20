@@ -46,6 +46,9 @@ use crate::ids::ObjectId;
 
 /// Reports kept for [`Engine::faults`].
 const MAX_HISTORY: usize = 32;
+
+/// How far up the owners [`Engine::resource_fault_in`] looks.
+const MAX_DEPTH: usize = 4096;
 /// Faults delivered in one go. A boundary whose restart faults again is
 /// bounded by its intensity; this bounds what nothing else does.
 const MAX_DELIVERED: usize = 256;
@@ -156,6 +159,9 @@ pub enum TakenBy {
     /// boundary gave up, the one around it that took the fault. `name` is
     /// what it was called then ([`Engine::label_of`]).
     Boundary { object: ObjectId, name: String },
+    /// The view or `Repeater` whose delegate a resource fault cut off: it
+    /// discarded that delegate and makes it again ([`crate::retry`]).
+    Remade { object: ObjectId, name: String },
     /// No boundary took it ([`Engine::application_fault`]).
     Application,
     /// It happened in a subtree already discarded for an earlier fault.
@@ -186,6 +192,10 @@ pub(crate) struct FaultState {
     /// the dispatch reports): `Some(None)` once one with no object of its
     /// own has.
     stopped: RefCell<Option<Option<Stopped>>>,
+    /// Objects whose run an interrupt stopped and that deal with it
+    /// themselves ([`Engine::try_call_js_as`]): the dispatch that unwinds
+    /// is not at fault for it.
+    pub(crate) dealt_with: RefCell<Vec<ObjectId>>,
     handler: RefCell<Option<FaultHandler>>,
     /// Set by the JS bridge for the QML function it is about to call: an
     /// exception in it is the calling script's to catch.
@@ -443,6 +453,48 @@ impl Engine {
             .get()
             .map(|o| (o, self.boundaries_around(Some(o))));
         *state.stopped.borrow_mut() = Some(stopped);
+    }
+
+    /// The first resource fault reported after the `since`th from inside
+    /// `root` (`root` or what it owns) and not delivered yet, or the
+    /// interrupt of a run inside it nested in the dispatch running now
+    /// (reported when the dispatch unwinds): what cut off its scripts
+    /// while it was being made, which leaves it made but not what its
+    /// code says.
+    pub(crate) fn resource_fault_in(
+        &self,
+        since: u64,
+        root: ObjectId,
+    ) -> Option<crate::retry::ResourceFault> {
+        let inside = |o: ObjectId| {
+            let mut cur = o;
+            for _ in 0..MAX_DEPTH {
+                if cur == root {
+                    return true;
+                }
+                match self.owner(cur) {
+                    Some(p) => cur = p,
+                    None => return false,
+                }
+            }
+            false
+        };
+        let state = &self.inner.faults;
+        if let Some(Some((o, _))) = &*state.stopped.borrow()
+            && inside(*o)
+        {
+            return Some(crate::retry::ResourceFault::Interrupted);
+        }
+        let queue = state.queue.borrow();
+        queue.iter().filter(|r| r.seq > since).find_map(|r| {
+            let cause = crate::retry::ResourceFault::of(&r.fault)?;
+            let stopped = r.stopped.as_ref().map(|(o, _)| *o);
+            [r.origin, stopped]
+                .into_iter()
+                .flatten()
+                .any(inside)
+                .then_some(cause)
+        })
     }
 
     /// How many faults have been reported: a fault whose

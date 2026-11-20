@@ -67,8 +67,6 @@ ljos_ir = { path = "../ljos_ir" }
 jpeg-encoder.workspace = true
 # Network pictures are fetched from a listener the test runs on loopback.
 ljos_platform = { path = "../ljos_platform", features = ["http"] }
-# The Loader's fault and retry state machine is checked against a model.
-proptest.workspace = true
 
 [lints]
 workspace = true

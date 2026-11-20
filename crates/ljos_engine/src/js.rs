@@ -1524,6 +1524,14 @@ impl Engine {
                     file,
                     line,
                 },
+                f @ JsFault::JsInterrupted { .. } => crate::JsError::Stopped {
+                    message: f.to_string(),
+                    cause: crate::retry::ResourceFault::Interrupted,
+                },
+                f @ JsFault::JsOutOfMemory { .. } => crate::JsError::Stopped {
+                    message: f.to_string(),
+                    cause: crate::retry::ResourceFault::OutOfMemory,
+                },
                 other => crate::JsError::Failed(other.to_string()),
             })
     }

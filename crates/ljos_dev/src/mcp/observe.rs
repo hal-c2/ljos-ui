@@ -875,7 +875,9 @@ fn fault_rows(engine: &Engine, secrets: &SecretBook, text: &mut String) -> Vec<V
             TakenBy::Log => ("log".to_owned(), None),
             TakenBy::Application => ("application".to_owned(), None),
             TakenBy::Discarded => ("discarded".to_owned(), None),
-            TakenBy::Boundary { object, name } => (name.clone(), alive(*object)),
+            TakenBy::Boundary { object, name } | TakenBy::Remade { object, name } => {
+                (name.clone(), alive(*object))
+            }
         };
         let origin_handle = f.origin.and_then(alive);
         let masked = |s: &str| {

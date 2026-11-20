@@ -1098,9 +1098,13 @@ impl Engine {
     /// [`Engine::advance_timers`]. For native deadlines that must not poll,
     /// such as a media clock's next frame or the end of a stream.
     pub fn call_at(&self, at: Time, f: impl FnOnce(&Engine) + 'static) -> TimerId {
+        // Slack only for a call far off: one due now or soon would
+        // otherwise wake the host up to 4 ms late, and a host that lets no
+        // time pass (a test settling a scene) would never run it.
+        let soon = at.saturating_since(self.now());
         let id = {
             let mut st = self.inner.timers.borrow_mut();
-            let id = st.sched.add_timer(at, TimerKind::Timer);
+            let id = st.sched.add_timer(at, TimerKind::for_interval(soon));
             st.pending.insert(id, Pending::Call(Box::new(f)));
             id
         };

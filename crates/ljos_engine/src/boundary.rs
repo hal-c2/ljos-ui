@@ -30,9 +30,9 @@
 //! carries on, and so does a Loader.
 
 use std::any::Any;
-use std::cell::{OnceCell, RefCell};
+use std::cell::{Cell, OnceCell, RefCell};
 use std::collections::{HashMap, HashSet};
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
 use ljos_runtime::{
     ChildId, ChildKind, ChildSpec, ExitReason, Fault, Intensity, Outcome, ProcId, ProcIdAllocator,
@@ -44,6 +44,7 @@ use crate::fault::{FaultReport, TakenBy};
 use crate::ids::ObjectId;
 use crate::meta::MetaObject;
 use crate::object::{ObjectFlags, QmlType};
+use crate::retry::ResourceFault;
 
 /// How deep a search for the boundary around an object goes. Ownership
 /// has no cycles; this is for a bug that makes one.
@@ -89,6 +90,35 @@ pub trait Boundary {
     fn failed(&self, _engine: &Engine, _boundary: ObjectId) -> bool {
         false
     }
+
+    /// Takes a resource fault in the content (`cause`: a full heap, an
+    /// interrupt) outside the supervisor tree: stops the content and makes
+    /// it again later by itself ([`crate::retry`]), so the fault neither
+    /// counts toward the restart intensity nor escalates. What filled the
+    /// heap may have been something else, and the content is not wrong
+    /// for it. False leaves the fault to [`Boundary::stop`] and the tree,
+    /// as for any other. Called between turns, as `stop` is.
+    fn recover(
+        &self,
+        _engine: &Engine,
+        _boundary: ObjectId,
+        _report: &FaultReport,
+        _cause: ResourceFault,
+    ) -> bool {
+        false
+    }
+}
+
+/// Something that makes content outside any boundary and makes it again
+/// by itself after a resource fault in it, as a view or a `Repeater` does
+/// its delegates: a full heap or an interrupt in one row then costs that
+/// row a while, not the application ([`crate::retry`]).
+pub(crate) trait Remakes {
+    /// `cause` cut off code in `content`, an object the holder owns:
+    /// discards it and makes it again later. False when `content` is not
+    /// something the holder made, and the fault goes on as any other.
+    /// Called between turns, as [`Boundary::stop`] is.
+    fn remake(self: Rc<Self>, engine: &Engine, content: ObjectId, cause: ResourceFault) -> bool;
 }
 
 /// The owner of everything no boundary is around.
@@ -117,6 +147,12 @@ pub(crate) struct Boundaries {
     procs: RefCell<Option<Procs>>,
     /// The fault being delivered, for the content that is stopped for it.
     current: RefCell<Option<FaultReport>>,
+    /// What makes content again after a resource fault, by the object
+    /// that owns that content ([`Remakes`]). Weak: the holder goes with
+    /// its object, and dead entries are swept as more are added.
+    holders: RefCell<HashMap<ObjectId, Weak<dyn Remakes>>>,
+    /// Entries after the last sweep of `holders`.
+    holders_swept: Cell<usize>,
 }
 
 impl Boundaries {
@@ -336,6 +372,36 @@ impl Engine {
         if report.target.is_none() && report.origin.is_some_and(|o| self.doomed(o)) {
             return Tripped::Handled(TakenBy::Discarded);
         }
+        // The run an interrupt stopped was in content already taken for
+        // it (a singleton made again later): the dispatch's time went
+        // there, and that was dealt with.
+        if report.target.is_none()
+            && report
+                .stopped
+                .as_ref()
+                .is_some_and(|(o, _)| self.doomed(*o))
+        {
+            return Tripped::Handled(TakenBy::Discarded);
+        }
+        // The run it stopped was called by an owner that deals with it.
+        if report.target.is_none()
+            && let Some((o, _)) = &report.stopped
+            && self.interrupt_dealt_with(*o)
+        {
+            return Tripped::Handled(TakenBy::Remade {
+                object: *o,
+                name: self.label_of(*o).unwrap_or_default(),
+            });
+        }
+        if report.target.is_none()
+            && let Some(cause) = ResourceFault::of(&report.fault)
+            && let Some(holder) = self.remake_content(report, cause)
+        {
+            return Tripped::Handled(TakenBy::Remade {
+                object: holder,
+                name: self.label_of(holder).unwrap_or_default(),
+            });
+        }
         let mut chain: Vec<(ObjectId, Rc<dyn Boundary>)> = Vec::new();
         for o in report
             .target
@@ -359,6 +425,15 @@ impl Engine {
         let Some(first) = first else {
             return unhandled();
         };
+        if let Some(cause) = ResourceFault::of(&report.fault) {
+            let (object, behaviour) = &chain[first];
+            if self.untrack(|| behaviour.recover(self, *object, report, cause)) {
+                return Tripped::Handled(TakenBy::Boundary {
+                    object: *object,
+                    name: self.label_of(*object).unwrap_or_default(),
+                });
+            }
+        }
         let ids: Vec<ObjectId> = chain[first..].iter().map(|(o, _)| *o).collect();
         let Some(content) = self.boundary_node(ids[0], &ids[1..]) else {
             return unhandled();
@@ -394,6 +469,63 @@ impl Engine {
             }),
             None => Tripped::Unhandled(Box::new(last)),
         }
+    }
+
+    /// Makes `remakes` the one that makes the content `holder` owns again
+    /// after a resource fault in it. Again for the same holder replaces it.
+    pub(crate) fn hold_content(&self, holder: ObjectId, remakes: Weak<dyn Remakes>) {
+        let b = &self.inner.faults.boundaries;
+        let mut holders = b.holders.borrow_mut();
+        if holders.len() >= b.holders_swept.get() * 2 + 16 {
+            holders.retain(|_, w| w.strong_count() > 0);
+            b.holders_swept.set(holders.len());
+        }
+        holders.insert(holder, remakes);
+    }
+
+    /// Hands a resource fault from inside content a holder made
+    /// ([`Remakes`]) to that holder, when it is nearer the fault than any
+    /// boundary: a boundary inside a delegate takes its own faults. The
+    /// holder it went to.
+    fn remake_content(&self, report: &FaultReport, cause: ResourceFault) -> Option<ObjectId> {
+        let holders = &self.inner.faults.boundaries.holders;
+        if holders.borrow().is_empty() {
+            return None;
+        }
+        // An interrupt nested in a dispatch is the dispatch's to report,
+        // but the time went to the run it stopped: that run's content is
+        // what is made again.
+        if let Some((stopped, around)) = &report.stopped
+            && let Some(holder) = self.remake_from(*stopped, around.first().copied(), cause)
+        {
+            return Some(holder);
+        }
+        self.remake_from(report.origin?, report.boundaries.first().copied(), cause)
+    }
+
+    /// [`Engine::remake_content`] for a fault in `cur`, with `nearest` the
+    /// nearest boundary around it.
+    fn remake_from(
+        &self,
+        mut cur: ObjectId,
+        nearest: Option<ObjectId>,
+        cause: ResourceFault,
+    ) -> Option<ObjectId> {
+        let holders = &self.inner.faults.boundaries.holders;
+        for _ in 0..MAX_DEPTH {
+            let parent = self.untrack(|| self.owner(cur).or_else(|| self.visual_parent(cur)))?;
+            if Some(parent) == nearest {
+                return None;
+            }
+            let holder = holders.borrow().get(&parent).and_then(Weak::upgrade);
+            if let Some(h) = holder
+                && self.untrack(|| h.remake(self, cur, cause))
+            {
+                return Some(parent);
+            }
+            cur = parent;
+        }
+        None
     }
 
     /// Forgets the nodes of boundaries that are gone, and of supervisors

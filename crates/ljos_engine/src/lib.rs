@@ -101,6 +101,7 @@ mod qtqml;
 mod records;
 mod registry;
 mod reset;
+pub mod retry;
 mod script_arrays;
 mod script_owned;
 mod signal;
