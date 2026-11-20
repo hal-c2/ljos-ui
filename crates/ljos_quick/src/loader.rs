@@ -18,24 +18,30 @@
 //! item (a panic in a native type, a JS run cut short) unloads the item
 //! and leaves the Loader at `Loader.Error`, and the rest of the
 //! application runs on. Loading again makes a new item from the source.
-//! A JS run cut short may not happen again (what it did before may have
-//! finished the work, or the data may have changed), so after one the Loader
-//! loads again by itself, once in [`SECOND_CHANCE`], and the log says so.
-//! That limit is for a run that loading again could cut short again: one
+//! A JS run cut short, or a script heap that ran out, is not the item's
+//! fault: what it did before may have finished the work, the data may have
+//! changed, and the garbage a collection frees may make room. So after one
+//! the Loader loads again by itself, and the log says so. It never gives
+//! up for good, unlike Qt, which has neither limit (a script that never
+//! returns hangs it, and running out of memory ends it). A fault soon after
+//! the Loader loaded again ([`SECOND_CHANCE`]) makes it wait before the
+//! next load, twice as long each time up to [`LONGEST_WAIT`] ([`Backoff`]),
+//! so an item that runs out each time costs one load in that long, and one
+//! that ran out while something else filled the heap comes back when that
+//! has let go. Told to load (a change of `active`, `source` or
+//! `sourceComponent`), it loads at once.
+//! That count is for a run that loading again could cut short again: one
 //! while the item is made, or in the item's own code. A short handler of a
 //! made item whose dispatch was cut short in other objects' code (a click
 //! that sets off long work elsewhere) was set off by whatever ran the
-//! handler, not by the loading, so the Loader loads again each time. When
-//! the interrupted dispatch was not input someone gave (a press, a key, a
-//! wheel: [`crate::input::filed_acting`]) but a timer's or other work's,
-//! the item set the work off by itself, and [`ELSEWHERE_STREAK`] such
+//! handler, not by the loading, so the Loader loads again each time at
+//! once. When the interrupted dispatch was not input someone gave (a press,
+//! a key, a wheel: [`crate::input::filed_acting`]) but a timer's or other
+//! work's, the item set the work off by itself: [`ELSEWHERE_STREAK`] such
 //! interrupts in a row, each of an item the last one loaded again and soon
-//! after it, leave the Loader at `Loader.Error`.
-//! A script heap that ran out below the item is no more final than an
-//! interrupt: the garbage a collection frees may make room. The Loader
-//! collects and loads again, once in [`SECOND_CHANCE`] as for an interrupt
-//! while the item is made, since an item that needs more than the heap
-//! holds runs out each time.
+//! after it, make it wait as above before each load after that.
+//! Before loading again for a full heap the Loader collects the garbage;
+//! faults are delivered between runs, where it can.
 //! An exception in a handler is not such a fault: Qt logs it and keeps
 //! the item, and so does this. The work of making the item is charged to
 //! the Loader as its owner.
@@ -54,16 +60,25 @@ use crate::enums::loader_status;
 use crate::item::{Item, is_a, is_item, size_follows_implicit, write_computed};
 use crate::tree;
 
-/// How long after loading again for an interrupted script a Loader takes
-/// another such fault as final.
+/// How long after loading again for an interrupted script or a full heap a
+/// Loader takes another such fault as its item's doing, and waits before it
+/// loads again ([`Backoff`]).
 const SECOND_CHANCE: Duration = Duration::from_secs(10);
+
+/// The wait before the first load that follows a fault soon after the last
+/// load; each such fault after it doubles the wait.
+const FIRST_WAIT: Duration = Duration::from_secs(1);
+
+/// The longest wait between loads: an item that runs out of time or memory
+/// each time it is made is made once in this long, and never given up on.
+const LONGEST_WAIT: Duration = Duration::from_secs(60);
 
 /// How many interrupts in a row of scripts an item set off elsewhere by
 /// itself (a timer of its own, not input someone gave it) a Loader takes,
 /// each within [`SECOND_CHANCE`] of the one before and of the item it
-/// loaded again. It loads again for the ones before; this one leaves it at
-/// `Loader.Error`. An item that sets the work off again each time it is
-/// made would chain them for good, however long the cut-off scripts ran.
+/// loaded again, before it waits between loads as [`Backoff`] does. An item
+/// that sets the work off again each time it is made would chain them for
+/// good, however long the cut-off scripts ran.
 const ELSEWHERE_STREAK: u32 = 8;
 
 /// `Loader` (QtQuick).
@@ -148,8 +163,13 @@ struct Run {
     /// An item was emptied without telling while the next one is made: a
     /// failure tells the empty item, as no item replaces it.
     emptied_quietly: bool,
-    /// When an interrupted script last made the Loader load again.
-    second_chance: Option<Time>,
+    /// When the Loader loads again after interrupted scripts or a full
+    /// heap.
+    backoff: Backoff,
+    /// The load [`Backoff`] waits for, to be dropped when the Loader is
+    /// told to load before it: its timer, when it is due, and how it is
+    /// counted.
+    waiting: Option<(ljos_runtime::TimerId, Time, Count)>,
     /// When a script an item set off elsewhere by itself was last
     /// interrupted, how many were in a row, and the generation of the item
     /// that loaded again for it: an item any other load made starts anew.
@@ -478,11 +498,93 @@ enum Cut {
     OutOfMemory,
 }
 
-/// After a script was stopped at `at`: loads again unless that was just
-/// tried. The log has the fault already; this says what became of the item.
+/// When a Loader loads again after faults that are not its item's code's
+/// own (an interrupted script, a full heap): at once after the first, and
+/// after a wait for each that comes within [`SECOND_CHANCE`] of the load
+/// before it, from [`FIRST_WAIT`] doubling up to [`LONGEST_WAIT`]. There is
+/// no last time: the fault may have been something else's (another item
+/// filling the heap), and what caused it may go away.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Backoff {
+    /// When the Loader last loaded again for such a fault.
+    last_load: Option<Time>,
+    /// How many such faults in a row came soon after the load before.
+    streak: u32,
+}
+
+impl Backoff {
+    /// A fault at `at` the Loader loads again for: how long it waits first.
+    pub(crate) fn fault(&mut self, at: Time) -> Duration {
+        let soon = self
+            .last_load
+            .is_some_and(|t| at.saturating_since(t) < SECOND_CHANCE);
+        self.streak = if soon {
+            self.streak.saturating_add(1)
+        } else {
+            0
+        };
+        wait_for(self.streak)
+    }
+
+    /// The Loader loads again at `at`.
+    pub(crate) fn loading(&mut self, at: Time) {
+        self.last_load = Some(at);
+    }
+}
+
+/// The wait before a load that follows `streak` faults in a row, each soon
+/// after the load before: none for the first.
+pub(crate) fn wait_for(streak: u32) -> Duration {
+    match streak {
+        0 => Duration::ZERO,
+        n => FIRST_WAIT
+            .saturating_mul(1_u32.checked_shl(n - 1).unwrap_or(u32::MAX))
+            .min(LONGEST_WAIT),
+    }
+}
+
+/// What the Loader notes when it loads again for a fault.
+#[derive(Clone, Copy, Debug)]
+enum Count {
+    /// [`Run::backoff`].
+    Backoff,
+    /// [`Run::elsewhere`]: the `n`th interrupt in a row of work the item
+    /// set off by itself.
+    Elsewhere(u32),
+    /// Nothing: someone's input set the work off.
+    Acted,
+}
+
+/// After a script was stopped at `at`: loads again, now or after a wait.
+/// The log has the fault already; this says what becomes of the item.
 fn load_again(e: &Engine, me: ObjectId, at: Time, again: Again, cut: Cut) {
+    // Nothing was loaded since the last fault: this is the same failure
+    // told again (the load's own error, then its fault report). The wait
+    // stands, for the generation the report moved on to.
+    if let Some(Some((old, due, count))) = with_run(e, me, |r| r.waiting.take()) {
+        e.cancel_call(old);
+        wait_until(e, me, due, count);
+        return;
+    }
     let place = e.declared_at(me).unwrap_or_default();
-    if again != Again::Counted {
+    let what = match cut {
+        Cut::Interrupted => "a script was interrupted",
+        Cut::OutOfMemory => "its item ran out of script memory",
+    };
+    let (wait, count, message) = if again == Again::Counted {
+        let Some(wait) = with_run(e, me, |r| r.backoff.fault(at)) else {
+            return;
+        };
+        let message = if wait.is_zero() {
+            format!("{place}Loader: {what}, loading again")
+        } else {
+            format!(
+                "{place}Loader: {what} again, so it stays at Loader.Error and loads again in {}",
+                seconds(wait)
+            )
+        };
+        (wait, Count::Backoff, message)
+    } else {
         let streak = with_run(e, me, |r| match (again, r.elsewhere) {
             (Again::Elsewhere { made_in }, Some((t, n, g)))
                 if g == made_in && at.saturating_since(t) < SECOND_CHANCE =>
@@ -492,60 +594,76 @@ fn load_again(e: &Engine, me: ObjectId, at: Time, again: Again, cut: Cut) {
             (Again::Elsewhere { .. }, _) => 1,
             _ => 0,
         });
-        match streak {
-            Some(n) if n < ELSEWHERE_STREAK => {
-                warn(
-                    e,
-                    format!(
-                        "{place}Loader: a script its item set off in another object was interrupted, loading again"
-                    ),
-                );
-                let before = with_run(e, me, |r| r.generation);
-                reload(e, me, true);
-                // A load asked for while the item was made (by a `loaded`
-                // handler) starts anew.
-                with_run(e, me, |r| {
-                    let mine = before.map(|g| g + 1);
-                    r.elsewhere =
-                        (n > 0 && mine == Some(r.generation)).then_some((at, n, r.generation));
-                });
-            }
-            Some(n) => warn(
-                e,
-                format!(
-                    "{place}Loader: scripts its item set off in other objects were interrupted {n} times in a row, so it stays at Loader.Error until it is told to load"
-                ),
-            ),
-            None => {}
+        let Some(n) = streak else { return };
+        let count = if n == 0 {
+            Count::Acted
+        } else {
+            Count::Elsewhere(n)
+        };
+        if n < ELSEWHERE_STREAK {
+            let message = format!(
+                "{place}Loader: a script its item set off in another object was interrupted, loading again"
+            );
+            (Duration::ZERO, count, message)
+        } else {
+            let wait = wait_for(n - ELSEWHERE_STREAK + 1);
+            let message = format!(
+                "{place}Loader: scripts its item set off in other objects were interrupted {n} times in a row, so it stays at Loader.Error and loads again in {}",
+                seconds(wait)
+            );
+            (wait, count, message)
         }
+    };
+    warn(e, message);
+    if wait.is_zero() {
+        load_counted(e, me, at, count);
         return;
     }
-    let tried = with_run(e, me, |r| {
-        let tried = r
-            .second_chance
-            .is_some_and(|t| at.saturating_since(t) < SECOND_CHANCE);
-        if !tried {
-            r.second_chance = Some(at);
-        }
-        tried
-    });
-    let what = match cut {
-        Cut::Interrupted => "a script was interrupted",
-        Cut::OutOfMemory => "its item ran out of script memory",
+    wait_until(e, me, at + wait, count);
+}
+
+/// Loads again at `due`, unless told to load before.
+fn wait_until(e: &Engine, me: ObjectId, due: Time, count: Count) {
+    let Some(generation) = with_run(e, me, |r| r.generation) else {
+        return;
     };
-    match tried {
-        Some(false) => {
-            warn(e, format!("{place}Loader: {what}, loading again"));
-            reload(e, me, true);
+    let timer = e.call_at(due, move |e| {
+        // Told to load, or gone, since: that load stands.
+        if !is_current(e, me, generation) {
+            return;
         }
-        Some(true) => warn(
-            e,
-            format!(
-                "{place}Loader: {what} again, so it stays at Loader.Error until it is told to load"
-            ),
-        ),
-        None => {}
+        with_run(e, me, |r| r.waiting = None);
+        load_counted(e, me, e.now(), count);
+    });
+    if let Some(Some((old, ..))) = with_run(e, me, |r| r.waiting.replace((timer, due, count))) {
+        e.cancel_call(old);
     }
+}
+
+/// Loads again for a fault, noting it as `count` says.
+fn load_counted(e: &Engine, me: ObjectId, at: Time, count: Count) {
+    let before = with_run(e, me, |r| {
+        if let Count::Backoff = count {
+            r.backoff.loading(at);
+        }
+        r.generation
+    });
+    reload(e, me, true);
+    if let Count::Elsewhere(n) = count {
+        // A load asked for while the item was made (by a `loaded` handler)
+        // starts anew.
+        with_run(e, me, |r| {
+            let mine = before.map(|g| g + 1);
+            r.elsewhere = (mine == Some(r.generation)).then_some((at, n, r.generation));
+        });
+    } else if let Count::Acted = count {
+        with_run(e, me, |r| r.elsewhere = None);
+    }
+}
+
+/// `1 s`, `1.5 s`.
+fn seconds(d: Duration) -> String {
+    format!("{} s", d.as_secs_f64())
 }
 
 /// Called when `child` is appended to `parent`'s `data`: a Loader with a
@@ -613,12 +731,21 @@ fn reload(e: &Engine, me: ObjectId, force: bool) {
         }
         r.generation += 1;
         r.origin = want.clone();
-        Some((r.generation, r.job.take(), r.incubating.take()))
+        Some((
+            r.generation,
+            r.job.take(),
+            r.incubating.take(),
+            r.waiting.take(),
+        ))
     })
     .flatten();
-    let Some((generation, job, half_made)) = begun else {
+    let Some((generation, job, half_made, waiting)) = begun else {
         return;
     };
+    // This load is the one a fault's wait was for.
+    if let Some((timer, ..)) = waiting {
+        e.cancel_call(timer);
+    }
     if let Some(job) = job {
         job.cancel();
     }
@@ -747,6 +874,14 @@ fn finish(e: &Engine, me: ObjectId, generation: u64, made: Result<ObjectId, Engi
             }
         }
         Err(err) => {
+            // A load cut short with no fault reported to the Loader (a
+            // module that ran out of heap in a job of its own) loads again
+            // as a reported one does.
+            let cut = match err {
+                EngineError::JsInterrupted(_) => Some(Cut::Interrupted),
+                EngineError::JsOutOfMemory(_) => Some(Cut::OutOfMemory),
+                _ => None,
+            };
             warn(e, err.to_string());
             set(e, me, Loader::STATUS.index, loader_status::ERROR.into());
             set(e, me, Loader::ITEM.index, Value::Null);
@@ -754,6 +889,12 @@ fn finish(e: &Engine, me: ObjectId, generation: u64, made: Result<ObjectId, Engi
                 let _ = e.notify(me, Loader::ITEM.index);
             }
             set(e, me, Loader::PROGRESS.index, 1.0.into());
+            if let Some(cut) = cut {
+                if cut == Cut::OutOfMemory {
+                    e.collect_garbage();
+                }
+                load_again(e, me, e.now(), Again::Counted, cut);
+            }
         }
     }
     if is_current(e, me, generation) {
@@ -810,4 +951,93 @@ fn resize(e: &Engine, me: ObjectId, horizontal: bool) -> Result<(), EngineError>
     }
     let v = e.read(item, implicit);
     write_computed(e, me, implicit, v)
+}
+
+#[cfg(test)]
+mod tests {
+    use proptest::prelude::*;
+
+    use super::*;
+
+    /// What happens to a Loader whose item faults over and over: when, after
+    /// each load, the next fault comes, or `None` when the item stays up.
+    #[derive(Clone, Debug)]
+    enum Step {
+        /// The item faults this long after it was loaded.
+        Faults(Duration),
+        /// The item stays up this long, then faults.
+        Lasts(Duration),
+    }
+
+    fn step() -> impl Strategy<Value = Step> {
+        prop_oneof![
+            (0..SECOND_CHANCE.as_millis() as u64)
+                .prop_map(|ms| Step::Faults(Duration::from_millis(ms))),
+            (SECOND_CHANCE.as_millis() as u64..10 * SECOND_CHANCE.as_millis() as u64)
+                .prop_map(|ms| Step::Lasts(Duration::from_millis(ms))),
+        ]
+    }
+
+    proptest! {
+        /// Run against a model of the state machine: every fault is followed
+        /// by a load (never a last time), a fault after an item that lasted
+        /// is loaded again at once, and a streak of quick faults waits
+        /// twice as long each time, from a second up to a minute.
+        #[test]
+        fn a_loader_always_loads_again_and_waits_as_the_model_says(
+            steps in proptest::collection::vec(step(), 1..40),
+        ) {
+            let mut b = Backoff::default();
+            let mut now = Time::ZERO + Duration::from_secs(1);
+            // The first load is the application's own, not counted.
+            let mut model_streak: Option<u32> = None;
+            for s in steps {
+                let (quick, after) = match s {
+                    Step::Faults(d) => (true, d),
+                    Step::Lasts(d) => (false, d),
+                };
+                now += after;
+                let wait = b.fault(now);
+                let streak = match (model_streak, quick) {
+                    (Some(n), true) => n + 1,
+                    _ => 0,
+                };
+                let expected = if streak == 0 {
+                    Duration::ZERO
+                } else {
+                    Duration::from_secs(1u64 << (streak - 1).min(6)).min(LONGEST_WAIT)
+                };
+                prop_assert_eq!(wait, expected);
+                prop_assert!(wait <= LONGEST_WAIT);
+                now += wait;
+                b.loading(now);
+                model_streak = Some(streak);
+            }
+        }
+
+        /// An item that faults at once every time is loaded at most once a
+        /// minute once the waits are long, and still loaded.
+        #[test]
+        fn a_runaway_item_is_loaded_at_a_bounded_rate(n in 8u32..200) {
+            let mut b = Backoff::default();
+            let mut now = Time::ZERO;
+            let mut loads = Vec::new();
+            for _ in 0..n {
+                now += b.fault(now);
+                b.loading(now);
+                loads.push(now);
+            }
+            prop_assert_eq!(loads.len() as u32, n);
+            for w in loads.windows(2).skip(7) {
+                prop_assert_eq!(w[1].saturating_since(w[0]), LONGEST_WAIT);
+            }
+        }
+    }
+
+    #[test]
+    fn waits_double_from_a_second_to_a_minute() {
+        let waits: Vec<u64> = (0..10).map(|n| wait_for(n).as_secs()).collect();
+        assert_eq!(waits, [0, 1, 2, 4, 8, 16, 32, 60, 60, 60]);
+        assert_eq!(wait_for(u32::MAX), LONGEST_WAIT);
+    }
 }

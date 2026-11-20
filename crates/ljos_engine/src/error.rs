@@ -72,6 +72,11 @@ pub enum EngineError {
     /// not by searching the words.
     #[error("{0}")]
     JsInterrupted(String),
+    /// JS that found the script heap full. Apart from [`EngineError::Js`]
+    /// so a caller can load again once there is room, as it may after an
+    /// interrupt, not give up as on an error in the script.
+    #[error("{0}")]
+    JsOutOfMemory(String),
 }
 
 /// Why [`Engine::try_call_js`](crate::Engine::try_call_js) or
@@ -149,6 +154,7 @@ impl EngineError {
     pub(crate) fn js(e: ljos_js::JsFault) -> Self {
         match e {
             ljos_js::JsFault::JsInterrupted { .. } => Self::JsInterrupted(e.to_string()),
+            ljos_js::JsFault::JsOutOfMemory { .. } => Self::JsOutOfMemory(e.to_string()),
             e => Self::Js(e.to_string()),
         }
     }

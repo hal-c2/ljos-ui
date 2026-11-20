@@ -4727,6 +4727,7 @@ dependencies = [
  "ljos_shader",
  "ljos_text",
  "png",
+ "proptest",
  "qml_front",
  "regex-automata",
  "resvg",
