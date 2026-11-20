@@ -1741,7 +1741,9 @@ fn reading_numbers_counts_against_the_walk_budget() {
         })
         .unwrap();
     let held = host
-        .enter("walk", host.config().slice, |s| Ok(s.held_by([vec![&nums]], 2)))
+        .enter("walk", host.config().slice, |s| {
+            Ok(s.held_by([vec![&nums]], 2))
+        })
         .unwrap();
     assert!(held.truncated, "{held:?}");
 }

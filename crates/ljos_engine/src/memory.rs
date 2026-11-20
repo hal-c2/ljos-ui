@@ -79,15 +79,11 @@ pub struct ScriptHolders {
 fn push_js<'v>(v: &'v Value, seen: &mut HashSet<usize>, out: &mut Vec<&'v ljos_js::JsRef>) {
     match v {
         Value::Js(h) => out.push(&h.0),
-        Value::List(items) => {
-            if seen.insert(Arc::as_ptr(items) as usize) {
-                items.iter().for_each(|v| push_js(v, seen, out));
-            }
+        Value::List(items) if seen.insert(Arc::as_ptr(items) as usize) => {
+            items.iter().for_each(|v| push_js(v, seen, out));
         }
-        Value::Map(fields) => {
-            if seen.insert(Arc::as_ptr(fields) as usize) {
-                fields.iter().for_each(|(_, v)| push_js(v, seen, out));
-            }
+        Value::Map(fields) if seen.insert(Arc::as_ptr(fields) as usize) => {
+            fields.iter().for_each(|(_, v)| push_js(v, seen, out));
         }
         _ => {}
     }
