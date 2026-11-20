@@ -53,6 +53,19 @@ pub trait ComponentSource {
         None
     }
 
+    /// Where on the disk a file the source lacks is, for `url` (its
+    /// address, as a script or the host asked for it): Qt loads whatever
+    /// file is at an address. The default is the address's own path. A
+    /// source whose addresses are not the disk's says where its files
+    /// are, and whether the engine may read one there; a source that
+    /// wraps another passes the question on.
+    fn on_disk(&self, _key: &str, url: &str) -> OnDisk {
+        match url_path(url) {
+            Some(path) => OnDisk::Read(path),
+            None => OnDisk::Unknown,
+        }
+    }
+
     /// `rel` as the document at `base` writes it, with a step up (`..`),
     /// before it is resolved: `Some` refuses it and is the address to
     /// load instead, one no file has. Resolving folds a step up at the
@@ -99,6 +112,19 @@ pub trait ComponentSource {
     /// }
     /// ```
     fn refuse_step_up(&self, base: &str, rel: &str) -> Option<String>;
+}
+
+/// Where a file a source lacks is on the disk: [`ComponentSource::on_disk`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OnDisk {
+    /// The file at this path is read, when it is there.
+    Read(std::path::PathBuf),
+    /// Nothing is read: the source reads its files itself, and has none
+    /// of the key. A message names the file at this path, where it would
+    /// be.
+    Missing(std::path::PathBuf),
+    /// The address is not on the disk: the source's reason stands.
+    Unknown,
 }
 
 /// Whether `rel`, an address with no scheme, takes a step up.
@@ -1039,15 +1065,33 @@ impl Engine {
         why: String,
     ) -> Result<Rc<LoadedFile>, EngineError> {
         let url = strip_query(url);
-        let Some(path) = url_path(url) else {
-            return Err(EngineError::Load(why));
+        let source = self.inner.loader.borrow().source.clone();
+        let found = match &source {
+            Some(source) => source.on_disk(key, url),
+            None => match url_path(url) {
+                Some(path) => OnDisk::Read(path),
+                None => OnDisk::Unknown,
+            },
+        };
+        // Named where it is looked for: a source's addresses need not be
+        // the disk's (a user's directory over a pack).
+        let missing = |path: &std::path::Path| {
+            let named = if url_path(url).as_deref() == Some(path) {
+                url.to_owned()
+            } else {
+                file_url(path)
+            };
+            EngineError::Load(format!("{named}: No such file or directory"))
+        };
+        let path = match found {
+            OnDisk::Read(path) => path,
+            OnDisk::Missing(path) => return Err(missing(&path)),
+            OnDisk::Unknown => return Err(EngineError::Load(why)),
         };
         // Only a file that is there is read: one stat, and only for an
         // address the source does not know.
         if !path.is_file() {
-            return Err(EngineError::Load(format!(
-                "{url}: No such file or directory"
-            )));
+            return Err(missing(&path));
         }
         let Some(compiled) = self.compile_from_disk(key, url, &path) else {
             return Err(EngineError::Load(format!(

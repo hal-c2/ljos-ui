@@ -35,7 +35,7 @@ use ljos_compiler::{
 };
 use ljos_design::theme::Theme;
 use ljos_engine::{
-    ComponentSource, Engine, LogLevel, MapSource, ObjectId, ReloadError, ReloadFault,
+    ComponentSource, Engine, LogLevel, MapSource, ObjectId, OnDisk, ReloadError, ReloadFault,
 };
 use ljos_ir::{CompiledFile, ReloadPatch};
 use ljos_js::Bytecode;
@@ -371,6 +371,13 @@ impl ComponentSource for LayeredSource {
             }
         }
         None
+    }
+
+    fn on_disk(&self, key: &str, _url: &str) -> OnDisk {
+        // The application's files and its user's share one root, which
+        // is not the disk's: a file of neither is the user's to write, and
+        // only the session reads the user's directory, through its checks.
+        OnDisk::Missing(self.user.root().join(format!("{key}.qml")))
     }
 
     fn bytecode(&self, key: &str) -> Option<Bytecode> {
