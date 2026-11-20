@@ -361,7 +361,9 @@ impl QuickScene {
             };
             let (range, typed) = changed(&before, &text);
             let at = span.start + range.start..span.end - (units_of(&before) - range.end);
-            let edited = !at.is_empty() || !typed.is_empty();
+            // Measured in what the method holds, not in the field: the
+            // field's selection goes only when something is typed over it.
+            let edited = !range.is_empty() || !typed.is_empty();
             // One edit, so a validator that refuses it leaves the field
             // as it was.
             let took = !edited || client.replace_whole(engine, item, at, &typed);
