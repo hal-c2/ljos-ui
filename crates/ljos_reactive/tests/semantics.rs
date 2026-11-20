@@ -369,6 +369,61 @@ fn host_write_keeps_binding_and_says_it_was_the_host() {
     assert_eq!(g.provenance(x), Some(Provenance::Bound));
 }
 
+/// A binding that has not run yet holds no value of its own: a host write
+/// over it is the property's value from then on, as it is over one that
+/// ran, and the binding gives its value again once what it reads changes.
+#[test]
+fn a_host_write_over_a_binding_that_never_ran_lasts() {
+    let g = Graph::new();
+    let r = g.root();
+    let implicit = g.property(r, 0).unwrap();
+    let runs = counter();
+    let size = counted_binding(&g, &runs, move |g| g.get(implicit));
+    g.batch(|| g.write(size, 240, WriteKind::Host).unwrap());
+    assert_eq!(g.get(size), 240);
+    assert_eq!(g.provenance(size), Some(Provenance::Host));
+    assert!(g.is_bound(size));
+    g.set(implicit, 100);
+    assert_eq!(g.get(size), 100);
+    assert_eq!(g.provenance(size), Some(Provenance::Bound));
+    // One run for the write, which a read would have made, and one for the
+    // change.
+    assert_eq!(runs.get(), 2);
+    g.check_invariants().unwrap();
+}
+
+/// The same over a binding that was due again: Qt runs a binding when what
+/// it reads changes, so a host write after that change is the last word.
+#[test]
+fn a_host_write_after_a_change_the_binding_had_not_run_for_lasts() {
+    let g = Graph::new();
+    let r = g.root();
+    let implicit = g.property(r, 0).unwrap();
+    let size = g.binding(r, 0, move |g| g.get(implicit)).unwrap();
+    assert_eq!(g.get(size), 0);
+    g.batch(|| {
+        g.set(implicit, 50);
+        g.write(size, 240, WriteKind::Host).unwrap();
+    });
+    assert_eq!(g.get(size), 240);
+    g.set(implicit, 60);
+    assert_eq!(g.get(size), 60);
+    g.check_invariants().unwrap();
+}
+
+/// Nothing reads a binding nobody wrote over: a host write elsewhere runs
+/// nothing.
+#[test]
+fn a_host_write_runs_no_binding_but_the_one_it_writes() {
+    let g = Graph::new();
+    let r = g.root();
+    let input = g.property(r, 0).unwrap();
+    let runs = counter();
+    let _other = counted_binding(&g, &runs, move |g| g.get(input));
+    g.write(input, 5, WriteKind::Host).unwrap();
+    assert_eq!(runs.get(), 0);
+}
+
 #[test]
 fn override_stack_restore_modes() {
     let g = Graph::new();
