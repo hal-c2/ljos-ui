@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# adb-run <binary> [args…]: cargo's runner for the Android targets
+# adb-run.sh <binary> [args…]: cargo's runner for the Android targets
 # (android:test sets CARGO_TARGET_<TRIPLE>_RUNNER to this). It copies a
 # test binary to the device that ANDROID_SERIAL names, or the only one,
 # runs it there with the same arguments and exits with its status, so
@@ -14,7 +14,7 @@ name="$(basename "$bin")"
 # so runs side by side on one device must not push over or delete each other's.
 "$adb" shell mkdir -p /data/local/tmp/ljos-test > /dev/null
 dir="$("$adb" shell mktemp -d /data/local/tmp/ljos-test/run.XXXXXX | tr -d '\r')"
-[ -n "$dir" ] || { echo "adb-run: no directory on the device" >&2; exit 1; }
+[ -n "$dir" ] || { echo "adb-run.sh: no directory on the device" >&2; exit 1; }
 # Also when the push fails or the run is interrupted, or leftovers pile up.
 trap '"$adb" shell rm -rf "$dir" > /dev/null 2>&1 || true' EXIT
 "$adb" push "$bin" "$dir/$name" > /dev/null

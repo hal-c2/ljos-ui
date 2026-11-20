@@ -29,6 +29,6 @@ need_rust_target "$triple"
 [ $# -gt 0 ] || set -- -p ljos_js
 android_cross_env "$triple"
 var="$(printf '%s' "$triple" | tr '[:lower:]-' '[:upper:]_')"
-export "CARGO_TARGET_${var}_RUNNER=$ljos_root/mise-tasks/_lib/adb-run"
+export "CARGO_TARGET_${var}_RUNNER=$ljos_root/scripts/adb-run.sh"
 export ADB="$adb"
 cargo test --target "$triple" "$@"
