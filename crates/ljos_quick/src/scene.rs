@@ -850,7 +850,31 @@ pub(crate) fn completed(e: &Engine, obj: ObjectId) {
 
 /// [`inherited`] from `p`'s change hook.
 fn told_inherited(e: &Engine, obj: ObjectId, p: PropIndex) {
+    if !recorded(e, obj) && is_completed(e, obj) {
+        // An item no scene has a record of yet, made by a script that goes
+        // on reading it, turned off: it is prepared as it would have been
+        // had it completed off, or a child recorded under it, whose own
+        // change took a cover from it, would never be told it turned on.
+        // One still being made is prepared as it completes, once what
+        // listens to its children is connected and can be told.
+        completed(e, obj);
+        return;
+    }
     inherited_as(e, obj, true, false, Some(p));
+}
+
+fn is_completed(e: &Engine, obj: ObjectId) -> bool {
+    e.flags(obj)
+        .is_some_and(|f| f.contains(ljos_engine::ObjectFlags::COMPLETED))
+}
+
+/// Whether a scene, or the pending records, keep inherited state of `obj`.
+fn recorded(e: &Engine, obj: ObjectId) -> bool {
+    let scenes = e.extension::<Scenes>();
+    scenes
+        .pending()
+        .is_some_and(|s| s.borrow().marks.contains(obj))
+        || scenes.live().iter().any(|s| s.borrow().marks.contains(obj))
 }
 
 /// `obj` was given another visual parent: it takes what the new one
@@ -913,7 +937,12 @@ fn inherited_as(e: &Engine, obj: ObjectId, down: bool, prepare: bool, told: Opti
                 run(&pending, true);
             }
         }
-    } else if pending_has {
+    } else if pending_has && live.is_empty() {
+        // A child completes before its parent, so it may have a pending
+        // record beside the one a scene prepared, until adoption merges
+        // them. Only the scene's passes reach it now: a cover its own
+        // change put in the pending record would be one none of them
+        // takes off, and adoption would carry it into the scene.
         run(pending.as_ref().unwrap(), true);
     }
 }
