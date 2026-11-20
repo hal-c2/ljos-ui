@@ -262,3 +262,102 @@ Item {
     set(&e, given, "anchors.margins", Value::Real(9.0));
     assert_eq!(num(&e, given, "anchors.leftMargin"), 9.0);
 }
+
+/// A property map's key written by the application re-runs the anchors
+/// of the items whose geometry follows that key, and of nothing else in
+/// the scene: a busy model must not lay out every anchored item on each
+/// write (#651). The delegates read the key through the root: an id set
+/// on the root context is not found from a delegate yet (#680).
+#[test]
+fn a_property_map_key_reruns_only_the_anchors_that_follow_it() {
+    let e = engine();
+    let owner = ljos_engine::PropertyMap::new(&e, None).expect("map creates");
+    owner.insert(&e, "wide", Value::Real(40.0));
+    owner.insert(&e, "label", Value::from("a"));
+    owner.insert(&e, "gap", Value::Real(3.0));
+    e.set_context_id(e.root_context(), "owner", owner.object());
+    let root = load(
+        &e,
+        r#"import QtQuick
+Item {
+    id: root
+    width: 400; height: 400
+    property string label: owner.label
+    property real gap: owner.gap
+    property string which: "wide"
+    property var map: owner
+    Item { id: sized; width: owner.wide; height: 10 }
+    Item { objectName: "next"; anchors.left: sized.right; width: 5; height: 5 }
+    Item { id: byName; width: owner[which]; height: 3 }
+    Item { anchors.left: byName.right; width: 1; height: 1 }
+    Item { id: byVar; width: map.wide + 1; height: 3 }
+    Item { anchors.left: byVar.right; width: 1; height: 1 }
+    Item { objectName: "atRight"; anchors.right: parent.right; width: owner.wide; height: 2 }
+    Repeater {
+        model: 50
+        Item {
+            anchors.left: parent.left; anchors.right: parent.right
+            anchors.top: parent.top; anchors.topMargin: index * 2
+            height: 1
+        }
+    }
+    ListView {
+        width: 400; height: 300; model: 30
+        delegate: Item {
+            width: ListView.view.width; height: 10
+            Text { anchors.left: parent.left; anchors.right: parent.right; text: "row " + index }
+            Item { anchors.centerIn: parent; width: 4; height: 4 }
+        }
+    }
+    Column {
+        y: 100; width: 400
+        Repeater {
+            model: 10
+            Item {
+                width: parent.width; height: 10
+                Item { objectName: "inset" + index; anchors.fill: parent; anchors.margins: root.gap }
+            }
+        }
+    }
+}
+"#,
+    );
+    let mut s = scene(&e, root, 400.0, 400.0);
+    frame(&mut s, &e);
+    let next = find(&e, root, "next");
+    let inset = find(&e, root, "inset3");
+    assert_eq!(num(&e, next, "x"), 40.0);
+    assert_eq!(rect(&e, inset), (3.0, 3.0, 394.0, 4.0));
+
+    // What a write lays out, counted at the write and at the next frame.
+    let mut laid_out = |key: &str, value: Value| {
+        let before = ljos_quick::anchor_computes();
+        owner.insert(&e, key, value);
+        frame(&mut s, &e);
+        ljos_quick::anchor_computes() - before
+    };
+    assert_eq!(
+        laid_out("label", Value::from("b")),
+        0,
+        "a key no geometry reads lays nothing out"
+    );
+    assert_eq!(
+        laid_out("added", Value::Real(1.0)),
+        0,
+        "a key the map had not got lays nothing out"
+    );
+    assert_eq!(
+        laid_out("wide", Value::Real(60.0)),
+        4,
+        "only the three items anchored to a resized one, and the one whose \
+         right edge holds it, lay out again, once each"
+    );
+    assert_eq!(
+        laid_out("gap", Value::Real(5.0)),
+        10,
+        "only the ten items whose margins follow the key lay out again"
+    );
+    assert_eq!(num(&e, next, "x"), 60.0);
+    assert_eq!(num(&e, find(&e, root, "atRight"), "x"), 340.0);
+    assert_eq!(rect(&e, inset), (5.0, 5.0, 390.0, 0.0));
+}

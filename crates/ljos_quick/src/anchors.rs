@@ -437,6 +437,18 @@ struct Span {
     len: Option<f64>,
 }
 
+thread_local! {
+    static COMPUTES: Cell<u64> = const { Cell::new(0) };
+}
+
+/// How many times this thread's anchors effects worked out an item's
+/// anchored geometry: what a write costs the anchors is counted, not
+/// timed, so a change seen to reach items that do not follow it shows.
+#[doc(hidden)]
+pub fn anchor_computes() -> u64 {
+    COMPUTES.get()
+}
+
 /// The body of an item's anchors effect.
 pub(crate) fn run(engine: &Engine, obj: ObjectId, state: &AnchorState) {
     if !engine.is_alive(obj) {
@@ -527,6 +539,7 @@ fn compute<'a>(
     obj: ObjectId,
     state: &AnchorState,
 ) -> Option<(Ctx<'a>, Span, Span)> {
+    COMPUTES.set(COMPUTES.get() + 1);
     // Most items are anchored by nothing, and each new one runs this: the
     // lines are read in one go, and an item none is set on asks no more.
     let lines = read_lines(engine, obj);
