@@ -292,13 +292,14 @@ fn show_when_drawn(
 /// another than it was last told, or the window was never told it
 /// (`size_untold`), or `force`: the application wrote a size the platform
 /// did not give. Until the platform says what size its window has, the
-/// window stays untold.
-fn note_size(slot: &mut Slot, engine: &Engine, sys: &WindowSystem, force: bool) {
+/// window stays untold. Whether the window has another size in pixels
+/// than its painter knew, when the next pass draws all of it.
+fn note_size(slot: &mut Slot, engine: &Engine, sys: &WindowSystem, force: bool) -> bool {
     let (Some(surface), Some(painter)) = (slot.surface.as_mut(), slot.painter.as_mut()) else {
-        return;
+        return false;
     };
-    let Some(size) = surface.fit(&slot.ctx, painter) else {
-        return;
+    let Some((size, resized)) = surface.fit(&slot.ctx, painter) else {
+        return false;
     };
     if force || slot.size_untold || slot.told_size != Some(size) {
         slot.told_size = Some(size);
@@ -307,6 +308,7 @@ fn note_size(slot: &mut Slot, engine: &Engine, sys: &WindowSystem, force: bool) 
             sys.resized(engine, win, size);
         }
     }
+    resized
 }
 
 /// Tells the QML window how its platform window is shown (its user
@@ -1492,10 +1494,12 @@ impl<M: Send + 'static> Desktop<M> {
             let follows = slot.view.is_none() && app.watches_items();
             #[cfg(not(feature = "mcp"))]
             let follows = false;
+            let px = surface.px();
             let change = if painter.wants_areas() || follows {
-                slot.shown.change(&shapes, pixels_per_point, clear)
+                slot.shown.change(&shapes, pixels_per_point, clear, px)
             } else {
-                slot.shown.whole_change(&shapes, pixels_per_point, clear)
+                slot.shown
+                    .whole_change(&shapes, pixels_per_point, clear, px)
             };
             #[cfg(feature = "mcp")]
             let changed = follows.then(|| change.boxes());
@@ -1521,7 +1525,7 @@ impl<M: Send + 'static> Desktop<M> {
                 );
                 Shown::Nothing { lost: false }
             } else {
-                let kept = slot.shown.keep(shapes, pixels_per_point, clear);
+                let kept = slot.shown.keep(shapes, pixels_per_point, clear, px);
                 painter.views_shown(kept);
                 let shapes = if let Frame::Part(areas) = &frame {
                     let mut part = kept.to_vec();
@@ -2105,7 +2109,9 @@ impl<M: Send + 'static> Desktop<M> {
             for slot in &mut self.slots {
                 if slot.size_check.is_some_and(|t| t <= now) {
                     slot.size_check = None;
-                    note_size(slot, &engine, &sys, true);
+                    if note_size(slot, &engine, &sys, true) {
+                        self.repaints.request(slot.key, now);
+                    }
                 }
             }
             // The pass at the size there is answers the agent that waits.
