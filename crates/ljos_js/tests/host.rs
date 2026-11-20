@@ -107,6 +107,41 @@ fn a_null_thrown_on_a_full_heap_is_running_out_of_memory_after_its_locals_go() {
     assert!(matches!(err, JsFault::JsException { .. }), "{err:?}");
 }
 
+/// QuickJS carves small objects out of arenas and lets an arena go only
+/// once all of it is free. Objects that stay among the freed ones keep
+/// their arenas held, so what the system gave back says little about
+/// what was freed: the heap is judged in the units its limit is.
+#[test]
+fn a_null_thrown_on_a_full_heap_is_out_of_memory_with_arenas_still_in_use() {
+    let host = JsHost::new(JsConfig {
+        memory_limit: Some(16 * 1024 * 1024),
+        ..JsConfig::default()
+    })
+    .unwrap();
+    host.collect_now();
+    let held = host.memory_stats().unwrap().malloc_size;
+    assert!(host.set_memory_limit(Some(held + 4 * 1024 * 1024)));
+    // One object kept for every four of a chain no cycle holds: the
+    // chain is freed when `fill` returns, the arenas stay.
+    let err = eval_num(
+        &host,
+        "var kept = { n: null };\n\
+         function fill() { let h = null; for (let i = 0; ; i++) { h = { n: h }; if (i % 4 == 0) kept = { n: kept } } }\n\
+         fill()",
+    )
+    .unwrap_err();
+    assert!(matches!(err, JsFault::JsOutOfMemory { .. }), "{err:?}");
+    let left = host.memory_stats().unwrap().malloc_size;
+    assert!(
+        left + 1024 * 1024 < held + 4 * 1024 * 1024,
+        "the chain was freed: {left} of {}",
+        held + 4 * 1024 * 1024
+    );
+    // A script's own `throw null` in the next run, with room, is its own.
+    let err = eval_num(&host, "throw null").unwrap_err();
+    assert!(matches!(err, JsFault::JsException { .. }), "{err:?}");
+}
+
 /// A nested run judges a `null` against what the heap held in it, not
 /// in the run around it: an outer run can last as long as a test function
 /// that waits, with the event loop nested inside it.

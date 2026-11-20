@@ -220,9 +220,13 @@ fn main() {
     }
 
     for file in source_files.iter().chain(header_files.iter()) {
+        // Ljós patches these sources: the env lines above would otherwise
+        // stop cargo rerunning this script when they change.
+        println!("cargo:rerun-if-changed={}", src_dir.join(file).display());
         fs::copy(src_dir.join(file), out_dir.join(file))
             .expect("Unable to copy source; try 'git submodule update --init'");
     }
+    println!("cargo:rerun-if-changed=quickjs.bind.h");
     fs::copy("quickjs.bind.h", out_dir.join("quickjs.bind.h")).expect("Unable to copy source");
 
     if target_os == "wasi" && !matches!(env::var("RQUICKJS_SYS_NO_WASI_SDK").as_deref(), Ok("1")) {
