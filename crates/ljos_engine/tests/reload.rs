@@ -1819,7 +1819,8 @@ fn reloads_leave_no_script_types_behind() {
     }
     assert!(r.h.engine.collect_garbage());
     let after = r.h.engine.script_memory().expect("scripts ran");
-    assert_eq!(before, after);
+    // What the scripts hold; the collections between them count up.
+    assert_eq!((before.bytes, before.objects), (after.bytes, after.objects));
     assert_eq!(r.num("one", "count"), 21.0);
 }
 
