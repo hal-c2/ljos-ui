@@ -68,6 +68,7 @@ Feature: The observer fits a narrow window
     And the observer's "role=tab[name=\"<page>\"]" is clicked
     Then every "text=" in the observer lies within the width of its window
     And every "role=button" in the observer lies within the width of its window
+    And no two "text=" in the observer overlap
 
     Examples:
       | page        | width |
