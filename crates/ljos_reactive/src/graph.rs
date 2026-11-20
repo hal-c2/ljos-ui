@@ -2062,6 +2062,18 @@ impl<V: Clone + 'static> Graph<V> {
 
     /// Writes with explicit binding semantics; see [`WriteKind`].
     pub fn write(&self, n: NodeId, v: V, how: WriteKind) -> Result<(), ReactiveError> {
+        // A host write leaves the binding in place, and only a change of
+        // what the binding reads may take the value back. A binding that
+        // is due (never run, or not run since such a change) would run on
+        // the next read and take it back at once; one that never ran has
+        // no sources yet, so marking it clean instead would leave it deaf
+        // to every later change. Qt's bindings run when they are made and
+        // when what they read changes, so there the write comes last: the
+        // binding catches up first, with the run the next read would have
+        // made anyway. A binding nobody writes over still runs only when read.
+        if how == WriteKind::Host && self.binding_due(n) {
+            self.update(n);
+        }
         let dropped;
         {
             let mut g = self.inner.borrow_mut();
@@ -3568,6 +3580,14 @@ impl<V: Clone + 'static> Graph<V> {
                 enqueue(queues, o, node);
             }
         }
+    }
+
+    /// Whether `n` is a property whose binding on top would run if read now.
+    fn binding_due(&self, n: NodeId) -> bool {
+        self.inner.borrow().nodes.get(n).is_some_and(|node| {
+            matches!(node.state, NodeState::Dirty | NodeState::Check)
+                && matches!(&node.kind, Kind::Property(p) if p.is_bound())
+        })
     }
 
     /// Brings `n` up to date: Check walks its sources (iteratively, so long
