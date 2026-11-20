@@ -486,6 +486,13 @@ fn thrown(e: &Engine, view: ObjectId, v: f64, o: f64, px_per_place: f64) -> (f64
             velocity * velocity.abs() / (2.0 * rate),
             s.deceleration,
         ),
+        // The even deceleration that goes as far as the spline in its time.
+        Motion::Start(Segment::Spline { velocity, .. }) => {
+            let (distance, time) = crate::flickable::spline_fling(velocity);
+            let secs = time.as_secs_f64();
+            let rate = if secs > 0.0 { velocity.abs() / secs } else { s.deceleration };
+            (velocity, velocity.signum() * distance, rate)
+        }
         _ => (0.0, 0.0, s.deceleration),
     }
 }

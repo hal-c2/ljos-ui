@@ -23,8 +23,8 @@ use ljos_engine::ObjectId;
 use ljos_host::android::{AndroidHost, Attach};
 use ljos_host::relay::{RelayControl, Request, WINDOW};
 use ljos_host::{
-    AppState, ButtonState, Event, HostApp, HostControl, Key, PlatformHost, TouchPhase, Wake,
-    WindowAttributes, WindowEvent,
+    AppState, BackPhase, ButtonState, Event, HostApp, HostControl, Insets, Key, PlatformHost,
+    TouchPhase, Wake, WindowAttributes, WindowEvent,
 };
 use ljos_runtime::SystemClock;
 use ndk::native_window::NativeWindow;
@@ -203,6 +203,11 @@ struct Phone<M, S> {
     due: Arc<Mutex<Option<Instant>>>,
     waker: ljos_host::Waker,
     focused: bool,
+    /// What of the screen the system keeps, in physical pixels.
+    insets: Insets,
+    /// What the activity was last told about Back: whether the
+    /// application takes it.
+    back_taken: Option<bool>,
     /// Frames tried again since one was last drawn.
     retries: u32,
 }
@@ -260,6 +265,8 @@ where
             due,
             waker,
             focused: true,
+            insets: Insets::default(),
+            back_taken: None,
             retries: 0,
         }
     }
@@ -302,7 +309,15 @@ where
                 let opaque = config.background.to_rgba8()[3] == 255;
                 app.set_backdrop(!opaque);
                 app.view_mut().set_fold_backdrop(opaque);
+                // Content is thrown and stopped as Android's own lists do.
+                ljos_quick::flickable::set_scroll_physics(
+                    app.engine(),
+                    ljos_quick::flickable::ScrollPhysics::Kinetic(
+                        ljos_quick::flickable::Kinetic::ANDROID,
+                    ),
+                );
                 self.stage = Stage::Running(Box::new(app));
+                self.apply_insets();
             }
             Err(e) => log::error!("the application did not start: {e}"),
         }
@@ -365,6 +380,61 @@ where
             surface.config.width = px[0].max(1);
             surface.config.height = px[1].max(1);
             surface.surface.configure(&gpu.device, &surface.config);
+        }
+    }
+
+    /// Tells the scene what of the screen it keeps clear: the safe area,
+    /// and the keyboard, which it gives up (see [`Phone::draw`]).
+    fn apply_insets(&self) {
+        let Stage::Running(app) = &self.stage else {
+            return;
+        };
+        let scale = if self.scale > 0.0 { f64::from(self.scale) } else { 1.0 };
+        let [l, t, r, b] = self.insets.safe_area().map(|n| n / scale);
+        let engine = app.engine();
+        ljos_quick::set_safe_area_insets(engine, l, t, r, b);
+        let keyboard = self.insets.keyboard() / scale;
+        let covers = (keyboard > 0.0).then(|| {
+            let w = f64::from(self.px[0]) / scale;
+            let h = f64::from(self.px[1]) / scale;
+            ljos_render::kurbo::Rect::new(0.0, (h - keyboard).max(0.0), w, h)
+        });
+        ljos_quick::set_on_screen_keyboard(engine, covers);
+    }
+
+    /// The system's Back, to the application's `Back` handlers; what none
+    /// takes is the system's.
+    fn back(&mut self, host: &mut RelayControl<'_, NativeWindow>, phase: BackPhase, progress: f32) {
+        let taken = match &self.stage {
+            Stage::Running(app) => {
+                let step = match phase {
+                    BackPhase::Started => ljos_quick::BackStep::Started,
+                    BackPhase::Progressed => ljos_quick::BackStep::Progressed,
+                    BackPhase::Cancelled => ljos_quick::BackStep::Cancelled,
+                    BackPhase::Invoked => ljos_quick::BackStep::Invoked,
+                };
+                ljos_quick::deliver_back(app.engine(), step, f64::from(progress))
+            }
+            _ => false,
+        };
+        if !taken && phase == BackPhase::Invoked {
+            // As a phone's own applications do, the application goes to
+            // the background and lives on.
+            host.request(Request::Background);
+        }
+    }
+
+    /// Tells the activity whether the application takes Back now, when
+    /// that changed, so the system plays its own animation for a Back
+    /// that is its own.
+    fn tell_back_taken(&mut self, host: &mut RelayControl<'_, NativeWindow>) {
+        let Stage::Running(app) = &self.stage else {
+            return;
+        };
+        let taken = ljos_quick::wants_back(app.engine());
+        if self.back_taken != Some(taken) {
+            self.back_taken = Some(taken);
+            host.request(Request::BackTaken(taken));
         }
     }
 
@@ -476,8 +546,16 @@ where
             return;
         };
         let scale = if self.scale > 0.0 { self.scale } else { 1.0 };
+        // The keyboard's part of the screen is given up, as a window that
+        // resizes for it (`adjustResize`) gives it up: what is at the
+        // bottom stays in sight above it.
+        #[allow(clippy::cast_possible_truncation)]
+        let keyboard = self.insets.keyboard() as f32 / scale;
         #[allow(clippy::cast_precision_loss)]
-        let size = egui::vec2(self.px[0] as f32 / scale, self.px[1] as f32 / scale);
+        let size = egui::vec2(
+            self.px[0] as f32 / scale,
+            (self.px[1] as f32 / scale - keyboard).max(1.0),
+        );
         let began = Instant::now();
         let mut raw = egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
@@ -582,14 +660,18 @@ where
             Event::Window { event, .. } => match event {
                 WindowEvent::Resized { px, scale } => {
                     self.resized(px, scale);
+                    self.apply_insets();
                     host.request_redraw(WINDOW);
                 }
                 WindowEvent::RedrawRequested => self.draw(host),
-                WindowEvent::Back { .. } => {
-                    // Nothing in the scene takes Back yet: as a phone's
-                    // own applications do, the application goes to the
-                    // background and lives on.
-                    host.request(Request::Background);
+                WindowEvent::Insets(insets) => {
+                    self.insets = insets;
+                    self.apply_insets();
+                    host.request_redraw(WINDOW);
+                }
+                WindowEvent::Back { phase, progress } => {
+                    self.back(host, phase, progress);
+                    host.request_redraw(WINDOW);
                 }
                 WindowEvent::Theme { .. } => host.request_redraw(WINDOW),
                 other => {
@@ -613,6 +695,7 @@ where
                     QUITTING.store(true, Ordering::Release);
                     host.exit();
                 } else {
+                    self.tell_back_taken(host);
                     self.next_wake(host);
                 }
             }

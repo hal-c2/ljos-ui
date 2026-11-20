@@ -180,6 +180,8 @@ pub struct LjosBackend {
     platform: FakePlatform,
     /// What the drags other applications make allow and propose.
     outside_actions: ljos_platform::DragActions,
+    /// Whether the application took the last step of the system's Back.
+    back_taken: Option<bool>,
     /// The wall clock the scenario pinned, in milliseconds since the UNIX
     /// epoch; given before anything was loaded.
     wall_clock: Option<f64>,

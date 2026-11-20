@@ -564,6 +564,16 @@ What the user and the system do to an application on a phone, which owns its scr
 | `Then the application is no longer running` | its process has ended, so the next start is a new process with a new application |
 | `Then the system has not found the application unresponsive` | no "not responding" since the scenario started |
 
+The system's Back, as the application's `Back` handlers get it. These are Ljós's own (no Qt
+type takes Back), so Ljós runs them anywhere; they take no phone.
+
+| Step | Meaning |
+|---|---|
+| `When the user presses the system's Back` | a Back with no swipe before it: a key or a button |
+| `When the user starts the back swipe` / `When the user's back swipe has come <f> of the way` | a swipe from the edge, as the system previews it (`<f>` from 0 to 1) |
+| `When the user cancels the back swipe` / `When the user completes the back swipe` | the swipe let go short, or let go to go back |
+| `Then the application took Back` / `Then the application left Back to the system` | whether a handler took the last step, or none was there for it |
+
 ### Planned (backlog scenarios may use them; not built yet)
 
 `When the agent clicks the reference of the "role" named "name"` · `When the object "o" is destroyed` ·

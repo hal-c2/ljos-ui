@@ -22,6 +22,7 @@ mod drag;
 mod drop_area;
 mod effects;
 pub mod enums;
+mod back;
 mod error_boundary;
 pub mod flickable;
 mod flipable;
@@ -119,6 +120,7 @@ pub use drop_area::{
     IGNORE_ACTION, PlatformDrag, PlatformDragKind, platform_drag, platform_drag_offered,
     platform_drag_target,
 };
+pub use back::{Back, BackStep, deliver_back, wants_back};
 pub use error_boundary::{BoundaryFault, ErrorBoundary};
 pub use flickable::Flickable;
 pub use font_loader::{FontFamilies, FontLoader};
@@ -326,6 +328,7 @@ pub fn register(engine: &Engine) {
     text::register(engine);
     // Module `Ljos`, and Loader and ErrorBoundary as UI boundaries.
     error_boundary::register(engine);
+    back::register(engine);
     #[cfg(feature = "pdf")]
     pdf::register(engine);
     loader::register(engine);

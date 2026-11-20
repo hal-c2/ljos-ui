@@ -450,6 +450,16 @@ impl dyn Backend + '_ {
     }
 }
 
+/// One step of the system's Back: a swipe (predictive back) as it goes,
+/// or a lone `Invoked` for a key or a button.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BackSwipe {
+    Started,
+    Progressed,
+    Cancelled,
+    Invoked,
+}
+
 /// What the user and the system do to an application on a phone, which
 /// owns its screen, takes it away and gives it back, and ends a hidden
 /// application's screen to save memory (ARCHITECTURE.md §10.2).
@@ -917,6 +927,18 @@ pub trait Platform: Backend {
     /// The system cannot take away a dialog it shows, from now on.
     fn system_dialogs_stay(&mut self) -> Result<()> {
         Err(BackendError::NotImplemented("the system's dialogs"))
+    }
+
+    /// One step of the system's Back, `progress` (0 to 1) being how far a
+    /// swipe has come.
+    fn system_back(&mut self, _step: BackSwipe, _progress: f64) -> Result<()> {
+        Err(BackendError::NotImplemented("the system's Back"))
+    }
+
+    /// Whether the application took the last step of the system's Back;
+    /// when it did not, Back was the system's to do.
+    fn back_taken(&mut self) -> Result<bool> {
+        Err(BackendError::NotImplemented("the system's Back"))
     }
 
     /// A step of a drag from another application, as the window system

@@ -93,6 +93,10 @@ pub enum Request {
     /// from: the platform does what it does then (Android: the task goes
     /// to the background; the activity is not finished).
     Background,
+    /// Whether the application takes the system's Back now. While it does
+    /// not, the platform does Back by itself (Android plays its own
+    /// predictive animation for it).
+    BackTaken(bool),
 }
 
 enum Msg<S, U> {

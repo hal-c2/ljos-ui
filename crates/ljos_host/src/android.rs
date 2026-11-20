@@ -18,8 +18,8 @@ use ndk::native_window::NativeWindow;
 use crate::pump::{exiting, keeps_pumping};
 use crate::relay::{Arrival, Relay, RelayHost, Request};
 use crate::{
-    AppState, BackPhase, ButtonState, Capabilities, Key, KeyEvent, TouchEvent, TouchPhase, Wake,
-    WindowEvent,
+    AppState, BackPhase, ButtonState, Capabilities, Insets, Key, KeyEvent, TouchEvent, TouchPhase,
+    Wake, WindowEvent,
 };
 
 /// The Android host: the application's side, run on its own thread.
@@ -31,6 +31,7 @@ pub fn capabilities() -> Capabilities {
     Capabilities {
         touch: true,
         back: true,
+        insets: true,
         ..Capabilities::default()
     }
 }
@@ -98,11 +99,8 @@ impl<U: Send + 'static> Attach<U> {
             requests.waker = Some(app.create_waker());
         }
         let relay = self.relay.clone();
-        *lock(&BACK) = Some(Box::new(move || {
-            let _ = relay.send(Arrival::Window(WindowEvent::Back {
-                phase: BackPhase::Invoked,
-                progress: 1.0,
-            }));
+        *lock(&FROM_JAVA) = Some(Box::new(move |event| {
+            let _ = relay.send(Arrival::Window(event));
         }));
         let mut pump = Pump {
             app,
@@ -130,7 +128,7 @@ impl<U: Send + 'static> Attach<U> {
             requests.waker = None;
             requests.attached = false;
         }
-        *lock(&BACK) = None;
+        *lock(&FROM_JAVA) = None;
         // The application lives on, without the activity.
         let _ = self.relay.send(Arrival::Detached);
     }
@@ -154,21 +152,88 @@ impl<U: Send + 'static> Attach<U> {
     }
 }
 
-/// Where the activity's Back goes: to the application attached, if any.
-/// Type-erased, since the native method knows no message type.
-static BACK: Mutex<Option<Box<dyn Fn() + Send>>> = Mutex::new(None);
+/// Where what `dev.ljos.LjosActivity` (the Gradle template's Java side)
+/// tells goes: to the application attached, if any. Type-erased, since the
+/// native methods know no message type.
+static FROM_JAVA: Mutex<Option<ToApplication>> = Mutex::new(None);
 
-/// Back, from `dev.ljos.LjosActivity`'s back dispatcher callback (the
-/// Gradle template's Java side): called on the activity's UI thread, it
-/// only queues the event.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_dev_ljos_LjosActivity_nativeBack(
-    _env: *mut std::ffi::c_void,
-    _this: *mut std::ffi::c_void,
-) {
-    if let Some(back) = &*lock(&BACK) {
-        back();
+/// What hands an event from the Java side to the application attached.
+type ToApplication = Box<dyn Fn(WindowEvent) + Send>;
+
+/// Called on the activity's UI thread: it only queues the event.
+fn from_java(event: WindowEvent) {
+    if let Some(send) = &*lock(&FROM_JAVA) {
+        send(event);
     }
+}
+
+type JEnv = *mut std::ffi::c_void;
+type JClass = *mut std::ffi::c_void;
+
+fn back(phase: BackPhase, progress: f32) {
+    let progress = if progress.is_finite() { progress.clamp(0.0, 1.0) } else { 0.0 };
+    from_java(WindowEvent::Back { phase, progress });
+}
+
+/// Back from the activity's back dispatcher: a key, a button, or a swipe
+/// completed.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_ljos_LjosActivity_nativeBack(_env: JEnv, _class: JClass) {
+    back(BackPhase::Invoked, 1.0);
+}
+
+/// A back swipe started (predictive back).
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_ljos_LjosActivity_nativeBackStarted(
+    _env: JEnv,
+    _class: JClass,
+    progress: f32,
+) {
+    back(BackPhase::Started, progress);
+}
+
+/// The back swipe moved.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_ljos_LjosActivity_nativeBackProgressed(
+    _env: JEnv,
+    _class: JClass,
+    progress: f32,
+) {
+    back(BackPhase::Progressed, progress);
+}
+
+/// The back swipe was let go short.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_ljos_LjosActivity_nativeBackCancelled(_env: JEnv, _class: JClass) {
+    back(BackPhase::Cancelled, 0.0);
+}
+
+/// What of the window the system keeps, in physical pixels, from the
+/// activity's insets listener.
+#[unsafe(no_mangle)]
+#[allow(clippy::too_many_arguments)]
+pub extern "system" fn Java_dev_ljos_LjosActivity_nativeInsets(
+    _env: JEnv,
+    _class: JClass,
+    bars_left: i32,
+    bars_top: i32,
+    bars_right: i32,
+    bars_bottom: i32,
+    cutout_left: i32,
+    cutout_top: i32,
+    cutout_right: i32,
+    cutout_bottom: i32,
+    ime_left: i32,
+    ime_top: i32,
+    ime_right: i32,
+    ime_bottom: i32,
+) {
+    let edges = |l: i32, t: i32, r: i32, b: i32| [l, t, r, b].map(f64::from);
+    from_java(WindowEvent::Insets(Insets {
+        system_bars: edges(bars_left, bars_top, bars_right, bars_bottom),
+        cutout: edges(cutout_left, cutout_top, cutout_right, cutout_bottom),
+        ime: edges(ime_left, ime_top, ime_right, ime_bottom),
+    }));
 }
 
 struct Pump<'a, U: Send + 'static> {
@@ -281,6 +346,9 @@ impl<U: Send + 'static> Pump<'_, U> {
             Request::Exit => {
                 let taken = call_activity(self.app, ActivityCall::Finish);
                 (self.closed, self.finishing) = exiting(taken);
+            }
+            Request::BackTaken(taken) => {
+                call_activity(self.app, ActivityCall::BackTaken(taken));
             }
         }
     }
@@ -400,6 +468,8 @@ fn named_key(code: Keycode) -> Option<&'static str> {
 enum ActivityCall {
     MoveTaskToBack,
     Finish,
+    /// `LjosActivity.setBackTaken`.
+    BackTaken(bool),
 }
 
 /// Calls the activity on this thread, which android-activity attached to
@@ -426,6 +496,14 @@ fn call_activity(app: &AndroidApp, call: ActivityCall) -> bool {
             }
             ActivityCall::Finish => {
                 env.call_method(&activity, jni_str!("finish"), jni_sig!(() -> void), &[])?;
+            }
+            ActivityCall::BackTaken(taken) => {
+                env.call_method(
+                    &activity,
+                    jni_str!("setBackTaken"),
+                    jni_sig!((jboolean) -> void),
+                    &[JValue::Bool(taken)],
+                )?;
             }
         }
         Ok(())
