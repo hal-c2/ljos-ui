@@ -197,8 +197,35 @@ impl Engine {
         if !js.host.collect_now() {
             return false;
         }
+        let full = self.extension::<HeapRanOut>();
+        full.collected_through.set(full.times.get());
         true
     }
+
+    /// The script heap had no room for what a run allocated: the next
+    /// [`Engine::collect_garbage_for_full_heap`] collects.
+    pub(crate) fn note_heap_ran_out(&self) {
+        let full = self.extension::<HeapRanOut>();
+        full.times.set(full.times.get() + 1);
+    }
+
+    /// [`Engine::collect_garbage`] for what ran out of script heap, unless
+    /// a collection since the heap last ran out already ran. Items that
+    /// run out together, a column of boundaries on one full heap, recover
+    /// through one collection rather than a full pause each. True when it
+    /// collected.
+    pub fn collect_garbage_for_full_heap(&self) -> bool {
+        let full = self.extension::<HeapRanOut>();
+        full.times.get() > full.collected_through.get() && self.collect_garbage()
+    }
+}
+
+/// How many times the script heap ran out, and how many of those the last
+/// collection came after.
+#[derive(Default)]
+struct HeapRanOut {
+    times: Cell<u64>,
+    collected_through: Cell<u64>,
 }
 
 /// What the script engine holds, as [`Engine::script_memory`] tells it.

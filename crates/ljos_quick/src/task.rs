@@ -253,7 +253,7 @@ fn not_started(
         _ => Value::from(why.to_string().as_str()),
     };
     if let JsError::Failed(_) = why {
-        e.collect_garbage();
+        e.collect_garbage_for_full_heap();
         let wait = tasks.start_again_after(e, me, args);
         message.push_str(&format!("; starting again in {}", seconds(wait)));
     }

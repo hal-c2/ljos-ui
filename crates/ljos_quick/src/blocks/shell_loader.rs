@@ -275,7 +275,7 @@ fn again_after(e: &Engine, me: ObjectId) {
         return;
     };
     // A full heap may have room once the garbage is collected.
-    e.collect_garbage();
+    e.collect_garbage_for_full_heap();
     warn(
         e,
         format!("ShellLoader: trying the source again in {}", seconds(wait)),

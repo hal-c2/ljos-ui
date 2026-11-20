@@ -1521,6 +1521,11 @@ impl Engine {
         self.enter_js(&js, label, String::new, f)
             .0
             .map_err(|fault| match fault {
+                // Not reported: what collects for it must still know.
+                JsFault::JsOutOfMemory { .. } => {
+                    self.note_heap_ran_out();
+                    crate::JsError::Failed(fault.to_string())
+                }
                 JsFault::JsException {
                     message,
                     stack,

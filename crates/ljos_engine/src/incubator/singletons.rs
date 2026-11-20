@@ -975,7 +975,7 @@ impl Engine {
             }
             // Timers run between scripts, where the heap can be.
             if full {
-                e.collect_garbage();
+                e.collect_garbage_for_full_heap();
             }
             let g = &e.inner.graph;
             let next = match g.get_untracked(woken) {

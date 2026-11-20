@@ -749,7 +749,7 @@ impl Shared {
             if due {
                 // Timers run between scripts, where the heap can be.
                 if full {
-                    e.collect_garbage();
+                    e.collect_garbage_for_full_heap();
                 }
                 Shared::create_row(&s, e, id);
             }
@@ -2161,7 +2161,7 @@ impl ViewShared {
             };
             // Timers run between scripts, where the heap can be.
             if full {
-                e.collect_garbage();
+                e.collect_garbage_for_full_heap();
             }
             if let Some(index) = index {
                 s.host.again(e, index);

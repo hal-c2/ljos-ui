@@ -236,7 +236,7 @@ fn again_after(e: &Engine, me: ObjectId, report: &FaultReport) {
     };
     if matches!(report.fault, Fault::JsOutOfMemory) {
         // The heap may have room once the garbage is collected.
-        e.collect_garbage();
+        e.collect_garbage_for_full_heap();
     }
     let place = e.declared_at(me).unwrap_or_default();
     warn(
