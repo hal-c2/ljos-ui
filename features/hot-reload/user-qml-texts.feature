@@ -119,9 +119,10 @@ Feature: A shipped application its users change makes QML of text and of files i
 
     Scenario: A text that does not compile is thrown to the script and told to the application
       When the application runs "Main.qml" built ahead, with the user's directory over it
-      And the method "makeAt" of "main" is called with "import QtQuick\nItem { nothing: 3 }", "dyn/bad"
+      And the method "makeAt" of "main" is called with "import QtQuick\nItem { width: }", "bad"
       Then the property "notMade" of "main" is true
-      And the application was told of 1 fault matching "dyn/bad"
+      And the application was told of 1 fault matching "bad"
+      And the application was told of 1 fault matching "/bad:2:\d+: "
       And the property "by" of "card" is "the application"
 
   Rule: A file the application loads from a directory it names is compiled when it is asked for
