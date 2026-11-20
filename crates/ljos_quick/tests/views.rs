@@ -1112,3 +1112,74 @@ fn hidden_persisted_delegate_is_destroyed_with_view() {
     assert!(!e.is_alive(delegate));
     assert_eq!(num(&e, root, "gone"), 1.0);
 }
+
+/// Every row of `view` that a frame paints, with where it is: a row made
+/// for the cacheBuffer over later frames is not painted until the view
+/// places it (#672).
+fn painted_rows(s: &QuickScene, e: &Engine, view: ObjectId) -> Vec<(i64, f64, f64)> {
+    let content = get(e, view, "contentItem").as_object().unwrap();
+    child_items(e, content)
+        .into_iter()
+        .filter(|o| !s.is_culled(*o))
+        .filter_map(|o| {
+            let name = get(e, o, "objectName").to_js_string().to_string();
+            let index = name.strip_prefix('r')?.parse().ok()?;
+            Some((index, num(e, o, "x"), num(e, o, "y")))
+        })
+        .collect()
+}
+
+/// Rows heavy enough that the incubator makes the cacheBuffer over
+/// several frames, between allocating each row and its being ready.
+const HEAVY_ROW: &str = r##"Rectangle {
+    required property int index
+    objectName: "r" + index
+    width: 80; height: 24
+    color: index % 2 ? "#ccddee" : "#99bbdd"
+    Text { y: 4; text: "row " + index }
+    Repeater { model: 60; Item { width: parent.width - index; height: 1 } }
+  }"##;
+
+#[test]
+fn a_list_paints_no_row_of_its_buffer_before_it_places_it() {
+    let e = engine();
+    let root = load(
+        &e,
+        &format!(
+            "import QtQuick\nListView {{\n  width: 240; height: 120\n  cacheBuffer: 200\n  model: 40\n  delegate: {HEAVY_ROW}\n}}\n"
+        ),
+    );
+    let mut s = scene(&e, root, 240.0, 120.0);
+    for i in 0..40 {
+        s.frame(&e, Time::from_millis(i * 16));
+        for (index, _, y) in painted_rows(&s, &e, root) {
+            assert_eq!(
+                y,
+                index as f64 * 24.0,
+                "frame {i}: row {index} painted at y {y}"
+            );
+        }
+    }
+    // The buffer was made: rows 5 to 13 are there.
+    assert!(rows(&e, root).len() > 10, "{:?}", rows(&e, root));
+}
+
+#[test]
+fn a_grid_paints_no_cell_of_its_buffer_before_it_places_it() {
+    let e = engine();
+    let root = load(
+        &e,
+        &format!(
+            "import QtQuick\nGridView {{\n  width: 240; height: 120\n  cellWidth: 80; cellHeight: 24\n  cacheBuffer: 200\n  model: 120\n  delegate: {HEAVY_ROW}\n}}\n"
+        ),
+    );
+    let mut s = scene(&e, root, 240.0, 120.0);
+    for i in 0..40 {
+        s.frame(&e, Time::from_millis(i * 16));
+        for (index, x, y) in painted_rows(&s, &e, root) {
+            let at = ((index % 3) as f64 * 80.0, (index / 3) as f64 * 24.0);
+            assert_eq!((x, y), at, "frame {i}: cell {index} painted at {x}, {y}");
+        }
+    }
+    assert!(rows(&e, root).len() > 30, "{:?}", rows(&e, root));
+}
