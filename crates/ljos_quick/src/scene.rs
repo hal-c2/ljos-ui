@@ -937,12 +937,13 @@ fn inherited_as(e: &Engine, obj: ObjectId, down: bool, prepare: bool, told: Opti
                 run(&pending, true);
             }
         }
-    } else if pending_has && live.is_empty() {
+    } else if pending_has && (live.is_empty() || told.is_none()) {
         // A child completes before its parent, so it may have a pending
         // record beside the one a scene prepared, until adoption merges
-        // them. Only the scene's passes reach it now: a cover its own
-        // change put in the pending record would be one none of them
-        // takes off, and adoption would carry it into the scene.
+        // them. Its own change reaches only the scene's: a cover it put
+        // in the pending record would be one no pass of the scene takes
+        // off, and adoption would carry it there. A reparent still sets
+        // both right, so neither carries a cover the new parent lifts.
         run(pending.as_ref().unwrap(), true);
     }
 }
