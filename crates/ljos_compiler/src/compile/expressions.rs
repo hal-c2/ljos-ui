@@ -194,6 +194,8 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
             )
         };
         let mut plans: HashMap<(String, Vec<String>, bool, bool), Plan> = HashMap::new();
+        let taken =
+            |made: &str| text.contains(made) || args.iter().flatten().any(|arg| arg.contains(made));
         let mut core_names: HashSet<String> = HashSet::new();
         let written: HashSet<&str> = analysis
             .free
@@ -217,7 +219,8 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                 .entry(key(free))
                 .or_insert_with(|| {
                     let is_written = written.contains(free.name.as_str());
-                    let plan = self.resolve(&free.name, offset, &free.chain, scope, is_written);
+                    let plan =
+                        self.resolve(&free.name, offset, &free.chain, scope, is_written, &taken);
                     let plan = if free.instance_type {
                         the_type(plan)
                     } else {
@@ -634,7 +637,8 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
     }
 
     /// What a free name at `offset` is, and how the function gets it.
-    /// `is_written` when the script assigns to it.
+    /// `is_written` when the script assigns to it; `taken` is true of a
+    /// name the script may bind itself, which a name made for it avoids.
     fn resolve(
         &mut self,
         name: &str,
@@ -642,6 +646,7 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
         chain: &[String],
         scope: usize,
         is_written: bool,
+        taken: &dyn Fn(&str) -> bool,
     ) -> Plan {
         let context = self.tree.objects[self.tree.object_at(offset)].context;
         let Some(mut resolution) = self.lookup(name, offset) else {
@@ -707,9 +712,13 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
         if resolution.made_in {
             // Qt reads the id, else the component's own property as it is
             // when read, and assigns the property, in the same function: a
-            // read after `this.label = …` sees what was written.
-            if resolution.aimed.is_none()
-                && let Some(plan) = base.as_ref().and_then(|base| made_in_written(name, base))
+            // read after `this.label = …` sees what was written. A name only
+            // read keeps the cheaper plan below, which tier 1 can run.
+            if is_written
+                && resolution.aimed.is_none()
+                && let Some(plan) = base
+                    .as_ref()
+                    .and_then(|base| made_in_written(name, base, taken))
             {
                 return plan;
             }
@@ -1287,7 +1296,7 @@ fn made_in(name: &str, base: Option<Plan>, fallback: Option<Box<Arg>>) -> Plan {
 /// writes the name through what it is given, which reads the id where the
 /// component is made, else the property as it is then, and writes the
 /// property.
-fn made_in_written(name: &str, base: &Plan) -> Option<Plan> {
+fn made_in_written(name: &str, base: &Plan, taken: &dyn Fn(&str) -> bool) -> Option<Plan> {
     let (
         Some(_),
         Some(Param {
@@ -1298,7 +1307,12 @@ fn made_in_written(name: &str, base: &Plan) -> Option<Plan> {
     else {
         return None;
     };
-    let through = format!("$m_{name}");
+    // A formal or local of the same name would shadow what the function is
+    // given.
+    let mut through = format!("$m_{name}");
+    while taken(&through) {
+        through.push('_');
+    }
     Some(Plan {
         resolved: base.resolved.clone(),
         param: Some(Param {
