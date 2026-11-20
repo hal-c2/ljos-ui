@@ -2,7 +2,9 @@
 #   https://doc.qt.io/qt-6/qml-string.html
 #   https://doc.qt.io/qt-6/qstring.html#arg
 #   https://doc.qt.io/qt-6/qtquick-internationalization.html
-# Verified on Qt 6.11.2 (qml6, offscreen).
+#   https://doc.qt.io/qt-6/whatsnew612.html
+# Verified on Qt 6.11.2 (qml6, offscreen), and the scenarios marked @qt-diverges on
+# Qt 6.12.0 (qml6, offscreen): several values in one arg() are new in 6.12.
 
 @qt-parity
 Feature: String.arg fills numbered place markers
@@ -161,20 +163,80 @@ Feature: String.arg fills numbered place markers
       Then the property "shown" of "root" is "plain %l1"
       And the log has a warning matching "Argument missing"
 
-    Scenario Outline: arg() takes exactly one value
+    Scenario: arg() with no value is rejected
       Given the QML:
         """qml
         import QtQuick
         Item {
           objectName: "root"
           property string shown: "kept"
-          Component.onCompleted: shown = <expression>
+          Component.onCompleted: shown = "%1".arg()
         }
         """
       Then the property "shown" of "root" is "kept"
       And the log has a warning matching "String.arg\(\): Invalid arguments"
 
+  # Qt 6.11.2 rejects arg() with more than one value ("String.arg(): Invalid
+  # arguments"); Qt 6.12.0 takes several and fills them in one pass, as
+  # whatsnew612 says. Ljós follows 6.12, so these run on Ljós only until the
+  # parity oracle is 6.12.
+  @qt-diverges
+  Rule: Several values fill the distinct markers, lowest first, in one pass
+
+    Scenario Outline: Each value takes the next lowest marker
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          objectName: "root"
+          property string shown: <expression>
+        }
+        """
+      Then the property "shown" of "root" is "<shown>"
+      And the log has no warnings
+
       Examples:
-        | expression          |
-        | "%1".arg()          |
-        | "%1 %2".arg(1, 2)   |
+        | expression                   | shown          |
+        | "%1 - %2".arg("a", "b")      | a - b          |
+        | "%2 - %1".arg("a", "b")      | b - a          |
+        | "%1 %2".arg("%2", "b")       | %2 b           |
+        | "%1 %3".arg("a", "b")        | a b            |
+        | "%10 %2".arg("a", "b")       | b a            |
+        | "%1 %2 %3".arg("a", "b")     | a b %3         |
+        | "%1 %2".arg(1.5, true)       | 1.5 1          |
+        | "%1 %2".arg(null, undefined) | null undefined |
+
+    Scenario: An "L" marker is not localised when several values are given
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          objectName: "root"
+          property string shown: "%L1 %2".arg(1234567, 2)
+        }
+        """
+      Then the property "shown" of "root" is "1234567 2"
+
+    Scenario: A value with no marker left is warned of, and the rest still fill
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          objectName: "root"
+          property string shown: "%1 %2".arg("a", "b", "c")
+        }
+        """
+      Then the property "shown" of "root" is "a b"
+      And the log has a warning matching "1 argument\(s\) missing in"
+
+    Scenario: A string with no marker is returned unchanged, every value warned of
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          objectName: "root"
+          property string shown: "plain".arg("a", "b")
+        }
+        """
+      Then the property "shown" of "root" is "plain"
+      And the log has a warning matching "2 argument\(s\) missing in"
