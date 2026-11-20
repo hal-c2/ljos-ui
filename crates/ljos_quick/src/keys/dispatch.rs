@@ -128,10 +128,17 @@ fn forward_targets(engine: &Engine, att: ObjectId) -> Vec<ObjectId> {
 }
 
 /// An item's `Keys` handlers for a press.
-fn keys_press(engine: &Engine, root: ObjectId, att: ObjectId, ev: &KeyEvent, depth: usize) -> bool {
+fn keys_press(
+    engine: &Engine,
+    root: ObjectId,
+    att: ObjectId,
+    ev: &KeyEvent,
+    depth: usize,
+    navigate: Navigate,
+) -> bool {
     if depth < FORWARD_DEPTH {
         for t in forward_targets(engine, att) {
-            if engine.is_alive(t) && item_press(engine, root, t, ev, depth + 1) {
+            if engine.is_alive(t) && item_press(engine, root, t, ev, depth + 1, navigate) {
                 return true;
             }
         }
@@ -157,10 +164,11 @@ fn keys_release(
     att: ObjectId,
     ev: &KeyEvent,
     depth: usize,
+    navigate: Navigate,
 ) -> bool {
     if depth < FORWARD_DEPTH {
         for t in forward_targets(engine, att) {
-            if engine.is_alive(t) && item_release(engine, root, t, ev, depth + 1) {
+            if engine.is_alive(t) && item_release(engine, root, t, ev, depth + 1, navigate) {
                 return true;
             }
         }
@@ -200,6 +208,16 @@ fn navigation_press(engine: &Engine, att: ObjectId, ev: &KeyEvent) -> bool {
     true
 }
 
+/// Whether a key's turn may move the focus by itself (`KeyNavigation`,
+/// Tab), as a key from the focus does, or only hands the key to handlers.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Navigate {
+    Yes,
+    /// A key handed to an item that was not given the focus must not
+    /// give the focus to anything.
+    No,
+}
+
 /// One item's turn at a press. `depth` counts `forwardTo` hops; an item
 /// keys are forwarded to does not move focus with Tab.
 fn item_press(
@@ -208,6 +226,7 @@ fn item_press(
     item: ObjectId,
     ev: &KeyEvent,
     depth: usize,
+    navigate: Navigate,
 ) -> bool {
     for after in [false, true] {
         if after
@@ -222,7 +241,7 @@ fn item_press(
         let keys = keys_of(engine, item);
         if at(engine, keys, KeysAttached::PRIORITY.index, after)
             && let Some(att) = keys
-            && keys_press(engine, root, att, ev, depth)
+            && keys_press(engine, root, att, ev, depth, navigate)
         {
             return true;
         }
@@ -230,7 +249,8 @@ fn item_press(
             return false;
         }
         let nav = navigation_of(engine, item);
-        if at(engine, nav, KeyNavigationAttached::PRIORITY.index, after)
+        if navigate == Navigate::Yes
+            && at(engine, nav, KeyNavigationAttached::PRIORITY.index, after)
             && let Some(att) = nav
             && navigation_press(engine, att, ev)
         {
@@ -238,6 +258,7 @@ fn item_press(
         }
     }
     if depth == 0
+        && navigate == Navigate::Yes
         && let Some(forward) = tab_direction(ev)
         && engine.is_alive(item)
         && engine
@@ -257,6 +278,7 @@ fn item_release(
     item: ObjectId,
     ev: &KeyEvent,
     depth: usize,
+    navigate: Navigate,
 ) -> bool {
     for after in [false, true] {
         if after
@@ -271,7 +293,7 @@ fn item_release(
         let keys = keys_of(engine, item);
         if at(engine, keys, KeysAttached::PRIORITY.index, after)
             && let Some(att) = keys
-            && keys_release(engine, root, att, ev, depth)
+            && keys_release(engine, root, att, ev, depth, navigate)
         {
             return true;
         }
@@ -281,7 +303,8 @@ fn item_release(
         // The release of a key that moves focus from here belongs to
         // that move.
         let nav = navigation_of(engine, item);
-        if at(engine, nav, KeyNavigationAttached::PRIORITY.index, after)
+        if navigate == Navigate::Yes
+            && at(engine, nav, KeyNavigationAttached::PRIORITY.index, after)
             && let Some(att) = nav
             && navigation_target(engine, att, ev).is_some()
         {
@@ -321,7 +344,8 @@ fn bubble(
     root: ObjectId,
     from: ObjectId,
     ev: &KeyEvent,
-    turn: fn(&Engine, ObjectId, ObjectId, &KeyEvent, usize) -> bool,
+    turn: fn(&Engine, ObjectId, ObjectId, &KeyEvent, usize, Navigate) -> bool,
+    navigate: Navigate,
 ) -> bool {
     let mut cur = Some(from);
     for _ in 0..DEPTH {
@@ -330,7 +354,7 @@ fn bubble(
         };
         // Read first: a handler may move the item.
         let parent = engine.visual_parent(item);
-        if turn(engine, root, item, ev, 0) {
+        if turn(engine, root, item, ev, 0, navigate) {
             return true;
         }
         cur = parent;
@@ -363,14 +387,15 @@ pub fn deliver_key(engine: &Engine, root: ObjectId, ev: &KeyEvent) -> bool {
 /// Hands `ev` to `item` as if it had the focus, which it is not given:
 /// the item's own handlers, then those of the items it is in, as a key
 /// with nowhere to go goes up from the focus. No shortcut and no filter
-/// is asked. Whether an item took it. For [`crate::live_input::send_input`].
+/// is asked, and nothing moves the focus: no `KeyNavigation`, no Tab.
+/// Whether an item took it. For [`crate::live_input::send_input`].
 pub(crate) fn deliver_key_to(engine: &Engine, item: ObjectId, ev: &KeyEvent) -> bool {
     let root = crate::layer::window_item(engine, item);
     let turn = match ev.kind {
         KeyKind::Press => item_press,
         KeyKind::Release => item_release,
     };
-    bubble(engine, root, item, ev, turn)
+    bubble(engine, root, item, ev, turn, Navigate::No)
 }
 
 /// [`deliver_key`], telling `reached` the item the key is handed to
@@ -394,7 +419,7 @@ pub(crate) fn deliver_key_reaching(
     if ev.kind == KeyKind::Release {
         return item.is_some_and(|f| {
             reached(f);
-            bubble(engine, root, f, ev, item_release)
+            bubble(engine, root, f, ev, item_release, Navigate::Yes)
         });
     }
     // Once a sequence of several chords is under way the next press is
@@ -408,7 +433,7 @@ pub(crate) fn deliver_key_reaching(
     let item = focus::active_focus_item(engine, root);
     if item.is_some_and(|f| {
         reached(f);
-        bubble(engine, root, f, ev, item_press)
+        bubble(engine, root, f, ev, item_press, Navigate::Yes)
     }) {
         return true;
     }

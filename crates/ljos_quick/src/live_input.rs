@@ -99,6 +99,13 @@ pub fn send_input(engine: &Engine, item: ObjectId, input: &Input) -> bool {
         return false;
     }
     let to_scene = |p| engine.untrack(|| crate::item::map_to_scene(engine, item, p));
+    // The items it is in now hear it, though a handler moves or ends it.
+    let watchers = engine.extension::<Watchers>();
+    let items = if watchers.is_empty() {
+        Vec::new()
+    } else {
+        watchers.items_holding(engine, item)
+    };
     let (taken, seen) = {
         let _delivering = crate::input::Delivering::begin(engine);
         match *input {
@@ -124,9 +131,7 @@ pub fn send_input(engine: &Engine, item: ObjectId, input: &Input) -> bool {
             }
         }
     };
-    let watchers = engine.extension::<Watchers>();
-    if !watchers.is_empty() && engine.is_alive(item) {
-        let items = watchers.items_holding(engine, item);
+    if !items.is_empty() {
         watchers.tell(engine, &items, &seen, InputOrigin::Synthetic, taken);
     }
     taken

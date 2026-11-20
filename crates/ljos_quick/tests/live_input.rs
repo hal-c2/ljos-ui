@@ -579,3 +579,70 @@ Item {
     assert_eq!(*seen_a.borrow(), [("wheel", User)]);
     assert!(seen_b.borrow().is_empty(), "{:?}", seen_b.borrow());
 }
+
+/// A key handed to an item that was not given the focus gives the focus
+/// to nothing: neither its `KeyNavigation` nor Tab moves it, though its
+/// handlers hear the key.
+#[test]
+fn a_sent_key_moves_no_focus() {
+    let e = engine();
+    let root = load(
+        &e,
+        r#"
+import QtQuick
+Item {
+    id: root
+    width: 100; height: 100
+    property int heard: 0
+    Item {
+        objectName: "a"; activeFocusOnTab: true
+        KeyNavigation.right: b
+        Keys.onPressed: (event) => { root.heard += 1; event.accepted = false }
+    }
+    Item { id: b; objectName: "b"; activeFocusOnTab: true }
+}
+"#,
+    );
+    let mut s = scene(&e, root, 100.0, 100.0);
+    frame(&mut s, &e);
+    let (a, b) = (find(&e, root, "a"), find(&e, root, "b"));
+    for k in [key::RIGHT, key::TAB] {
+        assert!(!ljos_quick::send_input(&e, a, &Input::Key(KeyEvent::press(k))));
+        assert!(!ljos_quick::send_input(&e, a, &Input::Key(KeyEvent::release(k))));
+    }
+    frame(&mut s, &e);
+    assert_eq!(get(&e, root, "heard").to_js_string().to_string(), "2");
+    assert_eq!(s.active_focus_item(&e), None);
+    for item in [a, b] {
+        assert_eq!(get(&e, item, "activeFocus"), ljos_engine::Value::Bool(false));
+    }
+}
+
+/// The items a sent event's item is in as it is sent hear it, though a
+/// handler moves the item into another.
+#[test]
+fn a_sent_key_is_heard_where_the_item_was() {
+    let e = engine();
+    let root = load(
+        &e,
+        r#"
+import QtQuick
+Item {
+    width: 100; height: 100
+    Item { objectName: "here"; Item { id: t; objectName: "t"; Keys.onPressed: t.parent = there } }
+    Item { id: there; objectName: "there" }
+}
+"#,
+    );
+    let mut s = scene(&e, root, 100.0, 100.0);
+    frame(&mut s, &e);
+    let (t, here, there) = (find(&e, root, "t"), find(&e, root, "here"), find(&e, root, "there"));
+    let heard: Rc<RefCell<Vec<&'static str>>> = Rc::default();
+    for (item, name) in [(here, "here"), (there, "there")] {
+        let log = heard.clone();
+        watch_input(&e, item, move |_, _| log.borrow_mut().push(name));
+    }
+    assert!(ljos_quick::send_input(&e, t, &Input::Key(KeyEvent::press(key::A))));
+    assert_eq!(e.visual_parent(t), Some(there), "the handler moved it");
+    assert_eq!(*heard.borrow(), ["here"]);
+}
