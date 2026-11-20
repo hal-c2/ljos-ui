@@ -1985,7 +1985,7 @@ impl JsHost {
         self.peak.mark();
         let heap_before = self.heap_bytes();
         self.interrupt.fired.set(false);
-        self.heap.take_over_share();
+        self.heap.clear_over_share();
         self.heap.set_cap(self.heap_cap());
         self.interrupt.stopped_in.take();
         self.state.stopped.set(false);
@@ -2016,7 +2016,7 @@ impl JsHost {
         let native = self.interrupt.native.get();
         self.interrupt.arm(start, None);
         self.heap.set_cap(None);
-        self.heap.take_over_share();
+        self.heap.clear_over_share();
         self.state.stopped.set(false);
         drop(guard);
 
@@ -2191,7 +2191,7 @@ impl JsHost {
         label: &str,
         elapsed: Duration,
     ) -> JsFault {
-        if self.heap.take_over_share()
+        if self.heap.over_share()
             && !self.interrupt.fired.get()
             && refused_room(&scope.ctx, &err)
         {
@@ -2611,9 +2611,12 @@ impl JsHost {
             let mark = self.peak.mark();
             most = Some(most.map_or(mark, |most| most.join(mark)));
             // Each job is a dispatch of its own, held to its share as
-            // `enter` holds one: an async loop that allocates between
-            // awaits must not fill the heap for the rest either.
-            self.heap.take_over_share();
+            // `enter` holds one, so one job that keeps allocating is
+            // stopped there. A loop that awaits between allocations is a
+            // job per turn, each well under its share: a share does not
+            // stop it filling the heap over many, and `script_holders`
+            // is what says who holds it then.
+            self.heap.clear_over_share();
             self.heap.set_cap(self.heap_cap());
             match self.rt.execute_pending_job() {
                 Ok(true) => pumped.ran += 1,
@@ -2627,7 +2630,7 @@ impl JsHost {
                     let after = self.interrupt.now(Timing::Leave) - now;
                     let mapper = self.state.mapper.borrow().clone();
                     let text = self.state.text.borrow().clone();
-                    let refused = self.heap.take_over_share();
+                    let refused = self.heap.over_share();
                     let fault = e.0.with(|ctx| {
                         if refused
                             && !self.interrupt.fired.get()
@@ -2666,7 +2669,7 @@ impl JsHost {
         }
         self.interrupt.arm(now, None);
         self.heap.set_cap(None);
-        self.heap.take_over_share();
+        self.heap.clear_over_share();
         self.state.stopped.set(false);
         drop(guard);
         if let Some(panic) = self.state.panicked.borrow_mut().take() {
@@ -3554,14 +3557,17 @@ pub(crate) struct Sources<'a> {
     pub(crate) peak: Option<&'a MallocPeak>,
 }
 
-/// Turns an rquickjs error into a [`JsFault`], draining the pending exception.
-/// With a `scope`, an exception keeps the value thrown.
 /// Whether `err`, from a run that was refused room past its share
 /// ([`HeapCount`]), is how QuickJS fails for want of room: a call that gave
 /// nothing back, its "out of memory" error, or the `null` it throws where
 /// even that error does not fit. Anything else is the script's own error,
 /// thrown after it caught the refusal, and is told as such. The pending
 /// exception is taken only when it is the heap's.
+///
+/// A script's own `throw null`, or an `InternalError` it makes saying
+/// "out of memory", in a dispatch that caught a refusal earlier is told
+/// as the heap running out too: QuickJS's `null` carries nothing to tell
+/// it from the script's, and the refusal is the likelier cause.
 fn refused_room(ctx: &Ctx<'_>, err: &rquickjs::Error) -> bool {
     match err {
         rquickjs::Error::Allocation | rquickjs::Error::Unknown => {
@@ -3570,11 +3576,7 @@ fn refused_room(ctx: &Ctx<'_>, err: &rquickjs::Error) -> bool {
         }
         rquickjs::Error::Exception => {
             let thrown = ctx.catch();
-            let ran_out = thrown.is_null()
-                || thrown
-                    .as_object()
-                    .and_then(|o| o.get::<_, Option<String>>("message").ok().flatten())
-                    .is_some_and(|m| m == "out of memory");
+            let ran_out = thrown.is_null() || is_quickjs_out_of_memory(&thrown);
             if !ran_out {
                 // Left for `classify_error` to describe.
                 let _ = ctx.throw(thrown);
@@ -3585,6 +3587,23 @@ fn refused_room(ctx: &Ctx<'_>, err: &rquickjs::Error) -> bool {
     }
 }
 
+/// QuickJS's own error for want of room (`JS_ThrowOutOfMemory`): an
+/// `InternalError` saying "out of memory". A `TypeError` saying the same
+/// is a script's.
+fn is_quickjs_out_of_memory(v: &rquickjs::Value<'_>) -> bool {
+    v.as_object().is_some_and(|o| {
+        let says = |key: &str, want: &str| {
+            o.get::<_, Option<String>>(key)
+                .ok()
+                .flatten()
+                .is_some_and(|s| s == want)
+        };
+        says("name", "InternalError") && says("message", "out of memory")
+    })
+}
+
+/// Turns an rquickjs error into a [`JsFault`], draining the pending exception.
+/// With a `scope`, an exception keeps the value thrown.
 pub(crate) fn classify_error<'js>(
     ctx: &Ctx<'js>,
     scope: Option<&Scope<'js>>,
