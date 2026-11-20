@@ -3253,9 +3253,7 @@ pub(crate) fn classify_error<'js>(
         // script's own, and is told as one rather than as a bug. Only the
         // run's own code can leave one here on purpose, which is how the
         // test of it does.
-        rquickjs::Error::Unknown if ctx.has_exception() => {
-            thrown_fault(ctx, scope, label, sources)
-        }
+        rquickjs::Error::Unknown if ctx.has_exception() => thrown_fault(ctx, scope, label, sources),
         rquickjs::Error::Unknown => {
             if heap_nearly_full(ctx, sources.peak.map_or(0, MallocPeak::get)) {
                 JsFault::JsOutOfMemory {
