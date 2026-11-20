@@ -15,6 +15,8 @@ name="$(basename "$bin")"
 "$adb" shell mkdir -p /data/local/tmp/ljos-test > /dev/null
 dir="$("$adb" shell mktemp -d /data/local/tmp/ljos-test/run.XXXXXX | tr -d '\r')"
 [ -n "$dir" ] || { echo "adb-run: no directory on the device" >&2; exit 1; }
+# Also when the push fails or the run is interrupted, or leftovers pile up.
+trap '"$adb" shell rm -rf "$dir" > /dev/null 2>&1 || true' EXIT
 "$adb" push "$bin" "$dir/$name" > /dev/null
 args=""
 for a in "$@"; do
@@ -23,5 +25,4 @@ done
 # The device's sh exits with the test's status, and adb shell passes it on.
 status=0
 "$adb" shell "cd $dir && RUST_BACKTRACE=1 ./$name$args" || status=$?
-"$adb" shell rm -rf "$dir" > /dev/null || true
 exit "$status"
