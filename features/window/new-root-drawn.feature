@@ -6,6 +6,9 @@
 Feature: A window shows the root put in it at once
   A root put in the window of another changes nothing the old root had,
   and the window keeps its size, yet the window shows another picture.
+  A `Window` that declares a size of its own is shown at that size: the
+  platform's window takes it, and the `Window` is not told the size the
+  one it replaced had.
   The new picture shows without another input event: a window that
   waited for one would show the old root until the pointer moved over it.
 
@@ -13,7 +16,7 @@ Feature: A window shows the root put in it at once
     Given the file "Default.qml":
       """qml
       import QtQuick
-      Window { width: 200; height: 100; visible: true; color: "#ff0000" }
+      Window { objectName: "default-window"; width: 200; height: 100; visible: true; color: "#ff0000" }
       """
     And the file "Blue.qml":
       """qml
@@ -51,3 +54,18 @@ Feature: A window shows the root put in it at once
     When the property "source" of "loader" is set to "Blue.qml"
     Then the pixel at 100, 50 of the window is "#0000ff"
     And the property "status" of "loader" is 1
+
+  Scenario: A Window shell that declares another size is shown at that size
+    Then the pixel at 100, 50 of the window is "#ff0000"
+    When the file "Shell.qml" is changed to:
+      """qml
+      import QtQuick
+      Window { objectName: "large-window"; width: 300; height: 200; visible: true; color: "#0000ff" }
+      """
+    Then the pixel at 250, 150 of the window is "#0000ff"
+    And the property "width" of "large-window" is 300
+    And the property "height" of "large-window" is 200
+    When the file "Shell.qml" is removed
+    Then the pixel at 100, 50 of the window is "#ff0000"
+    And the property "width" of "default-window" is 200
+    And the property "height" of "default-window" is 100
