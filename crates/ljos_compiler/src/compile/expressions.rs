@@ -712,10 +712,11 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
         if resolution.made_in {
             // Qt reads the id, else the component's own property as it is
             // when read, and assigns the property, in the same function: a
-            // read after `this.label = …` sees what was written. A name only
-            // read keeps the cheaper plan below, which tier 1 can run.
-            if is_written
-                && resolution.aimed.is_none()
+            // read after `this.label = …` sees what was written. That write
+            // is not of the free name, so a name only read takes this plan
+            // too: the one below reads the property once, as the function
+            // is entered.
+            if resolution.aimed.is_none()
                 && let Some(plan) = base
                     .as_ref()
                     .and_then(|base| made_in_written(name, base, taken))
