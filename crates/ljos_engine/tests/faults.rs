@@ -1026,3 +1026,31 @@ fn a_creation_job_that_panics_calls_on_done_with_an_error() {
     assert_eq!(handle.result().map(|r| r.is_err()), Some(true));
     assert_eq!(e.object_count(), before, "what was made went away");
 }
+
+/// Whoever waits may panic on being told of the panic: the creation is
+/// still closed, so what waits for no creation to run still runs.
+#[test]
+fn a_creation_job_whose_on_done_panics_on_its_error_still_closes_the_creation() {
+    let h = engine();
+    let e = &h.engine;
+    e.register_module(ljos_engine::module!("QtQuick" 2.0 => [Dud]));
+    let root = h.load(INCUBATE_DUD);
+    let comp = h.get(root, "c").as_object().expect("the component");
+    let (job, handle) = e.make_later(
+        ljos_engine::Request::component(comp).parent(Some(root)),
+        ljos_runtime::Lane::Visible,
+        ljos_runtime::ProcId::new(0, 0),
+    );
+    e.incubate(job.on_done(|_, r| {
+        assert!(r.is_ok(), "told twice over");
+    }));
+    DUDS_PANIC.set(true);
+    let faults = run_incubations(e);
+    DUDS_PANIC.set(false);
+    assert_eq!(faults.len(), 1, "{faults:?}");
+    assert_eq!(handle.result().map(|r| r.is_err()), Some(true));
+    let ran = Rc::new(Cell::new(false));
+    let r = ran.clone();
+    e.after_creation(move |_| r.set(true));
+    assert!(ran.get(), "a creation was left open");
+}
