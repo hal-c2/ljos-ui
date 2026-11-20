@@ -74,6 +74,17 @@ Feature: A window shows the root put in it at once
     Then the pixel at 250, 150 of the window is "#0000ff"
     And the property "width" of "large-window" is 300
     And the property "height" of "large-window" is 200
+    When the file "Shell.qml" is changed to:
+      """qml
+      import QtQuick
+      Window {
+        objectName: "unsized-after-large"; visible: true; color: "#ffff00"
+        Rectangle { width: parent.width; height: parent.height; color: "#0000ff" }
+      }
+      """
+    Then the pixel at 250, 150 of the window is "#0000ff"
+    And the property "width" of "unsized-after-large" is 300
+    And the property "height" of "unsized-after-large" is 200
     When the file "Shell.qml" is removed
     Then the pixel at 100, 50 of the window is "#ff0000"
     And the property "width" of "default-window" is 200
