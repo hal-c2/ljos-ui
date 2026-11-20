@@ -2141,12 +2141,17 @@ impl JsHost {
         // outer one may have filled the heap long before and been
         // collected since.
         let outer_peak = self.peak.mark();
+        // And its own refusals: one the outer run met before says nothing
+        // of an error thrown in here.
+        let outer_refused = self.heap.over_share();
+        self.heap.clear_over_share();
         let r = f(&scope);
         let took = st.now(Timing::Leave) - start;
         st.deadline.set(st.outer.borrow_mut().pop());
         st.give_back(took, before, false);
         let fault = r.map_err(|e| self.classify(&scope, e, label, took));
         self.peak.resume(outer_peak);
+        self.heap.resume_over_share(outer_refused);
         let fault = match fault {
             Ok(v) => return Ok(v),
             Err(fault) => fault,
@@ -2191,10 +2196,7 @@ impl JsHost {
         label: &str,
         elapsed: Duration,
     ) -> JsFault {
-        if self.heap.over_share()
-            && !self.interrupt.fired.get()
-            && refused_room(&scope.ctx, &err)
-        {
+        if self.heap.over_share() && !self.interrupt.fired.get() && refused_room(&scope.ctx, &err) {
             return JsFault::JsOutOfMemory {
                 label: label.to_owned(),
             };

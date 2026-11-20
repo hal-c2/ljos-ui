@@ -44,11 +44,19 @@ impl HeapCount {
         self.0.over_share.get()
     }
 
-    /// Forgets a refusal: done where a dispatch or a job begins and ends,
-    /// and never while one runs, so that a nested run that fails for its
-    /// own reason leaves the dispatch around it knowing it was refused.
+    /// Forgets a refusal: done where a dispatch, a job or a nested run
+    /// begins, and where a dispatch or a job ends.
     pub(crate) fn clear_over_share(&self) {
         self.0.over_share.set(false);
+    }
+
+    /// Ends a nested run: the run around it was refused room if it was
+    /// before the nested run began, or if the nested run was, since that
+    /// ran inside it. So a nested run that fails for its own reason leaves
+    /// the run around it knowing it was refused, and is judged by its own
+    /// refusals only.
+    pub(crate) fn resume_over_share(&self, outer: bool) {
+        self.0.over_share.set(outer || self.over_share());
     }
 
     /// Whether growing by `more` bytes would pass the cap; noted if so.
