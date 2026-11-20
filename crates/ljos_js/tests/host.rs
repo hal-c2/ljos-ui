@@ -2386,3 +2386,50 @@ fn an_unknown_error_with_nothing_pending_after_the_heap_came_near_its_limit_is_r
     assert!(matches!(err, JsFault::Internal(_)), "{err:?}");
     assert_eq!(eval_num(&host, "40 + 2").unwrap(), 42.0);
 }
+
+/// What a value reaches is counted for the first group that holds it, a
+/// getter is not run to find it, and the walk stops at its budget.
+#[test]
+fn what_each_group_holds_is_counted_once_without_running_getters() {
+    let host = plain();
+    let (big, small) = host
+        .enter("make", host.config().slice, |s| {
+            let big = s.eval::<rquickjs::Value, _>(
+                "globalThis.shared = []; \
+                 for (let i = 0; i < 10000; i++) shared.push({ i, s: 'row ' + i }); \
+                 ({ rows: shared })",
+            )?;
+            let small = s.eval::<rquickjs::Value, _>(
+                "globalThis.ran = false; \
+                 ({ rows: shared, get spy() { globalThis.ran = true; return [] } })",
+            )?;
+            Ok((s.keep(big), s.keep(small)))
+        })
+        .unwrap();
+
+    let held = host
+        .enter("walk", host.config().slice, |s| {
+            Ok(s.held_by([vec![&big], vec![&small]], usize::MAX))
+        })
+        .unwrap();
+    assert!(!held.truncated);
+    assert!(held.values > 20_000, "{held:?}");
+    assert!(held.bytes[0] > 10_000 * 64, "{held:?}");
+    assert!(
+        held.bytes[1] < 1024,
+        "the rows were the first group's: {held:?}"
+    );
+    assert_eq!(
+        eval_num(&host, "ran ? 1 : 0").unwrap(),
+        0.0,
+        "no getter ran"
+    );
+
+    let cut = host
+        .enter("walk", host.config().slice, |s| {
+            Ok(s.held_by([vec![&big]], 100))
+        })
+        .unwrap();
+    assert!(cut.truncated);
+    assert_eq!(cut.values, 100);
+}
