@@ -9,6 +9,12 @@
 //! is the boundary of its source's shell. Changing `source` or `fallback`
 //! tries again, and an `error` goes once the source's shell is shown.
 //!
+//! A shell that failed because the script heap was full or a script was
+//! interrupted is not wrong: the fallback is shown and the source is
+//! tried again by itself after a wait ([`ljos_engine::retry`]: at once,
+//! then from a second doubling to a minute while it keeps failing soon
+//! after), for as long as it takes.
+//!
 //! It is not a `Loader`: a Loader only logs why it could not load, and it
 //! holds one URL. The two make their item the same way.
 //!
@@ -27,6 +33,7 @@
 
 use std::time::Duration;
 
+use ljos_engine::retry::{ResourceFault, Retry, seconds};
 use ljos_engine::{
     Atom, Boundary, BoundaryConfig, Cx, Engine, EngineError, FaultReport, LogLevel, ObjectId,
     PropIndex, QmlObject, Request, Url, Value, WriteKind, qml_impl,
@@ -104,6 +111,25 @@ struct Run {
     /// Faults up to this one were dealt with while a shell was made; the
     /// boundary hears of them only afterwards.
     handled: u64,
+    /// The source's shell a resource fault took is tried again by this.
+    retry: Retry,
+}
+
+/// Why a shell is not shown.
+struct Why {
+    /// `file:line: message`.
+    text: String,
+    /// A full heap or an interrupt, which may not happen again.
+    cause: Option<ResourceFault>,
+}
+
+impl Why {
+    fn of(report: &FaultReport) -> Self {
+        Self {
+            text: describe(report),
+            cause: ResourceFault::of(&report.fault),
+        }
+    }
 }
 
 #[qml_impl]
@@ -154,9 +180,7 @@ impl Boundary for Behaviour {
             return;
         }
         drop_item(e, me);
-        let why = describe(report);
-        warn(e, format!("ShellLoader: {why}"));
-        show_fallback(e, me, why);
+        source_failed(e, me, Why::of(report));
     }
 
     fn start(&self, _: &Engine, _: ObjectId) -> Result<(), Fault> {
@@ -202,6 +226,8 @@ fn load(e: &Engine, me: ObjectId) {
     if !e.is_alive(me) || with_run(e, me, |r| r.completed) != Some(true) {
         return;
     }
+    // Asked for now: a try that waited is not needed.
+    with_run(e, me, |r| r.retry.cancel(e));
     drop_item(e, me);
     let source = url(e, me, ShellLoader::SOURCE.index);
     if source.is_empty() {
@@ -215,10 +241,37 @@ fn load(e: &Engine, me: ObjectId) {
             set(e, me, ShellLoader::STATUS.index, shell_status::READY.into());
             set(e, me, ShellLoader::ERROR.index, "".into());
         }
-        Err(why) => {
-            warn(e, format!("ShellLoader: {why}"));
-            show_fallback(e, me, why);
-        }
+        Err(why) => source_failed(e, me, why),
+    }
+}
+
+/// The source's shell did not work for `why`: the fallback is shown, and
+/// after a resource fault the source is tried again later.
+fn source_failed(e: &Engine, me: ObjectId, why: Why) {
+    warn(e, format!("ShellLoader: {}", why.text));
+    show_fallback(e, me, why.text);
+    let Some(cause) = why.cause else {
+        return;
+    };
+    let wait = with_run(e, me, |r| {
+        r.retry.schedule(e, cause, move |e| {
+            with_run(e, me, |r| r.retry.ran());
+            load(e, me);
+        })
+    });
+    if let Some(wait) = wait {
+        let when = if wait.is_zero() {
+            "at once".to_owned()
+        } else {
+            format!("in {}", seconds(wait))
+        };
+        warn(
+            e,
+            format!(
+                "ShellLoader: {}, so the source is tried again {when}",
+                cause.describe()
+            ),
+        );
     }
 }
 
@@ -251,7 +304,7 @@ fn show_fallback(e: &Engine, me: ObjectId, why: String) {
                 shell_status::FALLBACK.into(),
             );
         }
-        Err(also) => {
+        Err(Why { text: also, .. }) => {
             warn(e, format!("ShellLoader: fallback: {also}"));
             let both = if why.is_empty() {
                 format!("fallback: {also}")
@@ -267,7 +320,7 @@ fn show_fallback(e: &Engine, me: ObjectId, why: String) {
 
 /// Makes the shell at `url`, or says why it could not: it did not
 /// compile, or something in it faulted while it was made.
-fn make(e: &Engine, me: ObjectId, url: &str) -> Result<ObjectId, String> {
+fn make(e: &Engine, me: ObjectId, url: &str) -> Result<ObjectId, Why> {
     let (made, filed) = e.noting_faults(|| {
         e.make(
             Request::url(e.resolve_url(me, url))
@@ -278,9 +331,12 @@ fn make(e: &Engine, me: ObjectId, url: &str) -> Result<ObjectId, String> {
     });
     let after = last_fault(e);
     with_run(e, me, |r| r.handled = after);
-    let obj = made.map_err(|err| err.to_string())?;
+    let obj = made.map_err(|err| Why {
+        text: err.to_string(),
+        cause: err.resource_fault(),
+    })?;
     if let Some(report) = fault_in(e, obj, &filed) {
-        let why = describe(report);
+        let why = Why::of(report);
         discard(e, obj);
         return Err(why);
     }
@@ -316,8 +372,8 @@ fn judge_again(e: &Engine, me: ObjectId, obj: ObjectId, told: &[FaultReport]) {
     let Some(report) = fault_in(e, obj, told) else {
         return;
     };
-    let why = describe(report);
     if with_run(e, me, |r| r.fallback_item) == Some(Some(obj)) {
+        let why = describe(report);
         warn(e, format!("ShellLoader: fallback: {why}"));
         let first = text(&e.untrack(|| e.read(me, ShellLoader::ERROR.index)));
         let both = if first.is_empty() {
@@ -331,8 +387,7 @@ fn judge_again(e: &Engine, me: ObjectId, obj: ObjectId, told: &[FaultReport]) {
         return;
     }
     drop_item(e, me);
-    warn(e, format!("ShellLoader: {why}"));
-    show_fallback(e, me, why);
+    source_failed(e, me, Why::of(report));
 }
 
 fn last_fault(e: &Engine) -> u64 {
