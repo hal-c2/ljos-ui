@@ -157,3 +157,11 @@ Feature: An input method that tells the whole of what it holds
       And the input method holds "abc" selecting from 1 to 3
       Then the property "selectionStart" of "pin" is 3
       And the property "selectionEnd" of "pin" is 5
+
+    Scenario: An input method that typed nothing yet leaves the field's selection
+      When the property "focus" of "pin" is set to true
+      And the user presses "Ctrl+A"
+      And the input method holds "" with the cursor at 0
+      Then the property "text" of "pin" is "12"
+      And the property "selectionStart" of "pin" is 0
+      And the property "selectionEnd" of "pin" is 2
