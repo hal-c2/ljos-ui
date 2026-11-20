@@ -30,7 +30,7 @@ use ljos_ir::{
     TranslationKind, TypeRef,
 };
 use ljos_js::{JsValue, Scope};
-use ljos_runtime::{Job, JobCx, JobPoll, Lane, ProcId};
+use ljos_runtime::{Fault, Job, JobCx, JobPoll, Lane, ProcId};
 
 use crate::atom::Atom;
 use crate::engine::{Engine, Held};
@@ -3279,7 +3279,7 @@ impl CreationJob {
                 Ok(mut job) => job.step(check),
                 Err(_) => JobPoll::Yield,
             };
-            if matches!(poll, JobPoll::Done) {
+            if !matches!(poll, JobPoll::Yield) {
                 self.phase = Phase::Done;
             }
             return poll;
@@ -3296,8 +3296,24 @@ impl CreationJob {
         };
         // As for a creation made at once: its time is not a script's
         // that forced it.
-        let poll = e.not_script_time(|| self.run(&e, check));
-        if matches!(poll, JobPoll::Done) {
+        let ran = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            e.not_script_time(|| self.run(&e, check))
+        }));
+        let poll = match ran {
+            Ok(poll) => poll,
+            // Caught here and not only by whoever runs the job: they drop
+            // it, and whoever waits on it (a delegate, an incubator) would
+            // wait for good. The engine is usable after a panic (see
+            // `fault`), so it is told as for any job that failed, and the
+            // fault still goes to the job's owner.
+            Err(payload) => {
+                let fault = Fault::from_panic(payload);
+                self.unmake(Some(&e));
+                self.finish(Some(&e), Err(EngineError::Load(fault.to_string())));
+                JobPoll::Failed(fault)
+            }
+        };
+        if !matches!(poll, JobPoll::Yield) {
             e.close_creation(errors);
         } else {
             e.pause_creation(errors);
@@ -3321,7 +3337,9 @@ impl CreationJob {
                 self.unmake(Some(&e));
                 return self.finish(Some(&e), Err(EngineError::DeadObject(p)));
             }
-            match std::mem::replace(&mut self.phase, Phase::Done) {
+            // What is made so far stays in `phase` while a step runs, so a
+            // step that panics leaves it for `unmake`.
+            match &mut self.phase {
                 Phase::Load => match e.template_of(&req.source, req.scope) {
                     Ok((t, ctx)) => {
                         self.scope_ctx = ctx;
@@ -3329,13 +3347,16 @@ impl CreationJob {
                     }
                     Err(err) => return self.finish(Some(&e), Err(err)),
                 },
-                Phase::Allocate(t) => match e.template_allocation(&t, req.parent) {
-                    Ok(a) => self.phase = Phase::Allocating(Creation::default(), a),
-                    Err(err) => return self.finish(Some(&e), Err(err)),
-                },
-                Phase::Allocating(mut cr, mut a) => {
+                Phase::Allocate(t) => {
+                    let t = t.clone();
+                    match e.template_allocation(&t, req.parent) {
+                        Ok(a) => self.phase = Phase::Allocating(Creation::default(), a),
+                        Err(err) => return self.finish(Some(&e), Err(err)),
+                    }
+                }
+                Phase::Allocating(cr, a) => {
                     let made = loop {
-                        match e.allocate_step(&mut cr, &mut a) {
+                        match e.allocate_step(cr, a) {
                             Ok(None) if check() => break Ok(None),
                             Ok(None) => {}
                             Ok(Some(inst)) => break Ok(Some(inst)),
@@ -3344,17 +3365,14 @@ impl CreationJob {
                     };
                     let inst = match made {
                         Ok(Some(inst)) => inst,
-                        Ok(None) => {
-                            self.phase = Phase::Allocating(cr, a);
-                            return JobPoll::Yield;
-                        }
+                        Ok(None) => return JobPoll::Yield,
                         Err(err) => {
-                            e.discard_allocation(&cr);
+                            e.discard_allocation(cr);
                             return self.finish(Some(&e), Err(err));
                         }
                     };
                     let host = req.by == By::Native;
-                    match e.allocated_template(&mut cr, inst, req.parent, req.append, host) {
+                    match e.allocated_template(cr, inst, req.parent, req.append, host) {
                         Ok(root) => {
                             if let Some(ctx) = self.scope_ctx.take() {
                                 e.add_context(root, ctx);
@@ -3365,7 +3383,12 @@ impl CreationJob {
                             self.handle.0.root.set(Some(root));
                             let scripted =
                                 self.record.as_ref().is_some_and(Request::remade_as_script);
-                            e.reload_assign(&cr, root, scripted);
+                            e.reload_assign(cr, root, scripted);
+                            let Phase::Allocating(cr, _) =
+                                std::mem::replace(&mut self.phase, Phase::Done)
+                            else {
+                                unreachable!("allocating until it is making");
+                            };
                             self.phase = Phase::Making(sliced::Making::new(
                                 cr,
                                 root,
@@ -3374,14 +3397,15 @@ impl CreationJob {
                             ));
                         }
                         Err(err) => {
-                            e.discard_allocation(&cr);
+                            e.discard_allocation(cr);
                             return self.finish(Some(&e), Err(err));
                         }
                     }
                 }
-                Phase::Making(mut m) => {
-                    if !e.is_alive(m.root()) {
-                        return self.finish(Some(&e), Err(EngineError::DeadObject(m.root())));
+                Phase::Making(m) => {
+                    let root = m.root();
+                    if !e.is_alive(root) {
+                        return self.finish(Some(&e), Err(EngineError::DeadObject(root)));
                     }
                     if let Some(r) = m.step(&e, check) {
                         return self.finish(Some(&e), r);
@@ -3389,7 +3413,6 @@ impl CreationJob {
                     if let Some(p) = m.progress() {
                         self.handle.0.progress.set(p);
                     }
-                    self.phase = Phase::Making(m);
                     return JobPoll::Yield;
                 }
                 Phase::Done => return JobPoll::Done,
