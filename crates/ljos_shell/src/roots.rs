@@ -6,7 +6,7 @@ use std::rc::Rc;
 
 use ljos_egui::QmlView;
 use ljos_engine::{Engine, LogLevel, ObjectId};
-use ljos_quick::roots::{RootSwaps, adopt};
+use ljos_quick::roots::RootSwaps;
 
 use crate::ShellApp;
 
@@ -31,11 +31,14 @@ fn put(view: &mut QmlView, engine: &Engine, new: ObjectId) -> bool {
 /// which it has not. The view's root may be a window the root a reload
 /// replaces stood for (`RootSwaps::present`); a root that stands for one
 /// gives way to it before the next frame. False when the view cannot show
-/// it, and its root stays.
+/// it, and its root stays. Only a reload replaces the root, and only an
+/// application that compiles its own files reloads (`dev` brings
+/// `user-qml`).
+#[cfg(feature = "user-qml")]
 pub(crate) fn show_root(view: &mut QmlView, engine: &Engine, new: ObjectId) -> bool {
     let old = view.scene().root();
     if let Some(old) = old {
-        adopt(engine, old, new);
+        ljos_quick::roots::adopt(engine, old, new);
     }
     let shown = put(view, engine, new);
     if shown {
