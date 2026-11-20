@@ -569,3 +569,81 @@ fn a_loader_whose_item_runs_out_of_heap_again_stays_stopped() {
     set(&e, root, "on", Value::Bool(true));
     assert_eq!(num(&e, loader, "status"), 1.0);
 }
+
+const ROWS: &str = r#"
+import QtQuick
+Item {
+    objectName: "root"
+    Component { id: row; Item { objectName: "cell" } }
+    Loader { objectName: "a"; sourceComponent: row }
+    Loader { objectName: "b"; sourceComponent: row }
+    Loader { objectName: "c"; sourceComponent: row }
+    function warm() { return 1 }
+}
+"#;
+
+#[test]
+fn loaders_that_run_out_of_heap_together_collect_once() {
+    let e = engine();
+    let root = load(&e, ROWS);
+    // Running a script starts the script engine.
+    e.invoke_by_name(root, "warm", &[]).unwrap();
+    let loaders = ["a", "b", "c"].map(|n| find(&e, root, n));
+    let cells = loaders.map(|l| get(&e, l, "item").as_object().unwrap());
+    for cell in cells {
+        e.report_fault(Some(cell), ljos_runtime::Fault::JsOutOfMemory);
+    }
+    let before = e.script_memory().unwrap().collections;
+    deliver(&e);
+    assert_eq!(e.script_memory().unwrap().collections, before + 1);
+    for (l, old) in loaders.into_iter().zip(cells) {
+        assert_eq!(num(&e, l, "status"), 1.0);
+        assert_ne!(get(&e, l, "item").as_object(), Some(old));
+    }
+    let warned = e.take_warnings();
+    assert_eq!(
+        warned
+            .iter()
+            .filter(|w| w.contains("Loader: its item ran out of script memory, loading again"))
+            .count(),
+        3,
+        "{warned:?}"
+    );
+    // A heap that runs out after that collection is collected for again.
+    let cell = get(&e, loaders[0], "item").as_object().unwrap();
+    e.report_fault(Some(cell), ljos_runtime::Fault::JsOutOfMemory);
+    deliver(&e);
+    assert_eq!(e.script_memory().unwrap().collections, before + 2);
+}
+
+#[test]
+fn a_loader_out_of_heap_soon_after_an_interrupt_does_not_say_again() {
+    let (e, _clock) = timed();
+    let root = load(&e, LOADER);
+    let loader = find(&e, root, "loader");
+    e.report_fault(
+        Some(find(&e, root, "leaf")),
+        ljos_runtime::Fault::JsInterrupted {
+            slice: Duration::from_millis(50),
+        },
+    );
+    deliver(&e);
+    assert_eq!(num(&e, loader, "status"), 1.0, "loaded again");
+    e.report_fault(
+        Some(find(&e, root, "leaf")),
+        ljos_runtime::Fault::JsOutOfMemory,
+    );
+    deliver(&e);
+    assert_eq!(num(&e, loader, "status"), 3.0);
+    let warned = e.take_warnings();
+    assert!(
+        warned.iter().any(|w| w.contains(
+            "Loader: its item ran out of script memory soon after a script was interrupted, so it stays at Loader.Error until it is told to load"
+        )),
+        "{warned:?}"
+    );
+    assert!(
+        !warned.iter().any(|w| w.contains("memory again")),
+        "{warned:?}"
+    );
+}

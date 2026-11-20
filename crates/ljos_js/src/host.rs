@@ -1662,6 +1662,9 @@ pub struct JsHost {
     interrupt: Rc<InterruptState>,
     cfg: JsConfig,
     last_collect: Cell<usize>,
+    /// Full collections run, by [`JsHost::collect_now`] and
+    /// [`JsHost::collect_if_idle`].
+    collections: Cell<u64>,
     heap: HeapCount,
     /// Loaded bytecode is read in place (QuickJS `ROM_DATA`): module code
     /// points into these buffers, so they must outlive the runtime. Declared
@@ -1817,6 +1820,7 @@ impl JsHost {
             interrupt,
             cfg,
             last_collect: Cell::new(0),
+            collections: Cell::new(0),
             heap,
             bytecode: RefCell::default(),
         })
@@ -2535,6 +2539,7 @@ impl JsHost {
         }
         self.rt.run_gc();
         self.last_collect.set(self.heap_bytes());
+        self.collections.set(self.collections.get() + 1);
         self.flush_released();
         true
     }
@@ -2579,8 +2584,14 @@ impl JsHost {
         }
         self.rt.run_gc();
         self.last_collect.set(self.heap_bytes());
+        self.collections.set(self.collections.get() + 1);
         self.flush_released();
         true
+    }
+
+    /// How many full collections ran, for a tool that watches memory.
+    pub fn collections(&self) -> u64 {
+        self.collections.get()
     }
 
     /// Whether JS is running: a native function called from a script, or

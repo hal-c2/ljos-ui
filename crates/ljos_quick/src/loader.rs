@@ -148,8 +148,9 @@ struct Run {
     /// An item was emptied without telling while the next one is made: a
     /// failure tells the empty item, as no item replaces it.
     emptied_quietly: bool,
-    /// When an interrupted script last made the Loader load again.
-    second_chance: Option<Time>,
+    /// When a stopped script last made the Loader load again, and what
+    /// stopped it.
+    second_chance: Option<(Time, Cut)>,
     /// When a script an item set off elsewhere by itself was last
     /// interrupted, how many were in a row, and the generation of the item
     /// that loaded again for it: an item any other load made starts anew.
@@ -436,7 +437,13 @@ impl Boundary for LoaderBoundary {
             // could run out again, so it is counted as an interrupt made
             // while the item was made.
             Fault::JsOutOfMemory => {
-                e.collect_garbage();
+                // Rows run out together: the first Loader told collects,
+                // and the rest, whose faults came before it, load into
+                // what it freed.
+                let collected = e.extension::<CollectedThrough>();
+                if report.seq > collected.0.get() && e.collect_garbage() {
+                    collected.0.set(e.faults_reported());
+                }
                 load_again(e, me, report.at, Again::Counted, Cut::OutOfMemory);
             }
             _ => {}
@@ -469,8 +476,13 @@ enum Again {
     Elsewhere { made_in: u64 },
 }
 
+/// [`Engine::faults_reported`] when a Loader last collected the garbage
+/// for a full heap: a fault reported by then needs no other collection.
+#[derive(Default)]
+struct CollectedThrough(std::cell::Cell<u64>);
+
 /// What stopped a script a Loader loads again for.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Cut {
     /// The run was interrupted.
     Interrupted,
@@ -520,30 +532,39 @@ fn load_again(e: &Engine, me: ObjectId, at: Time, again: Again, cut: Cut) {
         }
         return;
     }
-    let tried = with_run(e, me, |r| {
-        let tried = r
+    let before = with_run(e, me, |r| {
+        let before = r
             .second_chance
-            .is_some_and(|t| at.saturating_since(t) < SECOND_CHANCE);
-        if !tried {
-            r.second_chance = Some(at);
+            .filter(|(t, _)| at.saturating_since(*t) < SECOND_CHANCE)
+            .map(|(_, c)| c);
+        if before.is_none() {
+            r.second_chance = Some((at, cut));
         }
-        tried
+        before
     });
-    let what = match cut {
+    let what = |cut| match cut {
         Cut::Interrupted => "a script was interrupted",
         Cut::OutOfMemory => "its item ran out of script memory",
     };
-    match tried {
-        Some(false) => {
-            warn(e, format!("{place}Loader: {what}, loading again"));
+    match before {
+        Some(None) => {
+            warn(e, format!("{place}Loader: {}, loading again", what(cut)));
             reload(e, me, true);
         }
-        Some(true) => warn(
-            e,
-            format!(
-                "{place}Loader: {what} again, so it stays at Loader.Error until it is told to load"
-            ),
-        ),
+        Some(Some(was)) => {
+            let after = if was == cut {
+                " again".to_owned()
+            } else {
+                format!(" soon after {}", what(was))
+            };
+            warn(
+                e,
+                format!(
+                    "{place}Loader: {}{after}, so it stays at Loader.Error until it is told to load",
+                    what(cut)
+                ),
+            );
+        }
         None => {}
     }
 }
