@@ -8,7 +8,8 @@ Feature: A window shows the root put in it at once
   and the window keeps its size, yet the window shows another picture.
   A `Window` that declares a size of its own is shown at that size: the
   platform's window takes it, and the `Window` is not told the size the
-  one it replaced had.
+  one it replaced had. A `Window` that asks for no other size than the
+  one it replaced is told the size the window has.
   The new picture shows without another input event: a window that
   waited for one would show the old root until the pointer moved over it.
 
@@ -22,6 +23,15 @@ Feature: A window shows the root put in it at once
       """qml
       import QtQuick
       Window { width: 200; height: 100; visible: true; color: "#0000ff" }
+      """
+    And the file "Unsized.qml":
+      """qml
+      import QtQuick
+      Window {
+        objectName: "second-unsized"; visible: true; color: "#ffff00"
+        property bool sized: width > 0 && height > 0
+        Rectangle { width: parent.width; height: parent.height; color: "#0000ff" }
+      }
       """
     And the QML:
       """qml
@@ -69,3 +79,14 @@ Feature: A window shows the root put in it at once
     Then the pixel at 100, 50 of the window is "#ff0000"
     And the property "width" of "default-window" is 200
     And the property "height" of "default-window" is 100
+
+  Scenario: A Window shell that asks for no other size is told the size its window has
+    When the file "Shell.qml" is changed to:
+      """qml
+      import QtQuick
+      Window { objectName: "first-unsized"; visible: true; color: "#00ff00" }
+      """
+    Then the pixel at 100, 50 of the window is "#00ff00"
+    When the property "source" of "loader" is set to "Unsized.qml"
+    Then the pixel at 100, 50 of the window is "#0000ff"
+    And the property "sized" of "second-unsized" is true
