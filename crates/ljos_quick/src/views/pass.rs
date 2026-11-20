@@ -1375,6 +1375,7 @@ fn run(e: &Engine, view: ObjectId, st: &ViewState, over: Option<f64>) {
                 let at = Value::Real(dest[g.main]);
                 warn(e, "place", write_placed(e, o, pos_p, at));
             }
+            super::cull::unplaced(e, o, false);
             if g.grid && !holds(1 - g.main) {
                 let across = Value::Real(dest[1 - g.main]);
                 warn(e, "place", write_placed(e, o, cross_p, across));
