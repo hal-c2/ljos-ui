@@ -10,6 +10,7 @@ use super::*;
 enum Msg {
     Wake,
     Stop,
+    Ping,
 }
 
 impl From<Wake> for Msg {
@@ -19,13 +20,15 @@ impl From<Wake> for Msg {
 }
 
 type Log = Arc<Mutex<Vec<String>>>;
+/// What the app does when its first surface comes.
+type OnFirst = Box<dyn FnMut(&mut RelayControl<'_, u32>)>;
 
 /// Writes down what it is handed, makes its window at the first surface
 /// and stops at [`Msg::Stop`].
 struct App {
     log: Log,
     surfaces: u32,
-    on_first: Option<Box<dyn FnMut(&mut RelayControl<'_, u32>)>>,
+    on_first: Option<OnFirst>,
     /// Stops once it has drawn on this surface (counted from 1).
     stop_when_drawn_on: Option<u32>,
     /// How long it takes to let go of a surface.
@@ -296,6 +299,47 @@ fn the_loop_sleeps_until_the_time_asked_for() {
     host.run(Until(app)).unwrap();
     assert!(started.elapsed() >= Duration::from_millis(30));
     assert!(lines(&log).contains(&String::from("Wake")));
+}
+
+#[test]
+fn a_time_passed_wakes_the_loop_though_messages_keep_coming() {
+    let log = Log::default();
+    let requests = Arc::default();
+    let (host, relay) = host(&requests);
+    host.waker().wake();
+    // Each message brings the next, so one is always waiting when the
+    // loop looks again; the time it asked for passes meanwhile.
+    struct Busy {
+        log: Log,
+        relay: Relay<u32, Msg>,
+        pings: u32,
+    }
+    impl HostApp<RelayHost<u32, Msg>> for Busy {
+        fn event(&mut self, host: &mut RelayControl<'_, u32>, event: Event<'_, (), Msg>) {
+            match event {
+                Event::User(Msg::Wake) => {
+                    host.wake_at(Some(Instant::now()));
+                    self.relay.post(Msg::Ping).unwrap();
+                }
+                Event::User(Msg::Ping) if self.pings < 5 => {
+                    self.pings += 1;
+                    std::thread::sleep(Duration::from_millis(2));
+                    self.relay.post(Msg::Ping).unwrap();
+                }
+                Event::User(Msg::Ping) => self.relay.post(Msg::Stop).unwrap(),
+                Event::User(Msg::Stop) => host.exit(),
+                Event::Wake => self.log.lock().unwrap().push(String::from("Wake")),
+                _ => {}
+            }
+        }
+    }
+    let app = Busy {
+        log: Arc::clone(&log),
+        relay,
+        pings: 0,
+    };
+    host.run(app).unwrap();
+    assert_eq!(lines(&log), ["Wake"]);
 }
 
 #[test]

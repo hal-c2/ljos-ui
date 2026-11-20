@@ -88,18 +88,40 @@ where
         let spawned = std::thread::Builder::new()
             .name(String::from("ljos-application"))
             .spawn(move || {
-                let (config, setup) = start();
-                let ui = Phone::new(config, setup, host.waker());
-                if let Err(e) = host.run(ui) {
-                    log::error!("the application's loop ended: {e}");
-                }
+                let ran = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+                    let (config, setup) = start();
+                    let ui = Phone::new(config, setup, host.waker());
+                    host.run(ui)
+                }));
+                let code = match ran {
+                    Ok(Ok(())) => 0,
+                    Ok(Err(e)) => {
+                        log::error!("the application's loop ended: {e}");
+                        1
+                    }
+                    // The hook logged why.
+                    Err(_) => 1,
+                };
+                end_process(code);
             });
         if let Err(e) = spawned {
             log::error!("the application's thread did not start: {e}");
+            end_process(1);
         }
         attach
     });
     attach.pump(&app);
+}
+
+/// The process ends with its application. Android keeps a process it
+/// cached after its last activity finished, and `ATTACH` holds the
+/// application of the process: an activity the launcher started in it
+/// later would attach to an application that is gone and close at once,
+/// until the system killed the process. Ended, the next start is a new
+/// process with a new application, as after the system ended it.
+fn end_process(code: i32) -> ! {
+    log::info!("the application ended; so does its process");
+    std::process::exit(code)
 }
 
 /// What draws: kept from one activity to the next.

@@ -264,6 +264,7 @@ impl Build {
         let project = package.target_dir.join("android").join(&package.name);
         write_project(&project, &fill)?;
         let jni = project.join("app/src/main/jniLibs");
+        keep_only_abis(&jni, &abis)?;
         for abi in &abis {
             let mut c = Command::new(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()));
             c.args(["ndk", "-t", abi, "-P", &MIN_SDK.to_string(), "-o"])
@@ -316,6 +317,31 @@ impl Build {
 
 /// Writes the filled template into `project`, leaving what Gradle and
 /// cargo-ndk put there before.
+/// Removes the libraries of the ABIs not built now: the package takes
+/// whatever is in `jni`, and an earlier build's library for another ABI
+/// would be installed on a device of that ABI without a word.
+fn keep_only_abis(jni: &Path, abis: &[&str]) -> anyhow::Result<()> {
+    let entries = match std::fs::read_dir(jni) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e).with_context(|| format!("reading {}", jni.display())),
+    };
+    for entry in entries {
+        let entry = entry.with_context(|| format!("reading {}", jni.display()))?;
+        let name = entry.file_name();
+        if !abis.iter().any(|abi| name == *abi) {
+            let path = entry.path();
+            let removed = if entry.file_type()?.is_dir() {
+                std::fs::remove_dir_all(&path)
+            } else {
+                std::fs::remove_file(&path)
+            };
+            removed.with_context(|| format!("removing {}", path.display()))?;
+        }
+    }
+    Ok(())
+}
+
 fn write_project(project: &Path, fill: &Fill) -> anyhow::Result<()> {
     for (path, text) in TEMPLATE {
         let to = project.join(path);
@@ -394,6 +420,21 @@ mod tests {
             label: String::from("Hello & \"you\""),
             lib_name: String::from("ljos_example_android_hello"),
         }
+    }
+
+    #[test]
+    fn a_build_for_one_abi_packs_no_library_of_another() {
+        let dir = tempfile::tempdir().unwrap();
+        let jni = dir.path().join("jniLibs");
+        for abi in ABIS {
+            std::fs::create_dir_all(jni.join(abi)).unwrap();
+            std::fs::write(jni.join(abi).join("libapp.so"), b"old").unwrap();
+        }
+        keep_only_abis(&jni, &["x86_64"]).unwrap();
+        assert!(jni.join("x86_64/libapp.so").is_file());
+        assert!(!jni.join("arm64-v8a").exists());
+        // Nothing built before: nothing to remove.
+        keep_only_abis(&dir.path().join("none"), &["x86_64"]).unwrap();
     }
 
     #[test]

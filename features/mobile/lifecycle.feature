@@ -30,6 +30,7 @@ Feature: An application on a phone outlives its screen
         property int taps: 0
         property bool wide: width > height
         function tap() { taps++ }
+        function quit() { Qt.quit() }
         Rectangle { anchors.fill: parent; color: "steelblue" }
       }
       """
@@ -69,6 +70,14 @@ Feature: An application on a phone outlives its screen
     And the user opens the application again
     Then the application is in front
     And the property "taps" of "w" is 2
+    And the system has not found the application unresponsive
+
+  Scenario: An application that quit starts anew when opened again
+    When the method "quit" of "w" is called
+    Then the application is no longer running
+    When the user opens the application again
+    Then the application is in front
+    And the property "taps" of "w" is 0
     And the system has not found the application unresponsive
 
   Scenario: A hidden application does nothing

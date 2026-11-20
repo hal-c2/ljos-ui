@@ -477,6 +477,13 @@ pub trait Device: Backend {
         ))
     }
 
+    /// The application's process is running.
+    fn running(&mut self) -> Result<bool> {
+        Err(BackendError::NotImplemented(
+            "whether the application's process runs",
+        ))
+    }
+
     /// The application is the one the user sees.
     fn in_front(&mut self) -> Result<bool> {
         Err(BackendError::NotImplemented(

@@ -48,6 +48,21 @@ fn in_front(w: &mut LjosWorld, where_: String) -> StepResult {
     })
 }
 
+// The application quit: its process is gone too, so the next start is a
+// new one.
+#[then("the application is no longer running")]
+fn ended(w: &mut LjosWorld) -> StepResult {
+    w.each(|b| {
+        if b.device()?.running()? {
+            Err(BackendError::Failed(
+                "the application's process is still running".into(),
+            ))
+        } else {
+            Ok(())
+        }
+    })
+}
+
 #[then("the system has not found the application unresponsive")]
 fn responding(w: &mut LjosWorld) -> StepResult {
     w.each(|b| {

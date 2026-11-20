@@ -391,6 +391,12 @@ impl<S: Send + 'static, U: From<Wake> + Send + 'static> PlatformHost for RelayHo
             };
             // Then everything already waiting, before the window is drawn.
             while let Some(msg) = next.take() {
+                // Asked of the clock, not of whether the wait timed out:
+                // while messages keep coming, none does.
+                if state.deadline.is_some_and(|at| at <= Instant::now()) {
+                    state.deadline = None;
+                    deliver(&mut state, Event::Wake);
+                }
                 match msg {
                     Msg::Wake => {
                         relay.wake_queued.store(false, Ordering::Release);
