@@ -1075,10 +1075,7 @@ fn a_creation_job_whose_on_done_panics_on_success_keeps_its_object() {
     }));
     let faults = run_incubations(e);
     assert_eq!(faults.len(), 1, "{faults:?}");
-    let made = handle
-        .result()
-        .expect("told")
-        .expect("the object was made");
+    let made = handle.result().expect("told").expect("the object was made");
     assert!(e.is_alive(made), "the object was unmade");
     let ran = Rc::new(Cell::new(false));
     let r = ran.clone();
