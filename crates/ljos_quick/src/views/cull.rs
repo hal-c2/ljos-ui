@@ -10,6 +10,12 @@
 //! leaves them out of the picture; they still take the pointer, as an
 //! item does that only is not painted.
 //!
+//! A row the view made and has not put anywhere yet is not drawn either:
+//! made by the incubator, it is the view's child from the moment it is
+//! allocated, at its own `x` and `y`, and half made for as many frames as
+//! its making takes. qml6 culls a delegate from `QQuickItemView::initItem`
+//! until the view lays it out.
+//!
 //! A delegate waiting in a view's pool (`reuseItems`) is neither drawn
 //! nor given the pointer, and is not told so either: it reads `visible`
 //! as it set it, and so does what is in it, as on qml6. Telling it would
@@ -27,6 +33,8 @@ struct Culled {
     by_view: RefCell<FxHashMap<ObjectId, FxHashSet<ObjectId>>>,
     /// The delegates in the pools of all views.
     pooled: RefCell<FxHashSet<ObjectId>>,
+    /// The rows made that their view has not placed yet.
+    unplaced: RefCell<FxHashSet<ObjectId>>,
     /// Counts the changes, so a scene asks again only after one.
     generation: Cell<u64>,
 }
@@ -65,6 +73,34 @@ pub(crate) fn pool(e: &Engine, row: ObjectId, pooled: bool) {
     }
 }
 
+/// The rows the set of unplaced ones keeps room for once it is empty.
+const UNPLACED_KEPT: usize = 16;
+
+/// `row` was made for its view (`made`) and is not drawn until the view
+/// puts it in its place, or the view put it there (`made` false) or it
+/// is gone.
+pub(crate) fn unplaced(e: &Engine, row: ObjectId, made: bool) {
+    let c = e.extension::<Culled>();
+    let changed = if made {
+        c.unplaced.borrow_mut().insert(row)
+    } else {
+        // Every row the view places, every pass: most were placed before.
+        let mut unplaced = c.unplaced.borrow_mut();
+        let removed = !unplaced.is_empty() && unplaced.remove(&row);
+        if removed && unplaced.is_empty() {
+            // A view made a thousand rows at once has a table for a
+            // thousand: given back once they are all placed, not kept as
+            // 18 bytes a row for the life of the engine. A screenful's
+            // room stays, so the next rows made do not grow it again.
+            unplaced.shrink_to(UNPLACED_KEPT);
+        }
+        removed
+    };
+    if changed {
+        c.generation.set(c.generation.get() + 1);
+    }
+}
+
 /// Every delegate waiting in a pool.
 pub(crate) fn pooled(e: &Engine) -> FxHashSet<ObjectId> {
     let c = e.extension::<Culled>();
@@ -77,13 +113,21 @@ pub(crate) fn generation(e: &Engine) -> u64 {
     e.extension::<Culled>().generation.get()
 }
 
-/// Every row a view made and does not show.
+/// Every row a view made and does not show, or has not placed yet.
 pub(crate) fn all(e: &Engine) -> FxHashSet<ObjectId> {
     let c = e.extension::<Culled>();
+    {
+        let mut unplaced = c.unplaced.borrow_mut();
+        unplaced.retain(|o| e.is_alive(*o));
+        if unplaced.is_empty() {
+            unplaced.shrink_to(UNPLACED_KEPT);
+        }
+    }
     c.by_view
         .borrow()
         .iter()
         .filter(|(view, _)| e.is_alive(**view))
         .flat_map(|(_, rows)| rows.iter().copied())
+        .chain(c.unplaced.borrow().iter().copied())
         .collect()
 }

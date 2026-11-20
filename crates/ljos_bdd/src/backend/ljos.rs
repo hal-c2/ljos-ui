@@ -141,6 +141,9 @@ struct Live {
     /// what moves until then is that input's doing, and `rest` is taken
     /// again there.
     rest_due: Option<ljos_runtime::Time>,
+    /// The window's picture after each frame, when a scenario keeps them,
+    /// or why that frame's picture could not be drawn.
+    kept: Option<Vec<KeptPicture>>,
 }
 
 #[derive(Default)]
@@ -192,6 +195,11 @@ pub struct LjosBackend {
     /// when the scenario gave them one.
     js_native: Option<Duration>,
     js_stall: Option<Duration>,
+    /// What each reading of the application's clock takes, when the
+    /// scenario said.
+    clock_reading: Option<Duration>,
+    /// Every picture of the window is kept from the first load on.
+    keep_pictures: bool,
     /// The platform whose key bindings the scenario asked for.
     key_bindings: Option<ljos_quick::keys::Platform>,
     /// The thread's text engine reads the machine's fonts for this scenario.
@@ -473,6 +481,7 @@ impl LjosBackend {
             outside_at: (0.0, 0.0),
             rest: None,
             rest_due: None,
+            kept: None,
         };
         // A decode takes as long as it takes; scenarios see its result when
         // time is advanced and not before, whatever the machine's speed.
@@ -548,6 +557,16 @@ impl LjosBackend {
         }
         if let Some(stall) = self.js_stall {
             set_js_clock_stalled(&live.engine, stall)?;
+        }
+        if let Some(cost) = self.clock_reading {
+            live.engine.set_clock(Rc::new(ReadingCosts {
+                clock: live.clock.clone(),
+                cost: u64::try_from(cost.as_micros()).unwrap_or(u64::MAX),
+                readings: std::sync::atomic::AtomicU64::new(0),
+            }));
+        }
+        if self.keep_pictures {
+            live.kept = Some(Vec::new());
         }
         // A scenario is not told which desktop ran it: with none asked
         // for, the build's platform, and on Linux no desktop's own keys.
@@ -758,6 +777,7 @@ impl Live {
             windows: &mut self.windows,
             roots: &mut self.roots,
             top: &mut self.top,
+            kept: self.kept.as_mut(),
         };
         let mut driver = Driver::new(&self.engine, &mut self.scene, &*self.clock, &mut self.drive)
             .hosted(&mut host);
@@ -1162,6 +1182,30 @@ struct Hosting<'a> {
     windows: &'a mut Vec<ObjectId>,
     roots: &'a mut Vec<ObjectId>,
     top: &'a mut ljos_dev::Top,
+    kept: Option<&'a mut Vec<KeptPicture>>,
+}
+
+/// A frame's picture, or why the reference renderer could not draw it.
+type KeptPicture = std::result::Result<ljos_render::RgbaImage, String>;
+
+/// The pixel at `x`, `y` in each kept picture. A frame that was not drawn
+/// fails the lot: what it showed is unknown, so no step may pass over it.
+fn kept_pixels_at(kept: &[KeptPicture], x: u32, y: u32) -> Result<Vec<[u8; 4]>> {
+    kept.iter()
+        .enumerate()
+        .map(|(i, p)| match p {
+            Ok(p) if x < p.width && y < p.height => Ok(p.pixel(x, y)),
+            Ok(p) => Err(failed(format!(
+                "{x}, {y} is outside the window's picture, which is {} by {}",
+                p.width, p.height
+            ))),
+            Err(e) => Err(failed(format!(
+                "picture {} of {} was not drawn: {e}",
+                i + 1,
+                kept.len()
+            ))),
+        })
+        .collect()
 }
 
 impl Host for Hosting<'_> {
@@ -1201,6 +1245,11 @@ impl Host for Hosting<'_> {
         if self.top.visible() {
             let report = scene.take_incubation_report().unwrap_or_default();
             self.top.record(engine, &report);
+        }
+        if let (Some(kept), Some(snapshot)) = (self.kept.as_deref_mut(), scene.snapshot()) {
+            let picture = ljos_render::VelloCpuReference::new(RasterConfig::default())
+                .render(&ljos_render::FrameView::new(snapshot, 1.0));
+            kept.push(picture.map_err(|e| e.to_string()));
         }
     }
 }
@@ -1374,6 +1423,15 @@ impl Backend for LjosBackend {
         self.live()?.grab()
     }
 
+    fn kept_pixels(&mut self, x: u32, y: u32) -> Result<Vec<[u8; 4]>> {
+        let kept = self
+            .live()?
+            .kept
+            .as_ref()
+            .ok_or_else(|| failed("no pictures of the window are kept"))?;
+        kept_pixels_at(kept, x, y)
+    }
+
     fn as_input(&mut self) -> Option<&mut dyn Input> {
         Some(self)
     }
@@ -1455,8 +1513,14 @@ impl Input for LjosBackend {
 
     fn touch(&mut self, x: f64, y: f64) -> Result<()> {
         self.input(|b| {
-            b.live()?
-                .drive(|d| d.touch(Point::new(x, y), kurbo::Vec2::ZERO))
+            // The step is a click of the mouse where it is, as the oracle's
+            // is ("taps … with a finger" is the touch screen's).
+            b.live()?.drive(|d| {
+                let now = d.now();
+                d.send_pointer(&PointerEvent::press(x, y, now).with_id(ljos_drive::FINGER));
+                d.send_pointer(&PointerEvent::release(x, y, now).with_id(ljos_drive::FINGER));
+                d.settle()
+            })
         })
     }
 
@@ -2153,6 +2217,26 @@ fn application_font(attrs: &[(String, String)]) -> Result<ljos_engine::Font> {
     Ok(font)
 }
 
+/// The application's clock of `Given each reading of the application's
+/// clock takes ...`: the scenario's clock, and `cost` microseconds more for
+/// each time it was read.
+#[derive(Debug)]
+struct ReadingCosts {
+    clock: Arc<VirtualClock>,
+    cost: u64,
+    readings: std::sync::atomic::AtomicU64,
+}
+
+impl ljos_runtime::Clock for ReadingCosts {
+    fn now(&self) -> ljos_runtime::Time {
+        use std::sync::atomic::Ordering;
+        let n = self.readings.fetch_add(1, Ordering::Relaxed) + 1;
+        self.clock
+            .now()
+            .saturating_add(Duration::from_micros(n.saturating_mul(self.cost)))
+    }
+}
+
 /// The clock of `Given JavaScript is timed by a clock ...`: a poll of the
 /// interrupt moves it ten milliseconds, native work by `native`.
 fn set_js_clock(engine: &Engine, native: Duration) -> Result<()> {
@@ -2208,6 +2292,26 @@ mod tests {
         b.load(&[file("Main.qml", source)], "Main.qml")
             .expect("Main.qml loads");
         b
+    }
+
+    #[test]
+    fn a_frame_not_drawn_fails_the_kept_pixels() {
+        let red = ljos_render::RgbaImage {
+            width: 1,
+            height: 1,
+            data: vec![255, 0, 0, 255],
+        };
+        let kept = vec![Ok(red.clone()), Err("out of memory".to_string()), Ok(red)];
+        let err = kept_pixels_at(&kept, 0, 0).expect_err("a frame was not drawn");
+        let said = err.to_string();
+        assert!(
+            said.contains("picture 2 of 3 was not drawn: out of memory"),
+            "{said}"
+        );
+        assert_eq!(
+            kept_pixels_at(&kept[..1], 0, 0).ok(),
+            Some(vec![[255, 0, 0, 255]])
+        );
     }
 
     const BINDING: &str = r#"import QtQuick

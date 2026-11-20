@@ -54,6 +54,22 @@ fn js_clock(w: &mut LjosWorld, secs: u64) -> StepResult {
     })
 }
 
+// What the application spreads over time by its clock, such as making the
+// delegates a view keeps ahead, then takes the time of several screen
+// refreshes, whatever the machine's speed.
+#[given(regex = r"^each reading of the application's clock takes (\d+) microseconds$")]
+fn clock_reading(w: &mut LjosWorld, micros: u64) -> StepResult {
+    w.each(|b| {
+        b.environment()?
+            .clock_reading(std::time::Duration::from_micros(micros))
+    })
+}
+
+#[given("every picture of the window is kept")]
+fn keep_pictures(w: &mut LjosWorld) -> StepResult {
+    w.each(|b| b.environment()?.keep_pictures())
+}
+
 #[given(regex = r"^a web view waits (\d+(?:\.\d+)?) seconds? for a new profile's storage$")]
 fn profile_wait(w: &mut LjosWorld, secs: f64) -> StepResult {
     w.each(|b| {

@@ -566,8 +566,8 @@ impl Hands<'_> {
     fn touch(&mut self, a: &TouchArgs) -> Result<Done, SurfaceError> {
         if a.action == TouchAction::Pinch {
             return Err(SurfaceError::unavailable(
-                "`pinch` is not supported yet: the scene routes one finger as a pointer with an \
-                 identity and has no gesture of two fingers. `tap` and `swipe` are",
+                "`pinch` is not supported yet: the tool moves one finger and has no gesture of two \
+                 fingers. `tap` and `swipe` are",
             ));
         }
         let at = self.spot(&a.target, "app_touch")?;

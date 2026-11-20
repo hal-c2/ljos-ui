@@ -450,7 +450,7 @@ impl Engine {
             })
         };
         // The prelude below has checked the arguments, with Qt's messages.
-        let functions: [(&str, HostFn); 17] = [
+        let functions: [(&str, HostFn); 18] = [
             (
                 // (message, context, key, "a,b", a, b): the prelude has
                 // made each value a number or a string.
@@ -488,6 +488,22 @@ impl Engine {
                         }
                     };
                     Ok(filled.map_or(JsValue::Undefined, JsValue::String))
+                }),
+            ),
+            (
+                // (template, a, b, …): the prelude has made each value its
+                // text. `[filled, values with no marker]`, or undefined when
+                // the template has no marker.
+                "__ljos_args",
+                host(|_, a| {
+                    let values: Vec<&str> = a.iter().skip(1).map(|v| string(Some(v))).collect();
+                    Ok(match ljos_i18n::arg::args(string(a.first()), &values) {
+                        Some((filled, unused)) => JsValue::Array(vec![
+                            JsValue::String(filled),
+                            JsValue::Number(unused as f64),
+                        ]),
+                        None => JsValue::Undefined,
+                    })
                 }),
             ),
             (
@@ -723,7 +739,8 @@ pub(crate) const PRELUDE: &str = r##"
 (function () {
   "use strict";
   const g = globalThis;
-  const tr = g.__ljos_tr, trId = g.__ljos_trId, fill = g.__ljos_arg, plainNumber = g.__ljos_argNumber;
+  const tr = g.__ljos_tr, trId = g.__ljos_trId, fill = g.__ljos_arg, fillAll = g.__ljos_args,
+    plainNumber = g.__ljos_argNumber;
   const uiLanguage = g.__ljos_uiLanguage, setUiLanguage = g.__ljos_setUiLanguage;
   const rightToLeft = g.__ljos_rightToLeft, hostLocale = g.__ljos_locale;
   const localeName = g.__ljos_localeName, formatDataSize = g.__ljos_formatDataSize;
@@ -766,14 +783,24 @@ pub(crate) const PRELUDE: &str = r##"
 
   // String.prototype.arg: fills every marker with the lowest number, as
   // QString::arg does. A number is written as QString::arg(double) writes it.
+  // Several values fill the distinct markers lowest first in one pass, as
+  // Qt's multi-argument QString::arg does (`%L` is not localised there).
   const show = (v) => {
     if (typeof v === "string") return v;
     if (typeof v === "boolean") return v ? "1" : "0";
     try { return String(v); } catch (e) { return "[object]"; }
   };
   define(String.prototype, "arg", function (value) {
-    if (arguments.length !== 1) throw new Error("String.arg(): Invalid arguments");
+    if (arguments.length === 0) throw new Error("String.arg(): Invalid arguments");
     const template = String(this);
+    if (arguments.length > 1) {
+      const texts = Array.prototype.map.call(arguments, (v) => typeof v === "number" ? plainNumber(v) : show(v));
+      const filled = fillAll(template, ...texts);
+      const unused = filled === undefined ? texts.length : filled[1];
+      if (unused > 0)
+        hostLog(2, "String.arg(): " + unused + " argument(s) missing in " + JSON.stringify(template));
+      return filled === undefined ? template : filled[0];
+    }
     const number = typeof value === "number";
     const filled = fill(template, number ? value : show(value));
     if (filled !== undefined) return filled;

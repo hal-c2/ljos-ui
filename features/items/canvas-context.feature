@@ -390,3 +390,40 @@ Feature: Drawing on a Canvas with its 2D context
       """
     When 200 milliseconds pass
     Then the property "chained" of "board" is true
+
+  Scenario: fillRect fills the pixels of the same rectangle filled as a path
+    # A sprite sheet is thousands of one-pixel fillRect calls, so fillRect
+    # takes a quicker way than a path. The pixels stay those of the path
+    # whatever the transform, clip and transparency. On qml6 the two differ
+    # where an edge falls inside a pixel, so every edge here lands on one.
+    # clearRect empties the board between rounds, and goes the same way.
+    Given the QML:
+      """qml
+      import QtQuick
+      Board {
+        objectName: "board"
+        property string differing: ""
+        function paint(asPath, r, t) {
+          ctx.reset(); ctx.clearRect(0, 0, 100, 100)
+          ctx.fillStyle = "rgb(0, 200, 0)"; ctx.fillRect(0, 0, 100, 50)
+          ctx.save(); ctx.beginPath(); ctx.rect(10, 0, 70, 100); ctx.clip()
+          ctx.setTransform(t[0], t[1], t[2], t[3], t[4], t[5])
+          ctx.globalAlpha = 0.6; ctx.fillStyle = "#c03080"
+          if (asPath) { ctx.beginPath(); ctx.rect(r[0], r[1], r[2], r[3]); ctx.fill() }
+          else ctx.fillRect(r[0], r[1], r[2], r[3])
+          ctx.restore(); return ctx.getImageData(0, 0, 100, 100).data
+        }
+        onDraw: {
+          var counts = []
+          for (var t of [[1, 0, 0, 1, 0, 0], [2, 0, 0, 2, 3, 4], [0, 1, -1, 0, 90, 0]])
+            for (var r of [[5, 5, 20, 30], [60, 60, -20, -10], [0, 0, 1, 1], [3, 3, 0, 9]]) {
+              var a = paint(true, r, t), b = paint(false, r, t), n = 0
+              for (var k = 0; k < a.length; k++) if (a[k] !== b[k]) n++
+              counts.push(n)
+            }
+          differing = counts.join(",")
+        }
+      }
+      """
+    When 200 milliseconds pass
+    Then the property "differing" of "board" is "0,0,0,0,0,0,0,0,0,0,0,0"

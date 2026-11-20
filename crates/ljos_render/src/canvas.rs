@@ -207,6 +207,35 @@ fn blur(values: &mut [f32], width: usize, height: usize, sigma: f64, reach: usiz
     }
 }
 
+/// `rect` in canvas pixels when `transform` keeps it a rectangle with
+/// sides along the axes and on whole pixels, and vello_cpu fills it as a
+/// rectangle exactly as it fills it as a path on `canvas`.
+fn device_rect(rect: Rect, transform: Affine, canvas: Rect) -> Option<Rect> {
+    let [a, b, c, d, _, _] = transform.as_coeffs();
+    if !((b == 0.0 && c == 0.0) || (a == 0.0 && d == 0.0)) {
+        return None;
+    }
+    let device = Rect::from_points(
+        transform * Point::new(rect.x0, rect.y0),
+        transform * Point::new(rect.x1, rect.y1),
+    );
+    // vello_cpu's rectangle covers an edge inside a pixel a little
+    // differently from its path, so only whole-pixel edges go that way.
+    let whole = [device.x0, device.y0, device.x1, device.y1]
+        .iter()
+        .all(|v| v.is_finite() && v.fract() == 0.0);
+    // Blended over what is there, a path that reaches the canvas's right
+    // or bottom edge comes out one step fainter in its last strip than the
+    // same rectangle (171 against 172 green at a = 100), on some sizes
+    // even when it only passes the edge, so only a rectangle inside the
+    // canvas goes as a rectangle.
+    let inside = device.x0 >= canvas.x0
+        && device.y0 >= canvas.y0
+        && device.x1 < canvas.x1
+        && device.y1 < canvas.y1;
+    (whole && inside).then_some(device)
+}
+
 fn is_plain(blend: BlendMode) -> bool {
     blend.mix == Mix::Normal && blend.compose == Compose::SrcOver
 }
@@ -550,6 +579,48 @@ impl CanvasPainter {
         });
     }
 
+    /// Fills `rect` (in the state's user space): `fillRect`, with the
+    /// pixels of the same rectangle filled as a path.
+    ///
+    /// A rectangle the transform keeps along the axes goes to vello_cpu as
+    /// a rectangle, which it makes into strips without the path's line
+    /// cutting and sorting: a sprite sheet is thousands of one-pixel
+    /// fills, and as paths each cost tens of microseconds (#608).
+    pub fn fill_rect(&mut self, rect: Rect, paint: &CanvasPaint, st: &DrawState<'_>) {
+        let rect = rect.abs();
+        let outline = || {
+            let mut area = rect.to_path(0.1);
+            area.apply_affine(st.transform);
+            area
+        };
+        let Some(device) = device_rect(rect, st.transform, self.bounds()) else {
+            self.fill(&outline(), FillRule::NonZero, paint, st);
+            return;
+        };
+        if st.alpha <= 0.0 {
+            return;
+        }
+        let Some((p, t)) = self.set_paint(paint, st.alpha, st.transform, Affine::IDENTITY) else {
+            return;
+        };
+        if st.shadow.is_some() {
+            let area = outline();
+            self.shadow(st, |ctx, shift| {
+                ctx.set_paint(p.clone());
+                ctx.set_paint_transform(t);
+                ctx.set_transform(shift);
+                ctx.set_fill_rule(Fill::NonZero);
+                ctx.fill_path(&area);
+            });
+        }
+        self.with_state(st, |ctx| {
+            ctx.set_paint(p);
+            ctx.set_paint_transform(t);
+            ctx.set_transform(Affine::IDENTITY);
+            ctx.fill_rect(&device);
+        });
+    }
+
     /// Strokes `path` (in canvas pixels) with `stroke` in the space of the
     /// state's transform.
     pub fn stroke(
@@ -591,8 +662,6 @@ impl CanvasPainter {
 
     /// Makes `rect` (in the state's user space) transparent, within the clip.
     pub fn clear_rect(&mut self, rect: Rect, st: &DrawState<'_>) {
-        let mut area = rect.to_path(0.1);
-        area.apply_affine(st.transform);
         // Clearing casts no shadow (measured).
         let clear = DrawState {
             alpha: 1.0,
@@ -600,9 +669,8 @@ impl CanvasPainter {
             shadow: None,
             ..*st
         };
-        self.fill(
-            &area,
-            FillRule::NonZero,
+        self.fill_rect(
+            rect,
             &CanvasPaint::Brush(Brush::Solid(crate::Rgba::BLACK)),
             &clear,
         );
@@ -954,6 +1022,176 @@ mod tests {
         assert!((total - 1.0).abs() < 1e-4, "{total}");
         assert!(v[10 * 21 + 10] > v[10 * 21 + 11]);
         assert_eq!(v[10 * 21 + 10 - 11 + 21], v[10 * 21 + 10 + 11 - 21]);
+    }
+
+    /// Every pixel of a 24 by 24 canvas, premultiplied.
+    fn pixels(p: &mut CanvasPainter) -> Vec<u8> {
+        p.picture()
+            .map(|i| i.data().to_vec())
+            .unwrap_or_else(|| vec![0; 24 * 24 * 4])
+    }
+
+    #[test]
+    fn a_filled_rect_has_the_pixels_of_its_path() {
+        use std::f64::consts::FRAC_PI_2;
+        let rects = [
+            Rect::new(2.0, 3.0, 9.0, 11.0),
+            Rect::new(5.0, 5.0, 6.0, 6.0),
+            Rect::new(1.25, 2.5, 7.75, 13.4),
+            Rect::new(9.0, 9.0, 3.0, 4.0),
+            Rect::new(-4.0, -2.0, 30.0, 6.5),
+            // Whole pixels past the canvas: it must come out as the path does.
+            Rect::new(-4.0, -2.0, 30.0, 6.0),
+            Rect::new(4.0, 4.0, 4.0, 10.0),
+        ];
+        let transforms = [
+            Affine::IDENTITY,
+            Affine::translate((0.5, 0.25)),
+            Affine::scale_non_uniform(2.0, 1.5),
+            Affine::scale_non_uniform(-1.0, 1.0) * Affine::translate((-20.0, 0.0)),
+            Affine::translate((20.0, 0.0)) * Affine::rotate(FRAC_PI_2),
+            // rotate(FRAC_PI_2) leaves a and d at 6e-17, so only an exact
+            // swap reaches the fast path's axis-swapped case.
+            Affine::new([0.0, 1.0, -1.0, 0.0, 20.0, 0.0]),
+            Affine::translate((12.0, 0.0)) * Affine::rotate(0.4),
+        ];
+        use crate::display_list::{BrushGradient, GradientGeometry, GradientStop, Spread};
+        let stop = |offset, color| GradientStop { offset, color };
+        let gradient = Brush::Gradient(Arc::new(BrushGradient::new(
+            GradientGeometry::Linear {
+                start: Point::new(0.0, 0.0),
+                end: Point::new(16.0, 4.0),
+            },
+            vec![
+                stop(0.0, Rgba::rgb(255, 0, 0)),
+                stop(1.0, Rgba::rgb(0, 0, 255)),
+            ],
+            Spread::Pad,
+        )));
+        let paints = [
+            red(),
+            CanvasPaint::Brush(Brush::Solid(Rgba::from_straight_u8(0, 128, 255, 100))),
+            CanvasPaint::Brush(gradient),
+        ];
+        let square_clip = Rect::new(3.0, 0.0, 15.0, 24.0).to_path(0.1);
+        let round_clip = vello_cpu::kurbo::Circle::new((12.0, 12.0), 7.5).to_path(0.1);
+        let clips: [&[BezPath]; 3] = [
+            &[],
+            std::slice::from_ref(&square_clip),
+            &[square_clip.clone(), round_clip],
+        ];
+        let blends = [
+            BlendMode::default(),
+            BlendMode::new(Mix::Normal, Compose::Copy),
+            BlendMode::new(Mix::Multiply, Compose::SrcOver),
+            BlendMode::new(Mix::Normal, Compose::Clear),
+        ];
+        let under = Rect::new(0.0, 0.0, 24.0, 12.0).to_path(0.1);
+        let ground = CanvasPaint::Brush(Brush::Solid(Rgba::rgb(0, 200, 0)));
+        for rect in rects {
+            for transform in transforms {
+                for paint in &paints {
+                    for clips in clips {
+                        for blend in blends {
+                            for alpha in [1.0, 0.5] {
+                                let st = DrawState {
+                                    transform,
+                                    alpha,
+                                    blend,
+                                    clips,
+                                    shadow: None,
+                                };
+                                let mut by_path = CanvasPainter::new(24, 24);
+                                let mut by_rect = CanvasPainter::new(24, 24);
+                                for p in [&mut by_path, &mut by_rect] {
+                                    p.fill(
+                                        &under,
+                                        FillRule::NonZero,
+                                        &ground,
+                                        &DrawState::default(),
+                                    );
+                                }
+                                let mut area = rect.abs().to_path(0.1);
+                                area.apply_affine(transform);
+                                by_path.fill(&area, FillRule::NonZero, paint, &st);
+                                by_rect.fill_rect(rect, paint, &st);
+                                let (want, got) = (pixels(&mut by_path), pixels(&mut by_rect));
+                                let first =
+                                    want.chunks(4).zip(got.chunks(4)).position(|(w, g)| w != g);
+                                assert!(
+                                    first.is_none(),
+                                    "{rect:?} at {transform:?} with {paint:?}, \
+                                     {} clips, {blend:?}, alpha {alpha}: pixel {:?} \
+                                     is {:?} as a path, {:?} as a rect ({} differ)",
+                                    clips.len(),
+                                    first.map(|i| (i % 24, i / 24)),
+                                    first.map(|i| &want[i * 4..i * 4 + 4]),
+                                    first.map(|i| &got[i * 4..i * 4 + 4]),
+                                    want.chunks(4)
+                                        .zip(got.chunks(4))
+                                        .filter(|(w, g)| w != g)
+                                        .count(),
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_filled_rect_casts_the_shadow_of_its_path() {
+        let st = DrawState {
+            transform: Affine::translate((1.5, 0.0)) * Affine::scale(2.0),
+            shadow: Some(CanvasShadow {
+                color: Rgba::from_straight_u8(0, 0, 255, 200),
+                offset: Vec2::new(3.0, 2.5),
+                sigma: 1.5,
+            }),
+            ..DrawState::default()
+        };
+        let rect = Rect::new(1.0, 1.0, 6.0, 5.0);
+        let mut by_path = CanvasPainter::new(24, 24);
+        let mut by_rect = CanvasPainter::new(24, 24);
+        let mut area = rect.to_path(0.1);
+        area.apply_affine(st.transform);
+        by_path.fill(&area, FillRule::NonZero, &red(), &st);
+        by_rect.fill_rect(rect, &red(), &st);
+        assert!(pixels(&mut by_path) == pixels(&mut by_rect));
+    }
+
+    /// The edge rule holds on canvases of every size, not only on sizes
+    /// that are whole strip columns. The two differ only where the paint
+    /// blends over what is already there, hence the ground.
+    #[test]
+    fn a_rect_at_the_canvas_edges_has_the_pixels_of_its_path() {
+        let paint = CanvasPaint::Brush(Brush::Solid(Rgba::from_straight_u8(0, 128, 255, 100)));
+        let ground = CanvasPaint::Brush(Brush::Solid(Rgba::rgb(0, 200, 0)));
+        let st = DrawState::default();
+        for (width, height) in (17..=28u32).flat_map(|w| (9..=13u32).map(move |h| (w, h))) {
+            let (w, h) = (f64::from(width), f64::from(height));
+            let under = Rect::new(0.0, 0.0, w, h).to_path(0.1);
+            for x0 in [-3.0, 0.0, 1.0, w - 6.0] {
+                for x1 in (width - 5..=width + 3).map(f64::from) {
+                    for (y0, y1) in [(2.0, 7.0), (-2.0, h), (1.0, h + 2.0), (3.0, h - 1.0)] {
+                        let rect = Rect::new(x0, y0, x1, y1);
+                        let mut by_path = CanvasPainter::new(width, height);
+                        let mut by_rect = CanvasPainter::new(width, height);
+                        for p in [&mut by_path, &mut by_rect] {
+                            p.fill(&under, FillRule::NonZero, &ground, &st);
+                        }
+                        by_path.fill(&rect.to_path(0.1), FillRule::NonZero, &paint, &st);
+                        by_rect.fill_rect(rect, &paint, &st);
+                        let (want, got) = (by_path.picture(), by_rect.picture());
+                        assert!(
+                            want.as_ref().map(|i| i.data()) == got.as_ref().map(|i| i.data()),
+                            "{rect:?} on a canvas {width} by {height}",
+                        );
+                    }
+                }
+            }
+        }
     }
 
     #[test]

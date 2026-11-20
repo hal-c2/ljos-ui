@@ -59,7 +59,7 @@ Feature: An agent that may give input
         TextInput { activeFocusOnTab: true; objectName: "second"; x: 100; y: 40; width: 120; height: 20; Accessible.name: "Second" }
         TextInput { activeFocusOnTab: true; objectName: "secret"; x: 100; y: 70; width: 120; height: 20; echoMode: TextInput.Password; Accessible.name: "Secret" }
         Flickable { objectName: "flick"; x: 100; y: 100; width: 100; height: 60; contentWidth: 100; contentHeight: 600; Rectangle { width: 100; height: 600; color: "#cccccc" } }
-        Rectangle { objectName: "tapper"; x: 220; y: 100; width: 60; height: 40; Accessible.role: Accessible.Button; Accessible.name: "Tapper"; TapHandler { onTapped: top.taps += 1 } }
+        Rectangle { objectName: "tapper"; x: 220; y: 100; width: 60; height: 40; Accessible.role: Accessible.Button; Accessible.name: "Tapper"; TapHandler { acceptedDevices: PointerDevice.TouchScreen; onTapped: top.taps += 1 } }
         Timer { running: true; repeat: true; interval: 100; onTriggered: top.ticks += 1 }
       }
       """
@@ -254,6 +254,17 @@ Feature: An agent that may give input
         """
       Then the property "taps" of "root" is 1
 
+    # The tapper's handler takes only a touch screen: a touch is a finger,
+    # not the mouse, and a click is not a touch.
+    Scenario: A touch is a finger and a click is not
+      When the agent calls the tool "app_click" on the reference of the "button" named "Tapper"
+      Then the property "taps" of "root" is 0
+      When the agent calls the tool "app_touch" on the reference of the "button" named "Tapper" with:
+        """json
+        {"action": "tap"}
+        """
+      Then the property "taps" of "root" is 1
+
     Scenario: A swipe drags what is under the finger
       When the agent calls the tool "app_touch" with:
         """json
@@ -261,8 +272,8 @@ Feature: An agent that may give input
         """
       Then the property "contentY" of "flick" is at least 1
 
-    # The scene routes one finger as a pointer with an id; it has no gesture of
-    # two fingers yet, so nothing can answer a pinch.
+    # The tool moves one finger; it has no gesture of two fingers yet, so
+    # nothing can answer a pinch.
     @backlog
     Scenario: A pinch changes what a pinch handler holds
       When the agent calls the tool "app_touch" on the reference of the "button" named "Tapper" with:
