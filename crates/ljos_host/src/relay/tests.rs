@@ -402,7 +402,10 @@ impl HostApp<RelayHost<u32, Msg>> for Drawer {
     }
 }
 
-fn surface_then_stop_after(relay: &Relay<u32, Msg>, after: Duration) -> std::thread::JoinHandle<()> {
+fn surface_then_stop_after(
+    relay: &Relay<u32, Msg>,
+    after: Duration,
+) -> std::thread::JoinHandle<()> {
     relay
         .send(Arrival::SurfaceCreated {
             surface: 7,
