@@ -120,6 +120,7 @@ fn main() {
     // ljos: the env lines above turn off Cargo's default of building again
     // when any file changes, so an edit to the forked C went unbuilt.
     println!("cargo:rerun-if-changed=quickjs");
+    println!("cargo:rerun-if-changed=quickjs.bind.h");
 
     let src_dir = Path::new("quickjs");
 

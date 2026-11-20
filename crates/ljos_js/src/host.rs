@@ -2698,8 +2698,9 @@ impl JsHost {
 
     /// After a run: collects when the heap is past three quarters of its
     /// limit and grew a quarter of the room left since it was last
-    /// collected, or at once when the run found no room, so the next run
-    /// has what garbage held. QuickJS collects only when an object is made
+    /// collected, or at once when the run found no room and the heap grew
+    /// since, so the next run has what garbage held: runs that run out
+    /// of a heap full of what lives do not each collect it again. QuickJS collects only when an object is made
     /// past its threshold, and a run of strings and arrays goes past the
     /// limit without one. Warns once while it stays past three quarters
     /// after collecting, naming the runs that grew it most, and again once
@@ -2712,7 +2713,8 @@ impl JsHost {
         let last = self.last_collect.get();
         let step = (limit.saturating_sub(last) / 4).max(self.cfg.idle_collect_min_growth);
         let size = self.heap_bytes();
-        let due = ran_out || (size >= high && size >= last.saturating_add(step));
+        let grew = size >= last.saturating_add(self.cfg.idle_collect_min_growth);
+        let due = (ran_out && grew) || (size >= high && size >= last.saturating_add(step));
         let most = if due {
             let most = self.pressure.borrow().most();
             self.collect();

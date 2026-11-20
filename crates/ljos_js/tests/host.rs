@@ -94,13 +94,20 @@ const MIB: usize = 1024 * 1024;
 
 /// Keeps about `mib` MiB alive in `globalThis.kept`, a run at a time.
 fn keep(host: &JsHost, mib: usize) {
+    keep_bytes(host, mib * MIB, 64);
+}
+
+/// Keeps `bytes` alive in `globalThis.kept`, `arrays` 1000-element arrays
+/// (about 16 KiB each) a run.
+fn keep_bytes(host: &JsHost, bytes: usize, arrays: usize) {
     host.enter("keep", host.config().slice, |s| {
         s.eval::<(), _>("globalThis.kept = []")
     })
     .unwrap();
-    while host.heap_bytes() < mib * MIB {
+    let run = format!("for (let i = 0; i < {arrays}; i++) kept.push(new Array(1000).fill(i))");
+    while host.heap_bytes() < bytes {
         host.enter("keep", host.config().slice, |s| {
-            s.eval::<(), _>("for (let i = 0; i < 64; i++) kept.push(new Array(1000).fill(i))")
+            s.eval::<(), _>(run.as_str())
         })
         .unwrap();
     }
@@ -132,15 +139,19 @@ fn garbage_past_two_thirds_of_the_limit_is_collected_before_the_heap_runs_out() 
     assert_eq!(out.unwrap(), 3_000_000.0);
 }
 
-/// Near the limit the collector keeps QuickJS's own threshold: a heap
-/// that lives within a sixteenth of it runs out, rather than collecting
-/// every few KiB until the slice stops the run.
+/// The collector runs at least a 64th of the limit apart: a heap that
+/// lives within that of the limit runs out, rather than collecting every
+/// few KiB until the slice stops the run.
 #[test]
 fn garbage_churned_on_a_nearly_full_heap_runs_out_rather_than_collecting_each_step() {
     let host = small(32);
-    keep(&host, 31);
+    keep_bytes(&host, 32 * MIB - MIB / 4, 4);
     host.collect_now();
-    assert!(host.heap_bytes() > 30 * MIB, "{}", host.heap_bytes());
+    assert!(
+        host.heap_bytes() > 32 * MIB - MIB / 2,
+        "{}",
+        host.heap_bytes()
+    );
     let slice = Slice {
         soft: Duration::from_secs(1),
         hard: Duration::from_secs(2),
@@ -151,6 +162,29 @@ fn garbage_churned_on_a_nearly_full_heap_runs_out_rather_than_collecting_each_st
         })
         .unwrap_err();
     assert!(matches!(err, JsFault::JsOutOfMemory { .. }), "{err:?}");
+}
+
+/// A heap that lives at 94% of the limit still has room for garbage: the
+/// collector runs halfway to the limit, a MiB on, not only past the limit
+/// as QuickJS would, nor every few KiB.
+#[test]
+fn garbage_churned_on_a_heap_at_94_percent_is_collected_as_it_goes() {
+    let host = small(32);
+    keep(&host, 30);
+    host.collect_now();
+    let live = host.heap_bytes();
+    assert!(live > 29 * MIB && live < 31 * MIB, "{live}");
+    let slice = Slice {
+        soft: Duration::from_secs(5),
+        hard: Duration::from_secs(20),
+    };
+    // About 16 MiB of self-holding arrays, eight times the room left.
+    let out = host.enter("churn", slice, |s| {
+        s.eval::<f64, _>(
+            "(() => { let n = 0; for (let i = 0; i < 1000; i++) { const a = new Array(1000).fill(i); a.self = a; n += a.length; } return n; })()",
+        )
+    });
+    assert_eq!(out.unwrap(), 1_000_000.0);
 }
 
 /// A run that found no room leaves its garbage collected, so the next run

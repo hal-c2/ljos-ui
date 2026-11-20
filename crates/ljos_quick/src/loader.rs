@@ -460,9 +460,10 @@ impl Boundary for LoaderBoundary {
             Fault::JsOutOfMemory => {
                 // Rows run out together: the first Loader told collects,
                 // and the rest, whose faults came before it, load into
-                // what it freed.
+                // what it freed. Not when the heap did not grow since the
+                // last collection, as when the run that ran out had one.
                 let collected = e.extension::<CollectedThrough>();
-                if report.seq > collected.0.get() && e.collect_garbage() {
+                if report.seq > collected.0.get() && e.wants_idle_collect() && e.collect_garbage() {
                     collected.0.set(e.faults_reported());
                 }
                 load_again(e, me, report.at, Again::Counted, Cut::OutOfMemory);

@@ -602,6 +602,36 @@ fn a_loader_whose_item_runs_out_of_heap_again_waits_and_loads_again() {
     assert_eq!(e.next_timer_deadline(), None, "nothing more to wait for");
 }
 
+/// Rows whose scripts run out of a heap full of what lives do not each
+/// collect it: a collection right after one finds nothing new to free.
+#[test]
+fn rows_that_run_out_of_a_full_heap_together_do_not_each_collect_it() {
+    let (e, _clock) = timed();
+    let rows = RUNS_OUT.replace(
+        "Loader { objectName: \"loader\"; active: root.on; source: \"Row.qml\" }",
+        "Loader { objectName: \"loader\"; active: root.on; source: \"Row.qml\" }\n\
+         Loader { active: root.on; source: \"Row.qml\" }\n\
+         Loader { active: root.on; source: \"Row.qml\" }\n\
+         Loader { active: root.on; source: \"Row.qml\" }",
+    );
+    compile(&e, &[("Main", &rows), ("Row", &row())]);
+    let root = e.create_from_url("Main", None, Vec::new()).unwrap();
+    e.invoke_by_name(root, "litter", &[Value::from(0.0)])
+        .unwrap();
+    assert!(e.collect_garbage());
+    let held = e.script_memory().unwrap().bytes;
+    assert!(e.set_script_heap_limit(Some(held + 4 * 1024)));
+    let before = e.script_memory().unwrap().collections;
+    set(&e, root, "on", Value::Bool(true));
+    let mut s = scene(&e, root, 200.0, 200.0);
+    frame(&mut s, &e);
+    frame(&mut s, &e);
+    let loader = find(&e, root, "loader");
+    assert_eq!(num(&e, loader, "status"), 3.0);
+    let collected = e.script_memory().unwrap().collections - before;
+    assert!(collected <= 1, "{collected} collections");
+}
+
 #[test]
 fn a_loader_told_to_load_while_it_waits_loads_at_once_and_drops_the_wait() {
     let (e, clock) = timed();
@@ -656,6 +686,9 @@ Item {
     Loader { objectName: "b"; sourceComponent: row }
     Loader { objectName: "c"; sourceComponent: row }
     function warm() { return 1 }
+    function litter(n) {
+        for (let i = 0; i < n; i++) { const a = { b: [i, i + 1, "x" + i] }; a.self = a }
+    }
 }
 "#;
 
@@ -686,8 +719,16 @@ fn loaders_that_run_out_of_heap_together_collect_once() {
         3,
         "{warned:?}"
     );
-    // A heap that runs out after that collection is collected for again.
+    // Running out again with nothing made since: collecting again would
+    // free nothing new.
     let cell = get(&e, loaders[0], "item").as_object().unwrap();
+    e.report_fault(Some(cell), ljos_runtime::Fault::JsOutOfMemory);
+    deliver(&e);
+    assert_eq!(e.script_memory().unwrap().collections, before + 1);
+    // A heap that grew after that collection is collected for again.
+    e.invoke_by_name(root, "litter", &[Value::from(20_000.0)])
+        .unwrap();
+    let cell = get(&e, loaders[1], "item").as_object().unwrap();
     e.report_fault(Some(cell), ljos_runtime::Fault::JsOutOfMemory);
     deliver(&e);
     assert_eq!(e.script_memory().unwrap().collections, before + 2);
