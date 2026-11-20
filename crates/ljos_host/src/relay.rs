@@ -112,12 +112,13 @@ pub enum Request {
 }
 
 /// Whether a [`Request::Held`] made `over` what the method held is stale
-/// now that it `holds` this text: the method typed meanwhile, and what it
-/// typed is on its way to the application, which asks again if the editor
-/// took other than that. Applied, the request would put the older text
-/// back over what was typed, and the application, told of the typing,
-/// would not know to correct it. Only the text is compared: a selection
-/// the platform evens out is not typing.
+/// now that it `holds` this text with this `selection` (its two ends): the
+/// method typed or moved its cursor meanwhile, and what it did is on its
+/// way to the application, which asks again if the editor took other than
+/// that. Applied, the request would put the older state back over the
+/// newer, and the application, told of the newer, would not know to
+/// correct it. The selection's ends are compared in either order: one the
+/// platform keeps start first is the same selection.
 ///
 /// What the application wrote is then lost to the method's typing: the
 /// method's report, of its older text with the typing, reaches the editor
@@ -126,8 +127,11 @@ pub enum Request {
 /// inside the one turn between the application's write and the platform
 /// getting to it.
 #[must_use]
-pub fn held_is_stale(over: Option<&crate::HeldText>, holds: &str) -> bool {
-    over.is_some_and(|over| over.text != holds)
+pub fn held_is_stale(over: Option<&crate::HeldText>, holds: &str, selection: [usize; 2]) -> bool {
+    let ends = |[a, b]: [usize; 2]| (a.min(b), a.max(b));
+    over.is_some_and(|over| {
+        over.text != holds || ends([over.anchor, over.cursor]) != ends(selection)
+    })
 }
 
 enum Msg<S, U> {

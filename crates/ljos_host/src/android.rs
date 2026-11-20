@@ -378,7 +378,9 @@ impl<U: Send + 'static> Pump<'_, U> {
                 );
             }
             Request::Held { now: held, over } => {
-                if crate::relay::held_is_stale(over.as_ref(), &self.app.text_input_state().text) {
+                let holds = self.app.text_input_state();
+                let selection = [holds.selection.start, holds.selection.end];
+                if crate::relay::held_is_stale(over.as_ref(), &holds.text, selection) {
                     return;
                 }
                 let span = |r: &std::ops::Range<usize>| TextSpan {

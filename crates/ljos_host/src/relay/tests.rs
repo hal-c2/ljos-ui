@@ -572,8 +572,24 @@ fn a_held_request_is_dropped_once_the_method_has_typed_since_it_was_made() {
         compose: None,
     };
     // Made while the method held "ab"; it has typed "c" since.
-    assert!(held_is_stale(Some(&held("ab")), "abc"));
-    assert!(!held_is_stale(Some(&held("ab")), "ab"));
+    assert!(held_is_stale(Some(&held("ab")), "abc", [0, 0]));
+    assert!(!held_is_stale(Some(&held("ab")), "ab", [0, 0]));
     // A method newly set up holds nothing the application knows of.
-    assert!(!held_is_stale(None, "abc"));
+    assert!(!held_is_stale(None, "abc", [0, 0]));
+}
+
+#[test]
+fn a_held_request_is_dropped_once_the_method_has_moved_its_cursor_since() {
+    let held = crate::HeldText {
+        text: "ab".to_owned(),
+        anchor: 2,
+        cursor: 0,
+        compose: None,
+    };
+    // The user put the cursor at the start; the application's move, made
+    // before it, would put it back.
+    assert!(held_is_stale(Some(&held), "ab", [0, 0]));
+    // The same selection, its ends in the order the platform keeps them.
+    assert!(!held_is_stale(Some(&held), "ab", [0, 2]));
+    assert!(!held_is_stale(Some(&held), "ab", [2, 0]));
 }
