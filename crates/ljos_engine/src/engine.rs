@@ -3822,7 +3822,13 @@ impl Engine {
             let contexts = self.inner.contexts.borrow();
             let mut cur = Some(ctx);
             loop {
-                let c = contexts.get(cur?)?;
+                let at = cur?;
+                // The engine's root context is of no file: an id a host puts
+                // there is not where the component is made.
+                if at == self.inner.root_context {
+                    return None;
+                }
+                let c = contexts.get(at)?;
                 if c.file.as_ref().is_some_and(|f| f != file) {
                     return None;
                 }
@@ -4457,5 +4463,25 @@ impl Wrapped {
             engine.binding_ran(run, &before, &v);
         }
         v
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_id_of_the_root_context_is_not_where_a_component_is_made() {
+        let engine = Engine::new();
+        let file = Atom::intern("file:///Panel.qml");
+        let made = engine.create_context(Some(engine.root_context()));
+        engine.set_context_file(made, &file);
+        let host = engine
+            .create_native(crate::QtObject::default(), None)
+            .unwrap();
+        engine.set_context_id(engine.root_context(), "label", host);
+        assert!(engine.context_id(made, &file, "label").is_none());
+        engine.set_context_id(made, "label", host);
+        assert!(engine.context_id(made, &file, "label").is_some());
     }
 }
