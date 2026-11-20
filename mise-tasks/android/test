@@ -29,6 +29,9 @@ need_rust_target "$triple"
 [ $# -gt 0 ] || set -- -p ljos_js
 android_cross_env "$triple"
 var="$(printf '%s' "$triple" | tr '[:lower:]-' '[:upper:]_')"
-export "CARGO_TARGET_${var}_RUNNER=$ljos_root/scripts/adb-run.sh"
+# Cargo splits a runner given as a string at spaces, so the runner is
+# named by itself and found on PATH: a checkout path may have spaces.
+export PATH="$ljos_root/scripts:$PATH"
+export "CARGO_TARGET_${var}_RUNNER=adb-run.sh"
 export ADB="$adb"
 cargo test --target "$triple" "$@"
