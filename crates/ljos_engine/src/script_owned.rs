@@ -18,8 +18,10 @@ use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 
 use ljos_js::JsRef;
+use ljos_runtime::Fault;
 
 use crate::engine::Engine;
+use crate::fault::FaultReport;
 use crate::ids::ObjectId;
 use crate::js::{obj_to_u64, u64_to_obj};
 use crate::object::ObjectFlags;
@@ -199,6 +201,7 @@ impl Engine {
         }
         let full = self.extension::<HeapRanOut>();
         full.collected_through.set(full.times.get());
+        full.collected_after.set(self.faults_reported());
         true
     }
 
@@ -218,14 +221,28 @@ impl Engine {
         let full = self.extension::<HeapRanOut>();
         full.times.get() > full.collected_through.get() && self.collect_garbage()
     }
+
+    /// [`Engine::collect_garbage_for_full_heap`] for one fault: collects
+    /// unless a collection already came after `report`, even if the heap
+    /// ran out again since. What ran out since is reported too, and its
+    /// own report collects; gating on the count instead would have a
+    /// column of items that reload at once, each running out again,
+    /// collect once per item. False for a fault that is not a full heap.
+    pub fn collect_garbage_for_fault(&self, report: &FaultReport) -> bool {
+        let full = self.extension::<HeapRanOut>();
+        matches!(report.fault, Fault::JsOutOfMemory)
+            && report.seq > full.collected_after.get()
+            && self.collect_garbage()
+    }
 }
 
 /// How many times the script heap ran out, and how many of those the last
-/// collection came after.
+/// collection came after; and how many faults had been reported by then.
 #[derive(Default)]
 struct HeapRanOut {
     times: Cell<u64>,
     collected_through: Cell<u64>,
+    collected_after: Cell<u64>,
 }
 
 /// What the script engine holds, as [`Engine::script_memory`] tells it.

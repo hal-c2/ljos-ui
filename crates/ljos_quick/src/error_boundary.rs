@@ -234,10 +234,8 @@ fn again_after(e: &Engine, me: ObjectId, report: &FaultReport) {
     let Some(wait) = with_run(e, me, |r| r.backoff.fault(now)) else {
         return;
     };
-    if matches!(report.fault, Fault::JsOutOfMemory) {
-        // The heap may have room once the garbage is collected.
-        e.collect_garbage_for_full_heap();
-    }
+    // The heap may have room once the garbage is collected.
+    e.collect_garbage_for_fault(report);
     let place = e.declared_at(me).unwrap_or_default();
     warn(
         e,
