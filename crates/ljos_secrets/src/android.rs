@@ -64,10 +64,12 @@ impl SecretBackend for AndroidKeystore {
                 .call_static_method(
                     &class,
                     jni_str!("secretRead"),
-                    jni_sig!(
-                        "(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;)[B"
-                    ),
-                    &[JValue::Object(context), JValue::from(&service), JValue::from(&key)],
+                    jni_sig!("(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;)[B"),
+                    &[
+                        JValue::Object(context),
+                        JValue::from(&service),
+                        JValue::from(&key),
+                    ],
                 )?
                 .l()?;
             if kept.is_null() {
@@ -89,7 +91,11 @@ impl SecretBackend for AndroidKeystore {
                 &class,
                 jni_str!("secretRemove"),
                 jni_sig!("(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;)Z"),
-                &[JValue::Object(context), JValue::from(&service), JValue::from(&key)],
+                &[
+                    JValue::Object(context),
+                    JValue::from(&service),
+                    JValue::from(&key),
+                ],
             )?
             .z()
         })

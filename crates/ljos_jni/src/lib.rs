@@ -50,7 +50,10 @@ mod tests {
 
     #[test]
     fn errors_say_what_failed() {
-        assert_eq!(JavaError::NoJava.to_string(), "there is no Java side to call");
+        assert_eq!(
+            JavaError::NoJava.to_string(),
+            "there is no Java side to call"
+        );
         assert_eq!(
             JavaError::Thrown("java.lang.SecurityException".into()).to_string(),
             "the Java side threw: java.lang.SecurityException"
