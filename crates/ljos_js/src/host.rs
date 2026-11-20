@@ -2560,6 +2560,18 @@ impl JsHost {
         self.heap.bytes()
     }
 
+    /// Puts a new limit on the heap, `None` for none, as
+    /// [`JsConfig::memory_limit`] puts the first. What the heap holds
+    /// already stays. Not available inside a run.
+    pub fn set_memory_limit(&self, limit: Option<usize>) -> bool {
+        if self.state.entered.get() {
+            return false;
+        }
+        // QuickJS takes 0 for no limit.
+        self.rt.set_memory_limit(limit.unwrap_or(0));
+        true
+    }
+
     /// Unconditional collection (memory pressure). Not available inside a run.
     pub fn collect_now(&self) -> bool {
         if self.state.entered.get() {
@@ -3279,6 +3291,15 @@ fn describe_exception(
             };
             (message, stack, file.or(sf), line.or(sl))
         }
+        // QuickJS throws `null` when it cannot make the error it meant to
+        // throw (quickjs.c `JS_ThrowError2`): the heap is out, and that
+        // `null` is all that is left of an "out of memory". A script's own
+        // `throw null` is told apart by the heap having room.
+        None if thrown.is_null() && heap_nearly_full(thrown.ctx()) => {
+            return JsFault::JsOutOfMemory {
+                label: label.to_owned(),
+            };
+        }
         None => (
             as_text(thrown).unwrap_or_else(|| "<non-error value thrown>".into()),
             String::new(),
@@ -3313,6 +3334,24 @@ fn describe_exception(
         line,
         thrown: None,
     }
+}
+
+/// Whether the heap is within a sixteenth of its limit: too full for
+/// QuickJS to have made an error object, after what unwinding the failed
+/// run let go of. False with no limit. Walks the heap, which only a thrown
+/// `null` asks for.
+fn heap_nearly_full(ctx: &Ctx<'_>) -> bool {
+    // SAFETY: the context is live while `ctx` is, and so its runtime.
+    let usage = unsafe {
+        let rt = rquickjs::qjs::JS_GetRuntime(ctx.as_raw().as_ptr());
+        let mut usage = std::mem::MaybeUninit::<rquickjs::qjs::JSMemoryUsage>::zeroed();
+        rquickjs::qjs::JS_ComputeMemoryUsage(rt, usage.as_mut_ptr());
+        usage.assume_init()
+    };
+    let limit = u64::try_from(usage.malloc_limit).unwrap_or(0);
+    let size = u64::try_from(usage.malloc_size).unwrap_or(0);
+    // No limit is 0.
+    limit > 0 && size.saturating_add(limit / 16) >= limit
 }
 
 /// Parses `at fn (file:line:col)` or `at file:line:col` from the first frame.

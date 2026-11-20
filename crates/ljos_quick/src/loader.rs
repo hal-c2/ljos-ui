@@ -31,6 +31,11 @@
 //! the item set the work off by itself, and [`ELSEWHERE_STREAK`] such
 //! interrupts in a row, each of an item the last one loaded again and soon
 //! after it, leave the Loader at `Loader.Error`.
+//! A script heap that ran out below the item is no more final than an
+//! interrupt: the garbage a collection frees may make room. The Loader
+//! collects and loads again, once in [`SECOND_CHANCE`] as for an interrupt
+//! while the item is made, since an item that needs more than the heap
+//! holds runs out each time.
 //! An exception in a handler is not such a fault: Qt logs it and keeps
 //! the item, and so does this. The work of making the item is charged to
 //! the Loader as its owner.
@@ -385,7 +390,8 @@ impl Boundary for LoaderBoundary {
     fn config(&self, _: &Engine, _: ObjectId) -> BoundaryConfig {
         BoundaryConfig {
             // The supervisor restarts nothing: only an interrupted script
-            // has the Loader load again (`stop`), and it counts those itself.
+            // or a full heap has the Loader load again (`stop`), and it
+            // counts those itself.
             restart: Restart::Temporary,
             // Nothing is restarted, so nothing is counted.
             intensity: Intensity::new(0, std::time::Duration::ZERO),
@@ -423,8 +429,17 @@ impl Boundary for LoaderBoundary {
         drop_old(e, me, old);
         set(e, me, Loader::STATUS.index, loader_status::ERROR.into());
         set(e, me, Loader::PROGRESS.index, 1.0.into());
-        if matches!(report.fault, Fault::JsInterrupted { .. }) {
-            load_again(e, me, report.at, again);
+        match report.fault {
+            Fault::JsInterrupted { .. } => load_again(e, me, report.at, again, Cut::Interrupted),
+            // The heap may have room once the garbage is collected; faults
+            // are delivered between runs, where it can be. Loading again
+            // could run out again, so it is counted as an interrupt made
+            // while the item was made.
+            Fault::JsOutOfMemory => {
+                e.collect_garbage();
+                load_again(e, me, report.at, Again::Counted, Cut::OutOfMemory);
+            }
+            _ => {}
         }
     }
 
@@ -454,9 +469,18 @@ enum Again {
     Elsewhere { made_in: u64 },
 }
 
-/// After a script was interrupted at `at`: loads again unless that was just
+/// What stopped a script a Loader loads again for.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Cut {
+    /// The run was interrupted.
+    Interrupted,
+    /// The script heap had no room for what it allocated.
+    OutOfMemory,
+}
+
+/// After a script was stopped at `at`: loads again unless that was just
 /// tried. The log has the fault already; this says what became of the item.
-fn load_again(e: &Engine, me: ObjectId, at: Time, again: Again) {
+fn load_again(e: &Engine, me: ObjectId, at: Time, again: Again, cut: Cut) {
     let place = e.declared_at(me).unwrap_or_default();
     if again != Again::Counted {
         let streak = with_run(e, me, |r| match (again, r.elsewhere) {
@@ -505,18 +529,19 @@ fn load_again(e: &Engine, me: ObjectId, at: Time, again: Again) {
         }
         tried
     });
+    let what = match cut {
+        Cut::Interrupted => "a script was interrupted",
+        Cut::OutOfMemory => "its item ran out of script memory",
+    };
     match tried {
         Some(false) => {
-            warn(
-                e,
-                format!("{place}Loader: a script was interrupted, loading again"),
-            );
+            warn(e, format!("{place}Loader: {what}, loading again"));
             reload(e, me, true);
         }
         Some(true) => warn(
             e,
             format!(
-                "{place}Loader: a script was interrupted again, so it stays at Loader.Error until it is told to load"
+                "{place}Loader: {what} again, so it stays at Loader.Error until it is told to load"
             ),
         ),
         None => {}
