@@ -1308,7 +1308,9 @@ fn an_exception_pending_behind_an_unknown_error_after_a_caught_refusal_is_the_sc
         })
         .unwrap_err();
     match err {
-        JsFault::JsException { message, thrown, .. } => {
+        JsFault::JsException {
+            message, thrown, ..
+        } => {
             assert!(message.contains("mine"), "{message}");
             assert!(thrown.is_some(), "the value thrown is kept");
         }

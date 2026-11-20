@@ -3572,11 +3572,14 @@ pub(crate) struct Sources<'a> {
 /// it from the script's, and the refusal is the likelier cause.
 fn refused_room(ctx: &Ctx<'_>, err: &rquickjs::Error) -> bool {
     match err {
-        rquickjs::Error::Allocation | rquickjs::Error::Unknown => {
+        rquickjs::Error::Allocation => {
             let _ = ctx.catch();
             true
         }
-        rquickjs::Error::Exception => {
+        rquickjs::Error::Unknown if !ctx.has_exception() => true,
+        // An unknown error with an exception pending is that exception, as
+        // `classify_error` tells it: judged by what was thrown.
+        rquickjs::Error::Exception | rquickjs::Error::Unknown => {
             let thrown = ctx.catch();
             let ran_out = thrown.is_null() || is_quickjs_out_of_memory(&thrown);
             if !ran_out {
