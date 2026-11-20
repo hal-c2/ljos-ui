@@ -311,6 +311,38 @@ fn garbage_past_three_quarters_with_no_collection_is_not_warned_of() {
     );
 }
 
+/// A run that let go of nothing, as a binding that only reads, leaves
+/// nothing to collect: a run that then finds a heap full of what lives
+/// does not collect it all again.
+#[test]
+fn a_run_out_of_a_live_heap_after_an_ordinary_run_does_not_collect() {
+    let host = small(32);
+    keep(&host, 28);
+    host.enter("read", host.config().slice, |s| {
+        s.eval::<(), _>("globalThis.read = () => kept.length")
+    })
+    .unwrap();
+    host.collect_now();
+    let collections = host.collections();
+    // A call, not an eval: compiling one frees what the compiler used.
+    host.enter("read", host.config().slice, |s| {
+        s.globals()
+            .get::<_, ljos_js::rquickjs::Function>("read")?
+            .call::<_, f64>(())
+    })
+    .unwrap();
+    assert!(!host.may_hold_garbage());
+    // One allocation bigger than the room left: it fails without growing
+    // the heap.
+    let err = host
+        .enter("fill", host.config().slice, |s| {
+            s.eval::<usize, _>("'x'.repeat(16 * 1024 * 1024).length")
+        })
+        .unwrap_err();
+    assert!(matches!(err, JsFault::JsOutOfMemory { .. }), "{err:?}");
+    assert_eq!(host.collections(), collections, "nothing collected");
+}
+
 /// What grew the heap is told per run, the most first, and the table
 /// stays small.
 #[test]

@@ -237,9 +237,11 @@ pub(crate) struct HostState {
     text: RefCell<Option<Rc<SourceText>>>,
     entered: Cell<bool>,
     /// Something may have let go of a script value since the collector
-    /// last ran: a run that did not run out, or the host dropping a value
-    /// it held. What it let go of may be cycles only the collector frees,
-    /// with the heap no bigger for it ([`JsHost::may_hold_garbage`]).
+    /// last ran: a run that did not run out and ended below its peak, or
+    /// the host dropping a value it held. What it let go of may be cycles
+    /// only the collector frees, with the heap no bigger for it
+    /// ([`JsHost::may_hold_garbage`]). A run that freed nothing, as a
+    /// binding that only reads, ends at its peak and does not set it.
     let_go: Cell<bool>,
     /// A run nested in this dispatch was interrupted: the dispatch is over,
     /// and the script that called back is stopped as it gets control back.
@@ -2065,7 +2067,7 @@ impl JsHost {
                 );
             }
         }
-        if !ran_out {
+        if !ran_out && self.peak.fell() {
             self.state.let_go.set(true);
         }
         self.flush_released();
@@ -2680,7 +2682,7 @@ impl JsHost {
     /// go of a script value since. A run that ran out is not one: what it
     /// let go of before it did is what its own retries meet, and rows
     /// that run out of one heap full of what lives would otherwise each
-    /// collect it. Walks nothing.
+    /// collect it. Nor is a run that freed nothing. Walks nothing.
     pub fn may_hold_garbage(&self) -> bool {
         self.state.let_go.get()
             || self.heap_bytes()

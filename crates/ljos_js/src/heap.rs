@@ -72,6 +72,15 @@ impl MallocPeak {
         unsafe { JS_ResumeMallocPeak(self.0, outer) };
     }
 
+    /// Whether less is held now than the most since the last
+    /// [`MallocPeak::mark`]: something was freed since. The mark stays.
+    pub(crate) fn fell(&self) -> bool {
+        let peak = self.mark();
+        let now = self.get();
+        self.resume(peak);
+        now < peak
+    }
+
     /// The most held since the last [`MallocPeak::mark`].
     pub(crate) fn get(&self) -> usize {
         // SAFETY: a live runtime (`of`); 0 is never above a mark.
