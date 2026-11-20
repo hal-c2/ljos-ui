@@ -18,6 +18,13 @@ fn user_presses(w: &mut LjosWorld, chord: String) -> StepResult {
     w.each(|b| b.key(&chord))
 }
 
+// A native type's own event, handed to one item that need not have the
+// focus (`ljos::input::send_input`).
+#[when(regex = r#"^the application sends "([^"]+)" to "([^"]+)"$"#)]
+fn application_sends_key(w: &mut LjosWorld, chord: String, path: String) -> StepResult {
+    w.each(|b| b.input()?.send_key_to(&chord, &path))
+}
+
 // A key held down repeats; the repeats are presses without a release between.
 #[when(regex = r#"^the user holds down "([^"]+)" until it repeats (\d+) times?$"#)]
 fn user_holds(w: &mut LjosWorld, chord: String, repeats: u32) -> StepResult {

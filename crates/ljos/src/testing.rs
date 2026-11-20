@@ -30,7 +30,7 @@ use ljos_runtime::{Clock as _, Time};
 pub use ljos_a11y::{AccessibleNode, Contrast, NodeKey, SystemPrefs};
 pub use ljos_controls::ScreenSpec;
 
-use crate::item::{KeyEvent, PointerEvent, TextEngine, WheelEvent};
+use crate::item::{KeyEvent, PointerEvent, TextEngine, TouchEvent, WheelEvent};
 use crate::prelude::ApplicationState;
 pub use crate::scene_error::SceneError;
 
@@ -148,6 +148,17 @@ impl TestWindow {
     /// Whether an item or handler took it.
     pub fn pointer(&mut self, ev: &PointerEvent) -> bool {
         let taken = self.drive().send_pointer(ev);
+        self.after_input(taken)
+    }
+
+    /// Hands the window one frame of touch points (in its coordinates),
+    /// as a touch screen reports them, then lets the scene come to rest.
+    /// Unlike a [`pointer`](Self::pointer) event, these reach what takes
+    /// fingers but not the mouse (`MultiPointTouchArea { mouseEnabled:
+    /// false }`); one finger is a mouse to the rest. Whether something
+    /// took one.
+    pub fn touch(&mut self, events: &[TouchEvent]) -> bool {
+        let taken = self.drive().send_touch(events);
         self.after_input(taken)
     }
 

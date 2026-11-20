@@ -348,6 +348,56 @@ fn a_patch_that_is_not_acknowledged_is_offered_again_from_the_same_base() {
     assert_eq!(second.ops, first.ops);
 }
 
+/// Whether a text that makes a `Helper` compiles in `s` with no error.
+/// It imports nothing: without Qt's table an import of QtQuick stands in
+/// for any name, a `Helper` that is not there too.
+fn makes_helper(s: &mut ReloadSession<QtTypeOracle>) -> bool {
+    s.compile_text("inline", "Helper { }\n", &[])
+        .is_ok_and(|compiled| !compiled.has_errors())
+}
+
+fn with_helper() -> ReloadSession<QtTypeOracle> {
+    session(&[
+        ("Main", "import QtQuick\nItem { width: 10 }\n"),
+        ("Helper", "import QtQuick\nItem { }\n"),
+    ])
+}
+
+#[test]
+fn a_text_sees_the_files_the_application_runs_not_a_save_that_did_not_compile() {
+    let mut s = with_helper();
+    assert!(makes_helper(&mut s));
+    s.remove_file("Helper");
+    s.set_file("Main", "import QtQuick\nItem { width: }\n");
+    assert!(s.build().is_err());
+    assert!(makes_helper(&mut s), "the application still runs Helper");
+    assert_eq!(s.source("Helper"), None, "the session keeps the save");
+}
+
+#[test]
+fn a_text_sees_a_removed_file_until_the_application_takes_the_patch() {
+    let mut s = with_helper();
+    s.remove_file("Helper");
+    let refused = s.build().unwrap().unwrap();
+    assert!(makes_helper(&mut s), "not taken yet");
+    s.reject(refused.generation);
+    assert!(makes_helper(&mut s), "refused");
+    let taken = s.build().unwrap().unwrap();
+    s.ack(taken.generation);
+    assert!(!makes_helper(&mut s), "taken");
+}
+
+#[test]
+fn a_text_sees_a_file_saved_since_once_the_application_takes_it() {
+    let mut s = session(&[("Main", "import QtQuick\nItem { width: 10 }\n")]);
+    assert!(!makes_helper(&mut s));
+    s.set_file("Helper", "import QtQuick\nItem { }\n");
+    s.set_file("Main", "import QtQuick\nItem { Helper { } }\n");
+    let p = s.build().unwrap().unwrap();
+    s.ack(p.generation);
+    assert!(makes_helper(&mut s));
+}
+
 fn faults(before: &str, after: &str) -> Vec<CompileFault> {
     let mut s = session(&[("Main", before)]);
     s.set_file("Main", after);

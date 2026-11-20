@@ -10,6 +10,12 @@
 //! a web page included. Nothing calls an item's handler directly, and the
 //! post is what wakes the host: nothing polls.
 //!
+//! [`send_input`] is the other way in: an event a native type makes for
+//! one item (a terminal's key row, a finger's drag read as a mouse
+//! selection), handed to that item at once and answered whether it was
+//! taken, as a toolkit's "send this event to this object" does. It is not
+//! hit-tested and moves no focus.
+//!
 //! [`watch_input`] calls back for each event the scene routes into an
 //! item, whoever sent it, after the scene has delivered it: watching takes
 //! nothing and moves nothing. [`WatchedInput::origin`] tells the user's
@@ -66,6 +72,86 @@ pub fn post_input(engine: &Engine, window: ObjectId, input: Input) -> Result<(),
         return Err(PostInputError::NotShown(window));
     }
     Ok(())
+}
+
+/// Hands `input` to `item` now, and to nothing else, whether or not it
+/// is shown or has the focus. Whether it was taken. Positions are in
+/// `item`'s own coordinates, and a point outside it is still its own.
+///
+/// - A key goes to the item's handlers (`Keys`, a type's
+///   [`crate::keys::KeyItem`]) as if it had the focus, which it is not
+///   given, and what the item leaves goes up to the items it is in. No
+///   shortcut and no key filter is asked.
+/// - A pointer event goes to the item's type's
+///   [`crate::PointerItem`]: a press to `press`, a move to `moved`, a
+///   release to `release`, a cancel to `cancel`, a leave to `hover`.
+///   The caller holds the press: it sends the moves and the release
+///   that follow to the same item. A leave only ends a hover: it clears
+///   what the pointer over the item set, so an item that was not hovered
+///   stays as it was. A sender starts no hover; only the scene's pointer
+///   does. Only a press can be refused; the rest
+///   are taken by an item that takes the pointer at all.
+/// - A wheel event goes to the item's type's
+///   [`crate::flickable::WheelItem`].
+///
+/// The watchers of the items `item` is in hear it, as
+/// [`InputOrigin::Synthetic`], with its positions in the scene's pixels.
+/// A gone item takes nothing.
+pub fn send_input(engine: &Engine, item: ObjectId, input: &Input) -> bool {
+    if !engine.is_alive(item) {
+        return false;
+    }
+    let to_scene = |p| engine.untrack(|| crate::item::map_to_scene(engine, item, p));
+    // The items it is in now hear it, though a handler moves or ends it.
+    let watchers = engine.extension::<Watchers>();
+    let items = if watchers.is_empty() {
+        Vec::new()
+    } else {
+        watchers.items_holding(engine, item)
+    };
+    let (taken, seen) = {
+        let _delivering = crate::input::Delivering::begin(engine);
+        match *input {
+            Input::Key(ref ev) => (crate::keys::deliver_key_to(engine, item, ev), input.clone()),
+            Input::Pointer(ev) => {
+                let local = ev.pos;
+                let ev = PointerEvent {
+                    pos: to_scene(local),
+                    ..ev
+                };
+                (send_pointer(engine, item, &ev, local), Input::Pointer(ev))
+            }
+            Input::Wheel(ev) => {
+                let local = ev.pos;
+                let ev = WheelEvent {
+                    pos: to_scene(local),
+                    ..ev
+                };
+                (
+                    crate::flickable::wheel::offer_at(engine, item, &ev, local),
+                    Input::Wheel(ev),
+                )
+            }
+        }
+    };
+    if !items.is_empty() {
+        watchers.tell(engine, &items, &seen, InputOrigin::Synthetic, taken);
+    }
+    taken
+}
+
+fn send_pointer(engine: &Engine, item: ObjectId, ev: &PointerEvent, local: kurbo::Point) -> bool {
+    let Some(h) = crate::pointer_item::pointer_item(engine, item) else {
+        return false;
+    };
+    match ev.kind {
+        PointerKind::Press => return (h.press)(engine, item, ev, local),
+        PointerKind::Move => (h.moved)(engine, item, ev, local),
+        PointerKind::Release => (h.release)(engine, item, ev, local),
+        PointerKind::Cancel => (h.cancel)(engine, item),
+        PointerKind::Leave => (h.hover)(engine, item, false),
+    }
+    true
 }
 
 /// One event a watcher of `item` sees.

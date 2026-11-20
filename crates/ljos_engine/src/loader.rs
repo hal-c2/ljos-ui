@@ -1071,6 +1071,29 @@ impl Engine {
         self.inner.loader.borrow().files.contains_key(key)
     }
 
+    /// Forgets the loaded files `keys`: an object made of one from here on
+    /// has it read from the component source again, for a host whose
+    /// source gives another version of a file than it gave. Objects made
+    /// already keep the version they were made of.
+    pub fn forget_loaded<'k>(&self, keys: impl IntoIterator<Item = &'k str>) {
+        let mut l = self.inner.loader.borrow_mut();
+        let mut forgot = false;
+        for key in keys {
+            forgot |= l.files.remove(key).is_some();
+        }
+        if !forgot {
+            return;
+        }
+        // The type made for an object of a file kept may derive from one
+        // of a file forgotten.
+        for f in l.files.values() {
+            f.metas.borrow_mut().clear();
+            f.unlink();
+        }
+        drop(l);
+        self.singletons_sources_changed();
+    }
+
     /// The loaded file `key`, loading it on first use.
     pub(crate) fn load_file(&self, key: &str) -> Result<Rc<LoadedFile>, EngineError> {
         if let Some(f) = self.inner.loader.borrow().files.get(key) {
