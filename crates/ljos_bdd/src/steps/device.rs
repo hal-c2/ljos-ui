@@ -108,7 +108,9 @@ fn back_taken(w: &mut LjosWorld, what: String) -> StepResult {
         if b.platform()?.back_taken()? == want {
             Ok(())
         } else {
-            Err(BackendError::Failed(format!("the application did not: {what}")))
+            Err(BackendError::Failed(format!(
+                "the application did not: {what}"
+            )))
         }
     })
 }

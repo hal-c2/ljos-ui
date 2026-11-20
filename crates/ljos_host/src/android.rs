@@ -171,7 +171,11 @@ type JEnv = *mut std::ffi::c_void;
 type JClass = *mut std::ffi::c_void;
 
 fn back(phase: BackPhase, progress: f32) {
-    let progress = if progress.is_finite() { progress.clamp(0.0, 1.0) } else { 0.0 };
+    let progress = if progress.is_finite() {
+        progress.clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
     from_java(WindowEvent::Back { phase, progress });
 }
 

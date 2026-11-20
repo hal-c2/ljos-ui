@@ -17,8 +17,8 @@
 
 use std::cell::{Cell, RefCell};
 
-use ljos_engine::{Cx, Engine, EngineError, ObjectId, QmlObject, QtObject, Value, WriteKind};
 use ljos_engine::qml_impl;
+use ljos_engine::{Cx, Engine, EngineError, ObjectId, QmlObject, QtObject, Value, WriteKind};
 
 use crate::item::{Item, is_item};
 
@@ -140,7 +140,12 @@ pub fn wants_back(engine: &Engine) -> bool {
 }
 
 fn set(engine: &Engine, b: ObjectId, active: bool, progress: f64) {
-    let _ = engine.write_internal(b, Back::ACTIVE.index, Value::Bool(active), WriteKind::Imperative);
+    let _ = engine.write_internal(
+        b,
+        Back::ACTIVE.index,
+        Value::Bool(active),
+        WriteKind::Imperative,
+    );
     let _ = engine.write_internal(
         b,
         Back::PROGRESS.index,
@@ -153,7 +158,11 @@ fn set(engine: &Engine, b: ObjectId, active: bool, progress: f64) {
 /// (0 to 1) being how far a swipe has come. Whether the application took
 /// it: when it did not, Back is the platform's to do.
 pub fn deliver_back(engine: &Engine, step: BackStep, progress: f64) -> bool {
-    let progress = if progress.is_finite() { progress.clamp(0.0, 1.0) } else { 0.0 };
+    let progress = if progress.is_finite() {
+        progress.clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
     let router = engine.extension::<Router>();
     let target = engine.untrack(|| match step {
         BackStep::Started => {

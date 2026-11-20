@@ -782,7 +782,10 @@ mod tests {
         assert!((distance - 194.4).abs() < 0.5, "{distance}");
         assert!((time.as_secs_f64() - 0.555).abs() < 0.002, "{time:?}");
         let (d4, t4) = spline_fling(4000.0);
-        assert!(d4 > 4.0 * distance && t4 > time, "faster goes further and longer");
+        assert!(
+            d4 > 4.0 * distance && t4 > time,
+            "faster goes further and longer"
+        );
     }
 
     #[test]
@@ -801,7 +804,10 @@ mod tests {
         let mut last = (p0, v0);
         for ms in (10..=555).step_by(10) {
             let now = seg.at(&A, Duration::from_millis(ms));
-            assert!(now.0 >= last.0 && now.1 <= last.1 + 1e-9, "{ms} ms: {now:?}");
+            assert!(
+                now.0 >= last.0 && now.1 <= last.1 + 1e-9,
+                "{ms} ms: {now:?}"
+            );
             last = now;
         }
     }
@@ -826,7 +832,10 @@ mod tests {
             deceleration: 100.0,
             ..S
         };
-        assert_eq!(A.plan(&moving(0.0, 800.0), &S), A.plan(&moving(0.0, 800.0), &slow));
+        assert_eq!(
+            A.plan(&moving(0.0, 800.0), &S),
+            A.plan(&moving(0.0, 800.0), &slow)
+        );
     }
 
     #[test]

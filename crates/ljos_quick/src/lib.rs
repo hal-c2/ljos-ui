@@ -15,6 +15,7 @@ mod application_palette;
 mod blocks;
 mod by_type;
 pub use app_font::application_font_changed;
+mod back;
 mod canvas;
 mod context_menu;
 pub mod controller;
@@ -22,7 +23,6 @@ mod drag;
 mod drop_area;
 mod effects;
 pub mod enums;
-mod back;
 mod error_boundary;
 pub mod flickable;
 mod flipable;
@@ -112,6 +112,7 @@ pub use animation::{
 };
 pub use animation::{QuaternionAnimation, Vector3dAnimation};
 pub use application_palette::{ApplicationPalette, application_palette, set_application_palette};
+pub use back::{Back, BackStep, deliver_back, wants_back};
 pub use blocks::{Contribution, ShellLoader, Slot, contribution_mode, shell_status};
 pub use context_menu::{ContextMenuHook, ContextMenuReason, register_context_menu};
 pub use drag::{Drag, DragAttached, drag_attached, drag_type};
@@ -120,7 +121,6 @@ pub use drop_area::{
     IGNORE_ACTION, PlatformDrag, PlatformDragKind, platform_drag, platform_drag_offered,
     platform_drag_target,
 };
-pub use back::{Back, BackStep, deliver_back, wants_back};
 pub use error_boundary::{BoundaryFault, ErrorBoundary};
 pub use flickable::Flickable;
 pub use font_loader::{FontFamilies, FontLoader};

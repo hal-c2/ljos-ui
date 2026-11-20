@@ -301,7 +301,8 @@ fn let_go(e: &Engine, f: ObjectId, st: &FlickState, time: Time, at: Option<kurbo
             Motion::Start(seg) => {
                 // `flickStarted` already reads the speed it was thrown with,
                 // also when nothing was dragged before.
-                if let Segment::Decelerate { velocity, .. } | Segment::Spline { velocity, .. } = seg {
+                if let Segment::Decelerate { velocity, .. } | Segment::Spline { velocity, .. } = seg
+                {
                     fling::show_velocity(e, f, axis, velocity);
                 }
                 segs[axis] = Some(seg);

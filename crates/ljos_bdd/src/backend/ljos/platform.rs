@@ -64,9 +64,8 @@ impl Platform for LjosBackend {
     }
 
     fn back_taken(&mut self) -> Result<bool> {
-        self.back_taken.ok_or_else(|| {
-            BackendError::Failed("the system's Back was not pressed".into())
-        })
+        self.back_taken
+            .ok_or_else(|| BackendError::Failed("the system's Back was not pressed".into()))
     }
 
     fn system_dialogs_stay(&mut self) -> Result<()> {

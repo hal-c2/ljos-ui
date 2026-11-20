@@ -389,7 +389,11 @@ where
         let Stage::Running(app) = &self.stage else {
             return;
         };
-        let scale = if self.scale > 0.0 { f64::from(self.scale) } else { 1.0 };
+        let scale = if self.scale > 0.0 {
+            f64::from(self.scale)
+        } else {
+            1.0
+        };
         let [l, t, r, b] = self.insets.safe_area().map(|n| n / scale);
         let engine = app.engine();
         ljos_quick::set_safe_area_insets(engine, l, t, r, b);
