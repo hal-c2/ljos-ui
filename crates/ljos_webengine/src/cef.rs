@@ -3412,9 +3412,7 @@ fn dev_event(shared: &Shared, method: &str, params: &Json) {
             let kind = match scripted_kind(kind, payload, &origin, asks_itself) {
                 Ok(kind) => kind,
                 Err(note) => {
-                    if let Some(note) = note {
-                        shared.sink.send(Ev::Note(note));
-                    }
+                    shared.sink.send(Ev::Note(note));
                     pass_to_chromium(shared, context, number, Pending::Ignore);
                     return;
                 }
@@ -3511,15 +3509,15 @@ fn scripted_kind(
     payload: &str,
     origin: &str,
     asks_itself: bool,
-) -> Result<i32, Option<String>> {
+) -> Result<i32, String> {
     match kind {
         Some(kind) if kind == NOTIFICATIONS_KIND || !asks_itself => Ok(kind),
-        Some(kind) => Err(Some(not_asked(origin, kind, Unasked::File))),
+        Some(kind) => Err(not_asked(origin, kind, Unasked::File)),
         // The page wrote the kind: a number is a kind to name, anything
         // else may be anything, a secret too, so only its length is said.
         None => {
             let (written, _) = payload.split_once(':').unwrap_or(("", payload));
-            Err(Some(match written.parse::<i32>() {
+            Err(match written.parse::<i32>() {
                 Ok(kind) => not_asked(origin, kind, Unasked::NotScripted),
                 Err(_) => {
                     let length = written.chars().count();
@@ -3529,7 +3527,7 @@ fn scripted_kind(
                          Chromium answers it"
                     )
                 }
-            }))
+            })
         }
     }
 }
@@ -4733,19 +4731,19 @@ mod tests {
         };
         assert_eq!(route("8:3", false), Ok(8));
         assert_eq!(route("7:3", true), Ok(7));
-        let Err(Some(file)) = route("8:3", true) else {
+        let Err(file) = route("8:3", true) else {
             panic!("a file's page asked for its location goes on untold");
         };
         assert!(file.contains("asks the view itself"), "{file}");
         // A kind the script never asks about, written by the page: the
         // number is a kind, so it is named.
-        let Err(Some(other)) = route("1:3", false) else {
+        let Err(other) = route("1:3", false) else {
             panic!("a question for the microphone goes on untold");
         };
         assert!(other.contains("asked for the microphone"), "{other}");
         assert!(other.contains("the view is not asked"), "{other}");
         // No kind at all: only its length, as for a question with no number.
-        let Err(Some(unread)) = route("secret:3", false) else {
+        let Err(unread) = route("secret:3", false) else {
             panic!("a question of no kind the view can read goes on untold");
         };
         assert!(!unread.contains("secret"), "{unread}");
