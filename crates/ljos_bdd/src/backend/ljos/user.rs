@@ -205,6 +205,18 @@ impl Live {
         Ok(ljos_engine::file_url(&path))
     }
 
+    /// Writes the file `name` in neither the user's directory nor one the
+    /// application loads from.
+    pub(super) fn outside_file(&mut self, name: &str, text: &str) -> Result<()> {
+        let path = self.user()?.outside.path().join(name);
+        super::disk::write(&path, text)
+    }
+
+    pub(super) fn outside_url(&mut self, name: &str) -> Result<String> {
+        let path = self.user()?.outside.path().join(name);
+        Ok(ljos_engine::file_url(&path))
+    }
+
     /// One frame's worth of what the session brought, without waiting.
     fn pump_user(&mut self) -> Result<Vec<ljos_dev::Report>> {
         let user = self

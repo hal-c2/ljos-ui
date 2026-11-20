@@ -500,10 +500,16 @@ their sources; the user's directory is a directory on the real disk. The steps c
 | `When the application runs "Main.qml" built ahead, with the user's directory over it` | the scenario's files built ahead (`build::Options::with_sources`), run with the user's directory over them; the root is made of the entry in a window of its own |
 | `When the application runs "Main.qml" built ahead from an older "X.qml", with the user's directory over it:` + doc string | the same, with `X.qml` compiled from the doc string while the pack carries the scenario's text of it, as a build that was not redone after a change |
 | `When the application runs "App.qml" built ahead in a window of its own, with the user's directory over it` | the same, of every file given so far, with the root made of the entry with no parent and shown in a window of its own, as an application's first window is |
+| `When the application runs "Main.qml" built ahead, without a user's directory` | the scenario's files built ahead with their sources, run as an application built without `user-qml`: no compiler is installed |
+| `Given the application's plugin file "X":` + doc string | a file of the directory the application loads QML from while it runs (`UserQml::loads_from`), on the real disk |
+| `Given the file "X" outside the application's directories:` + doc string | a file on the real disk in neither the user's directory nor the plugin directory |
+| `When the application's plugin "X" is given to the method "M" of "obj"` / `When the file "X" outside the application's directories is given to the method "M" of "obj"` | the method is called with the file's `file://` address |
+| `When the text "T" is given to the method "M" of "obj" with the address of the application's plugin "X"` | the method is called with the text and the address the file `X` of the plugin directory would have |
 | `When the user saves the file "X" as:` + doc string / `When the user removes the file "X"` | while the application runs; the step waits for what the save brings |
 | `When the user saves the file "X" as a link to a file outside the user's directory` | while the application runs, the file becomes a link that leads out of the directory; the step waits for what the save brings |
 | `When the user's directory is removed and made again` | the directory is removed and made again at its path before the application hears of either; the step waits for the wake |
 | `Then the user's files are compiled` / `are not compiled` | whether the compiler ran: it does once the user has a file |
+| `Then a compiler was made for text` / `Then no compiler was made for text` | whether a script asked for a text or a plugin file yet, which makes the texts' compiler |
 | `Then the user's directory is watched` | the application keeps a watch, on the directory or on the nearest one above it |
 | `Then N saves of the user's files have been applied` | the saves applied as reloads |
 | `Then the application was told of a fault matching "regex"` / `Then the application was told of no fault` | what the application's fault handler (`UserQml::on_fault`) heard |

@@ -42,10 +42,7 @@ Feature: A shipped application its users change makes QML of text and of files i
         function load(url) {
           caught = ""
           const component = Qt.createComponent(url)
-          if (component.status !== Component.Ready) {
-            caught = component.errorString().trim()
-            return
-          }
+          if (component.status !== Component.Ready) { caught = component.errorString().trim(); return }
           kid = component.createObject(main, { width: 7 })
         }
         Card { objectName: "card" }
@@ -141,6 +138,33 @@ Feature: A shipped application its users change makes QML of text and of files i
       And the property "by" of "main/plugin" is "the application's module"
       And the property "width" of "main/plugin" is 7
       And the application was told of no fault
+
+    Scenario: A plugin of two files sees the other file beside it
+      Given the application's plugin file "Helper.qml":
+        """qml
+        import QtQuick
+        Rectangle { property string by: "the plugin's helper"; width: 10; height: 10 }
+        """
+      And the application's plugin file "Plugin.qml":
+        """qml
+        Helper { objectName: "plugin" }
+        """
+      When the application runs "Main.qml" built ahead, with the user's directory over it
+      And the application's plugin "Plugin.qml" is given to the method "load" of "main"
+      Then the property "caught" of "main" is ""
+      And the property "by" of "main/plugin" is "the plugin's helper"
+      And the application was told of no fault
+
+    Scenario: A file in neither the plugin directory nor the user's is refused and told
+      Given the file "Elsewhere.qml" outside the application's directories:
+        """qml
+        import QtQuick
+        Item { objectName: "elsewhere" }
+        """
+      When the application runs "Main.qml" built ahead, with the user's directory over it
+      And the file "Elsewhere.qml" outside the application's directories is given to the method "load" of "main"
+      Then the object "main/elsewhere" does not exist
+      And the application was told of a fault matching "refused: .*Elsewhere\.qml"
 
     Scenario: A file in the application's plugin directory sees the user's file over the module's
       Given the user's file "Bricks/Brick.qml":

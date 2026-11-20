@@ -93,6 +93,23 @@ fn plugin_given(w: &mut LjosWorld, name: String, method: String, object: String)
     })
 }
 
+#[given(regex = r#"^the file "([^"]+)" outside the application's directories:$"#)]
+fn outside_file(w: &mut LjosWorld, name: String, step: &Step) -> StepResult {
+    let text = docstring(step)?;
+    w.each(|b| b.application()?.outside_file(&name, &text))
+}
+
+#[when(
+    regex = r#"^the file "([^"]+)" outside the application's directories is given to the method "([^"]+)" of "([^"]+)"$"#
+)]
+fn outside_given(w: &mut LjosWorld, name: String, method: String, object: String) -> StepResult {
+    w.each(|b| {
+        let url = b.application()?.outside_url(&name)?;
+        b.call(&object, &method, &[serde_json::Value::String(url)])
+            .map(drop)
+    })
+}
+
 #[when(
     regex = r#"^the text "([^"]+)" is given to the method "([^"]+)" of "([^"]+)" with the address of the application's plugin "([^"]+)"$"#
 )]
