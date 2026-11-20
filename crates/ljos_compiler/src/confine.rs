@@ -66,6 +66,12 @@ pub enum ReadError {
 /// More than this is not a user's QML but a disk.
 const MAX_DIRS: usize = 4096;
 
+/// Whether `name` is in the directory `dir` (both `/`-separated).
+fn under(name: &str, dir: &str) -> bool {
+    name.strip_prefix(dir)
+        .is_some_and(|rest| rest.starts_with('/'))
+}
+
 /// The directory an application's user's files are in.
 #[derive(Debug, Clone)]
 pub struct UserDir {
@@ -128,7 +134,12 @@ impl UserDir {
     #[must_use]
     pub fn path_of(&self, name: &str) -> PathBuf {
         match &self.modules {
-            Some(modules) if self.module_has(name) => self.root.join(modules).join(name),
+            // Only a module's file has a name in the modules' directory
+            // (`qml/qml/Card.qml` is `qml/Card.qml`): gone, it is not the
+            // root's path of that name, which is the module `Card.qml`.
+            Some(modules) if self.module_has(name) || under(name, modules) => {
+                self.root.join(modules).join(name)
+            }
             _ => self.root.join(name),
         }
     }
@@ -516,6 +527,12 @@ mod tests {
         assert_eq!(
             dir.path_of("shell.qml"),
             std::path::absolute(root.path().join("shell.qml")).unwrap()
+        );
+        // A module's name in the modules' directory is its path there
+        // while that file is gone, never the root's file of that name.
+        assert_eq!(
+            dir.path_of("qml/Card.qml"),
+            std::path::absolute(root.path().join("qml/qml/Card.qml")).unwrap()
         );
         assert!(dir.has_dir("Lib"));
         assert!(dir.has_dir("qml"));

@@ -201,8 +201,10 @@ impl Live {
             Some(text) => super::disk::write(&path, text)?,
             None => std::fs::remove_file(&path).map_err(failed)?,
         }
-        // Nothing watched: the save brings nothing to wait for.
-        if !user.session.as_ref().is_some_and(UserSession::is_watching) {
+        // Nothing watched: the save brings nothing to wait for. Nor does a
+        // theme the application reads itself: no report would ever come.
+        let own_theme = user.own_theme && name == ljos_design::theme::FILE;
+        if own_theme || !user.session.as_ref().is_some_and(UserSession::is_watching) {
             return Ok(());
         }
         self.take_user_save(name)

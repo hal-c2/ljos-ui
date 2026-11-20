@@ -228,10 +228,11 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
         self.layer.is_some()
     }
 
-    /// The files a user's directory holds: QML and JavaScript. Its other
-    /// files (a theme) are not compiled.
+    /// The files a user's directory holds: QML, JavaScript and the
+    /// `qmldir` that declares a module only the user has. Its other files
+    /// (a theme) are not compiled.
     fn users_file(name: &str) -> bool {
-        name.ends_with(".qml") || is_script(name)
+        name.ends_with(".qml") || is_script(name) || name.rsplit('/').next() == Some("qmldir")
     }
 
     /// Reads the user's directory again over the application's files.
