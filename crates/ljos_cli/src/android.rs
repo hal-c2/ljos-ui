@@ -241,10 +241,7 @@ impl Adb {
     /// What adb printed, without the carriage returns a device's shell
     /// puts before each newline.
     fn output(&self, args: &[&str]) -> anyhow::Result<String> {
-        let out = self
-            .command(args)
-            .output()
-            .context("starting adb")?;
+        let out = self.command(args).output().context("starting adb")?;
         if !out.status.success() {
             bail!(
                 "adb {}: {}",
@@ -760,7 +757,13 @@ mod tests {
         let plain = start_args("dev.ljos.hello", None);
         assert_eq!(
             plain,
-            ["shell", "am", "start", "-n", "dev.ljos.hello/dev.ljos.LjosActivity"]
+            [
+                "shell",
+                "am",
+                "start",
+                "-n",
+                "dev.ljos.hello/dev.ljos.LjosActivity"
+            ]
         );
         let caps = CapSet::parse_list("input,inspect").unwrap();
         let served = start_args("dev.ljos.hello", Some(caps));
@@ -798,7 +801,10 @@ mod tests {
 
     #[test]
     fn only_the_device_loopback_is_forwarded() {
-        assert_eq!(loopback_port("http://127.0.0.1:4410/mcp").unwrap(), (4410, "/mcp"));
+        assert_eq!(
+            loopback_port("http://127.0.0.1:4410/mcp").unwrap(),
+            (4410, "/mcp")
+        );
         assert_eq!(loopback_port("http://localhost:9").unwrap(), (9, ""));
         assert!(loopback_port("http://10.0.2.15:4410/mcp").is_err());
         assert!(loopback_port("unix:/data/x.sock").is_err());
@@ -872,7 +878,10 @@ esac
             device: Some("phone".into()),
         };
         let err = connect(&adb, "dev.ljos.other", &dir.path().join("out.json")).unwrap_err();
-        assert!(format!("{err:#}").contains("ljos android run --mcp"), "{err:#}");
+        assert!(
+            format!("{err:#}").contains("ljos android run --mcp"),
+            "{err:#}"
+        );
         assert!(!dir.path().join("out.json").exists());
     }
 
