@@ -251,6 +251,12 @@ unsafe extern "C" {
     pub fn JS_SetMemoryLimit(rt: *mut JSRuntime, limit: size_t);
 }
 unsafe extern "C" {
+    pub fn JS_MarkMallocPeak(rt: *mut JSRuntime) -> size_t;
+}
+unsafe extern "C" {
+    pub fn JS_ResumeMallocPeak(rt: *mut JSRuntime, outer: size_t) -> size_t;
+}
+unsafe extern "C" {
     pub fn JS_SetDumpFlags(rt: *mut JSRuntime, flags: u64);
 }
 unsafe extern "C" {
