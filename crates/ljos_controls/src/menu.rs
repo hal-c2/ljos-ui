@@ -156,6 +156,9 @@ pub(crate) struct MenuState {
     /// What is declared in the menu was taken in, which happens once: a
     /// declared child taken out again stays out.
     declared_in: Cell<bool>,
+    /// The delegate as it stood when the first declared child came, which
+    /// makes the items of the declared actions and menus.
+    declared_delegate: Cell<Option<Option<ObjectId>>>,
 }
 
 /// `Menu`.
@@ -480,6 +483,16 @@ fn put(cx: &Cx, child: ObjectId, anchor: Option<ObjectId>) -> Result<(), EngineE
         .is_some_and(|f| f.contains(ObjectFlags::COMPLETED));
     let declared_in = state_of(e, menu).is_some_and(|s| s.declared_in.get());
     if !complete && !declared_in {
+        if let Some(st) = state_of(e, menu)
+            && st.declared_delegate.get().is_none()
+        {
+            // Qt 6.12: a delegate given by a binding is not there yet when
+            // the declared children come, so the style's delegate, or one
+            // written in place, makes their items. Peeked: a read would
+            // run the binding.
+            let now = e.peek(menu, Menu::DELEGATE.index).as_object();
+            st.declared_delegate.set(Some(now));
+        }
         // Taken in when the menu is complete, when its delegate is known.
         return match anchor {
             Some(a) => host_insert(cx, child, a, POPUP),
@@ -491,7 +504,7 @@ fn put(cx: &Cx, child: ObjectId, anchor: Option<ObjectId>) -> Result<(), EngineE
         return Ok(());
     }
     let at = anchor.and_then(|a| items(e, menu).iter().position(|i| *i == a));
-    take_in(e, menu, child, at)?;
+    take_in(e, menu, child, at, false)?;
     changed(e, menu)
 }
 
@@ -544,7 +557,7 @@ fn take_in_declared(e: &Engine, menu: ObjectId) -> Result<bool, EngineError> {
             .iter()
             .any(|en| en.item == child || en.made_for == Some(child));
         if e.is_alive(child) && !taken {
-            take_in(e, menu, child, None)?;
+            take_in(e, menu, child, None, true)?;
         }
     }
     Ok(true)
@@ -575,6 +588,7 @@ fn take_in(
     menu: ObjectId,
     obj: ObjectId,
     at: Option<usize>,
+    declared: bool,
 ) -> Result<(), EngineError> {
     if is_a::<Repeater>(e, obj) {
         return take_in_repeater(e, menu, obj);
@@ -589,7 +603,7 @@ fn take_in(
     if obj == menu {
         return Ok(());
     }
-    let item = make_item(e, menu)?;
+    let item = make_item(e, menu, declared)?;
     if for_action {
         e.write(
             item,
@@ -704,8 +718,12 @@ fn keep(e: &Engine, menu: ObjectId, obj: ObjectId) -> Result<(), EngineError> {
 
 /// An item from the menu's `delegate`, or a plain `MenuItem` if that
 /// makes none.
-fn make_item(e: &Engine, menu: ObjectId) -> Result<ObjectId, EngineError> {
-    let delegate = e.untrack(|| object(e, menu, Menu::DELEGATE.index));
+fn make_item(e: &Engine, menu: ObjectId, declared: bool) -> Result<ObjectId, EngineError> {
+    let recorded = state_of(e, menu).and_then(|st| st.declared_delegate.get());
+    let delegate = match recorded {
+        Some(then) if declared => then,
+        _ => e.untrack(|| object(e, menu, Menu::DELEGATE.index)),
+    };
     if let (Some(d), Some(st)) = (delegate, state_of(e, menu)) {
         st.making.set(true);
         let made = e.component_create(d, Some(menu), Vec::new());
@@ -892,7 +910,7 @@ fn add(
         return Ok(());
     }
     declared_first(e, menu)?;
-    take_in(e, menu, obj, at)?;
+    take_in(e, menu, obj, at, false)?;
     changed(e, menu)
 }
 

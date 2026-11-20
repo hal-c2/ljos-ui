@@ -2073,6 +2073,9 @@ impl<V: Clone + 'static> Graph<V> {
         // made anyway. A binding nobody writes over still runs only when read.
         if how == WriteKind::Host && self.binding_due(n) {
             self.update(n);
+            // What that run found is told now, as a read's run tells it;
+            // the write itself may flush nothing.
+            self.dispatch_diagnostics();
         }
         let dropped;
         {

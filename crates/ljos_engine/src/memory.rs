@@ -173,4 +173,12 @@ impl Engine {
         }
         Some(self.js().ok()?.host.heap_bytes())
     }
+
+    /// Puts a new limit on the script heap, `None` for none, in place of
+    /// the 96 MiB the engine starts with (`ljos_js::JsConfig`); what is
+    /// held already stays. Starts the script engine. False inside a
+    /// script, and when the script engine could not start.
+    pub fn set_script_heap_limit(&self, limit: Option<usize>) -> bool {
+        self.js().is_ok_and(|js| js.host.set_memory_limit(limit))
+    }
 }
