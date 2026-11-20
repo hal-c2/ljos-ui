@@ -302,6 +302,16 @@ fn connect(adb: &Adb, application_id: &str, out: &Path) -> anyhow::Result<String
         bail!("the inspector of {application_id} is not running: {START}");
     };
     let (port, rest) = loopback_port(&body.url)?;
+    // The forward the last connect made, which nothing else removes: adb
+    // keeps it until it restarts, at a device port that may serve nothing
+    // now. Gone already when adb restarted since, so a failure is no error.
+    if let Some(old) = std::fs::read_to_string(out)
+        .ok()
+        .and_then(|text| TokenFileBody::parse(&text).ok())
+        .and_then(|last| loopback_port(&last.url).ok().map(|(p, _)| p))
+    {
+        let _ = adb.output(&["forward", "--remove", &format!("tcp:{old}")]);
+    }
     let forwarded = adb.output(&["forward", "tcp:0", &format!("tcp:{port}")])?;
     let local: u16 = forwarded
         .trim()
@@ -888,6 +898,7 @@ case "$*" in
     . '{pidof}' ;;
   "-s phone forward tcp:0 tcp:4410")
     echo 39001 ;;
+  "-s phone forward --remove tcp:39001") ;;
   *) echo "adb: unexpected $*" >&2; exit 1 ;;
 esac
 "#,
@@ -944,7 +955,26 @@ esac
                 & 0o777
         };
         assert_eq!(mode("target/ljos"), 0o700);
-        assert_ne!(mode("target"), 0o700);
+        // As any directory is made under this umask.
+        std::fs::create_dir(dir.path().join("plain")).unwrap();
+        assert_eq!(mode("target"), mode("plain"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn connect_again_removes_the_forward_the_last_connect_made() {
+        let dir = tempfile::tempdir().unwrap();
+        let adb = Adb {
+            program: fake_adb(dir.path(), &on_phone(4321, 4410).to_text(), None),
+            device: Some("phone".into()),
+        };
+        let out = dir.path().join("target/ljos/android-dev.ljos.hello.json");
+        connect(&adb, "dev.ljos.hello", &out).unwrap();
+        let log = || std::fs::read_to_string(dir.path().join("log")).unwrap();
+        assert!(!log().contains("--remove"), "{}", log());
+        // The second connect's forward is its own; the first one's goes.
+        connect(&adb, "dev.ljos.hello", &out).unwrap();
+        assert!(log().contains("forward --remove tcp:39001"), "{}", log());
     }
 
     #[cfg(unix)]
