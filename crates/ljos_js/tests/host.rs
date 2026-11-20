@@ -107,6 +107,39 @@ fn a_null_thrown_on_a_full_heap_is_running_out_of_memory_after_its_locals_go() {
     assert!(matches!(err, JsFault::JsException { .. }), "{err:?}");
 }
 
+/// A nested run judges a `null` against what the heap held in it, not
+/// in the run around it: an outer run can last as long as a test function
+/// that waits, with the event loop nested inside it.
+#[test]
+fn a_null_thrown_in_a_nested_run_after_another_ran_out_is_its_own() {
+    let host = JsHost::new(JsConfig {
+        memory_limit: Some(16 * 1024 * 1024),
+        ..JsConfig::default()
+    })
+    .unwrap();
+    host.collect_now();
+    let held = host.memory_stats().unwrap().malloc_size;
+    assert!(host.set_memory_limit(Some(held + 4 * 1024 * 1024)));
+    let slice = host.config().slice;
+    let (filled, thrown) = host
+        .enter("outer", slice, |_| {
+            let filled = host.enter("fill", slice, |s| {
+                s.eval::<f64, _>("function fill() { let h = null; for (;;) h = { n: h } } fill()")
+            });
+            let thrown = host.enter("throw", slice, |s| s.eval::<f64, _>("throw null"));
+            Ok((filled, thrown))
+        })
+        .unwrap();
+    assert!(
+        matches!(filled, Err(JsFault::JsOutOfMemory { .. })),
+        "{filled:?}"
+    );
+    assert!(
+        matches!(thrown, Err(JsFault::JsException { .. })),
+        "{thrown:?}"
+    );
+}
+
 #[test]
 fn out_of_memory_is_reported_and_context_survives() {
     let host = JsHost::new(JsConfig {

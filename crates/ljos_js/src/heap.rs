@@ -27,9 +27,17 @@ impl HeapCount {
     }
 
     /// Starts the high-water mark again from what is held now; a host
-    /// does this as a run begins.
-    pub(crate) fn mark(&self) {
-        self.0.peak.set(self.bytes());
+    /// does this as a run begins. Returns the mark it replaces, for a
+    /// nested run to hand back with [`HeapCount::resume`].
+    pub(crate) fn mark(&self) -> usize {
+        self.0.peak.replace(self.bytes())
+    }
+
+    /// Goes back to the run a nested one interrupted: its mark `outer`,
+    /// or the nested run's if that went higher, since the outer run held
+    /// the heap then too.
+    pub(crate) fn resume(&self, outer: usize) {
+        self.0.peak.set(self.0.peak.get().max(outer));
     }
 
     /// How much was let go since the most the heap held after the last

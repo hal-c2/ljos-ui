@@ -2009,13 +2009,19 @@ impl JsHost {
         }
         st.deadline.set(Some(start + slice.hard));
         st.settle();
+        // A nested run judges a thrown `null` against its own peak: the
+        // outer one may have filled the heap long before and been
+        // collected since.
+        let outer_peak = self.heap.mark();
         let r = f(&scope);
         let took = st.now(Timing::Leave) - start;
         st.deadline.set(st.outer.borrow_mut().pop());
         st.give_back(took, before, false);
-        let fault = match r {
+        let fault = r.map_err(|e| self.classify(&scope, e, label, took));
+        self.heap.resume(outer_peak);
+        let fault = match fault {
             Ok(v) => return Ok(v),
-            Err(e) => self.classify(&scope, e, label, took),
+            Err(fault) => fault,
         };
         if matches!(fault, JsFault::JsInterrupted { .. }) {
             self.state.stopped.set(true);
