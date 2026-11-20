@@ -1380,6 +1380,7 @@ fn run(e: &Engine, view: ObjectId, st: &ViewState, over: Option<f64>) {
                 warn(e, "place", write_placed(e, o, cross_p, across));
             }
         }
+        super::cull::placed(e, items.iter().map(|i| i.1));
         for &(h, top, lead) in &heads {
             let at = Value::Real(g.in_content(top, lead));
             warn(e, "place", write_placed(e, h, pos_p, at));

@@ -10,6 +10,11 @@
 //! leaves them out of the picture; they still take the pointer, as an
 //! item does that only is not painted.
 //!
+//! A row the incubator makes over later frames is a child of the view's
+//! content from when it is allocated, at its own place (0, 0) until a
+//! pass lays it out. Until then it is not drawn either: qml6 shows the
+//! list in order from its first frame, never a row over the first.
+//!
 //! A delegate waiting in a view's pool (`reuseItems`) is neither drawn
 //! nor given the pointer, and is not told so either: it reads `visible`
 //! as it set it, and so does what is in it, as on qml6. Telling it would
@@ -25,6 +30,8 @@ use rustc_hash::{FxHashMap, FxHashSet};
 struct Culled {
     /// The rows each view does not show.
     by_view: RefCell<FxHashMap<ObjectId, FxHashSet<ObjectId>>>,
+    /// The rows views allocated and have not placed yet.
+    unplaced: RefCell<FxHashSet<ObjectId>>,
     /// The delegates in the pools of all views.
     pooled: RefCell<FxHashSet<ObjectId>>,
     /// Counts the changes, so a scene asks again only after one.
@@ -49,6 +56,35 @@ pub(crate) fn set(e: &Engine, view: ObjectId, rows: FxHashSet<ObjectId>) {
         by_view.insert(view, rows);
     }
     c.generation.set(c.generation.get() + 1);
+}
+
+/// A view allocated `row`, which it has not placed yet.
+pub(crate) fn allocated(e: &Engine, row: ObjectId) {
+    let c = e.extension::<Culled>();
+    if c.unplaced.borrow_mut().insert(row) {
+        c.generation.set(c.generation.get() + 1);
+    }
+}
+
+/// A view placed `rows`, or (one row) let it go.
+pub(crate) fn placed(e: &Engine, rows: impl IntoIterator<Item = ObjectId>) {
+    let c = e.extension::<Culled>();
+    let mut unplaced = c.unplaced.borrow_mut();
+    if unplaced.is_empty() {
+        return;
+    }
+    let before = unplaced.len();
+    for row in rows {
+        unplaced.remove(&row);
+    }
+    if unplaced.len() != before {
+        c.generation.set(c.generation.get() + 1);
+    }
+    // It holds only the rows in flight; a pass that made a thousand at
+    // once would otherwise keep their room for good.
+    if unplaced.is_empty() && unplaced.capacity() > 64 {
+        *unplaced = FxHashSet::default();
+    }
 }
 
 /// `row` went to its view's pool, or (`pooled` false) came out of it or
@@ -77,13 +113,15 @@ pub(crate) fn generation(e: &Engine) -> u64 {
     e.extension::<Culled>().generation.get()
 }
 
-/// Every row a view made and does not show.
+/// Every row a view made and does not show, placed or not.
 pub(crate) fn all(e: &Engine) -> FxHashSet<ObjectId> {
     let c = e.extension::<Culled>();
+    c.unplaced.borrow_mut().retain(|o| e.is_alive(*o));
     c.by_view
         .borrow()
         .iter()
         .filter(|(view, _)| e.is_alive(**view))
         .flat_map(|(_, rows)| rows.iter().copied())
+        .chain(c.unplaced.borrow().iter().copied())
         .collect()
 }

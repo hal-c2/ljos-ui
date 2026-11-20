@@ -139,6 +139,9 @@ impl ViewHost for Host {
             return;
         };
         enrol(e, object, view, Part::Row);
+        // At (0, 0) until a pass places it, which for a row of the
+        // cacheBuffer is frames from now: not drawn over the first rows.
+        super::cull::allocated(e, object);
         // Before the delegate's bindings run, so `parent` and
         // `ListView.view` read right in them.
         e.batch(|| {
@@ -180,6 +183,7 @@ impl ViewHost for Host {
     fn destroying(&self, e: &Engine, object: ObjectId) {
         let view = self.0;
         strike(e, object);
+        super::cull::placed(e, [object]);
         // Out of the tree now; the object itself goes at the next frame.
         if e.is_alive(object) && is_item(e, object) {
             let _ = tree::set_parent_item(e, object, None);
