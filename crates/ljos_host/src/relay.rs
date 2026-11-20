@@ -112,13 +112,14 @@ pub enum Request {
 }
 
 /// Whether a [`Request::Held`] made `over` what the method held is stale
-/// now that it `holds` this text with this `selection` (its two ends): the
-/// method typed or moved its cursor meanwhile, and what it did is on its
-/// way to the application, which asks again if the editor took other than
-/// that. Applied, the request would put the older state back over the
-/// newer, and the application, told of the newer, would not know to
-/// correct it. The selection's ends are compared in either order: one the
-/// platform keeps start first is the same selection.
+/// now that it `holds` this: the method typed, moved its cursor or changed
+/// its composition meanwhile, and what it did is on its way to the
+/// application, which asks again if the editor took other than that.
+/// Applied, the request would put the older state back over the newer, and
+/// the application, told of the newer, would not know to correct it. The
+/// ends of the selection and of the composition are compared in either
+/// order, and an empty composition is none: what the platform keeps either
+/// way is the same.
 ///
 /// What the application wrote is then lost to the method's typing: the
 /// method's report, of its older text with the typing, reaches the editor
@@ -127,10 +128,18 @@ pub enum Request {
 /// inside the one turn between the application's write and the platform
 /// getting to it.
 #[must_use]
-pub fn held_is_stale(over: Option<&crate::HeldText>, holds: &str, selection: [usize; 2]) -> bool {
-    let ends = |[a, b]: [usize; 2]| (a.min(b), a.max(b));
+pub fn held_is_stale(over: Option<&crate::HeldText>, holds: &crate::HeldText) -> bool {
+    let ends = |a: usize, b: usize| (a.min(b), a.max(b));
+    let compose = |held: &crate::HeldText| {
+        held.compose
+            .as_ref()
+            .map(|c| ends(c.start, c.end))
+            .filter(|(start, end)| start < end)
+    };
     over.is_some_and(|over| {
-        over.text != holds || ends([over.anchor, over.cursor]) != ends(selection)
+        over.text != holds.text
+            || ends(over.anchor, over.cursor) != ends(holds.anchor, holds.cursor)
+            || compose(over) != compose(holds)
     })
 }
 
