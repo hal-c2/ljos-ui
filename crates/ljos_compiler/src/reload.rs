@@ -85,6 +85,17 @@ impl CompileFault {
     }
 }
 
+/// A patch offered and not yet answered.
+#[derive(Debug)]
+struct Pending {
+    generation: u64,
+    files: FileSet,
+    /// The files it runs without.
+    failed: BTreeSet<String>,
+    /// [`ReloadSession::unrun`] as it was when the patch was built.
+    unrun: BTreeMap<String, String>,
+}
+
 /// A project kept compiled while its files change.
 ///
 /// It knows what the application runs (the set it was last told was
@@ -128,7 +139,15 @@ pub struct ReloadSession<O> {
     dynamic: Option<HashSet<String>>,
     generation: u64,
     last: u64,
-    pending: Option<(u64, FileSet, BTreeSet<String>)>,
+    /// The patch offered and not yet answered: its generation, its
+    /// files, the files it runs without, and [`unrun`](Self::unrun) as
+    /// it was when it was built.
+    pending: Option<Pending>,
+    /// The files changed since what the application runs was compiled,
+    /// each with the text it runs: what a text is compiled against
+    /// ([`compile_text`](Self::compile_text)). A file it does not run, or
+    /// one it is given as it is now when it asks, has none.
+    unrun: BTreeMap<String, String>,
     warnings: BTreeMap<String, Vec<CompileFault>>,
     /// The scripts saved since the start that do not parse: no build is
     /// offered while one is.
@@ -140,6 +159,9 @@ pub struct ReloadSession<O> {
     /// The files compiled before the session started, by key, which
     /// [`seed`](Self::seed) took for their text.
     seeds: BTreeMap<String, Arc<CompiledFile>>,
+    /// The text each seed was compiled from where the session's differs,
+    /// until the start: a file whose text does not compile runs its seed.
+    seed_texts: BTreeMap<String, String>,
     /// The files whose saved text did not compile when the session
     /// started and which run their seed instead, until they are saved.
     reverted: BTreeSet<String>,
@@ -178,10 +200,12 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
             generation: 0,
             last: 0,
             pending: None,
+            unrun: BTreeMap::new(),
             warnings: BTreeMap::new(),
             broken_scripts: BTreeMap::new(),
             reached: None,
             seeds: BTreeMap::new(),
+            seed_texts: BTreeMap::new(),
             reverted: BTreeSet::new(),
             layer: None,
         }
@@ -223,17 +247,82 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
     }
 
     /// Compiles `text` as the file `key` would be compiled now, against
-    /// the session's files as they stand, with the files `beside` it
+    /// the files the application runs, with the files `beside` it
     /// ([`crate::compile_text_beside`]): for QML a running program holds
     /// as text (`Qt.createQmlObject`), or a file of a directory it reads
-    /// while it runs. The session is left as it was.
+    /// while it runs. A save it was not given, because it did not compile
+    /// or the application refused it, is not what the text sees. The
+    /// session is left as it was.
     pub fn compile_text(
         &mut self,
         key: &str,
         text: &str,
         beside: &[(String, String)],
     ) -> Result<crate::Compiled, Vec<Diagnostic>> {
-        crate::compile_text_beside(&mut self.project, key, text, beside)
+        let mut held = Vec::new();
+        let mut scripts = Vec::new();
+        for (at, ran) in &self.unrun {
+            if is_script(at) {
+                let now = self.project.script(at).map(str::to_owned);
+                if now.as_deref() != Some(ran.as_str()) {
+                    self.project.add_script(at, ran.clone());
+                    scripts.push((at.as_str(), now));
+                }
+            } else if self.sources.get(at) != Some(ran) {
+                held.push(self.project.hold(at, ran));
+            }
+        }
+        let compiled = crate::compile_text_beside(&mut self.project, key, text, beside);
+        for held in held.into_iter().rev() {
+            self.project.release(held);
+        }
+        for (at, now) in scripts.into_iter().rev() {
+            match now {
+                Some(now) => self.project.add_script(at, now),
+                None => self.project.remove_script(at),
+            }
+        }
+        compiled
+    }
+
+    /// Keeps `ran`, the text of `key` before a change, as what the
+    /// application runs of it, unless it changed already since the
+    /// application last took a patch. A QML file it does not run is given
+    /// as it is when it is asked for ([`provide`](Self::provide)).
+    fn note(&mut self, key: &str, ran: Option<&str>) {
+        let Some(ran) = ran else {
+            return;
+        };
+        if self.unrun.contains_key(key) {
+            return;
+        }
+        let runs = is_script(key)
+            || self.live.contains_key(key)
+            || self
+                .pending
+                .as_ref()
+                .is_some_and(|p| p.files.contains_key(key));
+        if runs {
+            self.unrun.insert(key.to_owned(), ran.to_owned());
+        }
+    }
+
+    /// Notes the text of the QML file `key` before it changes.
+    fn note_source(&mut self, key: &str) {
+        let ran = self.sources.get(key).cloned();
+        self.note(key, ran.as_deref());
+    }
+
+    /// Notes the text of the script `key` before it changes.
+    fn note_script(&mut self, key: &str) {
+        let ran = self.project.script(key).map(str::to_owned);
+        self.note(key, ran.as_deref());
+    }
+
+    /// Puts back what a patch that was not taken noted: the older text is
+    /// the one the application runs.
+    fn unrun_back(&mut self, pending: Pending) {
+        self.unrun.extend(pending.unrun);
     }
 
     /// Whether the session is over an application's files with its
@@ -304,9 +393,11 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
                 (key.to_owned(), text)
             })
             .collect();
+        let mut changed = Vec::new();
         for (key, text) in &sources {
             if self.sources.get(key) != Some(text) {
                 self.dirty.insert(key.clone());
+                changed.push(key.clone());
             }
         }
         let gone: Vec<String> = self
@@ -315,6 +406,9 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
             .filter(|key| !sources.contains_key(*key))
             .cloned()
             .collect();
+        for key in changed.iter().chain(&gone) {
+            self.note_source(key);
+        }
         self.sources = sources;
         for key in gone {
             self.dirty_namers(&key);
@@ -339,6 +433,7 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
             if let Some(text) = new_scripts.get(key) {
                 self.check_script(key, text);
             }
+            self.note(key, old_scripts.get(key).map(String::as_str));
             self.script_changed(key);
         }
     }
@@ -517,6 +612,9 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
             return false;
         }
         self.seeds.insert(key.to_owned(), file.clone());
+        if self.sources.get(key).map(String::as_str) != Some(source) {
+            self.seed_texts.insert(key.to_owned(), source.to_owned());
+        }
         // A file that imports a script the user changed is compiled
         // again, though its own text is the one its pack was built from.
         let stale = self
@@ -576,6 +674,21 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
         self.live = self.compiled.clone();
         self.live_failed = self.failed.keys().cloned().collect();
         self.pending = None;
+        // A file that runs its seed runs the text the seed was built from,
+        // and a broken script the application's own.
+        self.unrun.clear();
+        for (key, text) in std::mem::take(&mut self.seed_texts) {
+            if self.reverted.contains(&key) {
+                self.unrun.insert(key, text);
+            }
+        }
+        if let Some(layer) = &self.layer {
+            for key in self.broken_scripts.keys() {
+                if let Some(text) = layer.base.files.get(key) {
+                    self.unrun.insert(key.clone(), text.clone());
+                }
+            }
+        }
         faults
     }
 
@@ -711,6 +824,11 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
         let Some(root) = self.roots.first().cloned() else {
             return Ok(());
         };
+        let old_scripts: BTreeMap<String, String> = self
+            .project
+            .scripts()
+            .map(|(k, t)| (k.to_owned(), t.to_owned()))
+            .collect();
         self.project = match &self.reached {
             Some(reached) => {
                 let mut project =
@@ -737,7 +855,7 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
                 .script(key)
                 .is_some_and(|text| crate::script::syntax_error(text, key).is_some())
         });
-        self.sources = self
+        let sources: BTreeMap<String, String> = self
             .project
             .files()
             .map(|key| {
@@ -745,6 +863,21 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
                 (key.to_owned(), text)
             })
             .collect();
+        let old: Vec<(String, String)> = self
+            .sources
+            .iter()
+            .filter(|(key, text)| sources.get(*key) != Some(*text))
+            .map(|(k, t)| (k.clone(), t.clone()))
+            .chain(
+                old_scripts
+                    .into_iter()
+                    .filter(|(key, text)| self.project.script(key) != Some(text.as_str())),
+            )
+            .collect();
+        for (key, text) in old {
+            self.note(&key, Some(&text));
+        }
+        self.sources = sources;
         self.all_dirty = true;
         Ok(())
     }
@@ -806,6 +939,7 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
         if is_script(key) {
             if self.project.script(key) != Some(source.as_str()) {
                 self.check_script(key, &source);
+                self.note_script(key);
                 self.project.add_script(key, source);
                 self.script_changed(key);
             }
@@ -825,6 +959,7 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
             return;
         }
         if let Some(plain) = plain {
+            self.note_source(&plain);
             self.project.add(key, source);
             if let Some(text) = self.project.source(&plain).map(str::to_owned) {
                 self.sources.insert(plain.clone(), text);
@@ -842,6 +977,7 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
                 self.all_dirty = true;
             }
         }
+        self.note_source(key);
         self.project.add(key, source.as_str());
         self.sources.insert(key.to_owned(), source);
         self.dirty.insert(key.to_owned());
@@ -887,11 +1023,13 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
         if let Some(reached) = &mut self.reached {
             reached.insert(key.to_owned());
         }
+        // It runs as it is now from here on.
+        self.unrun.remove(key);
+        if let Some(pending) = &mut self.pending {
+            pending.unrun.remove(key);
+        }
         let compiled = self.compile_one(key);
-        let pending = self
-            .pending
-            .as_mut()
-            .map(|(_, files, failed)| (files, failed));
+        let pending = self.pending.as_mut().map(|p| (&mut p.files, &mut p.failed));
         match compiled {
             Ok((file, warnings)) => {
                 self.live.insert(key.to_owned(), file.clone());
@@ -933,12 +1071,14 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
         if is_script(key) {
             self.broken_scripts.remove(key);
             if self.project.script(key).is_some() {
+                self.note_script(key);
                 self.project.remove_script(key);
                 self.script_changed(key);
             }
             return;
         }
         if let Some(plain) = crate::project::plain_of(key) {
+            self.note_source(&plain);
             self.project.remove(key);
             if let Some(text) = self.project.source(&plain).map(str::to_owned) {
                 self.sources.insert(plain.clone(), text);
@@ -946,9 +1086,11 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
             }
             return;
         }
-        if self.sources.remove(key).is_none() {
+        if !self.sources.contains_key(key) {
             return;
         }
+        self.note_source(key);
+        self.sources.remove(key);
         if self.layer.is_some() {
             self.project.remove(key);
             self.dirty_namers(key);
@@ -1059,7 +1201,10 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
                 .zip(&self.live)
                 .all(|((ka, a), (kb, b))| ka == kb && (Arc::ptr_eq(a, b) || a == b))
         {
+            // The files compile to what runs: a text compiled against them
+            // is what it would be against what runs.
             self.pending = None;
+            self.unrun.clear();
             return Ok(None);
         }
         self.last += 1;
@@ -1071,7 +1216,24 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
                 patch.removed.push(key.clone());
             }
         }
-        self.pending = Some((self.last, self.compiled.clone(), failed));
+        if let Some(before) = self.pending.take() {
+            self.unrun_back(before);
+        }
+        // A file that runs its seed still does once the patch is taken.
+        let reverted = &self.reverted;
+        let still: BTreeMap<String, String> = self
+            .unrun
+            .iter()
+            .filter(|(key, _)| reverted.contains(*key))
+            .map(|(k, t)| (k.clone(), t.clone()))
+            .collect();
+        let unrun = std::mem::replace(&mut self.unrun, still);
+        self.pending = Some(Pending {
+            generation: self.last,
+            files: self.compiled.clone(),
+            failed,
+            unrun,
+        });
         Ok(Some(patch))
     }
 
@@ -1086,6 +1248,7 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
         self.live = self.compiled.clone();
         self.live_failed = self.failed.keys().cloned().collect();
         self.pending = None;
+        self.unrun.clear();
         &self.live
     }
 
@@ -1095,19 +1258,24 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
     /// waiting for an answer.
     pub fn advance(&mut self) -> u64 {
         self.last += 1;
-        self.pending = Some((self.last, self.live.clone(), self.live_failed.clone()));
+        self.pending = Some(Pending {
+            generation: self.last,
+            files: self.live.clone(),
+            failed: self.live_failed.clone(),
+            unrun: BTreeMap::new(),
+        });
         self.last
     }
 
     /// The application applied the patch of this generation.
     pub fn ack(&mut self, generation: u64) {
-        if let Some((g, files, failed)) = self.pending.take() {
-            if g == generation {
-                self.live = files;
-                self.live_failed = failed;
+        if let Some(pending) = self.pending.take() {
+            if pending.generation == generation {
+                self.live = pending.files;
+                self.live_failed = pending.failed;
                 self.generation = generation;
             } else {
-                self.pending = Some((g, files, failed));
+                self.pending = Some(pending);
             }
         }
     }
@@ -1118,9 +1286,10 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
         if self
             .pending
             .as_ref()
-            .is_some_and(|(g, ..)| *g == generation)
+            .is_some_and(|p| p.generation == generation)
+            && let Some(pending) = self.pending.take()
         {
-            self.pending = None;
+            self.unrun_back(pending);
         }
     }
 
