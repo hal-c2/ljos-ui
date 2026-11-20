@@ -236,7 +236,7 @@ Feature: A shipped application its users change makes QML of text and of files i
       Given the application's plugin file "Plugin.qml":
         """qml
         import QtQuick
-        Item { nothing: 3 }
+        Item { width: }
         """
       When the application runs "Main.qml" built ahead, with the user's directory over it
       And the application's plugin "Plugin.qml" is given to the method "load" of "main"
