@@ -13,6 +13,14 @@
 //! against the application's own sources (its pack's
 //! [`PackSources`]), and takes every other file as the build compiled it.
 //!
+//! The same compiler makes what a script hands the engine while it runs:
+//! QML it holds as text (`Qt.createQmlObject`), and a file of a directory
+//! the application loads from ([`UserQml::loads_from`]). Each compiles
+//! against the user's files over the application's, or the application's
+//! own sources while the user has none; nothing is read for it until a
+//! script first asks. A text that does not compile is the script's error
+//! and is told, as a user's file is.
+//!
 //! Nothing here draws: a host shows what [`UserSession::pump`] tells it,
 //! as a [`DevSession`](crate::DevSession)'s host does.
 
@@ -35,7 +43,8 @@ use ljos_compiler::{
 };
 use ljos_design::theme::Theme;
 use ljos_engine::{
-    ComponentSource, Engine, LogLevel, MapSource, ObjectId, OnDisk, ReloadError, ReloadFault,
+    ComponentSource, Engine, LogLevel, MapSource, ObjectId, OnDisk, QmlText, QmlTextCompiler,
+    QmlTextError, ReloadError, ReloadFault, WeakEngine,
 };
 use ljos_ir::{CompiledFile, ReloadPatch};
 use ljos_js::Bytecode;
@@ -183,6 +192,9 @@ trait Layers {
     /// Starts the watcher over the files, and asks it to read them now
     /// when `flush`.
     fn spawn(&self, sink: Sink, flush: bool) -> Result<Watcher, WatchError>;
+    /// Compiles `text` as the file `key` would be, against the files as
+    /// they stand.
+    fn text(&self, key: &str, text: &str) -> Result<CompiledFile, Vec<QmlTextError>>;
 }
 
 type Sink = Box<dyn FnMut(DevMsg) -> bool + Send>;
@@ -207,6 +219,10 @@ where
             let _ = watcher.flush();
         }
         Ok(watcher)
+    }
+
+    fn text(&self, key: &str, text: &str) -> Result<CompiledFile, Vec<QmlTextError>> {
+        crate::text::outcome(lock(self).compile_text(key, text))
     }
 }
 
@@ -238,6 +254,21 @@ type Make = Box<dyn FnOnce(Making) -> Built + Send>;
 /// user has a file: reading the program's types is work at start-up an
 /// application whose user has none would do for nothing.
 type Later = Box<dyn FnOnce(&Engine) -> Make>;
+
+/// The program's oracle, read from the engine once, by the first that
+/// needs it: the user's first file, or the first text a script makes.
+struct Oracle<O> {
+    make: Cell<Option<Box<dyn FnOnce(&Engine) -> O>>>,
+    made: std::cell::OnceCell<O>,
+}
+
+impl<O: Clone> Oracle<O> {
+    fn get(&self, engine: &Engine) -> O {
+        self.made
+            .get_or_init(|| (self.make.take().expect("read once"))(engine))
+            .clone()
+    }
+}
 
 /// The compiler over an oracle, made only when the user has a file.
 fn maker<O>(oracle: O) -> Make
@@ -293,6 +324,73 @@ where
     })
 }
 
+/// What the engine asks to compile a text, or a file of a directory the
+/// application loads from: the user's files over the application's once
+/// they run, the application's sources until then. Nothing is read before
+/// the first text.
+fn texts_compiler<O>(
+    engine: WeakEngine,
+    pack: Rc<MapSource>,
+    shared: Rc<Shared>,
+    oracle: Rc<Oracle<O>>,
+) -> QmlTextCompiler
+where
+    O: TypeOracle + Clone + Send + 'static,
+{
+    Rc::new(move |text: QmlText<'_>| {
+        shared.texts.set(true);
+        // Out of the borrow: compiling may load a file, which asks the
+        // source, which reads the layers.
+        let layers = shared.layers.borrow().clone();
+        let made = match layers {
+            Some(layers) => layers.text(text.key, text.text),
+            None => {
+                let base = shared.base.borrow().clone();
+                let base = match base {
+                    Some(base) => Ok(base),
+                    None => base_compiler(&engine, &pack, &oracle).inspect(|base| {
+                        *shared.base.borrow_mut() = Some(base.clone());
+                    }),
+                };
+                base.and_then(|base| base(text))
+            }
+        };
+        if let Err(errors) = &made {
+            shared.text_failed(text.url, errors);
+        }
+        made
+    })
+}
+
+/// The texts' compiler over the application's sources alone.
+fn base_compiler<O>(
+    engine: &WeakEngine,
+    pack: &MapSource,
+    oracle: &Oracle<O>,
+) -> Result<QmlTextCompiler, Vec<QmlTextError>>
+where
+    O: TypeOracle + Clone + Send + 'static,
+{
+    let unloaded = |message: String| {
+        vec![QmlTextError {
+            line: 0,
+            column: 0,
+            message,
+        }]
+    };
+    let engine = engine
+        .upgrade()
+        .ok_or_else(|| unloaded("the application has stopped".to_owned()))?;
+    let sources = pack
+        .trailer()
+        .ok_or(ljos_compiler::sources::SourcesError::Missing)
+        .and_then(PackSources::decode)
+        .map_err(|e| unloaded(format!("the application's sources are not loaded: {e}")))?;
+    let project =
+        ljos_compiler::Project::load_texts(&sources.files, sources.style, oracle.get(&engine));
+    Ok(crate::text::text_compiler(project))
+}
+
 /// What the engine's source and the session share.
 struct Shared {
     layers: RefCell<Option<Rc<dyn Layers>>>,
@@ -300,10 +398,33 @@ struct Shared {
     /// program asking again is not told again.
     refused: RefCell<Vec<Refusal>>,
     told: RefCell<HashSet<String>>,
+    /// The texts and files a script asked for that did not compile, not
+    /// yet told.
+    faults: RefCell<Vec<CompileFault>>,
+    /// The texts' compiler over the application's sources alone, while the
+    /// user has no file: made at the first text, dropped when the user's
+    /// files run.
+    base: RefCell<Option<QmlTextCompiler>>,
+    /// Whether a script has asked for a text or such a file yet.
+    texts: Cell<bool>,
     wake: WakeHook,
 }
 
 impl Shared {
+    /// Tells what was wrong with a text at the next pump, as well as the
+    /// script hearing of it.
+    fn text_failed(&self, url: &str, errors: &[QmlTextError]) {
+        self.faults
+            .borrow_mut()
+            .extend(errors.iter().map(|e| CompileFault {
+                file: url.to_owned(),
+                line: e.line,
+                column: e.column,
+                message: e.message.clone(),
+            }));
+        (self.wake)();
+    }
+
     fn refuse(&self, url: &str, why: Refusal) {
         if self.told.borrow_mut().insert(url.to_owned()) {
             self.refused.borrow_mut().push(why);
@@ -327,10 +448,24 @@ struct LayeredSource {
     /// Every directory of the application's files, by key (`parts`).
     dirs: BTreeSet<String>,
     user: UserDir,
+    /// The directories the application loads QML from while it runs
+    /// ([`UserQml::loads_from`]).
+    loads: Vec<PathBuf>,
     shared: Rc<Shared>,
 }
 
 impl LayeredSource {
+    /// Whether `url` is a file of a directory the application loads from:
+    /// under it as written, with no step up.
+    fn loaded_from(&self, url: &str) -> bool {
+        let Some(path) = ljos_engine::url_path(url) else {
+            return false;
+        };
+        !path
+            .components()
+            .any(|c| matches!(c, std::path::Component::ParentDir))
+            && self.loads.iter().any(|dir| path.starts_with(dir))
+    }
     fn layers(&self) -> Option<Rc<dyn Layers>> {
         self.shared.layers.borrow().clone()
     }
@@ -392,7 +527,12 @@ impl ComponentSource for LayeredSource {
         // registered (`Ljos/Design/Colors`): it leads nowhere else.
         let named = !url.contains(':') && !url.starts_with('/');
         let dir = key.rsplit_once('/').map_or("", |(dir, _)| dir);
-        if named || dir.is_empty() || self.dirs.contains(dir) || self.user.has_dir(dir) {
+        if named
+            || dir.is_empty()
+            || self.dirs.contains(dir)
+            || self.user.has_dir(dir)
+            || self.loaded_from(url)
+        {
             return key;
         }
         self.shared.refuse(url, Refusal::Outside(url.to_owned()));
@@ -560,7 +700,7 @@ impl UserSession {
             watch,
             modules,
             theme,
-            loads_from: _,
+            loads_from,
         } = config;
         let dir = match modules {
             Some(modules) => UserDir::new(dir).with_modules(&modules),
@@ -579,6 +719,9 @@ impl UserSession {
             layers: RefCell::new(None),
             refused: RefCell::new(Vec::new()),
             told: RefCell::new(HashSet::new()),
+            faults: RefCell::new(Vec::new()),
+            base: RefCell::new(None),
+            texts: Cell::new(false),
             wake: wake.clone(),
         });
         let (inbox, handle) = UiInbox::channel_with_wake(INBOX, wake);
@@ -605,12 +748,25 @@ impl UserSession {
             prepare(engine);
         }
         engine.set_component_source(LayeredSource {
-            pack,
+            pack: pack.clone(),
             dirs,
             user: dir.clone(),
-            shared,
+            loads: loads_from,
+            shared: shared.clone(),
         });
-        let make: Later = Box::new(move |engine| maker(oracle(engine)));
+        let oracle = Rc::new(Oracle {
+            make: Cell::new(Some(Box::new(oracle) as Box<dyn FnOnce(&Engine) -> O>)),
+            made: std::cell::OnceCell::new(),
+        });
+        // DECISION: the session's compiler replaces one a development
+        // host installed: a text sees the user's files only through it.
+        engine.set_qml_text_compiler(Some(texts_compiler(
+            engine.downgrade(),
+            pack,
+            shared,
+            oracle.clone(),
+        )));
+        let make: Later = Box::new(move |engine| maker(oracle.get(engine)));
         if has_user_files(&dir, theme) {
             match session.making(true) {
                 Ok(making) => {
@@ -666,6 +822,8 @@ impl UserSession {
         } = built;
         let layers: Rc<dyn Layers> = Rc::from(layers as Box<dyn Layers>);
         *self.shared.layers.borrow_mut() = Some(layers.clone());
+        // Texts compile against the user's files from here on.
+        self.shared.base.take();
         if let Some(theme) = theme {
             let generation = engine.reload_generation();
             if let Err(faults) = theme.and_then(|t| set_theme(engine, t.as_ref(), generation)) {
@@ -833,7 +991,7 @@ impl UserSession {
     /// Whether a compiler was made for QML a script holds as text, or for
     /// a file of a directory the application loads from.
     pub fn compiles_texts(&self) -> bool {
-        false
+        self.shared.texts.get()
     }
 
     /// How many reloads were applied.
@@ -869,6 +1027,7 @@ impl UserSession {
         if let Some(layers) = self.shared.layers.borrow().clone() {
             refused.extend(layers.take_refused());
         }
+        refused.extend(self.shared.faults.borrow_mut().drain(..));
         if !refused.is_empty() {
             self.tell(engine, &refused);
             out.push(Report::Failed {

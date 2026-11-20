@@ -82,7 +82,9 @@ fn plugin_file(w: &mut LjosWorld, name: String, step: &Step) -> StepResult {
     w.each(|b| b.application()?.plugin_file(&name, &text))
 }
 
-#[when(regex = r#"^the application's plugin "([^"]+)" is given to the method "([^"]+)" of "([^"]+)"$"#)]
+#[when(
+    regex = r#"^the application's plugin "([^"]+)" is given to the method "([^"]+)" of "([^"]+)"$"#
+)]
 fn plugin_given(w: &mut LjosWorld, name: String, method: String, object: String) -> StepResult {
     w.each(|b| {
         let url = b.application()?.plugin_url(&name)?;
@@ -103,7 +105,10 @@ fn text_given_at_plugin(
 ) -> StepResult {
     w.each(|b| {
         let url = b.application()?.plugin_url(&name)?;
-        let args = [serde_json::Value::String(text.clone()), serde_json::Value::String(url)];
+        let args = [
+            serde_json::Value::String(text.clone()),
+            serde_json::Value::String(url),
+        ];
         b.call(&object, &method, &args).map(drop)
     })
 }

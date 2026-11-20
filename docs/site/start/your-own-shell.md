@@ -292,9 +292,12 @@ fn main() {
 - A file that does not compile leaves what runs as it was. Ljós draws nothing over the window: the fault goes to `on_fault`, for the app to tell its user in its own way.
 - Files load from that directory and the app's pack only. A network address, an absolute path, a `../` that leads out, and a link out of the directory are refused, and the refusal goes to `on_fault`.
 - `UserQml::watch(false)` reads the directory once, at start-up.
+- A script can make QML of text (`Qt.createQmlObject`) against the app's types, with the user's files over them. The compiler for it is made at the first text, not before.
+- `UserQml::loads_from(dir)` names a directory the app loads QML from while it runs, such as plugins it fetched: `Qt.createComponent` and a `Loader` compile a file there when a script asks for it. A file there sees its own directory and the modules it imports, so a plugin that uses the app's types imports the app's module. Every other directory stays refused.
+- A text or a plugin file that does not compile is the script's error, and it goes to `on_fault` too.
 - What it costs an app whose user has no file: the compiler makes the program about 8 MB larger, and it starts in the same time. It takes about 14 MB more memory, most of it what a reload needs to keep the app's state across a save; with `watch(false)` that is not kept, and it takes about 5 MB more.
 
-`user-qml` links no inspector and no reload overlay; those are the `dev` feature's, which builds on it. `examples/user-shell` is a small app that does this.
+`user-qml` links no inspector and no reload overlay; those are the `dev` feature's, which builds on it, and compiling the whole app from source at start-up (`App::qml_dirs`) is `dev-qml`'s. `examples/user-shell` is a small app that does this.
 
 ## Change the shell while the app runs
 

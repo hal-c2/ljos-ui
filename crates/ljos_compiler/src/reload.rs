@@ -222,6 +222,18 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
         session
     }
 
+    /// Compiles `text` as the file `key` would be compiled now, against
+    /// the session's files as they stand ([`crate::compile_text`]): for
+    /// QML a running program holds as text (`Qt.createQmlObject`), or a
+    /// file it reads while it runs. The session is left as it was.
+    pub fn compile_text(
+        &mut self,
+        key: &str,
+        text: &str,
+    ) -> Result<crate::Compiled, Vec<Diagnostic>> {
+        crate::compile_text(&mut self.project, key, text)
+    }
+
     /// Whether the session is over an application's files with its
     /// user's over them.
     pub fn is_layered(&self) -> bool {

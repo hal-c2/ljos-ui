@@ -1,9 +1,11 @@
 //! QML a running program holds as text (`Qt.createQmlObject`).
 //!
-//! Only a development build can make an object of it: the text has to be
-//! compiled, and a shipped program has no compiler. The engine asks
-//! whoever was installed with [`Engine::set_qml_text_compiler`]; this is
-//! what a development host installs.
+//! The text has to be compiled, so only a program that links the compiler
+//! makes an object of it: a development build, and a shipped one its users
+//! change (`user-qml`, whose session compiles texts against the user's
+//! files, [`crate::UserSession`]). The engine asks whoever was installed
+//! with [`Engine::set_qml_text_compiler`]; this is what a development host
+//! installs, and what a session uses before the user has a file.
 //!
 //! [`Engine::set_qml_text_compiler`]: ljos_engine::Engine::set_qml_text_compiler
 
@@ -82,7 +84,15 @@ fn compile<O: TypeOracle>(
     project: &mut Project<O>,
     text: QmlText<'_>,
 ) -> Result<ljos_ir::CompiledFile, Vec<QmlTextError>> {
-    match compile_text(project, text.key, text.text) {
+    outcome(compile_text(project, text.key, text.text))
+}
+
+/// What a text compiled to, as the engine takes it: a file with an error
+/// is not one to make an object of.
+pub(crate) fn outcome(
+    compiled: Result<ljos_compiler::Compiled, Vec<Diagnostic>>,
+) -> Result<ljos_ir::CompiledFile, Vec<QmlTextError>> {
+    match compiled {
         Ok(compiled) if !compiled.has_errors() => Ok(compiled.file),
         Ok(compiled) => Err(errors(&compiled.diagnostics)),
         Err(diagnostics) => Err(errors(&diagnostics)),
