@@ -1675,7 +1675,8 @@ pub struct JsHost {
     interrupt: Rc<InterruptState>,
     cfg: JsConfig,
     /// The heap's limit now: the config's, until
-    /// [`JsHost::set_memory_limit`] puts another.
+    /// [`JsHost::set_memory_limit`] puts another, which a dispatch's
+    /// share is then taken from.
     memory_limit: Cell<Option<usize>>,
     last_collect: Cell<usize>,
     /// Full collections run, by [`JsHost::collect_now`] and
@@ -2846,7 +2847,7 @@ impl JsHost {
     /// The most the heap may hold before the dispatch beginning now is
     /// stopped: what it holds plus its share of the room left.
     fn heap_cap(&self) -> Option<usize> {
-        let limit = self.cfg.memory_limit.filter(|l| *l > 0)?;
+        let limit = self.memory_limit.get().filter(|l| *l > 0)?;
         let share = self.cfg.dispatch_heap_share?.clamp(0.0, 1.0);
         let held = self.heap_bytes();
         let room = limit.saturating_sub(held);
