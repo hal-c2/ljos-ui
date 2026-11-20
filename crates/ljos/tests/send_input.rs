@@ -93,7 +93,7 @@ fn setup(engine: &Engine) -> (ObjectId, ObjectId) {
             moved: |_, _, _, local| note(format!("move {}", at(local))),
             release: |_, _, _, local| note(format!("release {}", at(local))),
             cancel: |_, _| note("cancel".into()),
-            hover: |_, _, _| {},
+            hover: |_, _, on| note(format!("hover {on}")),
         },
     );
     item::register_wheel_item::<Pad>(
@@ -190,6 +190,24 @@ fn a_pointer_reaches_the_item_at_its_own_point() {
         frame,
         &Input::Pointer(PointerEvent::press(1.0, 1.0, t))
     ));
+}
+
+#[test]
+fn a_cancel_and_a_leave_end_what_the_sender_began() {
+    let engine = ljos::engine();
+    let mut window = TestWindow::new(&engine, 200.0, 200.0);
+    let (frame, pad) = setup(&engine);
+    window.show(frame).unwrap();
+    let t = window.now();
+    let send = |ev: PointerEvent| input::send_input(&engine, pad, &Input::Pointer(ev));
+
+    assert!(send(PointerEvent::press(10.0, 5.0, t)));
+    assert!(send(PointerEvent::cancel(t)));
+    assert!(send(PointerEvent::leave(t)));
+    assert_eq!(
+        seen(),
+        ["press 10,5 in scene 60,25", "cancel", "hover false"]
+    );
 }
 
 #[test]

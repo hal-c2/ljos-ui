@@ -86,7 +86,10 @@ pub fn post_input(engine: &Engine, window: ObjectId, input: Input) -> Result<(),
 ///   [`crate::PointerItem`]: a press to `press`, a move to `moved`, a
 ///   release to `release`, a cancel to `cancel`, a leave to `hover`.
 ///   The caller holds the press: it sends the moves and the release
-///   that follow to the same item. Only a press can be refused; the rest
+///   that follow to the same item. A leave only ends a hover: it clears
+///   what the pointer over the item set, so an item that was not hovered
+///   stays as it was. A sender starts no hover; only the scene's pointer
+///   does. Only a press can be refused; the rest
 ///   are taken by an item that takes the pointer at all.
 /// - A wheel event goes to the item's type's
 ///   [`crate::flickable::WheelItem`].

@@ -1432,6 +1432,19 @@ impl Input for LjosBackend {
         })
     }
 
+    fn send_key_to(&mut self, chord: &str, path: &str) -> Result<()> {
+        self.input(|b| {
+            let chord = Chord::parse(chord).map_err(failed)?;
+            let live = b.live()?;
+            let item = live.find(path)?;
+            let ev = ljos_quick::KeyEvent::press(chord.key)
+                .with_modifiers(chord.modifiers)
+                .with_text(chord.text);
+            ljos_quick::send_input(&live.engine, item, &ljos_quick::Input::Key(ev));
+            live.settle()
+        })
+    }
+
     fn window_active(&mut self, active: bool) -> Result<()> {
         self.input(|b| {
             let live = b.live()?;
