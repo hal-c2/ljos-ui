@@ -766,7 +766,7 @@ Feature: A shipped application its users change while it runs
       Then the property "by" of "badge" is "the user's module"
       And the application was told of no fault
 
-    Scenario: A save in the directory of modules is applied with what the user typed kept, and its removal gives way to the application's
+    Scenario: A save in the directory of modules is applied with what the user typed kept
       Given the application keeps its user's modules in "qml"
       When the application runs "Main.qml" built ahead, with the user's directory over it
       And the user types "hello"
@@ -777,10 +777,51 @@ Feature: A shipped application its users change while it runs
         """
       Then the property "by" of "card" is "the user's module"
       And the property "text" of "field" is "hello"
+      And there is no reload error
+      And the application was told of no fault
+
+    Scenario: A user's file in the directory of modules removed gives way to the application's with what the user typed kept
+      Given the application keeps its user's modules in "qml"
+      And the user's file "qml/Card.qml":
+        """qml
+        import QtQuick
+        Rectangle { property string by: "the user's module"; width: 30; height: 10 }
+        """
+      When the application runs "Main.qml" built ahead, with the user's directory over it
+      And the user types "hello"
+      Then the property "by" of "card" is "the user's module"
       When the user removes the file "qml/Card.qml"
       Then the property "by" of "card" is "the application"
       And the property "text" of "field" is "hello"
       And there is no reload error
+      And the application was told of no fault
+
+    Scenario: A module only the user has, declared by its own qmldir, is found by the user's shell
+      Given the application keeps its user's modules in "qml"
+      And the user's file "qml/Parts/qmldir":
+        """
+        module Parts
+        Badge 1.0 Badge.qml
+        """
+      And the user's file "qml/Parts/Badge.qml":
+        """qml
+        import QtQuick
+        Rectangle { property string by: "the user's module"; width: 10; height: 10 }
+        """
+      And the user's file "Shell.qml":
+        """qml
+        import QtQuick
+        import Parts
+        Rectangle {
+          objectName: "user-shell"
+          width: 50; height: 20
+          Badge { objectName: "badge" }
+        }
+        """
+      When the application runs "Main.qml" built ahead, with the user's directory over it
+      Then the user's files are compiled
+      And the object "loader/user-shell" exists
+      And the property "by" of "badge" is "the user's module"
       And the application was told of no fault
 
     Scenario: A user's file beside the directory of modules is hidden by the module's of its name, and back once that is removed
