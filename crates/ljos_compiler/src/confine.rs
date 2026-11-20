@@ -149,7 +149,7 @@ impl UserDir {
     fn module_has(&self, name: &str) -> bool {
         self.modules
             .as_ref()
-            .is_some_and(|modules| self.root.join(modules).join(name).exists())
+            .is_some_and(|modules| self.root.join(modules).join(name).is_file())
     }
 
     pub fn root(&self) -> &Path {
@@ -540,6 +540,22 @@ mod tests {
         // Without, the directory is a directory like any other.
         let plain = UserDir::new(root.path());
         assert_eq!(plain.name_of(&module).unwrap(), "qml/Lib/Badge.qml");
+    }
+
+    #[test]
+    fn a_directory_of_a_module_s_name_hides_no_file_of_the_root() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join("qml/Card.qml")).unwrap();
+        std::fs::write(root.path().join("Card.qml"), "Item {}").unwrap();
+        let dir = UserDir::new(root.path()).with_modules("qml");
+        let (files, refused) = dir.list(|name| name.ends_with(".qml"));
+        assert_eq!(files.keys().collect::<Vec<_>>(), ["Card.qml"]);
+        assert_eq!(files["Card.qml"], "Item {}");
+        assert!(refused.is_empty());
+        assert_eq!(
+            dir.path_of("Card.qml"),
+            std::path::absolute(root.path().join("Card.qml")).unwrap()
+        );
     }
 
     /// The walk reads the root's files before it enters the modules', so a
