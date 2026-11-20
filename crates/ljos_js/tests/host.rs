@@ -1366,3 +1366,27 @@ fn faults_convert_for_the_supervisor() {
     assert_eq!(info.to_string(), "Main.qml:7:0: x is not defined");
     assert_eq!(info.stack, None);
 }
+
+/// A call QuickJS words as unknown, with a script's exception pending, is
+/// that exception, and keeps the value thrown as a thrown one does. A
+/// script cannot reach this on purpose: the run's own code stands in for
+/// the QuickJS call that left it.
+#[test]
+fn an_exception_pending_behind_an_unknown_error_keeps_its_value() {
+    let host = plain();
+    let err = host
+        .enter("unknown", host.config().slice, |s| {
+            let v = s.eval::<ljos_js::rquickjs::Value, _>("new TypeError('mine')")?;
+            let _ = s.ctx().throw(v);
+            Err::<(), _>(ljos_js::rquickjs::Error::Unknown)
+        })
+        .unwrap_err();
+    let JsFault::JsException {
+        message, thrown, ..
+    } = err
+    else {
+        panic!("{err:?}")
+    };
+    assert!(message.contains("mine"), "{message}");
+    assert!(thrown.is_some(), "the value thrown is kept");
+}
