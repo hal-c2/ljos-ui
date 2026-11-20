@@ -3409,14 +3409,15 @@ fn dev_event(shared: &Shared, method: &str, params: &Json) {
             // none it asks nobody, so the view is asked here, and only a
             // refusal reaches the page as the view meant it.
             let asks_itself = origin.starts_with("file:") && !NO_DISPLAY.load(Ordering::Relaxed);
-            let Some(kind) = kind.filter(|k| *k == NOTIFICATIONS_KIND || !asks_itself) else {
-                if let Some(kind) = kind {
-                    shared
-                        .sink
-                        .send(Ev::Note(not_asked(&origin, kind, Unasked::File)));
+            let kind = match scripted_kind(kind, payload, &origin, asks_itself) {
+                Ok(kind) => kind,
+                Err(note) => {
+                    if let Some(note) = note {
+                        shared.sink.send(Ev::Note(note));
+                    }
+                    pass_to_chromium(shared, context, number, Pending::Ignore);
+                    return;
                 }
-                pass_to_chromium(shared, context, number, Pending::Ignore);
-                return;
             };
             if origin.is_empty() || origin == "null" {
                 shared
@@ -3501,6 +3502,38 @@ fn asked_in_script(payload: &str) -> (Option<i32>, Option<u64>) {
     (kind, number.parse::<u64>().ok())
 }
 
+/// The kind of a scripted question of `payload` (read as `kind`) from
+/// `origin` that the view is asked about, or what the log says of one
+/// that goes on to Chromium instead. `asks_itself`: Chromium asks the
+/// view itself about `origin`'s page.
+fn scripted_kind(
+    kind: Option<i32>,
+    payload: &str,
+    origin: &str,
+    asks_itself: bool,
+) -> Result<i32, Option<String>> {
+    match kind {
+        Some(kind) if kind == NOTIFICATIONS_KIND || !asks_itself => Ok(kind),
+        Some(kind) => Err(Some(not_asked(origin, kind, Unasked::File))),
+        // The page wrote the kind: a number is a kind to name, anything
+        // else may be anything, a secret too, so only its length is said.
+        None => {
+            let (written, _) = payload.split_once(':').unwrap_or(("", payload));
+            Err(Some(match written.parse::<i32>() {
+                Ok(kind) => not_asked(origin, kind, Unasked::NotScripted),
+                Err(_) => {
+                    let length = written.chars().count();
+                    format!(
+                        "WebEngineView: {origin:?} asked for a permission the view cannot read \
+                         ({length} characters, not logged), and the view is not asked: \
+                         Chromium answers it"
+                    )
+                }
+            }))
+        }
+    }
+}
+
 /// Why a page's question went on to Chromium, which answers it itself,
 /// without the view asked: what the engine's log says of it, so a page
 /// refused where a view should have been asked says which way it went.
@@ -3519,6 +3552,8 @@ enum Unasked {
     Unfocused,
     /// The view answered this origin before, allowing it or not.
     AnsweredBefore(bool),
+    /// A kind the script does not ask the view about.
+    NotScripted,
 }
 
 /// How the engine's log says that `origin`'s question for `kind` went on
@@ -3552,6 +3587,11 @@ fn not_asked(origin: &str, kind: i32, why: Unasked) -> String {
         }
         Unasked::AnsweredBefore(true) => "the view allowed it before".to_owned(),
         Unasked::AnsweredBefore(false) => "the view refused it before".to_owned(),
+        Unasked::NotScripted => {
+            "the view is asked only about notifications, its location and the clipboard, \
+             and Chromium answers the rest"
+                .to_owned()
+        }
     };
     format!("WebEngineView: {origin:?} asked for {what}, and the view is not asked: {why}")
 }
@@ -4683,6 +4723,33 @@ mod tests {
             let line = not_asked("o", kind, Unasked::AnsweredBefore(true));
             assert!(!line.contains("asked for permission"), "{line}");
         }
+    }
+
+    #[test]
+    fn a_question_of_a_kind_the_view_is_not_asked_about_is_told() {
+        let route = |payload: &str, asks_itself| {
+            let (kind, _) = asked_in_script(payload);
+            scripted_kind(kind, payload, "https://a.example", asks_itself)
+        };
+        assert_eq!(route("8:3", false), Ok(8));
+        assert_eq!(route("7:3", true), Ok(7));
+        let Err(Some(file)) = route("8:3", true) else {
+            panic!("a file's page asked for its location goes on untold");
+        };
+        assert!(file.contains("asks the view itself"), "{file}");
+        // A kind the script never asks about, written by the page: the
+        // number is a kind, so it is named.
+        let Err(Some(other)) = route("1:3", false) else {
+            panic!("a question for the microphone goes on untold");
+        };
+        assert!(other.contains("asked for the microphone"), "{other}");
+        assert!(other.contains("the view is not asked"), "{other}");
+        // No kind at all: only its length, as for a question with no number.
+        let Err(Some(unread)) = route("secret:3", false) else {
+            panic!("a question of no kind the view can read goes on untold");
+        };
+        assert!(!unread.contains("secret"), "{unread}");
+        assert!(unread.contains("the view is not asked"), "{unread}");
     }
 
     #[test]
