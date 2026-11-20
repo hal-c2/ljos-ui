@@ -6,8 +6,9 @@
 //! is not followed. Nothing is kept up to date for this: it is one pass
 //! over the objects, made when asked.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::mem::size_of;
+use std::sync::Arc;
 
 use smallvec::SmallVec;
 
@@ -71,11 +72,23 @@ pub struct ScriptHolders {
     pub truncated: bool,
 }
 
-fn push_js<'v>(v: &'v Value, out: &mut Vec<&'v ljos_js::JsRef>) {
+/// The script values `v` holds. A list or map shared at several places is
+/// gone through once (`seen`, by where it lives): a value that holds the
+/// same one twice at each level would otherwise be gone through
+/// exponentially often.
+fn push_js<'v>(v: &'v Value, seen: &mut HashSet<usize>, out: &mut Vec<&'v ljos_js::JsRef>) {
     match v {
         Value::Js(h) => out.push(&h.0),
-        Value::List(items) => items.iter().for_each(|v| push_js(v, out)),
-        Value::Map(fields) => fields.iter().for_each(|(_, v)| push_js(v, out)),
+        Value::List(items) => {
+            if seen.insert(Arc::as_ptr(items) as usize) {
+                items.iter().for_each(|v| push_js(v, seen, out));
+            }
+        }
+        Value::Map(fields) => {
+            if seen.insert(Arc::as_ptr(fields) as usize) {
+                fields.iter().for_each(|(_, v)| push_js(v, seen, out));
+            }
+        }
         _ => {}
     }
 }
@@ -214,9 +227,13 @@ impl Engine {
             let store = self.inner.store.borrow();
             let mut at: HashMap<Atom, usize> = HashMap::new();
             let mut refs = Vec::new();
+            let mut seen = HashSet::new();
             for header in store.objects.values() {
                 refs.clear();
-                header.dynamic.iter().for_each(|v| push_js(v, &mut refs));
+                header
+                    .dynamic
+                    .iter()
+                    .for_each(|v| push_js(v, &mut seen, &mut refs));
                 if refs.is_empty() {
                     continue;
                 }
