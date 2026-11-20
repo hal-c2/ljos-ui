@@ -90,3 +90,32 @@ fn a_property_of_the_root_context_is_seen_from_every_context_below_it() {
         e.set_context_property(e.root_context(), "owner", Value::Object(owner))
     });
 }
+
+/// A binding that read an id of the root context reads again when its
+/// object is destroyed, from a delegate as from the file's items: Qt 6.12.0
+/// gives `false`, then `true` in both once the application deletes the map.
+#[test]
+fn a_root_context_id_destroyed_re_runs_what_read_it() {
+    let e = engine();
+    let owner = PropertyMap::new(&e, None).expect("map creates");
+    e.set_context_id(e.root_context(), "owner", owner.object());
+    let root = load(
+        &e,
+        r#"import QtQuick
+Item {
+    Item { objectName: "direct"; property bool gone: owner === null }
+    Repeater { model: 1; Item { objectName: "repeater"; property bool gone: owner === null } }
+}
+"#,
+    );
+    let gone = |e: &Engine| ["direct", "repeater"].map(|n| (n, get(e, find(e, root, n), "gone")));
+    assert_eq!(
+        gone(&e),
+        ["direct", "repeater"].map(|n| (n, Value::Bool(false)))
+    );
+    e.destroy_now(owner.object());
+    assert_eq!(
+        gone(&e),
+        ["direct", "repeater"].map(|n| (n, Value::Bool(true)))
+    );
+}
