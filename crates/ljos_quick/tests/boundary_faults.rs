@@ -341,3 +341,87 @@ fn content_whose_scripts_ran_over_their_time_is_shown_and_its_binding_runs_again
     settle(&e, &clock, boundary);
     assert_eq!(e.next_timer_deadline(), None, "nothing more to wait for");
 }
+
+const HANDLER: &str = r#"
+import QtQuick
+import Ljos
+Item {
+    id: root
+    property int made: 0
+    property int ran: 0
+    ErrorBoundary {
+        id: boundary
+        objectName: "boundary"
+        fallback: Text { objectName: "sorry"; text: boundary.fault.kind }
+        content: Component {
+            Item {
+                objectName: "content"
+                property int size: 1
+                Component.onCompleted: root.made++
+                Timer {
+                    interval: 10
+                    running: true
+                    // Runs over its time each time it is called.
+                    onTriggered: { root.ran++; for (;;) {} }
+                }
+            }
+        }
+    }
+}
+"#;
+
+/// A handler of the content that runs over its time is cut short and
+/// nothing more: the content stays shown, the same item, it is not made
+/// again, and the fault is on record as taken by the boundary that kept
+/// its content.
+#[test]
+fn a_handler_of_the_content_that_ran_over_its_time_leaves_the_content_shown() {
+    let e = engine();
+    let clock = Arc::new(VirtualClock::new());
+    e.set_clock(Rc::new(clock.clone()));
+    compile(&e, &[("Main", HANDLER)]);
+    let root = e.create_from_url("Main", None, Vec::new()).unwrap();
+    let boundary = find(&e, root, "boundary");
+    settle(&e, &clock, boundary);
+    let content = get(&e, boundary, "item").as_object().expect("shown");
+    assert_eq!(shown(&e, boundary), "content");
+    let restarts = num(&e, boundary, "restarts");
+    e.set_js_dispatch_budget(Duration::from_millis(10), Duration::from_millis(50))
+        .unwrap();
+
+    clock.set(clock.now() + Duration::from_millis(20));
+    settle(&e, &clock, boundary);
+    assert_eq!(num(&e, root, "ran"), 1.0, "the handler ran");
+    let fault = e
+        .faults()
+        .into_iter()
+        .rev()
+        .find(|f| f.kind() == "JsInterrupted")
+        .expect("the interrupt is on record");
+    assert_eq!(
+        fault.taken_by,
+        ljos_engine::TakenBy::Kept {
+            object: boundary,
+            name: fault_name(&e, boundary),
+        }
+    );
+    assert_eq!(get(&e, boundary, "item").as_object(), Some(content));
+    assert!(e.is_alive(content));
+    assert!(!get(&e, boundary, "failed").to_boolean());
+    assert_eq!(num(&e, boundary, "restarts"), restarts);
+    assert_eq!(num(&e, root, "made"), 1.0, "not made again");
+    assert!(e.application_fault().is_none());
+    // Nothing waits to make it again.
+    for _ in 0..3 {
+        if let Some(due) = e.next_timer_deadline() {
+            clock.set(due);
+        }
+        settle(&e, &clock, boundary);
+    }
+    assert_eq!(get(&e, boundary, "item").as_object(), Some(content));
+    assert_eq!(num(&e, root, "made"), 1.0);
+}
+
+fn fault_name(e: &Engine, o: ObjectId) -> String {
+    e.label_of(o).unwrap_or_default()
+}

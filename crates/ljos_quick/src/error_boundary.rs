@@ -320,6 +320,15 @@ impl Boundary for Behaviour {
         failed(e, me)
     }
 
+    fn keeps(&self, _: &Engine, me: ObjectId, report: &FaultReport) -> bool {
+        // A script of the content stopped for its time leaves the content
+        // whole: the binding cut short runs again by itself
+        // (`run_again_after`), and content made again would run over
+        // again, without end. Content that could not be made at all (the
+        // boundary's own fault) is made again after a wait.
+        matches!(report.fault, Fault::JsInterrupted { .. }) && report.origin != Some(me)
+    }
+
     fn resource_fault(&self, e: &Engine, me: ObjectId, report: &FaultReport) -> bool {
         // A panic in a native type is that type's bug, as for a Loader:
         // it is counted like any other.
@@ -328,14 +337,6 @@ impl Boundary for Behaviour {
             Fault::JsOutOfMemory | Fault::JsInterrupted { .. }
         ) {
             return false;
-        }
-        // A script of the content stopped for its time leaves the content
-        // whole: the binding cut short runs again by itself
-        // (`run_again_after`), and content made again would run over
-        // again, without end. Content that could not be made at all (the
-        // boundary's own fault) is made again after a wait.
-        if matches!(report.fault, Fault::JsInterrupted { .. }) && report.origin != Some(me) {
-            return true;
         }
         self.stop(e, me, report);
         if let Some(Err(fault)) = show_fallback(e, me) {
