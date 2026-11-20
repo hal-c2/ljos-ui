@@ -165,8 +165,8 @@ impl SoftKeyboard {
             let shown = self.shown;
             self.shown = true;
             if differs(self.told.as_ref(), &now) {
-                self.told = Some(now.clone());
-                self.asked.push(Request::Held(now));
+                let over = self.told.replace(now.clone());
+                self.asked.push(Request::Held { now, over });
             }
             // What it holds is set before the keyboard shows.
             if !shown && !hidden {
@@ -250,7 +250,7 @@ mod tests {
         asked
             .iter()
             .filter_map(|r| match r {
-                Request::Held(h) => Some(h.text.clone()),
+                Request::Held { now, .. } => Some(now.text.clone()),
                 _ => None,
             })
             .collect()
@@ -263,7 +263,7 @@ mod tests {
         let asked = keyboard.sync(&s, &e);
         let at = |want: fn(&Request) -> bool| asked.iter().position(want);
         let editor = at(|r| matches!(r, Request::Editor(_))).expect("the editor is told");
-        let held = at(|r| matches!(r, Request::Held(_))).expect("its text is told");
+        let held = at(|r| matches!(r, Request::Held { .. })).expect("its text is told");
         let shown = asked
             .iter()
             .rposition(|r| *r == Request::Keyboard(true))
@@ -294,7 +294,15 @@ mod tests {
         assert_eq!(helds(&keyboard.sync(&s, &e)), Vec::<String>::new());
         e.write_by_name(input, "text", Value::from("zz")).unwrap();
         s.frame(&e, Time::ZERO);
-        assert_eq!(helds(&keyboard.sync(&s, &e)), ["zz"]);
+        let asked = keyboard.sync(&s, &e);
+        assert_eq!(helds(&asked), ["zz"]);
+        // With what the method held, so that the platform drops it if the
+        // method typed before it got to it.
+        let over = asked.iter().find_map(|r| match r {
+            Request::Held { over, .. } => over.as_ref().map(|o| o.text.clone()),
+            _ => None,
+        });
+        assert_eq!(over.as_deref(), Some("abc"));
     }
 
     #[test]
@@ -316,6 +324,23 @@ mod tests {
         );
     }
 
+    #[test]
+    fn typing_into_a_hidden_field_with_all_selected_types_over_it() {
+        let (e, mut s, input) = editor("1234", &[("echoMode", Value::from(2))]);
+        let mut keyboard = SoftKeyboard::default();
+        keyboard.sync(&s, &e);
+        // Selected on focus, as a password field often is.
+        e.invoke_by_name(input, "selectAll", &[]).unwrap();
+        s.frame(&e, Time::ZERO);
+        keyboard.sync(&s, &e);
+        keyboard.held(&s, &e, text("5", 1, None));
+        s.frame(&e, Time::ZERO);
+        assert_eq!(
+            e.read_by_name(input, "text").to_js_string().to_string(),
+            "5"
+        );
+    }
+
     fn position(asked: &[Request], want: fn(&Request) -> bool) -> Option<usize> {
         asked.iter().position(want)
     }
@@ -331,7 +356,7 @@ mod tests {
         keyboard.enable(hint::DIGITS_ONLY);
         let asked = keyboard.sync(&s, &e);
         let editor = position(&asked, |r| matches!(r, Request::Editor(_))).expect("told");
-        let held = position(&asked, |r| matches!(r, Request::Held(_))).expect("held");
+        let held = position(&asked, |r| matches!(r, Request::Held { .. })).expect("held");
         let shown = position(&asked, |r| *r == Request::Keyboard(true)).expect("shown");
         assert!(editor < held && held < shown, "{asked:?}");
     }
@@ -358,7 +383,7 @@ mod tests {
         keyboard.surface_changed();
         let asked = keyboard.sync(&s, &e);
         let editor = position(&asked, |r| matches!(r, Request::Editor(_))).expect("told");
-        let held = position(&asked, |r| matches!(r, Request::Held(_))).expect("held");
+        let held = position(&asked, |r| matches!(r, Request::Held { .. })).expect("held");
         let shown = position(&asked, |r| *r == Request::Keyboard(true)).expect("shown");
         assert!(editor < held && held < shown, "{asked:?}");
         assert_eq!(helds(&asked), ["ab"]);

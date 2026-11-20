@@ -66,15 +66,16 @@ pub trait TextInputClient {
     fn preedit(&self, _engine: &Engine, _item: ObjectId) -> String {
         String::new()
     }
-    /// Takes back the `units` UTF-16 units before the cursor, as as many
+    /// Takes back the selection and the `units` UTF-16 units before it, as
     /// Backspaces would: also in a field that hides its text, where the
     /// cursor is not shown.
     fn delete_before_cursor(&self, engine: &Engine, item: ObjectId, units: usize) {
         let s = self.surrounding(engine, item);
-        self.replace(engine, item, s.cursor.saturating_sub(units)..s.cursor, "");
+        let start = s.anchor.min(s.cursor).saturating_sub(units);
+        self.replace(engine, item, start..s.anchor.max(s.cursor), "");
     }
-    /// Puts `text` in place of the `units` UTF-16 units before the cursor
-    /// as one edit, which a validator takes or refuses whole, also in a
+    /// Puts `text` in place of the selection and the `units` UTF-16 units
+    /// before it as one edit, which a validator takes or refuses whole, also in a
     /// field that hides its text. Returns whether the item took all of
     /// it: a validator, a mask or `maximumLength` may take part or none.
     fn replace_before_cursor(

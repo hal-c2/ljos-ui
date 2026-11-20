@@ -562,3 +562,18 @@ fn insets_told_before_a_window_made_while_waiting_come_before_newer_ones() {
         ]
     );
 }
+
+#[test]
+fn a_held_request_is_dropped_once_the_method_has_typed_since_it_was_made() {
+    let held = |text: &str| crate::HeldText {
+        text: text.to_owned(),
+        anchor: 0,
+        cursor: 0,
+        compose: None,
+    };
+    // Made while the method held "ab"; it has typed "c" since.
+    assert!(held_is_stale(Some(&held("ab")), "abc"));
+    assert!(!held_is_stale(Some(&held("ab")), "ab"));
+    // A method newly set up holds nothing the application knows of.
+    assert!(!held_is_stale(None, "abc"));
+}

@@ -102,7 +102,25 @@ pub enum Request {
     Editor(crate::EditorKind),
     /// What the input method is to hold now: the application changed the
     /// editor's text or selection, or refused what the method typed.
-    Held(crate::HeldText),
+    Held {
+        now: crate::HeldText,
+        /// What the application last knew the method to hold. A method that
+        /// holds other text by the time the platform gets to this has typed
+        /// since, and the request is dropped (see [`held_is_stale`]).
+        over: Option<crate::HeldText>,
+    },
+}
+
+/// Whether a [`Request::Held`] made `over` what the method held is stale
+/// now that it `holds` this text: the method typed meanwhile, and what it
+/// typed is on its way to the application, which asks again if the editor
+/// took other than that. Applied, the request would put the older text
+/// back over what was typed, and the application, told of the typing,
+/// would not know to correct it. Only the text is compared: a selection
+/// the platform evens out is not typing.
+#[must_use]
+pub fn held_is_stale(over: Option<&crate::HeldText>, holds: &str) -> bool {
+    over.is_some_and(|over| over.text != holds)
 }
 
 enum Msg<S, U> {

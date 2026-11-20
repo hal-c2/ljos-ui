@@ -377,7 +377,10 @@ impl<U: Send + 'static> Pump<'_, U> {
                     ImeOptions::from_bits_retain(options),
                 );
             }
-            Request::Held(held) => {
+            Request::Held { now: held, over } => {
+                if crate::relay::held_is_stale(over.as_ref(), &self.app.text_input_state().text) {
+                    return;
+                }
                 let span = |r: &std::ops::Range<usize>| TextSpan {
                     start: r.start,
                     end: r.end,

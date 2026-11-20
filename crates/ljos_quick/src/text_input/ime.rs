@@ -68,10 +68,11 @@ impl TextInputClient for Client {
     }
 
     fn delete_before_cursor(&self, engine: &Engine, item: ObjectId, units: usize) {
-        let Some(cursor) = ops::ready(engine, item).map(|st| st.borrow().model.cursor()) else {
+        let Some(st) = ops::ready(engine, item) else {
             return;
         };
-        self.replace(engine, item, cursor.saturating_sub(units)..cursor, "");
+        let range = before_and_selected(&st.borrow().model, units);
+        self.replace(engine, item, range, "");
     }
 
     fn replace_before_cursor(
@@ -84,15 +85,15 @@ impl TextInputClient for Client {
         let Some(st) = ops::ready(engine, item) else {
             return false;
         };
-        let (cursor, len) = {
+        let (range, len) = {
             let s = st.borrow();
-            (s.model.cursor(), s.model.len())
+            (before_and_selected(&s.model, units), s.model.len())
         };
-        let start = cursor.saturating_sub(units);
-        self.replace(engine, item, start..cursor, text);
+        let (start, removed) = (range.start, range.len());
+        self.replace(engine, item, range, text);
         let s = st.borrow();
         let end = start + units_of(text);
-        s.model.len() == len - (cursor - start) + units_of(text) && s.model.cursor() == end
+        s.model.len() == len - removed + units_of(text) && s.model.cursor() == end
     }
 
     fn digest(&self, engine: &Engine, item: ObjectId) -> u64 {
@@ -430,6 +431,14 @@ fn byte_at(text: &str, unit: usize) -> usize {
         units += c.len_utf16();
     }
     text.len()
+}
+
+/// The `units` UTF-16 units before the selection, and the selection: what
+/// a Backspace there would take first, then the units before it. The
+/// method's report is of a text without the selection, so it goes too.
+fn before_and_selected(model: &ljos_text::TextModel, units: usize) -> Range<usize> {
+    let (anchor, cursor) = (model.anchor(), model.cursor());
+    anchor.min(cursor).saturating_sub(units)..anchor.max(cursor)
 }
 
 fn units_of(text: &str) -> usize {
