@@ -418,12 +418,42 @@ pub fn compile_text<O: TypeOracle>(
     key: &str,
     text: &str,
 ) -> Result<Compiled, Vec<Diagnostic>> {
-    let before = project.source(key).map(str::to_owned);
-    project.add(key, text);
+    compile_text_beside(project, key, text, &[])
+}
+
+/// [`compile_text`], with the files `beside` (key and text: a QML file's
+/// key, or a script's path) in the project while it compiles, as files of
+/// a directory the project does not hold are beside a file read from it.
+/// A file the project has at one of those keys is the one seen, as the
+/// engine loads the project's file of a key before it looks on the disk.
+/// The project is left as it was.
+pub fn compile_text_beside<O: TypeOracle>(
+    project: &mut Project<O>,
+    key: &str,
+    text: &str,
+    beside: &[(String, String)],
+) -> Result<Compiled, Vec<Diagnostic>> {
+    let mut added = Vec::with_capacity(beside.len());
+    for (at, source) in beside.iter().filter(|(at, _)| at != key) {
+        if qml_front::project::is_script(at) {
+            if project.script(at).is_none() {
+                project.add_script(at, source.clone());
+                added.push((at.as_str(), true));
+            }
+        } else if !project.holds(at) {
+            project.add(at, source.clone());
+            added.push((at.as_str(), false));
+        }
+    }
+    let held = project.hold(key, text);
     let compiled = compile_file(project, key);
-    match before {
-        Some(source) => project.add(key, source),
-        None => project.remove(key),
+    project.release(held);
+    for (at, script) in added.into_iter().rev() {
+        if script {
+            project.remove_script(at);
+        } else {
+            project.remove(at);
+        }
     }
     compiled
 }

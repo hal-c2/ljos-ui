@@ -20,8 +20,8 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use ljos_engine::{
-    ConnectionId, Cx, Engine, EngineError, MetaRef, ObjectFlags, ObjectId, QmlList, QmlObject,
-    QmlType, Value, WriteKind, qml_impl,
+    ConnectionId, Cx, Engine, EngineError, MetaRef, ObjectId, QmlList, QmlObject, QmlType, Value,
+    WriteKind, qml_impl,
 };
 use ljos_quick::focus::{FocusReason, force_active_focus, register_focus_scope};
 use ljos_quick::{Item, child_items, is_item, set_parent_item};
@@ -183,6 +183,9 @@ pub(crate) struct BarState {
     others: RefCell<Vec<ObjectId>>,
     /// The bar is making an item from its delegate, which appends it.
     making: Cell<bool>,
+    /// What was declared in the bar is taken in: from here on what comes
+    /// is taken in as it comes.
+    declared_in: Cell<bool>,
     /// The highlighted item.
     current: Cell<Option<ObjectId>>,
     /// The bar is closing a menu itself, to open another or because its
@@ -260,14 +263,9 @@ const BAR: Host = Host {
     content_children: MenuBar::CONTENT_CHILDREN.index,
 };
 
-fn is_complete(e: &Engine, bar: ObjectId) -> bool {
-    e.flags(bar)
-        .is_some_and(|f| f.contains(ObjectFlags::COMPLETED))
-}
-
 fn bar_append(cx: &Cx, child: ObjectId) -> Result<(), EngineError> {
     let (e, bar) = (cx.engine, cx.this);
-    if !is_complete(e, bar) {
+    if !declared_in(e, bar) {
         // Taken in when the bar is complete, when its delegate is known.
         return e.list_push(bar, BAR.content_data, child);
     }
@@ -281,7 +279,7 @@ fn bar_append(cx: &Cx, child: ObjectId) -> Result<(), EngineError> {
 
 fn menus_append(cx: &Cx, menu: ObjectId) -> Result<(), EngineError> {
     let (e, bar) = (cx.engine, cx.this);
-    if !is_complete(e, bar) {
+    if !declared_in(e, bar) {
         return e.list_push(bar, MenuBar::MENUS.index, menu);
     }
     if is_a::<Menu>(e, menu) {
@@ -323,6 +321,7 @@ impl MenuBar {
     #[qml(invokable, name = "removeItem")]
     fn remove_item(cx: &Cx, item: Option<ObjectId>) -> Result<(), EngineError> {
         let (e, bar) = (cx.engine, cx.this);
+        declared_first(e, bar)?;
         if let Some(item) = item
             && leave(e, bar, item)?.is_some()
         {
@@ -336,6 +335,7 @@ impl MenuBar {
     #[qml(invokable, name = "takeItem")]
     fn take_item(cx: &Cx, index: Value) -> Result<Value, EngineError> {
         let (e, bar) = (cx.engine, cx.this);
+        declared_first(e, bar)?;
         let Some(item) = index_arg(&index).and_then(|i| items(e, bar).get(i).copied()) else {
             return Ok(Value::Null);
         };
@@ -371,6 +371,7 @@ impl MenuBar {
         let Some(menu) = menu else {
             return Ok(());
         };
+        declared_first(e, bar)?;
         let Some(item) = items(e, bar)
             .into_iter()
             .find(|i| menu_of(e, *i) == Some(menu))
@@ -389,6 +390,7 @@ impl MenuBar {
     #[qml(invokable, name = "takeMenu")]
     fn take_menu(cx: &Cx, index: Value) -> Result<Value, EngineError> {
         let (e, bar) = (cx.engine, cx.this);
+        declared_first(e, bar)?;
         let Some(item) = index_arg(&index).and_then(|i| items(e, bar).get(i).copied()) else {
             return Ok(Value::Null);
         };
@@ -439,21 +441,12 @@ fn is_open(engine: &Engine, menu: ObjectId) -> bool {
     engine.untrack(|| flag(engine, menu, Popup::VISIBLE.index))
 }
 
+fn declared_in(e: &Engine, bar: ObjectId) -> bool {
+    state_of(e, bar).is_some_and(|s| s.declared_in.get())
+}
+
 fn init_bar(e: &Engine, bar: ObjectId) -> Result<(), EngineError> {
-    let listed = |prop| match e.untrack(|| e.read(bar, prop)) {
-        Value::List(l) => l.iter().filter_map(Value::as_object).collect::<Vec<_>>(),
-        _ => Vec::new(),
-    };
-    let declared = listed(BAR.content_data);
-    let menus = listed(MenuBar::MENUS.index);
-    // Both lists are written anew from the items once those are known.
-    e.list_clear(bar, BAR.content_data)?;
-    host_complete(e, bar, BAR)?;
-    for child in declared.into_iter().chain(menus) {
-        if e.is_alive(child) {
-            take_in(e, bar, child, None)?;
-        }
-    }
+    take_in_declared(e, bar)?;
     changed(e, bar)?;
 
     bind_default(e, bar, MenuBar::CONTENT_WIDTH.index, move |e| {
@@ -468,6 +461,45 @@ fn init_bar(e: &Engine, bar: ObjectId) -> Result<(), EngineError> {
     e.bind_initial(bar, Control::IMPLICIT_CONTENT_HEIGHT.index, move |e| {
         Value::Real(num(e, bar, MenuBar::CONTENT_HEIGHT.index))
     })?;
+    Ok(())
+}
+
+/// Takes in what was declared in the bar, once: when the bar is complete,
+/// or before that when a method changes its items (called from what its
+/// children run as they complete, such as an `Instantiator`'s
+/// `onObjectAdded`). On qml6 the declared menus are the bar's from the
+/// start, so the index such a method is given counts them.
+/// It says whether this was the time it ran.
+fn take_in_declared(e: &Engine, bar: ObjectId) -> Result<bool, EngineError> {
+    let Some(st) = state_of(e, bar) else {
+        return Ok(false);
+    };
+    if st.declared_in.replace(true) {
+        return Ok(false);
+    }
+    let listed = |prop| match e.untrack(|| e.read(bar, prop)) {
+        Value::List(l) => l.iter().filter_map(Value::as_object).collect::<Vec<_>>(),
+        _ => Vec::new(),
+    };
+    let declared = listed(BAR.content_data);
+    let menus = listed(MenuBar::MENUS.index);
+    // Both lists are written anew from the items once those are known.
+    e.list_clear(bar, BAR.content_data)?;
+    host_complete(e, bar, BAR)?;
+    for child in declared.into_iter().chain(menus) {
+        if e.is_alive(child) {
+            take_in(e, bar, child, None)?;
+        }
+    }
+    Ok(true)
+}
+
+/// [`take_in_declared`] for a method, which publishes what was taken in
+/// even when the method itself then changes nothing.
+fn declared_first(e: &Engine, bar: ObjectId) -> Result<(), EngineError> {
+    if take_in_declared(e, bar)? {
+        changed(e, bar)?;
+    }
     Ok(())
 }
 
@@ -693,6 +725,7 @@ fn add(
     if !fits {
         return Ok(());
     }
+    declared_first(e, bar)?;
     take_in(e, bar, obj, at)?;
     changed(e, bar)
 }

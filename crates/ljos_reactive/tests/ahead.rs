@@ -4,7 +4,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use ljos_reactive::Graph;
+use ljos_reactive::{Graph, WriteKind};
 
 type Log = Rc<RefCell<Vec<(i64, i64)>>>;
 
@@ -178,4 +178,51 @@ fn a_binding_first_read_in_a_handler_ahead_stays_part_of_the_change() {
     g.set(a, 1);
     assert_eq!(*seen.borrow(), vec![(1, 1), (10, 1)]);
     assert_eq!(g.get(c), 11);
+}
+
+/// A handler ahead runs before the bindings its change reaches, as
+/// `onXChanged` runs in Qt before the bindings that read `x`: a host write
+/// there over one of them comes before that binding's run for the change,
+/// and the run takes it back. `source` → `twice: source * 2` →
+/// `size: source + twice`, a handler on `source` that writes `size`.
+#[test]
+fn a_host_write_ahead_of_a_binding_the_change_reaches_is_taken_back() {
+    let g: Graph<i64> = Graph::new();
+    let r = g.root();
+    let source = g.property(r, 0).unwrap();
+    let twice = g.binding(r, 0, move |g| g.get(source) * 2).unwrap();
+    let size = g
+        .binding(r, 0, move |g| g.get(source) + g.get(twice))
+        .unwrap();
+    assert_eq!(g.get(size), 0);
+    g.watch_ahead(r, source, move |g, _| {
+        g.write(size, 240, WriteKind::Host).unwrap();
+    })
+    .unwrap();
+    g.set(source, 10);
+    assert_eq!(g.get(size), 30);
+    g.check_invariants().unwrap();
+}
+
+/// The same write from a handler ahead of a change that does not reach
+/// the binding lasts: nothing it reads changed.
+#[test]
+fn a_host_write_ahead_of_a_change_the_binding_does_not_read_lasts() {
+    let g: Graph<i64> = Graph::new();
+    let r = g.root();
+    let source = g.property(r, 0).unwrap();
+    let other = g.property(r, 0).unwrap();
+    let twice = g.binding(r, 0, move |g| g.get(source) * 2).unwrap();
+    let size = g
+        .binding(r, 0, move |g| g.get(source) + g.get(twice))
+        .unwrap();
+    g.watch_ahead(r, other, move |g, _| {
+        g.write(size, 240, WriteKind::Host).unwrap();
+    })
+    .unwrap();
+    g.set(other, 1);
+    assert_eq!(g.get(size), 240);
+    g.set(source, 10);
+    assert_eq!(g.get(size), 30);
+    g.check_invariants().unwrap();
 }

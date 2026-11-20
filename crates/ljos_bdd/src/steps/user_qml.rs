@@ -71,6 +71,72 @@ fn runs_built_ahead(w: &mut LjosWorld, entry: String) -> StepResult {
     w.each(|b| b.application()?.run_built_ahead(&entry))
 }
 
+#[given(regex = r#"^the application's plugin file "([^"]+)":$"#)]
+fn plugin_file(w: &mut LjosWorld, name: String, step: &Step) -> StepResult {
+    let text = docstring(step)?;
+    w.each(|b| b.application()?.plugin_file(&name, &text))
+}
+
+#[when(regex = r#"^the application fetches its plugin file "([^"]+)" again:$"#)]
+fn plugin_fetched_again(w: &mut LjosWorld, name: String, step: &Step) -> StepResult {
+    plugin_file(w, name, step)
+}
+
+#[given(
+    regex = r#"^the application's plugin file "([^"]+)" links to the file "([^"]+)" outside the application's directories$"#
+)]
+fn plugin_links_out(w: &mut LjosWorld, name: String, target: String) -> StepResult {
+    w.each(|b| b.application()?.plugin_link_out(&name, &target))
+}
+
+#[when(
+    regex = r#"^the application's plugin "([^"]+)" is given to the method "([^"]+)" of "([^"]+)"$"#
+)]
+fn plugin_given(w: &mut LjosWorld, name: String, method: String, object: String) -> StepResult {
+    w.each(|b| {
+        let url = b.application()?.plugin_url(&name)?;
+        b.call(&object, &method, &[serde_json::Value::String(url)])
+            .map(drop)
+    })
+}
+
+#[given(regex = r#"^the file "([^"]+)" outside the application's directories:$"#)]
+fn outside_file(w: &mut LjosWorld, name: String, step: &Step) -> StepResult {
+    let text = docstring(step)?;
+    w.each(|b| b.application()?.outside_file(&name, &text))
+}
+
+#[when(
+    regex = r#"^the file "([^"]+)" outside the application's directories is given to the method "([^"]+)" of "([^"]+)"$"#
+)]
+fn outside_given(w: &mut LjosWorld, name: String, method: String, object: String) -> StepResult {
+    w.each(|b| {
+        let url = b.application()?.outside_url(&name)?;
+        b.call(&object, &method, &[serde_json::Value::String(url)])
+            .map(drop)
+    })
+}
+
+#[when(
+    regex = r#"^the text "([^"]+)" is given to the method "([^"]+)" of "([^"]+)" with the address of the application's plugin "([^"]+)"$"#
+)]
+fn text_given_at_plugin(
+    w: &mut LjosWorld,
+    text: String,
+    method: String,
+    object: String,
+    name: String,
+) -> StepResult {
+    w.each(|b| {
+        let url = b.application()?.plugin_url(&name)?;
+        let args = [
+            serde_json::Value::String(text.clone()),
+            serde_json::Value::String(url),
+        ];
+        b.call(&object, &method, &args).map(drop)
+    })
+}
+
 #[when(
     regex = r#"^the application runs "([^"]+\.qml)" built ahead in a window of its own, with the user's directory over it$"#
 )]
@@ -129,6 +195,24 @@ fn not_compiled(w: &mut LjosWorld) -> StepResult {
         (!s.compiling)
             .then_some(())
             .ok_or_else(|| "the user's files are being compiled".to_owned())
+    })
+}
+
+#[then("no compiler was made for text")]
+fn no_text_compiler(w: &mut LjosWorld) -> StepResult {
+    seen(w, |s| {
+        (!s.texts)
+            .then_some(())
+            .ok_or_else(|| "a compiler was made for text".to_owned())
+    })
+}
+
+#[then("a compiler was made for text")]
+fn text_compiler(w: &mut LjosWorld) -> StepResult {
+    seen(w, |s| {
+        s.texts
+            .then_some(())
+            .ok_or_else(|| "no compiler was made for text".to_owned())
     })
 }
 

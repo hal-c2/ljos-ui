@@ -22,8 +22,9 @@ use crate::reload::CompileFault;
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum Refusal {
-    /// A link (or a directory on its way) leads out of the directory.
-    #[error("{0}: a link that leads out of the user's directory")]
+    /// A link (or a directory on its way) leads out of the directory: the
+    /// user's, or one the application loads from.
+    #[error("{0}: a link that leads out of its directory")]
     LinkOut(String),
     /// A path or address that names a place outside the application's
     /// files and its user's directory.
