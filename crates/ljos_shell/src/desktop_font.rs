@@ -38,8 +38,9 @@ use ljos_engine::Font;
 /// none, 1 GNOME's, 2 KDE's.
 static FOLLOWED: AtomicU8 = AtomicU8::new(0);
 
-/// As if the application had started on a GNOME desktop.
-#[cfg(test)]
+/// As if the application had started on a GNOME desktop. Only the
+/// portal's tests, which are Linux's, ask for it.
+#[cfg(all(test, target_os = "linux"))]
 pub(crate) fn follow_gnome() {
     FOLLOWED.store(1, Ordering::Relaxed);
 }
