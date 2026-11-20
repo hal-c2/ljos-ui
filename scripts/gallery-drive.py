@@ -330,7 +330,7 @@ def drive(out, eid):
             if not l.startswith("=="):
                 said.append(re.sub(r"^\d+ ", "", l).replace(CORPUS, ""))
 
-    # gallery:drive built Ljós before the first example (LJOS_BIN), so this is Ljós's own
+    # gallery:drive built Ljós before the first example (GALLERY_LJOS), so this is Ljós's own
     # start, which takes a second or two even with every core busy.
     path = None
     for _ in range(STARTUP * 2):

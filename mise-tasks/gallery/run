@@ -82,15 +82,16 @@ if [ -d "$root/corpus/standins/$id" ]; then
   export QML_XHR_ALLOW_FILE_READ=1
 fi
 
-# gallery:drive and gallery:hot build once before their examples and hand
-# the build down (LJOS_BIN): a build here, after a source changed or behind
+# gallery:drive builds once before its examples and hands the build down
+# (GALLERY_LJOS, a name of the gallery's own: a user sets LJOS_BIN for mcp
+# and features:run, and gallery:run on its own builds): a build here, after a source changed or behind
 # another cargo's lock on the target, would take the time the driver gives
 # the example to start, and its examples would not all run the same build.
 # Otherwise this runs the program its build made, as cargo names it, not
 # whatever is at that path when it starts. GALLERY_PROFILE=release measures
 # what a user gets; the default builds fastest.
-if [ -n "${LJOS_BIN:-}" ]; then
-  ljos="$LJOS_BIN"
+if [ -n "${GALLERY_LJOS:-}" ]; then
+  ljos="$GALLERY_LJOS"
 else
   profile="${GALLERY_PROFILE:-debug}"
   [ "$profile" != debug ] || profile=dev
