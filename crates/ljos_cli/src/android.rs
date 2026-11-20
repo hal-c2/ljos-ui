@@ -1025,7 +1025,8 @@ esac
             program: fake_adb(dir.path(), &on_phone(4321, 4410).to_text(), Some(&stale)),
             device: Some("phone".into()),
         };
-        let out = dir.path().join("out.json");
+        // In a directory connect makes its owner's alone, as a token's is.
+        let out = dir.path().join("target/ljos/out.json");
         let url = connect(&adb, "dev.ljos.hello", &out).unwrap();
         assert_eq!(url, "http://127.0.0.1:39001/mcp");
         let log = std::fs::read_to_string(dir.path().join("log")).unwrap();
