@@ -917,6 +917,7 @@ Item {
         inc.onStatusChanged = function(s) { seen += s + " " }
         return inc.status
     }
+    function force() { inc.forceCompletion(); return inc.status }
 }
 "#;
 
@@ -968,6 +969,34 @@ fn an_incubation_whose_making_panics_tells_its_incubator_and_leaves_nothing() {
     assert!(h.get(inc, "object").as_object().is_none());
     assert!(!e.has_half_made());
     // `inc` itself is the one object more.
+    assert_eq!(e.object_count(), before + 1, "what was made went away");
+}
+
+#[test]
+fn a_forced_incubation_whose_making_panics_reports_the_fault() {
+    let h = engine();
+    let e = &h.engine;
+    e.register_module(ljos_engine::module!("QtQuick" 2.0 => [Dud]));
+    let root = h.load(INCUBATE_DUD);
+    let before = e.object_count();
+    DUDS_PANIC.set(true);
+    assert_eq!(
+        e.invoke_by_name(root, "start", &[]).unwrap(),
+        Value::from(2.0)
+    );
+    // No scheduler runs it: the script makes it all at once.
+    let status = e.invoke_by_name(root, "force", &[]).unwrap();
+    DUDS_PANIC.set(false);
+    assert_eq!(status, Value::from(3.0), "Component.Error");
+    let faults = e.faults();
+    assert!(
+        faults
+            .iter()
+            .any(|f| f.kind() == "Panic" && f.message().contains("a dud")),
+        "{faults:?}"
+    );
+    assert_eq!(statuses(&h, root), "3 ", "told once");
+    assert!(!e.has_half_made());
     assert_eq!(e.object_count(), before + 1, "what was made went away");
 }
 
