@@ -341,6 +341,23 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_hidden_field_keeps_the_order_of_a_composition_text_follows() {
+        let (e, mut s, input) = editor("12", &[("echoMode", Value::from(2))]);
+        let mut keyboard = SoftKeyboard::default();
+        keyboard.sync(&s, &e);
+        // Composing "b", with "c" after it.
+        keyboard.held(&s, &e, text("abc", 3, Some(1..2)));
+        s.frame(&e, Time::ZERO);
+        // Taken whole, in its order: the method is told it with its
+        // composition ended, never a text in another order.
+        assert_eq!(helds(&keyboard.sync(&s, &e)), ["abc"]);
+        assert_eq!(
+            e.read_by_name(input, "text").to_js_string().to_string(),
+            "12abc"
+        );
+    }
+
     fn position(asked: &[Request], want: fn(&Request) -> bool) -> Option<usize> {
         asked.iter().position(want)
     }

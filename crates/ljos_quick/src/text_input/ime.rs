@@ -310,7 +310,18 @@ impl QuickScene {
         let hidden = hides(engine, item, &*client);
         let around = client.surrounding(engine, item);
         let composing = !client.preedit(engine, item).is_empty();
-        let (text, compose) = now.split();
+        let (mut text, mut compose) = now.split();
+        if hidden
+            && compose
+                .as_ref()
+                .is_some_and(|(at, _)| *at < units_of(&text))
+        {
+            // A hidden field keeps what the method typed just before the
+            // cursor, and a composition only at its end: one with text
+            // after it is taken as typed, in the method's order, rather
+            // than moved to the end (and told back so).
+            (text, compose) = (now.text.clone(), None);
+        }
         let (range, typed) = changed(&around.text, &text);
         let edits = !range.is_empty() || !typed.is_empty();
         if composing && (edits || compose.is_none()) {

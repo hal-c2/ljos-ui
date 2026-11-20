@@ -118,6 +118,13 @@ pub enum Request {
 /// back over what was typed, and the application, told of the typing,
 /// would not know to correct it. Only the text is compared: a selection
 /// the platform evens out is not typing.
+///
+/// What the application wrote is then lost to the method's typing: the
+/// method's report, of its older text with the typing, reaches the editor
+/// and is taken whole. Keeping both would need to know which text a
+/// report was made from, which the platform does not say; it takes typing
+/// inside the one turn between the application's write and the platform
+/// getting to it.
 #[must_use]
 pub fn held_is_stale(over: Option<&crate::HeldText>, holds: &str) -> bool {
     over.is_some_and(|over| over.text != holds)
