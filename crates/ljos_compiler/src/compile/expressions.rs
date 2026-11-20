@@ -735,6 +735,10 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                         fallback,
                     }));
                 }
+                // With no property of its own of the name, qml6 6.12 goes on
+                // to the ids and members around, those of the file that uses
+                // this one too.
+                let fallback = fallback.or_else(|| Some(Box::new(Arg::Dynamic(name.to_string()))));
                 return made_in(name, base, fallback);
             }
         }

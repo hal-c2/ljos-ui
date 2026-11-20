@@ -528,6 +528,31 @@ Feature: Names of the component around
       When the object "source" is destroyed
       Then the property "present" of "probe" is false
 
+    Scenario: Under ComponentBehavior Bound a binding reads an id of the file that uses the file when the component has nothing of the name
+      Given the file "Panel.qml":
+        """qml
+        pragma ComponentBehavior: Bound
+        import QtQuick
+        Item {
+          component Box: Item {
+            objectName: "box"
+            property string seen: typeof seed === "object" && seed !== null ? seed.objectName : "nothing"
+          }
+          component Other: Item { Item { id: seed; objectName: "other" } }
+          Other { }
+          Box { }
+        }
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        Item {
+          Item { id: seed; objectName: "outer" }
+          Panel { }
+        }
+        """
+      Then the property "seen" of "box" is "outer"
+
     Scenario: Under ComponentBehavior Bound a PropertyChanges reads an id of the file that uses the file where none is where the component is made
       Given the file "Panel.qml":
         """qml
