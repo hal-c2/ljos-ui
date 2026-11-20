@@ -495,3 +495,30 @@ fn a_pending_redraw_is_drawn_while_messages_keep_coming() {
     drop(stopper);
     assert_eq!(lines(&log), ["drawn", "drawn"]);
 }
+
+#[test]
+fn insets_told_before_the_window_reach_it_once_it_is_made() {
+    let log = Log::default();
+    let requests = Arc::default();
+    let (host, relay) = host(&requests);
+    let insets = crate::Insets {
+        system_bars: [0.0, 63.0, 0.0, 126.0],
+        ..crate::Insets::default()
+    };
+    // The activity tells its insets as it starts, before the application
+    // has a surface to make its window at.
+    relay
+        .send(Arrival::Window(WindowEvent::Insets(insets)))
+        .unwrap();
+    relay
+        .send(Arrival::SurfaceCreated {
+            surface: 7,
+            px: [1080, 2400],
+            scale: 2.75,
+        })
+        .unwrap();
+    relay.post(Msg::Stop).unwrap();
+    host.run(App::new(&log)).unwrap();
+    let told = format!("{:?}", WindowEvent::Insets(insets));
+    assert!(lines(&log).contains(&told), "{:?}", lines(&log));
+}

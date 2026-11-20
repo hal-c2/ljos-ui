@@ -245,6 +245,8 @@ struct State<S> {
     /// The size the window was last told of.
     told: Option<([u32; 2], f64)>,
     redraw: bool,
+    /// Insets told before there was a window, for the window once made.
+    insets: Option<crate::Insets>,
     deadline: Option<Instant>,
     exit: bool,
     app: AppState,
@@ -367,6 +369,7 @@ impl<S: Send + 'static, U: From<Wake> + Send + 'static> PlatformHost for RelayHo
             scale: 1.0,
             told: None,
             redraw: false,
+            insets: None,
             deadline: None,
             exit: false,
             app: AppState::Hidden,
@@ -432,6 +435,18 @@ impl<S: Send + 'static, U: From<Wake> + Send + 'static> PlatformHost for RelayHo
             if state.exit {
                 break;
             }
+            if state.window
+                && let Some(insets) = state.insets.take()
+            {
+                deliver(
+                    &mut state,
+                    Event::Window {
+                        id: WINDOW,
+                        event: WindowEvent::Insets(insets),
+                        raw: None,
+                    },
+                );
+            }
             if state.window && state.told != Some((state.px, state.scale)) && state.px != [0, 0] {
                 state.told = Some((state.px, state.scale));
                 let (px, scale) = (state.px, state.scale);
@@ -496,6 +511,11 @@ fn arrive<S, U>(
             drop(done);
         }
         Arrival::Window(WindowEvent::Resized { px, scale }) => resize(state, px, scale),
+        // Told once, as they change: kept until there is a window to
+        // tell them.
+        Arrival::Window(WindowEvent::Insets(insets)) if !state.window => {
+            state.insets = Some(insets);
+        }
         Arrival::Window(event) => {
             if state.window {
                 deliver(state, window(event));

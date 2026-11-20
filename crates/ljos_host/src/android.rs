@@ -102,6 +102,13 @@ impl<U: Send + 'static> Attach<U> {
         *lock(&FROM_JAVA) = Some(Box::new(move |event| {
             let _ = relay.send(Arrival::Window(event));
         }));
+        // The activity may have told its insets before this was there to
+        // take them; the last ones told stand until it tells others.
+        if let Some(insets) = *lock(&INSETS) {
+            let _ = self
+                .relay
+                .send(Arrival::Window(WindowEvent::Insets(insets)));
+        }
         let mut pump = Pump {
             app,
             relay: &self.relay,
@@ -160,8 +167,15 @@ static FROM_JAVA: Mutex<Option<ToApplication>> = Mutex::new(None);
 /// What hands an event from the Java side to the application attached.
 type ToApplication = Box<dyn Fn(WindowEvent) + Send>;
 
+/// The insets the activity last told, whether or not an application was
+/// attached to take them.
+static INSETS: Mutex<Option<Insets>> = Mutex::new(None);
+
 /// Called on the activity's UI thread: it only queues the event.
 fn from_java(event: WindowEvent) {
+    if let WindowEvent::Insets(insets) = event {
+        *lock(&INSETS) = Some(insets);
+    }
     if let Some(send) = &*lock(&FROM_JAVA) {
         send(event);
     }
