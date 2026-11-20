@@ -8,9 +8,13 @@ set -euo pipefail
 bin="$1"
 shift
 adb="${ADB:-adb}"
-dir=/data/local/tmp/ljos-test
 name="$(basename "$bin")"
-"$adb" shell mkdir -p "$dir" > /dev/null
+# A directory of its own: binaries share names (every doctest is rust_out,
+# and worktrees sharing a target directory build the same ljos_js-<hash>),
+# so runs side by side on one device must not push over or delete each other's.
+"$adb" shell mkdir -p /data/local/tmp/ljos-test > /dev/null
+dir="$("$adb" shell mktemp -d /data/local/tmp/ljos-test/run.XXXXXX | tr -d '\r')"
+[ -n "$dir" ] || { echo "adb-run: no directory on the device" >&2; exit 1; }
 "$adb" push "$bin" "$dir/$name" > /dev/null
 args=""
 for a in "$@"; do
@@ -19,5 +23,5 @@ done
 # The device's sh exits with the test's status, and adb shell passes it on.
 status=0
 "$adb" shell "cd $dir && RUST_BACKTRACE=1 ./$name$args" || status=$?
-"$adb" shell rm -f "$dir/$name" > /dev/null || true
+"$adb" shell rm -rf "$dir" > /dev/null || true
 exit "$status"
