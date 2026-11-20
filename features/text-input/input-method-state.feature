@@ -108,3 +108,29 @@ Feature: An input method that tells the whole of what it holds
       When the property "focus" of "pin" is set to true
       And the input method holds "3" with the cursor at 1
       Then the property "text" of "pin" is "123"
+
+    Scenario: What the input method keeps typing is typed once
+      When the property "focus" of "pin" is set to true
+      And the input method holds "3" with the cursor at 1
+      And the input method holds "34" with the cursor at 2
+      Then the property "text" of "pin" is "1234"
+
+    Scenario: What the input method takes back of its own typing is taken back
+      When the property "focus" of "pin" is set to true
+      And the input method holds "3" with the cursor at 1
+      And the input method holds "34" with the cursor at 2
+      And the input method holds "3" with the cursor at 1
+      Then the property "text" of "pin" is "123"
+
+    Scenario: The same character typed twice is typed twice
+      When the property "focus" of "pin" is set to true
+      And the input method holds "3" with the cursor at 1
+      And the input method holds "33" with the cursor at 2
+      Then the property "text" of "pin" is "1233"
+
+    Scenario: A field changed by the application starts what the input method holds anew
+      When the property "focus" of "pin" is set to true
+      And the input method holds "3" with the cursor at 1
+      And the property "text" of "pin" is set to ""
+      And the input method holds "4" with the cursor at 1
+      Then the property "text" of "pin" is "4"

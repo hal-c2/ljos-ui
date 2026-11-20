@@ -67,6 +67,23 @@ impl TextInputClient for Client {
         });
     }
 
+    fn delete_before_cursor(&self, engine: &Engine, item: ObjectId, units: usize) {
+        let Some(cursor) = ops::ready(engine, item).map(|st| st.borrow().model.cursor()) else {
+            return;
+        };
+        self.replace(engine, item, cursor.saturating_sub(units)..cursor, "");
+    }
+
+    fn digest(&self, engine: &Engine, item: ObjectId) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::hash::DefaultHasher::new();
+        if let Some(st) = ops::ready(engine, item) {
+            let s = st.borrow();
+            (s.model.text(), s.model.anchor(), s.model.cursor()).hash(&mut h);
+        }
+        h.finish()
+    }
+
     fn set_selection(&self, engine: &Engine, item: ObjectId, anchor: usize, cursor: usize) {
         ops::act(engine, item, |st| {
             let mut s = st.borrow_mut();
@@ -210,6 +227,17 @@ impl QuickScene {
         }
         let around = client.surrounding(engine, item);
         let preedit = client.preedit(engine, item);
+        if preedit.is_empty() && hides(engine, item, &*client) {
+            // What the method typed, which it holds still.
+            let text = typed_hidden(engine, item, &*client);
+            let end = units_of(&text);
+            return Some(ImeText {
+                text,
+                anchor: end,
+                cursor: end,
+                compose: None,
+            });
+        }
         if preedit.is_empty() {
             return Some(ImeText {
                 text: around.text,
@@ -240,8 +268,11 @@ impl QuickScene {
     ///
     /// A field that hides its text shows the method nothing
     /// ([`TextInputClient::surrounding`]), so the method only knows what
-    /// it typed since it was last told: what it adds goes at the cursor,
-    /// and what it takes back of its own is left to the keys it sends.
+    /// it typed there: that is taken to be just before the cursor, and
+    /// what changed of it is typed or taken back there. It is kept for as
+    /// long as the field is as the method left it ([`QuickScene::
+    /// ime_text`] tells it), so the method is not told to forget it after
+    /// every key, which it would do only after it typed the next.
     pub fn ime_set_text(&self, engine: &Engine, now: &ImeText) -> bool {
         self.note_input();
         let _acting = crate::input::Delivering::begin(engine);
@@ -251,7 +282,7 @@ impl QuickScene {
         if !client.enabled(engine, item) {
             return false;
         }
-        let hidden = client.hints(engine, item) & hint::HIDDEN_TEXT != 0;
+        let hidden = hides(engine, item, &*client);
         let around = client.surrounding(engine, item);
         let composing = !client.preedit(engine, item).is_empty();
         let (text, compose) = now.split();
@@ -263,9 +294,28 @@ impl QuickScene {
             client.set_preedit(engine, item, "", None);
         }
         if hidden {
-            if !typed.is_empty() {
-                client.commit(engine, item, &typed);
+            let before = typed_hidden(engine, item, &*client);
+            let (range, typed) = changed(&before, &text);
+            let digest = client.digest(engine, item);
+            let back = units_of(&before) - range.start;
+            if back > 0 {
+                client.delete_before_cursor(engine, item, back);
             }
+            // What followed the change in what it held was taken back
+            // with it.
+            let again = typed + &before[byte_at(&before, range.end)..];
+            if !again.is_empty() {
+                client.commit(engine, item, &again);
+            }
+            let after = client.digest(engine, item);
+            // A field that refused what was typed is not as the method
+            // holds it: the method is told to start anew.
+            let took = after != digest || (back == 0 && again.is_empty());
+            *hidden_held(engine).0.borrow_mut() = took.then(|| HiddenHeld {
+                item,
+                text: text.clone(),
+                digest: after,
+            });
         } else if edits {
             let at_cursor =
                 around.anchor == around.cursor && range == (around.cursor..around.cursor);
@@ -297,6 +347,41 @@ impl QuickScene {
             None => {}
         }
         true
+    }
+}
+
+/// Whether `item` hides its text from an input method.
+fn hides(engine: &Engine, item: ObjectId, client: &dyn TextInputClient) -> bool {
+    client.hints(engine, item) & hint::HIDDEN_TEXT != 0
+}
+
+/// What an input method that tells the whole of what it holds typed into
+/// a field that hides its text.
+struct HiddenHeld {
+    item: ObjectId,
+    text: String,
+    /// The field as the method left it ([`TextInputClient::digest`]).
+    digest: u64,
+}
+
+#[derive(Default)]
+struct Hidden(std::cell::RefCell<Option<HiddenHeld>>);
+
+fn hidden_held(engine: &Engine) -> std::rc::Rc<Hidden> {
+    engine.extension::<Hidden>()
+}
+
+/// What the method typed into the hidden field `item`, while the field is
+/// as it left it; else nothing.
+fn typed_hidden(engine: &Engine, item: ObjectId, client: &dyn TextInputClient) -> String {
+    let held = hidden_held(engine);
+    let mut held = held.0.borrow_mut();
+    match held.as_ref() {
+        Some(h) if h.item == item && h.digest == client.digest(engine, item) => h.text.clone(),
+        _ => {
+            *held = None;
+            String::new()
+        }
     }
 }
 

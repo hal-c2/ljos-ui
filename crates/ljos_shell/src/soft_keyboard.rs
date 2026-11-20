@@ -198,4 +198,100 @@ mod tests {
         assert!(!differs(Some(&composing), &text("abni", 4, Some(2..4))));
         assert!(differs(Some(&composing), &text("abni", 4, None)));
     }
+
+    use ljos_engine::{ObjectId, Value};
+    use ljos_quick::{Item, TextInput};
+    use ljos_runtime::Time;
+
+    /// A scene of one focused `TextInput` holding `start`, with `set`
+    /// written to it first.
+    fn editor(start: &str, set: &[(&str, Value)]) -> (Engine, QuickScene, ObjectId) {
+        let e = Engine::new();
+        ljos_quick::register(&e);
+        let root = e.create_native(Item::default(), None).unwrap();
+        e.complete(root).unwrap();
+        let input = e.create_native(TextInput::default(), Some(root)).unwrap();
+        ljos_quick::add_data(&e, root, input).unwrap();
+        e.complete(input).unwrap();
+        for (name, value) in set {
+            e.write_by_name(input, name, value.clone()).unwrap();
+        }
+        e.write_by_name(input, "text", Value::from(start)).unwrap();
+        let mut s = QuickScene::new(kurbo::Size::new(300.0, 200.0));
+        s.set_root(&e, root).unwrap();
+        s.frame(&e, Time::ZERO);
+        e.invoke_by_name(input, "forceActiveFocus", &[]).unwrap();
+        s.frame(&e, Time::ZERO);
+        (e, s, input)
+    }
+
+    fn helds(asked: &[Request]) -> Vec<String> {
+        asked
+            .iter()
+            .filter_map(|r| match r {
+                Request::Held(h) => Some(h.text.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_focused_editor_is_set_up_held_and_then_shown() {
+        let (e, s, _) = editor("ab", &[]);
+        let mut keyboard = SoftKeyboard::default();
+        let asked = keyboard.sync(&s, &e);
+        let at = |want: fn(&Request) -> bool| asked.iter().position(want);
+        let editor = at(|r| matches!(r, Request::Editor(_))).expect("the editor is told");
+        let held = at(|r| matches!(r, Request::Held(_))).expect("its text is told");
+        let shown = asked
+            .iter()
+            .rposition(|r| *r == Request::Keyboard(true))
+            .expect("the keyboard is shown");
+        assert!(editor < held && held < shown, "{asked:?}");
+        assert_eq!(helds(&asked), ["ab"]);
+        // Nothing changed: nothing more is told.
+        assert_eq!(keyboard.sync(&s, &e), Vec::<Request>::new());
+    }
+
+    #[test]
+    fn what_the_editor_refused_is_told_back() {
+        let (e, mut s, _) = editor("", &[("maximumLength", Value::from(2))]);
+        let mut keyboard = SoftKeyboard::default();
+        keyboard.sync(&s, &e);
+        keyboard.held(&s, &e, text("abx", 3, None));
+        s.frame(&e, Time::ZERO);
+        assert_eq!(helds(&keyboard.sync(&s, &e)), ["ab"]);
+    }
+
+    #[test]
+    fn what_the_application_set_is_told() {
+        let (e, mut s, input) = editor("ab", &[]);
+        let mut keyboard = SoftKeyboard::default();
+        keyboard.sync(&s, &e);
+        keyboard.held(&s, &e, text("abc", 3, None));
+        s.frame(&e, Time::ZERO);
+        assert_eq!(helds(&keyboard.sync(&s, &e)), Vec::<String>::new());
+        e.write_by_name(input, "text", Value::from("zz")).unwrap();
+        s.frame(&e, Time::ZERO);
+        assert_eq!(helds(&keyboard.sync(&s, &e)), ["zz"]);
+    }
+
+    #[test]
+    fn a_hidden_field_leaves_the_method_its_own_typing() {
+        // `TextInput.Password`.
+        let (e, mut s, input) = editor("12", &[("echoMode", Value::from(2))]);
+        let mut keyboard = SoftKeyboard::default();
+        // The method holds none of a hidden field's text.
+        assert_eq!(helds(&keyboard.sync(&s, &e)), [""]);
+        keyboard.held(&s, &e, text("3", 1, None));
+        s.frame(&e, Time::ZERO);
+        assert_eq!(helds(&keyboard.sync(&s, &e)), Vec::<String>::new());
+        keyboard.held(&s, &e, text("34", 2, None));
+        s.frame(&e, Time::ZERO);
+        assert_eq!(helds(&keyboard.sync(&s, &e)), Vec::<String>::new());
+        assert_eq!(
+            e.read_by_name(input, "text").to_js_string().to_string(),
+            "1234"
+        );
+    }
 }
