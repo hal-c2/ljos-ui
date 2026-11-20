@@ -82,6 +82,31 @@ fn a_null_thrown_on_a_full_heap_is_running_out_of_memory() {
     assert_eq!(eval_num(&host, "40 + 2").unwrap(), 42.0);
 }
 
+/// What a function that ran out held in its locals is freed as the
+/// exception leaves it, before the fault is told: the heap had room by
+/// then, but it was full when the `null` was thrown.
+#[test]
+fn a_null_thrown_on_a_full_heap_is_running_out_of_memory_after_its_locals_go() {
+    let host = JsHost::new(JsConfig {
+        memory_limit: Some(16 * 1024 * 1024),
+        ..JsConfig::default()
+    })
+    .unwrap();
+    host.collect_now();
+    let held = host.memory_stats().unwrap().malloc_size;
+    assert!(host.set_memory_limit(Some(held + 4 * 1024 * 1024)));
+    // A chain no cycle holds: freed as soon as `fill` returns.
+    let err = eval_num(
+        &host,
+        "function fill() { let h = null; for (;;) h = { n: h } } fill()",
+    )
+    .unwrap_err();
+    assert!(matches!(err, JsFault::JsOutOfMemory { .. }), "{err:?}");
+    // A script's own `throw null` in the next run, with room, is its own.
+    let err = eval_num(&host, "throw null").unwrap_err();
+    assert!(matches!(err, JsFault::JsException { .. }), "{err:?}");
+}
+
 #[test]
 fn out_of_memory_is_reported_and_context_survives() {
     let host = JsHost::new(JsConfig {
