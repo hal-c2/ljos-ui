@@ -3192,6 +3192,51 @@ fn app_audit_on_a_virtual_clock_lets_the_application_run_and_moves_it_on() {
     assert!(ran >= windows, "the clock moved {ran} µs");
 }
 
+/// A secret the application first holds while an acting audit lets it run
+/// is masked in what the audit tells, as one it held before is.
+#[test]
+fn app_audit_masks_a_secret_the_application_took_while_it_ran() {
+    use ljos_runtime::VirtualClock;
+    let mut app = app_granted(
+        r##"import QtQuick
+Item {
+    width: 200; height: 100
+    TextInput {
+        id: pin
+        width: 100; height: 20
+        echoMode: TextInput.Password
+    }
+    Timer {
+        interval: 1500; running: true
+        onTriggered: { pin.text = "late-pin"; throw new Error("thrown " + pin.text) }
+    }
+}
+"##,
+        InspectorConfig::default(),
+        CapSet::of([Cap::Inspect, Cap::Input]),
+    );
+    let clock = VirtualClock::new();
+    app.engine.set_clock(std::rc::Rc::new(clock.clone()));
+    let App {
+        client,
+        inspector,
+        scene,
+        engine,
+        ..
+    } = &mut app;
+    let inspector = inspector.as_mut().unwrap();
+    inspector.set_virtual_clock(clock.clone());
+    let reply = client
+        .call("app_audit", json!({ "act": true }), &mut || {
+            inspector.pump(engine, scene, &clock)
+        })
+        .unwrap();
+    let told = format!("{}\n{}", reply.structured, reply.text);
+    assert!(told.contains("health-fault"), "the fault was found: {told}");
+    assert!(!told.contains("late-pin"), "{told}");
+    assert!(told.contains("thrown <redacted>"), "{told}");
+}
+
 #[test]
 fn app_audit_can_keep_to_one_item_and_refuses_an_unknown_rule() {
     let mut app = app();

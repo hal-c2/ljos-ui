@@ -1275,7 +1275,10 @@ impl Inspector {
                     self.pointer_lines,
                 )));
             }
-            // Masked as what the application logged or threw is.
+            // Masked as what the application logged or threw is, with what
+            // the fields came to hold while an acting audit let it run.
+            let now = capture::secrets(engine, scene, self.cfg.redact_all);
+            self.logs.borrow_mut().learn(&now);
             let book = self.logs.borrow();
             let book = book.book();
             let answer = match answer {
