@@ -465,6 +465,9 @@ where
 
     /// One pass of the scene, drawn into the surface.
     fn draw(&mut self, host: &mut RelayControl<'_, NativeWindow>) {
+        // Met by this turn even when nothing can be drawn: a surface that
+        // comes back asks for a pass of its own.
+        posted_met(&self.due, Instant::now());
         let Stage::Running(app) = &mut self.stage else {
             return;
         };
@@ -548,16 +551,44 @@ where
     /// When the loop wakes by itself next: the scene's next frame, or
     /// what another thread asked for.
     fn next_wake(&mut self, host: &mut RelayControl<'_, NativeWindow>) {
-        let now = Instant::now();
-        let posted = crate::lock(&self.due).take();
-        let due = match (self.asked, posted) {
-            (Some(a), Some(b)) => Some(a.min(b)),
-            (a, b) => a.or(b),
-        };
-        match due {
-            Some(at) if at <= now + HEARTBEAT / 4 => host.request_redraw(WINDOW),
-            other => host.wake_at(other),
+        match next_wake(self.asked, &self.due, Instant::now()) {
+            Next::Now => host.request_redraw(WINDOW),
+            Next::At(at) => host.wake_at(at),
         }
+    }
+}
+
+/// What the loop does before it waits.
+#[derive(Debug, PartialEq, Eq)]
+enum Next {
+    /// A pass now: what is due is too near to sleep for.
+    Now,
+    /// Sleep until then, or until something arrives.
+    At(Option<Instant>),
+}
+
+/// The earlier of the scene's next frame (`asked`) and the turn another
+/// thread asked for (`posted`). What was posted stays until a pass meets
+/// it ([`posted_met`]): the host keeps only the deadline it was told last,
+/// and a turn that asks for nothing new would otherwise tell it none.
+fn next_wake(asked: Option<Instant>, posted: &Mutex<Option<Instant>>, now: Instant) -> Next {
+    let posted = *crate::lock(posted);
+    let due = match (asked, posted) {
+        (Some(a), Some(b)) => Some(a.min(b)),
+        (a, b) => a.or(b),
+    };
+    match due {
+        Some(at) if at <= now + HEARTBEAT / 4 => Next::Now,
+        other => Next::At(other),
+    }
+}
+
+/// A pass that `began` then meets what was posted for then or before, and
+/// for as near after as [`next_wake`] does not sleep for.
+fn posted_met(posted: &Mutex<Option<Instant>>, began: Instant) {
+    let mut posted = crate::lock(posted);
+    if posted.is_some_and(|at| at <= began + HEARTBEAT / 4) {
+        *posted = None;
     }
 }
 
@@ -766,4 +797,45 @@ fn surface_of(
     // SAFETY: the window outlives the surface: the relay keeps it until
     // the application has let go of the surface (`SurfaceDestroyed`).
     unsafe { instance.create_surface_unsafe(target) }.map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{HEARTBEAT, Next, next_wake, posted_met};
+    use std::sync::Mutex;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn a_posted_wake_outlives_a_turn_that_asks_for_nothing() {
+        let now = Instant::now();
+        let at = now + HEARTBEAT;
+        let posted = Mutex::new(Some(at));
+        assert_eq!(next_wake(None, &posted, now), Next::At(Some(at)));
+        // Memory pressure, say: a turn with no pass and nothing posted.
+        assert_eq!(next_wake(None, &posted, now), Next::At(Some(at)));
+        // A pass before it leaves it.
+        posted_met(&posted, now);
+        assert_eq!(next_wake(None, &posted, now), Next::At(Some(at)));
+    }
+
+    #[test]
+    fn a_pass_meets_the_posted_wake_once_it_is_due() {
+        let now = Instant::now();
+        let posted = Mutex::new(Some(now + Duration::from_millis(1)));
+        assert_eq!(next_wake(None, &posted, now), Next::Now);
+        posted_met(&posted, now);
+        assert_eq!(next_wake(None, &posted, now), Next::At(None));
+    }
+
+    #[test]
+    fn the_scenes_frame_and_a_posted_wake_take_the_earlier() {
+        let now = Instant::now();
+        let frame = now + HEARTBEAT;
+        let posted = Mutex::new(Some(now + 2 * HEARTBEAT));
+        assert_eq!(next_wake(Some(frame), &posted, now), Next::At(Some(frame)));
+        assert_eq!(
+            next_wake(None, &posted, now),
+            Next::At(Some(now + 2 * HEARTBEAT))
+        );
+    }
 }
