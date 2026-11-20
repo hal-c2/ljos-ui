@@ -361,6 +361,9 @@ struct JSRuntime {
     struct list_head tmp_obj_list; /* used during GC */
     JSGCPhaseEnum gc_phase : 8;
     size_t malloc_gc_threshold;
+    /* Ljós: the most malloc_size held since JS_MarkMallocPeak, in the units
+       malloc_limit is checked in. */
+    size_t malloc_peak;
 #ifdef ENABLE_DUMPS // JS_DUMP_LEAKS
     struct list_head string_list; /* list of JSString.link */
 #endif
@@ -2013,6 +2016,8 @@ void *js_calloc_rt(JSRuntime *rt, size_t count, size_t size)
 
     s->malloc_count++;
     s->malloc_size += js_arena_usable_size(rt, ptr) + MALLOC_OVERHEAD;
+    if (s->malloc_size > rt->malloc_peak)
+        rt->malloc_peak = s->malloc_size;
     return ptr;
 }
 
@@ -2036,6 +2041,8 @@ void *js_malloc_rt(JSRuntime *rt, size_t size)
 
     s->malloc_count++;
     s->malloc_size += js_arena_usable_size(rt, ptr) + MALLOC_OVERHEAD;
+    if (s->malloc_size > rt->malloc_peak)
+        rt->malloc_peak = s->malloc_size;
     return ptr;
 }
 
@@ -2082,6 +2089,8 @@ void *js_realloc_rt(JSRuntime *rt, void *ptr, size_t size)
         return NULL;
 
     s->malloc_size += js_arena_usable_size(rt, ptr) - old_size;
+    if (s->malloc_size > rt->malloc_peak)
+        rt->malloc_peak = s->malloc_size;
     return ptr;
 }
 
@@ -2453,6 +2462,25 @@ JSRuntime *JS_NewRuntime(void)
 void JS_SetMemoryLimit(JSRuntime *rt, size_t limit)
 {
     rt->malloc_state.malloc_limit = limit;
+}
+
+/* Ljós: starts the high-water mark of malloc_size again from what is held
+   now, returning the mark it replaces. */
+size_t JS_MarkMallocPeak(JSRuntime *rt)
+{
+    size_t old = rt->malloc_peak;
+    rt->malloc_peak = rt->malloc_state.malloc_size;
+    return old;
+}
+
+/* Ljós: the most malloc_size held since JS_MarkMallocPeak, or since
+   `outer` was marked when that is more: a nested run hands back the mark of
+   the run around it. */
+size_t JS_ResumeMallocPeak(JSRuntime *rt, size_t outer)
+{
+    if (outer > rt->malloc_peak)
+        rt->malloc_peak = outer;
+    return rt->malloc_peak;
 }
 
 void JS_SetDumpFlags(JSRuntime *rt, uint64_t flags)

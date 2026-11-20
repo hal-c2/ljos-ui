@@ -208,6 +208,8 @@ pub struct ScriptMemory {
     pub bytes: usize,
     /// Script objects alive, functions included.
     pub objects: usize,
+    /// Full collections run since the script engine started.
+    pub collections: u64,
 }
 
 impl Engine {
@@ -234,10 +236,12 @@ impl Engine {
         if !self.js_started() {
             return None;
         }
-        let stats = self.js().ok()?.host.memory_stats()?;
+        let host = &self.js().ok()?.host;
+        let stats = host.memory_stats()?;
         Some(ScriptMemory {
             bytes: stats.malloc_size,
             objects: stats.object_count,
+            collections: host.collections(),
         })
     }
 }
