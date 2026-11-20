@@ -3471,6 +3471,7 @@ pub(crate) fn classify_error<'js>(
             if heap_nearly_full(ctx, sources.peak.map_or(0, MallocPeak::get)) {
                 JsFault::JsOutOfMemory {
                     label: label.to_owned(),
+                    what: String::new(),
                 }
             } else {
                 JsFault::Internal(rquickjs::Error::Unknown.to_string())
