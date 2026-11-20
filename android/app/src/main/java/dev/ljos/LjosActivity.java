@@ -4,6 +4,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.view.View;
 import android.view.WindowManager;
+import android.view.inputmethod.InputMethodManager;
 import androidx.activity.BackEventCompat;
 import androidx.activity.OnBackPressedCallback;
 import androidx.core.graphics.Insets;
@@ -92,6 +93,22 @@ public class LjosActivity extends GameActivity {
             return;
         }
         runOnUiThread(() -> back.setEnabled(taken));
+    }
+
+    /**
+     * The application set what the input method holds; GameTextInput does
+     * not tell the keyboard, so a cursor the user moved by touch, or text
+     * the application changed, would be unknown to it until it restarts.
+     * Positions in UTF-16 units; -1 for no composition.
+     */
+    public void inputStateChanged(int selStart, int selEnd, int composeStart, int composeEnd) {
+        runOnUiThread(() -> {
+            View view = getWindow().getDecorView().findFocus();
+            InputMethodManager imm = getSystemService(InputMethodManager.class);
+            if (view != null && imm != null) {
+                imm.updateSelection(view, selStart, selEnd, composeStart, composeEnd);
+            }
+        });
     }
 
     @Override

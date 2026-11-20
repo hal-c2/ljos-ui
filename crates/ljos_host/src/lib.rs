@@ -19,6 +19,8 @@
 
 #[cfg(all(feature = "android", target_os = "android"))]
 pub mod android;
+#[cfg(any(test, all(feature = "android", target_os = "android")))]
+mod android_editor;
 mod event;
 // Only the Android host uses it; it builds everywhere so its tests run.
 #[cfg_attr(not(all(feature = "android", target_os = "android")), allow(dead_code))]
@@ -42,8 +44,9 @@ use std::sync::Arc;
 use std::time::Instant;
 
 pub use event::{
-    AppState, BackPhase, ButtonState, Event, Insets, Key, KeyEvent, Modifiers, PointerButton,
-    PointerEvent, PointerKind, TextEvent, TouchEvent, TouchPhase, WheelDelta, WindowEvent,
+    AppState, BackPhase, ButtonState, EditorKind, Event, HeldText, Insets, Key, KeyEvent,
+    Modifiers, PointerButton, PointerEvent, PointerKind, TextEvent, TextKind, TouchEvent,
+    TouchPhase, WheelDelta, WindowEvent,
 };
 pub use schedule::{Schedule, Sleep};
 pub use window::{

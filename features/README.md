@@ -268,6 +268,9 @@ setter tries to write `depth` and logs the error it gets.
 | `When the user scrolls N pixels down at X, Y` | a touchpad, or another device that scrolls by the pixel, scrolls that far, in the same four directions (`@ljos-only`) |
 | `When the input method composes "text"` | an input method shows the text at the cursor as what is being composed; `""` ends the composition with nothing typed (`@ljos-only`: the oracle has no input method) |
 | `When the input method commits "text"` | an input method ends the composition and types the text (`@ljos-only`) |
+| `When the input method holds "text" with the cursor at N` | an input method that tells the whole of what it holds (Android's GameTextInput) holds the text, the cursor at N UTF-16 units; the editor takes what changed (`@ljos-only`) |
+| `When the input method holds "text" selecting from A to B` | the same, with A to B selected |
+| `When the input method holds "text" composing A to B with the cursor at N` | the same, with A to B (UTF-16 units) still being composed |
 | `When the file "X.qml" is changed to:` + doc string | a file of the running application (a `.qml`, `.js`, `.mjs` or `.ts`) is saved with that text, or made if there was none; it is applied once the files have been quiet for 120 milliseconds; on `@desktop` the application runs under `ljos run --watch`, and the step waits until it has reloaded and presented its picture (`@ljos-only`: hot reload is a Ljós extension) |
 | `When the file "X.qml" is removed` | the file is deleted while the application runs (`@ljos-only`) |
 | `When a native handler of "o" panics with "message"` | a method of a native type panics while it runs for that object, as a bug in the type would (`@ljos-only`: faults and their boundaries are Ljós's own) |

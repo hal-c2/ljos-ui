@@ -76,6 +76,7 @@ mod roots;
 mod scene3d;
 mod screen_reader;
 mod settings;
+mod soft_keyboard;
 #[cfg(gl_painter)]
 mod software;
 mod streams;

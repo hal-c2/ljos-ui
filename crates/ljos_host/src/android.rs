@@ -10,7 +10,8 @@
 use std::sync::{Arc, Mutex};
 
 use android_activity::input::{
-    Axis, InputEvent, KeyAction, KeyMapChar, Keycode, MotionAction, MotionEvent,
+    Axis, ImeOptions, InputEvent, InputType, KeyAction, KeyMapChar, Keycode, MotionAction,
+    MotionEvent, TextInputAction, TextInputState, TextSpan,
 };
 use android_activity::{AndroidApp, AndroidAppWaker, InputStatus, MainEvent, PollEvent};
 use ndk::native_window::NativeWindow;
@@ -18,8 +19,8 @@ use ndk::native_window::NativeWindow;
 use crate::pump::{exiting, keeps_pumping};
 use crate::relay::{Arrival, Relay, RelayHost, Request};
 use crate::{
-    AppState, BackPhase, ButtonState, Capabilities, Insets, Key, KeyEvent, TouchEvent, TouchPhase,
-    Wake, WindowEvent,
+    AppState, BackPhase, ButtonState, Capabilities, HeldText, Insets, Key, KeyEvent, TextEvent,
+    TouchEvent, TouchPhase, Wake, WindowEvent,
 };
 
 /// The Android host: the application's side, run on its own thread.
@@ -368,6 +369,36 @@ impl<U: Send + 'static> Pump<'_, U> {
             Request::BackTaken(taken) => {
                 call_activity(self.app, ActivityCall::BackTaken(taken));
             }
+            Request::Editor(editor) => {
+                let (input_type, action, options) = crate::android_editor::editor_info(&editor);
+                self.app.set_ime_editor_info(
+                    InputType::from_bits_retain(input_type),
+                    TextInputAction::from(action),
+                    ImeOptions::from_bits_retain(options),
+                );
+            }
+            Request::Held(held) => {
+                let span = |r: &std::ops::Range<usize>| TextSpan {
+                    start: r.start,
+                    end: r.end,
+                };
+                let compose = held.compose.as_ref().filter(|c| c.start < c.end);
+                let unit = |n: usize| i32::try_from(n).unwrap_or(i32::MAX);
+                let told = ActivityCall::InputStateChanged {
+                    selection: [unit(held.anchor), unit(held.cursor)],
+                    compose: compose.map_or([-1, -1], |c| [unit(c.start), unit(c.end)]),
+                };
+                self.app.set_text_input_state(TextInputState {
+                    text: held.text,
+                    selection: TextSpan {
+                        start: held.anchor,
+                        end: held.cursor,
+                    },
+                    compose_region: compose.map(span),
+                });
+                // GameTextInput does not tell the keyboard itself.
+                call_activity(self.app, told);
+            }
         }
     }
 }
@@ -422,6 +453,23 @@ fn translate(app: &AndroidApp, event: &InputEvent<'_>, out: &mut Vec<WindowEvent
                 repeat: key.repeat_count() > 0,
                 text: None,
             }));
+            InputStatus::Handled
+        }
+        InputEvent::TextEvent(state) => {
+            let compose = state
+                .compose_region
+                .map(|c| c.start.min(c.end)..c.start.max(c.end))
+                .filter(|c| c.start < c.end);
+            out.push(WindowEvent::Text(TextEvent::Held(HeldText {
+                text: state.text.clone(),
+                anchor: state.selection.start,
+                cursor: state.selection.end,
+                compose,
+            })));
+            InputStatus::Handled
+        }
+        InputEvent::TextAction(_) => {
+            out.push(WindowEvent::Text(TextEvent::Action));
             InputStatus::Handled
         }
         _ => InputStatus::Unhandled,
@@ -488,6 +536,12 @@ enum ActivityCall {
     Finish,
     /// `LjosActivity.setBackTaken`.
     BackTaken(bool),
+    /// `LjosActivity.inputStateChanged`: the keyboard is told where the
+    /// selection and the composition are, in UTF-16 units; -1 for none.
+    InputStateChanged {
+        selection: [i32; 2],
+        compose: [i32; 2],
+    },
 }
 
 /// Calls the activity on this thread, which android-activity attached to
@@ -521,6 +575,19 @@ fn call_activity(app: &AndroidApp, call: ActivityCall) -> bool {
                     jni_str!("setBackTaken"),
                     jni_sig!((jboolean) -> void),
                     &[JValue::Bool(taken)],
+                )?;
+            }
+            ActivityCall::InputStateChanged { selection, compose } => {
+                env.call_method(
+                    &activity,
+                    jni_str!("inputStateChanged"),
+                    jni_sig!((jint, jint, jint, jint) -> void),
+                    &[
+                        JValue::Int(selection[0]),
+                        JValue::Int(selection[1]),
+                        JValue::Int(compose[0]),
+                        JValue::Int(compose[1]),
+                    ],
                 )?;
             }
         }

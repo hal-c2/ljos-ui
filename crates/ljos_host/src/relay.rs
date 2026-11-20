@@ -97,6 +97,12 @@ pub enum Request {
     /// not, the platform does Back by itself (Android plays its own
     /// predictive animation for it).
     BackTaken(bool),
+    /// The on-screen keyboard is for this kind of editor; told before it
+    /// is shown.
+    Editor(crate::EditorKind),
+    /// What the input method is to hold now: the application changed the
+    /// editor's text or selection, or refused what the method typed.
+    Held(crate::HeldText),
 }
 
 enum Msg<S, U> {

@@ -3,7 +3,7 @@
 use cucumber::{given, when};
 use gherkin::Step;
 
-use crate::backend::{OtherButton, PointerStep, TouchFrame, WheelBy};
+use crate::backend::{HeldText, OtherButton, PointerStep, TouchFrame, WheelBy};
 use crate::world::LjosWorld;
 
 use super::{StepResult, docstring};
@@ -243,6 +243,52 @@ fn user_scrolls(w: &mut LjosWorld, n: f64, direction: String, x: f64, y: f64) ->
 #[when(regex = r#"^the input method composes "([^"]*)"$"#)]
 fn input_method_composes(w: &mut LjosWorld, text: String) -> StepResult {
     w.each(|b| b.input()?.compose(&text))
+}
+
+#[when(regex = r#"^the input method holds "([^"]*)" with the cursor at (\d+)$"#)]
+fn input_method_holds(w: &mut LjosWorld, text: String, cursor: usize) -> StepResult {
+    let held = HeldText {
+        text,
+        anchor: cursor,
+        cursor,
+        compose: None,
+    };
+    w.each(|b| b.input()?.input_method_holds(&held))
+}
+
+#[when(regex = r#"^the input method holds "([^"]*)" selecting from (\d+) to (\d+)$"#)]
+fn input_method_holds_selected(
+    w: &mut LjosWorld,
+    text: String,
+    anchor: usize,
+    cursor: usize,
+) -> StepResult {
+    let held = HeldText {
+        text,
+        anchor,
+        cursor,
+        compose: None,
+    };
+    w.each(|b| b.input()?.input_method_holds(&held))
+}
+
+#[when(
+    regex = r#"^the input method holds "([^"]*)" composing (\d+) to (\d+) with the cursor at (\d+)$"#
+)]
+fn input_method_holds_composing(
+    w: &mut LjosWorld,
+    text: String,
+    start: usize,
+    end: usize,
+    cursor: usize,
+) -> StepResult {
+    let held = HeldText {
+        text,
+        anchor: cursor,
+        cursor,
+        compose: Some(start..end),
+    };
+    w.each(|b| b.input()?.input_method_holds(&held))
 }
 
 #[when(regex = r#"^the input method commits "([^"]*)"$"#)]

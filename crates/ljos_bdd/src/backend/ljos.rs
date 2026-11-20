@@ -1612,6 +1612,16 @@ impl Input for LjosBackend {
         })
     }
 
+    fn input_method_holds(&mut self, held: &super::HeldText) -> Result<()> {
+        let now = ljos_quick::ImeText {
+            text: held.text.clone(),
+            anchor: held.anchor,
+            cursor: held.cursor,
+            compose: held.compose.clone(),
+        };
+        self.input(|b| b.live()?.drive(|d| d.ime_text(&now).map(|_| ())))
+    }
+
     fn commit(&mut self, text: &str) -> Result<()> {
         self.input(|b| b.live()?.drive(|d| d.commit(text).map(|_| ())))
     }
