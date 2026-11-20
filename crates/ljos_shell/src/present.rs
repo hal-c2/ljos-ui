@@ -25,7 +25,7 @@ use ljos_render::scene3d::View3dPaint;
 #[derive(Debug, Default)]
 pub(crate) struct LastPicture {
     /// `None` until something is shown, and after the platform may have
-    /// lost it (a new surface, a new size, an exposed window).
+    /// lost it (a new surface, an exposed window).
     shown: Option<Shown>,
 }
 
@@ -34,23 +34,30 @@ struct Shown {
     shapes: Vec<ClippedShape>,
     pixels_per_point: f32,
     clear: egui::Color32,
+    /// The window's size in pixels it was drawn at. A platform that takes
+    /// the size the application asks for at once tells nothing of it
+    /// (Wayland), so a picture of one colour would look the same at the
+    /// new size, and the window would keep its old frame.
+    px: [u32; 2],
 }
 
 impl LastPicture {
     /// What drawing `shapes` would change in what the window shows. Shapes
     /// the same as the last picture's, in the same order, draw the same
     /// pixels, so only where the others lie (before and now) can differ:
-    /// each of those places is one of the areas.
+    /// each of those places is one of the areas. `px` is the window's size
+    /// in pixels: at another size, all of it changes.
     pub(crate) fn change(
         &self,
         shapes: &[ClippedShape],
         pixels_per_point: f32,
         clear: egui::Color32,
+        px: [u32; 2],
     ) -> Change {
         let Some(shown) = &self.shown else {
             return Change::All;
         };
-        if shown.pixels_per_point != pixels_per_point || shown.clear != clear {
+        if shown.pixels_per_point != pixels_per_point || shown.clear != clear || shown.px != px {
             return Change::All;
         }
         let (before, now) = (&shown.shapes[..], shapes);
@@ -107,12 +114,14 @@ impl LastPicture {
         shapes: &[ClippedShape],
         pixels_per_point: f32,
         clear: egui::Color32,
+        px: [u32; 2],
     ) -> Change {
         let Some(shown) = &self.shown else {
             return Change::All;
         };
         let same = shown.pixels_per_point == pixels_per_point
             && shown.clear == clear
+            && shown.px == px
             && shown.shapes.len() == shapes.len()
             && shown
                 .shapes
@@ -124,12 +133,13 @@ impl LastPicture {
 
     /// The window now shows `shapes`, which are kept as they are and lent
     /// back to be drawn: copied, they were a clone and a drop of every
-    /// shape in every drawn frame.
+    /// shape in every drawn frame. `px` is the window's size in pixels.
     pub(crate) fn keep(
         &mut self,
         shapes: Vec<ClippedShape>,
         pixels_per_point: f32,
         clear: egui::Color32,
+        px: [u32; 2],
     ) -> &[ClippedShape] {
         &self
             .shown
@@ -137,6 +147,7 @@ impl LastPicture {
                 shapes,
                 pixels_per_point,
                 clear,
+                px,
             })
             .shapes
     }
@@ -841,6 +852,9 @@ mod tests {
 
     use super::*;
 
+    /// The window's size in pixels a test draws at.
+    const PX: [u32; 2] = [200, 100];
+
     fn rect(x: f32) -> ClippedShape {
         ClippedShape::new(
             Rect::EVERYTHING,
@@ -883,9 +897,9 @@ mod tests {
         let mut last = LastPicture::default();
         let mut frames = 0;
         for shapes in passes {
-            if last.change(shapes, 1.0, Color32::WHITE) != Change::None {
+            if last.change(shapes, 1.0, Color32::WHITE, PX) != Change::None {
                 frames += 1;
-                last.keep(shapes.to_vec(), 1.0, Color32::WHITE);
+                last.keep(shapes.to_vec(), 1.0, Color32::WHITE, PX);
             }
         }
         frames
@@ -1024,8 +1038,8 @@ mod tests {
 
     fn change(before: &[ClippedShape], now: &[ClippedShape]) -> Change {
         let mut last = LastPicture::default();
-        last.keep(before.to_vec(), 1.0, Color32::WHITE);
-        last.change(now, 1.0, Color32::WHITE)
+        last.keep(before.to_vec(), 1.0, Color32::WHITE, PX);
+        last.change(now, 1.0, Color32::WHITE, PX)
     }
 
     #[test]
@@ -1043,10 +1057,13 @@ mod tests {
     fn a_painter_that_draws_whole_is_told_only_whether_something_changed() {
         let before = [rect(0.0), rect(20.0)];
         let mut last = LastPicture::default();
-        assert_eq!(last.whole_change(&before, 1.0, Color32::WHITE), Change::All);
-        last.keep(before.to_vec(), 1.0, Color32::WHITE);
         assert_eq!(
-            last.whole_change(&before, 1.0, Color32::WHITE),
+            last.whole_change(&before, 1.0, Color32::WHITE, PX),
+            Change::All
+        );
+        last.keep(before.to_vec(), 1.0, Color32::WHITE, PX);
+        assert_eq!(
+            last.whole_change(&before, 1.0, Color32::WHITE, PX),
             Change::None
         );
         for now in [&[rect(0.0), rect(25.0)][..], &[rect(0.0)], &before[..]] {
@@ -1055,10 +1072,16 @@ mod tests {
             } else {
                 Change::All
             };
-            assert_eq!(last.whole_change(now, 1.0, Color32::WHITE), whole);
+            assert_eq!(last.whole_change(now, 1.0, Color32::WHITE, PX), whole);
         }
-        assert_eq!(last.whole_change(&before, 2.0, Color32::WHITE), Change::All);
-        assert_eq!(last.whole_change(&before, 1.0, Color32::BLACK), Change::All);
+        assert_eq!(
+            last.whole_change(&before, 2.0, Color32::WHITE, PX),
+            Change::All
+        );
+        assert_eq!(
+            last.whole_change(&before, 1.0, Color32::BLACK, PX),
+            Change::All
+        );
     }
 
     #[test]
@@ -1081,10 +1104,37 @@ mod tests {
     #[test]
     fn another_scale_background_or_first_picture_changes_everything() {
         let mut last = LastPicture::default();
-        assert_eq!(last.change(&[rect(0.0)], 1.0, Color32::WHITE), Change::All);
-        last.keep(vec![rect(0.0)], 1.0, Color32::WHITE);
-        assert_eq!(last.change(&[rect(0.0)], 2.0, Color32::WHITE), Change::All);
-        assert_eq!(last.change(&[rect(0.0)], 1.0, Color32::BLACK), Change::All);
+        assert_eq!(
+            last.change(&[rect(0.0)], 1.0, Color32::WHITE, PX),
+            Change::All
+        );
+        last.keep(vec![rect(0.0)], 1.0, Color32::WHITE, PX);
+        assert_eq!(
+            last.change(&[rect(0.0)], 2.0, Color32::WHITE, PX),
+            Change::All
+        );
+        assert_eq!(
+            last.change(&[rect(0.0)], 1.0, Color32::BLACK, PX),
+            Change::All
+        );
+    }
+
+    #[test]
+    fn a_window_at_another_size_changes_everything() {
+        let mut last = LastPicture::default();
+        last.keep(vec![rect(0.0)], 1.0, Color32::WHITE, PX);
+        assert_eq!(
+            last.change(&[rect(0.0)], 1.0, Color32::WHITE, PX),
+            Change::None
+        );
+        assert_eq!(
+            last.change(&[rect(0.0)], 1.0, Color32::WHITE, [300, 200]),
+            Change::All
+        );
+        assert_eq!(
+            last.whole_change(&[rect(0.0)], 1.0, Color32::WHITE, [300, 200]),
+            Change::All
+        );
     }
 
     #[test]
@@ -1358,9 +1408,9 @@ mod tests {
     #[test]
     fn a_forgotten_picture_is_drawn_again() {
         let mut last = LastPicture::default();
-        last.keep(Vec::new(), 1.0, Color32::WHITE);
-        assert_eq!(last.change(&[], 1.0, Color32::WHITE), Change::None);
+        last.keep(Vec::new(), 1.0, Color32::WHITE, PX);
+        assert_eq!(last.change(&[], 1.0, Color32::WHITE, PX), Change::None);
         last.forget();
-        assert_eq!(last.change(&[], 1.0, Color32::WHITE), Change::All);
+        assert_eq!(last.change(&[], 1.0, Color32::WHITE, PX), Change::All);
     }
 }

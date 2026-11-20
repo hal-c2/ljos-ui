@@ -791,18 +791,33 @@ impl Surface {
         }
     }
 
-    /// The window's size in points of `ctx`, and the painter is told when
-    /// the size in pixels is another than it knows. `None` while the
-    /// window has no area (minimized on some platforms).
-    pub(crate) fn fit(&mut self, ctx: &egui::Context, painter: &mut Painter) -> Option<[f64; 2]> {
+    /// The window's size in points of `ctx`, and whether its size in
+    /// pixels is another than the painter knew, which the painter is then
+    /// told. `None` while the window has no area (minimized on some
+    /// platforms).
+    pub(crate) fn fit(
+        &mut self,
+        ctx: &egui::Context,
+        painter: &mut Painter,
+    ) -> Option<([f64; 2], bool)> {
         let px = self.window.inner_size();
         let (w, h) = (NonZeroU32::new(px.width)?, NonZeroU32::new(px.height)?);
-        if self.px != Some([px.width, px.height]) {
+        let resized = self.px != Some([px.width, px.height]);
+        if resized {
             self.px = Some([px.width, px.height]);
             painter.resized(w, h);
         }
         let ppp = f64::from(egui_winit::pixels_per_point(ctx, &self.window));
-        Some([f64::from(px.width) / ppp, f64::from(px.height) / ppp])
+        Some((
+            [f64::from(px.width) / ppp, f64::from(px.height) / ppp],
+            resized,
+        ))
+    }
+
+    /// The window's size in physical pixels its painter was last told,
+    /// none before it is.
+    pub(crate) fn px(&self) -> [u32; 2] {
+        self.px.unwrap_or_default()
     }
 
     /// How the platform shows the window now; `known` is how the shell

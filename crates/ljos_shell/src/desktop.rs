@@ -289,21 +289,26 @@ fn show_when_drawn(
 }
 
 /// Tells the QML window the size its platform window has, when that is
-/// another than it was last told (or `force`: the application wrote a
-/// size the platform did not give).
-fn note_size(slot: &mut Slot, engine: &Engine, sys: &WindowSystem, force: bool) {
+/// another than it was last told, or the window was never told it
+/// (`size_untold`), or `force`: the application wrote a size the platform
+/// did not give. Until the platform says what size its window has, the
+/// window stays untold. Whether the window has another size in pixels
+/// than its painter knew, when the next pass draws all of it.
+fn note_size(slot: &mut Slot, engine: &Engine, sys: &WindowSystem, force: bool) -> bool {
     let (Some(surface), Some(painter)) = (slot.surface.as_mut(), slot.painter.as_mut()) else {
-        return;
+        return false;
     };
-    let Some(size) = surface.fit(&slot.ctx, painter) else {
-        return;
+    let Some((size, resized)) = surface.fit(&slot.ctx, painter) else {
+        return false;
     };
-    if force || slot.told_size != Some(size) {
+    if force || slot.size_untold || slot.told_size != Some(size) {
         slot.told_size = Some(size);
+        slot.size_untold = false;
         if let Some(win) = slot.window {
             sys.resized(engine, win, size);
         }
     }
+    resized
 }
 
 /// Tells the QML window how its platform window is shown (its user
@@ -628,8 +633,13 @@ impl<M: Send + 'static> Desktop<M> {
                 spec.title.clone_from(&self.config.title);
             }
             if spec.size[0] <= 0.0 || spec.size[1] <= 0.0 {
-                let [w, h] = self.config.size;
-                spec.size = [f64::from(w), f64::from(h)];
+                // A root put in the window of another keeps the size that
+                // window has; the application's size is the one a window
+                // is opened with.
+                spec.size = self.slots[i].told_size.unwrap_or_else(|| {
+                    let [w, h] = self.config.size;
+                    [f64::from(w), f64::from(h)]
+                });
             }
         }
         Some(spec)
@@ -669,7 +679,15 @@ impl<M: Send + 'static> Desktop<M> {
         if self.slots[0].window != root_window || self.slots[0].applied.is_none() {
             let slot = &mut self.slots[0];
             slot.window = root_window;
-            slot.told_size = None;
+            // `told_size` stays: it is the size of the platform's window,
+            // which another root in it does not change. A `Window` that
+            // declares another size is asked of the platform (`change`)
+            // against it; without it the declared size would pass for the
+            // one the platform's window has, nothing would be asked, and the
+            // `Window` would be told the old size (#606). The new `Window`
+            // has not been told that size, though; it is once its spec is
+            // applied, unless a size was asked, which the platform answers.
+            slot.size_untold = root_window.is_some();
             slot.told_pos = None;
             slot.told_state = None;
             // A window's size is the platform's to say; a plain item is
@@ -728,6 +746,10 @@ impl<M: Send + 'static> Desktop<M> {
             if let Some(spec) = self.spec_of(i, engine, sys) {
                 self.apply(host, i, spec, engine, sys);
             }
+        }
+        let slot = &mut self.slots[0];
+        if slot.size_untold {
+            note_size(slot, engine, sys, true);
         }
 
         let application_modal = windows.iter().any(|w| {
@@ -874,6 +896,9 @@ impl<M: Send + 'static> Desktop<M> {
         let has = slot.told_size.unwrap_or(new.size);
         if let Some(size) = window_spec::size_request(old, new, has) {
             host.change_window(id, WindowChange::Size(scaled(size, zoom)));
+            // The window is told the size the platform gives, not the one
+            // it has until then.
+            slot.size_untold = false;
             // Some platforms resize at once and say nothing; others
             // answer later, or never when they refuse.
             note_size(slot, engine, sys, false);
@@ -1469,10 +1494,12 @@ impl<M: Send + 'static> Desktop<M> {
             let follows = slot.view.is_none() && app.watches_items();
             #[cfg(not(feature = "mcp"))]
             let follows = false;
+            let px = surface.px();
             let change = if painter.wants_areas() || follows {
-                slot.shown.change(&shapes, pixels_per_point, clear)
+                slot.shown.change(&shapes, pixels_per_point, clear, px)
             } else {
-                slot.shown.whole_change(&shapes, pixels_per_point, clear)
+                slot.shown
+                    .whole_change(&shapes, pixels_per_point, clear, px)
             };
             #[cfg(feature = "mcp")]
             let changed = follows.then(|| change.boxes());
@@ -1498,7 +1525,7 @@ impl<M: Send + 'static> Desktop<M> {
                 );
                 Shown::Nothing { lost: false }
             } else {
-                let kept = slot.shown.keep(shapes, pixels_per_point, clear);
+                let kept = slot.shown.keep(shapes, pixels_per_point, clear, px);
                 painter.views_shown(kept);
                 let shapes = if let Frame::Part(areas) = &frame {
                     let mut part = kept.to_vec();
@@ -2082,7 +2109,9 @@ impl<M: Send + 'static> Desktop<M> {
             for slot in &mut self.slots {
                 if slot.size_check.is_some_and(|t| t <= now) {
                     slot.size_check = None;
-                    note_size(slot, &engine, &sys, true);
+                    if note_size(slot, &engine, &sys, true) {
+                        self.repaints.request(slot.key, now);
+                    }
                 }
             }
             // The pass at the size there is answers the agent that waits.

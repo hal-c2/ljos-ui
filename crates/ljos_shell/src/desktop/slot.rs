@@ -59,6 +59,9 @@ pub(super) struct Slot {
     pub(super) size_check: Option<Instant>,
     /// What the QML window was last told of its platform window.
     pub(super) told_size: Option<[f64; 2]>,
+    /// Another QML window was put in the platform's window, and it has
+    /// not been told the size that window has.
+    pub(super) size_untold: bool,
     pub(super) told_pos: Option<[f64; 2]>,
     pub(super) told_state: Option<WindowState>,
     /// The platform's count of icon changes when the window was given
@@ -142,6 +145,7 @@ impl Slot {
             undrawn_pass_due: None,
             size_check: None,
             told_size: None,
+            size_untold: false,
             told_pos: None,
             told_state: None,
             plain_root_window: None,

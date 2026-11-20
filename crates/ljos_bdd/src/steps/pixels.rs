@@ -333,6 +333,26 @@ fn host_picture_empty(w: &mut LjosWorld) -> StepResult {
     })
 }
 
+/// The size of the picture the window drew, which is the platform
+/// window's: a root's `width` and `height` say what it declared, not what
+/// the window took.
+#[then(regex = r"^the window's picture is (\d+) by (\d+) pixels$")]
+fn window_picture_size(w: &mut LjosWorld, width: u32, height: u32) -> StepResult {
+    w.each(|b| {
+        let png = b.grab()?;
+        let picture = ljos_render::RgbaImage::from_png(&png)
+            .map_err(|e| BackendError::Failed(format!("the picture of the window: {e}")))?;
+        if (picture.width, picture.height) == (width, height) {
+            Ok(())
+        } else {
+            Err(BackendError::Failed(format!(
+                "the window's picture is {} by {} pixels, not {width} by {height}",
+                picture.width, picture.height
+            )))
+        }
+    })
+}
+
 fn rgb(colour: &str) -> Result<[u8; 3], String> {
     let c = u32::from_str_radix(&colour[1..], 16)
         .map_err(|e| format!("{colour} is not a colour as #rrggbb: {e}"))?;

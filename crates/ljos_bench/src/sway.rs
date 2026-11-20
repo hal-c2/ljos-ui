@@ -153,6 +153,22 @@ impl Sway {
         Ok(find(&tree, pid))
     }
 
+    /// Where the window of `pid` is ([`Sway::window_rect`]), and whether
+    /// that place is the size its client last committed. A floating
+    /// window's place takes a size the client commits only once the
+    /// compositor's transaction for it ends, up to its timeout later, so
+    /// the place read meanwhile is the old one.
+    ///
+    /// # Errors
+    /// The compositor cannot be reached, or does not answer by `by`
+    /// (`WouldBlock` or `TimedOut`).
+    pub fn window_place(&self, pid: u32, by: Option<Instant>) -> std::io::Result<Option<Place>> {
+        let mut stream = self.connect()?;
+        send(&mut stream, GET_TREE, "")?;
+        let (_, tree) = receive(&mut stream, by)?;
+        Ok(find_node(&tree, pid).and_then(place))
+    }
+
     /// The size of the whole layout, which absolute pointer motion is
     /// relative to.
     ///
@@ -204,17 +220,51 @@ fn focused(node: &Value) -> Option<u32> {
         .find_map(focused)
 }
 
+/// A window's place in the layout ([`Sway::window_place`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Place {
+    /// x, y, width, height of its content, in the layout's pixels.
+    pub rect: (i32, i32, i32, i32),
+    /// The place is not yet the size the client last asked for. Sway says
+    /// that only of an X11 client: its `geometry` is the size the client
+    /// last asked to be. A Wayland client's `geometry` is the size it had
+    /// when it was mapped, and stays that when the client resizes itself,
+    /// while its `rect` follows what it commits; there is nothing to
+    /// compare it with. Only a floating window is held to the size it asks
+    /// for; a tiled one is given its tile's whatever it draws.
+    pub resizing: bool,
+}
+
 fn find(node: &Value, pid: u32) -> Option<(i32, i32, i32, i32)> {
+    find_node(node, pid).and_then(place).map(|p| p.rect)
+}
+
+fn find_node(node: &Value, pid: u32) -> Option<&Value> {
     if node["pid"].as_u64() == Some(u64::from(pid)) {
-        let r = &node["rect"];
-        let get = |k: &str| r[k].as_i64().and_then(|v| i32::try_from(v).ok());
-        return Some((get("x")?, get("y")?, get("width")?, get("height")?));
+        return Some(node);
     }
     ["nodes", "floating_nodes"]
         .iter()
         .filter_map(|k| node[*k].as_array())
         .flatten()
-        .find_map(|child| find(child, pid))
+        .find_map(|child| find_node(child, pid))
+}
+
+fn place(node: &Value) -> Option<Place> {
+    let get = |r: &Value, k: &str| r[k].as_i64().and_then(|v| i32::try_from(v).ok());
+    let r = &node["rect"];
+    let rect = (
+        get(r, "x")?,
+        get(r, "y")?,
+        get(r, "width")?,
+        get(r, "height")?,
+    );
+    let g = &node["geometry"];
+    let committed = get(g, "width").zip(get(g, "height"));
+    let resizing = node["type"] == "floating_con"
+        && node["shell"] == "xwayland"
+        && committed.is_some_and(|(w, h)| w > 0 && (w, h) != (rect.2, rect.3));
+    Some(Place { rect, resizing })
 }
 
 #[cfg(test)]
@@ -230,6 +280,53 @@ mod tests {
         });
         assert_eq!(find(&tree, 7), Some((10, 20, 300, 200)));
         assert_eq!(find(&tree, 8), None);
+    }
+
+    fn node(shell: &str, kind: &str, rect: (i64, i64), geometry: (i64, i64)) -> Value {
+        serde_json::json!({"type": kind, "shell": shell, "pid": 7,
+            "rect": {"x": 10, "y": 20, "width": rect.0, "height": rect.1},
+            "geometry": {"x": 0, "y": 0, "width": geometry.0, "height": geometry.1}})
+    }
+
+    fn at(n: Value) -> Option<Place> {
+        let tree = serde_json::json!({"nodes": [], "floating_nodes": [n]});
+        find_node(&tree, 7).and_then(place)
+    }
+
+    /// An X11 window that asked for another size than its place is still
+    /// being resized; a tiled one drawn smaller than its tile is not.
+    #[test]
+    fn a_floating_x11_window_is_resizing_until_its_place_is_the_size_it_asked() {
+        assert_eq!(
+            at(node("xwayland", "floating_con", (200, 100), (300, 200))),
+            Some(Place {
+                rect: (10, 20, 200, 100),
+                resizing: true
+            })
+        );
+        let resizing = |n| at(n).map(|p| p.resizing);
+        assert_eq!(
+            resizing(node("xwayland", "floating_con", (300, 200), (300, 200))),
+            Some(false)
+        );
+        assert_eq!(
+            resizing(node("xwayland", "con", (150, 80), (300, 200))),
+            Some(false)
+        );
+    }
+
+    /// As sway showed it for a Wayland window mapped at 200×100 that then
+    /// committed 300×200: `rect` is the new size, `geometry` the one it was
+    /// mapped with. The window is where it is, not being resized.
+    #[test]
+    fn a_wayland_window_resized_after_it_was_mapped_is_not_resizing() {
+        assert_eq!(
+            at(node("xdg_shell", "floating_con", (300, 200), (200, 100))),
+            Some(Place {
+                rect: (10, 20, 300, 200),
+                resizing: false
+            })
+        );
     }
 
     /// A compositor that answers a byte at a time, each well inside the
