@@ -1513,8 +1513,14 @@ impl Input for LjosBackend {
 
     fn touch(&mut self, x: f64, y: f64) -> Result<()> {
         self.input(|b| {
-            b.live()?
-                .drive(|d| d.touch(Point::new(x, y), kurbo::Vec2::ZERO))
+            // The step is a click of the mouse where it is, as the oracle's
+            // is ("taps … with a finger" is the touch screen's).
+            b.live()?.drive(|d| {
+                let now = d.now();
+                d.send_pointer(&PointerEvent::press(x, y, now).with_id(ljos_drive::FINGER));
+                d.send_pointer(&PointerEvent::release(x, y, now).with_id(ljos_drive::FINGER));
+                d.settle()
+            })
         })
     }
 
