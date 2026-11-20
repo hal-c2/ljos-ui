@@ -109,9 +109,12 @@ fn compiled(w: &mut LjosWorld) -> StepResult {
 #[then("the user's files are not compiled")]
 fn not_compiled(w: &mut LjosWorld) -> StepResult {
     seen(w, |s| {
-        (!s.active)
+        if s.active {
+            return Err("the user's files are compiled".to_owned());
+        }
+        (!s.compiling)
             .then_some(())
-            .ok_or_else(|| "the user's files are compiled".to_owned())
+            .ok_or_else(|| "the user's files are being compiled".to_owned())
     })
 }
 

@@ -76,6 +76,8 @@ pub use ljos_a11y::AccessibleNode as A11yNode;
 pub struct UserSeen {
     /// The user's files are compiled and run.
     pub active: bool,
+    /// The user's files are being compiled, to run when they are.
+    pub compiling: bool,
     /// A watch is kept.
     pub watching: bool,
     /// Saves applied.

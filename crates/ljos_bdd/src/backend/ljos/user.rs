@@ -196,18 +196,42 @@ impl Live {
     /// application runs, waits for what the save brings and takes it.
     pub(super) fn user_qml_file(&mut self, name: &str, text: Option<&str>) -> Result<()> {
         let user = self.user()?;
+        let own_theme = user.own_theme && name == ljos_design::theme::FILE;
+        if own_theme {
+            // Every earlier wake was for something already taken; one left
+            // over would end the wait below before this save's came.
+            while user.woke.try_recv().is_ok() {}
+        }
         let path = user.dir.path().join(name);
         match text {
             Some(text) => super::disk::write(&path, text)?,
             None => std::fs::remove_file(&path).map_err(failed)?,
         }
-        // Nothing watched: the save brings nothing to wait for. Nor does a
-        // theme the application reads itself: no report would ever come.
-        let own_theme = user.own_theme && name == ljos_design::theme::FILE;
-        if own_theme || !user.session.as_ref().is_some_and(UserSession::is_watching) {
+        // Nothing watched: the save brings nothing to wait for.
+        if !user.session.as_ref().is_some_and(UserSession::is_watching) {
             return Ok(());
         }
+        // A theme the application reads itself brings no report, but it
+        // wakes a session still watching the directory: that wake is taken
+        // here, so that a check after the save sees what it started and
+        // the next save waits for its own.
+        if own_theme {
+            return self.take_user_wake(name);
+        }
         self.take_user_save(name)
+    }
+
+    /// Takes the wake a save brings when it brings no report: one wake is
+    /// enough, as the session takes every event it was woken for at once.
+    fn take_user_wake(&mut self, name: &str) -> Result<()> {
+        let user = self.user.as_ref().expect("written above");
+        if !user.session.as_ref().is_some_and(UserSession::is_active) {
+            user.woke
+                .recv_timeout(PATIENCE)
+                .map_err(|_| failed(format!("the application did not wake for {name}")))?;
+        }
+        self.pump_user()?;
+        self.settle()
     }
 
     /// Makes `name` in the user's directory a link to a file outside it.
@@ -284,6 +308,7 @@ impl Live {
             .ok_or_else(|| failed("the application does not run yet"))?;
         Ok(UserSeen {
             active: session.is_active(),
+            compiling: session.is_compiling(),
             watching: session.is_watching(),
             reloads: session.reloads(),
             told: user.told.borrow().clone(),

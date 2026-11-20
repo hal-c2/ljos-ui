@@ -791,6 +791,12 @@ impl UserSession {
         matches!(self.state, State::Active { .. })
     }
 
+    /// Whether the user's files are being compiled, on the compiler's
+    /// thread: they run once a later [`pump`](Self::pump) takes them.
+    pub fn is_compiling(&self) -> bool {
+        matches!(self.state, State::Making)
+    }
+
     /// Whether a watch is kept: on the user's files once there are any,
     /// on the directory before.
     pub fn is_watching(&self) -> bool {
