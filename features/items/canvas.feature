@@ -216,6 +216,29 @@ Feature: Canvas
     And 200 milliseconds pass
     Then the pixel at 50, 50 of the window is "#0000ff"
 
+  Scenario: A reset outside a paint empties the window's picture
+    Given the QML:
+      """qml
+      import QtQuick
+      Rectangle {
+        width: 100; height: 100; color: "black"
+        Canvas {
+          objectName: "canvas"
+          width: 100; height: 100
+          function wipe() { getContext("2d").reset() }
+          onPaint: {
+            var ctx = getContext("2d")
+            ctx.fillStyle = "#ff0000"
+            ctx.fillRect(0, 0, 100, 100)
+          }
+        }
+      }
+      """
+    When 200 milliseconds pass
+    And the method "wipe" of "canvas" is called
+    And 200 milliseconds pass
+    Then the pixel at 50, 50 of the window is "#000000"
+
   Scenario: An image is drawn once it has loaded
     Given a 4 by 4 image file "blue.png" filled with "#0000ff"
     And the QML:

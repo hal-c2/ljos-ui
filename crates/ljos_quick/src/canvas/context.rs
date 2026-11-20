@@ -529,7 +529,13 @@ impl Op<'_> {
                 Value::Undefined
             }
             "reset" => {
+                // As on qml6 (measured), reset empties the canvas as well as
+                // the state.
                 *self.ctx.borrow_mut() = Ctx::default();
+                self.run.borrow_mut().painter.clear();
+                // An empty canvas is a new picture, so a reset outside a
+                // paint is shown like any other drawing.
+                drew = true;
                 Value::Undefined
             }
             "scale" | "rotate" | "translate" | "transform" | "setTransform" | "shear"
