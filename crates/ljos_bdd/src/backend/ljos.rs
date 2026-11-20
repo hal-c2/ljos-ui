@@ -1756,6 +1756,18 @@ impl Application for LjosBackend {
         self.live()?.plugin_url(name)
     }
 
+    fn plugin_link_out(&mut self, name: &str, target: &str) -> Result<()> {
+        self.live()?.plugin_link_out(name, target)
+    }
+
+    fn outside_file(&mut self, name: &str, text: &str) -> Result<()> {
+        self.live()?.outside_file(name, text)
+    }
+
+    fn outside_url(&mut self, name: &str) -> Result<String> {
+        self.live()?.outside_url(name)
+    }
+
     fn windows_of_their_own(&mut self) -> Result<()> {
         self.windows_of_their_own = true;
         if let Some(live) = self.live.as_ref() {

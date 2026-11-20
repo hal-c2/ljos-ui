@@ -205,6 +205,23 @@ impl Live {
         Ok(ljos_engine::file_url(&path))
     }
 
+    /// Makes the file `name` of the application's plugin directory a link
+    /// to the file `target` outside the application's directories.
+    pub(super) fn plugin_link_out(&mut self, name: &str, target: &str) -> Result<()> {
+        let user = self.user()?;
+        let link = user.plugins.path().join(name);
+        let target = user.outside.path().join(target);
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(&target, &link).map_err(failed)
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = (link, target);
+            Err(BackendError::NotImplemented("links on this system"))
+        }
+    }
+
     /// Writes the file `name` in neither the user's directory nor one the
     /// application loads from.
     pub(super) fn outside_file(&mut self, name: &str, text: &str) -> Result<()> {

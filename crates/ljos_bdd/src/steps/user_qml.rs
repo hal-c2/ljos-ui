@@ -82,6 +82,13 @@ fn plugin_file(w: &mut LjosWorld, name: String, step: &Step) -> StepResult {
     w.each(|b| b.application()?.plugin_file(&name, &text))
 }
 
+#[given(
+    regex = r#"^the application's plugin file "([^"]+)" links to the file "([^"]+)" outside the application's directories$"#
+)]
+fn plugin_links_out(w: &mut LjosWorld, name: String, target: String) -> StepResult {
+    w.each(|b| b.application()?.plugin_link_out(&name, &target))
+}
+
 #[when(
     regex = r#"^the application's plugin "([^"]+)" is given to the method "([^"]+)" of "([^"]+)"$"#
 )]

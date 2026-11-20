@@ -166,6 +166,18 @@ Feature: A shipped application its users change makes QML of text and of files i
       Then the object "main/elsewhere" does not exist
       And the application was told of a fault matching "refused: .*Elsewhere\.qml"
 
+    Scenario: A file of the plugin directory that links out of it is refused and told
+      Given the file "Elsewhere.qml" outside the application's directories:
+        """qml
+        import QtQuick
+        Item { objectName: "elsewhere" }
+        """
+      And the application's plugin file "Plugin.qml" links to the file "Elsewhere.qml" outside the application's directories
+      When the application runs "Main.qml" built ahead, with the user's directory over it
+      And the application's plugin "Plugin.qml" is given to the method "load" of "main"
+      Then the object "main/elsewhere" does not exist
+      And the application was told of a fault matching "Plugin\.qml: a link that leads out"
+
     Scenario: A file in the application's plugin directory sees the user's file over the module's
       Given the user's file "Bricks/Brick.qml":
         """qml

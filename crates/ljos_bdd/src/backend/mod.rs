@@ -1096,6 +1096,24 @@ pub trait Application: Backend {
         Err(BackendError::NotImplemented("a plugin directory"))
     }
 
+    /// The file `name` of the application's plugin directory is a link
+    /// to the file `target` outside the application's directories.
+    fn plugin_link_out(&mut self, _name: &str, _target: &str) -> Result<()> {
+        Err(BackendError::NotImplemented("a plugin directory"))
+    }
+
+    /// The file `name` in neither the user's directory nor one the
+    /// application loads from is `text`.
+    fn outside_file(&mut self, _name: &str, _text: &str) -> Result<()> {
+        Err(BackendError::NotImplemented("a plugin directory"))
+    }
+
+    /// The address of the file `name` outside the application's
+    /// directories, as a script is given it.
+    fn outside_url(&mut self, _name: &str) -> Result<String> {
+        Err(BackendError::NotImplemented("a plugin directory"))
+    }
+
     /// Each `Window` is a platform window of its own, as where the
     /// application runs on a desktop: a tree of its own wherever it is
     /// declared. Given before anything is loaded.
