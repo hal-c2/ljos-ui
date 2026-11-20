@@ -6,14 +6,15 @@
 
 # Qt has no time limit on JavaScript: both taps run to their end and the item stays.
 @ljos-only
-Feature: A Loader gives up on its item only for scripts its item could set off again
-  A Loader that loads again after an interrupted script gives up when the next script is
-  interrupted soon after, because loading again would only be interrupted again. That holds for
+Feature: A Loader waits between loads only for scripts its item could set off again
+  A Loader that loads again after an interrupted script waits before the next load when the next
+  script is interrupted soon after, because loading again at once would only be interrupted
+  again. It never gives up: the wait doubles up to a minute, and it loads again after it. That holds for
   a script that runs while the item is made, and for the item's own code. A short handler of an
   item that sets off long scripts of other objects after the item was made is not such a case:
-  a click on it sets them off, not loading it again, so the Loader loads its item again however
-  often someone clicks. Only interrupts of scripts no input set off, the item setting them off
-  again each time it is made, still make the Loader give up, whatever else is clicked.
+  a click on it sets them off, not loading it again, so the Loader loads its item again at once
+  however often someone clicks. Only interrupts of scripts no input set off, the item setting them
+  off again each time it is made, make the Loader wait, whatever else is clicked.
 
   Background:
     Given JavaScript is timed by a clock on which native work a script asks for takes 0 seconds
@@ -113,7 +114,7 @@ Feature: A Loader gives up on its item only for scripts its item could set off a
     And the log has no warning matching "Loader: .*(interrupted again|times in a row)"
     And the application has no fault
 
-  Scenario: An item whose own handler is interrupted twice stays unloaded
+  Scenario: An item whose own handler is interrupted twice waits before it loads again
     When the property "slowRow" of "root" is set to true
     And the property "wanted" of "root" is set to true
     And the user clicks the "button" "Row"
@@ -125,7 +126,7 @@ Feature: A Loader gives up on its item only for scripts its item could set off a
     And the property "made" of "root" is 2
     And the log has a warning matching "Loader: .*interrupted again.*stays at Loader.Error"
 
-  Scenario: An item whose making sets off long scripts elsewhere stays unloaded the second time
+  Scenario: An item whose making sets off long scripts elsewhere waits after the second time
     When the property "atOnce" of "root" is set to true
     And the property "wanted" of "root" is set to true
     And 100 milliseconds pass
@@ -134,14 +135,15 @@ Feature: A Loader gives up on its item only for scripts its item could set off a
     And the property "made" of "root" is 2
     And the log has a warning matching "Loader: .*interrupted again.*stays at Loader.Error"
 
-  Scenario: An item whose own timer sets off long scripts elsewhere each time it is made gives up
+  Scenario: An item whose own timer sets off long scripts elsewhere each time it is made waits between loads
     When the property "timed" of "root" is set to true
     And the property "wanted" of "root" is set to true
     And 2 seconds pass
     Then the property "status" of "loader" is 3
     And the property "item" of "loader" is null
-    And the property "made" of "root" is 8
-    And the log has a warning matching "Loader: .*interrupted 8 times in a row.*stays at Loader.Error"
+    And the property "made" of "root" is 9
+    And the log has a warning matching "Loader: .*interrupted 8 times in a row.*stays at Loader.Error and loads again in 1 s"
+    And the log has a warning matching "Loader: .*interrupted 9 times in a row.*loads again in 2 s"
     And the application has no fault
 
   Scenario: Clicks elsewhere do not keep an item whose own timer sets off long scripts elsewhere
@@ -168,5 +170,6 @@ Feature: A Loader gives up on its item only for scripts its item could set off a
     And the user clicks the "button" "Other"
     And 2 seconds pass
     Then the property "status" of "loader" is 3
-    And the property "made" of "root" is 8
-    And the log has a warning matching "Loader: .*interrupted 8 times in a row.*stays at Loader.Error"
+    And the property "made" of "root" is 10
+    And the log has a warning matching "Loader: .*interrupted 8 times in a row.*stays at Loader.Error and loads again in 1 s"
+    And the log has a warning matching "Loader: .*interrupted 9 times in a row.*loads again in 2 s"

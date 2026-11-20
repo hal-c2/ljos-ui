@@ -2436,7 +2436,6 @@ impl JsHost {
             return Pumped::default();
         }
         let guard = EnterGuard(&self.state.entered);
-        self.peak.mark();
         self.interrupt.fired.set(false);
         self.state.stopped.set(false);
         // A job's deadline is the pump's, and so is the ceiling: nested runs
@@ -2448,7 +2447,12 @@ impl JsHost {
         self.interrupt.began.set(Some(now));
         self.interrupt.settle();
         let mut pumped = Pumped::default();
+        self.peak.mark();
+        let mut most = 0;
         while self.interrupt.now(Timing::Poll) < until {
+            // Each job judges a thrown `null` by its own peak, as a nested
+            // run does; the pump's is the most of them.
+            most = most.max(self.peak.mark());
             match self.rt.execute_pending_job() {
                 Ok(true) => pumped.ran += 1,
                 Ok(false) => break,
@@ -2480,6 +2484,7 @@ impl JsHost {
                 }
             }
         }
+        self.peak.resume(most);
         self.interrupt.arm(now, None);
         self.state.stopped.set(false);
         drop(guard);
@@ -3400,7 +3405,12 @@ fn describe_exception(
 /// Whether the heap is within a sixteenth of its limit: too full for
 /// QuickJS to have made an error object, at `peak`, the most the run held
 /// before unwinding it let go. False with no limit. Walks the heap, which
-/// only a thrown `null` asks for.
+/// only a thrown `null` or an unknown error asks for.
+///
+/// The peak is the run's, not the throw's: a script that fills the heap
+/// within a sixteenth of its limit, lets it go and then throws `null`
+/// itself in the same run reads as out of memory. Telling them apart
+/// would take the size at the throw, which QuickJS does not keep.
 fn heap_nearly_full(ctx: &Ctx<'_>, peak: usize) -> bool {
     // SAFETY: the context is live while `ctx` is, and so its runtime.
     let usage = unsafe {

@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use common::*;
 use ljos_engine::{Engine, Migrate, ObjectId, QmlObject, QtObject, Value};
-use ljos_runtime::{Time, VirtualClock};
+use ljos_runtime::{Clock, Time, VirtualClock};
 
 fn text(e: &Engine, o: ObjectId, name: &str) -> String {
     get(e, o, name).to_js_string().to_string()
@@ -498,10 +498,16 @@ fn row() -> String {
 /// above what the heap holds after `litter` left `garbage` cycles in it.
 fn out_of_room(garbage: u32, room: usize) -> (Engine, ObjectId, ObjectId) {
     let e = engine();
-    compile(&e, &[("Main", RUNS_OUT), ("Row", &row())]);
+    let (root, loader) = out_of_room_on(&e, garbage, room);
+    (e, root, loader)
+}
+
+/// [`out_of_room`] on an engine of the test's own (on a clock it moves).
+fn out_of_room_on(e: &Engine, garbage: u32, room: usize) -> (ObjectId, ObjectId) {
+    compile(e, &[("Main", RUNS_OUT), ("Row", &row())]);
     let root = e.create_from_url("Main", None, Vec::new()).unwrap();
-    let loader = find(&e, root, "loader");
-    assert_eq!(num(&e, loader, "status"), 0.0);
+    let loader = find(e, root, "loader");
+    assert_eq!(num(e, loader, "status"), 0.0);
     // Running a script starts the script engine.
     e.invoke_by_name(root, "litter", &[Value::from(0.0)])
         .unwrap();
@@ -510,11 +516,11 @@ fn out_of_room(garbage: u32, room: usize) -> (Engine, ObjectId, ObjectId) {
         .unwrap();
     let held = e.script_memory().unwrap().bytes;
     assert!(e.set_script_heap_limit(Some(held + room)));
-    set(&e, root, "on", Value::Bool(true));
+    set(e, root, "on", Value::Bool(true));
     // The item is made, but its script did not load: what QuickJS could not
     // allocate is a fault for the Loader, which it hears at the next frame.
-    assert_eq!(num(&e, loader, "status"), 1.0);
-    (e, root, loader)
+    assert_eq!(num(e, loader, "status"), 1.0);
+    (root, loader)
 }
 
 #[test]
@@ -546,10 +552,11 @@ fn a_loader_whose_item_ran_out_of_heap_loads_again_after_a_collection() {
 }
 
 #[test]
-fn a_loader_whose_item_runs_out_of_heap_again_stays_stopped() {
+fn a_loader_whose_item_runs_out_of_heap_again_waits_and_loads_again() {
     // No garbage to collect: the heap stays full, and loading again runs
     // out again.
-    let (e, root, loader) = out_of_room(0, 4 * 1024);
+    let (e, clock) = timed();
+    let (root, loader) = out_of_room_on(&e, 0, 4 * 1024);
     let mut s = scene(&e, root, 200.0, 200.0);
     frame(&mut s, &e);
     frame(&mut s, &e);
@@ -557,17 +564,113 @@ fn a_loader_whose_item_runs_out_of_heap_again_stays_stopped() {
     let warned = e.take_warnings();
     assert!(
         warned.iter().any(|w| w.contains(
-            "Loader: its item ran out of script memory again, so it stays at Loader.Error until it is told to load"
+            "Loader: its item ran out of script memory again, so it stays at Loader.Error and loads again in 1 s"
         )),
         "{warned:?}"
     );
-    let out = frame(&mut s, &e);
-    assert_eq!(out.next_wake, None::<Time>);
+    // It waits, without polling: one wake, when the wait is over.
+    // A second from the fault, which came after the script ran a while.
+    let due = e.next_timer_deadline().expect("it waits to load again");
+    let wait = due.saturating_since(clock.now());
+    assert!(
+        wait >= Duration::from_secs(1) && wait < Duration::from_millis(1100),
+        "{wait:?}"
+    );
+    clock.set(due.saturating_sub(Duration::from_millis(500)));
+    e.advance_timers(clock.now());
+    assert_eq!(num(&e, loader, "status"), 3.0);
+    // Loading again runs out again: twice as long a wait.
+    clock.set(due);
+    e.advance_timers(clock.now());
+    frame(&mut s, &e);
+    assert_eq!(num(&e, loader, "status"), 3.0);
+    let warned = e.take_warnings();
+    assert!(
+        warned.iter().any(|w| w.contains("loads again in 2 s")),
+        "{warned:?}"
+    );
+    // Whatever filled the heap lets go: the next load finds room, with
+    // nobody telling the Loader to load.
+    assert!(e.set_script_heap_limit(None));
+    clock.advance(Duration::from_secs(2));
+    e.advance_timers(clock.now());
+    frame(&mut s, &e);
+    assert_eq!(num(&e, loader, "status"), 1.0);
+    let item = get(&e, loader, "item").as_object().unwrap();
+    assert_eq!(num(&e, item, "width"), 12.0, "its script loaded");
+    assert!(e.application_fault().is_none());
+    assert_eq!(e.next_timer_deadline(), None, "nothing more to wait for");
+}
+
+#[test]
+fn a_loader_counts_a_late_fault_from_when_it_loaded_again() {
+    // The fault is heard long after it came: the load it sets off is the
+    // one the next fault comes soon after, not the fault.
+    let (e, clock) = timed();
+    let (root, loader) = out_of_room_on(&e, 0, 4 * 1024);
+    clock.advance(Duration::from_secs(30));
+    let mut s = scene(&e, root, 200.0, 200.0);
+    frame(&mut s, &e);
+    frame(&mut s, &e);
+    assert_eq!(num(&e, loader, "status"), 3.0);
+    let warned = e.take_warnings();
+    let at_once = warned
+        .iter()
+        .filter(|w| w.ends_with("Loader: its item ran out of script memory, loading again"))
+        .count();
+    assert_eq!(at_once, 1, "loaded at once only for the first: {warned:?}");
+    assert!(
+        warned.iter().any(|w| w.contains(
+            "Loader: its item ran out of script memory again, so it stays at Loader.Error and loads again in 1 s"
+        )),
+        "{warned:?}"
+    );
+    assert!(e.next_timer_deadline().is_some(), "it waits to load again");
+}
+
+#[test]
+fn a_loader_told_to_load_while_it_waits_loads_at_once_and_drops_the_wait() {
+    let (e, clock) = timed();
+    let (root, loader) = out_of_room_on(&e, 0, 4 * 1024);
+    let mut s = scene(&e, root, 200.0, 200.0);
+    frame(&mut s, &e);
+    frame(&mut s, &e);
+    assert_eq!(num(&e, loader, "status"), 3.0);
+    assert!(e.next_timer_deadline().is_some());
     // Told to load once there is room, it does.
     assert!(e.set_script_heap_limit(None));
     set(&e, root, "on", Value::Bool(false));
     set(&e, root, "on", Value::Bool(true));
     assert_eq!(num(&e, loader, "status"), 1.0);
+    let item = get(&e, loader, "item").as_object();
+    assert_eq!(e.next_timer_deadline(), None, "the wait went with the load");
+    clock.advance(Duration::from_secs(5));
+    e.advance_timers(clock.now());
+    assert_eq!(
+        get(&e, loader, "item").as_object(),
+        item,
+        "not loaded twice"
+    );
+}
+
+#[test]
+fn a_loader_whose_item_always_runs_out_never_gives_up_and_waits_at_most_a_minute() {
+    let (e, clock) = timed();
+    let (root, loader) = out_of_room_on(&e, 0, 4 * 1024);
+    let mut s = scene(&e, root, 200.0, 200.0);
+    frame(&mut s, &e);
+    frame(&mut s, &e);
+    let mut waits = Vec::new();
+    for _ in 0..9 {
+        assert_eq!(num(&e, loader, "status"), 3.0);
+        let due = e.next_timer_deadline().expect("a load is always to come");
+        waits.push(due.saturating_since(clock.now()).as_secs());
+        clock.advance(due.saturating_since(clock.now()));
+        e.advance_timers(clock.now());
+        frame(&mut s, &e);
+    }
+    assert_eq!(waits, [1, 2, 4, 8, 16, 32, 60, 60, 60]);
+    assert!(e.application_fault().is_none());
 }
 
 const ROWS: &str = r#"
@@ -638,7 +741,7 @@ fn a_loader_out_of_heap_soon_after_an_interrupt_does_not_say_again() {
     let warned = e.take_warnings();
     assert!(
         warned.iter().any(|w| w.contains(
-            "Loader: its item ran out of script memory soon after a script was interrupted, so it stays at Loader.Error until it is told to load"
+            "Loader: its item ran out of script memory soon after a script was interrupted, so it stays at Loader.Error and loads again in 1 s"
         )),
         "{warned:?}"
     );
