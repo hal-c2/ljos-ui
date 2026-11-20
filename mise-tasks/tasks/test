@@ -1579,6 +1579,16 @@ if code gallery/drive | grep -qF 'GALLERY_LJOS="$(pinned_program ljos "$programs
 else
   bad "gallery:drive does not pin its program once for every example gallery:run starts"
 fi
+# bench:egui measures the ljos a user gets. Built in one cargo run with
+# feed_egui, feature unification would hand that ljos the example's
+# eframe/default_fonts, so each is pinned by a build of its own.
+egui_pins="$(code bench/egui | grep -F 'pin_programs' || true)"
+if [ "$(grep -cF -- '-p ljos_cli' <<<"$egui_pins")" = 1 ] && [ "$(grep -cF -- '--example feed_egui' <<<"$egui_pins")" = 1 ] \
+  && ! grep -F -- '-p ljos_cli' <<<"$egui_pins" | grep -qF -- 'feed_egui'; then
+  ok "bench:egui builds ljos apart from its feed_egui example"
+else
+  bad "bench:egui does not build ljos and feed_egui in two builds of their own:" "$egui_pins"
+fi
 
 # --- Vulkan drivers --------------------------------------------------------------
 
