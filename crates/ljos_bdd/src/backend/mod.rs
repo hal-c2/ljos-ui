@@ -474,6 +474,13 @@ pub trait Input: Backend {
         Err(BackendError::NotImplemented("a drag"))
     }
 
+    /// The application hands the item at `path` the press of `chord`, as
+    /// a native type does (`ljos::input::send_input`): the focus stays
+    /// where it is.
+    fn send_key_to(&mut self, _chord: &str, _path: &str) -> Result<()> {
+        Err(BackendError::NotImplemented("a key sent to one item"))
+    }
+
     /// The keys of `chord` go down and stay down (`down`), or come up.
     fn key_state(&mut self, _chord: &str, _down: bool) -> Result<()> {
         Err(BackendError::NotImplemented("a key held while time passes"))
