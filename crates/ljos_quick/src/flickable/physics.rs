@@ -284,6 +284,12 @@ impl Segment {
     }
 }
 
+/// The share of its way Android's fling has gone when `share` of its time
+/// has.
+pub(crate) fn spline_way(share: f64) -> f64 {
+    spline::at(share.clamp(0.0, 1.0)).0
+}
+
 /// Where Android's fling from `from` at `velocity` is `t` after it began,
 /// and how fast it goes there.
 fn spline_at(from: f64, velocity: f64, t: Duration) -> (f64, f64) {

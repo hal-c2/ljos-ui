@@ -53,11 +53,19 @@ pub(crate) struct Run {
     pub delta: f64,
     pub start: Time,
     pub micros: u64,
+    /// A fling along Android's curve ([`spline_way`]) rather than evenly
+    /// slowing down.
+    ///
+    /// [`spline_way`]: crate::flickable::physics::spline_way
+    pub spline: bool,
 }
 
 impl Run {
     fn eased(&self, t: f64) -> f64 {
         let t = t.clamp(0.0, 1.0);
+        if self.spline {
+            return crate::flickable::physics::spline_way(t);
+        }
         match self.kind {
             // `Easing.InOutQuad`.
             Kind::Glide => {
@@ -371,6 +379,7 @@ fn glide(e: &Engine, view: ObjectId, st: &State, n: usize, target: f64) {
             delta,
             start: e.now(),
             micros: (ms * 1000.0) as u64,
+            spline: false,
         },
     );
 }
@@ -461,8 +470,16 @@ pub(crate) fn position_at(e: &Engine, view: ObjectId, index: i32, mode: i32) {
 /// What the engine's [`ScrollPhysics`](crate::flickable::physics::ScrollPhysics)
 /// does with a release of `v` pixels a second along a path of
 /// `px_per_place` pixels a place: how fast the rows go on and how far,
-/// in pixels. A path has no bounds, so the physics only slows them down.
-fn thrown(e: &Engine, view: ObjectId, v: f64, o: f64, px_per_place: f64) -> (f64, f64, f64) {
+/// in pixels, and the rate it slows down at; and how long it goes when it
+/// follows Android's curve. A path has no bounds, so the physics only
+/// slows them down.
+fn thrown(
+    e: &Engine,
+    view: ObjectId,
+    v: f64,
+    o: f64,
+    px_per_place: f64,
+) -> (f64, f64, f64, Option<std::time::Duration>) {
     use crate::flickable::physics::{AxisState, FlickSettings, Motion, Segment, scroll_physics};
     // qml6 slows the rows down by a tenth of `flickDeceleration` places a
     // second each second, whatever a place's length; its velocities are
@@ -485,8 +502,10 @@ fn thrown(e: &Engine, view: ObjectId, v: f64, o: f64, px_per_place: f64) -> (f64
             velocity,
             velocity * velocity.abs() / (2.0 * rate),
             s.deceleration,
+            None,
         ),
-        // The even deceleration that goes as far as the spline in its time.
+        // Android's: as far as the spline goes, in its time. The rate is
+        // for a rest moved to a row, which goes evenly.
         Motion::Start(Segment::Spline { velocity, .. }) => {
             let (distance, time) = crate::flickable::spline_fling(velocity);
             let secs = time.as_secs_f64();
@@ -495,9 +514,9 @@ fn thrown(e: &Engine, view: ObjectId, v: f64, o: f64, px_per_place: f64) -> (f64
             } else {
                 s.deceleration
             };
-            (velocity, velocity.signum() * distance, rate)
+            (velocity, velocity.signum() * distance, rate, Some(time))
         }
-        _ => (0.0, 0.0, s.deceleration),
+        _ => (0.0, 0.0, s.deceleration, None),
     }
 }
 
@@ -521,9 +540,10 @@ pub(crate) fn release(e: &Engine, view: ObjectId, st: &State, v: f64) {
         return;
     }
     let o = offset(e, view);
-    let (velocity, reach, rate) = thrown(e, view, v, o, px_per_place);
+    let (velocity, reach, rate, spline) = thrown(e, view, v, o, px_per_place);
     // A flick goes at most one row short of all the way round (qml6).
     let lap = (n as f64 - 1.0).max(0.0) * px_per_place;
+    let thrown_reach = reach;
     let reach = if reach.is_finite() {
         reach.clamp(-lap, lap)
     } else {
@@ -531,7 +551,8 @@ pub(crate) fn release(e: &Engine, view: ObjectId, st: &State, v: f64) {
     };
     let mut end = o + reach / px_per_place;
     let snap = rd(e, view, PathView::SNAP_MODE.index) as i32;
-    if strict(e, view) || snap != snap_mode::NO_SNAP {
+    let snapped = strict(e, view) || snap != snap_mode::NO_SNAP;
+    if snapped {
         // The row nearest a quarter of a place beyond where the rows would
         // stop: 3.24 places rests on 3, 3.26 on 4, going up; going down
         // 6.76 rests on 7 and 6.74 on 6 (qml6).
@@ -568,9 +589,9 @@ pub(crate) fn release(e: &Engine, view: ObjectId, st: &State, v: f64) {
         // the deceleration brings to rest there.
         (2.0 * rate * distance).sqrt()
     };
-    // `Easing.OutQuad` over `2 d / v` is even slowing down from `v` to
-    // rest in `d`.
-    let micros = (2.0 * distance / speed * 1e6) as u64;
+    // A spline the rows follow all the way keeps its time and curve.
+    let whole = flick && !snapped && reach == thrown_reach && velocity.signum() == delta.signum();
+    let (micros, spline) = timing(spline.filter(|_| whole), distance, speed);
     if flick {
         show_flicking(e, view, true);
     }
@@ -584,8 +605,21 @@ pub(crate) fn release(e: &Engine, view: ObjectId, st: &State, v: f64) {
             delta,
             start: e.now(),
             micros: micros.max(1),
+            spline,
         },
     );
+}
+
+/// How long a release runs, in microseconds, and whether along Android's
+/// curve: for a fling of the spline's `time` that nothing cut short or
+/// moved to a row, the spline's time; otherwise `Easing.OutQuad` over
+/// `2 d / v`, which is even slowing down from `speed` to rest in
+/// `distance`.
+fn timing(spline: Option<std::time::Duration>, distance: f64, speed: f64) -> (u64, bool) {
+    match spline {
+        Some(time) => (time.as_micros() as u64, true),
+        None => ((2.0 * distance / speed * 1e6) as u64, false),
+    }
 }
 
 /// Frame step: every view whose `offset` runs is moved to where it is at
@@ -638,4 +672,34 @@ pub(crate) fn next_wake(e: &Engine, now: Time) -> Option<Time> {
             .iter()
             .any(|v| state_of(e, *v).is_some_and(|st| st.motion.get().is_some()));
     any.then(|| now + FRAME)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_whole_spline_fling_keeps_the_splines_time_and_curve() {
+        let (distance, time) = crate::flickable::spline_fling(1000.0);
+        let (micros, spline) = timing(Some(time), distance, 1000.0);
+        assert!(spline);
+        assert_eq!(micros, time.as_micros() as u64);
+        // Not the even slowing down over the same distance, which takes
+        // 2 d / v.
+        let (even, _) = timing(None, distance, 1000.0);
+        assert!(micros > even + 100_000, "{micros} vs {even}");
+        let run = Run {
+            kind: Kind::Flick,
+            from: 0.0,
+            delta: 1.0,
+            start: Time::ZERO,
+            micros,
+            spline,
+        };
+        assert_eq!(run.eased(0.0), 0.0);
+        assert!((run.eased(1.0) - 1.0).abs() < 1e-9);
+        let half = crate::flickable::physics::spline_way(0.5);
+        assert_eq!(run.eased(0.5), half);
+        assert!(half > 0.75, "fast at first: {half}");
+    }
 }
