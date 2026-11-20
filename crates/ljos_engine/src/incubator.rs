@@ -2702,20 +2702,7 @@ impl Engine {
             Arg::MadeIn { name, fallback, .. } => {
                 match self.context_id(inst.context, &inst.file.url, name) {
                     Some(v) => Some(v),
-                    None => match fallback.as_deref()? {
-                        Arg::Context {
-                            component: None,
-                            name,
-                            fallback,
-                        } => {
-                            match self.context_name_within(inst.context, Some(&inst.file.url), name)
-                            {
-                                Some(v) => Some(v),
-                                None => self.arg_value_at(inst, fallback.as_deref()?, plan),
-                            }
-                        }
-                        f => self.arg_value_at(inst, f, plan),
-                    },
+                    None => self.arg_value_at(inst, fallback.as_deref()?, plan),
                 }
             }
             Arg::Attached { ty, object } => {
@@ -2870,21 +2857,6 @@ impl Engine {
                 match self.context_id(inst.context, &inst.file.url, name) {
                     Some(v) => self.to_js(&v),
                     None => match fallback.as_deref() {
-                        Some(Arg::Context {
-                            component: None,
-                            name,
-                            fallback,
-                        }) => {
-                            match self.context_name_within(inst.context, Some(&inst.file.url), name)
-                            {
-                                Some(v) => self.to_js(&v),
-                                None => match fallback.as_deref() {
-                                    Some(f) => self.arg_js_at(s, inst, f, plan),
-                                    None if has_global(s, name) => global(s, name),
-                                    None => global(s, NOWHERE),
-                                },
-                            }
-                        }
                         Some(f) => self.arg_js_at(s, inst, f, plan),
                         None if has_global(s, name) => global(s, name),
                         None => global(s, NOWHERE),

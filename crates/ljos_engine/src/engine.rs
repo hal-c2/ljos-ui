@@ -3901,31 +3901,12 @@ impl Engine {
     /// inline component reads the ids of the file that uses it this way,
     /// and a file the members of the file it is made in.
     pub(crate) fn context_name(&self, ctx: ContextId, name: &str) -> Option<Value> {
-        self.context_name_within(ctx, None, name)
-    }
-
-    /// [`Engine::context_name`], with the walk ending at a context of
-    /// another file than `file` when one is given, as
-    /// [`Engine::context_id`]'s does: what a Bound inline component's
-    /// PropertyChanges reads after the id where it is made is not the file
-    /// that uses its file.
-    pub(crate) fn context_name_within(
-        &self,
-        ctx: ContextId,
-        file: Option<&Atom>,
-        name: &str,
-    ) -> Option<Value> {
         crate::lookups::name();
         let mut cur = Some(ctx);
         let found = loop {
             let objects = {
                 let contexts = self.inner.contexts.borrow();
                 let c = contexts.get(cur?)?;
-                if let (Some(file), Some(own)) = (file, c.file.as_ref())
-                    && own != file
-                {
-                    return None;
-                }
                 if let Some(o) = c.id(name) {
                     break o;
                 }
