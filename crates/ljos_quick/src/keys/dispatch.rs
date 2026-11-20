@@ -360,6 +360,19 @@ pub fn deliver_key(engine: &Engine, root: ObjectId, ev: &KeyEvent) -> bool {
     deliver_key_reaching(engine, root, ev, &mut |_| {})
 }
 
+/// Hands `ev` to `item` as if it had the focus, which it is not given:
+/// the item's own handlers, then those of the items it is in, as a key
+/// with nowhere to go goes up from the focus. No shortcut and no filter
+/// is asked. Whether an item took it. For [`crate::live_input::send_input`].
+pub(crate) fn deliver_key_to(engine: &Engine, item: ObjectId, ev: &KeyEvent) -> bool {
+    let root = crate::layer::window_item(engine, item);
+    let turn = match ev.kind {
+        KeyKind::Press => item_press,
+        KeyKind::Release => item_release,
+    };
+    bubble(engine, root, item, ev, turn)
+}
+
 /// [`deliver_key`], telling `reached` the item the key is handed to
 /// as it is handed: after the shortcut overrides, which may have moved
 /// the focus.

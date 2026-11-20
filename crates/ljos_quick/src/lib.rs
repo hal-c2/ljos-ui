@@ -159,8 +159,8 @@ pub use layouts::{
     LayoutItemProxy, LjosBox, LjosGrid, RowLayout, StackLayout, layout_runs,
 };
 pub use live_input::{
-    Input, InputOrigin, InputWatch, PostInputError, WatchedInput, post_input, unwatch_input,
-    watch_input,
+    Input, InputOrigin, InputWatch, PostInputError, WatchedInput, post_input, send_input,
+    unwatch_input, watch_input,
 };
 pub use ljos_a11y::{ColorScheme, Contrast, DesktopSettings, HostPrefs, SettingValue, SystemPrefs};
 pub use loader::Loader;

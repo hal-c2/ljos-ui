@@ -45,6 +45,17 @@ fn wheel_item(engine: &Engine, obj: ObjectId) -> Option<WheelItem> {
     engine.extension::<Registry>().types.of(engine, obj)
 }
 
+/// Offers `ev` to `obj` at `local`, a point in its own coordinates,
+/// wherever the pointer is. Whether it used it.
+pub(crate) fn offer_at(
+    engine: &Engine,
+    obj: ObjectId,
+    ev: &WheelEvent,
+    local: kurbo::Point,
+) -> bool {
+    wheel_item(engine, obj).is_some_and(|h| (h.wheel)(engine, obj, ev, local))
+}
+
 /// Offers `ev` to one item under the pointer, if its type takes the
 /// wheel. Whether the item used it. Who is asked, and in which order, is
 /// [`crate::wheel::deliver`]'s to say.
