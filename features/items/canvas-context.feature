@@ -122,6 +122,32 @@ Feature: Drawing on a Canvas with its 2D context
     When 200 milliseconds pass
     Then the property "seen" of "board" is ["0,0,0,0", "255,0,0,255", "0,0,255,128", "0,255,0,127", "255,0,0,255", "0,0,0,0", "0,255,0,255"]
 
+  Scenario: reset empties the canvas and brings back the default state
+    Given the QML:
+      """qml
+      import QtQuick
+      Board {
+        objectName: "board"
+        property var seen: []
+        onDraw: {
+          var s = []
+          ctx.fillStyle = "red"; ctx.translate(10, 0); ctx.globalAlpha = 0.5
+          ctx.beginPath(); ctx.rect(0, 0, 50, 50); ctx.clip()
+          ctx.fillRect(0, 0, 20, 20)
+          s.push(px(15, 5))
+          ctx.reset()
+          s.push(px(15, 5), ctx.fillStyle, String(ctx.globalAlpha))
+          ctx.fillRect(0, 60, 10, 10)
+          s.push(px(5, 65))
+          ctx.beginPath(); ctx.rect(70, 70, 10, 10); ctx.reset(); ctx.fill()
+          s.push(px(75, 75))
+          seen = s
+        }
+      }
+      """
+    When 200 milliseconds pass
+    Then the property "seen" of "board" is ["255,0,0,127", "0,0,0,0", "#000000", "1", "0,0,0,255", "0,0,0,0"]
+
   Scenario: A composition that removes changes only what lies under the shape
     Given the QML:
       """qml
