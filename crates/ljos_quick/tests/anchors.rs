@@ -330,6 +330,9 @@ Item {
     assert_eq!(rect(&e, inset), (3.0, 3.0, 394.0, 4.0));
 
     // What a write lays out, counted at the write and at the next frame.
+    // The counts are of anchors passes: one more than expected is an item
+    // laid out twice (a nested or another settle pass), or an item that
+    // does not follow the key, and either is what this test is for.
     let mut laid_out = |key: &str, value: Value| {
         let before = ljos_quick::anchor_computes();
         owner.insert(&e, key, value);
@@ -349,13 +352,15 @@ Item {
     assert_eq!(
         laid_out("wide", Value::Real(60.0)),
         4,
-        "only the three items anchored to a resized one, and the one whose \
-         right edge holds it, lay out again, once each"
+        "one pass each for the three items anchored to a resized one and the \
+         one whose right edge holds it; more is an item laid out twice or one \
+         that does not follow the key"
     );
     assert_eq!(
         laid_out("gap", Value::Real(5.0)),
         10,
-        "only the ten items whose margins follow the key lay out again"
+        "one pass each for the ten items whose margins follow the key; more \
+         is an item laid out twice or one that does not follow the key"
     );
     assert_eq!(num(&e, next, "x"), 60.0);
     assert_eq!(num(&e, find(&e, root, "atRight"), "x"), 340.0);

@@ -441,9 +441,12 @@ thread_local! {
     static COMPUTES: Cell<u64> = const { Cell::new(0) };
 }
 
-/// How many times this thread's anchors effects worked out an item's
-/// anchored geometry: what a write costs the anchors is counted, not
-/// timed, so a change seen to reach items that do not follow it shows.
+/// How many anchors-effect passes this thread ran: each time an effect
+/// worked out an item's anchored geometry, a nested pass made while the
+/// effect is re-entered and each settle pass included, and an item no
+/// anchor is set on counted too. What a write costs the anchors is
+/// counted, not timed, so a change seen to reach items that do not follow
+/// it shows; a count is of passes, not of items.
 #[doc(hidden)]
 pub fn anchor_computes() -> u64 {
     COMPUTES.get()
