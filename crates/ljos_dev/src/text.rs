@@ -1,9 +1,11 @@
 //! QML a running program holds as text (`Qt.createQmlObject`).
 //!
-//! Only a development build can make an object of it: the text has to be
-//! compiled, and a shipped program has no compiler. The engine asks
-//! whoever was installed with [`Engine::set_qml_text_compiler`]; this is
-//! what a development host installs.
+//! The text has to be compiled, so only a program that links the compiler
+//! makes an object of it: a development build, and a shipped one its users
+//! change (`user-qml`, whose session compiles texts against the user's
+//! files, [`crate::UserSession`]). The engine asks whoever was installed
+//! with [`Engine::set_qml_text_compiler`]; this is what a development host
+//! installs, and what a session uses before the user has a file.
 //!
 //! [`Engine::set_qml_text_compiler`]: ljos_engine::Engine::set_qml_text_compiler
 
@@ -82,21 +84,39 @@ fn compile<O: TypeOracle>(
     project: &mut Project<O>,
     text: QmlText<'_>,
 ) -> Result<ljos_ir::CompiledFile, Vec<QmlTextError>> {
-    match compile_text(project, text.key, text.text) {
+    outcome(compile_text(project, text.key, text.text))
+}
+
+/// What a text compiled to, as the engine takes it: a file with an error
+/// is not one to make an object of.
+pub(crate) fn outcome(
+    compiled: Result<ljos_compiler::Compiled, Vec<Diagnostic>>,
+) -> Result<ljos_ir::CompiledFile, Vec<QmlTextError>> {
+    match compiled {
         Ok(compiled) if !compiled.has_errors() => Ok(compiled.file),
-        Ok(compiled) => Err(errors(&compiled.diagnostics)),
-        Err(diagnostics) => Err(errors(&diagnostics)),
+        Ok(compiled) => Err(errors(compiled.all_diagnostics())),
+        Err(diagnostics) => Err(errors(diagnostics.iter().map(|d| (None, d)))),
     }
 }
 
-fn errors(diagnostics: &[Diagnostic]) -> Vec<QmlTextError> {
+/// The errors, a module's (`None` is the text's own) said at its own
+/// line after its key: the text's lines are not the module's.
+fn errors<'a>(
+    diagnostics: impl Iterator<Item = (Option<&'a str>, &'a Diagnostic)>,
+) -> Vec<QmlTextError> {
     diagnostics
-        .iter()
-        .filter(|d| d.severity == Severity::Error)
-        .map(|d| QmlTextError {
-            line: d.span.line,
-            column: d.span.column,
-            message: d.message.clone(),
+        .filter(|(_, d)| d.severity == Severity::Error)
+        .map(|(module, d)| match module {
+            None => QmlTextError {
+                line: d.span.line,
+                column: d.span.column,
+                message: d.message.clone(),
+            },
+            Some(module) => QmlTextError {
+                line: 0,
+                column: 0,
+                message: format!("{module}:{}:{}: {}", d.span.line, d.span.column, d.message),
+            },
         })
         .collect()
 }
@@ -146,6 +166,32 @@ mod tests {
         assert_eq!(errors.len(), 1);
         assert_eq!(errors[0].line, 2);
         assert!(errors[0].message.contains("Expected"), "{errors:?}");
+    }
+
+    #[test]
+    fn a_module_s_error_is_told_at_its_own_line_after_its_key() {
+        let mut project = project();
+        let broken = match compile_text(&mut project, "inline", "import QtQuick\nItem { ") {
+            Ok(compiled) => compiled.diagnostics,
+            Err(diagnostics) => diagnostics,
+        };
+        let mut compiled =
+            compile_text(&mut project, "inline", "import QtQuick\nItem { }\n").expect("compiles");
+        assert!(
+            outcome(Ok(compiled.clone())).is_ok(),
+            "nothing is wrong yet"
+        );
+        compiled.modules.push(ljos_compiler::CheckedModule {
+            key: "content/filter.ts".into(),
+            diagnostics: broken,
+        });
+        let errors = outcome(Ok(compiled)).expect_err("a module it reaches has an error");
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert_eq!((errors[0].line, errors[0].column), (0, 0), "{errors:?}");
+        assert!(
+            errors[0].message.starts_with("content/filter.ts:2:"),
+            "{errors:?}"
+        );
     }
 
     #[test]

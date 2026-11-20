@@ -45,13 +45,17 @@
     let objs = { fillStyle: null, strokeStyle: null };
     let sent = { fillStyle: -1, strokeStyle: -1 };
     let saved = [];
+    // Every painting call runs this: a colour style, the usual case,
+    // costs two comparisons and no array to walk (#633).
     function sync() {
-      for (const p of ["fillStyle", "strokeStyle"]) {
-        const o = objs[p];
-        if (o !== null && sent[p] !== o.__version) {
-          n.write(p, styleOf(o));
-          sent[p] = o.__version;
-        }
+      if (objs.fillStyle !== null) syncOne("fillStyle");
+      if (objs.strokeStyle !== null) syncOne("strokeStyle");
+    }
+    function syncOne(p) {
+      const o = objs[p];
+      if (sent[p] !== o.__version) {
+        n.write(p, styleOf(o));
+        sent[p] = o.__version;
       }
     }
     Object.defineProperty(ctx, "canvas", { enumerable: true, get: () => canvas });
@@ -67,6 +71,13 @@
         enumerable: true,
         get: () => (objs[p] !== null ? objs[p] : n.read(p)),
         set: (v) => {
+          if (typeof v === "string") {
+            if (n.write(p, v)) {
+              objs[p] = null;
+              sent[p] = -1;
+            }
+            return;
+          }
           const made = v instanceof CanvasGradient || v instanceof CanvasPattern;
           if (n.write(p, styleOf(v))) {
             objs[p] = made ? v : null;
@@ -75,16 +86,23 @@
         },
       });
     }
+    // Up to six arguments go one by one (op6): a list of them would be
+    // a script array the native half reads back, which costs more than
+    // most ops (#633).
     for (const name of OPS) {
-      ctx[name] = function () {
-        if (PAINTS.has(name)) sync();
-        const r = n.op(name, Array.prototype.slice.call(arguments));
+      const paints = PAINTS.has(name);
+      ctx[name] = function (a, b, c, d, e, f) {
+        if (paints) sync();
+        const count = arguments.length;
+        const r = count <= 6
+          ? n.op6(name, count, a, b, c, d, e, f)
+          : n.op(name, Array.prototype.slice.call(arguments));
         return r === undefined ? ctx : r;
       };
     }
     ctx.save = function () {
       saved.push([objs.fillStyle, objs.strokeStyle, sent.fillStyle, sent.strokeStyle]);
-      n.op("save", []);
+      n.op6("save", 0);
       return ctx;
     };
     ctx.restore = function () {
@@ -93,17 +111,17 @@
         objs = { fillStyle: s[0], strokeStyle: s[1] };
         sent = { fillStyle: s[2], strokeStyle: s[3] };
       }
-      n.op("restore", []);
+      n.op6("restore", 0);
       return ctx;
     };
     ctx.reset = function () {
       objs = { fillStyle: null, strokeStyle: null };
       sent = { fillStyle: -1, strokeStyle: -1 };
       saved = [];
-      n.op("reset", []);
+      n.op6("reset", 0);
       return ctx;
     };
-    ctx.isPointInPath = function (x, y) { return n.op("isPointInPath", [x, y]); };
+    ctx.isPointInPath = function (x, y) { return n.op6("isPointInPath", 2, x, y); };
     ctx.measureText = function (text) { return { width: n.op("measureText", [String(text)]) }; };
     ctx.setLineDash = function (dashes) {
       n.op("setLineDash", [Array.from(dashes || [], Number)]);
@@ -138,7 +156,7 @@
       return { width: w, height: h, data: new Uint8ClampedArray(w * h * 4) };
     };
     ctx.getImageData = function (x, y, w, h) {
-      const r = n.op("getImageData", [x, y, w, h]);
+      const r = n.op6("getImageData", 4, x, y, w, h);
       if (r === undefined) return undefined;
       return { width: r[0], height: r[1], data: Uint8ClampedArray.from(r[2]) };
     };

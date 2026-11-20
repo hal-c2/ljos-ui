@@ -124,6 +124,9 @@ pub use ljos_quick::text_input::{
     CharFormatSpan, HighlightSpan, Highlighter, char_formats, highlights, set_highlighter,
     set_highlights,
 };
+/// A touch screen's points, which reach what takes fingers but not the
+/// mouse (`MultiPointTouchArea { mouseEnabled: false }`).
+pub use ljos_quick::touch::{TouchEvent, TouchPhase};
 pub use ljos_quick::transform::matrix_value;
 /// For a module crate with animations of its own (`QtQuick.Timeline`).
 pub use ljos_quick::{
@@ -138,7 +141,7 @@ pub use ljos_quick::{FrameAnimation, QuaternionAnimation, frame_time_due, frames
 pub use ljos_quick::{GrabRefused, grab};
 pub use ljos_quick::{
     HoverMove, MouseButtons, PointerEvent, PointerId, PointerItem, PointerKind, PointerPortal,
-    contains_point,
+    PointerSource, contains_point,
 };
 pub use ljos_quick::{
     Item, ItemPaint, KeyEvent, KeyKind, Modifiers, PaintedItem, ReadPaint, ScrollPhase, WheelEvent,

@@ -1432,6 +1432,19 @@ impl Input for LjosBackend {
         })
     }
 
+    fn send_key_to(&mut self, chord: &str, path: &str) -> Result<()> {
+        self.input(|b| {
+            let chord = Chord::parse(chord).map_err(failed)?;
+            let live = b.live()?;
+            let item = live.find(path)?;
+            let ev = ljos_quick::KeyEvent::press(chord.key)
+                .with_modifiers(chord.modifiers)
+                .with_text(chord.text);
+            ljos_quick::send_input(&live.engine, item, &ljos_quick::Input::Key(ev));
+            live.settle()
+        })
+    }
+
     fn window_active(&mut self, active: bool) -> Result<()> {
         self.input(|b| {
             let live = b.live()?;
@@ -1746,6 +1759,26 @@ impl Application for LjosBackend {
 
     fn run_built_ahead(&mut self, entry: &str) -> Result<()> {
         self.live()?.run_built_ahead(entry)
+    }
+
+    fn plugin_file(&mut self, name: &str, text: &str) -> Result<()> {
+        self.live()?.plugin_file(name, text)
+    }
+
+    fn plugin_url(&mut self, name: &str) -> Result<String> {
+        self.live()?.plugin_url(name)
+    }
+
+    fn plugin_link_out(&mut self, name: &str, target: &str) -> Result<()> {
+        self.live()?.plugin_link_out(name, target)
+    }
+
+    fn outside_file(&mut self, name: &str, text: &str) -> Result<()> {
+        self.live()?.outside_file(name, text)
+    }
+
+    fn outside_url(&mut self, name: &str) -> Result<String> {
+        self.live()?.outside_url(name)
     }
 
     fn windows_of_their_own(&mut self) -> Result<()> {
