@@ -369,3 +369,126 @@ fn the_one_window_is_the_only_one() {
         "{refused:?}"
     );
 }
+
+/// Draws on surface 7 and asks, through `on_draw`, what to do next.
+struct Drawer {
+    log: Log,
+    draws: u32,
+    on_draw: fn(u32, &mut RelayControl<'_, u32>),
+    on_wait: fn(u32, &mut RelayControl<'_, u32>),
+}
+
+impl HostApp<RelayHost<u32, Msg>> for Drawer {
+    fn event(&mut self, host: &mut RelayControl<'_, u32>, event: Event<'_, (), Msg>) {
+        match event {
+            Event::SurfaceCreated => {
+                host.create_window(&WindowAttributes::default()).unwrap();
+            }
+            Event::Window {
+                event: WindowEvent::RedrawRequested,
+                ..
+            } => {
+                self.draws += 1;
+                self.log.lock().unwrap().push(String::from("drawn"));
+                (self.on_draw)(self.draws, host);
+            }
+            Event::AboutToWait => (self.on_wait)(self.draws, host),
+            Event::User(Msg::Stop) => {
+                self.log.lock().unwrap().push(String::from("stop"));
+                host.exit();
+            }
+            _ => {}
+        }
+    }
+}
+
+fn surface_then_stop_after(relay: &Relay<u32, Msg>, after: Duration) -> std::thread::JoinHandle<()> {
+    relay
+        .send(Arrival::SurfaceCreated {
+            surface: 7,
+            px: [1080, 2400],
+            scale: 2.75,
+        })
+        .unwrap();
+    let relay = relay.clone();
+    // Only for a loop that went to sleep with a redraw pending: it stops
+    // the test, and the lines say what was drawn before.
+    std::thread::spawn(move || {
+        std::thread::sleep(after);
+        let _ = relay.post(Msg::Stop);
+    })
+}
+
+#[test]
+fn a_redraw_asked_while_about_to_wait_is_drawn_without_another_message() {
+    let log = Log::default();
+    let requests = Arc::default();
+    let (host, relay) = host(&requests);
+    let stopper = surface_then_stop_after(&relay, Duration::from_secs(2));
+    let app = Drawer {
+        log: Arc::clone(&log),
+        draws: 0,
+        on_draw: |draws, host| {
+            if draws == 2 {
+                host.exit();
+            }
+        },
+        // The scene's next pass is due now (an animation, a script that
+        // finished preparing): asked for after the loop looked.
+        on_wait: |draws, host| {
+            if draws == 1 {
+                host.request_redraw(WINDOW);
+            }
+        },
+    };
+    host.run(app).unwrap();
+    drop(stopper);
+    assert_eq!(lines(&log), ["drawn", "drawn"]);
+}
+
+#[test]
+fn a_pending_redraw_is_drawn_while_messages_keep_coming() {
+    let log = Log::default();
+    let requests = Arc::default();
+    let (host, relay) = host(&requests);
+    let stopper = surface_then_stop_after(&relay, Duration::from_secs(2));
+    // Each message brings the next, so the queue is never empty.
+    struct Flood {
+        drawer: Drawer,
+        relay: Relay<u32, Msg>,
+        pings: u32,
+    }
+    impl HostApp<RelayHost<u32, Msg>> for Flood {
+        fn event(&mut self, host: &mut RelayControl<'_, u32>, event: Event<'_, (), Msg>) {
+            if let Event::User(Msg::Ping) = event {
+                self.pings += 1;
+                if self.pings == 1 {
+                    host.request_redraw(WINDOW);
+                }
+                if self.pings < 1_000_000 {
+                    let _ = self.relay.post(Msg::Ping);
+                }
+                return;
+            }
+            self.drawer.event(host, event);
+        }
+    }
+    relay.post(Msg::Ping).unwrap();
+    let app = Flood {
+        drawer: Drawer {
+            log: Arc::clone(&log),
+            draws: 0,
+            // Drawn once, it asks for its next pass at once.
+            on_draw: |draws, host| match draws {
+                1 => host.request_redraw(WINDOW),
+                _ => host.exit(),
+            },
+            on_wait: |_, _| {},
+        },
+        relay: relay.clone(),
+        pings: 0,
+    };
+    host.run(app).unwrap();
+    drop(stopper);
+    assert_eq!(lines(&log), ["drawn", "drawn"]);
+}

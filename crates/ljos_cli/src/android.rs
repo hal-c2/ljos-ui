@@ -160,7 +160,8 @@ fn xml_text(text: &str) -> String {
 }
 
 /// The application id a package is given unless told: its name, as Java
-/// takes a package segment.
+/// takes a package segment and Android an application id's, which starts
+/// with a letter.
 fn default_application_id(package: &str) -> String {
     let segment: String = package
         .chars()
@@ -172,8 +173,8 @@ fn default_application_id(package: &str) -> String {
             }
         })
         .collect();
-    let segment = if segment.starts_with(|c: char| c.is_ascii_digit()) {
-        format!("_{segment}")
+    let segment = if !segment.starts_with(|c: char| c.is_ascii_alphabetic()) {
+        format!("app_{segment}")
     } else {
         segment
     };
@@ -269,7 +270,9 @@ impl Build {
             let mut c = Command::new(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()));
             c.args(["ndk", "-t", abi, "-P", &MIN_SDK.to_string(), "-o"])
                 .arg(&jni)
-                .args(["build", "-p", &package.name])
+                // Only the library the package is made of: a binary of the
+                // package for the desktop need not build for a phone.
+                .args(["build", "--lib", "-p", &package.name])
                 .current_dir(&self.path);
             if self.release {
                 c.arg("--release");
@@ -315,8 +318,6 @@ impl Build {
     }
 }
 
-/// Writes the filled template into `project`, leaving what Gradle and
-/// cargo-ndk put there before.
 /// Removes the libraries of the ABIs not built now: the package takes
 /// whatever is in `jni`, and an earlier build's library for another ABI
 /// would be installed on a device of that ABI without a word.
@@ -342,6 +343,8 @@ fn keep_only_abis(jni: &Path, abis: &[&str]) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Writes the filled template into `project`, leaving what Gradle and
+/// cargo-ndk put there before.
 fn write_project(project: &Path, fill: &Fill) -> anyhow::Result<()> {
     for (path, text) in TEMPLATE {
         let to = project.join(path);
@@ -489,6 +492,9 @@ mod tests {
             "dev.ljos.android_hello"
         );
         assert_eq!(default_application_id("Ljos_App"), "dev.ljos.ljos_app");
-        assert_eq!(default_application_id("3d"), "dev.ljos._3d");
+        // Android takes a segment only if it starts with a letter; cargo
+        // takes a package named `_foo`.
+        assert_eq!(default_application_id("_foo"), "dev.ljos.app__foo");
+        assert_eq!(default_application_id("3d"), "dev.ljos.app_3d");
     }
 }

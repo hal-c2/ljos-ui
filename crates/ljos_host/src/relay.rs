@@ -374,29 +374,43 @@ impl<S: Send + 'static, U: From<Wake> + Send + 'static> PlatformHost for RelayHo
             app.event(&mut RelayControl { state }, event);
         };
         loop {
-            // The first message: sleep until one comes, or the time asked for.
-            let first = match state.deadline {
-                None => rx.recv().map_err(|_| RecvTimeoutError::Disconnected),
-                Some(at) => rx.recv_timeout(at.saturating_duration_since(Instant::now())),
-            };
-            let mut next = match first {
-                Ok(msg) => Some(msg),
-                Err(RecvTimeoutError::Timeout) => {
-                    state.deadline = None;
-                    deliver(&mut state, Event::Wake);
-                    None
+            // The first message: sleep until one comes, or the time asked
+            // for. Not while a redraw is pending that can be drawn: it was
+            // asked for after the loop last looked, and nothing else may
+            // come to wake it.
+            let drawable = state.redraw && state.window && state.surface.is_some();
+            let mut next = if drawable {
+                rx.try_recv().ok()
+            } else {
+                let first = match state.deadline {
+                    None => rx.recv().map_err(|_| RecvTimeoutError::Disconnected),
+                    Some(at) => rx.recv_timeout(at.saturating_duration_since(Instant::now())),
+                };
+                match first {
+                    Ok(msg) => Some(msg),
+                    Err(RecvTimeoutError::Timeout) => {
+                        state.deadline = None;
+                        deliver(&mut state, Event::Wake);
+                        None
+                    }
+                    // The host holds a relay itself, so this is not reached.
+                    Err(RecvTimeoutError::Disconnected) => break,
                 }
-                // The host holds a relay itself, so this is not reached.
-                Err(RecvTimeoutError::Disconnected) => break,
             };
-            // Then everything already waiting, before the window is drawn.
-            while let Some(msg) = next.take() {
+            // Then what is already waiting, before the window is drawn; at
+            // most a turn's worth, so that a sender that never lets the
+            // queue empty does not keep the window from being drawn.
+            let mut taken = 0;
+            loop {
                 // Asked of the clock, not of whether the wait timed out:
                 // while messages keep coming, none does.
                 if state.deadline.is_some_and(|at| at <= Instant::now()) {
                     state.deadline = None;
                     deliver(&mut state, Event::Wake);
                 }
+                let Some(msg) = next.take() else {
+                    break;
+                };
                 match msg {
                     Msg::Wake => {
                         relay.wake_queued.store(false, Ordering::Release);
@@ -405,7 +419,8 @@ impl<S: Send + 'static, U: From<Wake> + Send + 'static> PlatformHost for RelayHo
                     Msg::User(u) => deliver(&mut state, Event::User(u)),
                     Msg::Arrival(arrival) => arrive(&mut state, &mut deliver, arrival),
                 }
-                if state.exit {
+                taken += 1;
+                if state.exit || taken == TURN {
                     break;
                 }
                 next = rx.try_recv().ok();
@@ -446,6 +461,9 @@ impl<S: Send + 'static, U: From<Wake> + Send + 'static> PlatformHost for RelayHo
         Ok(())
     }
 }
+
+/// The most messages one turn of the loop takes before it draws.
+const TURN: usize = 64;
 
 fn arrive<S, U>(
     state: &mut State<S>,

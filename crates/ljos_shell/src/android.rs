@@ -11,7 +11,9 @@
 use std::cell::Cell;
 use std::num::NonZeroUsize;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
+use std::thread::JoinHandle;
 use std::time::Instant;
 
 pub use android_activity::AndroidApp;
@@ -57,6 +59,13 @@ pub fn log_entry(entry: &ljos_engine::LogEntry) {
 /// The application of the process, attached to by every activity.
 static ATTACH: OnceLock<Attach<Message>> = OnceLock::new();
 
+/// The application asked to quit: its loop is ending, and has asked the
+/// activity to finish.
+static QUITTING: AtomicBool = AtomicBool::new(false);
+
+/// The application's thread, joined before a quit ends the process.
+static APPLICATION: Mutex<Option<JoinHandle<()>>> = Mutex::new(None);
+
 thread_local! {
     static IN_PASS: Cell<bool> = const { Cell::new(false) };
 }
@@ -93,24 +102,38 @@ where
                     let ui = Phone::new(config, setup, host.waker());
                     host.run(ui)
                 }));
-                let code = match ran {
-                    Ok(Ok(())) => 0,
+                match ran {
+                    // The activity was asked to finish: the process ends on
+                    // the activity's thread once it has (see `main`).
+                    Ok(Ok(())) => QUITTING.store(true, Ordering::Release),
                     Ok(Err(e)) => {
                         log::error!("the application's loop ended: {e}");
-                        1
+                        end_process(1);
                     }
                     // The hook logged why.
-                    Err(_) => 1,
-                };
-                end_process(code);
+                    Err(_) => end_process(1),
+                }
             });
-        if let Err(e) = spawned {
-            log::error!("the application's thread did not start: {e}");
-            end_process(1);
+        match spawned {
+            Ok(thread) => *crate::lock(&APPLICATION) = Some(thread),
+            Err(e) => {
+                log::error!("the application's thread did not start: {e}");
+                end_process(1);
+            }
         }
         attach
     });
     attach.pump(&app);
+    // Not from the application's thread as its loop ends: the activity it
+    // asked to finish would still be in front, and the process's exit
+    // would tear down what the activity's threads are still using. Here
+    // the activity has finished and its thread is back in `android_main`.
+    if QUITTING.load(Ordering::Acquire) {
+        if let Some(thread) = crate::lock(&APPLICATION).take() {
+            let _ = thread.join();
+        }
+        end_process(0);
+    }
 }
 
 /// The process ends with its application. Android keeps a process it
@@ -166,6 +189,24 @@ struct Phone<M, S> {
     due: Arc<Mutex<Option<Instant>>>,
     waker: ljos_host::Waker,
     focused: bool,
+    /// Frames tried again since one was last drawn.
+    retries: u32,
+}
+
+/// How long after a frame that could not be drawn it is tried again, and
+/// how many times.
+const RETRY: std::time::Duration = std::time::Duration::from_millis(16);
+const RETRIES: u32 = 8;
+
+/// What became of a frame.
+enum Painted {
+    Drawn,
+    /// The window is hidden.
+    Skipped,
+    /// None could be had now; another may soon.
+    Again,
+    /// The surface is gone and is made again.
+    Lost,
 }
 
 impl<M, S> Phone<M, S>
@@ -205,6 +246,7 @@ where
             due,
             waker,
             focused: true,
+            retries: 0,
         }
     }
 
@@ -260,6 +302,7 @@ where
             log::error!("nothing can be drawn: {e}");
             return;
         }
+        self.retries = 0;
         if let Stage::Waiting(..) = self.stage {
             // The one window is the screen; it comes with the first surface.
             if let Err(e) = host.create_window(&WindowAttributes::default()) {
@@ -378,7 +421,22 @@ where
                             });
                         }
                     }
-                    Key::Character(_) | Key::Unidentified => {}
+                    Key::Character(c) => {
+                        // A hardware keyboard's printable key, as a key and
+                        // not only as the text it types: what reads keys
+                        // (a shortcut, Keys.onPressed) sees it pressed and
+                        // let go.
+                        if let Some(k) = egui::Key::from_name(&c.to_uppercase()) {
+                            self.events.push(egui::Event::Key {
+                                key: k,
+                                physical_key: None,
+                                pressed,
+                                repeat: key.repeat,
+                                modifiers: egui::Modifiers::NONE,
+                            });
+                        }
+                    }
+                    Key::Unidentified => {}
                 }
                 if pressed && let Some(text) = key.text {
                     self.events.push(egui::Event::Text(text));
@@ -393,7 +451,7 @@ where
     }
 
     /// One pass of the scene, drawn into the surface.
-    fn draw(&mut self) {
+    fn draw(&mut self, host: &mut RelayControl<'_, NativeWindow>) {
         let Stage::Running(app) = &mut self.stage else {
             return;
         };
@@ -424,17 +482,46 @@ where
         self.asked = app.view_mut().take_asked().map(|after| began + after);
         let engine = Rc::clone(app.engine());
         let jobs = self.ctx.tessellate(output.shapes, output.pixels_per_point);
-        gpu.paint(
+        let painted = gpu.paint(
             surface,
             &jobs,
             &output.textures_delta,
             output.pixels_per_point,
         );
-        ljos_quick::ImageStore::of(&engine).frame_drawn(&engine);
+        match painted {
+            Painted::Drawn => {
+                self.retries = 0;
+                ljos_quick::ImageStore::of(&engine).frame_drawn(&engine);
+            }
+            // Hidden: drawn again when it shows, which asks for a pass.
+            Painted::Skipped => {}
+            Painted::Again => self.again(began),
+            Painted::Lost => {
+                self.surface = None;
+                if let Some(window) = host.surface().cloned() {
+                    match self.make_surface(&window) {
+                        Ok(()) => self.again(began),
+                        Err(e) => log::error!("the surface was lost and not made again: {e}"),
+                    }
+                }
+            }
+        }
         for command in output.platform_output.commands {
             if let egui::OutputCommand::OpenUrl(open) = command {
                 log::info!("open {}", open.url);
             }
+        }
+    }
+
+    /// What the scene changed is not on the screen yet: another pass is
+    /// asked for soon, a few times, and then only when the scene asks.
+    fn again(&mut self, began: Instant) {
+        if self.retries < RETRIES {
+            self.retries += 1;
+            let at = began + RETRY;
+            self.asked = Some(self.asked.map_or(at, |asked| asked.min(at)));
+        } else {
+            log::warn!("the screen was not drawn after {RETRIES} tries");
         }
     }
 
@@ -486,7 +573,7 @@ where
                     self.resized(px, scale);
                     host.request_redraw(WINDOW);
                 }
-                WindowEvent::RedrawRequested => self.draw(),
+                WindowEvent::RedrawRequested => self.draw(host),
                 WindowEvent::Back { .. } => {
                     // Nothing in the scene takes Back yet: as a phone's
                     // own applications do, the application goes to the
@@ -510,6 +597,9 @@ where
             Event::Wake | Event::User(Message::Wake) => host.request_redraw(WINDOW),
             Event::AboutToWait => {
                 if self.quit_requested() {
+                    // Before the activity is asked to finish, so that it
+                    // is known once it has.
+                    QUITTING.store(true, Ordering::Release);
                     host.exit();
                 } else {
                     self.next_wake(host);
@@ -583,7 +673,7 @@ impl Gpu {
         jobs: &[egui::ClippedPrimitive],
         textures: &egui::TexturesDelta,
         pixels_per_point: f32,
-    ) {
+    ) -> Painted {
         for (id, deltas) in &textures.set {
             for delta in deltas {
                 self.renderer
@@ -594,9 +684,19 @@ impl Gpu {
             wgpu::CurrentSurfaceTexture::Success(frame)
             | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
             other => {
-                log::warn!("no frame to draw into: {other:?}");
-                surface.surface.configure(&self.device, &surface.config);
-                return;
+                for id in &textures.free {
+                    self.renderer.free_texture(id);
+                }
+                return match other {
+                    wgpu::CurrentSurfaceTexture::Occluded => Painted::Skipped,
+                    wgpu::CurrentSurfaceTexture::Lost => Painted::Lost,
+                    wgpu::CurrentSurfaceTexture::Timeout => Painted::Again,
+                    other => {
+                        log::warn!("no frame to draw into: {other:?}");
+                        surface.surface.configure(&self.device, &surface.config);
+                        Painted::Again
+                    }
+                };
             }
         };
         let screen = egui_wgpu::ScreenDescriptor {
@@ -637,6 +737,7 @@ impl Gpu {
         for id in &textures.free {
             self.renderer.free_texture(id);
         }
+        Painted::Drawn
     }
 }
 
