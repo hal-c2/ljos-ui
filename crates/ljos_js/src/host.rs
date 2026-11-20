@@ -3245,25 +3245,22 @@ pub(crate) fn classify_error<'js>(
         rquickjs::Error::Allocation => JsFault::JsOutOfMemory {
             label: label.to_owned(),
         },
-        rquickjs::Error::Exception => {
-            let thrown = ctx.catch();
-            let mut fault = describe_exception(&thrown, label, sources);
-            if let (JsFault::JsException { thrown: kept, .. }, Some(scope)) = (&mut fault, scope) {
-                *kept = scope.from_value(&thrown).ok();
-                // Reading it can only fail by throwing (an array nested too
-                // deep): the context is left clean, and the value goes.
-                if kept.is_none() {
-                    let _ = ctx.catch();
-                }
-            }
-            fault
-        }
-        // rquickjs says no more than this when QuickJS gives it no string
-        // back (`JS_ToCStringLen`): there was no room to copy one into, and
-        // what QuickJS threw for that is pending.
+        rquickjs::Error::Exception => thrown_fault(ctx, scope, label, sources),
+        // rquickjs words a call into QuickJS that gave nothing back, and
+        // threw nothing it would show, as unknown (a string turned into
+        // text, an atom, a big integer). Where that call ran out of heap,
+        // QuickJS left its "out of memory" pending, or a `null` where even
+        // that would not fit: the heap is told as having run out, so the
+        // boundary above waits for room and tries again instead of taking
+        // it for a bug. The pending exception is cleared either way, or the
+        // next run would find it.
+        // A pending exception that is not running out of memory is the
+        // script's own, and is told as one rather than as a bug. Only the
+        // run's own code can leave one here on purpose, which is how the
+        // test of it does.
+        rquickjs::Error::Unknown if ctx.has_exception() => thrown_fault(ctx, scope, label, sources),
         rquickjs::Error::Unknown => {
-            let thrown = ctx.catch();
-            if out_of_memory_thrown(&thrown) {
+            if heap_nearly_full(ctx, sources.peak.map_or(0, MallocPeak::get)) {
                 JsFault::JsOutOfMemory {
                     label: label.to_owned(),
                 }
@@ -3273,6 +3270,27 @@ pub(crate) fn classify_error<'js>(
         }
         other => JsFault::Internal(other.to_string()),
     }
+}
+
+/// The pending exception as a fault, drained. With a `scope`, an
+/// exception keeps the value thrown.
+fn thrown_fault<'js>(
+    ctx: &Ctx<'js>,
+    scope: Option<&Scope<'js>>,
+    label: &str,
+    sources: Sources<'_>,
+) -> JsFault {
+    let thrown = ctx.catch();
+    let mut fault = describe_exception(&thrown, label, sources);
+    if let (JsFault::JsException { thrown: kept, .. }, Some(scope)) = (&mut fault, scope) {
+        *kept = scope.from_value(&thrown).ok();
+        // Reading it can only fail by throwing (an array nested too deep):
+        // the context is left clean, and the value goes.
+        if kept.is_none() {
+            let _ = ctx.catch();
+        }
+    }
+    fault
 }
 
 fn describe_exception(
@@ -3396,32 +3414,11 @@ fn describe_exception(
     }
 }
 
-/// Whether `thrown` is what QuickJS throws when an allocation fails: its
-/// `InternalError: out of memory`, one with no words when even those found
-/// no room, or `null` when the error itself found none.
-fn out_of_memory_thrown(thrown: &Value<'_>) -> bool {
-    if thrown.is_null() {
-        return true;
-    }
-    let Some(e) = thrown
-        .as_object()
-        .and_then(|o| Exception::from_object(o.clone()))
-    else {
-        return false;
-    };
-    let name = e
-        .as_object()
-        .get::<_, Option<String>>("name")
-        .ok()
-        .flatten();
-    name.as_deref() == Some("InternalError")
-        && matches!(e.message().as_deref(), None | Some("" | "out of memory"))
-}
-
 /// Whether the heap is within a sixteenth of its limit: too full for
 /// QuickJS to have made an error object, at `peak`, the most the run held
 /// before unwinding it let go. False with no limit. Walks the heap, which
-/// only a thrown `null` or an unworded `InternalError` asks for.
+/// only a thrown `null`, an unworded `InternalError` or an unknown error
+/// asks for.
 ///
 /// The peak is the run's, not the throw's: a script that fills the heap
 /// within a sixteenth of its limit, lets it go and then throws `null`

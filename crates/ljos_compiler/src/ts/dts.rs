@@ -739,8 +739,9 @@ declare function controller<P extends object = {}, B extends object = {}>(spec: 
 }): unknown;
 
 interface String {
-    /** QML's: the lowest `%n` of the text replaced by `value`. */
-    arg(value: string | number | boolean): string;
+    /** QML's: the lowest `%n` of the text replaced by `value`; with more
+     * values, the next lowest by each in turn, in one pass. */
+    arg(value: string | number | boolean, ...values: (string | number | boolean)[]): string;
 }
 ";
 

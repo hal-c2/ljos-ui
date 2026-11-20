@@ -125,6 +125,22 @@ impl Environment for LjosBackend {
         Ok(())
     }
 
+    fn clock_reading(&mut self, cost: Duration) -> Result<()> {
+        if self.live.is_some() {
+            return Err(failed("the clock's readings are given before the QML"));
+        }
+        self.clock_reading = Some(cost);
+        Ok(())
+    }
+
+    fn keep_pictures(&mut self) -> Result<()> {
+        if self.live.is_some() {
+            return Err(failed("the pictures are kept from before the QML"));
+        }
+        self.keep_pictures = true;
+        Ok(())
+    }
+
     fn js_clock(&mut self, native: Duration) -> Result<()> {
         self.js_native = Some(native);
         if let Some(live) = &self.live {

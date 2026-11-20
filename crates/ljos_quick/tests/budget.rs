@@ -781,6 +781,8 @@ fn hundred_canvas_cells_drawn_from_script() {
     // The bytes are what the painter keeps of the cells it was given
     // (18747 before #633 and after it), and the painter's buffers follow
     // the machine: CI keeps 64 more. They are bounded, not pinned.
+    // Whole-pixel cells inside the canvas are rectangle fills, with no
+    // path outline to build (#608): 1537 allocations before.
     assert!(got.bytes <= 20_000, "{got:?}");
     assert_eq!(
         got,
@@ -798,7 +800,7 @@ fn hundred_canvas_cells_drawn_from_script() {
                 names: 0,
                 atoms: 0,
             },
-            allocations: 1537,
+            allocations: 1334,
             bytes: got.bytes,
         }
     );

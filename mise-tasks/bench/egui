@@ -17,10 +17,14 @@ out="${BENCH_DIR:-$(checkout_dir bench-egui)}"
 
 # The run's own links to the programs it measures (pin_programs): the
 # target may be shared with another checkout, whose release build would
-# otherwise be measured as this one's.
-programs="$(pin_programs "$out/bin" build --quiet --release -p ljos_cli --bin ljos -p ljos_egui --example feed_egui)" ||
-  die "bench:egui: ljos and feed_egui did not build"
+# otherwise be measured as this one's. Two builds: in one, the example's
+# features (eframe's default_fonts) would reach the ljos it measures, and
+# that ljos would not be the one a user gets.
+programs="$(pin_programs "$out/bin" build --quiet --release -p ljos_cli --bin ljos)" ||
+  die "bench:egui: ljos did not build"
 ljos="$(pinned_program ljos "$programs")"
+programs="$(pin_programs "$out/bin" build --quiet --release -p ljos_egui --example feed_egui)" ||
+  die "bench:egui: feed_egui did not build"
 egui="$(pinned_program feed_egui "$programs")"
 [ -n "$ljos" ] && [ -n "$egui" ] || die "bench:egui: the build made no ljos or no feed_egui"
 

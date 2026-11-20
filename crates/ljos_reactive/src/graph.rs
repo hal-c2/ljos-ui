@@ -358,6 +358,18 @@ struct Node<V> {
     note_holds: u16,
 }
 
+/// Whether the reads that `node` (`n`) made in `run`, a [`Reader`]'s stamp,
+/// count among its sources: its last finished run's, or, while its runs
+/// are cut short, any of them and the whole run before them
+/// ([`Inner::kept`]). Stamps only grow, so those are the runs between.
+fn finished<V>(kept: &HashMap<NodeId, u64>, n: NodeId, node: &Node<V>, run: u64) -> bool {
+    node.done_stamp == run
+        || (!kept.is_empty()
+            && kept
+                .get(&n)
+                .is_some_and(|&from| from <= run && run <= node.done_stamp))
+}
+
 impl<V> Node<V> {
     fn is_eager(&self, all: bool) -> bool {
         match &self.kind {
@@ -408,6 +420,9 @@ struct Frame {
     node: Option<NodeId>,
     stamp: u64,
     reads: Vec<NodeId>,
+    /// A fault stopped the run before it read all it would have
+    /// ([`Graph::cut_short`]): it keeps its old sources besides its reads.
+    cut_short: bool,
 }
 
 /// A run still going whose read of `node` another run took over
@@ -427,6 +442,13 @@ struct Inner<V> {
     /// [`Graph::set_node_data`]'s tags, beside the nodes: few nodes have
     /// one, and every node would pay for the room.
     tags: HashMap<NodeId, u64>,
+    /// For a node whose runs since its last whole one were cut short
+    /// ([`Graph::cut_short`]), that whole run's stamp, or the first
+    /// cut-short run's when none finished whole: what those runs read
+    /// without a node still reaches the node, as its node sources do,
+    /// since each stopped before reading everything. Beside the nodes, as
+    /// the tags are: few runs are cut short.
+    kept: HashMap<NodeId, u64>,
     scopes: SlotMap<ScopeId, Scope>,
     root: ScopeId,
     /// Queued roots, one heap per flush level. A flush nested in an effect
@@ -925,6 +947,7 @@ impl<V: Clone + 'static> Graph<V> {
             inner: RefCell::new(Inner {
                 nodes: Slots::new(),
                 tags: HashMap::new(),
+                kept: HashMap::new(),
                 scopes,
                 root,
                 queues: vec![Queue::new()],
@@ -1646,6 +1669,7 @@ impl<V: Clone + 'static> Graph<V> {
             }
             i.mark_stack = stack;
             let has_tags = !i.tags.is_empty();
+            let has_kept = !i.kept.is_empty();
             let mut dead = std::mem::take(&mut i.dead_nodes);
             dead.reserve(ids.len());
             for &n in ids.iter().rev() {
@@ -1659,6 +1683,9 @@ impl<V: Clone + 'static> Graph<V> {
                 i.nodes.delete(n);
                 if has_tags {
                     i.tags.remove(&n);
+                }
+                if has_kept {
+                    i.kept.remove(&n);
                 }
                 // A scope that is going keeps no count.
                 if let Going::These(_) = going
@@ -1695,6 +1722,9 @@ impl<V: Clone + 'static> Graph<V> {
             let node = i.nodes.remove(n).ok_or(ReactiveError::DeadNode(n))?;
             if !i.tags.is_empty() {
                 i.tags.remove(&n);
+            }
+            if !i.kept.is_empty() {
+                i.kept.remove(&n);
             }
             for e in &node.sources {
                 drop_observer_slot(&mut i.nodes, e.node, e.back);
@@ -1862,6 +1892,7 @@ impl<V: Clone + 'static> Graph<V> {
             node: None,
             stamp: 0,
             reads: Vec::new(),
+            cut_short: false,
         });
     }
 
@@ -1881,6 +1912,27 @@ impl<V: Clone + 'static> Graph<V> {
             .frames
             .last()
             .is_some_and(|f| f.node.is_some())
+    }
+
+    /// Says that the run going on now (the innermost binding or effect, past
+    /// any [`Graph::untrack`]) was stopped by a fault that may not come
+    /// again, such as a full heap or an interrupt, before it read all it
+    /// would have. It keeps the sources of its last run as well as what it
+    /// read this time: the reads it never got to would otherwise wake it no
+    /// more, and its value would stay stale after the fault has passed.
+    /// What its last whole run and the cut-short runs since read without
+    /// a node ([`Graph::reader`]) stays [current](Graph::is_current) the
+    /// same way. A run that finishes as it should drops them again.
+    ///
+    /// A run cut short with no whole run before it, a binding's first,
+    /// has no sources but what it read: what it never got to cannot wake
+    /// it. Running it again once the fault has passed is for whoever was
+    /// told of the fault.
+    pub fn cut_short(&self) {
+        let mut i = self.inner.borrow_mut();
+        if let Some(f) = i.frames.iter_mut().rev().find(|f| f.node.is_some()) {
+            f.cut_short = true;
+        }
     }
 
     /// The run that a read right now belongs to: `None` where
@@ -2005,7 +2057,9 @@ impl<V: Clone + 'static> Graph<V> {
             let Some(reader) = i.nodes.get(r.node) else {
                 continue;
             };
-            if reader.done_stamp != r.run || i.nodes[n].observers.iter().any(|e| e.node == r.node) {
+            if !finished(&i.kept, r.node, reader, r.run)
+                || i.nodes[n].observers.iter().any(|e| e.node == r.node)
+            {
                 continue;
             }
             let back = reader.sources.len() as u32;
@@ -2031,7 +2085,10 @@ impl<V: Clone + 'static> Graph<V> {
             let i = &mut *g;
             let mut stack = std::mem::take(&mut i.mark_stack);
             for r in readers {
-                if i.nodes.get(r.node).is_some_and(|n| n.done_stamp == r.run) {
+                if i.nodes
+                    .get(r.node)
+                    .is_some_and(|n| finished(&i.kept, r.node, n, r.run))
+                {
                     stack.push((r.node, NodeState::Dirty, ALWAYS_STALE));
                 }
             }
@@ -3251,6 +3308,7 @@ impl<V: Clone + 'static> Graph<V> {
         i.nodes.bytes()
             + i.scopes.capacity() * std::mem::size_of::<Scope>()
             + i.tags.capacity() * (id + 8)
+            + i.kept.capacity() * (id + 8)
             + nodes
             + scopes
             + pooled
@@ -3738,6 +3796,7 @@ impl<V: Clone + 'static> Graph<V> {
                 node: Some(n),
                 stamp: i.tick,
                 reads,
+                cut_short: false,
             });
             i.eval_stack.push(n);
             (compute, node.binding_gen)
@@ -3956,6 +4015,7 @@ impl<V: Clone + 'static> Graph<V> {
             }
             i.eval_stack.pop();
             let stamp = frame.as_ref().map_or(0, |f| f.stamp);
+            let cut_short = frame.as_ref().is_some_and(|f| f.cut_short);
             let mut reads = frame.map(|f| f.reads).unwrap_or_default();
             let current = i.nodes.get(n).is_some_and(|node| node.binding_gen == gen_);
             if !current {
@@ -3978,6 +4038,18 @@ impl<V: Clone + 'static> Graph<V> {
                     (_, other) => leftover = other,
                 }
                 if ok {
+                    if cut_short {
+                        let node = &i.nodes[n];
+                        reads.extend(node.sources.iter().map(|e| e.node));
+                        let from = if node.done_stamp != 0 {
+                            node.done_stamp
+                        } else {
+                            stamp
+                        };
+                        i.kept.entry(n).or_insert(from);
+                    } else if !i.kept.is_empty() {
+                        i.kept.remove(&n);
+                    }
                     i.diff_sources(n, &reads);
                     i.nodes[n].done_stamp = stamp;
                     let node = &mut i.nodes[n];
@@ -4622,6 +4694,9 @@ impl<V: Clone + 'static> Inner<V> {
         // Its last run's reads are no longer its sources: what it read
         // without a node (`Graph::reader`) must not reach it either.
         node.done_stamp = 0;
+        if !self.kept.is_empty() {
+            self.kept.remove(&n);
+        }
         node.flags.set(Flags::HELD, false);
         node.height = 0;
         if node.state != NodeState::Computing {
@@ -4662,7 +4737,7 @@ impl<V: Clone + 'static> Inner<V> {
         let Some(node) = self.nodes.get(r.node) else {
             return false;
         };
-        node.done_stamp == r.run
+        finished(&self.kept, r.node, node, r.run)
             || self
                 .frames
                 .iter()

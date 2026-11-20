@@ -76,7 +76,7 @@ use std::sync::Arc;
 
 use ljos_a11y::{AccessibleNode, NodeKey};
 use ljos_engine::{Engine, ObjectId, Value};
-use ljos_quick::touch::TouchEvent;
+use ljos_quick::touch::{TouchEvent, TouchPhase};
 use ljos_quick::{
     InputOrigin, KeyEvent, Modifiers, MouseButtons, PointerEvent, PointerId, QuickScene, WheelEvent,
 };
@@ -399,17 +399,27 @@ impl<'a> Driver<'a> {
 
     /// A finger put down at `at`, moved by `by` in the steps a hand makes,
     /// and lifted: a tap when `by` is nothing, a swipe otherwise.
+    ///
+    /// It goes as a touch screen's frames do ([`Driver::send_touch`]), so
+    /// what takes only touch (a `MultiPointTouchArea`, a handler that
+    /// accepts only `PointerDevice.TouchScreen`) sees it, and what takes a
+    /// pointer sees a finger, not the mouse.
     pub fn touch(&mut self, at: Point, by: kurbo::Vec2) -> Result<(), DriveError> {
         let t = self.now();
-        self.send_pointer(&PointerEvent::press(at.x, at.y, t).with_id(FINGER));
+        let finger = |phase, pos| TouchEvent {
+            id: FINGER,
+            phase,
+            pos,
+            time: t,
+        };
+        self.send_touch(&[finger(TouchPhase::Begin, at)]);
         let end = at + by;
         if by != kurbo::Vec2::ZERO {
             for p in steps_between(at, end) {
-                let ev = PointerEvent::moved(p.x, p.y, MouseButtons::LEFT, t).with_id(FINGER);
-                self.send_pointer(&ev);
+                self.send_touch(&[finger(TouchPhase::Move, p)]);
             }
         }
-        self.send_pointer(&PointerEvent::release(end.x, end.y, t).with_id(FINGER));
+        self.send_touch(&[finger(TouchPhase::End, end)]);
         self.settle()
     }
 
