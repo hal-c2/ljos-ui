@@ -126,12 +126,14 @@ ApplicationWindow {
             objects.showTree(ok, s, r, parseInt(route.substring(8)), false)
         else if (route.indexOf("objects+:") === 0)
             objects.showTree(ok, s, r, parseInt(route.substring(9)), true)
-        else if (route === "inspect")
-            objects.showProperties(ok, s, r)
-        else if (route === "picture")
-            objects.showPicture(ok, r)
-        else if (route === "edited")
-            objects.edited(ok, r)
+        // What the Objects page asks names the object it asked of, so
+        // that an answer about one no longer picked is told apart.
+        else if (route.indexOf("inspect:") === 0)
+            objects.showProperties(ok, s, r, route.substring(8))
+        else if (route.indexOf("picture:") === 0)
+            objects.showPicture(ok, r, route.substring(8))
+        else if (route.indexOf("edited:") === 0)
+            objects.edited(ok, r, route.substring(7))
         else if (route === "supervisors" && ok)
             supervision.showTree(s.processes)
         else if (route === "faults" && ok)
@@ -191,7 +193,9 @@ ApplicationWindow {
             // A refresh the inspector turned away for being asked too
             // often keeps what is shown; the next change asks again. An
             // edit turned away is told.
-            if (!ok && route !== "watch" && route !== "edited"
+            var edit = route !== undefined && route.indexOf("edited:") === 0
+            var picture = route !== undefined && route.indexOf("picture:") === 0
+            if (!ok && route !== "watch" && !edit
                     && String(result).indexOf("rate_limited") >= 0) {
                 status.text = "The application is asked too often; showing the last answer"
                 if (route && route.indexOf("objects") === 0)
@@ -200,7 +204,7 @@ ApplicationWindow {
             }
             // A picture that cannot be taken is said where the picture
             // would be.
-            if (route !== "watch" && route !== "picture" && route !== "audit-shot")
+            if (route !== "watch" && !picture && route !== "audit-shot")
                 status.text = ok ? "" : tool + ": " + window.refusal(result)
             window.answered(route || "", ok, ok ? JSON.parse(result) : result)
         }
@@ -212,6 +216,13 @@ ApplicationWindow {
                                    "Bindings", "Growth", "Audit"]
     property int page: 0
     onPageChanged: watcher.start()
+
+    // A page chosen, by a click or a key, is asked for anew: what the
+    // watch told while it was hidden was not followed.
+    function show(index) {
+        page = index
+        refresh()
+    }
 
     function refresh(changed) {
         var all = changed === undefined
@@ -506,6 +517,7 @@ ApplicationWindow {
                     Layout.fillWidth: true
                     spacing: window.compact ? 4 : 2
                     Repeater {
+                        id: tabList
                         model: window.pages
                         delegate: Rectangle {
                             id: tab
@@ -520,6 +532,36 @@ ApplicationWindow {
                             color: shown ? theme.accentSoft
                                  : hover.containsMouse ? Qt.rgba(theme.text.r, theme.text.g, theme.text.b, 0.05)
                                  : "transparent"
+                            // The tab is what the keyboard and an
+                            // assistive technology reach, so it is what
+                            // speaks.
+                            Accessible.role: Accessible.PageTab
+                            Accessible.name: tab.modelData
+                            // The list is one stop of Tab, at the page
+                            // shown; the arrows go to the other tabs.
+                            activeFocusOnTab: tab.shown
+                            border.width: activeFocus ? 2 : 0
+                            border.color: theme.accent
+                            function go(by) {
+                                var n = window.pages.length
+                                tabList.itemAt((tab.index + by + n) % n).forceActiveFocus()
+                            }
+                            Keys.onPressed: function(event) {
+                                if (event.key === Qt.Key_Right || event.key === Qt.Key_Down)
+                                    go(1)
+                                else if (event.key === Qt.Key_Left || event.key === Qt.Key_Up)
+                                    go(-1)
+                                else if (event.key === Qt.Key_Home)
+                                    go(-tab.index)
+                                else if (event.key === Qt.Key_End)
+                                    go(window.pages.length - 1 - tab.index)
+                                else if (event.key === Qt.Key_Space || event.key === Qt.Key_Return
+                                         || event.key === Qt.Key_Enter)
+                                    window.show(tab.index)
+                                else
+                                    return
+                                event.accepted = true
+                            }
                             // Which page is shown: a bar at the start of a
                             // row of the list, under the name of a tab.
                             Rectangle {
@@ -554,12 +596,7 @@ ApplicationWindow {
                                 id: hover
                                 anchors.fill: parent
                                 hoverEnabled: true
-                                Accessible.role: Accessible.PageTab
-                                Accessible.name: tab.modelData
-                                onClicked: {
-                                    window.page = tab.index
-                                    window.refresh()
-                                }
+                                onClicked: window.show(tab.index)
                             }
                         }
                     }
@@ -1676,6 +1713,12 @@ ApplicationWindow {
                     property int spliceAt: 0
                     property string picked: ""
                     property string pickedName: ""
+                    // The object whose values are shown: "" while the
+                    // answer of the one picked is still coming. Only its
+                    // values can be changed, so that a value pressed is
+                    // never written to another object.
+                    property string shownOf: ""
+                    readonly property bool current: shownOf !== "" && shownOf === picked
                     property bool pickedItem: true
                     // The item picked is what the watch follows.
                     onPickedChanged: watcher.start()
@@ -2050,6 +2093,20 @@ ApplicationWindow {
 
                     function pick(handle, name) {
                         editing = ""
+                        // Another object's values are put away at once:
+                        // its answer may take a while. The one picked
+                        // asked again, with other bindings or more
+                        // properties, keeps its values until then.
+                        if (handle !== picked) {
+                            shownOf = ""
+                            propRows = 0
+                            props = []
+                            binds = []
+                            head = ""
+                            where = ""
+                            picture = ""
+                            pictureNote = ""
+                        }
                         picked = handle
                         pickedName = name || handle
                         inspect(false)
@@ -2061,16 +2118,22 @@ ApplicationWindow {
                     // that a change is shown one answer after it is made
                     // rather than two.
                     function inspect(withPicture) {
-                        window.ask("app_inspect", { target: picked, all: all, bindings: bindings }, "inspect")
+                        window.ask("app_inspect", { target: picked, all: all, bindings: bindings },
+                                   "inspect:" + picked)
                         shotAsked = withPicture === true && pickedItem
                         if (shotAsked)
-                            window.ask("app_screenshot", { target: picked, max_size: 640 }, "picture")
+                            window.ask("app_screenshot", { target: picked, max_size: 640 }, "picture:" + picked)
                     }
 
-                    function showProperties(ok, s, r) {
+                    function showProperties(ok, s, r, of) {
+                        // An answer about an object picked before is of
+                        // no use: the one picked since was asked of too.
+                        if (of !== picked)
+                            return
                         // The rows shrink before the list does, so that
                         // no row is drawn from past its end.
                         if (!ok) {
+                            shownOf = ""
                             propRows = 0
                             props = []
                             binds = []
@@ -2088,10 +2151,11 @@ ApplicationWindow {
                             propRows = props.length
                         }
                         binds = s.bindings || []
+                        shownOf = of
                         pickedItem = s.geometry !== undefined && s.geometry !== null
                         if (pickedItem) {
                             if (!shotAsked)
-                                window.ask("app_screenshot", { target: picked, max_size: 640 }, "picture")
+                                window.ask("app_screenshot", { target: picked, max_size: 640 }, "picture:" + picked)
                         } else {
                             picture = ""
                             pictureNote = "Not drawn: it is not an item"
@@ -2099,7 +2163,9 @@ ApplicationWindow {
                         shotAsked = false
                     }
 
-                    function showPicture(ok, r) {
+                    function showPicture(ok, r, of) {
+                        if (of !== picked)
+                            return
                         pictureNote = ok ? "" : window.refusal(r)
                         if (!ok) {
                             picture = ""
@@ -2138,9 +2204,11 @@ ApplicationWindow {
                     // that Revert brings the binding back.
                     function edit(name, type, value) {
                         editing = ""
+                        if (!current)
+                            return
                         window.ask("app_set_property",
-                                   { target: picked, property: name, value: value, keep_binding: true },
-                                   "edited")
+                                   { target: shownOf, property: name, value: value, keep_binding: true },
+                                   "edited:" + shownOf)
                     }
 
                     // Text that starts with `=` is an expression the
@@ -2148,17 +2216,23 @@ ApplicationWindow {
                     // is: it follows what it reads from then on.
                     function bind(name, expression) {
                         editing = ""
+                        if (!current)
+                            return
                         window.ask("app_set_property",
-                                   { target: picked, property: name, binding: expression, keep_binding: true },
-                                   "edited")
+                                   { target: shownOf, property: name, binding: expression, keep_binding: true },
+                                   "edited:" + shownOf)
                     }
 
                     function revert(name) {
-                        window.ask("app_set_property", { target: picked, property: name, revert: true }, "edited")
+                        if (!current)
+                            return
+                        window.ask("app_set_property", { target: shownOf, property: name, revert: true },
+                                   "edited:" + shownOf)
                     }
 
-                    function edited(ok, r) {
-                        if (ok)
+                    // An edit of an object picked before is not shown.
+                    function edited(ok, r, of) {
+                        if (ok && of === picked)
                             inspect(true)
                     }
 
@@ -2531,8 +2605,8 @@ ApplicationWindow {
                                         MouseArea {
                                             id: valueArea
                                             anchors.fill: parent
-                                            enabled: !prop.typing && (prop.editable || prop.modelData.handle !== undefined
-                                                                       || (prop.boolean && !prop.fixed))
+                                            enabled: objects.current && !prop.typing && (prop.editable || prop.modelData.handle !== undefined
+                                                                                          || (prop.boolean && !prop.fixed))
                                             hoverEnabled: enabled
                                             cursorShape: prop.editable ? Qt.IBeamCursor : Qt.PointingHandCursor
                                             // The check below speaks for a true or false value.
@@ -2667,7 +2741,7 @@ ApplicationWindow {
                                                 id: revertArea
                                                 anchors.fill: parent
                                                 anchors.margins: -4
-                                                enabled: prop.edited
+                                                enabled: objects.current && prop.edited
                                                 hoverEnabled: enabled
                                                 cursorShape: Qt.PointingHandCursor
                                                 Accessible.role: Accessible.Button
