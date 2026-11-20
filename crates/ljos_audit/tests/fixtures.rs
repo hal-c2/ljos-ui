@@ -80,6 +80,8 @@ const WINDOW: (f64, f64) = (640.0, 480.0);
 const SETTLE_MS: u64 = 500;
 /// One frame of that time.
 const FRAME_MS: u64 = 16;
+/// The turn budget a good fixture is held to ([`run`]).
+const GOOD_TURN_BUDGET: std::time::Duration = std::time::Duration::from_secs(5);
 
 fn engine() -> Engine {
     let e = Engine::new();
@@ -166,8 +168,16 @@ fn holder(source: &str, line: u32) -> Option<u32> {
 
 /// Mounts the fixture as a viewer does, the root filling the window, and
 /// audits it.
-fn run(source: &str, point: Option<MatrixPoint>) -> Result<Report, String> {
+fn run(source: &str, point: Option<MatrixPoint>, bad: bool) -> Result<Report, String> {
     let e = engine();
+    if !bad {
+        // `health-turn-slow` reads the wall clock, on which loading a
+        // fixture and its first frames in a debug build on a busy runner
+        // can take most of a turn's budget. A good fixture is judged
+        // against one no runner misses: what it shows is that its script
+        // is light, which the counted rule says on any machine.
+        e.set_turn_budget(Some(GOOD_TURN_BUDGET));
+    }
     let clock = Arc::new(VirtualClock::new());
     e.set_clock(Rc::new(Arc::clone(&clock)));
     ljos_audit::watch(&e);
@@ -222,7 +232,7 @@ fn check(path: &Path, code: &str) -> Option<String> {
         Ok(h) => h,
         Err(err) => return Some(err),
     };
-    let report = match run(&source, head.point) {
+    let report = match run(&source, head.point, bad) {
         Ok(r) => r,
         Err(err) => return Some(err),
     };

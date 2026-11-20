@@ -74,6 +74,10 @@ struct Open {
 #[derive(Default)]
 pub(super) struct Recorder {
     record: TurnRecord,
+    /// Whether this recorder saw the turn in progress begin: a recording
+    /// turned on within a turn starts with the next one, as the work done
+    /// before it is not this record's.
+    in_turn: bool,
     /// The work done when the turn in progress began.
     began: u64,
     open: Vec<Open>,
@@ -132,17 +136,34 @@ impl Engine {
             return false;
         };
         r.began = work;
+        r.in_turn = true;
         r.open.clear();
         r.heaviest = None;
         true
     }
 
+    /// Whether the turn in progress is recorded.
+    pub(super) fn recording_turn(&self) -> bool {
+        self.inner
+            .turns
+            .record
+            .borrow()
+            .as_ref()
+            .is_some_and(|r| r.in_turn)
+    }
+
+    /// Ends the recorded turn, started by `cause`. Naming a kept turn can
+    /// run application code (an `objectName` binding), and so start a turn
+    /// of its own: `cause` is the caller's, not the turn state's.
     pub(super) fn end_recorded_turn(&self, took: Duration, cause: &Cause) {
         let work = self.script_work();
         let mut record = self.inner.turns.record.borrow_mut();
         let Some(r) = record.as_mut() else {
             return;
         };
+        if !std::mem::take(&mut r.in_turn) {
+            return;
+        }
         let done = work.saturating_sub(r.began);
         r.record.turns += 1;
         r.record.work += done;
@@ -193,7 +214,7 @@ impl Engine {
         at: impl FnOnce() -> Option<String>,
     ) -> bool {
         let t = &self.inner.turns;
-        if t.started.get().is_none() || t.record.borrow().is_none() {
+        if t.started.get().is_none() || !self.recording_turn() {
             return false;
         }
         let began = self.script_work();
@@ -240,5 +261,26 @@ impl Engine {
         if let Some(r) = self.inner.turns.record.borrow_mut().as_mut() {
             r.heaviest = Some(handler);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{Engine, TurnCause};
+
+    #[test]
+    fn a_recording_turned_on_within_a_turn_starts_with_the_next() {
+        let e = Engine::new();
+        e.record_turns(true);
+        {
+            let _turn = e.begin_turn(TurnCause::Host, None);
+            // Off and on again: a fresh record, which did not see this
+            // turn begin and so cannot say what it did.
+            e.record_turns(false);
+            e.record_turns(true);
+        }
+        assert_eq!(e.recorded_turns().map(|r| r.turns), Some(0));
+        drop(e.begin_turn(TurnCause::Host, None));
+        assert_eq!(e.recorded_turns().map(|r| r.turns), Some(1));
     }
 }

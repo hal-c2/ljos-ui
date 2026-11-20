@@ -3127,7 +3127,22 @@ Rectangle {
     );
     let reply = app.call("app_audit", json!({ "act": true }));
     assert!(ran(&app) > 0.0, "the acting checks focused the button");
-    assert_eq!(reply.structured["notChecked"], json!([]));
+    // Every acting check ran. What only letting the application run on a
+    // clock the audit moves can check is left: this one is on the wall
+    // clock, and the answer says so.
+    assert_eq!(
+        reply.structured["notChecked"],
+        json!(["health-heap-growth", "health-never-settles"]),
+        "{}",
+        reply.structured
+    );
+    assert!(
+        reply.text.contains("given none it may move"),
+        "{}",
+        reply.text
+    );
+    // The audit recorded only its own run, and stopped.
+    assert!(app.engine.recorded_turns().is_none());
 }
 
 #[test]

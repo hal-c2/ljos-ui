@@ -625,7 +625,11 @@ impl Engine {
             return;
         };
         let took = started.elapsed();
-        self.end_recorded_turn(took, &t.cause.borrow());
+        if self.recording_turn() {
+            // Not borrowed while the turn is named: that can start another.
+            let cause = t.cause.borrow().clone();
+            self.end_recorded_turn(took, &cause);
+        }
         let reported = match t.marker.get() {
             Some(m) => {
                 m.end();

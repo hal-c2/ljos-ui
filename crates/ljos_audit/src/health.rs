@@ -21,13 +21,13 @@ use ljos_design::limits::health::{
     HEAP_GROWTH_MIN_BYTES, HEAP_HEADROOM_MIN, HEAP_WINDOW_MS, HEAP_WINDOWS, IDLE_FRAMES_MAX,
     POLL_MS, TURN_WORK_MAX,
 };
-use ljos_drive::{DriveError, DriveState, Driver, Host};
+use ljos_drive::{DriveError, DriveState, Driver};
 use ljos_engine::{DEFAULT_TURN_BUDGET, Engine, FaultReport, ObjectId, fault_kind};
 use ljos_quick::{Loader, QuickScene};
 use ljos_runtime::{Fault, Time};
 
 use crate::Options;
-use crate::cx::{Cx, is_a, place_of};
+use crate::cx::{Cx, belongs_to, is_a, place_of};
 use crate::finding::Finding;
 
 /// The codes only letting the application run can check.
@@ -44,33 +44,54 @@ pub(crate) const CODES: &[&str] = &[
     "health-never-settles",
 ];
 
-/// Counts the frames a settle makes.
-#[derive(Default)]
-struct Frames(u32);
-
-impl Host for Frames {
-    fn after_frame(&mut self, _engine: &Engine, _scene: &mut QuickScene) {
-        self.0 += 1;
-    }
-}
-
 /// What letting the application run showed.
 #[derive(Default)]
 struct Ran {
     /// The heap after a collection: before the first window and after
     /// each.
     heap: Vec<usize>,
-    /// Frames made in the last window, and whether something animated at
-    /// its end.
-    frames: Option<(u32, bool)>,
+    /// The frames that showed something new in the last whole window
+    /// while nothing animated.
+    idle_frames: Option<u64>,
     /// The settle that never came to rest, and when.
     unsettled: Option<(usize, Time)>,
 }
 
+/// What the health checks found, the time the application's clock
+/// reached, and the codes they could not judge, with why.
+pub(crate) struct Health {
+    pub found: Vec<Finding>,
+    pub until: Time,
+    pub not_checked: Vec<(&'static str, &'static str)>,
+}
+
+/// Why the checks that let the application run did not: not let act.
+const NOT_LET_RUN: &str = "these let the application run on its own clock for a few seconds, \
+                           which runs its timers, and this audit was not asked to act";
+/// Why they did not: no clock.
+const NO_CLOCK: &str = "these let the application run on its own clock for a few seconds, and \
+                        the audit was given none it may move (an application on the wall clock \
+                        runs on time no audit can let pass)";
+/// Why one did not: the run stopped first.
+const CUT_SHORT: &str = "the application's run stopped before this could be judged";
+/// Why the heap's headroom was not checked.
+const NOT_COLLECTED: &str = "the heap is judged after a collection, which can run the \
+                             application's destruction handlers, and this audit was not asked \
+                             to act; uncollected, the heap was too full to tell";
+
 /// The heap after a collection, if a script ever ran.
 fn heap_now(engine: &Engine) -> Option<usize> {
     engine.collect_garbage();
+    heap_as_is(engine)
+}
+
+/// The heap as it is, garbage and all: at least what a collection leaves.
+fn heap_as_is(engine: &Engine) -> Option<usize> {
     engine.script_memory().map(|m| m.bytes)
+}
+
+fn animating(engine: &Engine) -> bool {
+    ljos_quick::running_animation_count(engine) > 0
 }
 
 /// Lets the application run [`HEAP_WINDOWS`] windows on `clock`.
@@ -86,12 +107,27 @@ fn run_windows(
     ran.heap.extend(heap_now(engine));
     let mut state = DriveState::default();
     for _ in 0..HEAP_WINDOWS {
-        let mut frames = Frames::default();
-        let step = Driver::new(engine, scene, clock, &mut state)
-            .hosted(&mut frames)
-            .advance(u64::from(HEAP_WINDOW_MS));
+        // The frames that showed something new, a stop of the clock at a
+        // time; those of a stop with an animation running at either end
+        // are the animation's.
+        let mut idle = 0;
+        let mut shown = state.shown;
+        let mut moving = animating(engine);
+        let step = Driver::new(engine, scene, clock, &mut state).advance_until(
+            u64::from(HEAP_WINDOW_MS),
+            None,
+            |d| {
+                let now_moving = animating(d.engine);
+                if !(moving || now_moving) {
+                    idle += d.state.shown - shown;
+                }
+                shown = d.state.shown;
+                moving = now_moving;
+                Ok(false)
+            },
+        );
         match step {
-            Ok(()) => {}
+            Ok(_) => {}
             Err(DriveError::Unsettled { frames }) => {
                 ran.unsettled = Some((frames, ljos_runtime::Clock::now(clock)));
                 break;
@@ -101,47 +137,54 @@ fn run_windows(
             Err(_) => break,
         }
         ran.heap.extend(heap_now(engine));
-        let animating = ljos_quick::running_animation_count(engine) > 0;
-        ran.frames = Some((frames.0, animating));
+        ran.idle_frames = Some(idle);
     }
     ran
 }
 
 /// Runs the health checks `options` asks for once the rest of the audit is
-/// done, so that the turns its acting checks set off are judged too. The
-/// time the application's clock reached.
-pub(crate) fn run(
-    engine: &Engine,
-    scene: &mut QuickScene,
-    now: Time,
-    options: &Options,
-) -> (Vec<Finding>, Time) {
+/// done, so that the turns its acting checks set off are judged too.
+pub(crate) fn run(engine: &Engine, scene: &mut QuickScene, now: Time, options: &Options) -> Health {
+    let mut health = Health {
+        found: Vec::new(),
+        until: now,
+        not_checked: Vec::new(),
+    };
     if !CODES.iter().any(|c| options.wants(c)) {
-        return (Vec::new(), now);
+        return health;
     }
     // The windows run for any health code: what goes wrong on a timer or
     // a stream's news (a heavy turn, a fault, a Loader that fails) comes
     // only once time passes.
-    let running = options.act;
-    let ran = match (&options.clock.0, running) {
-        (Some(clock), true) => Some(run_windows(engine, scene, clock, now)),
-        _ => None,
+    let ran = match (&options.clock.0, options.act) {
+        (Some(clock), true) => {
+            let ran = run_windows(engine, scene, clock, now);
+            health.until = ljos_runtime::Clock::now(clock).max(now);
+            Some(ran)
+        }
+        (None, true) => {
+            health
+                .not_checked
+                .extend(RUNNING.iter().map(|c| (*c, NO_CLOCK)));
+            None
+        }
+        (_, false) => {
+            health
+                .not_checked
+                .extend(RUNNING.iter().map(|c| (*c, NOT_LET_RUN)));
+            None
+        }
     };
-    let until = options
-        .clock
-        .0
-        .as_ref()
-        .filter(|_| ran.is_some())
-        .map_or(now, |c| ljos_runtime::Clock::now(c).max(now));
     let mut cx = Cx::new(engine, scene, options);
     turns(&mut cx);
     faults(&mut cx);
     loaders(&mut cx);
-    heap(&mut cx, ran.as_ref());
+    heap(&mut cx, ran.as_ref(), &mut health.not_checked);
     if let Some(ran) = &ran {
-        settles(&mut cx, ran);
+        settles(&mut cx, ran, &mut health.not_checked);
     }
-    (cx.out, until)
+    health.found = cx.out;
+    health
 }
 
 /// `polls` as an optimised build's milliseconds.
@@ -302,7 +345,13 @@ fn loaders(cx: &mut Cx) {
     let e = cx.engine;
     let mut by_place: BTreeMap<Option<String>, (Vec<ObjectId>, usize, usize)> = BTreeMap::new();
     for obj in e.object_ids() {
-        if !e.is_alive(obj) || !is_a::<Loader>(e, obj) {
+        if !e.is_alive(obj)
+            || !is_a::<Loader>(e, obj)
+            || cx
+                .options
+                .within
+                .is_some_and(|root| !belongs_to(e, obj, root))
+        {
             continue;
         }
         let read = |name| e.untrack(|| e.read_by_name(obj, name));
@@ -312,7 +361,9 @@ fn loaders(cx: &mut Cx) {
         let wanted = !read("source").to_js_string().as_str().is_empty()
             || !read("sourceComponent").is_nullish();
         let error = status == f64::from(ljos_quick::enums::loader_status::ERROR);
-        let empty = active && wanted && item.is_nullish();
+        // An asynchronous Loader has no item until its job is done.
+        let loading = status == f64::from(ljos_quick::enums::loader_status::LOADING);
+        let empty = active && wanted && !loading && item.is_nullish();
         let entry = by_place.entry(place_of(e, obj)).or_default();
         entry.2 += 1;
         if error || empty {
@@ -350,17 +401,35 @@ fn loaders(cx: &mut Cx) {
 }
 
 /// `health-heap-headroom` and `health-heap-growth`.
-fn heap(cx: &mut Cx, ran: Option<&Ran>) {
+fn heap(cx: &mut Cx, ran: Option<&Ran>, not_checked: &mut Vec<(&'static str, &'static str)>) {
     let e = cx.engine;
     // The heap is the whole application's: the finding is about its root.
     let root = cx.scene.root();
+    let free = |bytes: usize, limit: usize| {
+        #[allow(clippy::cast_precision_loss)]
+        let f = 1.0 - bytes as f64 / limit as f64;
+        f
+    };
     let samples: Vec<usize> = match ran {
         Some(r) if !r.heap.is_empty() => r.heap.clone(),
+        // A collection frees what the application dropped, and its
+        // destruction handlers then run: that is acting. Without it, the
+        // heap as it is says enough when it has room.
+        _ if !cx.options.act => {
+            let as_is = heap_as_is(e);
+            if let (Some(limit), Some(bytes)) = (e.script_memory_limit(), as_is)
+                && free(bytes, limit) < HEAP_HEADROOM_MIN
+            {
+                not_checked.push(("health-heap-headroom", NOT_COLLECTED));
+                Vec::new()
+            } else {
+                as_is.into_iter().collect()
+            }
+        }
         _ => heap_now(e).into_iter().collect(),
     };
     if let (Some(limit), Some(&most)) = (e.script_memory_limit(), samples.iter().max()) {
-        #[allow(clippy::cast_precision_loss)]
-        let free = 1.0 - most as f64 / limit as f64;
+        let free = free(most, limit);
         if free < HEAP_HEADROOM_MIN {
             let message = format!(
                 "The script heap holds {} MiB after a collection, of a cap of {} MiB: a little \
@@ -375,7 +444,12 @@ fn heap(cx: &mut Cx, ran: Option<&Ran>) {
             ));
         }
     }
-    if ran.is_none() || samples.len() < 3 {
+    let Some(ran) = ran else {
+        return;
+    };
+    // Growth is judged over every window, or not at all.
+    if ran.heap.len() <= HEAP_WINDOWS as usize {
+        not_checked.push(("health-heap-growth", CUT_SHORT));
         return;
     }
     let grew = samples.windows(2).all(|w| w[1] > w[0]);
@@ -396,7 +470,7 @@ fn heap(cx: &mut Cx, ran: Option<&Ran>) {
 }
 
 /// `health-never-settles`.
-fn settles(cx: &mut Cx, ran: &Ran) {
+fn settles(cx: &mut Cx, ran: &Ran, not_checked: &mut Vec<(&'static str, &'static str)>) {
     let root = cx.scene.root();
     if let Some((frames, at)) = ran.unsettled {
         let message = format!(
@@ -408,12 +482,14 @@ fn settles(cx: &mut Cx, ran: &Ran) {
             Some(format!("{frames} frames at one time"));
         return;
     }
-    if let Some((frames, false)) = ran.frames
-        && frames >= IDLE_FRAMES_MAX
-    {
+    let Some(frames) = ran.idle_frames else {
+        not_checked.push(("health-never-settles", CUT_SHORT));
+        return;
+    };
+    if frames >= u64::from(IDLE_FRAMES_MAX) {
         let message = format!(
-            "With no animation running, the scene was framed {frames} times in {HEAP_WINDOW_MS} \
-             ms: something changes in every frame"
+            "With no animation running, the scene showed something new {frames} times in \
+             {HEAP_WINDOW_MS} ms: something changes in every frame"
         );
         cx.report("health-never-settles", root, message).measured =
             Some(format!("{frames} frames >= {IDLE_FRAMES_MAX}"));

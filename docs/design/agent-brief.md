@@ -113,7 +113,7 @@ Follow every line. `[code]` is the rule that finds the mistake; its section is `
 - Show a row's state on the row; never mention features the build lacks; avoid ambiguous one-word statuses.
 
 ## Health
-- Keep a turn's script under about 200 ms; apply what changed, not the whole value. [health-turn-over-budget] [health-turn-slow]
+- Keep a turn's script under 750 interpreter polls (about 110 ms in an optimised build), and every turn under the 100 ms budget on the wall clock; apply what changed, not the whole value. [health-turn-over-budget] [health-turn-slow]
 - Guard handlers against data that is not there yet; a fault leaves work half done. [health-fault]
 - Leave no Loader at `Loader.Error` or active with nothing made. [health-loader-failed]
 - Keep the script heap well under its cap, and keep nothing per update. [health-heap-headroom] [health-heap-growth]

@@ -1235,7 +1235,10 @@ impl Inspector {
             return;
         }
         if let Kind::Audit(args) = &kind {
-            let answer = args.options().and_then(|options| {
+            let answer = args.options().and_then(|mut options| {
+                // An application on a clock a test moves may be let run on
+                // it; one on the wall clock may not.
+                options.clock = ljos_audit::AppClock(self.vclock.clone());
                 let root = match (&args.root, capture.as_ref()) {
                     (Some(what), Some(seen)) => Some(
                         Look {

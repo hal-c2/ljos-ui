@@ -118,8 +118,10 @@ impl From<ljos_runtime::VirtualClock> for AppClock {
 
 /// Starts recording what the application's turns do, for the health
 /// checks to judge: call it before the application loads, so its startup
-/// is judged too. An audit of an engine that was not watched records from
-/// the audit on.
+/// is judged too, and the recording stays on. An audit of an engine that
+/// was not watched (a live host's) records only its own run, and turns the
+/// recording off again: each audit then judges what it ran, not what came
+/// long before it, and the turns between audits pay nothing for it.
 pub fn watch(engine: &Engine) {
     engine.record_turns(true);
 }
@@ -262,6 +264,7 @@ fn merge(all: &mut Vec<Finding>, found: Vec<Finding>, point: MatrixPoint, many: 
 /// the length of the audit when it is off, and a frame is run when the
 /// scene has none to show or is waiting for one.
 pub fn audit(engine: &Engine, scene: &mut QuickScene, now: Time, options: &Options) -> Report {
+    let watched = engine.recorded_turns().is_some();
     watch(engine);
     let was_active = scene.accessibility_active();
     if !was_active {
@@ -332,22 +335,31 @@ pub fn audit(engine: &Engine, scene: &mut QuickScene, now: Time, options: &Optio
     if !was_active {
         scene.set_accessibility_active(engine, false);
     }
+    if !watched {
+        engine.record_turns(false);
+    }
     if let Err(panic) = walked {
         std::panic::resume_unwind(panic);
     }
+    let mut why_not = acts_not_checked(options);
     match ran {
-        Some(Ok((found, reached))) => {
-            at = reached;
-            findings.extend(found.into_iter().filter(|f| {
+        Some(Ok(health)) => {
+            at = health.until;
+            findings.extend(health.found.into_iter().filter(|f| {
                 options.wants(f.code)
                     && options
                         .within
                         .is_none_or(|root| f.item.is_some_and(|i| cx::belongs_to(engine, i, root)))
             }));
+            why_not.extend(health.not_checked);
         }
         Some(Err(panic)) => std::panic::resume_unwind(panic),
         None => {}
     }
+    why_not.retain(|(c, _)| options.wants(c));
+    why_not.sort_unstable();
+    why_not.dedup_by_key(|(c, _)| *c);
+    let not_checked = why_not.iter().map(|(c, _)| *c).collect();
     let mut left_out = 0;
     if let Some(max) = options.max_findings
         && findings.len() > max
@@ -361,23 +373,24 @@ pub fn audit(engine: &Engine, scene: &mut QuickScene, now: Time, options: &Optio
         left_out,
         unseen: engine.stood_in_modules(),
         until: at,
-        not_checked: not_checked(options),
+        not_checked,
+        why_not_checked: why_not,
     }
 }
 
-/// The codes only the acting checks look for that `options` asked for,
-/// when it did not let them act.
-fn not_checked(options: &Options) -> Vec<&'static str> {
-    let acts = rules::ACTS
+/// The codes of the acting checks, with why, when `options` did not let
+/// them act.
+fn acts_not_checked(options: &Options) -> Vec<(&'static str, &'static str)> {
+    if options.act {
+        return Vec::new();
+    }
+    rules::ACTS
         .iter()
         .flat_map(|c| c.codes.iter().copied())
-        .filter(|_| !options.act);
-    let running = health::RUNNING
-        .iter()
-        .copied()
-        .filter(|_| !options.act || options.clock.0.is_none());
-    let mut out: Vec<&'static str> = acts.chain(running).filter(|c| options.wants(c)).collect();
-    out.sort_unstable();
-    out.dedup();
-    out
+        .map(|c| (c, NOT_ACTING))
+        .collect()
 }
+
+/// Why the acting checks were not run.
+const NOT_ACTING: &str = "these checks press keys, toggle controls and run the application's \
+                          handlers, which this audit was not asked to do";

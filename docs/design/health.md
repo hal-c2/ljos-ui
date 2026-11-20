@@ -4,8 +4,8 @@ A window that freezes for a third of a second at every update, a handler that th
 
 ## How the audit sees it
 
-- **Turns.** Each event (a timer, a message from a server, a key) runs as one turn of the UI thread, and nothing is drawn until the turn ends. The audit records every turn from the moment the host calls `ljos_audit::watch`, before the application loads, so its startup is judged too. A turn's work is counted in the script interpreter's polls, one every ten thousand jumps and calls (a loop's turns, a function's calls), rather than timed: the same script does the same work on a laptop and on a loaded CI runner, so a finding is the same everywhere. `limits::health::TURN_WORK_MAX` polls is about 110 ms of plain script in an optimised build (`limits::health::POLL_MS` a poll).
-- **Letting it run.** With a clock to run the application on (`Options::clock`) and leave to act, the audit lets the application run `limits::health::HEAP_WINDOWS` windows of `limits::health::HEAP_WINDOW_MS` of its own time, its timers and the host's updates included, collecting the garbage and reading the heap before and after each, and counting the frames of the last.
+- **Turns.** Each event (a timer, a message from a server, a key) runs as one turn of the UI thread, and nothing is drawn until the turn ends. The audit records every turn from the moment the host calls `ljos_audit::watch`, before the application loads, so its startup is judged too. An audit of a running application that was not watched (the inspector's `app_audit`) records only the turns of its own run, and stops recording when it is done. A turn's work is counted in the script interpreter's polls, one every ten thousand jumps and calls (a loop's turns, a function's calls), rather than timed: the same script does the same work on a laptop and on a loaded CI runner, so a finding is the same everywhere. `limits::health::TURN_WORK_MAX` polls is about 110 ms of plain script in an optimised build (`limits::health::POLL_MS` a poll).
+- **Letting it run.** With a clock to run the application on (`Options::clock`) and leave to act, the audit lets the application run `limits::health::HEAP_WINDOWS` windows of `limits::health::HEAP_WINDOW_MS` of its own time, its timers and the host's updates included, collecting the garbage and reading the heap before and after each, and counting the frames of the last that showed something new while nothing animated. An application on the wall clock cannot be let run, and an audit without leave to act collects no garbage (that can run destruction handlers); the report's `notChecked` says which codes that left unjudged, and why.
 - **What it does not see.** Work no script does (layout, drawing, image decoding) is no poll; `health-turn-slow` reads the wall clock for it, and is a hint because the wall clock is only as steady as the machine.
 
 A host that feeds the application its data (a server's updates, a plugin's values) feeds it during those windows too, so the audit sees the application loaded rather than empty.
@@ -48,8 +48,8 @@ Sources: https://web.dev/articles/rail , https://doc.qt.io/qt-6/qtquick-performa
 ```qml
 // Bad
 Component.onCompleted: root.row.title = "Inbox"   // row is null until the data comes
-// Good
-Component.onCompleted: if (root.row) root.row.title = "Inbox"
+// Good: a binding, which runs again when the row comes
+Text { text: root.row ? root.row.title : "" }
 ```
 
 Sources: https://doc.qt.io/qt-6/qtqml-javascript-expressions.html , https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Errors/Cant_access_property
@@ -99,7 +99,7 @@ Sources: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Guide/Memory_ma
 <a id="health-never-settles"></a>
 ### `health-never-settles`
 
-**Error, runtime.** With nothing animating, the scene asked for `limits::health::IDLE_FRAMES_MAX` frames or more in a window, or never came to rest at all: something changes in every frame, and the window draws and the CPU stays awake while the user does nothing.
+**Warning, runtime.** With nothing animating, the scene showed something new `limits::health::IDLE_FRAMES_MAX` times or more in a window, or never came to rest at all: something changes in every frame, and the window draws and the CPU stays awake while the user does nothing. A timer that fires and changes nothing shown is not counted. It is a warning, not an error: a ticker that changes every frame on purpose (a live waveform) can be what the design wants.
 
 ```qml
 // Bad

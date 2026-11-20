@@ -894,7 +894,7 @@ pub const RULES: &[Rule] = &[
     r(
         "health-never-settles",
         Health,
-        Error,
+        Warning,
         Runtime,
         "With nothing animating and nothing to do, the scene asks for frame after frame.",
         "Find the binding or handler that changes something every frame, and stop it when it has nothing to show.",
