@@ -28,11 +28,16 @@ Rectangle {
     // A running animation keeps the duration it started with, and the
     // system's answer about reduced motion can come after the turntable
     // has started: a new speed starts the turn again from where the watch
-    // is, so it neither jumps nor keeps the old speed.
+    // is, so it neither jumps nor keeps the old speed. The binding on
+    // `duration` only gives the starting speed: bindings that read
+    // `turnSeconds` update after this handler, as on Qt, so the handler
+    // writes the new duration itself, and that write takes `duration`
+    // over from the binding.
     onTurnSecondsChanged: {
         const at: number = showcase.spin % 360
         turntable.from = at
         turntable.to = at + 360
+        turntable.duration = showcase.turnSeconds * 1000
         turntable.restart()
         // A restart forgets that the turntable was paused, and `paused`'s
         // binding does not run again while the drag goes on.

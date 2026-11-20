@@ -455,3 +455,155 @@ fn a_loop_through_a_placed_value_goes_on_to_the_next_binding() {
         }
     }
 }
+
+#[test]
+fn a_handler_queued_before_a_held_one_runs_after_it_and_is_no_loop() {
+    // A combo box's current index is bound to where the chosen row is in a
+    // list; its handler writes the text, and the write flushes. A
+    // `Connections` handler of the list, queued by the same change, chooses
+    // the first row when the chosen one leaves. Qt runs it after the index's
+    // handler, when nothing holds the index, which then follows it: no loop.
+    for eager in [false, true] {
+        let g = graph(eager);
+        let [rows, chosen, index, text] = props(&g);
+        g.set(rows, 2);
+        g.set(chosen, 1);
+        g.bind(index, move |g| {
+            let c = g.get(chosen);
+            if c < g.get(rows) { c } else { -1 }
+        })
+        .unwrap();
+        g.watch(g.root(), index, move |g, v| g.set(text, *v))
+            .unwrap();
+        g.watch_behind(g.root(), rows, move |g, v| {
+            if g.get_untracked(chosen) >= *v {
+                g.set(chosen, 0);
+            }
+        })
+        .unwrap();
+        g.get(index);
+        g.set(rows, 1);
+        assert_eq!(
+            settled(&g, [chosen, index, text]),
+            [0, 0, 0],
+            "eager {eager}"
+        );
+        assert_eq!(loops(&g), [], "eager {eager}");
+    }
+}
+
+#[test]
+fn a_held_handler_sees_an_effect_its_write_reaches_through_a_dirty_binding() {
+    // b = a; d = a + x; watch(d) writes y; watch(b) writes x = 10 * b and
+    // reads y. Setting a leaves d dirty and its watcher queued before the
+    // handler's own flush level: the handler's write reaches that watcher
+    // through d all the same, so it runs before the write returns, as on Qt.
+    for eager in [false, true] {
+        let g = graph(eager);
+        let [a, x, b, d, y, seen] = props(&g);
+        g.set(a, 1);
+        g.bind(b, move |g| g.get(a)).unwrap();
+        g.bind(d, move |g| g.get(a) + g.get(x)).unwrap();
+        g.watch(g.root(), b, move |g, v| {
+            g.set(x, 10 * *v);
+            g.set(seen, g.get_untracked(y));
+        })
+        .unwrap();
+        g.watch(g.root(), d, move |g, v| g.set(y, *v)).unwrap();
+        g.get(b);
+        g.get(d);
+        g.set(a, 2);
+        assert_eq!(settled(&g, [x, y, seen]), [20, 22, 22], "eager {eager}");
+        assert_eq!(loops(&g), [], "eager {eager}");
+    }
+}
+
+#[test]
+fn a_held_binding_settles_before_a_handler_queued_ahead_of_it_runs() {
+    // a_handler_queued_before_a_held_one_runs_after_it_and_is_no_loop,
+    // with the index's count from a lazy binding the handler leaves dirty
+    // (it writes `wake`); brought up to date as the hold ends, that binding
+    // writes `side` for the first time, which flushes. The handler queued
+    // ahead must not run in that flush: it writes chosen while the index
+    // still settles, which would read as the change coming back.
+    for eager in [false, true] {
+        let g = graph(eager);
+        let [rows, chosen, index, text, wake, side, count] = props(&g);
+        g.set(rows, 2);
+        g.set(chosen, 1);
+        g.bind(count, move |g| {
+            if g.get(wake) > 0 {
+                g.set(side, 1);
+            }
+            g.get(rows)
+        })
+        .unwrap();
+        g.bind(index, move |g| {
+            let c = g.get(chosen);
+            if c < g.get(count) { c } else { -1 }
+        })
+        .unwrap();
+        g.watch(g.root(), index, move |g, v| {
+            g.set(text, *v);
+            g.set(wake, 1);
+        })
+        .unwrap();
+        g.watch_behind(g.root(), rows, move |g, v| {
+            if g.get_untracked(chosen) >= *v {
+                g.set(chosen, 0);
+            }
+        })
+        .unwrap();
+        g.get(index);
+        g.set(rows, 1);
+        assert_eq!(
+            settled(&g, [chosen, index, side]),
+            [0, 0, 1],
+            "eager {eager}"
+        );
+        assert_eq!(loops(&g), [], "eager {eager}");
+    }
+}
+
+#[test]
+fn a_held_handler_writing_into_one_dirty_region_walks_it_once() {
+    // d0..d63 = a + x read by one sum, watched; watch(b) writes x many
+    // times in a batch: each write stops at d0..d63, already dirty, and
+    // the region past them is walked for waiting effects once, not once
+    // per write.
+    const WIDE: usize = 64;
+    const WRITES: i64 = 32;
+    let g = graph(false);
+    let [a, x, b, sum, y] = props(&g);
+    let ds: Vec<NodeId> = (0..WIDE)
+        .map(|_| {
+            let d = g.property(g.root(), 0).unwrap();
+            g.bind(d, move |g| g.get(a) + g.get(x)).unwrap();
+            d
+        })
+        .collect();
+    g.bind(sum, move |g| ds.iter().map(|d| g.get(*d)).sum())
+        .unwrap();
+    g.bind(b, move |g| g.get(a)).unwrap();
+    g.watch(g.root(), b, move |g, _| {
+        // In one batch, so no write's flush brings the region up to date
+        // before the next write reaches it.
+        g.batch(|| {
+            for k in 1..=WRITES {
+                g.set(x, k);
+            }
+        });
+    })
+    .unwrap();
+    g.watch(g.root(), sum, move |g, v| g.set(y, *v)).unwrap();
+    g.get(b);
+    g.get(sum);
+    let before = g.stats().pull_steps;
+    g.set(a, 1);
+    let steps = g.stats().pull_steps - before;
+    assert_eq!(g.get(y), (1 + WRITES) * WIDE as i64);
+    assert!(
+        steps <= 4 * WIDE as u64,
+        "{steps} steps for {WRITES} writes into {WIDE} dirty bindings"
+    );
+}

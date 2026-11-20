@@ -324,6 +324,54 @@ Feature: ComboBox
       When the method "listThenWant" of "root" is called
       Then the property "seen" of "apart" is "1 [q]"
 
+  Rule: A handler of the list that the model and the index both read
+
+    A handler that hears the same change as the model and the index, and
+    moves what the index reads, runs after the combo box has taken the new
+    model. The index then follows its binding to the row the handler chose.
+    That is no binding loop.
+
+    Background:
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Item {
+          id: page; objectName: "page"
+          width: 400; height: 400
+          property string chosen: "b"
+          QtObject {
+            id: source; objectName: "source"
+            property var names: ["a", "b"]
+          }
+          Connections {
+            target: source
+            function onNamesChanged() {
+              if (!source.names.includes(page.chosen))
+                page.chosen = source.names[0] ?? ""
+            }
+          }
+          ComboBox {
+            id: c; objectName: "c"
+            model: source.names.map(name => name.toUpperCase())
+            currentIndex: source.names.indexOf(page.chosen)
+            property string seen: count + " " + currentIndex + " [" + currentText + "]"
+          }
+        }
+        """
+
+    Scenario: The chosen name leaves and the handler chooses the first one
+      When the property "names" of "source" is set to ["a"]
+      Then the property "chosen" of "page" is "a"
+      And the property "seen" of "c" is "1 0 [A]"
+      And the log has no warning matching "Binding loop"
+
+    Scenario: The chosen name stays and the index follows it to its new row
+      When the property "names" of "source" is set to ["c", "b"]
+      Then the property "chosen" of "page" is "b"
+      And the property "seen" of "c" is "2 1 [B]"
+      And the log has no warning matching "Binding loop"
+
   Rule: A bound current index over a model that grows and shrinks
 
     Rows put in, taken out or cleared change the count and leave a bound

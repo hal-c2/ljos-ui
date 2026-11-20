@@ -284,6 +284,11 @@ pub struct Stats {
     /// waits on changes goes no further from, for a stamp of a change it
     /// waits on ([`crate::Graph::own_queue`]).
     pub restamp_steps: u64,
+    /// The nodes looked at past one a change made on an inner flush level
+    /// goes no further from, for effects that wait on an outer one
+    /// ([`crate::Graph::watch`] on a bound property runs its handler on
+    /// such a level).
+    pub pull_steps: u64,
 }
 
 /// What the live nodes are, by kind: what a budget test pins, so a change
