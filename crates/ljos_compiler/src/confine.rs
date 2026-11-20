@@ -70,6 +70,9 @@ const MAX_DIRS: usize = 4096;
 #[derive(Debug, Clone)]
 pub struct UserDir {
     root: PathBuf,
+    /// The directory in it (`/`-separated) whose files are named as on
+    /// the application's import path.
+    modules: Option<String>,
 }
 
 impl UserDir {
@@ -77,7 +80,60 @@ impl UserDir {
         let root = root.into();
         // Absolute, so that the paths a watcher reports compare to it.
         let root = std::path::absolute(&root).unwrap_or(root);
-        Self { root }
+        Self {
+            root,
+            modules: None,
+        }
+    }
+
+    /// The files of `dir`, a directory in this one, are named from it, as
+    /// on the application's import path: `qml/Lib/Badge.qml` under
+    /// `with_modules("qml")` is `Lib/Badge.qml`. Of a module's file and
+    /// another of the same name, the module's is the one read.
+    #[must_use]
+    pub fn with_modules(mut self, dir: &str) -> Self {
+        let dir = dir
+            .split(['/', '\\'])
+            .filter(|part| !part.is_empty() && *part != ".")
+            .collect::<Vec<_>>()
+            .join("/");
+        self.modules = (!dir.is_empty()).then_some(dir);
+        self
+    }
+
+    /// The name of the file at `path`, a path under the directory: its
+    /// path from the root, or from the modules' directory for one in it.
+    pub fn name_of(&self, path: &Path) -> Result<String, Refusal> {
+        let relative = self.relative(path)?;
+        Ok(self.named(relative).0)
+    }
+
+    /// `relative` (a path from the root) as a name, and whether it is a
+    /// module's.
+    fn named(&self, relative: String) -> (String, bool) {
+        let Some(modules) = &self.modules else {
+            return (relative, false);
+        };
+        match relative
+            .strip_prefix(modules.as_str())
+            .and_then(|rest| rest.strip_prefix('/'))
+        {
+            Some(rest) => (rest.to_owned(), true),
+            None => (relative, false),
+        }
+    }
+
+    /// Where the file named `name` is read from: among the modules when
+    /// one of them is there, else from the root.
+    #[must_use]
+    pub fn path_of(&self, name: &str) -> PathBuf {
+        if let Some(modules) = &self.modules {
+            let module = self.root.join(modules).join(name);
+            if module.exists() {
+                return module;
+            }
+        }
+        self.root.join(name)
     }
 
     pub fn root(&self) -> &Path {
@@ -144,27 +200,35 @@ impl UserDir {
         Ok(text)
     }
 
-    /// Whether the directory `dir` (a path from the root, `""` for the
-    /// root) is there, and in the directory, links followed.
+    /// Whether the directory `dir` (a name, `""` for the root) is there,
+    /// among the modules or from the root, and in the directory, links
+    /// followed.
     #[must_use]
     pub fn has_dir(&self, dir: &str) -> bool {
         if dir.split('/').any(|part| part == ".." || part == ".") {
             return false;
         }
-        let (Some(root), Ok(real)) = (self.real_root(), self.root.join(dir).canonicalize()) else {
+        let Some(root) = self.real_root() else {
             return false;
         };
-        real.starts_with(root) && real.is_dir()
+        let modules = self.modules.as_ref().map(|m| self.root.join(m).join(dir));
+        modules
+            .into_iter()
+            .chain([self.root.join(dir)])
+            .filter_map(|at| at.canonicalize().ok())
+            .any(|real| real.starts_with(&root) && real.is_dir())
     }
 
     /// Every file under the directory a user may change the application
-    /// with (`wanted` chooses by name), by path from the root with its
-    /// text; and what was refused. Links inside the directory are read
+    /// with (`wanted` chooses by name), by name ([`name_of`](Self::name_of))
+    /// with its text; and what was refused, by name too. Links inside the directory are read
     /// as the files they name; a link that leads out is refused. A
     /// directory a walk skips ([`crate::skipped_dir`]) is not entered.
     #[must_use]
     pub fn list(&self, wanted: impl Fn(&str) -> bool) -> (BTreeMap<String, String>, Vec<Refusal>) {
         let mut files = BTreeMap::new();
+        // The names a module's file gave: another file of one is hidden.
+        let mut of_modules = std::collections::BTreeSet::new();
         let mut refused = Vec::new();
         let Some(root) = self.real_root() else {
             return (files, refused);
@@ -198,6 +262,10 @@ impl UserDir {
                 if name.starts_with('.') || !wanted(name) {
                     continue;
                 }
+                let (relative, module) = self.named(relative);
+                if !module && of_modules.contains(&relative) {
+                    continue;
+                }
                 if kind.is_symlink() {
                     match path.canonicalize() {
                         Ok(real) if !real.starts_with(&root) => {
@@ -213,6 +281,9 @@ impl UserDir {
                 }
                 match self.read(&path) {
                     Ok(text) => {
+                        if module {
+                            of_modules.insert(relative.clone());
+                        }
                         files.insert(relative, text);
                     }
                     Err(ReadError::Refused(why)) => refused.push(why),
@@ -418,6 +489,38 @@ mod tests {
         ));
         assert!(dir.has_dir("parts"));
         assert!(!dir.has_dir("../"));
+    }
+
+    #[test]
+    fn a_modules_directory_names_its_files_from_itself() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join("qml/Lib")).unwrap();
+        std::fs::write(root.path().join("shell.qml"), "Item {}").unwrap();
+        std::fs::write(root.path().join("qml/Lib/Badge.qml"), "Item {}").unwrap();
+        std::fs::write(root.path().join("qml/Card.qml"), "Rectangle {}").unwrap();
+        // Hidden by the module of its name.
+        std::fs::write(root.path().join("Card.qml"), "Item {}").unwrap();
+        let dir = UserDir::new(root.path()).with_modules("./qml/");
+        let (files, refused) = dir.list(|name| name.ends_with(".qml"));
+        assert_eq!(
+            files.keys().collect::<Vec<_>>(),
+            ["Card.qml", "Lib/Badge.qml", "shell.qml"]
+        );
+        assert_eq!(files["Card.qml"], "Rectangle {}");
+        assert!(refused.is_empty());
+        let module = std::path::absolute(root.path().join("qml/Lib/Badge.qml")).unwrap();
+        assert_eq!(dir.name_of(&module).unwrap(), "Lib/Badge.qml");
+        assert_eq!(dir.path_of("Lib/Badge.qml"), module);
+        assert_eq!(
+            dir.path_of("shell.qml"),
+            std::path::absolute(root.path().join("shell.qml")).unwrap()
+        );
+        assert!(dir.has_dir("Lib"));
+        assert!(dir.has_dir("qml"));
+        assert!(!dir.has_dir("Other"));
+        // Without, the directory is a directory like any other.
+        let plain = UserDir::new(root.path());
+        assert_eq!(plain.name_of(&module).unwrap(), "qml/Lib/Badge.qml");
     }
 
     #[cfg(unix)]

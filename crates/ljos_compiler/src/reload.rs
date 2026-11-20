@@ -741,6 +741,10 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
         // A directory an alias does not name now is none of the project's.
         let text = match self.mounts.iter().find(|m| path.starts_with(&m.dir)) {
             Some(_) => self.active_mounts().find_map(|m| m.key_of(path))?,
+            // A user's module is named from the modules' directory.
+            None if self.layer.is_some() => {
+                self.layer.as_ref().and_then(|l| l.dir.name_of(path).ok())?
+            }
             None => {
                 let relative = self
                     .roots
@@ -768,6 +772,9 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
         };
         if let Some(path) = self.mounts.iter().find_map(|m| m.path_of(&name)) {
             return Some(path);
+        }
+        if let Some(layer) = &self.layer {
+            return Some(layer.dir.path_of(&name));
         }
         let mut paths = self.roots.iter().map(|root| root.join(&name));
         let first = paths.next()?;
