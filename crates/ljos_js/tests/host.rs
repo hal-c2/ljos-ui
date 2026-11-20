@@ -1251,6 +1251,71 @@ fn an_error_thrown_after_a_caught_refusal_is_the_scripts_own() {
     }
 }
 
+/// A script's error that says what QuickJS's does, under another name, is
+/// still the script's own.
+#[test]
+fn a_script_error_saying_out_of_memory_after_a_caught_refusal_is_the_scripts_own() {
+    let host = JsHost::new(JsConfig {
+        memory_limit: Some(16 * 1024 * 1024),
+        ..JsConfig::default()
+    })
+    .unwrap();
+    let slice = Slice {
+        soft: Duration::from_secs(5),
+        hard: Duration::from_secs(10),
+    };
+    let err = host
+        .enter("caught", slice, |s| {
+            s.eval::<(), _>(
+                "let hog = []; \
+                 try { for (;;) hog.push(new Array(100).fill(1)) } catch (e) {} \
+                 hog = null; \
+                 throw new TypeError('out of memory')",
+            )
+        })
+        .unwrap_err();
+    match err {
+        JsFault::JsException { message, .. } => {
+            assert!(message.contains("TypeError"), "{message}")
+        }
+        other => panic!("told as {other:?}"),
+    }
+}
+
+/// A run nested in a dispatch that fails for its own reason does not make
+/// the dispatch forget it was refused room: rethrowing what the refusal
+/// threw is still the heap running out.
+#[test]
+fn a_refusal_rethrown_after_a_nested_run_failed_is_running_out_of_memory() {
+    let host = JsHost::new(JsConfig {
+        memory_limit: Some(16 * 1024 * 1024),
+        ..JsConfig::default()
+    })
+    .unwrap();
+    let slice = Slice {
+        soft: Duration::from_secs(5),
+        hard: Duration::from_secs(10),
+    };
+    let err = host
+        .enter("outer", slice, |s| {
+            s.eval::<(), _>(
+                "let hog = []; \
+                 try { for (;;) hog.push(new Array(100).fill(1)) } catch (e) { globalThis.saved = e } \
+                 hog = null",
+            )?;
+            let inner = host.enter("inner", slice, |s| {
+                s.eval::<(), _>("throw new TypeError('its own')")
+            });
+            assert!(
+                matches!(inner, Err(JsFault::JsException { .. })),
+                "{inner:?}"
+            );
+            s.eval::<(), _>("throw saved")
+        })
+        .unwrap_err();
+    assert!(matches!(err, JsFault::JsOutOfMemory { .. }), "{err:?}");
+}
+
 /// A script that calls itself `n` deep: `n`, or -1 once a RangeError
 /// says the stack ran out.
 fn recurse(n: u32) -> String {
