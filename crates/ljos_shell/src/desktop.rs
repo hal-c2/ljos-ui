@@ -669,7 +669,12 @@ impl<M: Send + 'static> Desktop<M> {
         if self.slots[0].window != root_window || self.slots[0].applied.is_none() {
             let slot = &mut self.slots[0];
             slot.window = root_window;
-            slot.told_size = None;
+            // `told_size` stays: it is the size of the platform's window,
+            // which another root in it does not change. A `Window` that
+            // declares another size is asked of the platform (`change`)
+            // against it; without it the declared size would pass for the
+            // one the platform's window has, nothing would be asked, and the
+            // `Window` would be told the old size (#606).
             slot.told_pos = None;
             slot.told_state = None;
             // A window's size is the platform's to say; a plain item is
