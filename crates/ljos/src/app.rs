@@ -375,6 +375,12 @@ impl<M> App<M> {
     ///     .run()
     /// # }
     /// ```
+    ///
+    /// Only the shell applies them: [`run`](App::run) and the other
+    /// `run` methods. [`build`](App::build) and
+    /// [`build_engine`](App::build_engine) have no loop to watch the
+    /// directory and apply a save in, so they apply none of the user's
+    /// files and say so in the engine's log.
     #[cfg(all(feature = "user-qml", feature = "shell"))]
     #[must_use]
     pub fn user_qml(mut self, config: crate::UserQml) -> Self {
@@ -680,12 +686,28 @@ impl<M> App<M> {
             log,
             #[cfg(feature = "dev-qml")]
             dev,
+            #[cfg(all(feature = "user-qml", feature = "shell"))]
+            user_qml,
             ..
         } = self;
         let engine = crate::engine();
         // Before the modules: one that sets a handler of its own wins.
         if let Some(log) = log {
             log.install(&engine);
+        }
+        // Said, not dropped: a host that set it would otherwise take its
+        // users' files for applied.
+        #[cfg(all(feature = "user-qml", feature = "shell"))]
+        if let Some(user_qml) = user_qml {
+            engine.log(
+                ljos_engine::LogLevel::Warning,
+                "qml",
+                format!(
+                    "App::user_qml: build and build_engine open the application without the \
+                     shell's loop, so the user's files in {} are not applied; App::run applies them",
+                    user_qml.path().display()
+                ),
+            );
         }
         #[cfg(feature = "dev-qml")]
         let source = Source {

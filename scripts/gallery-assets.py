@@ -18,8 +18,11 @@ copy them there. The links are excluded from the submodule's status."""
 import json, os, re, shutil, subprocess, sys, urllib.parse, urllib.request
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-TARGET = os.environ.get("CARGO_TARGET_DIR") or os.path.join(ROOT, "target")
-CACHE = os.environ.get("LJOS_CORPUS_ASSETS") or os.path.join(TARGET, "corpus-assets")
+# Absolute, as cargo reads a relative CARGO_TARGET_DIR: the assets are linked
+# into corpus/qtdoc, where a link to a relative path would point from the
+# example's directory.
+TARGET = os.path.abspath(os.environ.get("CARGO_TARGET_DIR") or os.path.join(ROOT, "target"))
+CACHE = os.path.abspath(os.environ.get("LJOS_CORPUS_ASSETS") or os.path.join(TARGET, "corpus-assets"))
 QTDOC = os.path.join(ROOT, "corpus", "qtdoc")
 
 
@@ -148,4 +151,5 @@ def main():
         print(f"{eid}: {kept}")
 
 
-main()
+if __name__ == "__main__":
+    main()
