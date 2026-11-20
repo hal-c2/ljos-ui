@@ -419,7 +419,19 @@ pub(crate) fn memory(
             "types": [],
             "types_left_out": kept.len(),
         },
-        "script": script.map(|b| json!({ "bytes": b, "approximate": false })),
+        "script": script.map(|b| {
+            let p = engine.script_heap_pressure();
+            json!({
+                "bytes": b,
+                "approximate": false,
+                "limit": p.as_ref().and_then(|p| p.limit),
+                "after_last_collection": p.as_ref().map(|p| p.after_last_collection),
+                "past_three_quarters": p.as_ref().map(|p| p.warned),
+                "grew_most": p.map(|p| p.growers.into_iter()
+                    .map(|(at, bytes)| json!({ "at": at, "bytes": bytes }))
+                    .collect::<Vec<_>>()),
+            })
+        }),
         "reactive": { "nodes": nodes, "bytes": graph, "approximate": true },
         "text": text.map(|t| json!({
             "layouts": t.layouts,

@@ -117,6 +117,9 @@ fn main() {
         println!("cargo:rerun-if-env-changed={}", feature_to_cargo(feature));
     }
     println!("cargo:rerun-if-env-changed=CARGO_CFG_SANITIZE");
+    // ljos: the env lines above turn off Cargo's default of building again
+    // when any file changes, so an edit to the forked C went unbuilt.
+    println!("cargo:rerun-if-changed=quickjs");
 
     let src_dir = Path::new("quickjs");
 

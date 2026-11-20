@@ -3,7 +3,8 @@ use std::time::Duration;
 /// Limits for one JS runtime. Defaults are the section 8.5 budget.
 #[derive(Debug, Clone)]
 pub struct JsConfig {
-    /// `set_memory_limit`. `None` means unlimited (tests, tools).
+    /// `set_memory_limit`. `None` means unlimited (tests, tools). The
+    /// default is [`default_memory_limit`].
     pub memory_limit: Option<usize>,
     /// QuickJS runs its cycle collector after the heap grows by this much.
     pub gc_threshold: usize,
@@ -26,6 +27,21 @@ pub struct JsConfig {
     pub idle_collect_min_growth: usize,
 }
 
+/// The heap a JS runtime may hold by default: a thirty-second of the
+/// memory this process may use (`ljos_runtime::usable_memory`), at least
+/// 96 MiB and at most 512 MiB; 96 MiB where the platform does not say.
+/// A phone of 3 GB gets 96 MiB, a desktop of 16 GB 512 MiB. One fixed
+/// size for both either starves a desktop app that keeps a lot in
+/// script, as HAL-C2's sidebar did at 96 MiB, or lets a phone's app grow
+/// until the system kills it.
+pub fn default_memory_limit() -> usize {
+    const LEAST: usize = 96 * 1024 * 1024;
+    const MOST: usize = 512 * 1024 * 1024;
+    ljos_runtime::usable_memory().map_or(LEAST, |m| {
+        usize::try_from(m / 32).unwrap_or(MOST).clamp(LEAST, MOST)
+    })
+}
+
 /// The stack JS may use where the thread's stack bounds are unknown and
 /// [`JsConfig::max_stack`] gives none.
 pub const FALLBACK_MAX_STACK: usize = 512 * 1024;
@@ -33,7 +49,7 @@ pub const FALLBACK_MAX_STACK: usize = 512 * 1024;
 impl Default for JsConfig {
     fn default() -> Self {
         Self {
-            memory_limit: Some(96 * 1024 * 1024),
+            memory_limit: Some(default_memory_limit()),
             gc_threshold: 8 * 1024 * 1024,
             max_stack: None,
             slice: Slice::default(),

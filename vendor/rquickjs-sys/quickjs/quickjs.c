@@ -1697,6 +1697,18 @@ static void js_trigger_gc(JSRuntime *rt, size_t size)
         JS_RunGC(rt);
         rt->malloc_gc_threshold = rt->malloc_state.malloc_size +
             (rt->malloc_state.malloc_size >> 1);
+        /* ljos: once what lives is past two thirds of the limit, half again
+           as much is past the limit, and garbage fills the heap up to it
+           without another collection: the allocation that meets it fails
+           while most of the heap could be freed. Collect again halfway to
+           the limit instead. */
+        if (rt->malloc_state.malloc_limit != 0) {
+            size_t size = rt->malloc_state.malloc_size;
+            size_t limit = rt->malloc_state.malloc_limit;
+            size_t halfway = size < limit ? size + ((limit - size) >> 1) : size;
+            if (rt->malloc_gc_threshold > halfway)
+                rt->malloc_gc_threshold = halfway;
+        }
     }
 }
 

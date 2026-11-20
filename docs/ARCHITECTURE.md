@@ -922,9 +922,11 @@ These are initial values, enforced in CI by benchmarks (04 §3.7).
 | Decoded images (LRU, at `sourceSize` or layout size × DPR) | min(64 MiB, 6 % of usable memory) | min(256 MiB, ⅛ of usable memory) |
 | GPU caches (layers, paths) | 24 MB | 64 MB |
 | Glyph atlas | 2048² A8 | up to 4096² |
-| JS heap | `set_memory_limit(96 MiB)`, GC threshold 8 MiB | same; limit configurable |
+| JS heap | 1/32 of usable memory, at least 96 MiB (`ljos_js::default_memory_limit`); GC threshold 8 MiB | same, at most 512 MiB; `Engine::set_script_heap_limit` |
 | JS time per dispatch | 4 ms soft (log), 100 ms hard (interrupt); a debug build allows 8 times both | same |
 | Process | RSS ≤ 150 MiB, GPU ≤ 64 MiB, cold start ≤ 500 ms | — |
+
+The JS heap must not run out while most of it is garbage. QuickJS collects only when an object is made past a threshold it sets to half again what lived after its last collection, so past two thirds of the limit the next collection would come after the limit; the fork caps that threshold at halfway to the limit (`vendor/QUICKJS.md`). After a run, `JsHost` also collects when the heap is past three quarters and grew a quarter of the room left, and at once after a run that ran out, so the next run, whoever's it is, does not meet the same full heap. Past three quarters after collecting it warns once, naming the runs that grew the heap most since it was last collected (QML file and line), and `app_metrics` shows the same under `script`. What lives is not attributed: that needs a heap walk.
 
 Usable memory is the machine's (`MemTotal`), or the lowest `memory.max` of the cgroup the process is in and the groups above it when that is less: an application in a container or a systemd unit with a limit sizes its caches to the limit, not to the machine.
 

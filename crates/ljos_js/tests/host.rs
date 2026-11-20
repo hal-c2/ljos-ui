@@ -82,6 +82,146 @@ fn a_null_thrown_on_a_full_heap_is_running_out_of_memory() {
     assert_eq!(eval_num(&host, "40 + 2").unwrap(), 42.0);
 }
 
+fn small(limit_mib: usize) -> JsHost {
+    JsHost::new(JsConfig {
+        memory_limit: Some(limit_mib * 1024 * 1024),
+        ..JsConfig::default()
+    })
+    .unwrap()
+}
+
+const MIB: usize = 1024 * 1024;
+
+/// Keeps about `mib` MiB alive in `globalThis.kept`, a run at a time.
+fn keep(host: &JsHost, mib: usize) {
+    host.enter("keep", host.config().slice, |s| {
+        s.eval::<(), _>("globalThis.kept = []")
+    })
+    .unwrap();
+    while host.heap_bytes() < mib * MIB {
+        host.enter("keep", host.config().slice, |s| {
+            s.eval::<(), _>("for (let i = 0; i < 64; i++) kept.push(new Array(1000).fill(i))")
+        })
+        .unwrap();
+    }
+}
+
+/// QuickJS collects when the heap is half again what lived after the last
+/// collection. Past two thirds of the limit that is past the limit, and
+/// garbage alone used to fill the heap until an allocation failed with
+/// most of it free (the 96 MiB the HAL-C2 sidebar ran out of). The
+/// collector now also runs halfway to the limit.
+#[test]
+fn garbage_past_two_thirds_of_the_limit_is_collected_before_the_heap_runs_out() {
+    let host = small(32);
+    keep(&host, 22);
+    host.collect_now();
+    assert!(host.heap_bytes() > 21 * MIB, "{}", host.heap_bytes());
+    let slice = Slice {
+        soft: Duration::from_secs(5),
+        hard: Duration::from_secs(20),
+    };
+    // About 50 MiB of arrays made and dropped in one run, each holding
+    // itself: refcounts free what holds nothing, and only the collector
+    // frees a cycle, as closures and QML's back-references make.
+    let out = host.enter("churn", slice, |s| {
+        s.eval::<f64, _>(
+            "(() => { let n = 0; for (let i = 0; i < 3000; i++) { const a = new Array(1000).fill(i); a.self = a; n += a.length; } return n; })()",
+        )
+    });
+    assert_eq!(out.unwrap(), 3_000_000.0);
+}
+
+/// A run that found no room leaves its garbage collected, so the next run
+/// does not meet the same full heap, whoever it belongs to.
+#[test]
+fn a_run_that_runs_out_of_heap_leaves_its_garbage_collected() {
+    let host = small(8);
+    let err = host
+        .enter("hog", host.config().slice, |s| {
+            s.eval::<(), _>(
+                "(function(){ const a = []; a.self = a; for (;;) a.push(new Array(1000).fill(1)); })()",
+            )
+        })
+        .unwrap_err();
+    assert!(matches!(err, JsFault::JsOutOfMemory { .. }), "{err:?}");
+    assert!(host.heap_bytes() < 4 * MIB, "{}", host.heap_bytes());
+}
+
+/// The fault of a run that found no room names what grew the heap.
+#[test]
+fn running_out_of_heap_names_what_grew_it() {
+    let host = small(8);
+    let err = host
+        .enter_naming(
+            "binding",
+            || "Sidebar.qml:12".to_owned(),
+            host.config().slice,
+            |s| {
+                s.eval::<(), _>(
+                    "(function(){ globalThis.a = []; for (;;) a.push(new Array(1000).fill(1)); })()",
+                )
+            },
+        )
+        .unwrap_err();
+    let said = err.to_string();
+    assert!(said.contains(" at Sidebar.qml:12"), "{said}");
+    assert!(
+        said.contains("grew it most since it was last collected: Sidebar.qml:12 ("),
+        "{said}"
+    );
+}
+
+/// Past three quarters of the limit after collecting, the host says so
+/// once and names what grew the heap; below five eighths it may say so
+/// again.
+#[test]
+fn a_heap_past_three_quarters_is_warned_of_once_and_named() {
+    let host = small(32);
+    assert!(!host.heap_pressure().warned);
+    keep(&host, 25);
+    let p = host.heap_pressure();
+    assert!(p.warned, "{p:?}");
+    assert_eq!(p.limit, Some(32 * MIB));
+    host.enter("drop", host.config().slice, |s| {
+        s.eval::<(), _>("globalThis.kept = null")
+    })
+    .unwrap();
+    host.collect_now();
+    assert!(host.heap_pressure().growers.is_empty());
+    host.enter("after", host.config().slice, |s| s.eval::<(), _>("1"))
+        .unwrap();
+    assert!(!host.heap_pressure().warned);
+}
+
+/// What grew the heap is told per run, the most first, and the table
+/// stays small.
+#[test]
+fn heap_growers_are_kept_by_name_and_bounded() {
+    let host = small(64);
+    for i in 0..12 {
+        let name = format!("Row{i}.qml:1");
+        host.enter_naming(&name, || name.clone(), host.config().slice, |s| {
+            s.eval::<(), _>(format!(
+                "globalThis.k{i} = []; for (let j = 0; j < {}; j++) k{i}.push(new Array(1000).fill(j))",
+                40 + i * 10
+            ))
+        })
+        .unwrap();
+    }
+    let p = host.heap_pressure();
+    assert!(p.growers.len() <= 8, "{p:?}");
+    assert_eq!(p.growers[0].0, "Row11.qml:1", "{p:?}");
+    assert!(p.growers.windows(2).all(|w| w[0].1 >= w[1].1), "{p:?}");
+}
+
+/// The default limit follows the machine, within bounds.
+#[test]
+fn the_default_heap_limit_is_between_96_and_512_mib() {
+    let l = ljos_js::default_memory_limit();
+    assert!((96 * MIB..=512 * MIB).contains(&l), "{l}");
+}
+
 #[test]
 fn out_of_memory_is_reported_and_context_survives() {
     let host = JsHost::new(JsConfig {
@@ -1223,6 +1363,7 @@ fn a_promise_job_that_never_ends_is_interrupted_at_the_deadline() {
 fn faults_convert_for_the_supervisor() {
     let f = ljos_js::JsFault::JsOutOfMemory {
         label: "binding".into(),
+        what: String::new(),
     };
     assert_eq!(
         ljos_runtime::Fault::from(f),

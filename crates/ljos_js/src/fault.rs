@@ -30,8 +30,10 @@ pub enum JsFault {
         after: Duration,
         what: String,
     },
-    #[error("JS heap limit exceeded in `{label}`")]
-    JsOutOfMemory { label: String },
+    /// `what` says where the dispatch was and what grew the heap most since
+    /// it was last collected; it is empty where nothing is known.
+    #[error("JS heap limit exceeded in `{label}`{what}")]
+    JsOutOfMemory { label: String, what: String },
     #[error("panic in `{label}`: {message}")]
     Panic { label: String, message: String },
     /// A bug or misuse on the Rust side (stale handle, re-entrant `enter`,
