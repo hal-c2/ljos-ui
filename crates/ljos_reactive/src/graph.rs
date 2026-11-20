@@ -359,10 +359,15 @@ struct Node<V> {
 }
 
 /// Whether the reads that `node` (`n`) made in `run`, a [`Reader`]'s stamp,
-/// count among its sources: its last finished run's, or the whole run
-/// before the cut-short ones since ([`Inner::kept`]).
+/// count among its sources: its last finished run's, or, while its runs
+/// are cut short, any of them and the whole run before them
+/// ([`Inner::kept`]). Stamps only grow, so those are the runs between.
 fn finished<V>(kept: &HashMap<NodeId, u64>, n: NodeId, node: &Node<V>, run: u64) -> bool {
-    node.done_stamp == run || (!kept.is_empty() && kept.get(&n) == Some(&run))
+    node.done_stamp == run
+        || (!kept.is_empty()
+            && kept
+                .get(&n)
+                .is_some_and(|&from| from <= run && run <= node.done_stamp))
 }
 
 impl<V> Node<V> {
@@ -438,10 +443,11 @@ struct Inner<V> {
     /// one, and every node would pay for the room.
     tags: HashMap<NodeId, u64>,
     /// For a node whose runs since its last whole one were cut short
-    /// ([`Graph::cut_short`]), that whole run's stamp: what it read
+    /// ([`Graph::cut_short`]), that whole run's stamp, or the first
+    /// cut-short run's when none finished whole: what those runs read
     /// without a node still reaches the node, as its node sources do,
-    /// since the runs after it stopped before reading everything. Beside
-    /// the nodes, as the tags are: few runs are cut short.
+    /// since each stopped before reading everything. Beside the nodes, as
+    /// the tags are: few runs are cut short.
     kept: HashMap<NodeId, u64>,
     scopes: SlotMap<ScopeId, Scope>,
     root: ScopeId,
@@ -1914,9 +1920,14 @@ impl<V: Clone + 'static> Graph<V> {
     /// would have. It keeps the sources of its last run as well as what it
     /// read this time: the reads it never got to would otherwise wake it no
     /// more, and its value would stay stale after the fault has passed.
-    /// What its last whole run read without a node ([`Graph::reader`])
-    /// stays [current](Graph::is_current) the same way. A run that
-    /// finishes as it should drops them again.
+    /// What its last whole run and the cut-short runs since read without
+    /// a node ([`Graph::reader`]) stays [current](Graph::is_current) the
+    /// same way. A run that finishes as it should drops them again.
+    ///
+    /// A run cut short with no whole run before it, a binding's first,
+    /// has no sources but what it read: what it never got to cannot wake
+    /// it. Running it again once the fault has passed is for whoever was
+    /// told of the fault.
     pub fn cut_short(&self) {
         let mut i = self.inner.borrow_mut();
         if let Some(f) = i.frames.iter_mut().rev().find(|f| f.node.is_some()) {
@@ -4030,9 +4041,12 @@ impl<V: Clone + 'static> Graph<V> {
                     if cut_short {
                         let node = &i.nodes[n];
                         reads.extend(node.sources.iter().map(|e| e.node));
-                        if node.done_stamp != 0 {
-                            i.kept.entry(n).or_insert(node.done_stamp);
-                        }
+                        let from = if node.done_stamp != 0 {
+                            node.done_stamp
+                        } else {
+                            stamp
+                        };
+                        i.kept.entry(n).or_insert(from);
                     } else if !i.kept.is_empty() {
                         i.kept.remove(&n);
                     }
