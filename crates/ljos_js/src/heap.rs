@@ -10,21 +10,78 @@ use std::{cell::Cell, rc::Rc};
 
 use rquickjs::allocator::Allocator;
 
-/// Bytes the runtime holds from the system, shared with the host.
+/// Bytes the runtime holds from the system, shared with the host. QuickJS
+/// carves small blocks out of arenas, so this is not what its limit is
+/// checked against: a block freed in an arena still in use is still held
+/// here ([`MallocPeak`] is in the limit's units).
 #[derive(Debug, Clone, Default)]
-pub(crate) struct HeapCount(Rc<Cell<usize>>);
+pub(crate) struct HeapCount(Rc<Count>);
+
+#[derive(Debug, Default)]
+struct Count {
+    bytes: Cell<usize>,
+}
 
 impl HeapCount {
     pub(crate) fn bytes(&self) -> usize {
-        self.0.get()
+        self.0.bytes.get()
     }
 
     fn add(&self, bytes: usize) {
-        self.0.set(self.0.get().saturating_add(bytes));
+        self.0.bytes.set(self.bytes().saturating_add(bytes));
     }
 
     fn sub(&self, bytes: usize) {
-        self.0.set(self.0.get().saturating_sub(bytes));
+        self.0.bytes.set(self.bytes().saturating_sub(bytes));
+    }
+}
+
+unsafe extern "C" {
+    // Ljós's patch to the vendored quickjs.c (quickjs.h).
+    fn JS_MarkMallocPeak(rt: *mut rquickjs::qjs::JSRuntime) -> usize;
+    fn JS_ResumeMallocPeak(rt: *mut rquickjs::qjs::JSRuntime, outer: usize) -> usize;
+}
+
+/// The most the runtime held in a run, in the units QuickJS checks its
+/// limit in (`malloc_size`, block by block). A function that ran out frees
+/// its locals as its exception unwinds it, so a thrown `null` is judged
+/// against this, not against what is held after.
+pub(crate) struct MallocPeak(*mut rquickjs::qjs::JSRuntime);
+
+impl MallocPeak {
+    /// # Safety
+    ///
+    /// `rt` is a live runtime, and outlives what this is handed to.
+    pub(crate) unsafe fn of(rt: *mut rquickjs::qjs::JSRuntime) -> Self {
+        Self(rt)
+    }
+
+    /// Starts the high-water mark again from what is held now; a host
+    /// does this as a run begins. Returns the mark it replaces, for a
+    /// nested run to hand back with [`MallocPeak::resume`].
+    pub(crate) fn mark(&self) -> usize {
+        // SAFETY: a live runtime (`of`).
+        unsafe { JS_MarkMallocPeak(self.0) }
+    }
+
+    /// Goes back to the run a nested one interrupted: its mark `outer`,
+    /// or the nested run's if that went higher, since the outer run held
+    /// the heap then too.
+    pub(crate) fn resume(&self, outer: usize) {
+        // SAFETY: a live runtime (`of`).
+        unsafe { JS_ResumeMallocPeak(self.0, outer) };
+    }
+
+    /// The most held since the last [`MallocPeak::mark`].
+    pub(crate) fn get(&self) -> usize {
+        // SAFETY: a live runtime (`of`); 0 is never above a mark.
+        unsafe { JS_ResumeMallocPeak(self.0, 0) }
+    }
+}
+
+impl std::fmt::Debug for MallocPeak {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("MallocPeak")
     }
 }
 
