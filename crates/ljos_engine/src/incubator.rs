@@ -3109,8 +3109,17 @@ impl SharedCreation {
         // One step without a budget runs to the end; the bound is for a
         // job that would not.
         for _ in 0..64 {
-            if matches!(job.step(&|| false), JobPoll::Done) {
-                break;
+            match job.step(&|| false) {
+                JobPoll::Done => break,
+                JobPoll::Yield => {}
+                // No scheduler runs a forced job, so none would hear of
+                // its fault: the engine is told here instead.
+                JobPoll::Failed(fault) => {
+                    if let Some(e) = job.engine.upgrade().map(Engine::from_inner) {
+                        e.report_fault(None, fault);
+                    }
+                    break;
+                }
             }
         }
         true
@@ -3308,8 +3317,12 @@ impl CreationJob {
             // fault still goes to the job's owner.
             Err(payload) => {
                 let fault = Fault::from_panic(payload);
-                self.unmake(Some(&e));
-                self.finish(Some(&e), Err(EngineError::Load(fault.to_string())));
+                // A panic in `on_done` comes after the result is out:
+                // whoever waits was told, and the object is theirs.
+                if self.handle.0.result.borrow().is_none() {
+                    self.unmake(Some(&e));
+                    self.finish(Some(&e), Err(EngineError::Load(fault.to_string())));
+                }
                 JobPoll::Failed(fault)
             }
         };
