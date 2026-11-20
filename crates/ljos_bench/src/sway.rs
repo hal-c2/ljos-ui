@@ -225,9 +225,13 @@ fn focused(node: &Value) -> Option<u32> {
 pub struct Place {
     /// x, y, width, height of its content, in the layout's pixels.
     pub rect: (i32, i32, i32, i32),
-    /// The place is not yet the size the client last committed. Only a
-    /// floating window is held to the size it commits; a tiled one is
-    /// given its tile's whatever it draws.
+    /// The place is not yet the size the client last asked for. Sway says
+    /// that only of an X11 client: its `geometry` is the size the client
+    /// last asked to be. A Wayland client's `geometry` is the size it had
+    /// when it was mapped, and stays that when the client resizes itself,
+    /// while its `rect` follows what it commits; there is nothing to
+    /// compare it with. Only a floating window is held to the size it asks
+    /// for; a tiled one is given its tile's whatever it draws.
     pub resizing: bool,
 }
 
@@ -258,6 +262,7 @@ fn place(node: &Value) -> Option<Place> {
     let g = &node["geometry"];
     let committed = get(g, "width").zip(get(g, "height"));
     let resizing = node["type"] == "floating_con"
+        && node["shell"] == "xwayland"
         && committed.is_some_and(|(w, h)| w > 0 && (w, h) != (rect.2, rect.3));
     Some(Place { rect, resizing })
 }
@@ -277,29 +282,51 @@ mod tests {
         assert_eq!(find(&tree, 8), None);
     }
 
-    /// A floating window that committed another size than its place is
-    /// still being resized; a tiled one drawn smaller than its tile is not.
+    fn node(shell: &str, kind: &str, rect: (i64, i64), geometry: (i64, i64)) -> Value {
+        serde_json::json!({"type": kind, "shell": shell, "pid": 7,
+            "rect": {"x": 10, "y": 20, "width": rect.0, "height": rect.1},
+            "geometry": {"x": 0, "y": 0, "width": geometry.0, "height": geometry.1}})
+    }
+
+    fn at(n: Value) -> Option<Place> {
+        let tree = serde_json::json!({"nodes": [], "floating_nodes": [n]});
+        find_node(&tree, 7).and_then(place)
+    }
+
+    /// An X11 window that asked for another size than its place is still
+    /// being resized; a tiled one drawn smaller than its tile is not.
     #[test]
-    fn a_floating_window_is_resizing_until_its_place_is_its_committed_size() {
-        let node = |kind: &str, w: i64, h: i64| {
-            serde_json::json!({"type": kind, "pid": 7,
-                "rect": {"x": 10, "y": 20, "width": 200, "height": 100},
-                "geometry": {"x": 0, "y": 0, "width": w, "height": h}})
-        };
-        let tree = |n: Value| serde_json::json!({"nodes": [], "floating_nodes": [n]});
-        let at = |n: Value| find_node(&tree(n), 7).and_then(place);
+    fn a_floating_x11_window_is_resizing_until_its_place_is_the_size_it_asked() {
         assert_eq!(
-            at(node("floating_con", 300, 200)),
+            at(node("xwayland", "floating_con", (200, 100), (300, 200))),
             Some(Place {
                 rect: (10, 20, 200, 100),
                 resizing: true
             })
         );
+        let resizing = |n| at(n).map(|p| p.resizing);
         assert_eq!(
-            at(node("floating_con", 200, 100)).map(|p| p.resizing),
+            resizing(node("xwayland", "floating_con", (300, 200), (300, 200))),
             Some(false)
         );
-        assert_eq!(at(node("con", 150, 80)).map(|p| p.resizing), Some(false));
+        assert_eq!(
+            resizing(node("xwayland", "con", (150, 80), (300, 200))),
+            Some(false)
+        );
+    }
+
+    /// As sway showed it for a Wayland window mapped at 200×100 that then
+    /// committed 300×200: `rect` is the new size, `geometry` the one it was
+    /// mapped with. The window is where it is, not being resized.
+    #[test]
+    fn a_wayland_window_resized_after_it_was_mapped_is_not_resizing() {
+        assert_eq!(
+            at(node("xdg_shell", "floating_con", (300, 200), (200, 100))),
+            Some(Place {
+                rect: (10, 20, 300, 200),
+                resizing: false
+            })
+        );
     }
 
     /// A compositor that answers a byte at a time, each well inside the

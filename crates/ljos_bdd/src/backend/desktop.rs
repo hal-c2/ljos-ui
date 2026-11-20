@@ -1025,7 +1025,11 @@ impl Backend for DesktopBackend {
         // size, and the compositor moves the window's place to it only
         // when its transaction ends, a moment later. So the picture is
         // taken once the window is still in the place the compositor
-        // says, and that place is the size the application drew.
+        // says, read after it was still: a place that moved while the
+        // picture was still is looked at again. An X11 window asks the
+        // compositor for its size, and is resizing until its place is the
+        // size asked; a Wayland one draws at the size it takes, and its
+        // place follows what it commits (`Place::resizing`).
         let pid = self.running()?.app.id();
         let rect = loop {
             let rect = self.running()?.rect;
