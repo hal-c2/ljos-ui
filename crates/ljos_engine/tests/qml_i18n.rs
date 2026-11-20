@@ -374,4 +374,19 @@ Item { property string s: "%1".arg("a", "b") }
     );
     assert_eq!(string(&h, extra, "s"), "a");
     assert_eq!(h.warnings().len(), 1);
+
+    // With no marker at all, the text stays and one warning counts every value.
+    let plain = h.load(
+        r#"
+import QtQuick
+Item { property string s: "plain".arg("a", "b") }
+"#,
+    );
+    assert_eq!(string(&h, plain, "s"), "plain");
+    let warnings = h.warnings();
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert!(
+        warnings[0].contains("2 argument(s) missing"),
+        "{warnings:?}"
+    );
 }
