@@ -1160,6 +1160,9 @@ fn a_list_paints_no_row_of_its_buffer_before_it_places_it() {
             );
         }
     }
+    // The rows in the view are drawn once placed, not culled for good.
+    let painted: Vec<i64> = painted_rows(&s, &e, root).iter().map(|r| r.0).collect();
+    assert!((0..5).all(|i| painted.contains(&i)), "painted {painted:?}");
     // The buffer was made: rows 5 to 13 are there.
     assert!(rows(&e, root).len() > 10, "{:?}", rows(&e, root));
 }
@@ -1181,5 +1184,7 @@ fn a_grid_paints_no_cell_of_its_buffer_before_it_places_it() {
             assert_eq!((x, y), at, "frame {i}: cell {index} painted at {x}, {y}");
         }
     }
+    let painted: Vec<i64> = painted_rows(&s, &e, root).iter().map(|r| r.0).collect();
+    assert!((0..15).all(|i| painted.contains(&i)), "painted {painted:?}");
     assert!(rows(&e, root).len() > 30, "{:?}", rows(&e, root));
 }
