@@ -674,7 +674,10 @@ impl<M: Send + 'static> Desktop<M> {
             // declares another size is asked of the platform (`change`)
             // against it; without it the declared size would pass for the
             // one the platform's window has, nothing would be asked, and the
-            // `Window` would be told the old size (#606).
+            // `Window` would be told the old size (#606). The new `Window`
+            // has not been told that size, though; it is once its spec is
+            // applied, unless a size was asked, which the platform answers.
+            slot.size_untold = root_window.is_some();
             slot.told_pos = None;
             slot.told_state = None;
             // A window's size is the platform's to say; a plain item is
@@ -733,6 +736,10 @@ impl<M: Send + 'static> Desktop<M> {
             if let Some(spec) = self.spec_of(i, engine, sys) {
                 self.apply(host, i, spec, engine, sys);
             }
+        }
+        let slot = &mut self.slots[0];
+        if std::mem::take(&mut slot.size_untold) {
+            note_size(slot, engine, sys, true);
         }
 
         let application_modal = windows.iter().any(|w| {
@@ -879,6 +886,9 @@ impl<M: Send + 'static> Desktop<M> {
         let has = slot.told_size.unwrap_or(new.size);
         if let Some(size) = window_spec::size_request(old, new, has) {
             host.change_window(id, WindowChange::Size(scaled(size, zoom)));
+            // The window is told the size the platform gives, not the one
+            // it has until then.
+            slot.size_untold = false;
             // Some platforms resize at once and say nothing; others
             // answer later, or never when they refuse.
             note_size(slot, engine, sys, false);
