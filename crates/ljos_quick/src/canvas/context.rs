@@ -885,9 +885,7 @@ impl Op<'_> {
             "clearRect" => painter.clear_rect(rect, &st),
             "fillRect" => {
                 if let Some((paint, st)) = with_style(&c.gs, &c.gs.fill) {
-                    let mut area = rect.abs().to_path(0.1);
-                    area.apply_affine(c.gs.transform);
-                    painter.fill(&area, FillRule::NonZero, &paint, &st);
+                    painter.fill_rect(rect, &paint, &st);
                 }
             }
             _ => {
