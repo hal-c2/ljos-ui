@@ -48,6 +48,7 @@ jobs:
       clippy: ${{ steps.plan.outputs.clippy }}
       clippy_args: ${{ steps.plan.outputs.clippy_args }}
       wasm: ${{ steps.plan.outputs.wasm }}
+      android: ${{ steps.plan.outputs.android }}
       tests: ${{ steps.plan.outputs.tests }}
       lint: ${{ steps.plan.outputs.lint }}
       features: ${{ steps.plan.outputs.features }}
@@ -124,6 +125,42 @@ jobs:
           CLIPPY_ARGS: ${{ needs.changes.outputs.clippy_args }}
       - run: mise run check:wasm
         if: needs.changes.outputs.wasm == 'true'
+
+  # ljos_js for Android from the bindings bundled in the vendored rquickjs-sys, and those
+  # bindings held to what bindgen makes of the NDK sysroot (#612,
+  # docs/spikes/02-rquickjs-android-bindgen.md): the build needs the NDK and rustup
+  # targets only, never libclang; libclang here serves the regeneration alone. Not the
+  # setup action: it removes the runner's Android directories and installs what only the
+  # desktop build needs.
+  android-bindings:
+    needs: changes
+    if: needs.changes.outputs.android == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      # Cargo resolves the whole workspace even for `-p ljos_js`.
+      - run: git submodule update --init --depth 1 third_party/filmcraft
+      - uses: jdx/mise-action@v3
+      # Its own key, and only main saves it, as with the setup action's cache.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: android-bindings
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: mise exec -- rustup target add aarch64-linux-android x86_64-linux-android
+      # Pinned like every other tool here; downloaded when the job runs, which is only
+      # when the change reaches ljos_js, so no cache of gigabytes is kept for it.
+      - uses: nttld/setup-ndk@v1
+        id: ndk
+        with:
+          ndk-version: r27c
+          add-to-path: false
+      - run: sudo apt-get update && sudo apt-get install -y libclang-dev
+      - run: bash scripts/android-bindings.sh check
+        env:
+          ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
 
   test:
     needs: changes
@@ -281,7 +318,7 @@ jobs:
   # the jobs it did not need were left out.
   ci-ok:
     if: always()
-    needs: [changes, docs, tasks-smoke, clippy, test, features-build, lint, features, acceptance]
+    needs: [changes, docs, tasks-smoke, clippy, android-bindings, test, features-build, lint, features, acceptance]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
