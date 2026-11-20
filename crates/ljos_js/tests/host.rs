@@ -60,6 +60,121 @@ fn a_debug_build_does_not_interrupt_what_an_optimised_build_finishes() {
     assert_eq!(out.unwrap(), 1.0);
 }
 
+/// QuickJS throws `null` when the heap has no room left for the error it
+/// meant to throw. Such a `null` is the heap running out; a script's own
+/// `throw null` with room to spare stays an exception.
+#[test]
+fn a_null_thrown_on_a_full_heap_is_running_out_of_memory() {
+    let host = JsHost::new(JsConfig {
+        memory_limit: Some(16 * 1024 * 1024),
+        ..JsConfig::default()
+    })
+    .unwrap();
+    let err = eval_num(&host, "throw null").unwrap_err();
+    assert!(matches!(err, JsFault::JsException { .. }), "{err:?}");
+    host.collect_now();
+    let held = host.memory_stats().unwrap().malloc_size;
+    assert!(host.set_memory_limit(Some(held + 1024)));
+    let err = eval_num(&host, "throw null").unwrap_err();
+    assert!(matches!(err, JsFault::JsOutOfMemory { .. }), "{err:?}");
+    // With room again, scripts run.
+    assert!(host.set_memory_limit(None));
+    assert_eq!(eval_num(&host, "40 + 2").unwrap(), 42.0);
+}
+
+/// What a function that ran out held in its locals is freed as the
+/// exception leaves it, before the fault is told: the heap had room by
+/// then, but it was full when the `null` was thrown.
+#[test]
+fn a_null_thrown_on_a_full_heap_is_running_out_of_memory_after_its_locals_go() {
+    let host = JsHost::new(JsConfig {
+        memory_limit: Some(16 * 1024 * 1024),
+        ..JsConfig::default()
+    })
+    .unwrap();
+    host.collect_now();
+    let held = host.memory_stats().unwrap().malloc_size;
+    assert!(host.set_memory_limit(Some(held + 4 * 1024 * 1024)));
+    // A chain no cycle holds: freed as soon as `fill` returns.
+    let err = eval_num(
+        &host,
+        "function fill() { let h = null; for (;;) h = { n: h } } fill()",
+    )
+    .unwrap_err();
+    assert!(matches!(err, JsFault::JsOutOfMemory { .. }), "{err:?}");
+    // A script's own `throw null` in the next run, with room, is its own.
+    let err = eval_num(&host, "throw null").unwrap_err();
+    assert!(matches!(err, JsFault::JsException { .. }), "{err:?}");
+}
+
+/// QuickJS carves small objects out of arenas and lets an arena go only
+/// once all of it is free. Objects that stay among the freed ones keep
+/// their arenas held, so what the system gave back says little about
+/// what was freed: the heap is judged in the units its limit is.
+#[test]
+fn a_null_thrown_on_a_full_heap_is_out_of_memory_with_arenas_still_in_use() {
+    let host = JsHost::new(JsConfig {
+        memory_limit: Some(16 * 1024 * 1024),
+        ..JsConfig::default()
+    })
+    .unwrap();
+    host.collect_now();
+    let held = host.memory_stats().unwrap().malloc_size;
+    assert!(host.set_memory_limit(Some(held + 4 * 1024 * 1024)));
+    // One object kept for every four of a chain no cycle holds: the
+    // chain is freed when `fill` returns, the arenas stay.
+    let err = eval_num(
+        &host,
+        "var kept = { n: null };\n\
+         function fill() { let h = null; for (let i = 0; ; i++) { h = { n: h }; if (i % 4 == 0) kept = { n: kept } } }\n\
+         fill()",
+    )
+    .unwrap_err();
+    assert!(matches!(err, JsFault::JsOutOfMemory { .. }), "{err:?}");
+    let left = host.memory_stats().unwrap().malloc_size;
+    assert!(
+        left + 1024 * 1024 < held + 4 * 1024 * 1024,
+        "the chain was freed: {left} of {}",
+        held + 4 * 1024 * 1024
+    );
+    // A script's own `throw null` in the next run, with room, is its own.
+    let err = eval_num(&host, "throw null").unwrap_err();
+    assert!(matches!(err, JsFault::JsException { .. }), "{err:?}");
+}
+
+/// A nested run judges a `null` against what the heap held in it, not
+/// in the run around it: an outer run can last as long as a test function
+/// that waits, with the event loop nested inside it.
+#[test]
+fn a_null_thrown_in_a_nested_run_after_another_ran_out_is_its_own() {
+    let host = JsHost::new(JsConfig {
+        memory_limit: Some(16 * 1024 * 1024),
+        ..JsConfig::default()
+    })
+    .unwrap();
+    host.collect_now();
+    let held = host.memory_stats().unwrap().malloc_size;
+    assert!(host.set_memory_limit(Some(held + 4 * 1024 * 1024)));
+    let slice = host.config().slice;
+    let (filled, thrown) = host
+        .enter("outer", slice, |_| {
+            let filled = host.enter("fill", slice, |s| {
+                s.eval::<f64, _>("function fill() { let h = null; for (;;) h = { n: h } } fill()")
+            });
+            let thrown = host.enter("throw", slice, |s| s.eval::<f64, _>("throw null"));
+            Ok((filled, thrown))
+        })
+        .unwrap();
+    assert!(
+        matches!(filled, Err(JsFault::JsOutOfMemory { .. })),
+        "{filled:?}"
+    );
+    assert!(
+        matches!(thrown, Err(JsFault::JsException { .. })),
+        "{thrown:?}"
+    );
+}
+
 #[test]
 fn out_of_memory_is_reported_and_context_survives() {
     let host = JsHost::new(JsConfig {
