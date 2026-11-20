@@ -3895,11 +3895,10 @@ impl Engine {
                 let contexts = self.inner.contexts.borrow();
                 let c = contexts.get(id)?;
                 if let Some(o) = c.id(name) {
-                    return Some(if self.is_alive(o) {
-                        Value::Object(o)
-                    } else {
-                        Value::Null
-                    });
+                    drop(contexts);
+                    // Tracked: a binding that read the id reads again when
+                    // it goes, as one of the file's items does.
+                    return Some(self.live(Value::Object(o)));
                 }
                 if let Some(v) = c.props.get(name) {
                     return Some(v.clone());
@@ -3947,11 +3946,8 @@ impl Engine {
                 }
             }
         };
-        Some(if self.is_alive(found) {
-            Value::Object(found)
-        } else {
-            Value::Null
-        })
+        // Tracked: a binding that read the id reads again when it goes.
+        Some(self.live(Value::Object(found)))
     }
 
     /// Where `name` is from `ctx` outwards: the context object that has a
