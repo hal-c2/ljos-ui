@@ -305,6 +305,11 @@
                 "null"
               ]
             },
+            "script_holders": {
+              "default": false,
+              "description": "Also say what holds the script heap: the types whose objects keep\nscript values in their properties, with about the bytes those\nreach. Walks the script values, at most a million.",
+              "type": "boolean"
+            },
             "type": {
               "default": null,
               "description": "Only the objects of this type, by the name `app_objects` gives it.",
