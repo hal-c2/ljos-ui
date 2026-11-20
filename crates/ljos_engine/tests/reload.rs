@@ -1711,6 +1711,31 @@ Item {
 }
 
 #[test]
+fn a_value_edited_before_a_stand_in_is_edited_in_place() {
+    // The edit moves where the stand-in is written, and nothing else of
+    // the imports: where a warning points is no reason to make the file
+    // again.
+    let gizmo = r#"import QtQuick
+import QtQuick3D.Helpers
+Item {
+  id: root
+  objectName: "root"
+  width: 10
+  SceneGizmo { objectName: "gizmo" }
+}
+"#;
+    let mut r = rig(&[("Main", gizmo)]);
+    let (root, before) = (r.root, r.find("gizmo"));
+    let done = r
+        .edit("Main", &gizmo.replace("width: 10", "width: 100"))
+        .unwrap();
+    assert_eq!(done.roots, vec![(root, root)], "in place");
+    assert_eq!(r.find("gizmo"), before);
+    assert_eq!(r.num("root", "width"), 100.0);
+    assert_eq!(r.h.engine.stood_in_modules(), ["QtQuick3D.Helpers"]);
+}
+
+#[test]
 fn a_failed_reload_takes_back_what_it_stood_in_for() {
     // The attempt loads a file that uses a stand-in, then fails: the old
     // tree goes on, and so does what the audit read before.

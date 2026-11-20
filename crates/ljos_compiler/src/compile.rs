@@ -630,22 +630,26 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                         signal.name.name.as_ref(),
                         signal.name.span,
                     );
+                    let mut params = Vec::with_capacity(signal.params.len());
+                    for param in &signal.params {
+                        // A parameter of a type that stands in is told where
+                        // its type is written, and holds the Item it stands
+                        // in as, as a property of that type does.
+                        let ty = param.type_name.as_ref().map(|t| {
+                            if self.module_typed(&t.name.parts, t.span.start) {
+                                "var".to_string()
+                            } else {
+                                self.property_type_name(&t.name.parts, t.name.span)
+                            }
+                        });
+                        params.push(SignalParam {
+                            name: param.name.name.to_string(),
+                            ty,
+                        });
+                    }
                     let declaration = SignalDecl {
                         name: signal.name.name.to_string(),
-                        params: signal
-                            .params
-                            .iter()
-                            .map(|param| SignalParam {
-                                name: param.name.name.to_string(),
-                                ty: param.type_name.as_ref().map(|t| {
-                                    if self.module_typed(&t.name.parts, t.span.start) {
-                                        "var".to_string()
-                                    } else {
-                                        t.name.to_string()
-                                    }
-                                }),
-                            })
-                            .collect(),
+                        params,
                     };
                     self.def_mut(at).signals.push(declaration);
                 }
@@ -2158,7 +2162,7 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
 
     /// `Text.AlignLeft`, `Image.Fill.Stretch`, `C.Text.AlignLeft`,
     /// `Qt.AlignLeft`.
-    fn enum_literal(&self, expression: &Expression<'a>) -> Option<EnumRef> {
+    fn enum_literal(&mut self, expression: &Expression<'a>) -> Option<EnumRef> {
         let mut members = Vec::new();
         let mut object = expression;
         while let Expression::StaticMemberExpression(member) = object {
@@ -2198,6 +2202,21 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
         };
         if !is_key_name(key) || !self.types.is_key(&found.kind, scope, key) {
             return None;
+        }
+        // A key read of a type that stands in is told where the type is
+        // read, as any other read of it is: an Item has the key too, so
+        // the value is right, but what only the missing type has is not.
+        if let Origin::StandIn(uri) = &found.origin {
+            let uri = uri.clone();
+            match qualifier {
+                Some(qualifier) => {
+                    let ty = members[0];
+                    let start = base.span.start;
+                    let span = Span::new(start, start + (qualifier.len() + 1 + ty.len()) as u32);
+                    self.stood_in_at(&[qualifier, ty], &uri, span);
+                }
+                None => self.stood_in_at(&[name], &uri, base.span),
+            }
         }
         Some(EnumRef {
             ty: self.type_ref(&found, qualifier),

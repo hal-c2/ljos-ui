@@ -453,6 +453,75 @@ Feature: Checking files on a machine that has no Qt
         1 files, 0 errors, 1 warnings
         """
 
+    Scenario: A signal's parameter of such a type is told where its type is written
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
+        import QtQuick3D
+        import QtQuick3D.Helpers
+        Item {
+          signal picked(SceneGizmo gizmo)
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        Main.qml:5:25: warning: `SceneGizmo` of module "QtQuick3D.Helpers" is not part of Ljós: it stands in as an empty Item, and what only it has is left out [stand-in]
+        1 files, 0 errors, 1 warnings
+        """
+
+    Scenario: A key of such a type that an Item has too is told where it is read
+      # The stand-in is an Item, so `Center` is a key it has and the value
+      # is written as a number, not read by a script; the type is still lost.
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
+        import QtQuick3D
+        import QtQuick3D.Helpers
+        Item {
+          property int origin: SceneGizmo.Center
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        Main.qml:5:32: warning: `SceneGizmo` of module "QtQuick3D.Helpers" is not part of Ljós: it stands in as an empty Item, and what only it has is left out [stand-in]
+        1 files, 0 errors, 1 warnings
+        """
+
+    Scenario: A key of such a type read through its qualifier is told where it is read
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
+        import QtQuick3D
+        import QtQuick3D.Helpers as H
+        Item {
+          property int origin: H.SceneGizmo.Center
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        Main.qml:5:32: warning: `SceneGizmo` of module "QtQuick3D.Helpers" is not part of Ljós: it stands in as an empty Item, and what only it has is left out [stand-in]
+        1 files, 0 errors, 1 warnings
+        """
+
+    Scenario: A key of an Item read by its own name is no stand-in
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
+        import QtQuick3D
+        import QtQuick3D.Helpers
+        Item {
+          property int origin: Item.Center
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        1 files, 0 errors, 0 warnings
+        """
+
     Scenario: A type that may be of a module Ljós has nothing of is told by that module's import
       Given the file "Main.qml":
         """qml
