@@ -230,6 +230,13 @@ impl Engine {
         self.js_started() && self.js().is_ok_and(|js| js.host.wants_idle_collect())
     }
 
+    /// Whether collecting the script heap could free anything: it grew
+    /// since it was last collected, or a run or the Engine let go of a
+    /// script value since. False before any script ran.
+    pub fn script_heap_may_hold_garbage(&self) -> bool {
+        self.js_started() && self.js().is_ok_and(|js| js.host.may_hold_garbage())
+    }
+
     /// What the script engine holds now, for a tool that watches memory;
     /// None before any script ran and while one runs.
     pub fn script_memory(&self) -> Option<ScriptMemory> {

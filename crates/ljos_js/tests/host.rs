@@ -203,6 +203,34 @@ fn a_run_that_runs_out_of_heap_leaves_its_garbage_collected() {
     assert!(host.heap_bytes() < 4 * MIB, "{}", host.heap_bytes());
 }
 
+/// What lived when the heap was last collected and was let go of since as
+/// cycles is garbage the heap is no bigger for. A run that finds no room
+/// for a string (which never asks QuickJS to collect) still leaves it
+/// collected, so the next run has room.
+#[test]
+fn a_run_that_runs_out_after_cycles_were_let_go_leaves_them_collected() {
+    let host = small(16);
+    keep(&host, 9);
+    host.enter("tie", host.config().slice, |s| {
+        s.eval::<(), _>("kept.self = kept")
+    })
+    .unwrap();
+    assert!(host.collect_now());
+    let held = host.heap_bytes();
+    host.enter("drop", host.config().slice, |s| {
+        s.eval::<(), _>("globalThis.kept = null")
+    })
+    .unwrap();
+    assert!(host.heap_bytes() >= held, "the cycles are still there");
+    let fill = "globalThis.s = 'x'.repeat(8 * 1024 * 1024)";
+    let err = host
+        .enter("fill", host.config().slice, |s| s.eval::<(), _>(fill))
+        .unwrap_err();
+    assert!(matches!(err, JsFault::JsOutOfMemory { .. }), "{err:?}");
+    host.enter("fill", host.config().slice, |s| s.eval::<(), _>(fill))
+        .unwrap();
+}
+
 /// The fault of a run that found no room names what grew the heap.
 #[test]
 fn running_out_of_heap_names_what_grew_it() {

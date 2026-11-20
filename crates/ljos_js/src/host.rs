@@ -236,6 +236,11 @@ pub(crate) struct HostState {
     mapper: RefCell<Option<Rc<SourceMapper>>>,
     text: RefCell<Option<Rc<SourceText>>>,
     entered: Cell<bool>,
+    /// Something may have let go of a script value since the collector
+    /// last ran: a run that did not run out, or the host dropping a value
+    /// it held. What it let go of may be cycles only the collector frees,
+    /// with the heap no bigger for it ([`JsHost::may_hold_garbage`]).
+    let_go: Cell<bool>,
     /// A run nested in this dispatch was interrupted: the dispatch is over,
     /// and the script that called back is stopped as it gets control back.
     stopped: Cell<bool>,
@@ -382,6 +387,9 @@ impl HostState {
                 }
                 Some(held)
             }));
+        }
+        if !freed.is_empty() {
+            self.let_go.set(true);
         }
         keys.clear();
         freed.clear();
@@ -1847,6 +1855,7 @@ impl JsHost {
             mapper: RefCell::default(),
             text: RefCell::default(),
             entered: Cell::new(false),
+            let_go: Cell::new(false),
             stopped: Cell::new(false),
             handles: RefCell::default(),
             by_object: RefCell::default(),
@@ -2055,6 +2064,9 @@ impl JsHost {
                     "JS dispatch exceeded its soft budget"
                 );
             }
+        }
+        if !ran_out {
+            self.state.let_go.set(true);
         }
         self.flush_released();
         self.mind_heap(ran_out);
@@ -2420,6 +2432,7 @@ impl JsHost {
     pub fn unregister_type(&self, id: HostTypeId) {
         if let Some(slot) = self.state.types.borrow_mut().get_mut(id.0 as usize) {
             *slot = None;
+            self.state.let_go.set(true);
         }
         if let Some(slot) = self.state.listings.borrow_mut().get_mut(id.0 as usize) {
             *slot = None;
@@ -2433,7 +2446,11 @@ impl JsHost {
     /// script let go of it.
     pub fn drop_wrapper(&self, obj: u64) -> bool {
         self.state.owned.borrow_mut().remove(&obj);
-        self.state.wrappers.borrow_mut().remove(&obj).is_some()
+        let dropped = self.state.wrappers.borrow_mut().remove(&obj).is_some();
+        if dropped {
+            self.state.let_go.set(true);
+        }
+        dropped
     }
 
     /// Gives `obj` to the scripts: from now on its wrapper lives only as
@@ -2658,6 +2675,21 @@ impl JsHost {
                     .saturating_add(self.cfg.idle_collect_min_growth)
     }
 
+    /// Whether collecting could free anything: the heap grew by the
+    /// configured growth since the collector last ran, or something let
+    /// go of a script value since. A run that ran out is not one: what it
+    /// let go of before it did is what its own retries meet, and rows
+    /// that run out of one heap full of what lives would otherwise each
+    /// collect it. Walks nothing.
+    pub fn may_hold_garbage(&self) -> bool {
+        self.state.let_go.get()
+            || self.heap_bytes()
+                >= self
+                    .last_collect
+                    .get()
+                    .saturating_add(self.cfg.idle_collect_min_growth)
+    }
+
     /// What the runtime holds from the system allocator: blocks QuickJS
     /// carves small allocations from, and large ones whole. Unlike
     /// [`JsHost::memory_stats`] this walks nothing and may be asked inside
@@ -2689,6 +2721,7 @@ impl JsHost {
     }
 
     fn collect(&self) {
+        self.state.let_go.set(false);
         self.rt.run_gc();
         self.last_collect.set(self.heap_bytes());
         self.collections.set(self.collections.get() + 1);
@@ -2698,9 +2731,11 @@ impl JsHost {
 
     /// After a run: collects when the heap is past three quarters of its
     /// limit and grew a quarter of the room left since it was last
-    /// collected, or at once when the run found no room and the heap grew
-    /// since, so the next run has what garbage held: runs that run out
-    /// of a heap full of what lives do not each collect it again. QuickJS collects only when an object is made
+    /// collected, or at once when the run found no room and collecting
+    /// could free something ([`JsHost::may_hold_garbage`]), so the next
+    /// run has what garbage held: runs that run out of a heap full of what
+    /// lives do not each collect it again. QuickJS collects only when an
+    /// object is made
     /// past its threshold, and a run of strings and arrays goes past the
     /// limit without one. Warns once while it stays past three quarters
     /// after collecting, naming the runs that grew it most, and again once
@@ -2713,8 +2748,8 @@ impl JsHost {
         let last = self.last_collect.get();
         let step = (limit.saturating_sub(last) / 4).max(self.cfg.idle_collect_min_growth);
         let size = self.heap_bytes();
-        let grew = size >= last.saturating_add(self.cfg.idle_collect_min_growth);
-        let due = (ran_out && grew) || (size >= high && size >= last.saturating_add(step));
+        let due = (ran_out && self.may_hold_garbage())
+            || (size >= high && size >= last.saturating_add(step));
         let most = if due {
             let most = self.pressure.borrow().most();
             self.collect();
