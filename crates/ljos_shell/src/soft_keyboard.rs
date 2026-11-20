@@ -396,6 +396,46 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_hidden_field_leaves_the_method_the_cursor_it_moved() {
+        let (e, mut s, input) = editor("12", &[("echoMode", Value::from(2))]);
+        let mut keyboard = SoftKeyboard::default();
+        keyboard.sync(&s, &e);
+        keyboard.held(&s, &e, text("abc", 3, None));
+        s.frame(&e, Time::ZERO);
+        keyboard.sync(&s, &e);
+        // A swipe on the space bar.
+        keyboard.held(&s, &e, text("abc", 1, None));
+        s.frame(&e, Time::ZERO);
+        assert_eq!(helds(&keyboard.sync(&s, &e)), Vec::<String>::new());
+        keyboard.held(&s, &e, text("axbc", 2, None));
+        s.frame(&e, Time::ZERO);
+        assert_eq!(helds(&keyboard.sync(&s, &e)), Vec::<String>::new());
+        assert_eq!(
+            e.read_by_name(input, "text").to_js_string().to_string(),
+            "12axbc"
+        );
+        assert_eq!(e.read_by_name(input, "cursorPosition").to_number(), 4.0);
+    }
+
+    #[test]
+    fn a_field_that_clears_on_edit_takes_the_method_typing() {
+        // `TextInput.PasswordEchoOnEdit`: the first edit starts over.
+        let (e, mut s, input) = editor("secret", &[("echoMode", Value::from(3))]);
+        let mut keyboard = SoftKeyboard::default();
+        keyboard.sync(&s, &e);
+        keyboard.held(&s, &e, text("a", 1, None));
+        s.frame(&e, Time::ZERO);
+        // The method keeps what it typed: it is not told to start anew.
+        assert_eq!(helds(&keyboard.sync(&s, &e)), Vec::<String>::new());
+        keyboard.held(&s, &e, text("ab", 2, None));
+        s.frame(&e, Time::ZERO);
+        assert_eq!(
+            e.read_by_name(input, "text").to_js_string().to_string(),
+            "ab"
+        );
+    }
+
     fn position(asked: &[Request], want: fn(&Request) -> bool) -> Option<usize> {
         asked.iter().position(want)
     }

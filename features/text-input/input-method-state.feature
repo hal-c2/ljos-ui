@@ -134,3 +134,26 @@ Feature: An input method that tells the whole of what it holds
       And the property "text" of "pin" is set to ""
       And the input method holds "4" with the cursor at 1
       Then the property "text" of "pin" is "4"
+
+    Scenario: The input method moves its cursor inside what it typed
+      When the property "focus" of "pin" is set to true
+      And the input method holds "abc" with the cursor at 3
+      And the input method holds "abc" with the cursor at 1
+      And the input method holds "axbc" with the cursor at 2
+      Then the property "text" of "pin" is "12axbc"
+      And the property "cursorPosition" of "pin" is 4
+
+    Scenario: What the input method deletes after moving its cursor goes from there
+      When the property "focus" of "pin" is set to true
+      And the input method holds "abc" with the cursor at 3
+      And the input method holds "abc" with the cursor at 1
+      And the input method holds "bc" with the cursor at 0
+      Then the property "text" of "pin" is "12bc"
+      And the property "cursorPosition" of "pin" is 2
+
+    Scenario: The input method selects inside what it typed
+      When the property "focus" of "pin" is set to true
+      And the input method holds "abc" with the cursor at 3
+      And the input method holds "abc" selecting from 1 to 3
+      Then the property "selectionStart" of "pin" is 3
+      And the property "selectionEnd" of "pin" is 5
