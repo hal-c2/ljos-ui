@@ -48,10 +48,16 @@ Feature: ErrorBoundary says what went wrong
     And the property "fault.message" of "boundary" is "TypeError: not a page"
     And the property "fault.line" of "boundary" is 12
 
+  # The content stays shown: the engine runs again what the interrupt cut
+  # short, and content made again would only run over again.
   Scenario: A handler that never returns is a fault of the kind JsInterrupted
     When the method "spin" of "content" is called
     Then the property "fault.kind" of "boundary" is "JsInterrupted"
-    And the property "failed" of "boundary" is true
+    And the property "fault.message" of "boundary" is not ""
+    And the property "inThisFile" of "boundary" is true
+    And the property "fault.line" of "boundary" is 9
+    And the property "failed" of "boundary" is false
+    And the object "content" exists
 
   Scenario: The fallback can show the fault
     When a native handler of "content" panics with "boom"
