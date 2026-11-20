@@ -45,9 +45,16 @@ case "$profile" in
     exit 2
     ;;
 esac
+# A build is measured through the run's own link to it (pin_programs): the
+# target may be shared with another checkout, whose build would otherwise
+# be measured as this one's.
 if [[ ${BENCH_BUILD:-1} != 0 ]]; then
-  cargo build --quiet --profile "$profile" -p ljos_cli
+  programs="$(pin_programs "$out/bin" build --quiet --profile "$profile" -p ljos_cli --bin ljos)" || die "bench: ljos did not build"
+  ljos="$(pinned_program ljos "$programs")"
+  [ -n "$ljos" ] || die "bench: the build made no ljos"
   cargo build --quiet -p qml_compare
+else
+  ljos="$target/$profile/ljos"
 fi
 
 manifest="$out/manifest.json"
@@ -65,7 +72,7 @@ qt_note="qt: not measured"
 if [ "$qt" = true ]; then
   qt_note="qt: $(QT_QPA_PLATFORM=offscreen "$qml" --version 2>&1 | sed -n 1p), QT_QUICK_CONTROLS_STYLE=Basic"
 fi
-exec "$target/$profile/ljos" bench --manifest "$manifest" \
+exec "$ljos" bench --manifest "$manifest" \
   --sway "$(value SWAYSOCK)" --wayland "$(value WAYLAND_DISPLAY)" \
   --app-env "DBUS_SESSION_BUS_ADDRESS=$(value DBUS_SESSION_BUS_ADDRESS)" \
   --app-env "XDG_CONFIG_HOME=$(value XDG_CONFIG_HOME)" --app-env "XDG_DATA_HOME=$(value XDG_DATA_HOME)" \

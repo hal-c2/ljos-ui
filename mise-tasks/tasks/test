@@ -1533,6 +1533,26 @@ programs="$(printf '%s\n' "ljos-x $real/a b/bin/ljos-x" "ljos $real/a b/bin/ljos
 out="$(pinned_program ljos "$programs")|$(pinned_program qml-compare "$programs")|$(pinned_program qml "$programs")"
 if [ "$out" = "$real/a b/bin/ljos|$real/a b/bin/qml-compare|" ]; then ok "a pinned program's path is all of it, spaces and all"; else bad "pinned_program gave: $out"; fi
 
+# --- A task runs the program it built ---------------------------------------------
+
+# A program at a path a task puts together itself is whatever was built there
+# last: another checkout sharing the target, or a run beside this one, may
+# have built it again since. These tasks run what pin_programs or
+# built_program hands them. bench's BENCH_BUILD=0 measures what is built
+# already, so it alone names where cargo put it.
+assembled='\$\{?target\}?/(\$\{?[a-z_]+\}?|debug|release|dist)/'
+for task in bench/egui bench/hot bench/_default gallery/drive gallery/run lottie; do
+  found="$(grep -nE "$assembled" "$ljos_root/mise-tasks/$task" | grep -vE '^[0-9]+:[[:space:]]*#' || true)"
+  [ "$task" != bench/_default ] || found="$(printf '%s\n' "$found" | grep -vF 'ljos="$target/$profile/ljos"' || true)"
+  if [ -z "$found" ]; then ok "$task runs the program it built, not one at a path it puts together"; else bad "$task runs a program at a path it puts together:" "$found"; fi
+done
+# Every example a drive runs is the one build it pinned, handed down as LJOS_BIN.
+if grep -q 'pin_programs' "$ljos_root/mise-tasks/gallery/drive" && grep -q 'LJOS_BIN' "$ljos_root/mise-tasks/gallery/run"; then
+  ok "gallery:drive pins its program once and gallery:run runs that one"
+else
+  bad "gallery:drive does not pin its program once for every example gallery:run starts"
+fi
+
 # --- Vulkan drivers --------------------------------------------------------------
 
 mkdir -p "$real/icd" "$real/nvidia"

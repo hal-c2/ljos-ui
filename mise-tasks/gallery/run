@@ -10,7 +10,6 @@ set -euo pipefail
 root="$ljos_root"
 need_python3
 manifest="$root/corpus/examples.json"
-target="$(target_dir)"
 gallery="${GALLERY_DIR:-$(checkout_dir gallery)}"
 report="$gallery/report.json"
 
@@ -83,18 +82,19 @@ if [ -d "$root/corpus/standins/$id" ]; then
   export QML_XHR_ALLOW_FILE_READ=1
 fi
 
-# gallery:drive builds once before its examples (GALLERY_BUILT=1): a build here, after a source
-# changed or behind another cargo's lock on the target, would take the time the driver gives
+# gallery:drive and gallery:hot build once before their examples and hand
+# the build down (LJOS_BIN): a build here, after a source changed or behind
+# another cargo's lock on the target, would take the time the driver gives
 # the example to start, and its examples would not all run the same build.
-# GALLERY_PROFILE=release measures what a user gets; the default builds
-# fastest.
-profile="${GALLERY_PROFILE:-debug}"
-if [ -z "${GALLERY_BUILT:-}" ]; then
-  if [ "$profile" = debug ]; then
-    cargo build --quiet --manifest-path "$root/Cargo.toml" -p ljos_cli --bin ljos
-  else
-    cargo build --quiet --manifest-path "$root/Cargo.toml" -p ljos_cli --bin ljos --profile "$profile"
-  fi
+# Otherwise this runs the program its build made, as cargo names it, not
+# whatever is at that path when it starts. GALLERY_PROFILE=release measures
+# what a user gets; the default builds fastest.
+if [ -n "${LJOS_BIN:-}" ]; then
+  ljos="$LJOS_BIN"
+else
+  profile="${GALLERY_PROFILE:-debug}"
+  [ "$profile" != debug ] || profile=dev
+  ljos="$(built_program --manifest-path "$root/Cargo.toml" -p ljos_cli --bin ljos --profile "$profile")"
 fi
 # An example's `file:content/…` is relative to the working directory, and a
 # Qt build runs where it unpacked its assets: those of a stand-in's download
@@ -119,5 +119,5 @@ fi
 
 # The window is as large as the root says, as qml6 opens it; the manifest's
 # size is the gallery's picture. A `--size` among the arguments sets one.
-exec "$target/$profile/ljos" run "$root/corpus/qtdoc/$dir/$entry" \
+exec "$ljos" run "$root/corpus/qtdoc/$dir/$entry" \
   "${project[@]}" --example "$id" ${standins[@]+"${standins[@]}"} "$@"
