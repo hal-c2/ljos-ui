@@ -108,6 +108,14 @@ pub struct Relay<S, U> {
     wake_queued: Arc<AtomicBool>,
 }
 
+impl<S, U> std::fmt::Debug for Relay<S, U> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Relay")
+            .field("wake_queued", &self.wake_queued.load(Ordering::Relaxed))
+            .finish_non_exhaustive()
+    }
+}
+
 impl<S, U> Clone for Relay<S, U> {
     fn clone(&self) -> Self {
         Self {
@@ -180,6 +188,16 @@ pub struct RelayHost<S, U> {
     capabilities: Capabilities,
     requests: Requests,
     name: String,
+}
+
+impl<S, U> std::fmt::Debug for RelayHost<S, U> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RelayHost")
+            .field("relay", &self.relay)
+            .field("capabilities", &self.capabilities)
+            .field("name", &self.name)
+            .finish_non_exhaustive()
+    }
 }
 
 impl<S: Send + 'static, U: From<Wake> + Send + 'static> RelayHost<S, U> {
