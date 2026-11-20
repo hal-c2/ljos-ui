@@ -58,13 +58,15 @@ ListView {{
     )
 }
 
-/// The rows painted where row `n` is, but for row `n` itself, made.
-fn painted_over(s: &QuickScene, e: &Engine, view: ObjectId, n: usize) -> Vec<String> {
+/// The rows painted where row `n` is, but for row `n` itself, made; and
+/// whether row `n` itself is painted there.
+fn painted_at(s: &QuickScene, e: &Engine, view: ObjectId, n: usize) -> (Vec<String>, bool) {
     let content = get(e, view, "contentItem").as_object().unwrap();
     let rows = child_items(e, content);
     let at = kurbo::Point::new(5.0, n as f64 * 20.0 + 10.0 - num(e, view, "contentY"));
     let snap = s.snapshot().expect("a frame was made");
     let mut over = Vec::new();
+    let mut own = false;
     for item in &snap.items {
         let local = item.world.inverse() * at;
         let inside = local.x >= 0.0
@@ -78,7 +80,9 @@ fn painted_over(s: &QuickScene, e: &Engine, view: ObjectId, n: usize) -> Vec<Str
             continue;
         };
         let name = get(e, row, "objectName").to_js_string().to_string();
-        if num(e, row, "index") != n as f64 || name.is_empty() {
+        if num(e, row, "index") == n as f64 && !name.is_empty() {
+            own = true;
+        } else {
             over.push(format!(
                 "{name:?} (n {:?}) at y {}",
                 get(e, row, "n"),
@@ -86,7 +90,7 @@ fn painted_over(s: &QuickScene, e: &Engine, view: ObjectId, n: usize) -> Vec<Str
             ));
         }
     }
-    over
+    (over, own)
 }
 
 /// Whether the rows of the buffer, 5 to 9, are made and in their places.
@@ -105,10 +109,17 @@ fn frames_paint_rows_in_place(s: &mut QuickScene, e: &Engine, view: ObjectId, fr
     for i in 0..200 {
         s.frame(e, Time::from_millis(from + i * 16));
         for n in 0..5 {
-            let over = painted_over(s, e, view, n);
+            let (over, _) = painted_at(s, e, view, n);
             assert!(over.is_empty(), "frame {i}: painted over r{n}: {over:?}");
         }
         if buffer_placed(e, view) {
+            // Placed, the rows in sight are painted, not culled with the rest.
+            for n in 0..5 {
+                assert!(
+                    painted_at(s, e, view, n).1,
+                    "frame {i}: r{n} is not painted"
+                );
+            }
             // Made over several frames, or the test shows nothing.
             assert!(i > 1, "the buffer was made in frame {i}");
             return;
