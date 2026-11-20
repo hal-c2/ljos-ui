@@ -132,6 +132,34 @@ impl PathEnv {
         }
     }
 
+    /// An application that the system gives directories of its own, as a
+    /// phone does: `files`, which only it reads and which goes with it,
+    /// and `cache`, which the system may empty. Every location is in one
+    /// of them; there is no user's home to reach (a phone's shared files
+    /// are the system's pickers').
+    pub fn application(files: &Path, cache: &Path) -> PathEnv {
+        let path = |p: PathBuf| p.to_string_lossy().into_owned();
+        let vars = [
+            ("XDG_DATA_HOME", path(files.to_path_buf())),
+            ("XDG_CONFIG_HOME", path(files.join("config"))),
+            ("XDG_STATE_HOME", path(files.join("state"))),
+            ("XDG_CACHE_HOME", path(cache.to_path_buf())),
+            ("XDG_RUNTIME_DIR", path(cache.join("run"))),
+            ("XDG_DATA_DIRS", path(files.to_path_buf())),
+            ("XDG_CONFIG_DIRS", path(files.join("config"))),
+            ("TMPDIR", path(cache.join("tmp"))),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_owned(), v))
+        .collect();
+        PathEnv {
+            home: files.to_path_buf(),
+            vars,
+            root: None,
+            library: false,
+        }
+    }
+
     /// A user whose home is `home`, with no XDG variables set, whose files
     /// live under `root`.
     pub fn sandbox(home: impl Into<PathBuf>, root: impl Into<PathBuf>) -> PathEnv {
@@ -648,6 +676,36 @@ mod tests {
 
     fn user() -> PathEnv {
         PathEnv::sandbox("/home/user", "/nowhere")
+    }
+
+    #[test]
+    fn an_application_with_directories_of_its_own_writes_nowhere_else() {
+        let files = Path::new("/data/user/0/dev.ljos.app/files");
+        let cache = Path::new("/data/user/0/dev.ljos.app/cache");
+        let env = PathEnv::application(files, cache);
+        for (location, name, _) in LOCATIONS {
+            let at = location.writable(&env, "Org", "App");
+            assert!(
+                at.starts_with(files) || at.starts_with(cache),
+                "{name} is {}",
+                at.display()
+            );
+            for dir in location.all(&env, "Org", "App") {
+                assert!(
+                    dir.starts_with(files) || dir.starts_with(cache),
+                    "{name} looks in {}",
+                    dir.display()
+                );
+            }
+        }
+        assert_eq!(
+            Location::AppData.writable(&env, "Org", "App"),
+            files.join("Org/App")
+        );
+        assert_eq!(
+            Location::Cache.writable(&env, "Org", "App"),
+            cache.join("Org/App")
+        );
     }
 
     #[test]

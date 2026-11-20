@@ -1,6 +1,7 @@
 //! What the user and the system do to an application on a phone
-//! (`mobile/`): the home screen, turning the phone, Back, and the system
-//! ending a hidden application's screen.
+//! (`mobile/`): the home screen, turning the phone, Back, the system
+//! ending a hidden application's screen or process, and the system's store
+//! of secrets and places for the application's files.
 
 use cucumber::{then, when};
 
@@ -70,6 +71,73 @@ fn responding(w: &mut LjosWorld) -> StepResult {
             Err(BackendError::Failed(
                 "the system found the application not responding".into(),
             ))
+        } else {
+            Ok(())
+        }
+    })
+}
+
+#[when("the system ends the application's process")]
+fn end_process(w: &mut LjosWorld) -> StepResult {
+    w.each(|b| b.device()?.end_process())
+}
+
+#[when(regex = r#"^the application keeps the secret "([^"]*)" as "([^"]+)" of "([^"]+)"$"#)]
+fn keep_secret(w: &mut LjosWorld, secret: String, key: String, service: String) -> StepResult {
+    w.each(|b| b.device()?.keep_secret(&service, &key, &secret))
+}
+
+#[when(regex = r#"^the application removes the secret "([^"]+)" of "([^"]+)"$"#)]
+fn remove_secret(w: &mut LjosWorld, key: String, service: String) -> StepResult {
+    w.each(|b| b.device()?.remove_secret(&service, &key))
+}
+
+#[then(regex = r#"^the application reads the secret "([^"]*)" as "([^"]+)" of "([^"]+)"$"#)]
+fn reads_secret(w: &mut LjosWorld, secret: String, key: String, service: String) -> StepResult {
+    w.each(|b| match b.device()?.read_secret(&service, &key)? {
+        Some(read) if read == secret => Ok(()),
+        read => Err(BackendError::Failed(format!(
+            "read {read:?} as {key:?} of {service:?}, expected {secret:?}"
+        ))),
+    })
+}
+
+#[then(regex = r#"^the application reads no secret as "([^"]+)" of "([^"]+)"$"#)]
+fn reads_no_secret(w: &mut LjosWorld, key: String, service: String) -> StepResult {
+    w.each(|b| match b.device()?.read_secret(&service, &key)? {
+        None => Ok(()),
+        Some(read) => Err(BackendError::Failed(format!(
+            "read {read:?} as {key:?} of {service:?}, expected none"
+        ))),
+    })
+}
+
+#[then(regex = r#"^the property "([^"]+)" of "([^"]+)" is a directory of the application's own$"#)]
+fn own_directory(w: &mut LjosWorld, property: String, object: String) -> StepResult {
+    w.each(|b| {
+        let value = b.get(&object, &property)?;
+        let Some(path) = value.as_str().filter(|p| !p.is_empty()) else {
+            return Err(BackendError::Failed(format!(
+                "property {property:?} of {object:?} is {value}, not a path"
+            )));
+        };
+        if b.device()?.own_directory(path)? {
+            Ok(())
+        } else {
+            Err(BackendError::Failed(format!(
+                "{path:?} is not a directory of the application's own"
+            )))
+        }
+    })
+}
+
+#[then(regex = r#"^no file of the application holds "([^"]+)"$"#)]
+fn no_file_holds(w: &mut LjosWorld, text: String) -> StepResult {
+    w.each(|b| {
+        if b.device()?.files_hold(&text)? {
+            Err(BackendError::Failed(format!(
+                "a file of the application holds {text:?}"
+            )))
         } else {
             Ok(())
         }

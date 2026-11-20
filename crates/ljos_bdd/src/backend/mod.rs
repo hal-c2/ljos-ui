@@ -516,6 +516,50 @@ pub trait Device: Backend {
             "an application not responding",
         ))
     }
+
+    /// The system ends the application's process, as it ends a hidden
+    /// one to save memory; the user opening it again starts a new one.
+    fn end_process(&mut self) -> Result<()> {
+        Err(BackendError::NotImplemented(
+            "the system ending the application's process",
+        ))
+    }
+
+    /// The application keeps `secret` as `key` of `service` in the
+    /// system's store of secrets.
+    fn keep_secret(&mut self, service: &str, key: &str, secret: &str) -> Result<()> {
+        let _ = (service, key, secret);
+        Err(BackendError::NotImplemented("keeping a secret"))
+    }
+
+    /// The application removes the secret kept as `key` of `service`.
+    fn remove_secret(&mut self, service: &str, key: &str) -> Result<()> {
+        let _ = (service, key);
+        Err(BackendError::NotImplemented("removing a secret"))
+    }
+
+    /// The secret the application reads as `key` of `service`, if any.
+    fn read_secret(&mut self, service: &str, key: &str) -> Result<Option<String>> {
+        let _ = (service, key);
+        Err(BackendError::NotImplemented("reading a secret"))
+    }
+
+    /// Whether `path` is a directory that is the application's own: the
+    /// system keeps it for the application alone and removes it with it.
+    fn own_directory(&mut self, path: &str) -> Result<bool> {
+        let _ = path;
+        Err(BackendError::NotImplemented(
+            "a directory of the application's own",
+        ))
+    }
+
+    /// Whether any file of the application's own holds `text` as it is.
+    fn files_hold(&mut self, text: &str) -> Result<bool> {
+        let _ = text;
+        Err(BackendError::NotImplemented(
+            "searching the application's files",
+        ))
+    }
 }
 
 /// Input besides a click by name, a key and the pointer's steps.

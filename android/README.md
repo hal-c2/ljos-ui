@@ -20,6 +20,11 @@ in place.
 - `dev.ljos.LjosActivity` hands Back to the application through the
   activity's back dispatcher (since API 33 the system's gesture never
   reaches the native side as a key).
+- `dev.ljos.LjosServices` is the system's services for the native side
+  (`ljos_jni`): the clipboard, the opener of links, the application's own
+  directories, and its secrets, kept with AES-GCM under a key in the Android
+  Keystore. Keep its methods if the application shrinks its code (R8): the
+  native side calls them by name.
 - Gradle 8.13 with AGP 8.13 runs on JDK 21; `ljos android` passes the JDK in
   `JAVA_HOME` to Gradle. Release builds are signed with the debug key until
   the application gives its own (`--gradle-arg`).

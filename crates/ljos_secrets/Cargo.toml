@@ -1,6 +1,6 @@
 [package]
 name = "ljos_secrets"
-description = "Secrets the system keeps safe (passwords, tokens, keys), written, read and removed by service and key: the Secret Service on Linux, the Keychain on macOS, the Credential Manager on Windows"
+description = "Secrets the system keeps safe (passwords, tokens, keys), written, read and removed by service and key: the Secret Service on Linux, the Keychain on macOS, the Credential Manager on Windows, the Android Keystore on Android"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -23,6 +23,10 @@ blocking.workspace = true
 # dictionaries.
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2-core-foundation = { workspace = true, features = ["CFDictionary", "CFData", "CFNumber"] }
+
+# The Android Keystore, through the application's Java side.
+[target.'cfg(target_os = "android")'.dependencies]
+ljos_jni = { path = "../ljos_jni" }
 
 # The Credential Manager.
 [target.'cfg(target_os = "windows")'.dependencies]
