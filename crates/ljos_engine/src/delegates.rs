@@ -158,9 +158,11 @@ impl Again {
     }
 }
 
-/// `made`, unless a resource fault met while it was made (`fault`) left it
-/// less than whole: then it is destroyed and the fault is the result, so
-/// the delegate is made again as for one that failed for it.
+/// `made`, unless a full heap or a panic met while it was made (`fault`,
+/// from [`Engine::resource_fault_since`]) left it less than whole: then it
+/// is destroyed and the fault is the result, so the delegate is made again
+/// as for one that failed for it. A binding interrupted for its time is
+/// not such a fault: the delegate is shown, and the binding runs again.
 fn whole(
     engine: &Engine,
     made: Result<ObjectId, EngineError>,
@@ -1477,10 +1479,12 @@ struct Held {
     /// while it is being made may ask which row it is.
     root: Option<ObjectId>,
     pending: Option<(CreationHandle, SharedCreation)>,
-    /// The component could not make it: asking again would only say the
-    /// same again, unless the fault was not the delegate's own, and the
-    /// wait [`Held::again`] says is over.
-    failed: bool,
+    /// It failed for a fault not its own and the wait [`Held::again`]
+    /// says is over: the next ask makes it again. Otherwise an entry with
+    /// no object and no job failed, and asking again would only say the
+    /// same again, or it is being made at once, and an ask from inside
+    /// that make gets nothing rather than a second delegate.
+    again_due: bool,
     /// When it is made again after a fault that was not its own.
     again: Again,
     /// The row's own object, not something made for it: never destroyed
@@ -1726,8 +1730,9 @@ impl ViewDelegates {
                 Some(h) => match (&h.object, &h.pending) {
                     (Some(o), _) => Have::Object(*o),
                     (None, Some((_, job))) => Have::Pending(h.id, job.clone()),
-                    (None, None) if h.failed => Have::Failed,
-                    (None, None) => Have::Again(h.id),
+                    (None, None) if h.again_due => Have::Again(h.id),
+                    // Failed, or being made at once further up.
+                    (None, None) => Have::Failed,
                 },
                 None => Have::Nothing,
             };
@@ -1798,7 +1803,7 @@ impl ViewDelegates {
                 object: None,
                 root: None,
                 pending: None,
-                failed: false,
+                again_due: false,
                 again,
                 own: false,
             });
@@ -1974,7 +1979,7 @@ impl ViewShared {
                 object: Some(object),
                 root: Some(object),
                 pending: None,
-                failed: false,
+                again_due: false,
                 again: Again::default(),
                 own: true,
             });
@@ -2073,11 +2078,8 @@ impl ViewShared {
                 h.pending = None;
                 match &made {
                     Ok(obj) => h.object = Some(*obj),
-                    Err(_) => {
-                        // The row object went with the failed delegate.
-                        h.data = None;
-                        h.failed = true;
-                    }
+                    // The row object went with the failed delegate.
+                    Err(_) => h.data = None,
                 }
                 h.index
             });
@@ -2154,7 +2156,7 @@ impl ViewShared {
                 if h.object.is_some() || h.pending.is_some() {
                     return;
                 }
-                h.failed = false;
+                h.again_due = true;
                 h.index
             };
             // Timers run between scripts, where the heap can be.

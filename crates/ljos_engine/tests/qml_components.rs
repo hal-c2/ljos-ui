@@ -762,3 +762,44 @@ fn a_job_that_panics_still_tells_whoever_waits_for_it() {
     // Nothing half made is left under the root.
     assert_eq!(h.engine.children(root), before);
 }
+
+#[test]
+fn a_job_that_panics_closes_its_creation_when_whoever_waits_panics_too() {
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+
+    let h = engine();
+    h.engine
+        .register_module(ljos_engine::module!("QtQuick" 2.0 => [Dud]));
+    let root = h.load(
+        "import QtQuick\nItem {\n  Component { id: comp; Item { Text {} } }\n  property Component c: comp\n}\n",
+    );
+    let comp = h.get(root, "c").as_object().unwrap();
+    let (job, _handle) = h.engine.make_later(
+        ljos_engine::Request::component(comp).parent(Some(root)),
+        Lane::Visible,
+        ProcId::new(0, 0),
+    );
+    let mut job = job.on_done(|_, _| panic!("whoever waits panics too"));
+    let stepped = catch_unwind(AssertUnwindSafe(|| {
+        while let ljos_runtime::JobPoll::Yield = job.step(&|| true) {}
+    }));
+    // The job's own panic goes on, not the one of whoever waits.
+    let payload = stepped.expect_err("the panic goes on");
+    let said = payload
+        .downcast_ref::<&str>()
+        .map(|s| (*s).to_owned())
+        .or_else(|| payload.downcast_ref::<String>().cloned())
+        .unwrap_or_default();
+    assert!(said.contains("no Dud today"), "{said}");
+    h.warnings();
+    // The creation is closed: what a later one's bindings say is logged,
+    // not held for a creation that never ends.
+    h.files(&[(
+        "Later",
+        "import QtQuick\nItem { property int x: nowhere.y }\n",
+    )]);
+    let later = h.engine.create_from_url("Later", None, vec![]).unwrap();
+    h.get(later, "x");
+    let warned = h.warnings();
+    assert!(warned.iter().any(|w| w.contains("nowhere")), "{warned:?}");
+}
