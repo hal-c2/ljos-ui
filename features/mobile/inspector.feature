@@ -7,7 +7,7 @@
 # The inspector of an application on a phone listens on the phone's own
 # loopback address and writes its token file in the application's own
 # directory. `ljos android run --mcp=…` starts a debug build with it;
-# `ljos android connect` forwards a port of the computer to it over adb,
+# `ljos android connect` forwards its port, the same on the computer, to it over adb,
 # reads the token with `run-as` (which only a debuggable package allows),
 # and writes a token file on the computer that `ljos observe`,
 # `ljos attach` and agents take.
