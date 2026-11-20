@@ -14,6 +14,9 @@
 use std::collections::BTreeMap;
 use std::fmt;
 
+// Only the checks for the stores that name items here return it: Android's
+// store names its files itself.
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows", test))]
 use crate::SecretError;
 
 /// The names of the item that keeps the secret of `key` in `service`.
