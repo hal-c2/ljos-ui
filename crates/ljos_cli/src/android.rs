@@ -13,12 +13,16 @@
 //! | the project | the template, filled, in `<target>/android/<package>/` |
 //! | the package | `gradle -p <project> assembleDebug` (or `assembleRelease`), on `JAVA_HOME`'s JDK |
 //! | `run` | `adb install -r <apk>`, then `adb shell am start -n <id>/dev.ljos.LjosActivity` |
+//! | `run --mcp=<caps>` | the library built with `ljos/mcp`, a debug package, and `am start -S … --es dev.ljos.MCP <caps>`: the activity hands the capabilities to the application as `LJOS_MCP`, with its files directory as `LJOS_MCP_DIR` |
+//! | `connect` | `adb shell run-as <id>` lists and reads the inspector's token file, `adb forward tcp:0 tcp:<port>` reaches its port, and a token file for this computer is written (ARCHITECTURE.md §19.7) |
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::{Context, bail};
 use clap::{Args, Subcommand};
+use ljos_mcp_core::CapSet;
+use ljos_mcp_core::protocol::TokenFileBody;
 
 use crate::stdout::outln;
 
@@ -30,6 +34,16 @@ const ABIS: [&str; 2] = ["arm64-v8a", "x86_64"];
 
 /// The activity the template's manifest declares.
 const ACTIVITY: &str = "dev.ljos.LjosActivity";
+
+/// The extra of the intent that starts the activity with the inspector:
+/// the capabilities, as `--mcp=` takes them. LjosActivity reads it only in
+/// a debuggable package.
+const MCP_EXTRA: &str = "dev.ljos.MCP";
+
+/// Where the inspector of an application on the phone writes its token
+/// file, below the application's own directory (`LJOS_MCP_DIR` is its
+/// files directory, and the token file goes to `target/ljos/` below it).
+const TOKEN_DIR: &str = "files/target/ljos";
 
 /// The Gradle template, by the path it is written to in the project.
 const TEMPLATE: [(&str, &str); 9] = [
@@ -67,6 +81,10 @@ const TEMPLATE: [(&str, &str); 9] = [
         "app/src/main/java/dev/ljos/LjosServices.java",
         include_str!("../../../android/app/src/main/java/dev/ljos/LjosServices.java"),
     ),
+    (
+        "app/src/debug/AndroidManifest.xml",
+        include_str!("../../../android/app/src/debug/AndroidManifest.xml"),
+    ),
     ("README.md", include_str!("../../../android/README.md")),
 ];
 
@@ -82,6 +100,31 @@ pub enum AndroidCommand {
         /// The device to install on (`adb -s`), when there is more than one.
         #[arg(long)]
         device: Option<String>,
+        /// Serve the application's inspector to clients holding these
+        /// capabilities (inspect, input, mutate, eval), as `ljos run --mcp`
+        /// does; `ljos android connect` then reaches it. Builds the library
+        /// with `ljos/mcp`; a debug package only.
+        #[arg(long, value_name = "CAPS", value_parser = CapSet::parse_list)]
+        mcp: Option<CapSet>,
+    },
+    /// Reach the inspector of an application running on the phone, one
+    /// started with `ljos android run --mcp`: forward a port of this
+    /// computer to it over adb, read its token with `run-as`, and write a
+    /// token file that `ljos observe`, `ljos attach` and agents take.
+    Connect {
+        /// The application's crate, for its id, as `run` takes it.
+        #[arg(default_value = ".")]
+        path: PathBuf,
+        /// The application's id, instead of the one its crate gets.
+        #[arg(long)]
+        application_id: Option<String>,
+        /// The device (`adb -s`), when there is more than one.
+        #[arg(long)]
+        device: Option<String>,
+        /// The token file to write, by default
+        /// `target/ljos/android-<id>.json` here.
+        #[arg(long)]
+        out: Option<PathBuf>,
     },
 }
 
@@ -115,28 +158,187 @@ pub fn run(command: AndroidCommand) -> anyhow::Result<()> {
             outln!("{}", built.apk.display());
             Ok(())
         }
-        AndroidCommand::Run { build, device } => {
-            let built = build.bundle()?;
-            let adb = |args: &[&str]| -> anyhow::Result<()> {
-                let mut c = Command::new(tool("adb", "platform-tools/adb")?);
-                if let Some(d) = &device {
-                    c.args(["-s", d]);
-                }
-                status(c.args(args), "adb")
-            };
+        AndroidCommand::Run { build, device, mcp } => {
+            if mcp.is_some() && build.release {
+                bail!(
+                    "--mcp serves the inspector from a debug package only \
+                     (ARCHITECTURE.md §19.7): leave out --release"
+                );
+            }
+            let features: &[&str] = if mcp.is_some() { &["ljos/mcp"] } else { &[] };
+            let built = build.bundle_with(features)?;
+            let adb = Adb::found(device)?;
             let apk = built.apk.to_string_lossy();
-            adb(&["install", "-r", &apk])?;
-            adb(&[
-                "shell",
-                "am",
-                "start",
-                "-n",
-                &format!("{}/{ACTIVITY}", built.application_id),
-            ])?;
+            adb.run(&["install", "-r", &apk])?;
+            adb.run(&start_args(&built.application_id, mcp))?;
             outln!("started {}", built.application_id);
             Ok(())
         }
+        AndroidCommand::Connect {
+            path,
+            application_id,
+            device,
+            out,
+        } => {
+            let id = match application_id {
+                Some(id) => id,
+                None => default_application_id(&package(&path)?.name),
+            };
+            let out = out.unwrap_or_else(|| {
+                PathBuf::from("target")
+                    .join("ljos")
+                    .join(format!("android-{id}.json"))
+            });
+            let url = connect(&Adb::found(device)?, &id, &out)?;
+            outln!("{} at {url}, token in {}", id, out.display());
+            Ok(())
+        }
     }
+}
+
+/// What `adb shell am start` is given to start the application, with the
+/// inspector when `mcp` asks for it. `-S` stops a running one first: the
+/// application reads `LJOS_MCP` once, as its process starts.
+fn start_args(application_id: &str, mcp: Option<CapSet>) -> Vec<String> {
+    let mut args: Vec<String> = ["shell", "am", "start"].map(String::from).into();
+    if let Some(caps) = mcp {
+        let caps: Vec<String> = caps.iter().map(|c| c.to_string()).collect();
+        args.extend(["-S".into(), "--es".into(), MCP_EXTRA.into(), caps.join(",")]);
+    }
+    args.extend(["-n".into(), format!("{application_id}/{ACTIVITY}")]);
+    args
+}
+
+/// adb, talking to one device.
+struct Adb {
+    program: PathBuf,
+    device: Option<String>,
+}
+
+impl Adb {
+    /// adb: `ADB`, on `PATH`, else in the SDK.
+    fn found(device: Option<String>) -> anyhow::Result<Self> {
+        let program = match std::env::var_os("ADB").filter(|a| !a.is_empty()) {
+            Some(adb) => PathBuf::from(adb),
+            None => tool("adb", "platform-tools/adb")?,
+        };
+        Ok(Self { program, device })
+    }
+
+    fn command(&self, args: &[impl AsRef<std::ffi::OsStr>]) -> Command {
+        let mut c = Command::new(&self.program);
+        if let Some(d) = &self.device {
+            c.args(["-s", d]);
+        }
+        c.args(args);
+        c
+    }
+
+    fn run(&self, args: &[impl AsRef<std::ffi::OsStr>]) -> anyhow::Result<()> {
+        status(&mut self.command(args), "adb")
+    }
+
+    /// What adb printed, without the carriage returns a device's shell
+    /// puts before each newline.
+    fn output(&self, args: &[&str]) -> anyhow::Result<String> {
+        let out = self
+            .command(args)
+            .output()
+            .context("starting adb")?;
+        if !out.status.success() {
+            bail!(
+                "adb {}: {}",
+                args.join(" "),
+                String::from_utf8_lossy(&out.stderr).trim()
+            );
+        }
+        Ok(String::from_utf8_lossy(&out.stdout).replace('\r', ""))
+    }
+}
+
+/// Reaches the inspector of `application_id` on the device and writes a
+/// token file for this computer to `out`; returns the address there.
+fn connect(adb: &Adb, application_id: &str, out: &Path) -> anyhow::Result<String> {
+    let run_as = |args: &[&str]| {
+        let mut all = vec!["shell", "run-as", application_id];
+        all.extend_from_slice(args);
+        adb.output(&all)
+    };
+    // Newest first: an inspector removes its file when it stops, and the
+    // newest of what a killed one left is the running one's.
+    let listed = run_as(&["ls", "-t", TOKEN_DIR]).with_context(|| {
+        format!(
+            "no inspector of {application_id} on the device: start it with \
+             `ljos android run --mcp=inspect` (a debug package; run-as reads only those)"
+        )
+    })?;
+    let Some(name) = listed
+        .lines()
+        .map(str::trim)
+        .find(|n| n.starts_with("mcp-") && n.ends_with(".json"))
+    else {
+        bail!(
+            "{application_id} serves no inspector: start it with \
+             `ljos android run --mcp=inspect`"
+        );
+    };
+    let text = run_as(&["cat", &format!("{TOKEN_DIR}/{name}")])?;
+    let body = TokenFileBody::parse(&text)
+        .with_context(|| format!("{TOKEN_DIR}/{name} of {application_id}"))?;
+    let (port, rest) = loopback_port(&body.url)?;
+    let forwarded = adb.output(&["forward", "tcp:0", &format!("tcp:{port}")])?;
+    let local: u16 = forwarded
+        .trim()
+        .parse()
+        .with_context(|| format!("adb forward said {:?}, not a port", forwarded.trim()))?;
+    let url = format!("http://127.0.0.1:{local}{rest}");
+    // The process is the phone's, not one of this computer's.
+    let here = TokenFileBody {
+        url: url.clone(),
+        pid: None,
+        ..body
+    };
+    write_owner_only(out, &here.to_text())?;
+    Ok(url)
+}
+
+/// The port of an inspector's address on the device's loopback, and what
+/// follows it.
+fn loopback_port(url: &str) -> anyhow::Result<(u16, &str)> {
+    let not_reachable = || {
+        anyhow::anyhow!(
+            "the inspector on the device is at {url}: adb forwards only a port of the \
+             device's loopback address"
+        )
+    };
+    let after = url.strip_prefix("http://").ok_or_else(not_reachable)?;
+    let (authority, rest) = after.find('/').map_or((after, ""), |i| after.split_at(i));
+    let (host, port) = authority.rsplit_once(':').ok_or_else(not_reachable)?;
+    if !matches!(host, "127.0.0.1" | "localhost" | "[::1]") {
+        return Err(not_reachable());
+    }
+    Ok((port.parse().map_err(|_| not_reachable())?, rest))
+}
+
+/// Writes `text` to `path`, readable by its owner alone, as an inspector
+/// writes its own token file.
+fn write_owner_only(path: &Path, text: &str) -> anyhow::Result<()> {
+    if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
+        std::fs::create_dir_all(dir).with_context(|| format!("making {}", dir.display()))?;
+    }
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    let mut file = options
+        .open(path)
+        .with_context(|| format!("writing {}", path.display()))?;
+    // A file an earlier run left keeps its mode: make it the owner's.
+    #[cfg(unix)]
+    file.set_permissions(std::os::unix::fs::PermissionsExt::from_mode(0o600))
+        .with_context(|| format!("writing {}", path.display()))?;
+    std::io::Write::write_all(&mut file, text.as_bytes())
+        .with_context(|| format!("writing {}", path.display()))
 }
 
 /// What `bundle` made.
@@ -255,6 +457,12 @@ fn package(dir: &Path) -> anyhow::Result<Package> {
 
 impl Build {
     fn bundle(&self) -> anyhow::Result<Built> {
+        self.bundle_with(&[])
+    }
+
+    /// As [`bundle`](Self::bundle), with the library built with
+    /// `features` too (`ljos/mcp`).
+    fn bundle_with(&self, features: &[&str]) -> anyhow::Result<Built> {
         let abis: Vec<&str> = if self.abis.is_empty() {
             ABIS.to_vec()
         } else {
@@ -284,6 +492,9 @@ impl Build {
                 // package for the desktop need not build for a phone.
                 .args(["build", "--lib", "-p", &package.name])
                 .current_dir(&self.path);
+            if !features.is_empty() {
+                c.args(["--features", &features.join(",")]);
+            }
             if self.release {
                 c.arg("--release");
             }
@@ -542,6 +753,127 @@ mod tests {
         ] {
             assert!(java.contains(method), "{method}");
         }
+    }
+
+    #[test]
+    fn the_inspector_is_asked_for_by_the_intent() {
+        let plain = start_args("dev.ljos.hello", None);
+        assert_eq!(
+            plain,
+            ["shell", "am", "start", "-n", "dev.ljos.hello/dev.ljos.LjosActivity"]
+        );
+        let caps = CapSet::parse_list("input,inspect").unwrap();
+        let served = start_args("dev.ljos.hello", Some(caps));
+        assert_eq!(
+            served,
+            [
+                "shell",
+                "am",
+                "start",
+                "-S",
+                "--es",
+                "dev.ljos.MCP",
+                "inspect,input",
+                "-n",
+                "dev.ljos.hello/dev.ljos.LjosActivity"
+            ]
+        );
+        let java = TEMPLATE
+            .iter()
+            .find(|(p, _)| p.ends_with("LjosActivity.java"))
+            .map(|(_, t)| *t)
+            .unwrap();
+        assert!(java.contains(&format!("\"{MCP_EXTRA}\"")));
+        assert!(java.contains("FLAG_DEBUGGABLE"));
+        // Before super.onCreate, which starts the native side.
+        let serve = java.find("serveInspector();").unwrap();
+        assert!(serve < java.find("super.onCreate(").unwrap());
+        let debug = TEMPLATE
+            .iter()
+            .find(|(p, _)| *p == "app/src/debug/AndroidManifest.xml")
+            .map(|(_, t)| *t)
+            .unwrap();
+        assert!(debug.contains("android.permission.INTERNET"));
+    }
+
+    #[test]
+    fn only_the_device_loopback_is_forwarded() {
+        assert_eq!(loopback_port("http://127.0.0.1:4410/mcp").unwrap(), (4410, "/mcp"));
+        assert_eq!(loopback_port("http://localhost:9").unwrap(), (9, ""));
+        assert!(loopback_port("http://10.0.2.15:4410/mcp").is_err());
+        assert!(loopback_port("unix:/data/x.sock").is_err());
+        assert!(loopback_port("http://127.0.0.1/mcp").is_err());
+    }
+
+    /// An adb that answers as one device with an application serving its
+    /// inspector at port 4410 would, and logs what it was asked.
+    #[cfg(unix)]
+    fn fake_adb(dir: &Path, token_file: &str) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::write(dir.join("token.json"), token_file).unwrap();
+        let script = format!(
+            r#"#!/bin/sh
+echo "$*" >> '{log}'
+case "$*" in
+  "-s phone shell run-as dev.ljos.hello ls -t files/target/ljos")
+    printf 'mcp-4321.json\r\nmcp-1200.json\r\n' ;;
+  "-s phone shell run-as dev.ljos.hello cat files/target/ljos/mcp-4321.json")
+    cat '{token}' ;;
+  "-s phone forward tcp:0 tcp:4410")
+    echo 39001 ;;
+  *) echo "adb: unexpected $*" >&2; exit 1 ;;
+esac
+"#,
+            log = dir.join("log").display(),
+            token = dir.join("token.json").display(),
+        );
+        let adb = dir.join("adb");
+        std::fs::write(&adb, script).unwrap();
+        std::fs::set_permissions(&adb, std::fs::Permissions::from_mode(0o755)).unwrap();
+        adb
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn connect_forwards_a_port_and_writes_a_token_file_here() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let on_phone = TokenFileBody {
+            url: "http://127.0.0.1:4410/mcp".into(),
+            token: "ab".repeat(32),
+            pid: Some(4321),
+            capabilities: CapSet::parse_list("inspect").unwrap(),
+            calls_per_second: Some(50),
+        };
+        let adb = Adb {
+            program: fake_adb(dir.path(), &on_phone.to_text()),
+            device: Some("phone".into()),
+        };
+        let out = dir.path().join("target/ljos/android-dev.ljos.hello.json");
+        let url = connect(&adb, "dev.ljos.hello", &out).unwrap();
+        assert_eq!(url, "http://127.0.0.1:39001/mcp");
+        let written = TokenFileBody::parse(&std::fs::read_to_string(&out).unwrap()).unwrap();
+        assert_eq!(written.url, url);
+        assert_eq!(written.token, on_phone.token);
+        assert_eq!(written.capabilities, on_phone.capabilities);
+        assert_eq!(written.calls_per_second, Some(50));
+        // The phone's process is no process of this computer.
+        assert_eq!(written.pid, None);
+        let mode = std::fs::metadata(&out).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn connect_says_how_to_start_an_inspector_when_there_is_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let adb = Adb {
+            program: fake_adb(dir.path(), ""),
+            device: Some("phone".into()),
+        };
+        let err = connect(&adb, "dev.ljos.other", &dir.path().join("out.json")).unwrap_err();
+        assert!(format!("{err:#}").contains("ljos android run --mcp"), "{err:#}");
+        assert!(!dir.path().join("out.json").exists());
     }
 
     #[test]

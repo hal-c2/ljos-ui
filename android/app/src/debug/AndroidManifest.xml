@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Merged into a debug package only. The inspector (`ljos android run`
+     with its mcp option) listens on the device's loopback address, and Android lets an
+     application open no socket, a loopback one included, without INTERNET.
+     A release package asks for nothing it does not use. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.INTERNET" />
+</manifest>

@@ -574,6 +574,7 @@ What the user and the system do to an application on a phone, which owns its scr
 | `Then the application reads the secret "s" as "k" of "svc"` / `Then the application reads no secret as "k" of "svc"` | what the application reads back from that store |
 | `Then the property "p" of "o" is a directory of the application's own` | the property is the path of a directory the system keeps for the application alone (on Android, below its data directory) |
 | `Then no file of the application holds "s"` | no file in the application's own directories holds the text as it is: a secret is kept encrypted |
+| `Given the inspector of the application on the phone is connected over adb` | the application on the phone serves its inspector (`ljos android run --mcp`), and the computer reaches it as `ljos android connect` does: a port forwarded over adb and the token read with `run-as`; the inspector steps then ask it |
 
 The system's Back, as the application's `Back` handlers get it. These are Ljós's own (no Qt
 type takes Back), so Ljós runs them anywhere; they take no phone.

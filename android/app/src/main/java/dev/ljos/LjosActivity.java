@@ -1,10 +1,13 @@
 package dev.ljos;
 
+import android.content.pm.ApplicationInfo;
 import android.os.Build;
 import android.os.Bundle;
 import android.util.SparseBooleanArray;
 import android.view.KeyCharacterMap;
 import android.view.KeyEvent;
+import android.system.ErrnoException;
+import android.system.Os;
 import android.view.View;
 import android.view.WindowManager;
 import android.view.inputmethod.InputMethodManager;
@@ -57,8 +60,33 @@ public class LjosActivity extends GameActivity {
     /** Keys whose press this activity typed, so their release is its too. */
     private final SparseBooleanArray typed = new SparseBooleanArray();
 
+    /** The intent's extra that asks for the inspector (`ljos android run --mcp`). */
+    private static final String MCP_EXTRA = "dev.ljos.MCP";
+
+    /**
+     * Hands the application the inspector's capabilities when the intent
+     * asks for them, as {@code LJOS_MCP}, with its own files directory for
+     * the token file as {@code LJOS_MCP_DIR}. Before the native side
+     * starts, which reads them once; and only in a debuggable package,
+     * whose files {@code run-as} reads for {@code ljos android connect}.
+     */
+    private void serveInspector() {
+        String caps = getIntent() == null ? null : getIntent().getStringExtra(MCP_EXTRA);
+        boolean debuggable = (getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0;
+        if (caps == null || !debuggable) {
+            return;
+        }
+        try {
+            Os.setenv("LJOS_MCP", caps, true);
+            Os.setenv("LJOS_MCP_DIR", getFilesDir().getAbsolutePath(), true);
+        } catch (ErrnoException e) {
+            android.util.Log.w("ljos", "the inspector is not served", e);
+        }
+    }
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
+        serveInspector();
         super.onCreate(savedInstanceState);
         // The application draws under the system's bars and the cutout and
         // keeps clear of them itself (SafeArea), as on any phone.
