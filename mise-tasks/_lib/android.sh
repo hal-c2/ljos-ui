@@ -38,33 +38,38 @@ android_ndk() {
   die "$(task_name) needs the Android NDK (r27 or newer): set ANDROID_NDK_HOME, or install it with the SDK manager (ndk;30.0.16248370)"
 }
 
-# android_ndk_prebuilt: the NDK's LLVM toolchain for this machine.
+# android_ndk_prebuilt <ndk>: the NDK's LLVM toolchain for this machine.
 android_ndk_prebuilt() {
-  local ndk host
-  ndk="$(android_ndk)"
+  local host
   case "$(uname -s)" in
     Linux) host=linux-x86_64 ;;
     Darwin) host=darwin-x86_64 ;;
     *) host=windows-x86_64 ;;
   esac
-  printf '%s\n' "$ndk/toolchains/llvm/prebuilt/$host"
+  printf '%s\n' "$1/toolchains/llvm/prebuilt/$host"
 }
 
 # android_cross_env <rust target>: the C compiler, archiver and linker of the
 # NDK for cargo and cc-rs, at the minimum API level, the variables cargo-ndk
 # sets, so that plain `cargo build --target` works the same.
 android_cross_env() {
-  local triple="$1" bin var
-  bin="$(android_ndk_prebuilt)/bin"
+  local triple="$1" ndk bin var
+  # Found once, outside a command substitution: `set -e` does not reach into
+  # one, so a missing NDK would be told more than once.
+  ndk="$(android_ndk)" || exit 1
+  bin="$(android_ndk_prebuilt "$ndk")/bin"
   [ -x "$bin/$triple$android_min_sdk-clang" ] ||
-    die "$(task_name): the NDK at $(android_ndk) has no $triple$android_min_sdk-clang"
+    die "$(task_name): the NDK at $ndk has no $triple$android_min_sdk-clang"
   var="$(printf '%s' "$triple" | tr '-' '_')"
   export "CC_$var=$bin/$triple$android_min_sdk-clang"
   export "CXX_$var=$bin/$triple$android_min_sdk-clang++"
   export "AR_$var=$bin/llvm-ar"
   var="$(printf '%s' "$triple" | tr '[:lower:]-' '[:upper:]_')"
   export "CARGO_TARGET_${var}_LINKER=$bin/$triple$android_min_sdk-clang"
-  export ANDROID_NDK_HOME="${ANDROID_NDK_HOME:-$(android_ndk)}"
+  # The NDK the compilers are from, for the build scripts that read it
+  # (cc-rs, bindgen, cmake), even when ANDROID_NDK_HOME named one without
+  # a toolchain.
+  export ANDROID_NDK_HOME="$ndk"
 }
 
 # android_adb: the SDK's adb, else the one on PATH.
