@@ -3321,7 +3321,17 @@ impl CreationJob {
                 // whoever waits was told, and the object is theirs.
                 if self.handle.0.result.borrow().is_none() {
                     self.unmake(Some(&e));
-                    self.finish(Some(&e), Err(EngineError::Load(fault.to_string())));
+                    let why = EngineError::Load(fault.to_string());
+                    // `on_done` may panic on the error too. The error is
+                    // out by then, and the creation must still close
+                    // below, or what waits for no creation to run waits
+                    // for good.
+                    let told = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        self.finish(Some(&e), Err(why))
+                    }));
+                    if let Err(payload) = told {
+                        e.report_fault(None, Fault::from_panic(payload));
+                    }
                 }
                 JobPoll::Failed(fault)
             }
