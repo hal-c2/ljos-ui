@@ -172,6 +172,60 @@ pub struct TokenFile {
     path: PathBuf,
 }
 
+/// Writes a token file's `text` to `path` as [`TokenFile::write`] does:
+/// owner-only, in a directory nobody else can get into, and whole, renamed
+/// into place, so that nothing reads it half written and nothing at `path`
+/// (a link, say) is written through. For a token file of another process
+/// (an inspector on a phone, reached through a forward).
+///
+/// # Errors
+/// The directory is others' to reach, or the file could not be written.
+pub fn write_token_text(path: &Path, text: &str) -> Result<(), TokenFileError> {
+    let fail = |source| TokenFileError::Write {
+        path: path.to_path_buf(),
+        source,
+    };
+    // A bare name goes in the working directory, which counts as any.
+    let dir = match path.parent() {
+        Some(dir) if !dir.as_os_str().is_empty() => dir,
+        _ => Path::new("."),
+    };
+    token_directory(dir)?;
+    // A client waits for the file to appear and reads it at once, so
+    // it must appear whole: it is written beside its name and renamed
+    // into place. The rename replaces whatever a dead process left
+    // there, a link included, without following it.
+    let mut staged = path.as_os_str().to_owned();
+    staged.push(format!(".{}.part", std::process::id()));
+    let staged = PathBuf::from(staged);
+    // A part of an earlier process with this id is removed, not written
+    // over: it may be a link to a file somebody wants overwritten, and
+    // `create_new` follows none.
+    match std::fs::remove_file(&staged) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(fail(e)),
+    }
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        // Given at creation, so the file is never open to others, not
+        // even for the moment before a `chmod`.
+        options.mode(0o600);
+    }
+    let written = options
+        .open(&staged)
+        .and_then(|mut file| file.write_all(text.as_bytes()))
+        .and_then(|()| std::fs::rename(&staged, path));
+    if let Err(e) = written {
+        let _ = std::fs::remove_file(&staged);
+        return Err(fail(e));
+    }
+    Ok(())
+}
+
 impl TokenFile {
     /// Writes `{"url", "token", "pid", "capabilities", "calls_per_second"}`
     /// to `path`, readable and writable by the owner alone, in a directory
@@ -185,40 +239,6 @@ impl TokenFile {
         caps: CapSet,
         calls_per_second: u32,
     ) -> Result<TokenFile, TokenFileError> {
-        let fail = |source| TokenFileError::Write {
-            path: path.to_path_buf(),
-            source,
-        };
-        // A bare name goes in the working directory, which counts as any.
-        let dir = match path.parent() {
-            Some(dir) if !dir.as_os_str().is_empty() => dir,
-            _ => Path::new("."),
-        };
-        token_directory(dir)?;
-        // A client waits for the file to appear and reads it at once, so
-        // it must appear whole: it is written beside its name and renamed
-        // into place. The rename replaces whatever a dead process left
-        // there, a link included, without following it.
-        let mut staged = path.as_os_str().to_owned();
-        staged.push(format!(".{}.part", std::process::id()));
-        let staged = PathBuf::from(staged);
-        // A part of an earlier process with this id is removed, not written
-        // over: it may be a link to a file somebody wants overwritten, and
-        // `create_new` follows none.
-        match std::fs::remove_file(&staged) {
-            Ok(()) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => return Err(fail(e)),
-        }
-        let mut options = std::fs::OpenOptions::new();
-        options.write(true).create_new(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt as _;
-            // Given at creation, so the file is never open to others, not
-            // even for the moment before a `chmod`.
-            options.mode(0o600);
-        }
         let text = TokenFileBody {
             url: url.to_owned(),
             token: token.as_str().to_owned(),
@@ -227,14 +247,7 @@ impl TokenFile {
             calls_per_second: Some(calls_per_second),
         }
         .to_text();
-        let written = options
-            .open(&staged)
-            .and_then(|mut file| file.write_all(text.as_bytes()))
-            .and_then(|()| std::fs::rename(&staged, path));
-        if let Err(e) = written {
-            let _ = std::fs::remove_file(&staged);
-            return Err(fail(e));
-        }
+        write_token_text(path, &text)?;
         Ok(TokenFile {
             path: path.to_path_buf(),
         })

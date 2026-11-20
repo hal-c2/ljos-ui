@@ -302,16 +302,7 @@ fn connect(adb: &Adb, application_id: &str, out: &Path) -> anyhow::Result<String
         bail!("the inspector of {application_id} is not running: {START}");
     };
     let (port, rest) = loopback_port(&body.url)?;
-    // The forward the last connect made, which nothing else removes: adb
-    // keeps it until it restarts, at a device port that may serve nothing
-    // now. Gone already when adb restarted since, so a failure is no error.
-    if let Some(old) = std::fs::read_to_string(out)
-        .ok()
-        .and_then(|text| TokenFileBody::parse(&text).ok())
-        .and_then(|last| loopback_port(&last.url).ok().map(|(p, _)| p))
-    {
-        let _ = adb.output(&["forward", "--remove", &format!("tcp:{old}")]);
-    }
+    remove_last_forward(adb, out);
     let forwarded = adb.output(&["forward", "tcp:0", &format!("tcp:{port}")])?;
     let local: u16 = forwarded
         .trim()
@@ -324,8 +315,45 @@ fn connect(adb: &Adb, application_id: &str, out: &Path) -> anyhow::Result<String
         pid: None,
         ..body
     };
-    write_owner_only(out, &here.to_text())?;
+    // Whole, renamed into place: `attach` reads it again for every
+    // message, and must not find it half written.
+    ljos_mcp_core::write_token_text(out, &here.to_text())?;
     Ok(url)
+}
+
+/// Removes the forward the last connect to `out` made, which nothing else
+/// removes: adb keeps it until it restarts, at a device port that may serve
+/// nothing now. Only while adb still lists that port as forwarded to this
+/// device: after adb restarted, the port may be another's forward, and
+/// `--remove` names the port alone. Failing, it leaves the forward.
+fn remove_last_forward(adb: &Adb, out: &Path) {
+    let Some(old) = std::fs::read_to_string(out)
+        .ok()
+        .and_then(|text| TokenFileBody::parse(&text).ok())
+        .and_then(|last| loopback_port(&last.url).ok().map(|(p, _)| p))
+    else {
+        return;
+    };
+    let serial = match &adb.device {
+        Some(device) => Some(device.clone()),
+        None => adb
+            .output(&["get-serialno"])
+            .ok()
+            .map(|s| s.trim().to_owned()),
+    };
+    let Some(serial) = serial.filter(|s| !s.is_empty()) else {
+        return;
+    };
+    let ours = |line: &str| {
+        let mut fields = line.split_whitespace();
+        fields.next() == Some(serial.as_str()) && fields.next() == Some(&format!("tcp:{old}"))
+    };
+    if adb
+        .output(&["forward", "--list"])
+        .is_ok_and(|listed| listed.lines().any(ours))
+    {
+        let _ = adb.output(&["forward", "--remove", &format!("tcp:{old}")]);
+    }
 }
 
 /// The processes of `application_id` on the device. `pidof` exits 1 when
@@ -368,29 +396,6 @@ fn loopback_port(url: &str) -> anyhow::Result<(u16, &str)> {
         return Err(not_reachable());
     }
     Ok((port.parse().map_err(|_| not_reachable())?, rest))
-}
-
-/// Writes `text` to `path`, readable by its owner alone, as an inspector
-/// writes its own token file: in a directory that, on Unix, is the
-/// owner's alone too (ARCHITECTURE.md §19.7). One made here is made so;
-/// one others can reach is refused, not changed.
-fn write_owner_only(path: &Path, text: &str) -> anyhow::Result<()> {
-    if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
-        ljos_mcp_core::token_directory(dir)?;
-    }
-    let mut options = std::fs::OpenOptions::new();
-    options.write(true).create(true).truncate(true);
-    #[cfg(unix)]
-    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
-    let mut file = options
-        .open(path)
-        .with_context(|| format!("writing {}", path.display()))?;
-    // A file an earlier run left keeps its mode: make it the owner's.
-    #[cfg(unix)]
-    file.set_permissions(std::os::unix::fs::PermissionsExt::from_mode(0o600))
-        .with_context(|| format!("writing {}", path.display()))?;
-    std::io::Write::write_all(&mut file, text.as_bytes())
-        .with_context(|| format!("writing {}", path.display()))
 }
 
 /// What `bundle` made.
@@ -876,6 +881,7 @@ mod tests {
         std::fs::write(dir.join("token.json"), token_file).unwrap();
         std::fs::write(dir.join("stale.json"), stale.unwrap_or("")).unwrap();
         std::fs::write(dir.join("pidof"), "printf '4321\\r\\npidof-exit:0\\r\\n'\n").unwrap();
+        std::fs::write(dir.join("forwards"), "phone tcp:39001 tcp:4410\n").unwrap();
         // The application names its files: one that is no inspector's
         // would run what it names in the device's shell.
         let listed = if stale.is_some() {
@@ -899,6 +905,8 @@ case "$*" in
   "-s phone forward tcp:0 tcp:4410")
     echo 39001 ;;
   "-s phone forward --remove tcp:39001") ;;
+  "-s phone forward --list")
+    cat '{forwards}' ;;
   *) echo "adb: unexpected $*" >&2; exit 1 ;;
 esac
 "#,
@@ -906,6 +914,7 @@ esac
             token = dir.join("token.json").display(),
             stale = dir.join("stale.json").display(),
             pidof = dir.join("pidof").display(),
+            forwards = dir.join("forwards").display(),
         );
         let adb = dir.join("adb");
         std::fs::write(&adb, script).unwrap();
@@ -975,6 +984,43 @@ esac
         // The second connect's forward is its own; the first one's goes.
         connect(&adb, "dev.ljos.hello", &out).unwrap();
         assert!(log().contains("forward --remove tcp:39001"), "{}", log());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn connect_leaves_a_forward_adb_now_holds_for_another_device() {
+        let dir = tempfile::tempdir().unwrap();
+        let adb = Adb {
+            program: fake_adb(dir.path(), &on_phone(4321, 4410).to_text(), None),
+            device: Some("phone".into()),
+        };
+        let out = dir.path().join("target/ljos/android-dev.ljos.hello.json");
+        connect(&adb, "dev.ljos.hello", &out).unwrap();
+        // adb restarted since, and the port is another device's forward.
+        std::fs::write(dir.path().join("forwards"), "tablet tcp:39001 tcp:5000\n").unwrap();
+        connect(&adb, "dev.ljos.hello", &out).unwrap();
+        let log = std::fs::read_to_string(dir.path().join("log")).unwrap();
+        assert!(!log.contains("--remove"), "{log}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn connect_replaces_a_link_at_its_token_file_and_writes_nothing_through_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let adb = Adb {
+            program: fake_adb(dir.path(), &on_phone(4321, 4410).to_text(), None),
+            device: Some("phone".into()),
+        };
+        let out = dir.path().join("target/ljos/android-dev.ljos.hello.json");
+        connect(&adb, "dev.ljos.hello", &out).unwrap();
+        let victim = dir.path().join("victim");
+        std::fs::write(&victim, "keep").unwrap();
+        std::fs::remove_file(&out).unwrap();
+        std::os::unix::fs::symlink(&victim, &out).unwrap();
+        connect(&adb, "dev.ljos.hello", &out).unwrap();
+        assert_eq!(std::fs::read_to_string(&victim).unwrap(), "keep");
+        assert!(!std::fs::symlink_metadata(&out).unwrap().is_symlink());
+        TokenFileBody::parse(&std::fs::read_to_string(&out).unwrap()).unwrap();
     }
 
     #[cfg(unix)]

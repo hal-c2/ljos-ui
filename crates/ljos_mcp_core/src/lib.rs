@@ -37,7 +37,7 @@ pub use alive::{effective_uid, process_alive};
 #[cfg(feature = "http")]
 pub use auth::{
     RateLimit, Token, TokenFile, TokenFileError, address_host, loopback_host, loopback_origin,
-    token_directory,
+    token_directory, write_token_text,
 };
 pub use protocol::{
     CALLS_PER_SECOND, DEFAULT_CALLS_PER_SECOND, RateError, check_calls_per_second,
