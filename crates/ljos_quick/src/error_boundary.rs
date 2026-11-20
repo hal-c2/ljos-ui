@@ -27,12 +27,14 @@
 //! the engine's supervisor tree ([`ljos_engine::Boundary`]); this file
 //! only says how the content is stopped and started.
 //!
-//! A resource fault (the script heap ran out, a script was interrupted)
-//! is not the content's doing and is not counted: the fallback is shown,
-//! and the content is made again by itself after a wait, as a Loader does
-//! ([`Backoff`]: a second, twice as long each time it faults again soon
-//! after, up to a minute), for as long as it takes. `retry()` or a new
-//! `content` makes it at once.
+//! A resource fault (the script heap ran out, the content could not be
+//! made in its time) is not the content's doing and is not counted: the
+//! fallback is shown, and the content is made again by itself after a
+//! wait, as a Loader does ([`Backoff`]: a second, twice as long each time
+//! it faults again soon after, up to a minute), for as long as it takes.
+//! `retry()` or a new `content` makes it at once. A script of the content
+//! stopped for its time leaves it shown: the engine runs the binding it
+//! cut short again.
 //!
 //! The content is always made from the component, never repaired. State a
 //! native type declares worth keeping (`ljos_engine::Migrate`) is taken
@@ -326,6 +328,14 @@ impl Boundary for Behaviour {
             Fault::JsOutOfMemory | Fault::JsInterrupted { .. }
         ) {
             return false;
+        }
+        // A script of the content stopped for its time leaves the content
+        // whole: the binding cut short runs again by itself
+        // (`run_again_after`), and content made again would run over
+        // again, without end. Content that could not be made at all (the
+        // boundary's own fault) is made again after a wait.
+        if matches!(report.fault, Fault::JsInterrupted { .. }) && report.origin != Some(me) {
+            return true;
         }
         self.stop(e, me, report);
         if let Some(Err(fault)) = show_fallback(e, me) {

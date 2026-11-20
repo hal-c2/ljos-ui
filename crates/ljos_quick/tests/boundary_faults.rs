@@ -261,3 +261,83 @@ proptest! {
         prop_assert!(e.application_fault().is_none());
     }
 }
+
+const SLOW: &str = r#"
+import QtQuick
+import Ljos
+Item {
+    id: root
+    property int made: 0
+    readonly property var tries: ({ binding: 0, handler: 0 })
+    // Runs over its time the first `n` times it is called for `what`.
+    function slow(what, n) {
+        if (tries[what]++ < n) { for (;;) {} }
+        return 5
+    }
+    ErrorBoundary {
+        id: boundary
+        objectName: "boundary"
+        fallback: Text { objectName: "sorry"; text: boundary.fault.kind }
+        Item { objectName: "idle" }
+    }
+    property Component slowContent: Component {
+        Item {
+            objectName: "content"
+            property int size: root.slow("binding", 3)
+            // Runs over its time while the content is made.
+            Component.onCompleted: { root.made++; root.slow("handler", 1) }
+        }
+    }
+}
+"#;
+
+/// A script stopped for its time while the boundary's content is made is
+/// not a fault that breaks the content (ljos-ui#676): the content is made
+/// once and shown, the boundary neither shows its fallback nor counts a
+/// restart, and the binding cut short, here three times, gets its value
+/// when the engine runs it again.
+#[test]
+fn content_whose_scripts_ran_over_their_time_is_shown_and_its_binding_runs_again() {
+    let e = engine();
+    let clock = Arc::new(VirtualClock::new());
+    e.set_clock(Rc::new(clock.clone()));
+    compile(&e, &[("Main", SLOW)]);
+    let root = e.create_from_url("Main", None, Vec::new()).unwrap();
+    let boundary = find(&e, root, "boundary");
+    assert_eq!(shown(&e, boundary), "idle");
+    let restarts = num(&e, boundary, "restarts");
+    e.set_js_dispatch_budget(Duration::from_millis(10), Duration::from_millis(50))
+        .unwrap();
+
+    let slow = get(&e, root, "slowContent");
+    set(&e, boundary, "content", slow);
+    settle(&e, &clock, boundary);
+    let content = get(&e, boundary, "item").as_object().expect("shown");
+    assert_eq!(shown(&e, boundary), "content");
+    assert!(!get(&e, boundary, "failed").to_boolean());
+    assert_eq!(num(&e, boundary, "restarts"), restarts);
+    assert_eq!(num(&e, root, "made"), 1.0);
+    assert_eq!(num(&e, content, "size"), 0.0, "cut short");
+
+    // The binding runs again after a wait; the content is not made again.
+    let mut waits = Vec::new();
+    while num(&e, content, "size") != 5.0 {
+        assert!(waits.len() < 8, "never ran again: {waits:?}");
+        let due = e.next_timer_deadline().expect("the binding runs again");
+        waits.push(due.saturating_since(clock.now()));
+        clock.set(due);
+        settle(&e, &clock, boundary);
+        assert_eq!(get(&e, boundary, "item").as_object(), Some(content));
+        assert!(!get(&e, boundary, "failed").to_boolean());
+    }
+    assert!(
+        waits.iter().all(|w| *w <= Duration::from_secs(60)),
+        "{waits:?}"
+    );
+    assert!(e.is_alive(content));
+    assert_eq!(num(&e, root, "made"), 1.0);
+    assert_eq!(num(&e, boundary, "restarts"), restarts);
+    assert!(e.application_fault().is_none());
+    settle(&e, &clock, boundary);
+    assert_eq!(e.next_timer_deadline(), None, "nothing more to wait for");
+}
