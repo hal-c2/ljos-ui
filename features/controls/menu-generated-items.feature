@@ -85,3 +85,73 @@ Feature: Items an Instantiator adds to a menu
     @api-QtQuick.Controls.Menu.addItem
     Scenario: Items added while the menu is made come after every declared item
       Then the property "seen" of "root" is "Act,Sub,P1,P2"
+
+  Rule: Methods called while the menu is made
+
+    Background:
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Item {
+          id: root; objectName: "root"
+          property string took: ""; property string rest: ""; property string seen: ""
+          function look(m) { var s = []; for (var i = 0; i < m.count; i++) s.push(m.itemAt(i).text); return s.join(",") }
+          Menu {
+            id: a
+            Action { text: "Act" }
+            MenuItem { text: "B" }
+            Instantiator {
+              model: 1; delegate: QtObject {}
+              onObjectAdded: { var t = a.takeAction(0); root.took = t.text + " " + a.count }
+            }
+          }
+          Menu {
+            id: b
+            MenuItem { text: "A" }
+            Instantiator {
+              model: 1; delegate: QtObject {}
+              onObjectAdded: { b.takeItem(-1); root.rest = "" + b.count }
+            }
+          }
+          Component.onCompleted: Qt.callLater(function() { seen = look(a) + " | " + look(b) })
+        }
+        """
+
+    @api-QtQuick.Controls.Menu.takeAction @api-QtQuick.Controls.Menu.takeItem
+    Scenario: What is taken out stays out, and the count counts what is left
+      Then the property "took" of "root" is "Act 1"
+      And the property "rest" of "root" is "1"
+      And the property "seen" of "root" is "B | A"
+
+  Rule: A delegate that adds an item while it is made
+
+    Background:
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Item {
+          id: root; objectName: "root"
+          property bool done: false
+          property string seen: ""
+          MenuItem { id: extra; text: "Extra" }
+          Menu {
+            id: c
+            delegate: MenuItem { Component.onCompleted: if (!root.done) { root.done = true; c.addItem(extra) } }
+            Action { text: "Act" }
+            Instantiator {
+              model: 1; delegate: QtObject {}
+              onObjectAdded: { c.addItem(gen) }
+            }
+            MenuItem { id: gen; text: "Gen" }
+          }
+          Component.onCompleted: Qt.callLater(function() {
+            var s = []; for (var i = 0; i < c.count; i++) s.push(c.itemAt(i).text); seen = s.join(",")
+          })
+        }
+        """
+
+    @api-QtQuick.Controls.Menu.addItem @api-QtQuick.Controls.Menu.delegate
+    Scenario: The item the delegate adds comes before the action's item
+      Then the property "seen" of "root" is "Extra,Act,Gen"
