@@ -607,14 +607,25 @@ Item {
     frame(&mut s, &e);
     let (a, b) = (find(&e, root, "a"), find(&e, root, "b"));
     for k in [key::RIGHT, key::TAB] {
-        assert!(!ljos_quick::send_input(&e, a, &Input::Key(KeyEvent::press(k))));
-        assert!(!ljos_quick::send_input(&e, a, &Input::Key(KeyEvent::release(k))));
+        assert!(!ljos_quick::send_input(
+            &e,
+            a,
+            &Input::Key(KeyEvent::press(k))
+        ));
+        assert!(!ljos_quick::send_input(
+            &e,
+            a,
+            &Input::Key(KeyEvent::release(k))
+        ));
     }
     frame(&mut s, &e);
     assert_eq!(get(&e, root, "heard").to_js_string().to_string(), "2");
     assert_eq!(s.active_focus_item(&e), None);
     for item in [a, b] {
-        assert_eq!(get(&e, item, "activeFocus"), ljos_engine::Value::Bool(false));
+        assert_eq!(
+            get(&e, item, "activeFocus"),
+            ljos_engine::Value::Bool(false)
+        );
     }
 }
 
@@ -642,13 +653,21 @@ Item {
     );
     let mut s = scene(&e, root, 100.0, 100.0);
     frame(&mut s, &e);
-    let (t, here, there) = (find(&e, root, "t"), find(&e, root, "here"), find(&e, root, "there"));
+    let (t, here, there) = (
+        find(&e, root, "t"),
+        find(&e, root, "here"),
+        find(&e, root, "there"),
+    );
     let heard: Rc<RefCell<Vec<&'static str>>> = Rc::default();
     for (item, name) in [(here, "here"), (there, "there")] {
         let log = heard.clone();
         watch_input(&e, item, move |_, _| log.borrow_mut().push(name));
     }
-    assert!(ljos_quick::send_input(&e, t, &Input::Key(KeyEvent::press(key::A))));
+    assert!(ljos_quick::send_input(
+        &e,
+        t,
+        &Input::Key(KeyEvent::press(key::A))
+    ));
     assert_eq!(e.visual_parent(t), Some(there), "the handler moved it");
     assert_eq!(*heard.borrow(), ["here"]);
 }

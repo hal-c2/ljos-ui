@@ -40,7 +40,11 @@ pub struct Frame {
 }
 
 fn name(engine: &Engine, o: ObjectId) -> String {
-    engine.read_by_name(o, "objectName").to_js_string().as_str().to_owned()
+    engine
+        .read_by_name(o, "objectName")
+        .to_js_string()
+        .as_str()
+        .to_owned()
 }
 
 fn pad_press(engine: &Engine, o: ObjectId, ev: &KeyEvent) -> bool {
