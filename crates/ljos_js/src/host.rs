@@ -1557,10 +1557,10 @@ impl<'js> Scope<'js> {
 const COPY_DEPTH: u32 = 32;
 
 /// The own keys `JS_GetOwnPropertyNames` gave, freed with it.
-struct OwnNames {
-    ctx: *mut rquickjs::qjs::JSContext,
-    tab: *mut rquickjs::qjs::JSPropertyEnum,
-    len: u32,
+pub(crate) struct OwnNames {
+    pub(crate) ctx: *mut rquickjs::qjs::JSContext,
+    pub(crate) tab: *mut rquickjs::qjs::JSPropertyEnum,
+    pub(crate) len: u32,
 }
 
 impl Drop for OwnNames {
@@ -1574,10 +1574,10 @@ impl Drop for OwnNames {
 
 /// QuickJS's class of an ordinary object (`JS_CLASS_OBJECT`, which its
 /// header keeps first).
-const JS_CLASS_OBJECT: rquickjs::qjs::JSClassID = 1;
+pub(crate) const JS_CLASS_OBJECT: rquickjs::qjs::JSClassID = 1;
 
 /// QuickJS's class of an array, next after [`JS_CLASS_OBJECT`].
-const JS_CLASS_ARRAY: rquickjs::qjs::JSClassID = 2;
+pub(crate) const JS_CLASS_ARRAY: rquickjs::qjs::JSClassID = 2;
 
 /// The array behind `v`, an array's reference, and its length. A proxy
 /// standing for one (a host's kind of array: see [`JsRef::array_of_kind`])

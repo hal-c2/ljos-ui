@@ -55,7 +55,16 @@ pub struct MemoryArgs {
     /// process's memory map, a few milliseconds.
     #[serde(default)]
     pub mappings: bool,
+    /// Also say what holds the script heap: the types whose objects keep
+    /// script values in their properties, with about the bytes those
+    /// reach. Walks the script values, at most a million.
+    #[serde(default)]
+    pub script_holders: bool,
 }
+
+/// The most script values `script_holders` walks: enough for any heap the
+/// default limit allows, few enough that an answer stays quick.
+const MOST_SCRIPT_VALUES: usize = 1_000_000;
 
 /// What one window holds, as its host tells it.
 #[derive(Clone, Copy, Debug)]
@@ -596,6 +605,34 @@ pub(crate) fn memory(
     }
     value["objects"]["types"] = rows.into_iter().map(|(_, v, _)| v).collect();
     value["objects"]["types_left_out"] = json!(left_out);
+    // Null when not asked, as `mappings` is: the key is always there.
+    value["script_holders"] = Value::Null;
+    if args.script_holders
+        && let Some(held) = engine.script_heap_holders(MOST_SCRIPT_VALUES)
+    {
+        let _ = writeln!(lines, "script heap, by what holds it:");
+        for h in held.holders.iter().take(max) {
+            let _ = writeln!(
+                lines,
+                "  {:<24} {:>12} B  ({} objects)",
+                h.name, h.bytes, h.objects
+            );
+        }
+        if held.truncated {
+            let _ = writeln!(lines, "  … stopped after {} values", held.values);
+        }
+        value["script_holders"] = json!({
+            "holders": held.holders.iter().take(max).map(|h| json!({
+                "type": h.name,
+                "objects": h.objects,
+                "bytes": h.bytes,
+            })).collect::<Vec<_>>(),
+            "holders_left_out": held.holders.len().saturating_sub(max),
+            "values": held.values,
+            "truncated": held.truncated,
+            "approximate": true,
+        });
+    }
     ToolReply::from(value).with_text(format!("{head}{lines}{out}"))
 }
 

@@ -182,6 +182,27 @@ Feature: An agent reads where the application's memory is
     Then the answer's "/mappings" is null
     And the answer does not contain "by mapping"
 
+  # The script values the objects hold are walked only when asked; each is
+  # counted for the first type that reaches it.
+  Scenario: What holds the script heap is told by type when asked
+    When the agent calls the tool "app_metrics" with:
+      """json
+      {"memory": {"script_holders": true}}
+      """
+    Then the answer's "/script_holders/values" is at least 1
+    And the answer's "/script_holders/holders/0/bytes" is at least 1
+    And the answer's "/script_holders/truncated" is false
+    And the answer's "/script_holders/approximate" is true
+    And the answer's text contains "script heap, by what holds it:"
+
+  Scenario: Without `script_holders` the script values are not walked
+    When the agent calls the tool "app_metrics" with:
+      """json
+      {"memory": {}}
+      """
+    Then the answer's "/script_holders" is null
+    And the answer does not contain "by what holds it"
+
   Scenario: Each object says about how much it holds
     When the agent calls the tool "app_objects"
     Then the answer's "/objects/0/bytes" is at least 1

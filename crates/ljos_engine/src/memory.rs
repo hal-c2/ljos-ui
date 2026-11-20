@@ -46,6 +46,40 @@ pub struct OwnerMemory {
 #[derive(Default)]
 pub(crate) struct MemoryOwners(std::cell::RefCell<Vec<Box<dyn Fn() -> OwnerMemory>>>);
 
+/// The script values the objects of one type hold in their properties,
+/// and about what those reach in the script heap
+/// ([`Engine::script_heap_holders`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ScriptHolder {
+    /// The type's name, as [`TypeMemory::name`] gives it.
+    pub name: String,
+    /// Its objects that hold a script value.
+    pub objects: usize,
+    /// About the bytes reached, each value counted for the first type that
+    /// reaches it.
+    pub bytes: usize,
+}
+
+/// What holds the script heap, by the types whose properties hold it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ScriptHolders {
+    /// The most bytes first.
+    pub holders: Vec<ScriptHolder>,
+    /// The script values walked.
+    pub values: usize,
+    /// The walk reached its budget; the rest was not counted.
+    pub truncated: bool,
+}
+
+fn push_js<'v>(v: &'v Value, out: &mut Vec<&'v ljos_js::JsRef>) {
+    match v {
+        Value::Js(h) => out.push(&h.0),
+        Value::List(items) => items.iter().for_each(|v| push_js(v, out)),
+        Value::Map(fields) => fields.iter().for_each(|(_, v)| push_js(v, out)),
+        _ => {}
+    }
+}
+
 /// The objects of one type.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TypeMemory {
@@ -162,6 +196,58 @@ impl Engine {
                 bytes: m.bytes + f.bytes(),
             },
         )
+    }
+
+    /// What holds the script heap: the script values each type's objects
+    /// keep in their properties, walked for what they reach
+    /// ([`ljos_js::Scope::held_by`]) and counted for the first type to
+    /// reach them. What only a running function's closure or a script's
+    /// globals hold is not reached from any object, so the holders may add
+    /// up to less than [`Engine::script_heap_bytes`]. Walks up to `budget`
+    /// values, when asked, never on its own. `None` before any script ran.
+    pub fn script_heap_holders(&self, budget: usize) -> Option<ScriptHolders> {
+        if !self.js_started() {
+            return None;
+        }
+        let mut groups: Vec<(Atom, usize, Vec<ljos_js::JsRef>)> = Vec::new();
+        {
+            let store = self.inner.store.borrow();
+            let mut at: HashMap<Atom, usize> = HashMap::new();
+            let mut refs = Vec::new();
+            for header in store.objects.values() {
+                refs.clear();
+                header.dynamic.iter().for_each(|v| push_js(v, &mut refs));
+                if refs.is_empty() {
+                    continue;
+                }
+                let i = *at.entry(header.meta.name.clone()).or_insert_with(|| {
+                    groups.push((header.meta.name.clone(), 0, Vec::new()));
+                    groups.len() - 1
+                });
+                groups[i].1 += 1;
+                groups[i].2.extend(refs.iter().map(|r| (*r).clone()));
+            }
+        }
+        // Entering and leaving the script context may reach the store (a
+        // fault report, the jobs it runs after), so its borrow ends first.
+        let held = self.run_js("heap holders", |s| {
+            Ok(s.held_by(groups.iter().map(|g| g.2.iter()), budget))
+        })?;
+        let mut holders: Vec<ScriptHolder> = groups
+            .into_iter()
+            .zip(held.bytes)
+            .map(|((name, objects, _), bytes)| ScriptHolder {
+                name: name.to_string(),
+                objects,
+                bytes,
+            })
+            .collect();
+        holders.sort_by(|a, b| b.bytes.cmp(&a.bytes).then_with(|| a.name.cmp(&b.name)));
+        Some(ScriptHolders {
+            holders,
+            values: held.values,
+            truncated: held.truncated,
+        })
     }
 
     /// What the script engine holds from the system allocator, as the
