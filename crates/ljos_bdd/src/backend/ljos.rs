@@ -141,8 +141,9 @@ struct Live {
     /// what moves until then is that input's doing, and `rest` is taken
     /// again there.
     rest_due: Option<ljos_runtime::Time>,
-    /// The window's picture after each frame, when a scenario keeps them.
-    kept: Option<Vec<ljos_render::RgbaImage>>,
+    /// The window's picture after each frame, when a scenario keeps them,
+    /// or why that frame's picture could not be drawn.
+    kept: Option<Vec<KeptPicture>>,
 }
 
 #[derive(Default)]
@@ -1181,7 +1182,30 @@ struct Hosting<'a> {
     windows: &'a mut Vec<ObjectId>,
     roots: &'a mut Vec<ObjectId>,
     top: &'a mut ljos_dev::Top,
-    kept: Option<&'a mut Vec<ljos_render::RgbaImage>>,
+    kept: Option<&'a mut Vec<KeptPicture>>,
+}
+
+/// A frame's picture, or why the reference renderer could not draw it.
+type KeptPicture = std::result::Result<ljos_render::RgbaImage, String>;
+
+/// The pixel at `x`, `y` in each kept picture. A frame that was not drawn
+/// fails the lot: what it showed is unknown, so no step may pass over it.
+fn kept_pixels_at(kept: &[KeptPicture], x: u32, y: u32) -> Result<Vec<[u8; 4]>> {
+    kept.iter()
+        .enumerate()
+        .map(|(i, p)| match p {
+            Ok(p) if x < p.width && y < p.height => Ok(p.pixel(x, y)),
+            Ok(p) => Err(failed(format!(
+                "{x}, {y} is outside the window's picture, which is {} by {}",
+                p.width, p.height
+            ))),
+            Err(e) => Err(failed(format!(
+                "picture {} of {} was not drawn: {e}",
+                i + 1,
+                kept.len()
+            ))),
+        })
+        .collect()
 }
 
 impl Host for Hosting<'_> {
@@ -1225,9 +1249,7 @@ impl Host for Hosting<'_> {
         if let (Some(kept), Some(snapshot)) = (self.kept.as_deref_mut(), scene.snapshot()) {
             let picture = ljos_render::VelloCpuReference::new(RasterConfig::default())
                 .render(&ljos_render::FrameView::new(snapshot, 1.0));
-            if let Ok(picture) = picture {
-                kept.push(picture);
-            }
+            kept.push(picture.map_err(|e| e.to_string()));
         }
     }
 }
@@ -1407,18 +1429,7 @@ impl Backend for LjosBackend {
             .kept
             .as_ref()
             .ok_or_else(|| failed("no pictures of the window are kept"))?;
-        kept.iter()
-            .map(|p| {
-                if x < p.width && y < p.height {
-                    Ok(p.pixel(x, y))
-                } else {
-                    Err(failed(format!(
-                        "{x}, {y} is outside the window's picture, which is {} by {}",
-                        p.width, p.height
-                    )))
-                }
-            })
-            .collect()
+        kept_pixels_at(kept, x, y)
     }
 
     fn as_input(&mut self) -> Option<&mut dyn Input> {
@@ -2262,6 +2273,26 @@ mod tests {
         b.load(&[file("Main.qml", source)], "Main.qml")
             .expect("Main.qml loads");
         b
+    }
+
+    #[test]
+    fn a_frame_not_drawn_fails_the_kept_pixels() {
+        let red = ljos_render::RgbaImage {
+            width: 1,
+            height: 1,
+            data: vec![255, 0, 0, 255],
+        };
+        let kept = vec![Ok(red.clone()), Err("out of memory".to_string()), Ok(red)];
+        let err = kept_pixels_at(&kept, 0, 0).expect_err("a frame was not drawn");
+        let said = err.to_string();
+        assert!(
+            said.contains("picture 2 of 3 was not drawn: out of memory"),
+            "{said}"
+        );
+        assert_eq!(
+            kept_pixels_at(&kept[..1], 0, 0).ok(),
+            Some(vec![[255, 0, 0, 255]])
+        );
     }
 
     const BINDING: &str = r#"import QtQuick
