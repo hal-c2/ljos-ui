@@ -268,7 +268,13 @@ fn connect(adb: &Adb, application_id: &str, out: &Path) -> anyhow::Result<String
     let names: Vec<&str> = listed
         .lines()
         .map(str::trim)
-        .filter(|n| n.starts_with("mcp-") && n.ends_with(".json"))
+        // Only an inspector's name: the application names the files, and
+        // a name reaches the device's shell as it is.
+        .filter(|n| {
+            n.strip_prefix("mcp-")
+                .and_then(|n| n.strip_suffix(".json"))
+                .is_some_and(|pid| !pid.is_empty() && pid.bytes().all(|b| b.is_ascii_digit()))
+        })
         .collect();
     if names.is_empty() {
         bail!("{application_id} serves no inspector: {START}");
@@ -276,14 +282,9 @@ fn connect(adb: &Adb, application_id: &str, out: &Path) -> anyhow::Result<String
     // An inspector removes its file when it stops, but one the system
     // killed (`am start -S` kills the last run) leaves it: only the file of
     // the process running now is the inspector's.
-    let running: Vec<u32> = adb
-        .output(&["shell", "pidof", application_id])
-        .map(|out| {
-            out.split_whitespace()
-                .filter_map(|p| p.parse().ok())
-                .collect()
-        })
-        .unwrap_or_default();
+    // What runs is asked before anything is removed: a file is removed
+    // only when `pidof` answered and its process is not among them.
+    let running = running(adb, application_id)?;
     let mut found = None;
     for name in names {
         let path = format!("{TOKEN_DIR}/{name}");
@@ -317,6 +318,30 @@ fn connect(adb: &Adb, application_id: &str, out: &Path) -> anyhow::Result<String
     Ok(url)
 }
 
+/// The processes of `application_id` on the device. `pidof` exits 1 when
+/// none runs; anything else it or adb says is an error, not "none".
+fn running(adb: &Adb, application_id: &str) -> anyhow::Result<Vec<u32>> {
+    let asked = format!("pidof {application_id}; echo pidof-exit:$?");
+    let out = adb
+        .output(&["shell", &asked])
+        .context("asking the device which processes run")?;
+    let (pids, status) = out
+        .trim_end()
+        .rsplit_once("pidof-exit:")
+        .unwrap_or((out.as_str(), ""));
+    match status.trim() {
+        "0" => Ok(pids
+            .split_whitespace()
+            .filter_map(|p| p.parse().ok())
+            .collect()),
+        "1" => Ok(Vec::new()),
+        _ => bail!(
+            "the device's pidof did not say which processes run: {}",
+            out.trim()
+        ),
+    }
+}
+
 /// The port of an inspector's address on the device's loopback, and what
 /// follows it.
 fn loopback_port(url: &str) -> anyhow::Result<(u16, &str)> {
@@ -336,10 +361,12 @@ fn loopback_port(url: &str) -> anyhow::Result<(u16, &str)> {
 }
 
 /// Writes `text` to `path`, readable by its owner alone, as an inspector
-/// writes its own token file.
+/// writes its own token file: in a directory that, on Unix, is the
+/// owner's alone too (ARCHITECTURE.md §19.7). One made here is made so;
+/// one others can reach is refused, not changed.
 fn write_owner_only(path: &Path, text: &str) -> anyhow::Result<()> {
     if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
-        std::fs::create_dir_all(dir).with_context(|| format!("making {}", dir.display()))?;
+        ljos_mcp_core::token_directory(dir)?;
     }
     let mut options = std::fs::OpenOptions::new();
     options.write(true).create(true).truncate(true);
@@ -838,10 +865,13 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         std::fs::write(dir.join("token.json"), token_file).unwrap();
         std::fs::write(dir.join("stale.json"), stale.unwrap_or("")).unwrap();
+        std::fs::write(dir.join("pidof"), "printf '4321\\r\\npidof-exit:0\\r\\n'\n").unwrap();
+        // The application names its files: one that is no inspector's
+        // would run what it names in the device's shell.
         let listed = if stale.is_some() {
-            r"mcp-1200.json\r\nmcp-4321.json\r\n"
+            r"mcp-1;id;.json\r\nmcp-1200.json\r\nmcp-4321.json\r\n"
         } else {
-            r"mcp-4321.json\r\nmcp-1200.json\r\n"
+            r"mcp-1;id;.json\r\nmcp-4321.json\r\nmcp-1200.json\r\n"
         };
         let script = format!(
             r#"#!/bin/sh
@@ -854,8 +884,8 @@ case "$*" in
   "-s phone shell run-as dev.ljos.hello cat files/target/ljos/mcp-1200.json")
     cat '{stale}' ;;
   "-s phone shell run-as dev.ljos.hello rm -f files/target/ljos/mcp-1200.json") ;;
-  "-s phone shell pidof dev.ljos.hello")
-    printf '4321\r\n' ;;
+  "-s phone shell pidof dev.ljos.hello; echo pidof-exit:\$?")
+    . '{pidof}' ;;
   "-s phone forward tcp:0 tcp:4410")
     echo 39001 ;;
   *) echo "adb: unexpected $*" >&2; exit 1 ;;
@@ -864,6 +894,7 @@ esac
             log = dir.join("log").display(),
             token = dir.join("token.json").display(),
             stale = dir.join("stale.json").display(),
+            pidof = dir.join("pidof").display(),
         );
         let adb = dir.join("adb");
         std::fs::write(&adb, script).unwrap();
@@ -903,6 +934,69 @@ esac
         assert_eq!(written.pid, None);
         let mode = std::fs::metadata(&out).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o600);
+        // Its directory is the owner's alone; the one above it is not
+        // made so.
+        let mode = |d: &str| {
+            std::fs::metadata(dir.path().join(d))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777
+        };
+        assert_eq!(mode("target/ljos"), 0o700);
+        assert_ne!(mode("target"), 0o700);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn connect_refuses_a_token_directory_others_can_read() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let open = dir.path().join("open");
+        std::fs::create_dir(&open).unwrap();
+        std::fs::set_permissions(&open, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let adb = Adb {
+            program: fake_adb(dir.path(), &on_phone(4321, 4410).to_text(), None),
+            device: Some("phone".into()),
+        };
+        let out = open.join("out.json");
+        let err = connect(&adb, "dev.ljos.hello", &out).unwrap_err();
+        assert!(
+            format!("{err:#}").contains(&open.display().to_string()),
+            "{err:#}"
+        );
+        assert!(!out.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn connect_removes_nothing_when_it_cannot_tell_what_runs() {
+        let dir = tempfile::tempdir().unwrap();
+        let stale = on_phone(1200, 4999).to_text();
+        let adb = Adb {
+            program: fake_adb(dir.path(), &on_phone(4321, 4410).to_text(), Some(&stale)),
+            device: Some("phone".into()),
+        };
+        // The device has no pidof.
+        std::fs::write(
+            dir.path().join("pidof"),
+            "printf 'sh: pidof: not found\\r\\npidof-exit:127\\r\\n'\n",
+        )
+        .unwrap();
+        let err = connect(&adb, "dev.ljos.hello", &dir.path().join("out.json")).unwrap_err();
+        assert!(format!("{err:#}").contains("pidof"), "{err:#}");
+        let log = std::fs::read_to_string(dir.path().join("log")).unwrap();
+        assert!(!log.contains("rm -f"), "{log}");
+        // Nor when adb itself fails.
+        std::fs::write(
+            dir.path().join("pidof"),
+            "echo 'adb: device offline' >&2; exit 1\n",
+        )
+        .unwrap();
+        let err = connect(&adb, "dev.ljos.hello", &dir.path().join("out.json")).unwrap_err();
+        assert!(format!("{err:#}").contains("offline"), "{err:#}");
+        let log = std::fs::read_to_string(dir.path().join("log")).unwrap();
+        assert!(!log.contains("rm -f"), "{log}");
     }
 
     #[cfg(unix)]

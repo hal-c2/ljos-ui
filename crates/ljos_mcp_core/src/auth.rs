@@ -129,7 +129,11 @@ fn check_own_directory(
 /// there. Only the directory itself is the token's: what is above it (a
 /// project's `target`, say) is made as anything else there is, and keeps
 /// its mode, for other tools use it.
-fn token_directory(dir: &Path) -> Result<(), TokenFileError> {
+///
+/// # Errors
+/// The directory cannot be made, or is a link, another user's, or open
+/// to others; it is refused, never changed.
+pub fn token_directory(dir: &Path) -> Result<(), TokenFileError> {
     let fail = |source| TokenFileError::Write {
         path: dir.to_path_buf(),
         source,
