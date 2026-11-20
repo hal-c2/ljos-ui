@@ -1054,3 +1054,34 @@ fn a_creation_job_whose_on_done_panics_on_its_error_still_closes_the_creation() 
     e.after_creation(move |_| r.set(true));
     assert!(ran.get(), "a creation was left open");
 }
+
+/// A panic in `on_done` after the object was made comes after the result
+/// is out: whoever waits keeps the object, it is not unmade, and the
+/// creation still closes.
+#[test]
+fn a_creation_job_whose_on_done_panics_on_success_keeps_its_object() {
+    let h = engine();
+    let e = &h.engine;
+    e.register_module(ljos_engine::module!("QtQuick" 2.0 => [Dud]));
+    let root = h.load(INCUBATE_DUD);
+    let comp = h.get(root, "c").as_object().expect("the component");
+    let (job, handle) = e.make_later(
+        ljos_engine::Request::component(comp).parent(Some(root)),
+        ljos_runtime::Lane::Visible,
+        ljos_runtime::ProcId::new(0, 0),
+    );
+    e.incubate(job.on_done(|_, r| {
+        assert!(r.is_err(), "whoever waits panics on success");
+    }));
+    let faults = run_incubations(e);
+    assert_eq!(faults.len(), 1, "{faults:?}");
+    let made = handle
+        .result()
+        .expect("told")
+        .expect("the object was made");
+    assert!(e.is_alive(made), "the object was unmade");
+    let ran = Rc::new(Cell::new(false));
+    let r = ran.clone();
+    e.after_creation(move |_| r.set(true));
+    assert!(ran.get(), "a creation was left open");
+}
