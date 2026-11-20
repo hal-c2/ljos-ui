@@ -884,7 +884,8 @@ Feature: A shipped application its users change while it runs
         """json
         { "Colors": { "accent": "#2e7d32" } }
         """
-      And the user saves the file "Shell.qml" as:
+      Then the user's files are not compiled
+      When the user saves the file "Shell.qml" as:
         """qml
         import QtQuick
         Rectangle { objectName: "user-shell"; width: 50; height: 20 }
