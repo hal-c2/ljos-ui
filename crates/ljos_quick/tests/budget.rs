@@ -499,6 +499,9 @@ fn ten_plain_items() {
     // object table's growth falls elsewhere in the count (192 bytes).
     // What frees the script values Rust let go of keeps its lists between
     // runs, which nested runs now do too (#591): six fewer.
+    // A context knows the file it is made for, so an id a Bound inline
+    // component reads is looked for no further out: 8 bytes a context
+    // (128 bytes).
     assert_eq!(
         b,
         Budget {
@@ -516,7 +519,7 @@ fn ten_plain_items() {
                 atoms: 0,
             },
             allocations: 665,
-            bytes: 120344,
+            bytes: 120472,
         }
     );
 }
@@ -597,14 +600,16 @@ fn bytes_a_thousand_instances_keep() {
     // 16 wrapped and plain). A node's count of the change that marked it,
     // 64 bits where a byte wrapped, is 8 bytes a node (20.8, 23.1 and
     // 11.1 kB before). `fetch`'s helper, one more object an engine, moves
-    // that growth again: 12 bytes more `plain` (11.1 kB before). The rest
+    // that growth again: 12 bytes more `plain` (11.1 kB before). A
+    // context's file, which an id a Bound inline component reads stops at,
+    // is 8 bytes an instance. The rest
     // is mostly the graph's nodes, the objects and the text's runs.
     assert_eq!(
         kept,
         Kept {
-            one_line: 20898,
-            wrapped: 23205,
-            plain: 11143,
+            one_line: 20906,
+            wrapped: 23213,
+            plain: 11151,
         }
     );
 }

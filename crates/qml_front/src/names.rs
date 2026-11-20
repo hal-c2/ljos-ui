@@ -18,7 +18,8 @@
 //! `pragma ComponentBehavior: Bound` changes the order: the ids of every
 //! component around come before any property, and a delegate is given
 //! nothing in its context (what the model has comes through `required`
-//! properties).
+//! properties). An inline component of such a file is made only in that
+//! file, and the ids where it is made come before its own properties too.
 //!
 //! Finding which names are free is the caller's: it needs JavaScript scope
 //! analysis of the script, which the back end does anyway.
@@ -53,6 +54,9 @@ pub enum Target<T> {
     Global(Global),
 }
 
+/// What every delegate's context is given, whatever its model.
+pub const GIVEN: &[&str] = &["index", "model", "modelData"];
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Global {
     /// `Qt`, `qsTr`, `print`: what QML puts in every script's scope.
@@ -78,6 +82,11 @@ pub struct Resolution<T> {
     /// What the name is when no role and no aimed target has it. None when
     /// only those might.
     pub target: Option<Target<T>>,
+    /// An inline component of a file under `pragma ComponentBehavior: Bound`
+    /// whose name is an id elsewhere in the file: the id where the component
+    /// is made comes before [`target`](Self::target), and which object that
+    /// is, only the running program knows.
+    pub made_in: bool,
 }
 
 impl<T> Resolution<T> {
@@ -86,6 +95,7 @@ impl<T> Resolution<T> {
             aimed: None,
             roles: Vec::new(),
             target: Some(target),
+            made_in: false,
         }
     }
 }
@@ -116,7 +126,11 @@ impl<O: TypeOracle> Names<'_, '_, '_, O> {
             resolution.target = global(name).or_else(|| self.core(name)).map(Target::Global);
         }
         resolution.aimed = aimed;
-        if resolution.target.is_none() && resolution.roles.is_empty() && aimed.is_none() {
+        if resolution.target.is_none()
+            && resolution.roles.is_empty()
+            && aimed.is_none()
+            && !resolution.made_in
+        {
             return None;
         }
         // A name only the model may have: the outermost model is the last
@@ -165,6 +179,7 @@ impl<O: TypeOracle> Names<'_, '_, '_, O> {
                     aimed: None,
                     roles,
                     target: Some(Target::Id(object)),
+                    made_in: false,
                 };
             }
             let root = tree.contexts[context].root;
@@ -187,11 +202,12 @@ impl<O: TypeOracle> Names<'_, '_, '_, O> {
                     aimed: None,
                     roles,
                     target: Some(target),
+                    made_in: false,
                 };
             }
             if tree.contexts[context].is_delegate {
                 // What every delegate is given, whatever the model.
-                if matches!(name, "index" | "model" | "modelData") {
+                if GIVEN.contains(&name) {
                     let target = Target::Context {
                         context,
                         name: name.to_string(),
@@ -200,6 +216,7 @@ impl<O: TypeOracle> Names<'_, '_, '_, O> {
                         aimed: None,
                         roles,
                         target: Some(target),
+                        made_in: false,
                     };
                 }
                 roles.push(context);
@@ -211,6 +228,7 @@ impl<O: TypeOracle> Names<'_, '_, '_, O> {
                         aimed: None,
                         roles,
                         target: None,
+                        made_in: false,
                     };
                 }
             }
@@ -219,6 +237,7 @@ impl<O: TypeOracle> Names<'_, '_, '_, O> {
 
     /// `pragma ComponentBehavior: Bound`: every id in sight, then the scope
     /// object and the roots, the nearest first. A delegate is given nothing.
+    /// In an inline component the ids in sight go on where it is made.
     fn bound(&self, name: &str, offset: u32) -> Resolution<O::Type> {
         let tree = self.tree;
         let inside = tree.object_at(offset);
@@ -232,22 +251,29 @@ impl<O: TypeOracle> Names<'_, '_, '_, O> {
         if let Some(object) = chain.iter().find_map(|context| tree.id_in(*context, name)) {
             return Resolution::found(Target::Id(object));
         }
+        let outermost = *chain.last().expect("a context");
+        let made_in = outermost != 0
+            && tree.contexts[outermost].outer.is_none()
+            && tree
+                .objects
+                .iter()
+                .any(|object| object.id == Some(name) && !chain.contains(&object.context));
         let scope = (scope != tree.contexts[chain[0]].root && !aimed).then_some(scope);
         let objects = scope
             .into_iter()
             .chain(chain.iter().map(|context| tree.contexts[*context].root));
-        for object in objects {
-            if self.has(object, name) {
-                return Resolution::found(Target::Property {
-                    object,
-                    name: name.to_string(),
-                });
-            }
-        }
+        let target = objects
+            .into_iter()
+            .find(|object| self.has(*object, name))
+            .map(|object| Target::Property {
+                object,
+                name: name.to_string(),
+            });
         Resolution {
             aimed: None,
             roles: Vec::new(),
-            target: None,
+            target,
+            made_in,
         }
     }
 

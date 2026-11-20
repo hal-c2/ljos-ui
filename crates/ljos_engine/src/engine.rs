@@ -3811,6 +3811,44 @@ impl Engine {
         found.filter(|o| self.is_alive(*o))
     }
 
+    /// The object `name` is the id of from `ctx` outwards within the file
+    /// `file`, as [`Engine::context_name`] gives it: `null` for one that is
+    /// gone. Nothing else of a context is looked at, and a context of
+    /// another file ends the walk: Qt does not find, for a Bound inline
+    /// component, an id of the file that uses its file.
+    pub(crate) fn context_id(&self, ctx: ContextId, file: &Atom, name: &str) -> Option<Value> {
+        crate::lookups::name();
+        let found = {
+            let contexts = self.inner.contexts.borrow();
+            let mut cur = Some(ctx);
+            loop {
+                let at = cur?;
+                // The engine's root context is of no file: an id a host puts
+                // there is not where the component is made.
+                if at == self.inner.root_context {
+                    return None;
+                }
+                let c = contexts.get(at)?;
+                if c.file.as_ref().is_some_and(|f| f != file) {
+                    return None;
+                }
+                if let Some(o) = c.id(name) {
+                    break o;
+                }
+                cur = c.parent;
+            }
+        };
+        // Tracked: a binding that read the id reads again when it goes.
+        Some(self.live(Value::Object(found)))
+    }
+
+    /// See [`Context::file`].
+    pub(crate) fn set_context_file(&self, ctx: ContextId, file: &Atom) {
+        if let Some(c) = self.inner.contexts.borrow_mut().get_mut(ctx) {
+            c.file = Some(file.clone());
+        }
+    }
+
     /// See [`Context::root`].
     pub(crate) fn set_context_root(&self, ctx: ContextId, obj: ObjectId) {
         if let Some(c) = self.inner.contexts.borrow_mut().get_mut(ctx) {
@@ -4425,5 +4463,25 @@ impl Wrapped {
             engine.binding_ran(run, &before, &v);
         }
         v
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_id_of_the_root_context_is_not_where_a_component_is_made() {
+        let engine = Engine::new();
+        let file = Atom::intern("file:///Panel.qml");
+        let made = engine.create_context(Some(engine.root_context()));
+        engine.set_context_file(made, &file);
+        let host = engine
+            .create_native(crate::QtObject::default(), None)
+            .unwrap();
+        engine.set_context_id(engine.root_context(), "label", host);
+        assert!(engine.context_id(made, &file, "label").is_none());
+        engine.set_context_id(made, "label", host);
+        assert!(engine.context_id(made, &file, "label").is_some());
     }
 }

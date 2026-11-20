@@ -2,7 +2,9 @@
 #   https://doc.qt.io/qt-6/qtqml-documents-scope.html
 #   https://doc.qt.io/qt-6/qml-qtquick-repeater.html
 #   https://doc.qt.io/qt-6/qml-qtquick-loader.html
-# Verified on Qt 6.11.2 (qml6, offscreen).
+#   https://doc.qt.io/qt-6/qtqml-documents-definetypes.html#inline-components
+#   https://doc.qt.io/qt-6/qtqml-documents-structure.html#componentbehavior
+# Verified on Qt 6.11.2 (qml6, offscreen); the inline component rules on Qt 6.12.0.
 
 @qt-parity
 Feature: Names of the component around
@@ -263,3 +265,353 @@ Feature: Names of the component around
         }
         """
       Then the property "seen" of "root" is "3 1"
+
+  Rule: An inline component finds what it does not have where it is made
+
+    Scenario: A delegate in an inline component reads an id of the file
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: settings
+          objectName: "root"
+          property string foreground: "red"
+          component Choice: Row {
+            Repeater { model: 1; Text { objectName: "choice"; text: settings.foreground } }
+          }
+          Choice { }
+        }
+        """
+      Then the property "text" of "choice" is "red"
+      When the property "foreground" of "root" is set to "blue"
+      Then the property "text" of "choice" is "blue"
+
+    Scenario: An inline component's own property comes before an id of the file
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          component Probe: QtObject {
+            objectName: "probe"
+            property string label: "mine"
+            property string seen: typeof label === "string" ? "property" : "id"
+          }
+          Probe { }
+          Item { id: label }
+        }
+        """
+      Then the property "seen" of "probe" is "property"
+
+    Scenario: Under ComponentBehavior Bound an id of the file comes before the component's own property
+      Given the QML:
+        """qml
+        pragma ComponentBehavior: Bound
+        import QtQuick
+        Item {
+          component Probe: QtObject {
+            objectName: "probe"
+            property string label: "mine"
+            property string seen: typeof label === "string" ? "property" : label.objectName
+          }
+          Probe { }
+          Item { id: label; objectName: "the file's" }
+        }
+        """
+      Then the property "seen" of "probe" is "the file's"
+
+    Scenario: Under ComponentBehavior Bound the id is the one where the component is made
+      Given the QML:
+        """qml
+        pragma ComponentBehavior: Bound
+        import QtQuick
+        Item {
+          QtObject { id: source; property string name: "root" }
+          component Probe: QtObject { property string seen: source.name }
+          Probe { objectName: "top" }
+          Repeater {
+            model: 1
+            Item {
+              QtObject { id: source; property string name: "row" }
+              Probe { objectName: "inner" }
+            }
+          }
+        }
+        """
+      Then the property "seen" of "top" is "root"
+      And the property "seen" of "inner" is "row"
+
+    Scenario: Under ComponentBehavior Bound a function that assigns the name still reads the id
+      Given the QML:
+        """qml
+        pragma ComponentBehavior: Bound
+        import QtQuick
+        Item {
+          component Probe: QtObject {
+            objectName: "probe"
+            property string label: "mine"
+            property string before: ""
+            property string after: ""
+            function go() {
+              before = typeof label === "string" ? "property" : "id"
+              label = "written"
+              after = typeof label === "string" ? "property" : "id"
+            }
+          }
+          Probe { }
+          Item { id: label }
+        }
+        """
+      When the method "go" of "probe" is called
+      Then the property "before" of "probe" is "id"
+      And the property "after" of "probe" is "id"
+      And the property "label" of "probe" is "written"
+
+    Scenario: Under ComponentBehavior Bound an id of the file that uses the component's file is not found
+      Given the file "Panel.qml":
+        """qml
+        pragma ComponentBehavior: Bound
+        import QtQuick
+        Item {
+          component Probe: QtObject {
+            property string label: "mine"
+            property string seen: typeof label === "string" ? "property" : "id"
+          }
+          Probe { objectName: "probe" }
+          Repeater {
+            model: 1
+            Item { Item { id: label } }
+          }
+        }
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        Item {
+          Item { id: label }
+          Panel { }
+        }
+        """
+      Then the property "seen" of "probe" is "property"
+
+    Scenario: Under ComponentBehavior Bound the id where the component is made comes before the target of a PropertyChanges
+      Given the QML:
+        """qml
+        pragma ComponentBehavior: Bound
+        import QtQuick
+        Item {
+          component Box: Item {
+            objectName: "box"
+            property string seed: "own"
+            property alias seen: holder.seen
+            property alias seen2: holder2.seen
+            QtObject { id: holder; property string seed: "target"; property string seen: "none" }
+            QtObject { id: holder2; property string seen: "none" }
+            state: "on"
+            states: State {
+              name: "on"
+              PropertyChanges { target: holder; seen: typeof seed === "string" ? seed : seed.objectName }
+              PropertyChanges { target: holder2; seen: typeof seed === "string" ? seed : seed.objectName }
+            }
+          }
+          Item { id: seed; objectName: "id" }
+          Box { }
+        }
+        """
+      Then the property "seen" of "box" is "id"
+      And the property "seen2" of "box" is "id"
+
+    Scenario: Under ComponentBehavior Bound the target of a PropertyChanges has the name when no id where the component is made does
+      Given the QML:
+        """qml
+        pragma ComponentBehavior: Bound
+        import QtQuick
+        Item {
+          component Box: Item {
+            objectName: "box"
+            property string seed: "own"
+            property alias seen: holder.seen
+            property alias seen2: holder2.seen
+            QtObject { id: holder; property string seed: "target"; property string seen: "none" }
+            QtObject { id: holder2; property string seen: "none" }
+            state: "on"
+            states: State {
+              name: "on"
+              PropertyChanges { target: holder; seen: typeof seed === "string" ? seed : seed.objectName }
+              PropertyChanges { target: holder2; seen: typeof seed === "string" ? seed : seed.objectName }
+            }
+          }
+          component Other: Item { Item { id: seed; objectName: "id" } }
+          Other { }
+          Box { }
+        }
+        """
+      Then the property "seen" of "box" is "target"
+      And the property "seen2" of "box" is "own"
+
+    @ljos-only
+    Scenario: Under ComponentBehavior Bound a name of Ljos.Core is Ljos.Core's where no id of the name is
+      Given the QML:
+        """qml
+        pragma ComponentBehavior: Bound
+        import Ljos.Ui
+        import Ljos.Core
+        Item {
+          component Box: Item {
+            objectName: "box"
+            property real seen: point(3, 4).x
+          }
+          component Other: Item { Item { id: point } }
+          Other { }
+          Box { }
+        }
+        """
+      Then the property "seen" of "box" is 3
+
+    Scenario: Under ComponentBehavior Bound a read after the function writes its own property sees the write
+      Given the QML:
+        """qml
+        pragma ComponentBehavior: Bound
+        import QtQuick
+        Item {
+          component Probe: QtObject {
+            objectName: "probe"
+            property string label: "mine"
+            property string after: ""
+            function go() {
+              this.label = "written"
+              after = label
+            }
+          }
+          component Other: Item { Item { id: label } }
+          Other { }
+          Probe { }
+        }
+        """
+      When the method "go" of "probe" is called
+      Then the property "after" of "probe" is "written"
+
+    Scenario: Under ComponentBehavior Bound a function's own formal does not stand in for the id it writes
+      Given the QML:
+        """qml
+        pragma ComponentBehavior: Bound
+        import QtQuick
+        Item {
+          component Probe: QtObject {
+            objectName: "probe"
+            property var label: null
+            function go($m_label) { label = null; return label.objectName }
+            property string seen: go({ label: { objectName: "argument" } })
+          }
+          Probe { }
+          Item { id: label; objectName: "made" }
+        }
+        """
+      Then the property "seen" of "probe" is "made"
+
+    @ljos-only
+    Scenario: Under ComponentBehavior Bound a binding that reads an id where the component is made reads again when the id goes
+      Given the QML:
+        """qml
+        pragma ComponentBehavior: Bound
+        import QtQuick
+        Item {
+          component Probe: QtObject {
+            objectName: "probe"
+            property string source: "mine"
+            property bool present: source !== null
+          }
+          Probe { }
+          Item { id: source; objectName: "source" }
+        }
+        """
+      Then the property "present" of "probe" is true
+      When the object "source" is destroyed
+      Then the property "present" of "probe" is false
+
+    Scenario: Under ComponentBehavior Bound a binding reads an id of the file that uses the file when the component has nothing of the name
+      Given the file "Panel.qml":
+        """qml
+        pragma ComponentBehavior: Bound
+        import QtQuick
+        Item {
+          component Box: Item {
+            objectName: "box"
+            property string seen: typeof seed === "object" && seed !== null ? seed.objectName : "nothing"
+          }
+          component Other: Item { Item { id: seed; objectName: "other" } }
+          Other { }
+          Box { }
+        }
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        Item {
+          Item { id: seed; objectName: "outer" }
+          Panel { }
+        }
+        """
+      Then the property "seen" of "box" is "outer"
+
+    Scenario: Under ComponentBehavior Bound a PropertyChanges reads an id of the file that uses the file where none is where the component is made
+      Given the file "Panel.qml":
+        """qml
+        pragma ComponentBehavior: Bound
+        import QtQuick
+        Item {
+          component Box: Item {
+            objectName: "box"
+            property alias seen: holder.seen
+            QtObject { id: holder; property string seen: "none" }
+            state: "on"
+            states: State {
+              name: "on"
+              PropertyChanges { target: holder; seen: typeof seed === "object" && seed !== null ? seed.objectName : "nothing" }
+            }
+          }
+          component Other: Item { Item { id: seed; objectName: "other" } }
+          Other { }
+          Box { }
+        }
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        Item {
+          Item { id: seed; objectName: "outer" }
+          Panel { }
+        }
+        """
+      Then the property "seen" of "box" is "outer"
+
+    @ljos-only
+    Scenario: Under ComponentBehavior Bound a PropertyChanges reads Ljos.Core's name where no id of the name is around
+      Given the file "Panel.qml":
+        """qml
+        pragma ComponentBehavior: Bound
+        import Ljos.Ui
+        import Ljos.Core
+        Item {
+          component Box: Item {
+            objectName: "box"
+            property alias seen: holder.seen
+            Item { id: holder; property real seen: -1 }
+            state: "on"
+            states: State {
+              name: "on"
+              PropertyChanges { target: holder; seen: point(3, 4).x }
+            }
+          }
+          component Other: Item { Item { id: point } }
+          Other { }
+          Box { }
+        }
+        """
+      And the QML:
+        """qml
+        import Ljos.Ui
+        Item {
+          Panel { }
+        }
+        """
+      Then the property "seen" of "box" is 3

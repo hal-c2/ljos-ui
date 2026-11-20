@@ -194,6 +194,8 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
             )
         };
         let mut plans: HashMap<(String, Vec<String>, bool, bool), Plan> = HashMap::new();
+        let taken =
+            |made: &str| text.contains(made) || args.iter().flatten().any(|arg| arg.contains(made));
         let mut core_names: HashSet<String> = HashSet::new();
         let written: HashSet<&str> = analysis
             .free
@@ -216,17 +218,15 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
             let plan = plans
                 .entry(key(free))
                 .or_insert_with(|| {
-                    let plan = self.resolve(&free.name, offset, &free.chain, scope);
+                    let is_written = written.contains(free.name.as_str());
+                    let plan =
+                        self.resolve(&free.name, offset, &free.chain, scope, is_written, &taken);
                     let plan = if free.instance_type {
                         the_type(plan)
                     } else {
                         plan
                     };
-                    if written.contains(free.name.as_str()) {
-                        held(plan)
-                    } else {
-                        plan
-                    }
+                    if is_written { held(plan) } else { plan }
                 })
                 .clone();
             if let Some(param) = &plan.param
@@ -278,7 +278,10 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                 && plan.replace.is_none()
                 && plan.param.as_ref().is_some_and(|param| {
                     param.name == free.name
-                        && matches!(param.arg, Arg::Context { .. } | Arg::Dynamic(_))
+                        && matches!(
+                            param.arg,
+                            Arg::Context { .. } | Arg::Dynamic(_) | Arg::MadeIn { .. }
+                        )
                 })
             {
                 // The name reached the function by value: it is a variable
@@ -634,26 +637,21 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
     }
 
     /// What a free name at `offset` is, and how the function gets it.
-    fn resolve(&mut self, name: &str, offset: u32, chain: &[String], scope: usize) -> Plan {
+    /// `is_written` when the script assigns to it; `taken` is true of a
+    /// name the script may bind itself, which a name made for it avoids.
+    fn resolve(
+        &mut self,
+        name: &str,
+        offset: u32,
+        chain: &[String],
+        scope: usize,
+        is_written: bool,
+        taken: &dyn Fn(&str) -> bool,
+    ) -> Plan {
         let context = self.tree.objects[self.tree.object_at(offset)].context;
-        let Some(resolution) = self.lookup(name, offset) else {
+        let Some(mut resolution) = self.lookup(name, offset) else {
             if self.project.dynamic_names().contains(name) {
-                return Plan {
-                    resolved: Resolved::ContextProp {
-                        component: None,
-                        fallback: None,
-                    },
-                    param: Some(Param {
-                        name: name.to_string(),
-                        arg: Arg::Context {
-                            component: None,
-                            name: name.to_string(),
-                            fallback: None,
-                        },
-                    }),
-                    rewrite: None,
-                    replace: None,
-                };
+                return made_where(name);
             }
             if self.warned.insert(name.to_string()) {
                 let span = self.span(Span::new(offset, offset + name.len() as u32));
@@ -690,10 +688,60 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
             let span = Span::new(offset, offset + (name.len() + 1 + ty.len()) as u32);
             self.stood_in_at(&[name, ty.as_str()], &uri, span);
         }
+        // A role of the delegate's model was the only guess left for a name
+        // nothing in sight has. Where a component of the project has the name
+        // the running program may find it where the component is made (an
+        // inline component's delegate reading an id of the file that made
+        // it), after the model.
+        let mut made = None;
+        if resolution.aimed.is_none()
+            && let Some(Target::Context { context, .. }) = resolution.target
+            && !qml_front::names::GIVEN.contains(&name)
+            && self.project.dynamic_names().contains(name)
+        {
+            resolution.roles.push(context);
+            resolution.target = None;
+            made = Some(made_where(name));
+        }
         let base = resolution
             .target
             .as_ref()
-            .map(|target| self.target(name, target, chain, scope, context));
+            .map(|target| self.target(name, target, chain, scope, context))
+            .or(made);
+        let core = matches!(resolution.target, Some(Target::Global(Global::Core)));
+        if resolution.made_in {
+            // Qt reads the id, else the component's own property as it is
+            // when read, and assigns the property, in the same function: a
+            // read after `this.label = …` sees what was written. That write
+            // is not of the free name, so a name only read takes this plan
+            // too: the one below reads the property once, as the function
+            // is entered.
+            if resolution.aimed.is_none()
+                && let Some(plan) = base
+                    .as_ref()
+                    .and_then(|base| made_in_written(name, base, taken))
+            {
+                return plan;
+            }
+            if !is_written {
+                let mut fallback = fallback_of(name, base.as_ref(), core);
+                // Qt 6.12 reads the target of a PropertyChanges after the id
+                // where the component is made and before what the component
+                // has itself.
+                if resolution.aimed.is_some() {
+                    fallback = Some(Box::new(Arg::Context {
+                        component: None,
+                        name: name.to_string(),
+                        fallback,
+                    }));
+                }
+                // With no property of its own of the name, qml6 6.12 goes on
+                // to the ids and members around, those of the file that uses
+                // this one too.
+                let fallback = fallback.or_else(|| Some(Box::new(Arg::Dynamic(name.to_string()))));
+                return made_in(name, base, fallback);
+            }
+        }
         let role = resolution.roles.first().copied();
         if role.is_none()
             && resolution.aimed.is_none()
@@ -704,23 +752,7 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
         // The running program may have the name first: a role of the model,
         // or what the target of a PropertyChanges has.
         let component = role.map(|c| CompIdx(c as u32));
-        let fallback_arg = base.as_ref().and_then(|base| {
-            // `Ljos.Core`'s is a const of the module, which the function
-            // is not given: the engine reads it where the role is not.
-            if base.param.is_none()
-                && matches!(resolution.target, Some(Target::Global(Global::Core)))
-            {
-                return Some(Box::new(Arg::Core(name.to_string())));
-            }
-            let param = base.param.as_ref()?;
-            Some(Box::new(match (&base.rewrite, &param.arg) {
-                (Some(_), Arg::Object(object)) => Arg::Property {
-                    object: *object,
-                    name: name.to_string(),
-                },
-                (_, arg) => arg.clone(),
-            }))
-        });
+        let fallback_arg = fallback_of(name, base.as_ref(), core);
         Plan {
             resolved: Resolved::ContextProp {
                 component,
@@ -1198,4 +1230,105 @@ fn kept_this(link: &js::Link, called_attached: &dyn Fn(u32) -> bool) -> Option<j
         js::LinkKind::Call(Some(this)) => Some(this.clone()),
         _ => None,
     }
+}
+
+/// A name only the context an instance is made in has, found there at run
+/// time.
+fn made_where(name: &str) -> Plan {
+    Plan {
+        resolved: Resolved::ContextProp {
+            component: None,
+            fallback: None,
+        },
+        param: Some(Param {
+            name: name.to_string(),
+            arg: Arg::Context {
+                component: None,
+                name: name.to_string(),
+                fallback: None,
+            },
+        }),
+        rewrite: None,
+        replace: None,
+    }
+}
+
+/// What the engine reads for `name` when what the running program has
+/// first does not have it: `base` as the function would be given it.
+/// `core` says `base` is a const of `Ljos.Core`, which the function is not
+/// given, so the engine reads it from the module.
+fn fallback_of(name: &str, base: Option<&Plan>, core: bool) -> Option<Box<Arg>> {
+    let base = base?;
+    if core && base.param.is_none() {
+        return Some(Box::new(Arg::Core(name.to_string())));
+    }
+    let param = base.param.as_ref()?;
+    Some(Box::new(match (&base.rewrite, &param.arg) {
+        (Some(_), Arg::Object(object)) => Arg::Property {
+            object: *object,
+            name: name.to_string(),
+        },
+        (_, arg) => arg.clone(),
+    }))
+}
+
+/// A name of an inline component under `pragma ComponentBehavior: Bound`
+/// that may be an id where the component is made: that id, else what
+/// `fallback` reads.
+/// What the function is given stands for both, so a member `base` reaches
+/// through its object is given as a value.
+fn made_in(name: &str, base: Option<Plan>, fallback: Option<Box<Arg>>) -> Plan {
+    Plan {
+        resolved: Resolved::ContextProp {
+            component: None,
+            fallback: base.map(|base| Box::new(base.resolved)),
+        },
+        param: Some(Param {
+            name: name.to_string(),
+            arg: Arg::MadeIn {
+                name: name.to_string(),
+                fallback,
+                writes: None,
+            },
+        }),
+        rewrite: None,
+        replace: None,
+    }
+}
+
+/// The plan for a name of a Bound inline component that may be an id where
+/// it is made, where `base` is its own property: the script reads and
+/// writes the name through what it is given, which reads the id where the
+/// component is made, else the property as it is then, and writes the
+/// property.
+fn made_in_written(name: &str, base: &Plan, taken: &dyn Fn(&str) -> bool) -> Option<Plan> {
+    let (
+        Some(_),
+        Some(Param {
+            arg: Arg::Object(object),
+            ..
+        }),
+    ) = (&base.rewrite, &base.param)
+    else {
+        return None;
+    };
+    // A formal or local of the same name would shadow what the function is
+    // given.
+    let mut through = format!("$m_{name}");
+    while taken(&through) {
+        through.push('_');
+    }
+    Some(Plan {
+        resolved: base.resolved.clone(),
+        param: Some(Param {
+            name: through.clone(),
+            arg: Arg::MadeIn {
+                name: name.to_string(),
+                fallback: None,
+                writes: Some(*object),
+            },
+        }),
+        rewrite: Some(through),
+        replace: None,
+    })
 }

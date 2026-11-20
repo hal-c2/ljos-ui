@@ -3,8 +3,8 @@ use ljos_engine::aot as rt;
 pub static FILE: rt::File = rt::File {
     name: "Scenario",
     content: [
-        67, 93, 231, 109, 60, 2, 214, 180, 163, 30, 182, 146, 162, 96, 47, 160, 80, 167, 74, 139,
-        1, 85, 33, 223, 175, 51, 200, 136, 3, 167, 74, 135,
+        66, 85, 240, 224, 137, 73, 95, 96, 174, 1, 157, 116, 109, 178, 133, 233, 225, 196, 97, 244,
+        6, 6, 255, 144, 182, 195, 86, 220, 213, 48, 9, 7,
     ],
     context: "",
     texts: &[],
@@ -24,61 +24,66 @@ pub static FILE: rt::File = rt::File {
             kind: rt::Kind::String,
             write: false,
         },
-        rt::PropSite {
-            name: "doubled",
-            kind: rt::Kind::Number,
-            write: false,
-        },
-        rt::PropSite {
-            name: "count",
-            kind: rt::Kind::Number,
-            write: true,
-        },
     ],
-    signals: &[],
+    signals: &["ping"],
     methods: &[],
-    exprs: &[Some(e0), Some(e1), Some(e2)],
+    exprs: &[Some(e0), Some(e1), Some(e2), Some(e3)],
 };
 
-// Scenario:6:33
+// Scenario:6:31
 fn e0(f: &rt::Frame<'_>) -> Result<rt::Value, rt::Stop> {
     let o0 = f.object(0, 0)?;
     let p0 = f.prop(o0, 0)?;
-    return Ok(rt::Value::Real((f.num(o0, p0)? * 2.0_f64)));
+    return Ok(rt::Value::Real((f.num(o0, p0)? / 2.0_f64)));
 }
 
-// Scenario:8:29
+// Scenario:7:34
 fn e1(f: &rt::Frame<'_>) -> Result<rt::Value, rt::Stop> {
     let o0 = f.object(0, 0)?;
-    let p0 = f.prop(o0, 1)?;
-    let p1 = f.prop(o0, 2)?;
-    let p2 = f.prop(o0, 3)?;
-    let _ = {
-        let l1 = rt::js::concat(
-            &(rt::js::concat(&(f.str(o0, p1)?), &(rt::Atom::from("d")))),
-            &rt::js::number_text(f.num(o0, p2)?),
-        );
-        f.set(o0, p0, rt::Value::String(l1.clone()))?;
-        l1
-    };
-    return Ok(rt::Value::Undefined);
+    let p0 = f.prop(o0, 0)?;
+    return Ok(rt::Value::String(rt::js::concat(
+        &(rt::Atom::from("n=")),
+        &rt::js::number_text(f.num(o0, p0)?),
+    )));
 }
 
-// Scenario:9:34
+// Scenario:10:19
 fn e2(f: &rt::Frame<'_>) -> Result<rt::Value, rt::Stop> {
     let o0 = f.object(0, 0)?;
     let p0 = f.prop(o0, 1)?;
     let p1 = f.prop(o0, 2)?;
-    let p2 = f.prop(o0, 4)?;
+    let mut a0 = f.arg_num(0)?;
+    let _ = {
+        let l1 = rt::js::concat(
+            &(rt::js::concat(&(f.str(o0, p1)?), &(rt::Atom::from("p")))),
+            &rt::js::number_text(a0),
+        );
+        f.set(o0, p0, rt::Value::String(l1.clone()))?;
+        l1
+    };
+    Ok(rt::Value::Undefined)
+}
+
+// Scenario:11:27
+fn e3(f: &rt::Frame<'_>) -> Result<rt::Value, rt::Stop> {
+    let o0 = f.object(0, 0)?;
+    let p0 = f.prop(o0, 1)?;
+    let p1 = f.prop(o0, 2)?;
+    let p2 = f.prop(o0, 0)?;
+    let s0 = f.signal(o0, 0)?;
     let _ = {
         let l1 = rt::js::concat(&(f.str(o0, p1)?), &(rt::Atom::from("c")));
         f.set(o0, p0, rt::Value::String(l1.clone()))?;
         l1
     };
     let _ = {
-        let l2 = 5.0_f64;
-        f.set(o0, p2, rt::Value::Real(l2))?;
-        l2
+        let l2 = rt::Value::Real(f.num(o0, p2)?);
+        f.emit(o0, s0, &[l2])?
+    };
+    let _ = {
+        let l3 = rt::js::concat(&(f.str(o0, p1)?), &(rt::Atom::from("e")));
+        f.set(o0, p0, rt::Value::String(l3.clone()))?;
+        l3
     };
     Ok(rt::Value::Undefined)
 }

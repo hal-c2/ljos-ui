@@ -248,6 +248,28 @@ fn sample() -> CompiledFile {
                     fallback: Some(Box::new(Arg::Dynamic("modelData".into()))),
                 },
             },
+            Param {
+                name: "label".into(),
+                arg: Arg::MadeIn {
+                    name: "label".into(),
+                    fallback: Some(Box::new(Arg::Object(ObjRef {
+                        component: CompIdx(1),
+                        object: ObjIdx(0),
+                    }))),
+                    writes: None,
+                },
+            },
+            Param {
+                name: "$m_label".into(),
+                arg: Arg::MadeIn {
+                    name: "label".into(),
+                    fallback: None,
+                    writes: Some(ObjRef {
+                        component: CompIdx(1),
+                        object: ObjIdx(0),
+                    }),
+                },
+            },
         ],
         args: vec![],
         refs: resolved

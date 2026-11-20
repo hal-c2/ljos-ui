@@ -661,6 +661,16 @@ impl<'p, 'a> Gen<'p, 'a> {
                 Arg::Holder { name, .. } => {
                     return Err(Reason::with("assignment to a name", name.clone()));
                 }
+                Arg::MadeIn {
+                    name,
+                    writes: Some(_),
+                    ..
+                } => {
+                    return Err(Reason::with(
+                        "a name read through an id where the component is made",
+                        name.clone(),
+                    ));
+                }
                 Arg::Namespace { .. } => Slot::Unusable(Reason::new("import namespace")),
                 Arg::Type(_) => Slot::Type {
                     param: number,
@@ -675,7 +685,8 @@ impl<'p, 'a> Gen<'p, 'a> {
                 | Arg::Context { .. }
                 | Arg::Attached { .. }
                 | Arg::Dynamic(_)
-                | Arg::Core(_) => {
+                | Arg::Core(_)
+                | Arg::MadeIn { .. } => {
                     let reg = self.alloc()?;
                     self.emit(Op::Param {
                         dst: reg,
