@@ -1250,7 +1250,7 @@ pin_programs() {
   mkdir -p "$into"
   # Absolute, so a program pinned into a relative directory still runs
   # from a task that changes directory first (gallery:run does).
-  into="$(cd "$into" && pwd)" || return 1
+  into="$(CDPATH='' cd -- "$into" && pwd)" || return 1
   build="$(build_dir)" || return 1
   messages="$(CARGO_BUILD_BUILD_DIR="$build" CARGO_TARGET_DIR="$into/.target" pin_build "$@")" || return 1
   while IFS= read -r exe; do

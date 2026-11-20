@@ -1395,11 +1395,12 @@ want="1 builds, prog $dir/bin/prog: build 1, build dir $dir/build, target $dir/b
 if [ "$out" = "$want" ]; then ok "a run's programs are built once, with the build directory cargo says, into a target of the run's own that another checkout's build does not reach"; else bad "pin_programs gave:" "gave: $out" "not:  $want"; fi
 # A pin directory given relative (GALLERY_DIR=reports) still names its
 # programs absolutely: gallery:run changes directory before it runs one.
+# A CDPATH a user set makes cd print where it went, which is not the path.
 dir="$real/pin-relative"
 mkdir -p "$dir"
 out="$(
-  PATH="$pinfakes:$PATH" PIN_COUNT="$dir/count" PIN_BUILD_DIR="$dir/build" PIN_SHARED="$dir/shared" CARGO_TARGET_DIR="$dir/shared"
-  export PATH PIN_COUNT PIN_BUILD_DIR PIN_SHARED CARGO_TARGET_DIR
+  PATH="$pinfakes:$PATH" PIN_COUNT="$dir/count" PIN_BUILD_DIR="$dir/build" PIN_SHARED="$dir/shared" CARGO_TARGET_DIR="$dir/shared" CDPATH=.
+  export PATH PIN_COUNT PIN_BUILD_DIR PIN_SHARED CARGO_TARGET_DIR CDPATH
   ljos_cargo_config=""
   cd "$dir" && pin_programs "a b/bin" build --quiet 2>/dev/null || echo failed
 )"
