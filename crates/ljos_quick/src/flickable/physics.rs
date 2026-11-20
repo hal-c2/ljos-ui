@@ -795,7 +795,9 @@ mod tests {
             panic!("{seg:?}")
         };
         let (p0, v0) = seg.at(&A, Duration::ZERO);
-        assert_eq!(p0, 0.0);
+        // The spline is sampled, so its start is the start to within its
+        // arithmetic, not to the bit.
+        assert!(p0.abs() < 1e-3, "{p0}");
         assert!((v0 - 1000.0).abs() < 10.0, "{v0}");
         let (p, v) = seg.at(&A, cut);
         assert!((p - 194.4).abs() < 0.5, "{p}");
