@@ -61,15 +61,19 @@ public final class LjosServices {
 
     /** The clipboard's text, or null when it holds none. */
     public static String clipboardText(Context context) throws Exception {
-        return onMain(() -> {
+        ClipData.Item item = onMain(() -> {
             ClipboardManager clipboard = context.getSystemService(ClipboardManager.class);
             ClipData clip = clipboard == null ? null : clipboard.getPrimaryClip();
-            if (clip == null || clip.getItemCount() == 0) {
-                return null;
-            }
-            CharSequence text = clip.getItemAt(0).coerceToText(context);
-            return text == null ? null : text.toString();
+            return clip == null || clip.getItemCount() == 0 ? null : clip.getItemAt(0);
         });
+        if (item == null) {
+            return null;
+        }
+        // On the caller's thread, not the main one: an item that is a
+        // content URI is read from its provider, which may take its time,
+        // and the main thread waiting on it would not answer the user.
+        CharSequence text = item.coerceToText(context);
+        return text == null ? null : text.toString();
     }
 
     /** Puts {@code text} on the clipboard. */

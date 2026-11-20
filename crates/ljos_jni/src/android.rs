@@ -48,7 +48,10 @@ fn recorded() -> Option<(*mut std::ffi::c_void, *mut std::ffi::c_void)> {
     }
     // `ndk-context` has no way to ask whether it was told yet but to
     // panic; the panic is caught (the workspace unwinds) and is then
-    // `NoJava`, and once it answers it is not asked again.
+    // `NoJava`, and once it answers it is not asked again. A panic hook
+    // logs that panic all the same: expected, and only where no activity
+    // glue ran (a test binary), as android-activity records the context
+    // before `android_main`, and so before anything an application runs.
     let android = std::panic::catch_unwind(ndk_context::android_context).ok()?;
     let (vm, context) = (android.vm(), android.context());
     if vm.is_null() || context.is_null() {
