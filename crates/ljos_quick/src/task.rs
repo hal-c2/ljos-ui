@@ -14,10 +14,16 @@
 //! JS job that tells the Task. What a run needs once the Task is gone (its
 //! abort) lives in a per-engine table, not in the Task, so the Task's
 //! destruction, its host's with it, can abort it.
+//!
+//! A run that could not be started has failed, with why as its `error`.
+//! When the script heap was full or the start was interrupted, which may
+//! not happen again, the Task starts the run again by itself after a wait
+//! ([`ljos_engine::retry`]), unless something else started one first.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
+use ljos_engine::retry::{ResourceFault, Retry, seconds};
 use ljos_engine::{
     Cx, Engine, EngineError, ImplInfo, LogLevel, MethodDecl, ObjectFlags, ObjectId, PropIndex,
     QmlImplInfo, QmlObject, QmlType, SignalDecl, SignalIndex, TypeTag, Value, qml_impl,
@@ -189,13 +195,27 @@ fn args_changed(cx: &Cx<'_>, _: PropIndex) {
 fn begin(e: &Engine, me: ObjectId, args: Value) -> Result<(), EngineError> {
     let tasks = Tasks::of(e);
     tasks.abort(e, me);
+    // This run replaces one that waited to start again. The backoff
+    // stays: a fault soon after still waits longer.
+    if let Some(r) = tasks
+        .entries
+        .borrow_mut()
+        .get_mut(&me)
+        .and_then(|t| t.retry.as_mut())
+    {
+        r.cancel(e);
+    }
     let number = tasks.number();
     tasks.watch(e, me)?;
     let value = e.untrack(|| e.get(me, Task::VALUE))?;
     put(e, me, PENDING, &value, None)?;
     let run = e.untrack(|| e.get(me, Task::RUN))?;
-    let Some(driver) = tasks.driver(e) else {
-        return Ok(());
+    let driver = match tasks.driver(e) {
+        Ok(driver) => driver,
+        Err(err) => {
+            let cause = err.resource_fault();
+            return not_started(e, me, args, err.to_string(), cause);
+        }
     };
     // Recorded before the driver is called: `settle` finds the run by it.
     tasks.entries.borrow_mut().entry(me).or_default().run = Some(Run {
@@ -203,9 +223,20 @@ fn begin(e: &Engine, me: ObjectId, args: Value) -> Result<(), EngineError> {
         abort: Value::Undefined,
     });
     tasks.numbers.borrow_mut().insert(number, me);
-    let started = e
-        .try_call_js(&driver.start, &[Value::Int(number), run, args])
-        .map_err(|err| EngineError::Invoke(err.to_string()))?;
+    let started = match e.try_call_js(&driver.start, &[Value::Int(number), run, args.clone()]) {
+        Ok(started) => started,
+        Err(err) => {
+            // Nothing will settle it: the run never began.
+            tasks.numbers.borrow_mut().remove(&number);
+            if let Some(entry) = tasks.entries.borrow_mut().get_mut(&me)
+                && entry.run.as_ref().is_some_and(|r| r.number == number)
+            {
+                entry.run = None;
+            }
+            let cause = err.resource_fault();
+            return not_started(e, me, args, err.message(e), cause);
+        }
+    };
     let abort = e.js_member(&started, "abort").unwrap_or_default();
     let args = e.js_member(&started, "args").unwrap_or_default();
     // Only for the run still in progress: one that replaced it keeps its
@@ -245,6 +276,60 @@ fn settle(e: &Engine, number: i32, ok: bool, outcome: Value) -> Result<(), Engin
     } else {
         fail(e, me, outcome)
     }
+}
+
+/// A run with `args` could not be started, for `why`: it has failed, and
+/// after a resource fault (`cause`) it is started again after a wait.
+fn not_started(
+    e: &Engine,
+    me: ObjectId,
+    args: Value,
+    why: String,
+    cause: Option<ResourceFault>,
+) -> Result<(), EngineError> {
+    let message = format!("the run could not be started: {why}");
+    if let Some(cause) = cause {
+        let tasks = Tasks::of(e);
+        let wait = {
+            let mut entries = tasks.entries.borrow_mut();
+            let entry = entries.entry(me).or_default();
+            let retry = entry.retry.get_or_insert_default();
+            retry.schedule(e, cause, move |e| {
+                let tasks = Tasks::of(e);
+                // A run started meanwhile cancelled this one.
+                let mine = tasks
+                    .entries
+                    .borrow_mut()
+                    .get_mut(&me)
+                    .and_then(|t| t.retry.as_mut())
+                    .is_some_and(|r| {
+                        let waiting = r.waiting();
+                        r.ran();
+                        waiting
+                    });
+                if mine && e.is_alive(me) {
+                    warn(e, begin(e, me, args));
+                }
+            })
+        };
+        let when = if wait.is_zero() {
+            "at once".to_owned()
+        } else {
+            format!("in {}", seconds(wait))
+        };
+        e.log(
+            LogLevel::Warning,
+            "ljos.task",
+            format!(
+                "Task: {message}; {}, so it is started again {when}",
+                cause.describe()
+            ),
+        );
+    } else {
+        e.log(LogLevel::Warning, "ljos.task", format!("Task: {message}"));
+    }
+    // A string, not an `Error`: making one may need the heap that was full.
+    fail(e, me, Value::from(message.as_str()))
 }
 
 fn fail(e: &Engine, me: ObjectId, error: Value) -> Result<(), EngineError> {
@@ -326,6 +411,61 @@ impl TaskHelper {
     fn settle(cx: &Cx, number: i32, ok: bool, outcome: Value) {
         warn(cx.engine, settle(cx.engine, number, ok, outcome));
     }
+
+    /// Calls `start`, which calls run `number`, as its Task's code: a run
+    /// a resource fault cut off as it started has failed and is started
+    /// again after a wait; one that threw has failed.
+    #[qml(invokable)]
+    fn call(cx: &Cx, number: i32, start: Value) {
+        let e = cx.engine;
+        let Some(me) = Tasks::of(e).numbers.borrow().get(&number).copied() else {
+            return;
+        };
+        let Err(err) = e.try_call_js_as(me, &start, &[]) else {
+            return;
+        };
+        let done = match err.resource_fault() {
+            Some(cause) => cut_off(e, me, number, err.message(e), cause),
+            None => {
+                let why = match err {
+                    ljos_engine::JsError::Thrown { value, .. } => value,
+                    other => Value::from(other.message(e).as_str()),
+                };
+                settle(e, number, false, why)
+            }
+        };
+        warn(e, done);
+    }
+}
+
+/// Run `number` of `me` was cut off by `cause` as it started: it has
+/// failed, and is started again with the same arguments after a wait.
+fn cut_off(
+    e: &Engine,
+    me: ObjectId,
+    number: i32,
+    why: String,
+    cause: ResourceFault,
+) -> Result<(), EngineError> {
+    let tasks = Tasks::of(e);
+    if tasks.numbers.borrow_mut().remove(&number).is_none() {
+        return Ok(());
+    }
+    let args = {
+        let mut entries = tasks.entries.borrow_mut();
+        let Some(entry) = entries.get_mut(&me) else {
+            return Ok(());
+        };
+        if entry.run.as_ref().is_none_or(|r| r.number != number) {
+            return Ok(());
+        }
+        entry.run = None;
+        entry.args.clone()
+    };
+    if !e.is_alive(me) {
+        return Ok(());
+    }
+    not_started(e, me, args, why, Some(cause))
 }
 
 /// The runs in progress, and the arguments of each Task's last run, by
@@ -346,6 +486,8 @@ struct Entry {
     /// The elements the last run was called with, copied.
     args: Value,
     run: Option<Run>,
+    /// A run a resource fault kept from starting, started again by this.
+    retry: Option<Retry>,
 }
 
 struct Run {
@@ -370,34 +512,41 @@ impl Tasks {
         n
     }
 
-    fn driver(&self, e: &Engine) -> Option<Rc<Driver>> {
+    /// The JS end, installed at the first run. Not kept when it could
+    /// not be made (a full heap), so the next run tries again.
+    fn driver(&self, e: &Engine) -> Result<Rc<Driver>, EngineError> {
         if let Some(d) = self.driver.borrow().as_ref() {
-            return Some(d.clone());
+            return Ok(d.clone());
         }
         let made = e
             .create_native_incomplete(TaskHelper {}, None)
             .and_then(|helper| {
                 let install = e.eval_js(DRIVER)?;
                 e.try_call_js(&install, &[Value::Object(helper)])
-                    .map_err(|err| EngineError::Invoke(err.to_string()))
-            });
-        let made = match made {
-            Ok(v) => v,
-            Err(err) => {
-                warn(e, Err(err));
-                return None;
-            }
+                    .map_err(|err| match err.resource_fault() {
+                        Some(ResourceFault::Interrupted) => {
+                            EngineError::JsInterrupted(err.to_string())
+                        }
+                        Some(ResourceFault::OutOfMemory) => {
+                            EngineError::JsOutOfMemory(err.to_string())
+                        }
+                        None => EngineError::Invoke(err.to_string()),
+                    })
+            })?;
+        let member = |name| {
+            e.js_member(&made, name)
+                .ok_or_else(|| EngineError::Invoke(format!("the Task driver has no {name}")))
         };
         let driver = Rc::new(Driver {
-            start: e.js_member(&made, "start")?,
-            same: e.js_member(&made, "same")?,
+            start: member("start")?,
+            same: member("same")?,
         });
         *self.driver.borrow_mut() = Some(driver.clone());
-        Some(driver)
+        Ok(driver)
     }
 
     fn same(&self, e: &Engine, a: &Value, b: &Value) -> bool {
-        let Some(driver) = self.driver(e) else {
+        let Ok(driver) = self.driver(e) else {
             return false;
         };
         e.try_call_js(&driver.same, &[a.clone(), b.clone()])
@@ -412,7 +561,10 @@ impl Tasks {
             let tasks = Tasks::of(e);
             tasks.watched.borrow_mut().remove(&me);
             tasks.abort(e, me);
-            tasks.entries.borrow_mut().remove(&me);
+            let gone = tasks.entries.borrow_mut().remove(&me);
+            if let Some(mut retry) = gone.and_then(|t| t.retry) {
+                retry.cancel(e);
+            }
         })?;
         Ok(())
     }
@@ -475,9 +627,15 @@ const DRIVER: &str = r#"(function (helper) {
     // aborts this one rather than a run with nothing to abort it by. A
     // run aborted before its microtask (args changed twice in one turn,
     // or its item gone) is never called.
+    // Called through the helper, as the Task's code: the helper settles
+    // a run that threw or was cut off as it started.
     Promise.resolve().then(() => {
-      controller.signal.throwIfAborted();
-      return run(...given, controller.signal);
+      let started;
+      helper.call(number, () => {
+        controller.signal.throwIfAborted();
+        started = run(...given, controller.signal);
+      });
+      return started;
     }).then(
       (value) => helper.settle(number, true, value),
       (error) => helper.settle(number, false, error),

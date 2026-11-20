@@ -2441,6 +2441,10 @@ impl JsHost {
         // A job's deadline is the pump's, and so is the ceiling: nested runs
         // and native work give time back, but never past `until`.
         let now = self.interrupt.now(Timing::Enter);
+        // `until` is on the wall clock, but the interrupt's clock (one a
+        // test moves, say) measures the pump: one ahead of the wall clock
+        // after a long script would otherwise never run a job again.
+        let until = now + until.saturating_duration_since(Instant::now());
         self.interrupt.arm(now, None);
         self.interrupt.deadline.set(Some(until));
         self.interrupt.ceiling.set(Some(until));
