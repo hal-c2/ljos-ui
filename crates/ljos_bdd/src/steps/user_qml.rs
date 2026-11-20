@@ -71,11 +71,6 @@ fn runs_built_ahead(w: &mut LjosWorld, entry: String) -> StepResult {
     w.each(|b| b.application()?.run_built_ahead(&entry))
 }
 
-#[when(regex = r#"^the application runs "([^"]+\.qml)" built ahead, without a user's directory$"#)]
-fn runs_built_ahead(w: &mut LjosWorld, entry: String) -> StepResult {
-    w.each(|b| b.application()?.run_built_ahead(&entry))
-}
-
 #[given(regex = r#"^the application's plugin file "([^"]+)":$"#)]
 fn plugin_file(w: &mut LjosWorld, name: String, step: &Step) -> StepResult {
     let text = docstring(step)?;
