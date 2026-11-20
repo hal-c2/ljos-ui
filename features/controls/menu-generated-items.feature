@@ -88,15 +88,16 @@ Feature: Items an Instantiator adds to a menu
 
   Rule: Methods called while the menu is made
 
-    Background:
+    @api-QtQuick.Controls.Menu.takeAction
+    Scenario: A declared action taken out while the menu is made stays out
       Given the QML:
         """qml
         import QtQuick
         import QtQuick.Controls.Basic
         Item {
           id: root; objectName: "root"
-          property string took: ""; property string rest: ""; property string seen: ""
-          function look(m) { var s = []; for (var i = 0; i < m.count; i++) s.push(m.itemAt(i).text); return s.join(",") }
+          property string took: ""
+          property string seen: ""
           Menu {
             id: a
             Action { text: "Act" }
@@ -106,6 +107,22 @@ Feature: Items an Instantiator adds to a menu
               onObjectAdded: { var t = a.takeAction(0); root.took = t.text + " " + a.count }
             }
           }
+          Component.onCompleted: Qt.callLater(function() { seen = a.count + " " + a.itemAt(0).text })
+        }
+        """
+      Then the property "took" of "root" is "Act 1"
+      And the property "seen" of "root" is "1 B"
+
+    @api-QtQuick.Controls.Menu.takeItem
+    Scenario: Taking nothing out while the menu is made counts the declared items
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Item {
+          id: root; objectName: "root"
+          property string rest: ""
+          property string seen: ""
           Menu {
             id: b
             MenuItem { text: "A" }
@@ -114,15 +131,11 @@ Feature: Items an Instantiator adds to a menu
               onObjectAdded: { b.takeItem(-1); root.rest = "" + b.count }
             }
           }
-          Component.onCompleted: Qt.callLater(function() { seen = look(a) + " | " + look(b) })
+          Component.onCompleted: Qt.callLater(function() { seen = b.count + " " + b.itemAt(0).text })
         }
         """
-
-    @api-QtQuick.Controls.Menu.takeAction @api-QtQuick.Controls.Menu.takeItem
-    Scenario: What is taken out stays out, and the count counts what is left
-      Then the property "took" of "root" is "Act 1"
-      And the property "rest" of "root" is "1"
-      And the property "seen" of "root" is "B | A"
+      Then the property "rest" of "root" is "1"
+      And the property "seen" of "root" is "1 A"
 
   Rule: A delegate that adds an item while it is made
 
