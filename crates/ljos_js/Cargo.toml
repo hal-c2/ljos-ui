@@ -30,8 +30,10 @@ windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_System_
 
 [features]
 # Generates the QuickJS bindings at build time instead of using the bundled
-# per-target files. Needed for aarch64-linux-android and other targets without
-# bundled bindings (docs/spikes/02-rquickjs-android-bindgen.md).
+# per-target files. The vendored rquickjs-sys bundles both Android targets
+# Ljós builds for (vendor/QUICKJS.md), so this is needed only for targets
+# without a bundled file, such as armv7-linux-androideabi or iOS
+# (docs/spikes/02-rquickjs-android-bindgen.md).
 bindgen = ["rquickjs/bindgen"]
 
 [lints]

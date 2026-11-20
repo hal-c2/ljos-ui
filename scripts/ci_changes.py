@@ -4,6 +4,8 @@
     full        "true" when everything runs
     clippy      "true" when fmt and clippy run; `clippy_args` names the packages
     wasm        "true" when the web build of ljos_mcp_core is checked
+    android     "true" when ljos_js is built for Android and its bundled
+                QuickJS bindings are held to bindgen's (scripts/android-bindings.sh)
     tests       a JSON list of test shards, each {"name", "packages", "doc"}
     lint        "true" when features:lint runs
     features    a JSON list of feature shards, each {"name", "files"}
@@ -147,6 +149,9 @@ RUNNER = "ljos_bdd"
 DESKTOP_BIN = "ljos_cli"
 # The crate whose web build `mise run check` checks.
 WASM = "ljos_mcp_core"
+# The crate the Android job builds: it is what links the vendored QuickJS, so a
+# change it can feel (itself, or a crate under it) re-runs the Android build.
+ANDROID = "ljos_js"
 
 # Shards: at most this many, each with at least about this much work.
 TEST_SHARDS = 3
@@ -498,6 +503,7 @@ def plan(mode: str, paths: list[str], ws: Workspace, features: dict[str, str]) -
         "clippy": bool(clippy_set),
         "clippy_args": "--workspace" if c.full else " ".join(f"-p {p}" for p in sorted(clippy_set)),
         "wasm": c.full or WASM in clippy_set,
+        "android": c.full or ANDROID in clippy_set,
         "tests": test_shards,
         "lint": lint,
         "features": feature_shards,
