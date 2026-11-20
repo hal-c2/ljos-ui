@@ -19,9 +19,11 @@ import java.security.GeneralSecurityException;
 import java.security.KeyStore;
 import java.security.MessageDigest;
 import java.util.concurrent.Callable;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import javax.crypto.Cipher;
 import javax.crypto.KeyGenerator;
 import javax.crypto.SecretKey;
@@ -39,20 +41,35 @@ public final class LjosServices {
     /** How long the native side waits for the main thread. */
     private static final long MAIN_TIMEOUT_MS = 2000;
 
-    /** Runs {@code call} on the main thread and waits for it. */
+    /**
+     * Runs {@code call} on the main thread and waits for it. A call the main
+     * thread has not started within the timeout is never run: a clipboard
+     * set after the caller was told it was not would surprise it. One it
+     * has started is waited for to its end.
+     */
     private static <T> T onMain(Callable<T> call) throws Exception {
         if (Looper.myLooper() == Looper.getMainLooper()) {
             return call.call();
         }
-        FutureTask<T> task = new FutureTask<>(call);
+        // Taken by whichever comes first: the main thread starting the
+        // call, or the caller giving up on it.
+        AtomicBoolean taken = new AtomicBoolean(false);
+        FutureTask<T> task = new FutureTask<>(() -> {
+            if (!taken.compareAndSet(false, true)) {
+                throw new CancellationException("the caller gave up on it");
+            }
+            return call.call();
+        });
         new Handler(Looper.getMainLooper()).post(task);
         try {
             return task.get(MAIN_TIMEOUT_MS, TimeUnit.MILLISECONDS);
         } catch (TimeoutException e) {
-            // Not run later, when the caller has its error: a clipboard
-            // set after the caller was told it was not would surprise it.
-            task.cancel(false);
-            throw e;
+            if (taken.compareAndSet(false, true)) {
+                task.cancel(false);
+                throw e;
+            }
+            // Started just as the time ran out: its outcome is the caller's.
+            return task.get();
         }
     }
 
