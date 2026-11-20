@@ -2565,7 +2565,13 @@ fn same_but_edits(
     edits: &mut Vec<Edit>,
     moves: &HashMap<&ObjectKey, &ObjectKey>,
 ) -> Option<Same> {
-    if old.imports != new.imports
+    let same_imports = old.imports.len() == new.imports.len()
+        && old
+            .imports
+            .iter()
+            .zip(&new.imports)
+            .all(|(a, b)| a.same_but_spans(b));
+    if !same_imports
         || old.pragmas != new.pragmas
         || old.scripts != new.scripts
         || old.invocable != new.invocable

@@ -233,6 +233,28 @@ pub struct Import {
     pub stood_in: Option<Vec<StoodIn>>,
 }
 
+impl Import {
+    /// Whether `other` is the same import, wherever the types that stand
+    /// in are written: an edit that moves them leaves the module as it was.
+    pub fn same_but_spans(&self, other: &Import) -> bool {
+        let same_types = match (&self.stood_in, &other.stood_in) {
+            (Some(a), Some(b)) => {
+                a.len() == b.len()
+                    && a.iter()
+                        .zip(b)
+                        .all(|(a, b)| a.name == b.name && a.known == b.known)
+            }
+            (a, b) => a.is_none() && b.is_none(),
+        };
+        self.source == other.source
+            && self.version == other.version
+            && self.alias == other.alias
+            && self.in_project == other.in_project
+            && self.stands_in == other.stands_in
+            && same_types
+    }
+}
+
 /// A type of a module the runtime builds part of that stands in as an
 /// empty Item where a file names it ([`Import::stood_in`]).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
