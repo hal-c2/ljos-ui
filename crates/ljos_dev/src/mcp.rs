@@ -346,6 +346,9 @@ pub struct Inspector {
     /// accessible node: what the last `app_snapshot` that said asked for.
     pointer_lines: bool,
     logs: Rc<RefCell<LogRing>>,
+    /// What the fields hold while an acting `app_audit` lets the
+    /// application run.
+    secret_watch: capture::SecretWatch,
     /// What `app_trace` wrote down.
     traces: Rc<RefCell<trace::TraceLog>>,
     stats: FrameStats,
@@ -464,6 +467,7 @@ impl Inspector {
             kept: VecDeque::new(),
             pointer_lines: false,
             logs: Rc::new(RefCell::new(LogRing::default())),
+            secret_watch: capture::SecretWatch::default(),
             traces,
             stats: FrameStats::new(),
             work: None,
@@ -1241,7 +1245,7 @@ impl Inspector {
                 let now = capture::secrets(engine, scene, self.cfg.redact_all);
                 self.logs.borrow_mut().learn(&now);
             }
-            let watch = capture::SecretWatch::start(engine, scene, self.cfg.redact_all);
+            self.secret_watch.start(engine, scene, self.cfg.redact_all);
             let answer = args.options().and_then(|mut options| {
                 // An application on a clock a test moves may be let run on
                 // it; one on the wall clock may not.
@@ -1277,9 +1281,9 @@ impl Inspector {
                 )));
             }
             // Masked as what the application logged or threw is, with what
-            // the fields held at any moment an acting audit let it run, and
-            // what fields made meanwhile hold now.
-            let heard = watch.stop(engine);
+            // the fields held at any moment an acting audit let it run
+            // (fields made meanwhile included) and what they hold now.
+            let heard = self.secret_watch.stop(engine);
             let now = capture::secrets(engine, scene, self.cfg.redact_all);
             let mut logs = self.logs.borrow_mut();
             logs.learn(&heard);

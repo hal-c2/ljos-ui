@@ -7,7 +7,9 @@
 //! something asks for it, so the inspector switches it on for one request
 //! and gives it back afterwards ([`Lease`]).
 
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
 
 use ljos_a11y::{NodeKey, accesskit::Toggled, role_word};
 use ljos_engine::{Engine, ObjectId, Value};
@@ -525,30 +527,44 @@ pub(crate) fn secrets(engine: &Engine, scene: &QuickScene, redact_all: bool) -> 
 /// shown, as each value is written: for a request that lets the
 /// application run (an acting audit), whose handlers can put a secret in a
 /// field, clear it and repeat it in a fault before anything looks again.
-/// Each editor there when the watch starts is watched, so one whose text
-/// is hidden only later is heard too; an editor made while it runs is not,
-/// which [`secrets`] after the run covers for what it still holds.
+/// Each editor there when the watch starts is watched, and each one put in
+/// the scene while it runs (a dialog a Loader opens), so one whose text is
+/// hidden only later is heard too. A value is a secret if its field hides
+/// its text when it is written.
+#[derive(Default)]
 pub(crate) struct SecretWatch {
-    heard: std::rc::Rc<std::cell::RefCell<HashSet<String>>>,
-    nodes: Vec<ljos_engine::NodeId>,
+    live: Rc<RefCell<Option<Watching>>>,
+    /// The engine whose new items are heard of: the engine keeps its
+    /// listeners, so there is one for each engine, idle between watches.
+    hooked: Option<Engine>,
 }
 
-impl SecretWatch {
-    pub(crate) fn start(engine: &Engine, scene: &QuickScene, redact_all: bool) -> Self {
-        let heard: std::rc::Rc<std::cell::RefCell<HashSet<String>>> = std::rc::Rc::default();
-        let mut nodes = Vec::new();
-        let objects = scene
-            .root()
-            .map_or_else(Vec::new, |root| objects_below(engine, root));
-        for obj in objects {
-            if !is_editor(engine, obj) {
+struct Watching {
+    heard: Rc<RefCell<HashSet<String>>>,
+    nodes: Vec<ljos_engine::NodeId>,
+    watched: HashSet<ObjectId>,
+    redact_all: bool,
+}
+
+impl Watching {
+    fn watch_below(&mut self, engine: &Engine, root: ObjectId) {
+        for obj in objects_below(engine, root) {
+            if !is_editor(engine, obj) || !self.watched.insert(obj) {
                 continue;
             }
+            let redact_all = self.redact_all;
             for prop in TYPED {
                 let Ok(index) = engine.property_index(obj, prop) else {
                     continue;
                 };
-                let heard = std::rc::Rc::clone(&heard);
+                // What it holds as it comes in.
+                if let Value::String(s) = engine.untrack(|| engine.read_by_name(obj, prop))
+                    && !s.is_empty()
+                    && (redact_all || hides_its_text(engine, obj))
+                {
+                    self.heard.borrow_mut().insert(s.to_string());
+                }
+                let heard = Rc::clone(&self.heard);
                 let watched = engine.watch(obj, index, move |engine, v| {
                     if let Value::String(s) = v
                         && !s.is_empty()
@@ -557,18 +573,51 @@ impl SecretWatch {
                         heard.borrow_mut().insert(s.to_string());
                     }
                 });
-                nodes.extend(watched.ok());
+                self.nodes.extend(watched.ok());
             }
         }
-        Self { heard, nodes }
+    }
+}
+
+impl SecretWatch {
+    pub(crate) fn start(&mut self, engine: &Engine, scene: &QuickScene, redact_all: bool) {
+        if !self
+            .hooked
+            .as_ref()
+            .is_some_and(|e| Engine::ptr_eq(e, engine))
+        {
+            let live = Rc::clone(&self.live);
+            engine.on_visual_parent_changed(move |engine, obj, parent| {
+                if parent.is_some()
+                    && let Ok(mut live) = live.try_borrow_mut()
+                    && let Some(w) = live.as_mut()
+                {
+                    w.watch_below(engine, obj);
+                }
+            });
+            self.hooked = Some(engine.clone());
+        }
+        let mut w = Watching {
+            heard: Rc::default(),
+            nodes: Vec::new(),
+            watched: HashSet::new(),
+            redact_all,
+        };
+        if let Some(root) = scene.root() {
+            w.watch_below(engine, root);
+        }
+        *self.live.borrow_mut() = Some(w);
     }
 
     /// Stops watching, and gives what was heard.
-    pub(crate) fn stop(self, engine: &Engine) -> HashSet<String> {
-        for n in self.nodes {
+    pub(crate) fn stop(&mut self, engine: &Engine) -> HashSet<String> {
+        let Some(w) = self.live.borrow_mut().take() else {
+            return HashSet::new();
+        };
+        for n in w.nodes {
             engine.stop_effect(n);
         }
-        self.heard.take()
+        w.heard.take()
     }
 }
 

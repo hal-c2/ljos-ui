@@ -3194,7 +3194,8 @@ fn app_audit_on_a_virtual_clock_lets_the_application_run_and_moves_it_on() {
 
 /// A secret the application first holds while an acting audit lets it run
 /// is masked in what the audit tells, as one it held before is, also when
-/// the field has let it go by the time the audit is done.
+/// the field has let it go by the time the audit is done, or was made and
+/// gone while it ran.
 #[test]
 fn app_audit_masks_a_secret_the_application_took_while_it_ran() {
     use ljos_runtime::VirtualClock;
@@ -3210,6 +3211,25 @@ Item {
     Timer {
         interval: 1500; running: true
         onTriggered: { pin.text = "late-pin"; throw new Error("thrown " + pin.text) }
+    }
+    Loader {
+        id: dialog
+        active: false
+        sourceComponent: Component {
+            TextInput { width: 100; height: 20; echoMode: TextInput.Password }
+        }
+    }
+    Timer { interval: 1200; running: true; onTriggered: dialog.active = true }
+    Timer {
+        interval: 2200; running: true
+        onTriggered: {
+            const field = dialog.item;
+            field.text = "new-pin";
+            const held = field.text;
+            field.text = "";
+            dialog.active = false;
+            throw new Error("dropped " + held)
+        }
     }
     Timer {
         interval: 2500; running: true
@@ -3249,6 +3269,9 @@ Item {
     // audit is done.
     assert!(!told.contains("gone-pin"), "{told}");
     assert!(told.contains("cleared <redacted>"), "{told}");
+    // In a field a Loader opened while the audit ran, and closed again.
+    assert!(!told.contains("new-pin"), "{told}");
+    assert!(told.contains("dropped <redacted>"), "{told}");
 }
 
 #[test]
