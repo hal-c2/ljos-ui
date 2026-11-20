@@ -285,3 +285,65 @@ fn a_list_view_delegate_that_ran_out_of_heap_while_it_was_made_is_made_again() {
     frame(&mut s, &e);
     assert_eq!(e.next_timer_deadline(), None, "nothing more to wait for");
 }
+
+const SLOW_BINDING: &str = r#"
+import QtQuick
+Item {
+    id: root
+    objectName: "root"
+    property bool on: false
+    property int made: 0
+    readonly property var tries: ({ binding: 0, handler: 0 })
+    // Runs over its time the first three times it is called for `what`.
+    function slow(what) {
+        if (tries[what]++ < 3) { for (;;) {} }
+        return 5
+    }
+    ListView {
+        objectName: "view"
+        width: 100; height: 100
+        model: root.on ? 3 : 0
+        delegate: Item {
+            width: 12; height: 10
+            property int v: root.slow("binding")
+            // Runs over its time while the delegate is made.
+            Component.onCompleted: { root.made++; root.slow("handler") }
+        }
+    }
+}
+"#;
+
+#[test]
+fn a_list_view_delegate_whose_scripts_ran_over_their_time_is_shown_and_its_binding_runs_again() {
+    let (e, clock) = timed();
+    compile(&e, &[("Main", SLOW_BINDING)]);
+    let root = e.create_from_url("Main", None, Vec::new()).unwrap();
+    let view = find(&e, root, "view");
+    e.set_js_dispatch_budget(Duration::from_millis(10), Duration::from_millis(50))
+        .unwrap();
+    set(&e, root, "on", Value::Bool(true));
+    let mut s = scene(&e, root, 200.0, 200.0);
+    frame(&mut s, &e);
+    // Made once and shown, though a script was stopped while it was made
+    // and its binding was stopped after.
+    assert_eq!(num(&e, root, "made"), 3.0);
+    assert_eq!(delegate_widths(&e, view), [12.0, 12.0, 12.0]);
+    let v = |e: &Engine| -> Vec<f64> {
+        (0..3)
+            .map(|i| {
+                e.invoke_by_name(view, "itemAtIndex", &[Value::from(f64::from(i))])
+                    .ok()
+                    .and_then(|v| v.as_object())
+                    .map_or(-1.0, |o| num(e, o, "v"))
+            })
+            .collect()
+    };
+    assert_eq!(v(&e), [0.0, 0.0, 0.0]);
+    // The binding runs again after a wait; the delegate is not made again.
+    let wait = wait_out(&e, &clock, &mut s);
+    assert!(wait <= Duration::from_secs(60), "{wait:?}");
+    assert_eq!(v(&e), [5.0, 5.0, 5.0]);
+    assert_eq!(num(&e, root, "made"), 3.0);
+    frame(&mut s, &e);
+    assert_eq!(e.next_timer_deadline(), None, "nothing more to wait for");
+}

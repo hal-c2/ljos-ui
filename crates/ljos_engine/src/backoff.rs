@@ -115,8 +115,11 @@ struct RunAgain {
     timer: Cell<Option<TimerId>>,
     /// A fault since the last bump was a full heap: collect before.
     full: Cell<bool>,
-    /// Every resource fault so far, and the last: what made something,
-    /// outside any binding, tells by them whether one stopped it.
+    /// Every resource fault so far that leaves what met it less than
+    /// whole (a full heap, a panic), and the last: what made something
+    /// tells by them whether one broke it. An interrupted script is not
+    /// one: the binding it cut short runs again here, and a script that
+    /// always runs over its slice would otherwise be made forever.
     seen: Cell<u64>,
     last: std::cell::RefCell<Option<Fault>>,
 }
@@ -137,8 +140,10 @@ impl Engine {
             }
             return;
         }
-        r.seen.set(r.seen.get() + 1);
-        *r.last.borrow_mut() = Some(fault.clone());
+        if !matches!(fault, Fault::JsInterrupted { .. }) {
+            r.seen.set(r.seen.get() + 1);
+            *r.last.borrow_mut() = Some(fault.clone());
+        }
         let g = &self.inner.graph;
         // Outside a binding, what met the fault has its own way back (a
         // Loader's, a view's, a singleton's) or is the caller's to retry.
@@ -188,15 +193,16 @@ impl Engine {
         r.timer.set(Some(timer));
     }
 
-    /// How many resource faults there have been: compare with a later
-    /// count by [`Engine::resource_fault_since`].
+    /// How many resource faults that break what met them there have
+    /// been: compare with a later count by [`Engine::resource_fault_since`].
     pub(crate) fn resource_faults_seen(&self) -> u64 {
         self.extension::<RunAgain>().seen.get()
     }
 
-    /// The last resource fault, if there was one after `seen`
+    /// The last full heap or panic, if there was one after `seen`
     /// ([`Engine::resource_faults_seen`]): what something made since then
-    /// met, and is not whole for, though no error came back.
+    /// met, and is not whole for, though no error came back. Interrupted
+    /// scripts are left out: [`Engine::run_again_after`] runs them again.
     pub(crate) fn resource_fault_since(&self, seen: u64) -> Option<EngineError> {
         let r = self.extension::<RunAgain>();
         if r.seen.get() == seen {
@@ -205,9 +211,6 @@ impl Engine {
         Some(match r.last.borrow().as_ref()? {
             Fault::JsOutOfMemory => {
                 EngineError::JsOutOfMemory("it ran out of script memory while it was made".into())
-            }
-            Fault::JsInterrupted { .. } => {
-                EngineError::JsInterrupted("a script was stopped while it was made".into())
             }
             Fault::Panic(m) => EngineError::Panic(format!("a panic while it was made: {m}")),
             _ => return None,

@@ -3024,16 +3024,17 @@ struct HandleState {
     progress: Cell<f64>,
     /// The root, from the moment it is allocated.
     root: Cell<Option<ObjectId>>,
-    /// The kind of the last resource fault one of the job's steps met: a
-    /// byte, not the error, since a view keeps a handle for each delegate.
+    /// The kind of the last resource fault that breaks what met it (a full
+    /// heap, a panic) one of the job's steps met: a byte, not the error,
+    /// since a view keeps a handle for each delegate.
     fault: Cell<Option<Resource>>,
 }
 
-/// A kind of resource fault ([`EngineError::is_resource_fault`]).
+/// A kind of resource fault that breaks what met it
+/// ([`Engine::resource_fault_since`]).
 #[derive(Clone, Copy, Debug)]
 enum Resource {
     OutOfMemory,
-    Interrupted,
     Panic,
 }
 
@@ -3082,16 +3083,15 @@ impl CreationHandle {
         self.0.cancelled.get()
     }
 
-    /// A resource fault (a full heap, an interrupted script, a panic in
-    /// native work) one of the job's steps met though the job went on: an
-    /// object made all the same may not be whole, its script not loaded or
-    /// a binding of it cut short while it was made.
+    /// A resource fault (a full heap, a panic in native work) one of the
+    /// job's steps met though the job went on: an object made all the same
+    /// may not be whole, its script not loaded while it was made. A script
+    /// interrupted for its time is not one: its binding runs again.
     pub fn resource_fault(&self) -> Option<EngineError> {
         let kind = self.0.fault.get()?;
         let why = "a resource fault while it was made".to_owned();
         Some(match kind {
             Resource::OutOfMemory => EngineError::JsOutOfMemory(why),
-            Resource::Interrupted => EngineError::JsInterrupted(why),
             Resource::Panic => EngineError::Panic(why),
         })
     }
@@ -3343,7 +3343,6 @@ impl CreationJob {
         if let Some(f) = e.resource_fault_since(faults) {
             self.handle.0.fault.set(match f {
                 EngineError::JsOutOfMemory(_) => Some(Resource::OutOfMemory),
-                EngineError::JsInterrupted(_) => Some(Resource::Interrupted),
                 EngineError::Panic(_) => Some(Resource::Panic),
                 _ => None,
             });
@@ -3375,7 +3374,9 @@ impl CreationJob {
                     );
                 }
                 self.phase = Phase::Done;
-                self.tell(&e);
+                // Whoever waits may panic too: the creation is closed all
+                // the same, and the first panic goes on.
+                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.tell(&e)));
                 e.close_creation(errors);
                 std::panic::resume_unwind(payload);
             }

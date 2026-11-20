@@ -600,3 +600,64 @@ Item {
     }
     assert!(h.warnings().is_empty(), "{:?}", h.warnings());
 }
+
+/// Asks for the row again from inside the make of its delegate, as a
+/// binding reading `itemAtIndex` or a layout pass of the view would.
+#[derive(Default)]
+struct AsksAgain {
+    delegates: RefCell<Option<ViewDelegates>>,
+    inner: RefCell<Vec<Option<(ObjectId, Made)>>>,
+}
+
+impl ViewHost for AsksAgain {
+    fn allocated(&self, e: &Engine, index: usize, _: ObjectId) {
+        let d = self.delegates.borrow().clone().expect("the view is set");
+        let got = d.request(e, index, Urgency::Now);
+        self.inner.borrow_mut().push(got);
+    }
+    fn changed(&self, _: &Engine, _: &ModelChange, _: &[(usize, ObjectId)]) {}
+}
+
+#[test]
+fn a_row_asked_for_while_its_delegate_is_made_is_made_once() {
+    let h = engine();
+    let root = h.load(
+        r#"import QtQuick
+Item {
+  property Component c: Component {
+    QtObject { property string text: label; property int row: index }
+  }
+}
+"#,
+    );
+    let Value::Object(component) = h.get(root, "c") else {
+        panic!("no component");
+    };
+    let labels = Labels::of(3);
+    let holder = model_object(&h, root, &labels);
+    let host = Rc::new(AsksAgain::default());
+    let delegates = ViewDelegates::new(root, host.clone());
+    *host.delegates.borrow_mut() = Some(delegates.clone());
+    let model = h.engine.object_model(holder);
+    delegates.set_source(&h.engine, model, Some(component));
+    let before = h.engine.children(root).len();
+    let (obj, made) = delegates
+        .request(&h.engine, 1, Urgency::Now)
+        .expect("row 1 has a delegate");
+    assert_eq!(made, Made::Created);
+    // The ask from inside the make gets nothing, not a second delegate.
+    assert_eq!(*host.inner.borrow(), [None]);
+    assert_eq!(delegates.created(), 1);
+    assert_eq!(delegates.live().len(), 1);
+    assert_eq!(delegates.object_at(1), Some(obj));
+    assert_eq!(
+        delegates.request(&h.engine, 1, Urgency::Now),
+        Some((obj, Made::Existing))
+    );
+    assert_eq!(
+        h.engine.children(root).len(),
+        before + 1,
+        "no second delegate"
+    );
+    *host.delegates.borrow_mut() = None;
+}
