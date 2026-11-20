@@ -119,3 +119,50 @@ Item {
         ["direct", "repeater"].map(|n| (n, Value::Bool(true)))
     );
 }
+
+/// A delegate writes a key through an id of the root context, and the map
+/// and every reader see it, as a write in a file's item does.
+#[test]
+fn a_delegate_writes_through_a_root_context_id() {
+    let e = engine();
+    let owner = PropertyMap::new(&e, None).expect("map creates");
+    owner.insert(&e, "gap", Value::Real(3.0));
+    e.set_context_id(e.root_context(), "owner", owner.object());
+    let root = load(
+        &e,
+        r#"import QtQuick
+Item {
+    width: 400; height: 400
+    Item { objectName: "direct"; property real g: owner.gap }
+    Repeater {
+        model: 1
+        Item { objectName: "repeater"; function write(v) { owner.gap = v } }
+    }
+    ListView {
+        width: 100; height: 100; model: 1
+        delegate: Item {
+            objectName: "listView"; width: 10; height: 10
+            function write(v) { owner.gap = v }
+        }
+    }
+}
+"#,
+    );
+    let mut s = scene(&e, root, 400.0, 400.0);
+    frame(&mut s, &e);
+    for (writer, v) in [("repeater", 4.0), ("listView", 6.0)] {
+        e.invoke_by_name(find(&e, root, writer), "write", &[Value::Real(v)])
+            .unwrap_or_else(|err| panic!("{writer}: {err}"));
+        frame(&mut s, &e);
+        assert_eq!(
+            owner.value(&e, "gap"),
+            Value::Real(v),
+            "{writer} wrote the map"
+        );
+        assert_eq!(
+            num(&e, find(&e, root, "direct"), "g"),
+            v,
+            "{writer}'s write is read"
+        );
+    }
+}
