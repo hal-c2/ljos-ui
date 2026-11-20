@@ -411,6 +411,53 @@ fn a_host_write_after_a_change_the_binding_had_not_run_for_lasts() {
     g.check_invariants().unwrap();
 }
 
+/// The same when the change is a step away, through a binding in between:
+/// the binding written over only may be due, and the catch-up walks to the
+/// change and runs it, so the write still comes last.
+#[test]
+fn a_host_write_after_a_change_a_step_away_lasts() {
+    let g = Graph::new();
+    let r = g.root();
+    let implicit = g.property(r, 0).unwrap();
+    let mid = g.binding(r, 0, move |g| g.get(implicit)).unwrap();
+    let size = g.binding(r, 0, move |g| g.get(mid)).unwrap();
+    assert_eq!(g.get(size), 0);
+    g.batch(|| {
+        g.set(implicit, 50);
+        g.write(size, 240, WriteKind::Host).unwrap();
+    });
+    assert_eq!(g.get(size), 240);
+    assert_eq!(g.provenance(size), Some(Provenance::Host));
+    g.set(implicit, 60);
+    assert_eq!(g.get(size), 60);
+    g.check_invariants().unwrap();
+}
+
+/// When the binding in between gives the value it gave before, the one
+/// written over has nothing new to run for: the catch-up runs it not at
+/// all, the write lasts, and a later change that does get through reaches it.
+#[test]
+fn a_host_write_after_a_change_that_does_not_get_through_lasts() {
+    let g = Graph::new();
+    let r = g.root();
+    let implicit = g.property(r, 0).unwrap();
+    let mid = g.binding(r, 0, move |g| g.get(implicit) / 100).unwrap();
+    let runs = counter();
+    let size = counted_binding(&g, &runs, move |g| g.get(mid));
+    assert_eq!(g.get(size), 0);
+    assert_eq!(runs.get(), 1);
+    g.batch(|| {
+        g.set(implicit, 50);
+        g.write(size, 240, WriteKind::Host).unwrap();
+    });
+    assert_eq!(g.get(size), 240);
+    assert_eq!(runs.get(), 1);
+    g.set(implicit, 300);
+    assert_eq!(g.get(size), 3);
+    assert_eq!(g.provenance(size), Some(Provenance::Bound));
+    g.check_invariants().unwrap();
+}
+
 /// Nothing reads a binding nobody wrote over: a host write elsewhere runs
 /// nothing.
 #[test]
