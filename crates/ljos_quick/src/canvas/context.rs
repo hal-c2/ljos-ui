@@ -529,7 +529,10 @@ impl Op<'_> {
                 Value::Undefined
             }
             "reset" => {
+                // As on qml6 (measured), reset empties the canvas as well as
+                // the state.
                 *self.ctx.borrow_mut() = Ctx::default();
+                self.run.borrow_mut().painter.clear();
                 Value::Undefined
             }
             "scale" | "rotate" | "translate" | "transform" | "setTransform" | "shear"
