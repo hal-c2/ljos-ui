@@ -35,16 +35,20 @@ for tool in sway dbus-run-session; do
   need "$tool" "the sandbox (scripts/cua-sandbox.sh) runs the apps in a headless sway on a bus of its own: install sway and dbus"
 done
 if [ "$check" = true ]; then
-  echo "bench:hot can run: it would build the dist ljos into $target/dist, run ${ids[*]:-every bench app} under callgrind for ${secs}s each, and rewrite $order (tracked: commit it, or git checkout it)"
+  echo "bench:hot can run: it would build the dist ljos and link it into $out/bin, run ${ids[*]:-every bench app} under callgrind for ${secs}s each, and rewrite $order (tracked: commit it, or git checkout it)"
   exit 0
 fi
 
-cargo build --quiet --profile dist -p ljos_cli
-cargo build --quiet -p qml_compare
-bin="$target/dist/ljos"
-
 rm -rf "${out:?}"
 mkdir -p "$out/runs"
+# The run's own link to the dist ljos (pin_programs): the target may be
+# shared with another checkout, whose build during the run would put its
+# ljos under the apps callgrind counts, and its symbols in place of the
+# ones nm reads.
+programs="$(pin_programs "$out/bin" build --quiet --profile dist -p ljos_cli --bin ljos)" || die "bench:hot: the dist ljos did not build"
+bin="$(pinned_program ljos "$programs")"
+[ -n "$bin" ] || die "bench:hot: the build made no ljos"
+cargo build --quiet -p qml_compare
 # The examples the gallery rendered and the controls gallery:drive clicked,
 # in this checkout's corner of the target.
 GALLERY_DIR="${GALLERY_DIR:-$(checkout_dir gallery)}" "$root/scripts/bench-manifest.sh" "$out" ${ids[@]+"${ids[@]}"}

@@ -10,7 +10,6 @@ set -euo pipefail
 . "$(dirname "$0")/_lib/env.sh"
 cd "$ljos_root"
 root="$ljos_root"
-target="$(target_dir)"
 
 check=
 args=()
@@ -122,7 +121,4 @@ fi
 # Release by default: a debug build's frame times say nothing about how
 # Lottie plays.
 profile="${LOTTIE_PROFILE:-release}"
-cargo build --quiet -p ljos_cli --bin ljos --profile "$profile"
-dir="$profile"
-[ "$profile" != dev ] || dir=debug
-exec "$target/$dir/ljos" run "$entry" "$@"
+exec "$(built_program -p ljos_cli --bin ljos --profile "$profile")" run "$entry" "$@"

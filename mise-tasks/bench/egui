@@ -8,7 +8,6 @@ set -euo pipefail
 # shellcheck source-path=SCRIPTDIR source=../_lib/env.sh
 . "$(dirname "$0")/../_lib/env.sh"
 root="$ljos_root"
-target="$(target_dir)"
 need_systemd_run
 read -r -a defaults <<< "${BENCH_DEFAULTS---warm-up --repeat 3}"
 qml="$(bench_qml6 ${defaults[@]+"${defaults[@]}"} "$@")"
@@ -16,9 +15,14 @@ QML6="$qml" need_qml6
 unset QT_QPA_PLATFORMTHEME
 out="${BENCH_DIR:-$(checkout_dir bench-egui)}"
 
-cargo build --quiet --release -p ljos_cli
-cargo build --quiet --release -p ljos_egui --example feed_egui
-egui="$target/release/examples/feed_egui"
+# The run's own links to the programs it measures (pin_programs): the
+# target may be shared with another checkout, whose release build would
+# otherwise be measured as this one's.
+programs="$(pin_programs "$out/bin" build --quiet --release -p ljos_cli --bin ljos -p ljos_egui --example feed_egui)" ||
+  die "bench:egui: ljos and feed_egui did not build"
+ljos="$(pinned_program ljos "$programs")"
+egui="$(pinned_program feed_egui "$programs")"
+[ -n "$ljos" ] && [ -n "$egui" ] || die "bench:egui: the build made no ljos or no feed_egui"
 
 # feed: the spinner turns, so its idle span is the spinner alone; under
 # load the list scrolls under it. feed-still: nothing moves, so its idle
@@ -39,7 +43,7 @@ value() { sed -n "s/^$1=//p" <<< "$sandbox"; }
 bench() {
   local manifest="$1"
   shift
-  "$target/release/ljos" bench --manifest "$manifest" --runtime ljos,egui,qt --profile desktop \
+  "$ljos" bench --manifest "$manifest" --runtime ljos,egui,qt --profile desktop \
     --sway "$(value SWAYSOCK)" --wayland "$(value WAYLAND_DISPLAY)" \
     --app-env "DBUS_SESSION_BUS_ADDRESS=$(value DBUS_SESSION_BUS_ADDRESS)" \
     --app-env "XDG_CONFIG_HOME=$(value XDG_CONFIG_HOME)" --app-env "XDG_DATA_HOME=$(value XDG_DATA_HOME)" \
