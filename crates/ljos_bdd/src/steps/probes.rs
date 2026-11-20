@@ -180,6 +180,18 @@ fn observer_scrolled(w: &mut LjosWorld, locator: String, notches: f64, way: Stri
     })
 }
 
+// Keys go to what has the observer's keyboard focus, as someone using
+// only a keyboard would press them: `"Tab Right Return"`, one chord after
+// another.
+#[when(regex = r#"^the observer is given the keys "([^"]+)"$"#)]
+fn observer_given_keys(w: &mut LjosWorld, keys: String) -> StepResult {
+    w.each(|b| {
+        b.probes()?
+            .observer_call("app_press", serde_json::json!({ "keys": keys }))
+            .map(|_| ())
+    })
+}
+
 #[then(regex = r#"^the observer shows "([^"]+)"$"#)]
 fn observer_shows(w: &mut LjosWorld, text: String) -> StepResult {
     observer_matches(w, &format!("text={text}"), true)
