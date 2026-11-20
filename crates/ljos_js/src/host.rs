@@ -2717,7 +2717,8 @@ impl JsHost {
         };
         let size = self.heap_bytes();
         let mut p = self.pressure.borrow_mut();
-        if size >= high {
+        // Only a collection tells live from garbage.
+        if due && size >= high {
             if !p.warned {
                 p.warned = true;
                 let most = if most.is_empty() { p.most() } else { most };

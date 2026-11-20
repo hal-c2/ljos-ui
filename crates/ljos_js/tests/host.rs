@@ -132,6 +132,27 @@ fn garbage_past_two_thirds_of_the_limit_is_collected_before_the_heap_runs_out() 
     assert_eq!(out.unwrap(), 3_000_000.0);
 }
 
+/// Near the limit the collector keeps QuickJS's own threshold: a heap
+/// that lives within a sixteenth of it runs out, rather than collecting
+/// every few KiB until the slice stops the run.
+#[test]
+fn garbage_churned_on_a_nearly_full_heap_runs_out_rather_than_collecting_each_step() {
+    let host = small(32);
+    keep(&host, 31);
+    host.collect_now();
+    assert!(host.heap_bytes() > 30 * MIB, "{}", host.heap_bytes());
+    let slice = Slice {
+        soft: Duration::from_secs(1),
+        hard: Duration::from_secs(2),
+    };
+    let err = host
+        .enter("churn", slice, |s| {
+            s.eval::<(), _>("for (;;) { const a = { b: [1, 2, 3] }; a.self = a }")
+        })
+        .unwrap_err();
+    assert!(matches!(err, JsFault::JsOutOfMemory { .. }), "{err:?}");
+}
+
 /// A run that found no room leaves its garbage collected, so the next run
 /// does not meet the same full heap, whoever it belongs to.
 #[test]
@@ -192,6 +213,40 @@ fn a_heap_past_three_quarters_is_warned_of_once_and_named() {
     host.enter("after", host.config().slice, |s| s.eval::<(), _>("1"))
         .unwrap();
     assert!(!host.heap_pressure().warned);
+}
+
+/// A heap past three quarters that a collection would bring back under
+/// it is not warned of: the warning follows a collection.
+#[test]
+fn garbage_past_three_quarters_with_no_collection_is_not_warned_of() {
+    let host = small(32);
+    keep(&host, 22);
+    host.collect_now();
+    let collections = host.collections();
+    let high = 24 * MIB;
+    // Cycles only the collector frees, a little at a time, until the
+    // heap ends a run past three quarters, short of the growth that
+    // collects.
+    for _ in 0..200 {
+        if host.heap_bytes() >= high {
+            break;
+        }
+        host.enter("litter", host.config().slice, |s| {
+            s.eval::<(), _>(
+                "for (let i = 0; i < 16; i++) { const a = new Array(1000).fill(i); a.self = a }",
+            )
+        })
+        .unwrap();
+    }
+    assert!(host.heap_bytes() >= high, "{}", host.heap_bytes());
+    assert_eq!(host.collections(), collections, "nothing collected");
+    assert!(!host.heap_pressure().warned, "{:?}", host.heap_pressure());
+    host.collect_now();
+    assert!(
+        host.heap_bytes() < high,
+        "it was garbage: {}",
+        host.heap_bytes()
+    );
 }
 
 /// What grew the heap is told per run, the most first, and the table

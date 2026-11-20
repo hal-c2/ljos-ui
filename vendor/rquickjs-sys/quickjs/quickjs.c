@@ -1704,13 +1704,18 @@ static void js_trigger_gc(JSRuntime *rt, size_t size)
            as much is past the limit, and garbage fills the heap up to it
            without another collection: the allocation that meets it fails
            while most of the heap could be freed. Collect again halfway to
-           the limit instead. */
+           the limit instead, while a sixteenth of the limit is left: past
+           that, halfway is a few KiB away and a run that makes garbage
+           would collect the whole heap each time, until its slice ran out.
+           It runs out of heap instead, and the host collects after it. */
         if (rt->malloc_state.malloc_limit != 0) {
             size_t size = rt->malloc_state.malloc_size;
             size_t limit = rt->malloc_state.malloc_limit;
-            size_t halfway = size < limit ? size + ((limit - size) >> 1) : size;
-            if (rt->malloc_gc_threshold > halfway)
-                rt->malloc_gc_threshold = halfway;
+            if (size < limit && limit - size >= (limit >> 4)) {
+                size_t halfway = size + ((limit - size) >> 1);
+                if (rt->malloc_gc_threshold > halfway)
+                    rt->malloc_gc_threshold = halfway;
+            }
         }
     }
 }
