@@ -153,6 +153,9 @@ pub(crate) struct MenuState {
     repeaters: RefCell<Vec<ObjectId>>,
     /// The `ObjectModel` that `contentModel` reads.
     model: Cell<Option<ObjectId>>,
+    /// What is declared in the menu was taken in, which happens once: a
+    /// declared child taken out again stays out.
+    declared_in: Cell<bool>,
 }
 
 /// `Menu`.
@@ -475,7 +478,8 @@ fn put(cx: &Cx, child: ObjectId, anchor: Option<ObjectId>) -> Result<(), EngineE
     let complete = e
         .flags(menu)
         .is_some_and(|f| f.contains(ObjectFlags::COMPLETED));
-    if !complete {
+    let declared_in = state_of(e, menu).is_some_and(|s| s.declared_in.get());
+    if !complete && !declared_in {
         // Taken in when the menu is complete, when its delegate is known.
         return match anchor {
             Some(a) => host_insert(cx, child, a, POPUP),
@@ -517,14 +521,19 @@ fn init_menu(e: &Engine, menu: ObjectId) -> Result<(), EngineError> {
 }
 
 /// Takes in, last and in order, what is declared in the menu and is not
-/// one of its items yet.
-fn take_in_declared(e: &Engine, menu: ObjectId) -> Result<(), EngineError> {
+/// one of its items yet. It runs once, and says whether this was it.
+fn take_in_declared(e: &Engine, menu: ObjectId) -> Result<bool, EngineError> {
+    let Some(st) = state_of(e, menu) else {
+        return Ok(false);
+    };
+    // Set first: a delegate made here may add an item while it completes,
+    // and that must not take in what is declared a second time.
+    if st.declared_in.replace(true) {
+        return Ok(false);
+    }
     let declared: Vec<ObjectId> = match e.untrack(|| e.read(menu, POPUP.content_data)) {
         Value::List(l) => l.iter().filter_map(Value::as_object).collect(),
         _ => Vec::new(),
-    };
-    let Some(st) = state_of(e, menu) else {
-        return Ok(());
     };
     for child in declared {
         // An action or a menu taken in already has its item, which it
@@ -538,7 +547,7 @@ fn take_in_declared(e: &Engine, menu: ObjectId) -> Result<(), EngineError> {
             take_in(e, menu, child, None)?;
         }
     }
-    Ok(())
+    Ok(true)
 }
 
 /// Before the menu is complete, a method that changes its items (called
@@ -550,10 +559,12 @@ fn declared_first(e: &Engine, menu: ObjectId) -> Result<(), EngineError> {
     let complete = e
         .flags(menu)
         .is_some_and(|f| f.contains(ObjectFlags::COMPLETED));
-    if complete {
+    if complete || !take_in_declared(e, menu)? {
         return Ok(());
     }
-    take_in_declared(e, menu)
+    // Even when the method itself changes nothing, the menu now counts
+    // what it took in.
+    changed(e, menu)
 }
 
 /// Makes `obj` an item of the menu, the `at`-th or the last: an item as

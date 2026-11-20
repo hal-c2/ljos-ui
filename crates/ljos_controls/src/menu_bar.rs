@@ -321,7 +321,7 @@ impl MenuBar {
     #[qml(invokable, name = "removeItem")]
     fn remove_item(cx: &Cx, item: Option<ObjectId>) -> Result<(), EngineError> {
         let (e, bar) = (cx.engine, cx.this);
-        take_in_declared(e, bar)?;
+        declared_first(e, bar)?;
         if let Some(item) = item
             && leave(e, bar, item)?.is_some()
         {
@@ -335,7 +335,7 @@ impl MenuBar {
     #[qml(invokable, name = "takeItem")]
     fn take_item(cx: &Cx, index: Value) -> Result<Value, EngineError> {
         let (e, bar) = (cx.engine, cx.this);
-        take_in_declared(e, bar)?;
+        declared_first(e, bar)?;
         let Some(item) = index_arg(&index).and_then(|i| items(e, bar).get(i).copied()) else {
             return Ok(Value::Null);
         };
@@ -371,7 +371,7 @@ impl MenuBar {
         let Some(menu) = menu else {
             return Ok(());
         };
-        take_in_declared(e, bar)?;
+        declared_first(e, bar)?;
         let Some(item) = items(e, bar)
             .into_iter()
             .find(|i| menu_of(e, *i) == Some(menu))
@@ -390,7 +390,7 @@ impl MenuBar {
     #[qml(invokable, name = "takeMenu")]
     fn take_menu(cx: &Cx, index: Value) -> Result<Value, EngineError> {
         let (e, bar) = (cx.engine, cx.this);
-        take_in_declared(e, bar)?;
+        declared_first(e, bar)?;
         let Some(item) = index_arg(&index).and_then(|i| items(e, bar).get(i).copied()) else {
             return Ok(Value::Null);
         };
@@ -469,12 +469,13 @@ fn init_bar(e: &Engine, bar: ObjectId) -> Result<(), EngineError> {
 /// children run as they complete, such as an `Instantiator`'s
 /// `onObjectAdded`). On qml6 the declared menus are the bar's from the
 /// start, so the index such a method is given counts them.
-fn take_in_declared(e: &Engine, bar: ObjectId) -> Result<(), EngineError> {
+/// It says whether this was the time it ran.
+fn take_in_declared(e: &Engine, bar: ObjectId) -> Result<bool, EngineError> {
     let Some(st) = state_of(e, bar) else {
-        return Ok(());
+        return Ok(false);
     };
     if st.declared_in.replace(true) {
-        return Ok(());
+        return Ok(false);
     }
     let listed = |prop| match e.untrack(|| e.read(bar, prop)) {
         Value::List(l) => l.iter().filter_map(Value::as_object).collect::<Vec<_>>(),
@@ -489,6 +490,15 @@ fn take_in_declared(e: &Engine, bar: ObjectId) -> Result<(), EngineError> {
         if e.is_alive(child) {
             take_in(e, bar, child, None)?;
         }
+    }
+    Ok(true)
+}
+
+/// [`take_in_declared`] for a method, which publishes what was taken in
+/// even when the method itself then changes nothing.
+fn declared_first(e: &Engine, bar: ObjectId) -> Result<(), EngineError> {
+    if take_in_declared(e, bar)? {
+        changed(e, bar)?;
     }
     Ok(())
 }
@@ -715,7 +725,7 @@ fn add(
     if !fits {
         return Ok(());
     }
-    take_in_declared(e, bar)?;
+    declared_first(e, bar)?;
     take_in(e, bar, obj, at)?;
     changed(e, bar)
 }
