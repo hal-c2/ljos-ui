@@ -127,13 +127,18 @@ impl UserDir {
     /// one of them is there, else from the root.
     #[must_use]
     pub fn path_of(&self, name: &str) -> PathBuf {
-        if let Some(modules) = &self.modules {
-            let module = self.root.join(modules).join(name);
-            if module.exists() {
-                return module;
-            }
+        match &self.modules {
+            Some(modules) if self.module_has(name) => self.root.join(modules).join(name),
+            _ => self.root.join(name),
         }
-        self.root.join(name)
+    }
+
+    /// Whether the modules have a file named `name`, which hides the
+    /// root's of that name.
+    fn module_has(&self, name: &str) -> bool {
+        self.modules
+            .as_ref()
+            .is_some_and(|modules| self.root.join(modules).join(name).exists())
     }
 
     pub fn root(&self) -> &Path {
@@ -227,8 +232,6 @@ impl UserDir {
     #[must_use]
     pub fn list(&self, wanted: impl Fn(&str) -> bool) -> (BTreeMap<String, String>, Vec<Refusal>) {
         let mut files = BTreeMap::new();
-        // The names a module's file gave: another file of one is hidden.
-        let mut of_modules = std::collections::BTreeSet::new();
         let mut refused = Vec::new();
         let Some(root) = self.real_root() else {
             return (files, refused);
@@ -263,7 +266,9 @@ impl UserDir {
                     continue;
                 }
                 let (relative, module) = self.named(relative);
-                if !module && of_modules.contains(&relative) {
+                // Hidden whatever the order of the walk: a file that is not
+                // read is neither listed nor refused.
+                if !module && self.module_has(&relative) {
                     continue;
                 }
                 if kind.is_symlink() {
@@ -281,9 +286,6 @@ impl UserDir {
                 }
                 match self.read(&path) {
                     Ok(text) => {
-                        if module {
-                            of_modules.insert(relative.clone());
-                        }
                         files.insert(relative, text);
                     }
                     Err(ReadError::Refused(why)) => refused.push(why),
@@ -521,6 +523,33 @@ mod tests {
         // Without, the directory is a directory like any other.
         let plain = UserDir::new(root.path());
         assert_eq!(plain.name_of(&module).unwrap(), "qml/Lib/Badge.qml");
+    }
+
+    /// The walk reads the root's files before it enters the modules', so a
+    /// hidden file is one the walk meets first.
+    #[cfg(unix)]
+    #[test]
+    fn a_file_a_module_hides_is_not_refused() {
+        let outside = tempfile::tempdir().unwrap();
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(outside.path().join("Evil.qml"), "Item {}").unwrap();
+        std::fs::create_dir(root.path().join("qml")).unwrap();
+        std::fs::write(root.path().join("qml/Card.qml"), "Rectangle {}").unwrap();
+        std::os::unix::fs::symlink(
+            outside.path().join("Evil.qml"),
+            root.path().join("Card.qml"),
+        )
+        .unwrap();
+        let dir = UserDir::new(root.path()).with_modules("qml");
+        let (files, refused) = dir.list(|name| name.ends_with(".qml"));
+        assert_eq!(files.keys().collect::<Vec<_>>(), ["Card.qml"]);
+        assert_eq!(files["Card.qml"], "Rectangle {}");
+        assert!(refused.is_empty(), "{refused:?}");
+        // The module's gone, the root's is the one named, and refused.
+        std::fs::remove_file(root.path().join("qml/Card.qml")).unwrap();
+        let (files, refused) = dir.list(|name| name.ends_with(".qml"));
+        assert!(files.is_empty());
+        assert_eq!(refused, vec![Refusal::LinkOut("Card.qml".to_owned())]);
     }
 
     #[cfg(unix)]
