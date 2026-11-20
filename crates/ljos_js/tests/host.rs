@@ -1134,6 +1134,37 @@ fn out_of_memory_is_reported_and_context_survives() {
     assert!(host.memory_stats().unwrap().malloc_size < 4 * 1024 * 1024);
 }
 
+/// A dispatch that keeps all it allocates is stopped once it took its
+/// share of the room under the limit, and told as the heap running out:
+/// the rest of the application keeps the room left, instead of every
+/// script after it running out too.
+#[test]
+fn a_dispatch_that_keeps_allocating_leaves_room_for_the_rest() {
+    let limit = 16 * 1024 * 1024;
+    let host = JsHost::new(JsConfig {
+        memory_limit: Some(limit),
+        ..JsConfig::default()
+    })
+    .unwrap();
+    let slice = Slice {
+        soft: Duration::from_secs(5),
+        hard: Duration::from_secs(10),
+    };
+    let err = host
+        .enter("hog", slice, |s| {
+            s.eval::<(), _>("globalThis.hog = []; for (;;) hog.push(new Array(100).fill(1))")
+        })
+        .unwrap_err();
+    assert!(matches!(err, JsFault::JsOutOfMemory { .. }), "{err:?}");
+    // What it kept stays, but a quarter of the room is someone else's.
+    let held = host.heap_bytes();
+    assert!(held < limit / 8 * 7, "the hog holds {held} of {limit}");
+    let other = host.enter("other", slice, |s| {
+        s.eval::<f64, _>("'x'.repeat(2 * 1024 * 1024).length")
+    });
+    assert_eq!(other.unwrap(), (2 * 1024 * 1024) as f64);
+}
+
 /// A script that calls itself `n` deep: `n`, or -1 once a RangeError
 /// says the stack ran out.
 fn recurse(n: u32) -> String {
