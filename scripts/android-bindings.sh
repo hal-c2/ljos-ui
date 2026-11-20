@@ -72,7 +72,8 @@ fi
 
 # bindgen needs libclang on the host; the regeneration is the only part that
 # does. The NDK's (lib/ in current NDKs, lib64/ in old ones) ties its version
-# to the NDK; its clang is the one bindgen asks for the include paths.
+# to the NDK; its clang is the one bindgen asks for the include paths. r27 has
+# only a musl build of it (musl/lib), which bindgen cannot load: use r30.
 if [ -z "${LIBCLANG_PATH:-}" ]; then
   for dir in "$prebuilt/lib" "$prebuilt/lib64"; do
     if compgen -G "$dir/libclang.so*" > /dev/null; then LIBCLANG_PATH="$dir"; break; fi
