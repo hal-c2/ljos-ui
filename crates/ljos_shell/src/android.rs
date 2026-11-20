@@ -29,8 +29,9 @@ use ljos_host::{
 use ljos_runtime::SystemClock;
 use ndk::native_window::NativeWindow;
 
-use crate::desktop::{HEARTBEAT, use_fonts};
+use crate::desktop::use_fonts;
 use crate::platform::Display;
+use crate::wake::{Next, next_wake, posted_met};
 use crate::{Hosting, Setup, SetupError, ShellApp, ShellConfig};
 
 /// What reaches the application's thread besides the activity's events.
@@ -558,40 +559,6 @@ where
     }
 }
 
-/// What the loop does before it waits.
-#[derive(Debug, PartialEq, Eq)]
-enum Next {
-    /// A pass now: what is due is too near to sleep for.
-    Now,
-    /// Sleep until then, or until something arrives.
-    At(Option<Instant>),
-}
-
-/// The earlier of the scene's next frame (`asked`) and the turn another
-/// thread asked for (`posted`). What was posted stays until a pass meets
-/// it ([`posted_met`]): the host keeps only the deadline it was told last,
-/// and a turn that asks for nothing new would otherwise tell it none.
-fn next_wake(asked: Option<Instant>, posted: &Mutex<Option<Instant>>, now: Instant) -> Next {
-    let posted = *crate::lock(posted);
-    let due = match (asked, posted) {
-        (Some(a), Some(b)) => Some(a.min(b)),
-        (a, b) => a.or(b),
-    };
-    match due {
-        Some(at) if at <= now + HEARTBEAT / 4 => Next::Now,
-        other => Next::At(other),
-    }
-}
-
-/// A pass that `began` then meets what was posted for then or before, and
-/// for as near after as [`next_wake`] does not sleep for.
-fn posted_met(posted: &Mutex<Option<Instant>>, began: Instant) {
-    let mut posted = crate::lock(posted);
-    if posted.is_some_and(|at| at <= began + HEARTBEAT / 4) {
-        *posted = None;
-    }
-}
-
 /// Asks for a turn at `at` unless one is due earlier already.
 fn ask(due: &Mutex<Option<Instant>>, waker: &ljos_host::Waker, at: Instant) {
     let mut due = crate::lock(due);
@@ -797,45 +764,4 @@ fn surface_of(
     // SAFETY: the window outlives the surface: the relay keeps it until
     // the application has let go of the surface (`SurfaceDestroyed`).
     unsafe { instance.create_surface_unsafe(target) }.map_err(|e| e.to_string())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{HEARTBEAT, Next, next_wake, posted_met};
-    use std::sync::Mutex;
-    use std::time::{Duration, Instant};
-
-    #[test]
-    fn a_posted_wake_outlives_a_turn_that_asks_for_nothing() {
-        let now = Instant::now();
-        let at = now + HEARTBEAT;
-        let posted = Mutex::new(Some(at));
-        assert_eq!(next_wake(None, &posted, now), Next::At(Some(at)));
-        // Memory pressure, say: a turn with no pass and nothing posted.
-        assert_eq!(next_wake(None, &posted, now), Next::At(Some(at)));
-        // A pass before it leaves it.
-        posted_met(&posted, now);
-        assert_eq!(next_wake(None, &posted, now), Next::At(Some(at)));
-    }
-
-    #[test]
-    fn a_pass_meets_the_posted_wake_once_it_is_due() {
-        let now = Instant::now();
-        let posted = Mutex::new(Some(now + Duration::from_millis(1)));
-        assert_eq!(next_wake(None, &posted, now), Next::Now);
-        posted_met(&posted, now);
-        assert_eq!(next_wake(None, &posted, now), Next::At(None));
-    }
-
-    #[test]
-    fn the_scenes_frame_and_a_posted_wake_take_the_earlier() {
-        let now = Instant::now();
-        let frame = now + HEARTBEAT;
-        let posted = Mutex::new(Some(now + 2 * HEARTBEAT));
-        assert_eq!(next_wake(Some(frame), &posted, now), Next::At(Some(frame)));
-        assert_eq!(
-            next_wake(None, &posted, now),
-            Next::At(Some(now + 2 * HEARTBEAT))
-        );
-    }
 }

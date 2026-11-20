@@ -82,6 +82,9 @@ mod surface;
 mod system_fonts;
 #[cfg(all(test, target_os = "linux"))]
 mod test_bus;
+// The Android shell's; built everywhere so that its tests run on any host.
+#[cfg_attr(not(all(feature = "android", target_os = "android")), allow(dead_code))]
+mod wake;
 mod wayland_drag;
 #[cfg(target_os = "windows")]
 mod win32_drag;

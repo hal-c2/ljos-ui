@@ -149,7 +149,7 @@ fn keeps_pumping(destroyed: bool, closed: bool, finishing: bool) -> bool {
 /// activity did not take brings no Destroy to wait for: the pump ends now,
 /// not at the next event, and `main` ends the process.
 fn exiting(finish_taken: bool) -> (bool, bool) {
-    (true, finish_taken)
+    (false, finish_taken)
 }
 
 /// Where the activity's Back goes: to the application attached, if any.
