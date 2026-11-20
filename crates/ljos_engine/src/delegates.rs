@@ -23,11 +23,12 @@
 //! [`DelegateHost`].
 
 use std::cell::{Cell, RefCell};
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
 use ljos_runtime::{Lane, ProcId};
 
 use crate::atom::Atom;
+use crate::boundary::Remakes;
 use crate::engine::Engine;
 use crate::error::EngineError;
 use crate::ids::{ContextId, ObjectId, PropIndex};
@@ -40,6 +41,7 @@ use crate::model::{
     DelegateSource, ItemModel, ModelChange, ModelRow, RowKey, RowKind, RowObject, RowShape,
     member_row_shape, row_hook, row_shape,
 };
+use crate::retry::{ResourceFault, Retry, seconds};
 use crate::value::Value;
 use crate::{NodeId, Provenance, WriteKind};
 
@@ -118,6 +120,10 @@ struct State {
     later: Cell<Option<Later>>,
     /// The model said rows are about to go, and what was due ran.
     announced: bool,
+    /// Rows whose delegate a resource fault took, by row id: each is made
+    /// again after a wait. Apart from [`Row`], and a list, not a map, as
+    /// few rows ever have one and every view keeps this.
+    retries: Vec<(u64, Retry)>,
 }
 
 /// No row in `from..at` has a delegate and the row at `at` has one, or
@@ -259,6 +265,8 @@ impl Delegates {
     ) {
         let s = &self.shared;
         engine.note_shown_model(s.owner, model.as_ref());
+        let holder: Weak<dyn Remakes> = Rc::<Shared>::downgrade(s);
+        engine.hold_content(s.owner, holder);
         let model = model.filter(|_| component.is_some());
         engine.batch(|| {
             // Measured on Qt 6.11: a new delegate takes the old objects
@@ -346,6 +354,50 @@ impl Delegates {
     /// a change touched only its rows.
     pub fn created(&self) -> u64 {
         self.shared.state.borrow().created
+    }
+}
+
+/// A resource fault in a row's delegate takes that delegate, and the row
+/// gets a new one after a wait: the rest of the rows stay as they are.
+impl Remakes for Shared {
+    fn remake(self: Rc<Self>, engine: &Engine, content: ObjectId, cause: ResourceFault) -> bool {
+        let found = {
+            let mut st = self.state.borrow_mut();
+            let component = st.component;
+            let at = st.rows.iter().position(|r| {
+                r.object == Some(content)
+                    || r.pending.as_ref().and_then(CreationHandle::half_made) == Some(content)
+            });
+            at.map(|i| {
+                st.later.set(None);
+                let row = &mut st.rows[i];
+                row.data = None;
+                (i, row.id, row.object.take(), row.pending.take(), component)
+            })
+        };
+        let Some((index, id, object, pending, component)) = found else {
+            return false;
+        };
+        // What the job made so far goes at its next step.
+        if let Some(h) = pending {
+            h.cancel();
+        }
+        if let Some(obj) = object {
+            self.placed_changed(engine);
+            self.host.removed(engine, index, obj);
+            engine.tell_destruction(obj, false);
+            self.host.released(engine, obj);
+            engine.destroy(obj);
+        }
+        Shared::make_row_again(
+            &self,
+            engine,
+            id,
+            index,
+            component.unwrap_or(self.owner),
+            cause,
+        );
+        true
     }
 }
 
@@ -445,6 +497,14 @@ impl Shared {
         if let Some(h) = &row.pending {
             h.cancel();
         }
+        let retry = {
+            let mut st = self.state.borrow_mut();
+            let at = st.retries.iter().position(|(id, _)| *id == row.id);
+            at.map(|i| st.retries.swap_remove(i))
+        };
+        if let Some((_, mut r)) = retry {
+            r.cancel(engine);
+        }
         let Some(obj) = row.object else {
             return;
         };
@@ -511,7 +571,7 @@ impl Shared {
                         .delegate(setup),
                 )
                 .map(|(root, _)| root);
-            s.finish_row(engine, id, component, r);
+            Shared::finish_row(s, engine, id, component, r);
             return;
         }
         let (job, handle) = engine.make_later(
@@ -534,7 +594,7 @@ impl Shared {
             if let Some(s) = weak.upgrade()
                 && e.is_alive(s.owner)
             {
-                s.finish_row(e, id, component, r.clone());
+                Shared::finish_row(&s, e, id, component, r.clone());
             }
         }));
     }
@@ -561,14 +621,14 @@ impl Shared {
     }
 
     fn finish_row(
-        &self,
+        s: &Rc<Shared>,
         engine: &Engine,
         id: u64,
         component: ObjectId,
         made: Result<ObjectId, EngineError>,
     ) {
         let index = {
-            let mut st = self.state.borrow_mut();
+            let mut st = s.state.borrow_mut();
             let i = st.position(id);
             if let Some(i) = i {
                 st.rows[i].pending = None;
@@ -585,19 +645,67 @@ impl Shared {
         };
         match (made, index) {
             (Ok(obj), Some(i)) => {
-                self.placed_changed(engine);
-                self.host.added(engine, i, obj);
+                s.placed_changed(engine);
+                s.host.added(engine, i, obj);
             }
             // The row went while its delegate was being made.
             (Ok(obj), None) => {
                 engine.destroy(obj);
             }
             (Err(_), None) => {}
-            (Err(e), Some(_)) => {
+            (Err(e), Some(i)) => {
                 cannot_create(engine, component);
                 e.said().into_iter().for_each(|l| engine.warn(l));
+                if let Some(cause) = e.resource_fault() {
+                    Shared::make_row_again(s, engine, id, i, component, cause);
+                }
             }
         }
+    }
+
+    /// The delegate of row `id` was not made for `cause`, which may be
+    /// gone in a while: it is made again then, unless the row is gone or
+    /// has one by then. A code bug says the same each time, and waits for
+    /// the row or the delegate to change, as in Qt.
+    fn make_row_again(
+        s: &Rc<Shared>,
+        engine: &Engine,
+        id: u64,
+        index: usize,
+        component: ObjectId,
+        cause: ResourceFault,
+    ) {
+        let weak = Rc::downgrade(s);
+        let wait = {
+            let mut st = s.state.borrow_mut();
+            let at = match st.retries.iter().position(|(r, _)| *r == id) {
+                Some(at) => at,
+                None => {
+                    st.retries.push((id, Retry::default()));
+                    st.retries.len() - 1
+                }
+            };
+            st.retries[at]
+                .1
+                .schedule(engine, cause, move |e| {
+                    let Some(s) = weak.upgrade().filter(|s| e.is_alive(s.owner)) else {
+                        return;
+                    };
+                    let empty = {
+                        let mut st = s.state.borrow_mut();
+                        if let Some((_, r)) = st.retries.iter_mut().find(|(r, _)| *r == id) {
+                            r.ran();
+                        }
+                        st.position(id).is_some_and(|i| {
+                            st.rows[i].object.is_none() && st.rows[i].pending.is_none()
+                        })
+                    };
+                    if empty {
+                        Shared::create_row(&s, e, id);
+                    }
+                })
+        };
+        made_again_later(engine, component, cause, index, wait);
     }
 
     fn on_change(s: &Rc<Shared>, engine: &Engine, change: &ModelChange) {
@@ -1307,8 +1415,11 @@ struct Held {
     root: Option<ObjectId>,
     pending: Option<(CreationHandle, SharedCreation)>,
     /// The component could not make it: asking again would only say the
-    /// same again.
+    /// same again, unless a resource fault was why ([`Held::retry`]).
     failed: bool,
+    /// The delegate a resource fault took is made again after a wait.
+    /// Boxed, as few rows ever have one.
+    retry: Option<Box<Retry>>,
     /// The row's own object, not something made for it: never destroyed
     /// and never shown for another row.
     own: bool,
@@ -1389,6 +1500,8 @@ impl ViewDelegates {
         component: Option<ObjectId>,
     ) {
         let s = &self.shared;
+        let holder: Weak<dyn Remakes> = Rc::<ViewShared>::downgrade(s);
+        engine.hold_content(s.owner, holder);
         engine.note_shown_model(s.owner, model.as_ref());
         let model =
             model.filter(|m| component.is_some() || m.delegate_source() != DelegateSource::View);
@@ -1612,58 +1725,12 @@ impl ViewDelegates {
                 root: None,
                 pending: None,
                 failed: false,
+                retry: None,
                 own: false,
             });
             id
         };
-        let for_setup = s.clone();
-        let ljos = engine.written_in_ljos_ui(component);
-        let setup = move |e: &Engine, root: ObjectId, ctx: ContextId| {
-            for_setup.setup(e, id, root, ctx, ljos);
-        };
-        match urgency {
-            Urgency::Now => {
-                let r = engine
-                    .make(
-                        Request::component(component)
-                            .parent(Some(s.owner))
-                            .delegate(setup),
-                    )
-                    .map(|(root, _)| root);
-                s.finish(engine, id, component, r, false)
-                    .map(|o| (o, Made::Created))
-            }
-            Urgency::Later => {
-                let (job, handle) = engine.make_later(
-                    Request::component(component)
-                        .parent(Some(s.owner))
-                        .delegate(setup),
-                    Lane::Prefetch,
-                    ProcId::new(0, 0),
-                );
-                let weak = Rc::downgrade(s);
-                let (job, shared) = job
-                    .on_done(move |e, r| {
-                        // A job whose owner went ends with an error
-                        // nobody is to hear of.
-                        if let Some(s) = weak.upgrade()
-                            && e.is_alive(s.owner)
-                        {
-                            let tell = !s.forcing.get();
-                            s.finish(e, id, component, r.clone(), tell);
-                        }
-                    })
-                    .shared();
-                {
-                    let mut st = s.state.borrow_mut();
-                    if let Some(h) = st.live.iter_mut().find(|h| h.id == id) {
-                        h.pending = Some((handle, shared));
-                    }
-                }
-                engine.incubate(job);
-                None
-            }
-        }
+        ViewShared::start(s, engine, id, component, urgency).map(|o| (o, Made::Created))
     }
 
     /// The view is done with `object`. With `reuse` it goes to the pool
@@ -1758,7 +1825,179 @@ impl ViewDelegates {
     }
 }
 
+/// A resource fault in a delegate the view shows takes that delegate; the
+/// view lays its rows out without it and gets a new one after a wait, as
+/// for one it asked for later.
+impl Remakes for ViewShared {
+    fn remake(self: Rc<Self>, engine: &Engine, content: ObjectId, cause: ResourceFault) -> bool {
+        let found = {
+            let mut st = self.state.borrow_mut();
+            let component = st.component;
+            let at = st.live.iter().position(|h| {
+                !h.own
+                    && h.index.is_some()
+                    && (h.object == Some(content) || h.root == Some(content))
+            });
+            at.and_then(|i| {
+                let mut gone = st.live.remove(i);
+                let index = gone.index?;
+                st.live.insert(
+                    i,
+                    Held {
+                        id: gone.id,
+                        index: Some(index),
+                        data: None,
+                        object: None,
+                        root: None,
+                        pending: None,
+                        failed: true,
+                        retry: gone.retry.take(),
+                        own: false,
+                    },
+                );
+                Some((gone, index, component))
+            })
+        };
+        let Some((gone, index, component)) = found else {
+            return false;
+        };
+        let id = gone.id;
+        self.destroy(engine, gone);
+        ViewShared::make_again(
+            &self,
+            engine,
+            id,
+            index,
+            component.unwrap_or(self.owner),
+            cause,
+        );
+        true
+    }
+}
+
 impl ViewShared {
+    /// Makes the delegate of the entry `id` from `component`: before this
+    /// returns, or in the incubation queue.
+    fn start(
+        s: &Rc<Self>,
+        engine: &Engine,
+        id: u64,
+        component: ObjectId,
+        urgency: Urgency,
+    ) -> Option<ObjectId> {
+        let for_setup = s.clone();
+        let ljos = engine.written_in_ljos_ui(component);
+        let setup = move |e: &Engine, root: ObjectId, ctx: ContextId| {
+            for_setup.setup(e, id, root, ctx, ljos);
+        };
+        match urgency {
+            Urgency::Now => {
+                let r = engine
+                    .make(
+                        Request::component(component)
+                            .parent(Some(s.owner))
+                            .delegate(setup),
+                    )
+                    .map(|(root, _)| root);
+                ViewShared::finish(s, engine, id, component, r, false)
+            }
+            Urgency::Later => {
+                let (job, handle) = engine.make_later(
+                    Request::component(component)
+                        .parent(Some(s.owner))
+                        .delegate(setup),
+                    Lane::Prefetch,
+                    ProcId::new(0, 0),
+                );
+                let weak = Rc::downgrade(s);
+                let (job, shared) = job
+                    .on_done(move |e, r| {
+                        // A job whose owner went ends with an error
+                        // nobody is to hear of.
+                        if let Some(s) = weak.upgrade()
+                            && e.is_alive(s.owner)
+                        {
+                            let tell = !s.forcing.get();
+                            ViewShared::finish(&s, e, id, component, r.clone(), tell);
+                        }
+                    })
+                    .shared();
+                {
+                    let mut st = s.state.borrow_mut();
+                    if let Some(h) = st.live.iter_mut().find(|h| h.id == id) {
+                        h.pending = Some((handle, shared));
+                    }
+                }
+                engine.incubate(job);
+                None
+            }
+        }
+    }
+
+    /// The delegate of the entry `id` was not made for `cause`, which may
+    /// be gone in a while: it is made again then, and the view told as of
+    /// one it asked for later. A row that is gone or shown by then, or
+    /// given back, is not.
+    fn make_again(
+        s: &Rc<Self>,
+        engine: &Engine,
+        id: u64,
+        index: usize,
+        component: ObjectId,
+        cause: ResourceFault,
+    ) {
+        let weak = Rc::downgrade(s);
+        let wait = {
+            let mut st = s.state.borrow_mut();
+            let Some(held) = st.live.iter_mut().find(|h| h.id == id) else {
+                return;
+            };
+            held.retry
+                .get_or_insert_default()
+                .schedule(engine, cause, move |e| {
+                    if let Some(s) = weak.upgrade().filter(|s| e.is_alive(s.owner)) {
+                        ViewShared::try_again(&s, e, id);
+                    }
+                })
+        };
+        made_again_later(engine, component, cause, index, wait);
+    }
+
+    /// Makes again the delegate of the entry `id` that a resource fault
+    /// took, if the row still wants one.
+    fn try_again(s: &Rc<Self>, engine: &Engine, id: u64) {
+        let found = {
+            let mut st = s.state.borrow_mut();
+            let model = st.model.clone();
+            let component = st.component;
+            let held = st.live.iter_mut().find(|h| h.id == id);
+            held.and_then(|h| {
+                if let Some(r) = h.retry.as_mut() {
+                    r.ran();
+                }
+                let index = h
+                    .index
+                    .filter(|_| h.failed && h.object.is_none() && h.pending.is_none())?;
+                h.failed = false;
+                Some((index, model?, component))
+            })
+        };
+        let Some((index, model, component)) = found else {
+            return;
+        };
+        let component = match model.delegate_source() {
+            DelegateSource::View => component,
+            DelegateSource::Component(c) => component.or(c),
+            DelegateSource::Rows => None,
+        };
+        let component =
+            component.and_then(|c| crate::chooser::resolve_delegate(engine, c, &model, index));
+        let Some(component) = component else {
+            return;
+        };
+        ViewShared::start(s, engine, id, component, Urgency::Later);
+    }
+
     /// The object of row `index` of a model whose rows show themselves.
     fn adopt(
         &self,
@@ -1784,6 +2023,7 @@ impl ViewShared {
                 root: Some(object),
                 pending: None,
                 failed: false,
+                retry: None,
                 own: true,
             });
         }
@@ -1791,7 +2031,10 @@ impl ViewShared {
         Some((object, Made::Created))
     }
 
-    fn destroy(&self, engine: &Engine, held: Held) {
+    fn destroy(&self, engine: &Engine, mut held: Held) {
+        if let Some(r) = held.retry.as_mut() {
+            r.cancel(engine);
+        }
         if held.own {
             if let Some(obj) = held.object {
                 self.host.destroying(engine, obj);
@@ -1866,7 +2109,7 @@ impl ViewShared {
     }
 
     fn finish(
-        &self,
+        s: &Rc<Self>,
         engine: &Engine,
         id: u64,
         component: ObjectId,
@@ -1874,7 +2117,7 @@ impl ViewShared {
         tell: bool,
     ) -> Option<ObjectId> {
         let (index, model) = {
-            let mut st = self.state.borrow_mut();
+            let mut st = s.state.borrow_mut();
             let held = st.live.iter_mut().find(|h| h.id == id);
             let index = held.map(|h| {
                 h.pending = None;
@@ -1899,20 +2142,23 @@ impl ViewShared {
                     m.delegate_made(engine, index, obj);
                 }
                 if tell && let Some(index) = index {
-                    self.host.ready(engine, index, obj);
+                    s.host.ready(engine, index, obj);
                 }
                 Some(obj)
             }
             // The row went while its delegate was being made.
             (Ok(obj), None) => {
-                self.host.destroying(engine, obj);
+                s.host.destroying(engine, obj);
                 engine.destroy(obj);
                 None
             }
             (Err(_), None) => None,
-            (Err(e), Some(_)) => {
+            (Err(e), Some(index)) => {
                 cannot_create(engine, component);
                 e.said().into_iter().for_each(|l| engine.warn(l));
+                if let (Some(cause), Some(index)) = (e.resource_fault(), index) {
+                    ViewShared::make_again(s, engine, id, index, component, cause);
+                }
                 None
             }
         }
@@ -2129,6 +2375,27 @@ impl ViewShared {
             s.host.ready(engine, 0, s.owner);
         }
     }
+}
+
+/// Says that the delegate of row `index` is made again after `wait`, as
+/// `cause` may be gone by then.
+fn made_again_later(
+    engine: &Engine,
+    component: ObjectId,
+    cause: ResourceFault,
+    index: usize,
+    wait: std::time::Duration,
+) {
+    let at = engine.declared_at(component).unwrap_or_default();
+    let when = if wait.is_zero() {
+        "at once".to_owned()
+    } else {
+        format!("in {}", seconds(wait))
+    };
+    engine.warn(format!(
+        "{at}QML Component: {}, so the delegate of row {index} is made again {when}",
+        cause.describe()
+    ));
 }
 
 /// Told at the delegate's component, as Qt does, before what stopped it:
