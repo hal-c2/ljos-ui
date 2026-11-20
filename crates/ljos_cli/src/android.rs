@@ -532,6 +532,7 @@ mod tests {
         for method in [
             "public static String clipboardText(Context context)",
             "public static void setClipboardText(Context context, String text)",
+            "public static void clearClipboard(Context context)",
             "public static boolean openUrl(Context context, String url)",
             "public static String filesDir(Context context)",
             "public static String cacheDir(Context context)",
