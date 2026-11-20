@@ -1241,6 +1241,7 @@ impl Inspector {
                 let now = capture::secrets(engine, scene, self.cfg.redact_all);
                 self.logs.borrow_mut().learn(&now);
             }
+            let watch = capture::SecretWatch::start(engine, scene, self.cfg.redact_all);
             let answer = args.options().and_then(|mut options| {
                 // An application on a clock a test moves may be let run on
                 // it; one on the wall clock may not.
@@ -1276,9 +1277,14 @@ impl Inspector {
                 )));
             }
             // Masked as what the application logged or threw is, with what
-            // the fields came to hold while an acting audit let it run.
+            // the fields held at any moment an acting audit let it run, and
+            // what fields made meanwhile hold now.
+            let heard = watch.stop(engine);
             let now = capture::secrets(engine, scene, self.cfg.redact_all);
-            self.logs.borrow_mut().learn(&now);
+            let mut logs = self.logs.borrow_mut();
+            logs.learn(&heard);
+            logs.learn(&now);
+            drop(logs);
             let book = self.logs.borrow();
             let book = book.book();
             let answer = match answer {

@@ -3193,7 +3193,8 @@ fn app_audit_on_a_virtual_clock_lets_the_application_run_and_moves_it_on() {
 }
 
 /// A secret the application first holds while an acting audit lets it run
-/// is masked in what the audit tells, as one it held before is.
+/// is masked in what the audit tells, as one it held before is, also when
+/// the field has let it go by the time the audit is done.
 #[test]
 fn app_audit_masks_a_secret_the_application_took_while_it_ran() {
     use ljos_runtime::VirtualClock;
@@ -3209,6 +3210,15 @@ Item {
     Timer {
         interval: 1500; running: true
         onTriggered: { pin.text = "late-pin"; throw new Error("thrown " + pin.text) }
+    }
+    Timer {
+        interval: 2500; running: true
+        onTriggered: {
+            pin.text = "gone-pin";
+            const held = pin.text;
+            pin.text = "";
+            throw new Error("cleared " + held)
+        }
     }
 }
 "##,
@@ -3235,6 +3245,10 @@ Item {
     assert!(told.contains("health-fault"), "the fault was found: {told}");
     assert!(!told.contains("late-pin"), "{told}");
     assert!(told.contains("thrown <redacted>"), "{told}");
+    // Held, let go and thrown in one handler: never in the field when the
+    // audit is done.
+    assert!(!told.contains("gone-pin"), "{told}");
+    assert!(told.contains("cleared <redacted>"), "{told}");
 }
 
 #[test]

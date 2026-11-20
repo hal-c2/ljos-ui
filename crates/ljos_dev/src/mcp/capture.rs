@@ -521,6 +521,57 @@ pub(crate) fn secrets(engine: &Engine, scene: &QuickScene, redact_all: bool) -> 
         .map_or_else(HashSet::new, |root| secrets_below(engine, root, redact_all))
 }
 
+/// What the fields below the scene's root come to hold that must not be
+/// shown, as each value is written: for a request that lets the
+/// application run (an acting audit), whose handlers can put a secret in a
+/// field, clear it and repeat it in a fault before anything looks again.
+/// Each editor there when the watch starts is watched, so one whose text
+/// is hidden only later is heard too; an editor made while it runs is not,
+/// which [`secrets`] after the run covers for what it still holds.
+pub(crate) struct SecretWatch {
+    heard: std::rc::Rc<std::cell::RefCell<HashSet<String>>>,
+    nodes: Vec<ljos_engine::NodeId>,
+}
+
+impl SecretWatch {
+    pub(crate) fn start(engine: &Engine, scene: &QuickScene, redact_all: bool) -> Self {
+        let heard: std::rc::Rc<std::cell::RefCell<HashSet<String>>> = std::rc::Rc::default();
+        let mut nodes = Vec::new();
+        let objects = scene
+            .root()
+            .map_or_else(Vec::new, |root| objects_below(engine, root));
+        for obj in objects {
+            if !is_editor(engine, obj) {
+                continue;
+            }
+            for prop in TYPED {
+                let Ok(index) = engine.property_index(obj, prop) else {
+                    continue;
+                };
+                let heard = std::rc::Rc::clone(&heard);
+                let watched = engine.watch(obj, index, move |engine, v| {
+                    if let Value::String(s) = v
+                        && !s.is_empty()
+                        && (redact_all || hides_its_text(engine, obj))
+                    {
+                        heard.borrow_mut().insert(s.to_string());
+                    }
+                });
+                nodes.extend(watched.ok());
+            }
+        }
+        Self { heard, nodes }
+    }
+
+    /// Stops watching, and gives what was heard.
+    pub(crate) fn stop(self, engine: &Engine) -> HashSet<String> {
+        for n in self.nodes {
+            engine.stop_effect(n);
+        }
+        self.heard.take()
+    }
+}
+
 /// [`secrets`] of the objects below `root`: for what has the engine but not
 /// the scene (a trace written down as the application runs).
 pub(crate) fn secrets_below(engine: &Engine, root: ObjectId, redact_all: bool) -> HashSet<String> {
