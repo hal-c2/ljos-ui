@@ -872,6 +872,10 @@ impl<M> App<M> {
     /// The window's configuration and the shell's setup: the builder's
     /// part, then `setup`.
     #[cfg(feature = "shell")]
+    #[allow(
+        clippy::type_complexity,
+        reason = "a type alias cannot name the returned `impl FnOnce` on stable Rust"
+    )]
     fn prepared(
         self,
         setup: impl FnOnce(&mut crate::Setup<'_, M>) -> Result<ObjectId, crate::SetupError> + 'static,
