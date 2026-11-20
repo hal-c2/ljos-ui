@@ -209,8 +209,9 @@ impl<O: TypeOracle + Clone> Reloader<O> {
         &mut self,
         key: &str,
         text: &str,
+        beside: &[(String, String)],
     ) -> Result<ljos_compiler::Compiled, Vec<ljos_compiler::Diagnostic>> {
-        self.session.compile_text(key, text)
+        self.session.compile_text(key, text, beside)
     }
 
     /// [`ReloadSession::refuse`].
