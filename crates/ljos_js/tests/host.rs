@@ -231,6 +231,40 @@ fn a_run_that_runs_out_after_cycles_were_let_go_leaves_them_collected() {
         .unwrap();
 }
 
+/// A run that only drops the last reference to cycles frees nothing and
+/// ends at its peak, but what it let go of is garbage: a run that then
+/// finds no room still leaves it collected, so the next run has room.
+#[test]
+fn a_run_out_after_a_run_that_only_dropped_cycles_collects_them() {
+    let host = small(16);
+    keep(&host, 9);
+    host.enter("tie", host.config().slice, |s| {
+        s.eval::<(), _>("kept.self = kept; globalThis.drop = () => { globalThis.kept = null }")
+    })
+    .unwrap();
+    assert!(host.collect_now());
+    let held = host.heap_bytes();
+    let collections = host.collections();
+    // A call, not an eval: compiling one frees what the compiler used.
+    host.enter("drop", host.config().slice, |s| {
+        s.globals()
+            .get::<_, ljos_js::rquickjs::Function>("drop")?
+            .call::<_, ()>(())
+    })
+    .unwrap();
+    assert_eq!(host.heap_bytes(), held, "it freed nothing");
+    assert!(host.may_hold_garbage());
+    let fill = "globalThis.s = 'x'.repeat(8 * 1024 * 1024)";
+    let err = host
+        .enter("fill", host.config().slice, |s| s.eval::<(), _>(fill))
+        .unwrap_err();
+    assert!(matches!(err, JsFault::JsOutOfMemory { .. }), "{err:?}");
+    assert_eq!(host.collections(), collections + 1);
+    assert!(host.heap_bytes() < held / 2, "{}", host.heap_bytes());
+    host.enter("fill", host.config().slice, |s| s.eval::<(), _>(fill))
+        .unwrap();
+}
+
 /// The fault of a run that found no room names what grew the heap.
 #[test]
 fn running_out_of_heap_names_what_grew_it() {

@@ -2490,6 +2490,25 @@ size_t JS_ResumeMallocPeak(JSRuntime *rt, size_t outer)
     return rt->malloc_peak;
 }
 
+/* Ljós: a digest of every GC object and its reference count, the same for
+   the same objects and counts in any order. A run that let go of a cycle
+   drops a count and frees nothing; one that only reads leaves every count as
+   it found it. Walks the object list, not what the objects hold. */
+uint64_t JS_GCObjectDigest(JSRuntime *rt)
+{
+    struct list_head *el;
+    uint64_t d = 0;
+    list_for_each(el, &rt->gc_obj_list) {
+        JSGCObjectHeader *p = list_entry(el, JSGCObjectHeader, link);
+        uint64_t h = (uint64_t)(uintptr_t)p
+            + (uint64_t)JS_REF_COUNT(p) * 0x9e3779b97f4a7c15ull;
+        h = (h ^ (h >> 30)) * 0xbf58476d1ce4e5b9ull;
+        h = (h ^ (h >> 27)) * 0x94d049bb133111ebull;
+        d += h ^ (h >> 31);
+    }
+    return d;
+}
+
 void JS_SetDumpFlags(JSRuntime *rt, uint64_t flags)
 {
 #ifdef ENABLE_DUMPS

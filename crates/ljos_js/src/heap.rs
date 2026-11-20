@@ -40,6 +40,7 @@ unsafe extern "C" {
     // Ljós's patch to the vendored quickjs.c (quickjs.h).
     fn JS_MarkMallocPeak(rt: *mut rquickjs::qjs::JSRuntime) -> usize;
     fn JS_ResumeMallocPeak(rt: *mut rquickjs::qjs::JSRuntime, outer: usize) -> usize;
+    fn JS_GCObjectDigest(rt: *mut rquickjs::qjs::JSRuntime) -> u64;
 }
 
 /// The most the runtime held in a run, in the units QuickJS checks its
@@ -72,19 +73,39 @@ impl MallocPeak {
         unsafe { JS_ResumeMallocPeak(self.0, outer) };
     }
 
-    /// Whether less is held now than the most since the last
-    /// [`MallocPeak::mark`]: something was freed since. The mark stays.
-    pub(crate) fn fell(&self) -> bool {
-        let peak = self.mark();
-        let now = self.get();
-        self.resume(peak);
-        now < peak
-    }
-
     /// The most held since the last [`MallocPeak::mark`].
     pub(crate) fn get(&self) -> usize {
         // SAFETY: a live runtime (`of`); 0 is never above a mark.
         unsafe { JS_ResumeMallocPeak(self.0, 0) }
+    }
+}
+
+/// A digest of the runtime's collectable objects and their reference
+/// counts. Equal digests mean, to a 64-bit hash, the same objects held as
+/// often: no script value was let go of, so no cycle became garbage. A run
+/// that drops the last reference to a cycle frees nothing, so neither the
+/// heap nor its peak tells; a count does. Walks the object list once, not
+/// what the objects hold, so it is far cheaper than a collection, but it is
+/// not free.
+pub(crate) struct ObjectDigest(*mut rquickjs::qjs::JSRuntime);
+
+impl ObjectDigest {
+    /// # Safety
+    ///
+    /// `rt` is a live runtime, and outlives what this is handed to.
+    pub(crate) unsafe fn of(rt: *mut rquickjs::qjs::JSRuntime) -> Self {
+        Self(rt)
+    }
+
+    pub(crate) fn get(&self) -> u64 {
+        // SAFETY: a live runtime (`of`); the walk reads the list only.
+        unsafe { JS_GCObjectDigest(self.0) }
+    }
+}
+
+impl std::fmt::Debug for ObjectDigest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ObjectDigest")
     }
 }
 

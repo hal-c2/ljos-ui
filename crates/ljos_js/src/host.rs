@@ -27,7 +27,7 @@ use crate::{
     Bytecode, HostError, HostObjects, HostTypeId, JsConfig, JsFault, JsRef, JsValue, MethodDef,
     MethodFace, PlainValue, PropDef, SignalDef, Slice, SourceMapper, SourceText, TypeDef,
     ValueKind,
-    heap::{Counted, HeapCount, MallocPeak},
+    heap::{Counted, HeapCount, MallocPeak, ObjectDigest},
     objects::{HostWrapper, new_wrapper, register_wrapper_class, wrapper_id},
     value::{Pending, WeakRef},
 };
@@ -237,11 +237,10 @@ pub(crate) struct HostState {
     text: RefCell<Option<Rc<SourceText>>>,
     entered: Cell<bool>,
     /// Something may have let go of a script value since the collector
-    /// last ran: a run that did not run out and ended below its peak, or
-    /// the host dropping a value it held. What it let go of may be cycles
-    /// only the collector frees, with the heap no bigger for it
-    /// ([`JsHost::may_hold_garbage`]). A run that freed nothing, as a
-    /// binding that only reads, ends at its peak and does not set it.
+    /// last ran, or since [`JsHost::may_hold_garbage`] last found nothing
+    /// had: a run that did not run out, or the host dropping a value it
+    /// held. What it let go of may be cycles only the collector frees,
+    /// with the heap no bigger for it.
     let_go: Cell<bool>,
     /// A run nested in this dispatch was interrupted: the dispatch is over,
     /// and the script that called back is stopped as it gets control back.
@@ -1681,6 +1680,10 @@ pub struct JsHost {
     pressure: RefCell<Pressure>,
     /// The most the heap held in the run, for a thrown `null`.
     peak: MallocPeak,
+    /// The objects and their counts, and what they were after the last
+    /// collection ([`JsHost::may_hold_garbage`]).
+    objects: ObjectDigest,
+    collected: Cell<u64>,
     /// Loaded bytecode is read in place (QuickJS `ROM_DATA`): module code
     /// points into these buffers, so they must outlive the runtime. Declared
     /// last, so they are freed last.
@@ -1898,6 +1901,9 @@ impl JsHost {
             pressure: RefCell::default(),
             // SAFETY: the runtime lives as long as the host.
             peak: unsafe { MallocPeak::of(rquickjs::qjs::JS_GetRuntime(raw.as_ptr())) },
+            // SAFETY: as `peak`.
+            objects: unsafe { ObjectDigest::of(rquickjs::qjs::JS_GetRuntime(raw.as_ptr())) },
+            collected: Cell::new(0),
             bytecode: RefCell::default(),
         })
     }
@@ -2067,7 +2073,7 @@ impl JsHost {
                 );
             }
         }
-        if !ran_out && self.peak.fell() {
+        if !ran_out {
             self.state.let_go.set(true);
         }
         self.flush_released();
@@ -2678,18 +2684,34 @@ impl JsHost {
     }
 
     /// Whether collecting could free anything: the heap grew by the
-    /// configured growth since the collector last ran, or something let
-    /// go of a script value since. A run that ran out is not one: what it
-    /// let go of before it did is what its own retries meet, and rows
-    /// that run out of one heap full of what lives would otherwise each
-    /// collect it. Nor is a run that freed nothing. Walks nothing.
+    /// configured growth since the collector last ran, or a script value
+    /// was let go of since. A run that drops the last reference to a cycle
+    /// frees nothing, so neither the heap nor its peak tells; an object's
+    /// count does. So when a run that did not run out, or the host, may
+    /// have let go of something, this compares a digest of every object
+    /// and its count with the one the last collection left. A binding that
+    /// only reads leaves every count as it found it, and rows that run out
+    /// of one heap full of what lives do not each collect it again. A run
+    /// that ran out is not asked about: what it let go of before it did is
+    /// what its own retries meet. Walks the object list when something may
+    /// have let go since it last did, not what the objects hold.
     pub fn may_hold_garbage(&self) -> bool {
-        self.state.let_go.get()
-            || self.heap_bytes()
-                >= self
-                    .last_collect
-                    .get()
-                    .saturating_add(self.cfg.idle_collect_min_growth)
+        if self.heap_bytes()
+            >= self
+                .last_collect
+                .get()
+                .saturating_add(self.cfg.idle_collect_min_growth)
+        {
+            return true;
+        }
+        if !self.state.let_go.get() {
+            return false;
+        }
+        if self.objects.get() != self.collected.get() {
+            return true;
+        }
+        self.state.let_go.set(false);
+        false
     }
 
     /// What the runtime holds from the system allocator: blocks QuickJS
@@ -2725,6 +2747,7 @@ impl JsHost {
     fn collect(&self) {
         self.state.let_go.set(false);
         self.rt.run_gc();
+        self.collected.set(self.objects.get());
         self.last_collect.set(self.heap_bytes());
         self.collections.set(self.collections.get() + 1);
         self.flush_released();
