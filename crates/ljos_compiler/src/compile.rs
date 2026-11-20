@@ -2164,9 +2164,13 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
     /// `Qt.AlignLeft`.
     fn enum_literal(&mut self, expression: &Expression<'a>) -> Option<EnumRef> {
         let mut members = Vec::new();
+        // The span of the innermost member (`H.SceneGizmo`), which is where
+        // a qualified stand-in is written, spaces around the dot and all.
+        let mut qualified = None;
         let mut object = expression;
         while let Expression::StaticMemberExpression(member) = object {
             members.push(member.property.name.as_str());
+            qualified = Some(member.span);
             object = &member.object;
         }
         let Expression::Identifier(base) = object else {
@@ -2210,10 +2214,9 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
             let uri = uri.clone();
             match qualifier {
                 Some(qualifier) => {
-                    let ty = members[0];
-                    let start = base.span.start;
-                    let span = Span::new(start, start + (qualifier.len() + 1 + ty.len()) as u32);
-                    self.stood_in_at(&[qualifier, ty], &uri, span);
+                    if let Some(span) = qualified {
+                        self.stood_in_at(&[qualifier, members[0]], &uri, span);
+                    }
                 }
                 None => self.stood_in_at(&[name], &uri, base.span),
             }
