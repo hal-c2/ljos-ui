@@ -1282,6 +1282,40 @@ fn a_script_error_saying_out_of_memory_after_a_caught_refusal_is_the_scripts_own
     }
 }
 
+/// A script's exception left pending behind an unknown error, after the
+/// run caught a refusal, is the script's, as it is on a heap with room.
+#[test]
+fn an_exception_pending_behind_an_unknown_error_after_a_caught_refusal_is_the_scripts_own() {
+    let host = JsHost::new(JsConfig {
+        memory_limit: Some(16 * 1024 * 1024),
+        ..JsConfig::default()
+    })
+    .unwrap();
+    let slice = Slice {
+        soft: Duration::from_secs(5),
+        hard: Duration::from_secs(10),
+    };
+    let err = host
+        .enter("caught", slice, |s| {
+            let v = s.eval::<ljos_js::rquickjs::Value, _>(
+                "let hog = []; \
+                 try { for (;;) hog.push(new Array(100).fill(1)) } catch (e) {} \
+                 hog = null; \
+                 new TypeError('mine')",
+            )?;
+            let _ = s.ctx().throw(v);
+            Err::<(), _>(ljos_js::rquickjs::Error::Unknown)
+        })
+        .unwrap_err();
+    match err {
+        JsFault::JsException { message, thrown, .. } => {
+            assert!(message.contains("mine"), "{message}");
+            assert!(thrown.is_some(), "the value thrown is kept");
+        }
+        other => panic!("told as {other:?}"),
+    }
+}
+
 /// A run nested in a dispatch that fails for its own reason does not make
 /// the dispatch forget it was refused room: rethrowing what the refusal
 /// threw is still the heap running out.
