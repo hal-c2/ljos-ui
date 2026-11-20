@@ -60,3 +60,18 @@ mod tests {
         );
     }
 }
+
+#[cfg(target_os = "android")]
+#[cfg(test)]
+mod android_tests {
+    use super::*;
+
+    // A test binary run on a device has no activity glue: nothing
+    // recorded the VM.
+    #[test]
+    fn a_call_before_the_glue_recorded_the_vm_is_no_java() {
+        assert_eq!(with_java(|_, _| Ok(())), Err(JavaError::NoJava));
+        // Asked again, it answers the same.
+        assert_eq!(with_java(|_, _| Ok(())), Err(JavaError::NoJava));
+    }
+}

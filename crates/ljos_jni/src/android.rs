@@ -1,4 +1,6 @@
-use jni::objects::{JClass, JObject, JThrowable};
+use std::sync::OnceLock;
+
+use jni::objects::{JClass, JClassLoader, JObject, JThrowable};
 use jni::refs::LoaderContext;
 use jni::strings::JNIStr;
 use jni::{Env, JavaVM};
@@ -15,11 +17,7 @@ use crate::JavaError;
 pub fn with_java<T>(
     call: impl FnOnce(&mut Env<'_>, &JObject<'_>) -> jni::errors::Result<T>,
 ) -> Result<T, JavaError> {
-    let android = ndk_context::android_context();
-    let (vm, context) = (android.vm(), android.context());
-    if vm.is_null() || context.is_null() {
-        return Err(JavaError::NoJava);
-    }
+    let (vm, context) = recorded().ok_or(JavaError::NoJava)?;
     // SAFETY: the VM is the process's, recorded by the activity glue; it
     // lives as long as the process.
     let vm = unsafe { JavaVM::from_raw(vm.cast()) };
@@ -41,6 +39,25 @@ pub fn with_java<T>(
     })
 }
 
+/// The VM and the Context the activity glue recorded, once it has.
+fn recorded() -> Option<(*mut std::ffi::c_void, *mut std::ffi::c_void)> {
+    // Kept as addresses: the glue records them once, for the process.
+    static RECORDED: OnceLock<(usize, usize)> = OnceLock::new();
+    if let Some(&(vm, context)) = RECORDED.get() {
+        return Some((vm as *mut _, context as *mut _));
+    }
+    // `ndk-context` has no way to ask whether it was told yet but to
+    // panic; the panic is caught (the workspace unwinds) and is then
+    // `NoJava`, and once it answers it is not asked again.
+    let android = std::panic::catch_unwind(ndk_context::android_context).ok()?;
+    let (vm, context) = (android.vm(), android.context());
+    if vm.is_null() || context.is_null() {
+        return None;
+    }
+    let &(vm, context) = RECORDED.get_or_init(|| (vm as usize, context as usize));
+    Some((vm as *mut _, context as *mut _))
+}
+
 /// The class `name` (a binary name, `dev.ljos.LjosServices`) of the
 /// application, found through `context`'s class loader.
 ///
@@ -51,7 +68,20 @@ pub fn app_class<'local>(
     context: &JObject<'_>,
     name: impl AsRef<JNIStr>,
 ) -> jni::errors::Result<JClass<'local>> {
-    LoaderContext::FromObject(context).load_class(env, name, false)
+    // The Context's own loader is the application's: a thread native code
+    // started has none of its own, and the Context's class (the
+    // `Application`) is the framework's, whose loader does not know the
+    // application's classes.
+    let loader = env
+        .call_method(
+            context,
+            jni::jni_str!("getClassLoader"),
+            jni::jni_sig!("()Ljava/lang/ClassLoader;"),
+            &[],
+        )?
+        .l()?;
+    let loader = env.cast_local::<JClassLoader>(loader)?;
+    LoaderContext::Loader(&loader).load_class(env, name, false)
 }
 
 /// The class [`SERVICES`](crate::SERVICES) of the application.

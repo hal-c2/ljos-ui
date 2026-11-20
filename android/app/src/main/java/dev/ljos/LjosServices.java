@@ -21,6 +21,7 @@ import java.security.MessageDigest;
 import java.util.concurrent.Callable;
 import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import javax.crypto.Cipher;
 import javax.crypto.KeyGenerator;
 import javax.crypto.SecretKey;
@@ -45,7 +46,14 @@ public final class LjosServices {
         }
         FutureTask<T> task = new FutureTask<>(call);
         new Handler(Looper.getMainLooper()).post(task);
-        return task.get(MAIN_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+        try {
+            return task.get(MAIN_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+        } catch (TimeoutException e) {
+            // Not run later, when the caller has its error: a clipboard
+            // set after the caller was told it was not would surprise it.
+            task.cancel(false);
+            throw e;
+        }
     }
 
     // The clipboard. Android lets only the application with focus read it,
@@ -164,7 +172,8 @@ public final class LjosServices {
         }
         File file = secretFile(context, name);
         File dir = file.getParentFile();
-        if (!dir.isDirectory() && !dir.mkdirs()) {
+        // Another thread may make it between the two looks.
+        if (!dir.isDirectory() && !dir.mkdirs() && !dir.isDirectory()) {
             throw new IOException("cannot make " + dir);
         }
         // Written whole beside it and moved over it: a secret is never half
