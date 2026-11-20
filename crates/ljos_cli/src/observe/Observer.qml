@@ -6143,7 +6143,13 @@ ApplicationWindow {
                         // on the next, where it is and what set it off
                         // under them. The heads wrap as the rows do.
                         readonly property real line: width - 24
-                        readonly property bool narrow: line < 808
+                        // A row is on one line only where all seven of its
+                        // cells fit there, 10 apart: the binding, its runs,
+                        // its three times, where it is, and at least
+                        // `causeLeast` of what set it off.
+                        readonly property real causeLeast: 60
+                        readonly property real wide: 260 + 60 + 3 * 76 + 150 + causeLeast + 6 * 10
+                        readonly property bool narrow: line < wide
                         readonly property real lineHeight: narrow ? 20 : 22
                         function column(name) {
                             if (name === "binding")
@@ -6289,7 +6295,7 @@ ApplicationWindow {
                                         font.pixelSize: 11
                                     }
                                     Text {
-                                        width: hotTable.narrow ? hotTable.column("cause") : Math.max(60, hotRow.width - 790)
+                                        width: hotTable.narrow ? hotTable.column("cause") : hotTable.line - hotTable.wide + hotTable.causeLeast
                                         height: hotTable.lineHeight
                                         verticalAlignment: Text.AlignVCenter
                                         elide: Text.ElideRight
