@@ -32,6 +32,7 @@ mod color;
 mod config;
 mod fault;
 mod heap;
+mod held;
 mod host;
 mod objects;
 mod stack;
@@ -42,6 +43,7 @@ pub use ahead::compile_ahead;
 pub use bytecode::{Bytecode, BytecodeOptions};
 pub use config::{FALLBACK_MAX_STACK, JsConfig, Slice, default_memory_limit};
 pub use fault::{JsFault, SourceMapper, SourceText};
+pub use held::Held;
 pub use host::{
     DirectCall, DirectParam, FnId, HeapPressure, HostFn, JsClock, JsHost, MemoryStats,
     ModuleHandle, Pumped, Scope, Timing,

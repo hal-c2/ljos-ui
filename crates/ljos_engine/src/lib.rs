@@ -170,7 +170,7 @@ pub use log::{LogEntry, LogLevel, LogListenerId, log_to_stderr};
 pub use lookups::Lookups;
 #[cfg(feature = "lookup-counts")]
 pub use lookups::lookups;
-pub use memory::{CompiledMemory, OwnerMemory, TypeMemory};
+pub use memory::{CompiledMemory, OwnerMemory, ScriptHolder, ScriptHolders, TypeMemory};
 pub use meta::{
     AttachedTypeId, BlockInfo, ChangeHook, CompleteThunk, Declared, EnumInfo, Getter, GivenHook,
     GroupGet, GroupGetMut, ImplInfo, ListAppend, ListField, ListInsert, ListRemove, MetaBuilder,
