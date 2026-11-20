@@ -52,3 +52,43 @@ Feature: An attached object made while a binding works out its value
       PASS   : Made::cleanupTestCase()
       Totals: 3 passed, 0 failed, 0 skipped
       """
+
+  Scenario: Delegates a view makes together each make Screen in a binding while a handler waits
+    # A view makes its delegates inside one batch, so what each one's
+    # Screen and its handler reach waits for the batch as it did before.
+    Given the file "tst_delegates.qml":
+      """qml
+      import QtQuick
+      import QtTest
+      Item {
+        id: root; width: 400; height: 300
+        ListView {
+          id: view; anchors.fill: parent; model: 3
+          delegate: Item {
+            readonly property var office: ({})[""] ?? null
+            property int cols: 0
+            readonly property real scale: cols > 0 ? 2 / Screen.devicePixelRatio : 1
+            width: cols * scale; height: 10
+            onOfficeChanged: cols = 40
+          }
+        }
+        TestCase { name: "Delegates"; when: windowShown
+          function test_delegates() {
+            compare(view.count, 3)
+            for (let i = 0; i < 3; ++i) {
+              const d = view.itemAtIndex(i)
+              compare(d.cols, 40)
+              compare(d.width, 80 / Screen.devicePixelRatio)
+            }
+          }
+        }
+      }
+      """
+    When the tests are run
+    Then the test report is:
+      """
+      PASS   : Delegates::initTestCase()
+      PASS   : Delegates::test_delegates()
+      PASS   : Delegates::cleanupTestCase()
+      Totals: 3 passed, 0 failed, 0 skipped
+      """
