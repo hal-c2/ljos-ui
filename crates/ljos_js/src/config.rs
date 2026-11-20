@@ -50,9 +50,12 @@ impl Default for JsConfig {
                 hard: Duration::from_secs(2),
             },
             idle_collect_min_growth: 256 * 1024,
-            // Above the half QuickJS's collector waits for, so a dispatch
-            // that makes garbage in cycles is collected before it is
-            // refused room; a quarter is left for the rest.
+            // A quarter of the room is left for the rest. QuickJS collects
+            // once the heap passes 1.5 times what survived its last
+            // collection, so where more than some 60 % of the limit
+            // survived, a dispatch that makes garbage in cycles may be
+            // refused room before a collection runs, and is told as out of
+            // memory as it would be at the limit itself.
             dispatch_heap_share: Some(0.75),
         }
     }
