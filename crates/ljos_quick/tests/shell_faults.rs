@@ -22,7 +22,7 @@ Item {
     ShellLoader {
         objectName: "loader"
         source: root.on ? "SOURCE" : ""
-        fallback: "Light"
+        fallback: "FALLBACK"
     }
     function litter(n) {
         for (let i = 0; i < n; i++) { const a = { b: [i, i + 1, "x" + i] }; a.self = a }
@@ -39,6 +39,15 @@ Item {
         for (let i = 0; i < 20000; i++) a.push({ i: i, s: "row " + i });
         return a;
     }
+}
+"#;
+
+/// A shell whose script runs past its slice while it is made.
+const ENDLESS: &str = r#"
+import QtQuick
+Item {
+    objectName: "endless"
+    Component.onCompleted: { while (true) {} }
 }
 "#;
 
@@ -71,14 +80,22 @@ fn settle(e: &Engine, clock: &VirtualClock, loader: ObjectId) {
 }
 
 fn timed(source: &str) -> (Engine, Arc<VirtualClock>, ObjectId, ObjectId) {
+    timed_with(source, "Light")
+}
+
+fn timed_with(source: &str, fallback: &str) -> (Engine, Arc<VirtualClock>, ObjectId, ObjectId) {
     let e = engine();
     let clock = Arc::new(VirtualClock::new());
     e.set_clock(Rc::new(clock.clone()));
     compile(
         &e,
         &[
-            ("Main", &MAIN.replace("SOURCE", source)),
+            (
+                "Main",
+                &MAIN.replace("SOURCE", source).replace("FALLBACK", fallback),
+            ),
             ("Heavy", HEAVY),
+            ("Endless", ENDLESS),
             ("Light", LIGHT),
         ],
     );
@@ -133,6 +150,43 @@ fn a_shell_that_ran_out_of_heap_falls_back_and_is_tried_again_once_there_is_room
     assert_eq!(shown(&e, loader), "heavy");
     assert_eq!(get(&e, loader, "error").to_js_string().to_string(), "");
     assert_eq!(e.next_timer_deadline(), None, "nothing more to wait for");
+}
+
+#[test]
+fn a_fallback_that_is_also_interrupted_charges_the_backoff_once_a_try() {
+    let (e, clock, root, loader) = timed_with("Endless", "Endless");
+    e.set_js_dispatch_budget(Duration::from_millis(5), Duration::from_millis(20))
+        .unwrap();
+    // No source: the fallback alone fails while the root is made (tried
+    // at once) and again in the frame (a second on).
+    settle(&e, &clock, loader);
+    assert_eq!(status(&e, loader), 3);
+    // The source fails, and the fallback with it.
+    set(&e, root, "on", Value::Bool(true));
+    settle(&e, &clock, loader);
+    assert_eq!(status(&e, loader), 3, "{:?}", get(&e, loader, "error"));
+    let _ = e.take_warnings();
+
+    // Each try the source and the fallback both fail is one fault to the
+    // backoff, not two: the wait doubles once a try (charged twice, it
+    // would go 4 s, 16 s, 60 s), one warning a try.
+    let mut waits = Vec::new();
+    for _ in 0..5 {
+        let due = e.next_timer_deadline().expect("the source is tried again");
+        waits.push(due.saturating_since(clock.now()));
+        clock.set(due);
+        settle(&e, &clock, loader);
+        assert_eq!(status(&e, loader), 3, "{:?}", get(&e, loader, "error"));
+    }
+    // Whole seconds: a wait runs a timer step over.
+    let secs: Vec<u64> = waits.iter().map(Duration::as_secs).collect();
+    assert_eq!(secs, [2, 4, 8, 16, 32], "{waits:?}");
+    let warned = e.take_warnings();
+    let tries = warned
+        .iter()
+        .filter(|w| w.contains("ShellLoader: trying the source again in"))
+        .count();
+    assert_eq!(tries, 5, "{warned:?}");
 }
 
 #[test]

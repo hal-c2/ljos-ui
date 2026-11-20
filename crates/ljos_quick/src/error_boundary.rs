@@ -445,13 +445,7 @@ fn make_content(e: &Engine, me: ObjectId) -> Result<(), Fault> {
     };
     let made = e
         .component_create_owned(content, me, place)
-        .map_err(|err| match err {
-            EngineError::JsOutOfMemory(_) => Fault::JsOutOfMemory,
-            EngineError::JsInterrupted(_) => Fault::JsInterrupted {
-                slice: Duration::ZERO,
-            },
-            other => Fault::Startup(other.to_string()),
-        })?;
+        .map_err(|err| creation_fault(e, err))?;
     if !e.is_alive(me) {
         return Ok(());
     }
@@ -461,6 +455,19 @@ fn make_content(e: &Engine, me: ObjectId) -> Result<(), Fault> {
     set(e, me, ErrorBoundary::ITEM.index, Value::Object(made));
     set(e, me, ErrorBoundary::FAILED.index, false.into());
     Ok(())
+}
+
+/// The fault of content that could not be made for `err`.
+fn creation_fault(e: &Engine, err: EngineError) -> Fault {
+    match err {
+        EngineError::JsOutOfMemory(_) => Fault::JsOutOfMemory,
+        // The engine's error words the interrupt; the fault names the
+        // slice the script ran over, the one every dispatch has.
+        EngineError::JsInterrupted(_) => Fault::JsInterrupted {
+            slice: e.js_dispatch_slice().unwrap_or_default(),
+        },
+        other => Fault::Startup(other.to_string()),
+    }
 }
 
 /// Puts a new item in the boundary before its bindings run, so `parent`
@@ -523,4 +530,24 @@ fn resize(e: &Engine, me: ObjectId, horizontal: bool) -> Result<(), EngineError>
     }
     let v = e.read(shown, implicit);
     write_computed(e, me, implicit, v)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn content_interrupted_while_it_was_made_names_the_engines_slice() {
+        let e = Engine::new();
+        e.set_js_dispatch_budget(Duration::from_millis(5), Duration::from_millis(40))
+            .unwrap();
+        let fault = creation_fault(
+            &e,
+            EngineError::JsInterrupted("a resource fault while it was made".into()),
+        );
+        assert_eq!(
+            fault.to_string(),
+            "JS interrupted after exceeding its 40ms slice"
+        );
+    }
 }

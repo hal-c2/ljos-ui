@@ -1358,6 +1358,14 @@ impl Engine {
         Ok(())
     }
 
+    /// The time one dispatch into JS may take before the script is
+    /// interrupted: what a [`Fault::JsInterrupted`](ljos_runtime::Fault)
+    /// reports as its slice. `None` before the JS host has started.
+    pub fn js_dispatch_slice(&self) -> Option<std::time::Duration> {
+        let js = self.inner.js.borrow().clone();
+        js.map(|js| js.slice().hard)
+    }
+
     /// Runs native work a script asked for (compiling a component, making
     /// objects): its time is not the script's, and does not use up the
     /// slice of the dispatch it is in (`ljos_js::JsHost::native`). Nor
