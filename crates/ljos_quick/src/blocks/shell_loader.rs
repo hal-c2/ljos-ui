@@ -9,6 +9,12 @@
 //! is the boundary of its source's shell. Changing `source` or `fallback`
 //! tries again, and an `error` goes once the source's shell is shown.
 //!
+//! A resource fault (the script heap ran out, a script was interrupted)
+//! is not the shell's own: the fallback stands in for it while the loader
+//! waits as a Loader does ([`Backoff`]: a second, twice as long each time
+//! the shell fails again soon after, up to a minute), and it then tries
+//! the source again, for as long as it takes.
+//!
 //! It is not a `Loader`: a Loader only logs why it could not load, and it
 //! holds one URL. The two make their item the same way.
 //!
@@ -27,11 +33,12 @@
 
 use std::time::Duration;
 
+use ljos_engine::backoff::{Backoff, seconds};
 use ljos_engine::{
     Atom, Boundary, BoundaryConfig, Cx, Engine, EngineError, FaultReport, LogLevel, ObjectId,
     PropIndex, QmlObject, Request, Url, Value, WriteKind, qml_impl,
 };
-use ljos_runtime::{Fault, Intensity, Restart};
+use ljos_runtime::{Fault, Intensity, Restart, TimerId};
 
 use super::contribution::text;
 use crate::item::{Item, is_item, size_follows_implicit, write_computed};
@@ -104,6 +111,10 @@ struct Run {
     /// Faults up to this one were dealt with while a shell was made; the
     /// boundary hears of them only afterwards.
     handled: u64,
+    /// When the source is tried again after a resource fault.
+    backoff: Backoff,
+    /// The try [`Run::backoff`] waits for.
+    waiting: Option<TimerId>,
 }
 
 #[qml_impl]
@@ -157,6 +168,9 @@ impl Boundary for Behaviour {
         let why = describe(report);
         warn(e, format!("ShellLoader: {why}"));
         show_fallback(e, me, why);
+        if is_resource(&report.fault) {
+            again_after(e, me);
+        }
     }
 
     fn start(&self, _: &Engine, _: ObjectId) -> Result<(), Fault> {
@@ -202,6 +216,9 @@ fn load(e: &Engine, me: ObjectId) {
     if !e.is_alive(me) || with_run(e, me, |r| r.completed) != Some(true) {
         return;
     }
+    if let Some(Some(timer)) = with_run(e, me, |r| r.waiting.take()) {
+        e.cancel_call(timer);
+    }
     drop_item(e, me);
     let source = url(e, me, ShellLoader::SOURCE.index);
     if source.is_empty() {
@@ -215,11 +232,54 @@ fn load(e: &Engine, me: ObjectId) {
             set(e, me, ShellLoader::STATUS.index, shell_status::READY.into());
             set(e, me, ShellLoader::ERROR.index, "".into());
         }
-        Err(why) => {
+        Err(Failed { why, resource }) => {
             warn(e, format!("ShellLoader: {why}"));
             show_fallback(e, me, why);
+            if resource {
+                again_after(e, me);
+            }
         }
     }
+}
+
+/// Whether `fault` is one the shell's code did not cause and a later try
+/// may not meet. A panic in a native type is that type's bug, as for a
+/// Loader.
+fn is_resource(fault: &Fault) -> bool {
+    matches!(fault, Fault::JsOutOfMemory | Fault::JsInterrupted { .. })
+}
+
+/// After a resource fault: tries the source again once the [`Backoff`]
+/// wait is over, the fallback shown meanwhile.
+fn again_after(e: &Engine, me: ObjectId) {
+    let now = e.now();
+    let Some(wait) = with_run(e, me, |r| r.backoff.fault(now)) else {
+        return;
+    };
+    // A full heap may have room once the garbage is collected.
+    e.collect_garbage();
+    warn(
+        e,
+        format!("ShellLoader: trying the source again in {}", seconds(wait)),
+    );
+    let timer = e.call_at(now + wait, move |e| {
+        let tried = with_run(e, me, |r| {
+            r.waiting = None;
+            r.backoff.trying(e.now());
+        });
+        if tried.is_some() {
+            load(e, me);
+        }
+    });
+    if let Some(Some(old)) = with_run(e, me, |r| r.waiting.replace(timer)) {
+        e.cancel_call(old);
+    }
+}
+
+/// Why a shell could not be made, and whether it was a resource fault.
+struct Failed {
+    why: String,
+    resource: bool,
 }
 
 /// Shows the fallback's shell in place of the source's, which did not
@@ -238,6 +298,7 @@ fn show_fallback(e: &Engine, me: ObjectId, why: String) {
     }
     with_run(e, me, |r| r.making_fallback = true);
     let made = make(e, me, &fallback);
+    let mut again = false;
     match made {
         Ok(obj) => {
             with_run(e, me, |r| r.fallback_item = Some(obj));
@@ -251,7 +312,11 @@ fn show_fallback(e: &Engine, me: ObjectId, why: String) {
                 shell_status::FALLBACK.into(),
             );
         }
-        Err(also) => {
+        Err(Failed {
+            why: also,
+            resource,
+        }) => {
+            again = resource;
             warn(e, format!("ShellLoader: fallback: {also}"));
             let both = if why.is_empty() {
                 format!("fallback: {also}")
@@ -263,11 +328,16 @@ fn show_fallback(e: &Engine, me: ObjectId, why: String) {
         }
     }
     with_run(e, me, |r| r.making_fallback = false);
+    // Nothing could be shown for want of room: the source is tried again,
+    // and the fallback with it.
+    if again {
+        again_after(e, me);
+    }
 }
 
 /// Makes the shell at `url`, or says why it could not: it did not
 /// compile, or something in it faulted while it was made.
-fn make(e: &Engine, me: ObjectId, url: &str) -> Result<ObjectId, String> {
+fn make(e: &Engine, me: ObjectId, url: &str) -> Result<ObjectId, Failed> {
     let (made, filed) = e.noting_faults(|| {
         e.make(
             Request::url(e.resolve_url(me, url))
@@ -278,11 +348,20 @@ fn make(e: &Engine, me: ObjectId, url: &str) -> Result<ObjectId, String> {
     });
     let after = last_fault(e);
     with_run(e, me, |r| r.handled = after);
-    let obj = made.map_err(|err| err.to_string())?;
+    let obj = made.map_err(|err| Failed {
+        resource: matches!(
+            err,
+            EngineError::JsOutOfMemory(_) | EngineError::JsInterrupted(_)
+        ),
+        why: err.to_string(),
+    })?;
     if let Some(report) = fault_in(e, obj, &filed) {
-        let why = describe(report);
+        let failed = Failed {
+            why: describe(report),
+            resource: is_resource(&report.fault),
+        };
         discard(e, obj);
-        return Err(why);
+        return Err(failed);
     }
     // A binding that throws while the shell is made is a fault only if
     // it still throws once the creation around the loader is complete,
@@ -328,11 +407,18 @@ fn judge_again(e: &Engine, me: ObjectId, obj: ObjectId, told: &[FaultReport]) {
         drop_item(e, me);
         set(e, me, ShellLoader::ERROR.index, both.as_str().into());
         set(e, me, ShellLoader::STATUS.index, shell_status::ERROR.into());
+        if is_resource(&report.fault) {
+            again_after(e, me);
+        }
         return;
     }
     drop_item(e, me);
     warn(e, format!("ShellLoader: {why}"));
+    let resource = is_resource(&report.fault);
     show_fallback(e, me, why);
+    if resource {
+        again_after(e, me);
+    }
 }
 
 fn last_fault(e: &Engine) -> u64 {
