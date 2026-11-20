@@ -1050,10 +1050,12 @@ pub trait Application: Backend {
 
     /// Runs `entry` of the given files built ahead into a pack that
     /// carries their sources (`sources`; else none), with the user's
-    /// directory over them. `built_from`: files the build compiled from
-    /// other texts than the sources it carries.
+    /// directory over them. `files`: what the application is built from,
+    /// a file given since the last load among them. `built_from`: files
+    /// the build compiled from other texts than the sources it carries.
     fn run_with_user_qml(
         &mut self,
+        _files: &[QmlFile],
         _entry: &str,
         _built_from: &[(String, String)],
         _sources: bool,

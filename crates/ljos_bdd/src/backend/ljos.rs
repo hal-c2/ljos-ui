@@ -1730,11 +1730,13 @@ impl Application for LjosBackend {
 
     fn run_with_user_qml(
         &mut self,
+        files: &[QmlFile],
         entry: &str,
         built_from: &[(String, String)],
         sources: bool,
     ) -> Result<()> {
-        self.live()?.run_with_user_qml(entry, built_from, sources)
+        self.live()?
+            .run_with_user_qml_at(entry, files, built_from, sources, false)
     }
 
     fn run_with_user_qml_in_window(&mut self, files: &[QmlFile], entry: &str) -> Result<()> {

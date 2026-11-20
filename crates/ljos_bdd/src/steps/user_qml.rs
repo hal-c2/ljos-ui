@@ -59,7 +59,11 @@ fn user_removes(w: &mut LjosWorld, name: String) -> StepResult {
     regex = r#"^the application runs "([^"]+\.qml)" built ahead, with the user's directory over it$"#
 )]
 fn runs_with_user_qml(w: &mut LjosWorld, entry: String) -> StepResult {
-    w.each(|b| b.application()?.run_with_user_qml(&entry, &[], true))
+    let files = w.staged()?;
+    w.each(|b| {
+        b.application()?
+            .run_with_user_qml(&files, &entry, &[], true)
+    })
 }
 
 #[when(
@@ -74,7 +78,11 @@ fn runs_with_user_qml_in_window(w: &mut LjosWorld, entry: String) -> StepResult 
     regex = r#"^the application runs "([^"]+\.qml)" built ahead without its sources, with the user's directory over it$"#
 )]
 fn runs_without_sources(w: &mut LjosWorld, entry: String) -> StepResult {
-    w.each(|b| b.application()?.run_with_user_qml(&entry, &[], false))
+    let files = w.staged()?;
+    w.each(|b| {
+        b.application()?
+            .run_with_user_qml(&files, &entry, &[], false)
+    })
 }
 
 #[when(
@@ -87,9 +95,10 @@ fn runs_built_from_older(
     step: &Step,
 ) -> StepResult {
     let text = docstring(step)?;
+    let files = w.staged()?;
     w.each(|b| {
         b.application()?
-            .run_with_user_qml(&entry, &[(older.clone(), text.clone())], true)
+            .run_with_user_qml(&files, &entry, &[(older.clone(), text.clone())], true)
     })
 }
 

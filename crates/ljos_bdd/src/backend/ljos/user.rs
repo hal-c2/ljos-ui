@@ -81,23 +81,13 @@ impl Live {
     }
 
     /// Runs `entry` of the scenario's files built ahead, with the user's
-    /// directory over them. `built_from`: files the build compiled from
-    /// other texts than the sources it carries; `with_sources`: whether
-    /// it carries them.
-    pub(super) fn run_with_user_qml(
-        &mut self,
-        entry: &str,
-        built_from: &[(String, String)],
-        with_sources: bool,
-    ) -> Result<()> {
-        self.run_with_user_qml_at(entry, &[], built_from, with_sources, false)
-    }
-
-    /// As [`run_with_user_qml`](Self::run_with_user_qml); `given`: files
-    /// the build carries over the loaded ones, given since the last load.
-    /// They go into the build only: the engine runs what the build makes,
-    /// at the generation the session starts from. `own_window`: the root
-    /// is made with no parent and shown in a window of its own.
+    /// directory over them. `given`: files the build carries over the
+    /// loaded ones, given since the last load. They go into the build
+    /// only: the engine runs what the build makes, at the generation the
+    /// session starts from. `built_from`: files the build compiled from
+    /// other texts than the sources it carries; `with_sources`: whether it
+    /// carries them. `own_window`: the root is made with no parent and
+    /// shown in a window of its own.
     pub(super) fn run_with_user_qml_at(
         &mut self,
         entry: &str,
