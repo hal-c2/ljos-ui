@@ -144,6 +144,14 @@ fn keeps_pumping(destroyed: bool, closed: bool, finishing: bool) -> bool {
     !destroyed && (!closed || finishing)
 }
 
+/// The pump's `closed` and `finishing` once the application asked to exit.
+/// The application is ending, so nothing more goes to it. A finish the
+/// activity did not take brings no Destroy to wait for: the pump ends now,
+/// not at the next event, and `main` ends the process.
+fn exiting(finish_taken: bool) -> (bool, bool) {
+    (true, finish_taken)
+}
+
 /// Where the activity's Back goes: to the application attached, if any.
 /// Type-erased, since the native method knows no message type.
 static BACK: Mutex<Option<Box<dyn Fn() + Send>>> = Mutex::new(None);
@@ -269,10 +277,8 @@ impl<U: Send + 'static> Pump<'_, U> {
                 call_activity(self.app, ActivityCall::MoveTaskToBack);
             }
             Request::Exit => {
-                // A finish the activity did not take brings no Destroy to
-                // wait for: the pump then ends with the application, and
-                // `main` ends the process.
-                self.finishing = call_activity(self.app, ActivityCall::Finish);
+                let taken = call_activity(self.app, ActivityCall::Finish);
+                (self.closed, self.finishing) = exiting(taken);
             }
             _ => {}
         }
@@ -432,6 +438,15 @@ fn call_activity(app: &AndroidApp, call: ActivityCall) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_exit_the_activity_did_not_finish_ends_the_pump() {
+        let (closed, finishing) = exiting(false);
+        assert!(!keeps_pumping(false, closed, finishing));
+        let (closed, finishing) = exiting(true);
+        assert!(keeps_pumping(false, closed, finishing));
+        assert!(!keeps_pumping(true, closed, finishing));
+    }
 
     #[test]
     fn a_pump_that_asked_for_finish_waits_for_destroy_after_the_application_ends() {
