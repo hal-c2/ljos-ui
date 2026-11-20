@@ -175,6 +175,38 @@ fn a_null_thrown_in_a_nested_run_after_another_ran_out_is_its_own() {
     );
 }
 
+/// Turning a string into Rust text allocates (non-ASCII text grows as
+/// UTF-8). On a full heap QuickJS gives no string back, which rquickjs
+/// words as an unknown error; the heap ran out all the same.
+#[test]
+fn a_string_too_big_for_the_heap_left_is_running_out_of_memory() {
+    let host = JsHost::new(JsConfig {
+        memory_limit: Some(16 * 1024 * 1024),
+        ..JsConfig::default()
+    })
+    .unwrap();
+    host.collect_now();
+    let held = host.memory_stats().unwrap().malloc_size;
+    assert!(host.set_memory_limit(Some(held + 3 * 1024 * 1024)));
+    let slice = host.config().slice;
+    // 1.2 MB as JS holds it, 2.4 MB as UTF-8.
+    let err = host
+        .enter("text", slice, |s| {
+            s.eval::<String, _>("'\\u00e9'.repeat(1200000)")
+        })
+        .unwrap_err();
+    assert!(matches!(err, JsFault::JsOutOfMemory { .. }), "{err:?}");
+    // With room, the same text comes through, and nothing is left pending.
+    assert!(host.set_memory_limit(None));
+    let text = host
+        .enter("text", slice, |s| {
+            s.eval::<String, _>("'\\u00e9'.repeat(1200000)")
+        })
+        .unwrap();
+    assert_eq!(text.chars().count(), 1_200_000);
+    assert_eq!(eval_num(&host, "40 + 2").unwrap(), 42.0);
+}
+
 #[test]
 fn out_of_memory_is_reported_and_context_survives() {
     let host = JsHost::new(JsConfig {
