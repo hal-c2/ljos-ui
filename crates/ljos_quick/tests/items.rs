@@ -357,3 +357,22 @@ fn an_object_destroyed_while_the_scene_rests_goes_at_the_next_frame() {
     assert!(!e.is_alive(child));
     assert!(!s.needs_frame());
 }
+
+/// What a window system gives a side that follows its implicit size, as a
+/// host gives a window its size, is the side's size from then on, also
+/// when nothing had read the side before: no binding has run there yet to
+/// take the place of.
+#[test]
+fn a_size_given_over_one_that_follows_its_implicit_size_lasts() {
+    let e = engine();
+    let w = make::<Rectangle>(&e, None);
+    set(&e, w, "width", Value::Real(200.0));
+    e.batch(|| {
+        e.write_derived(w, Item::HEIGHT.index, Value::Real(240.0))
+            .unwrap()
+    });
+    assert_eq!((num(&e, w, "width"), num(&e, w, "height")), (200.0, 240.0));
+    // The side still follows its implicit size once that changes.
+    set(&e, w, "implicitHeight", Value::Real(90.0));
+    assert_eq!(num(&e, w, "height"), 90.0);
+}
