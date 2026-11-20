@@ -9,11 +9,14 @@
 //! is the boundary of its source's shell. Changing `source` or `fallback`
 //! tries again, and an `error` goes once the source's shell is shown.
 //!
-//! A resource fault (the script heap ran out, a script was interrupted)
-//! is not the shell's own: the fallback stands in for it while the loader
-//! waits as a Loader does ([`Backoff`]: a second, twice as long each time
-//! the shell fails again soon after, up to a minute), and it then tries
-//! the source again, for as long as it takes.
+//! A resource fault (the script heap ran out, the shell could not be made
+//! in its time) is not the shell's own: the fallback stands in for it
+//! while the loader waits as a Loader does ([`Backoff`]: a second, twice
+//! as long each time the shell fails again soon after, up to a minute),
+//! and it then tries the source again, for as long as it takes. A script
+//! of a shell that was made, stopped for its time, leaves the shell
+//! shown: the engine runs the binding it cut short again, and a shell
+//! made again would blank, and run over again, without end.
 //!
 //! It is not a `Loader`: a Loader only logs why it could not load, and it
 //! holds one URL. The two make their item the same way.
@@ -180,6 +183,21 @@ impl Boundary for Behaviour {
     fn failed(&self, e: &Engine, me: ObjectId) -> bool {
         failed(e, me)
     }
+
+    fn keeps(&self, _: &Engine, _: ObjectId, report: &FaultReport) -> bool {
+        // A script of the shell stopped for its time leaves the shell
+        // whole: the binding cut short runs again by itself
+        // (`run_again_after`). A full heap or a panic is the supervisor's,
+        // and so `stop`'s.
+        kept(report)
+    }
+}
+
+/// Whether `report` leaves the shell it was raised in shown: a script of
+/// it stopped for its time. A shell that could not be made at all comes
+/// back from [`make`] as an error, not as a fault in it.
+fn kept(report: &FaultReport) -> bool {
+    matches!(report.fault, Fault::JsInterrupted { .. })
 }
 
 fn with_run<R>(e: &Engine, me: ObjectId, f: impl FnOnce(&mut Run) -> R) -> Option<R> {
@@ -373,11 +391,12 @@ fn make(e: &Engine, me: ObjectId, url: &str) -> Result<ObjectId, Failed> {
     Ok(obj)
 }
 
-/// The first of `faults` raised in `obj` or what it owns.
+/// The first of `faults` raised in `obj` or what it owns that breaks it
+/// (not one that leaves it shown: [`kept`]).
 fn fault_in<'a>(e: &Engine, obj: ObjectId, faults: &'a [FaultReport]) -> Option<&'a FaultReport> {
     faults
         .iter()
-        .find(|r| r.origin.is_some_and(|o| within(e, o, obj)))
+        .find(|r| !kept(r) && r.origin.is_some_and(|o| within(e, o, obj)))
 }
 
 /// What [`make`] would have said had the shell's faults in `told` been

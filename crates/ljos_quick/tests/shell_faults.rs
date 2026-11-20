@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use common::*;
-use ljos_engine::{Engine, ObjectId, Value};
+use ljos_engine::{Engine, ObjectId, TakenBy, Value};
 use ljos_runtime::{Clock, VirtualClock};
 
 const MAIN: &str = r#"
@@ -42,12 +42,15 @@ Item {
 }
 "#;
 
-/// A shell whose script runs past its slice while it is made.
-const ENDLESS: &str = r#"
+/// A shell that fills the heap while it is made.
+const HUNGRY: &str = r#"
 import QtQuick
 Item {
-    objectName: "endless"
-    Component.onCompleted: { while (true) {} }
+    objectName: "hungry"
+    property var lots: []
+    Component.onCompleted: {
+        for (let i = 0; i < 20000; i++) lots.push({ i: i, s: "row " + i });
+    }
 }
 "#;
 
@@ -95,7 +98,6 @@ fn timed_with(source: &str, fallback: &str) -> (Engine, Arc<VirtualClock>, Objec
                 &MAIN.replace("SOURCE", source).replace("FALLBACK", fallback),
             ),
             ("Heavy", HEAVY),
-            ("Endless", ENDLESS),
             ("Light", LIGHT),
         ],
     );
@@ -153,14 +155,31 @@ fn a_shell_that_ran_out_of_heap_falls_back_and_is_tried_again_once_there_is_room
 }
 
 #[test]
-fn a_fallback_that_is_also_interrupted_charges_the_backoff_once_a_try() {
-    let (e, clock, root, loader) = timed_with("Endless", "Endless");
-    e.set_js_dispatch_budget(Duration::from_millis(5), Duration::from_millis(20))
+fn a_fallback_that_also_ran_out_of_heap_charges_the_backoff_once_a_try() {
+    let e = engine();
+    let clock = Arc::new(VirtualClock::new());
+    e.set_clock(Rc::new(clock.clone()));
+    let main = MAIN
+        .replace("SOURCE", "Hungry")
+        .replace("\"FALLBACK\"", "root.fallback")
+        .replace(
+            "property bool on: false",
+            "property bool on: false\n    property string fallback",
+        );
+    compile(&e, &[("Main", &main), ("Hungry", HUNGRY)]);
+    let root = e.create_from_url("Main", None, Vec::new()).unwrap();
+    let loader = find(&e, root, "loader");
+    // Room for the application, not for a shell's rows.
+    e.invoke_by_name(root, "litter", &[Value::from(0.0)])
         .unwrap();
-    // No source: the fallback alone fails while the root is made (tried
-    // at once) and again in the frame (a second on).
+    assert!(e.collect_garbage());
+    let held = e.script_memory().unwrap().bytes;
+    assert!(e.set_script_heap_limit(Some(held + 64 * 1024)));
+    // No source: the fallback alone fails, tried at once and again in the
+    // frame (a second on).
+    set(&e, root, "fallback", Value::from("Hungry"));
     settle(&e, &clock, loader);
-    assert_eq!(status(&e, loader), 3);
+    assert_eq!(status(&e, loader), 3, "{:?}", get(&e, loader, "error"));
     // The source fails, and the fallback with it.
     set(&e, root, "on", Value::Bool(true));
     settle(&e, &clock, loader);
@@ -169,7 +188,7 @@ fn a_fallback_that_is_also_interrupted_charges_the_backoff_once_a_try() {
 
     // Each try the source and the fallback both fail is one fault to the
     // backoff, not two: the wait doubles once a try (charged twice, it
-    // would go 4 s, 16 s, 60 s), one warning a try.
+    // would go up four times a try), one warning a try.
     let mut waits = Vec::new();
     for _ in 0..5 {
         let due = e.next_timer_deadline().expect("the source is tried again");
@@ -201,4 +220,101 @@ fn a_shell_that_cannot_be_made_for_its_own_reasons_stays_on_the_fallback() {
         None,
         "only a resource fault is tried again"
     );
+}
+
+const SLOW_MAIN: &str = r#"
+import QtQuick
+import Ljos.Blocks
+Item {
+    id: root
+    property bool on: false
+    property int made: 0
+    readonly property var tries: ({ binding: 0, handler: 0 })
+    // Runs over its time the first `n` times it is called for `what`.
+    function slow(what, n) {
+        if (tries[what]++ < n) { for (;;) {} }
+        return 5
+    }
+    ShellLoader {
+        objectName: "loader"
+        source: root.on ? "Slow" : ""
+        fallback: "Light"
+    }
+}
+"#;
+
+const SLOW: &str = r#"
+import QtQuick
+Item {
+    objectName: "slow"
+    property int size: root.slow("binding", 3)
+    // Runs over its time while the shell is made.
+    Component.onCompleted: { root.made++; root.slow("handler", 1) }
+}
+"#;
+
+/// A script stopped for its time in a shell that was made is not a fault
+/// that breaks the shell (ljos-ui#676): the shell is made once and stays
+/// shown, the fallback never stands in, and the binding cut short, here
+/// three times, gets its value when the engine runs it again. Making the
+/// shell again would blank it, and a binding that always runs over would
+/// have it made again for good.
+#[test]
+fn a_shell_whose_scripts_ran_over_their_time_is_kept_and_its_binding_runs_again() {
+    let e = engine();
+    let clock = Arc::new(VirtualClock::new());
+    e.set_clock(Rc::new(clock.clone()));
+    compile(&e, &[("Main", SLOW_MAIN), ("Slow", SLOW), ("Light", LIGHT)]);
+    let root = e.create_from_url("Main", None, Vec::new()).unwrap();
+    let loader = find(&e, root, "loader");
+    let frame = |e: &Engine| {
+        e.advance_timers(clock.now());
+        e.run_pending_calls();
+        if let Some(item) = get(e, loader, "item").as_object() {
+            let _ = get(e, item, "size");
+        }
+        e.deliver_faults();
+        e.process_deferred_deletes();
+    };
+    frame(&e);
+    assert_eq!(shown(&e, loader), "light");
+    e.set_js_dispatch_budget(Duration::from_millis(10), Duration::from_millis(50))
+        .unwrap();
+
+    set(&e, root, "on", Value::Bool(true));
+    frame(&e);
+    assert_eq!(status(&e, loader), 1, "{:?}", get(&e, loader, "error"));
+    let shell = get(&e, loader, "item").as_object().expect("shown");
+    assert_eq!(shown(&e, loader), "slow");
+    assert_eq!(num(&e, root, "made"), 1.0);
+    assert_eq!(num(&e, shell, "size"), 0.0, "cut short");
+    // On record as taken by the loader, which kept its shell.
+    let kept = e
+        .faults()
+        .into_iter()
+        .filter(|f| f.kind() == "JsInterrupted")
+        .all(|f| matches!(f.taken_by, TakenBy::Kept { object, .. } if object == loader));
+    assert!(kept, "{:?}", e.faults());
+
+    // The binding runs again after a wait; the shell is not made again.
+    let mut waits = Vec::new();
+    while num(&e, shell, "size") != 5.0 {
+        assert!(waits.len() < 8, "never ran again: {waits:?}");
+        let due = e.next_timer_deadline().expect("the binding runs again");
+        waits.push(due.saturating_since(clock.now()));
+        clock.set(due);
+        frame(&e);
+        assert_eq!(get(&e, loader, "item").as_object(), Some(shell));
+        assert_eq!(status(&e, loader), 1, "{:?}", get(&e, loader, "error"));
+    }
+    assert!(
+        waits.iter().all(|w| *w <= Duration::from_secs(60)),
+        "{waits:?}"
+    );
+    assert!(e.is_alive(shell));
+    assert_eq!(num(&e, root, "made"), 1.0);
+    assert_eq!(get(&e, loader, "error").to_js_string().to_string(), "");
+    assert!(e.application_fault().is_none());
+    frame(&e);
+    assert_eq!(e.next_timer_deadline(), None, "nothing more to wait for");
 }
