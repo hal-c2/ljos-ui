@@ -73,6 +73,9 @@ pub(crate) fn pool(e: &Engine, row: ObjectId, pooled: bool) {
     }
 }
 
+/// The rows the set of unplaced ones keeps room for once it is empty.
+const UNPLACED_KEPT: usize = 16;
+
 /// `row` was made for its view (`made`) and is not drawn until the view
 /// puts it in its place, or the view put it there (`made` false) or it
 /// is gone.
@@ -83,7 +86,15 @@ pub(crate) fn unplaced(e: &Engine, row: ObjectId, made: bool) {
     } else {
         // Every row the view places, every pass: most were placed before.
         let mut unplaced = c.unplaced.borrow_mut();
-        !unplaced.is_empty() && unplaced.remove(&row)
+        let removed = !unplaced.is_empty() && unplaced.remove(&row);
+        if removed && unplaced.is_empty() {
+            // A view made a thousand rows at once has a table for a
+            // thousand: given back once they are all placed, not kept as
+            // 18 bytes a row for the life of the engine. A screenful's
+            // room stays, so the next rows made do not grow it again.
+            unplaced.shrink_to(UNPLACED_KEPT);
+        }
+        removed
     };
     if changed {
         c.generation.set(c.generation.get() + 1);
@@ -105,7 +116,13 @@ pub(crate) fn generation(e: &Engine) -> u64 {
 /// Every row a view made and does not show, or has not placed yet.
 pub(crate) fn all(e: &Engine) -> FxHashSet<ObjectId> {
     let c = e.extension::<Culled>();
-    c.unplaced.borrow_mut().retain(|o| e.is_alive(*o));
+    {
+        let mut unplaced = c.unplaced.borrow_mut();
+        unplaced.retain(|o| e.is_alive(*o));
+        if unplaced.is_empty() {
+            unplaced.shrink_to(UNPLACED_KEPT);
+        }
+    }
     c.by_view
         .borrow()
         .iter()
