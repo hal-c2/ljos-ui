@@ -74,6 +74,27 @@ impl TextInputClient for Client {
         self.replace(engine, item, cursor.saturating_sub(units)..cursor, "");
     }
 
+    fn replace_before_cursor(
+        &self,
+        engine: &Engine,
+        item: ObjectId,
+        units: usize,
+        text: &str,
+    ) -> bool {
+        let Some(st) = ops::ready(engine, item) else {
+            return false;
+        };
+        let (cursor, len) = {
+            let s = st.borrow();
+            (s.model.cursor(), s.model.len())
+        };
+        let start = cursor.saturating_sub(units);
+        self.replace(engine, item, start..cursor, text);
+        let s = st.borrow();
+        let end = start + units_of(text);
+        s.model.len() == len - (cursor - start) + units_of(text) && s.model.cursor() == end
+    }
+
     fn digest(&self, engine: &Engine, item: ObjectId) -> u64 {
         use std::hash::{Hash, Hasher};
         let mut h = std::hash::DefaultHasher::new();
@@ -227,15 +248,18 @@ impl QuickScene {
         }
         let around = client.surrounding(engine, item);
         let preedit = client.preedit(engine, item);
-        if preedit.is_empty() && hides(engine, item, &*client) {
-            // What the method typed, which it holds still.
-            let text = typed_hidden(engine, item, &*client);
+        if hides(engine, item, &*client) {
+            // What the method typed, which it holds still, and what it
+            // composes after it.
+            let mut text = typed_hidden(engine, item, &*client);
+            let typed = units_of(&text);
+            text.push_str(&preedit);
             let end = units_of(&text);
             return Some(ImeText {
                 text,
                 anchor: end,
                 cursor: end,
-                compose: None,
+                compose: (end > typed).then_some(typed..end),
             });
         }
         if preedit.is_empty() {
@@ -296,21 +320,17 @@ impl QuickScene {
         if hidden {
             let before = typed_hidden(engine, item, &*client);
             let (range, typed) = changed(&before, &text);
-            let digest = client.digest(engine, item);
             let back = units_of(&before) - range.start;
-            if back > 0 {
-                client.delete_before_cursor(engine, item, back);
-            }
             // What followed the change in what it held was taken back
             // with it.
             let again = typed + &before[byte_at(&before, range.end)..];
-            if !again.is_empty() {
-                client.commit(engine, item, &again);
-            }
+            // One edit, so a validator that refuses it leaves the field
+            // as it was, not with only the taking back done.
+            let took = (back == 0 && again.is_empty())
+                || client.replace_before_cursor(engine, item, back, &again);
             let after = client.digest(engine, item);
-            // A field that refused what was typed is not as the method
-            // holds it: the method is told to start anew.
-            let took = after != digest || (back == 0 && again.is_empty());
+            // A field that refused or cut what was typed is not as the
+            // method holds it: the method is told to start anew.
             *hidden_held(engine).0.borrow_mut() = took.then(|| HiddenHeld {
                 item,
                 text: text.clone(),

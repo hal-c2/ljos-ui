@@ -384,9 +384,13 @@ impl<U: Send + 'static> Pump<'_, U> {
                 };
                 let compose = held.compose.as_ref().filter(|c| c.start < c.end);
                 let unit = |n: usize| i32::try_from(n).unwrap_or(i32::MAX);
+                // The keyboard is told of a cursor that moved, but must
+                // read text that changed anew.
+                let replaced = self.app.text_input_state().text != held.text;
                 let told = ActivityCall::InputStateChanged {
                     selection: [unit(held.anchor), unit(held.cursor)],
                     compose: compose.map_or([-1, -1], |c| [unit(c.start), unit(c.end)]),
+                    replaced,
                 };
                 self.app.set_text_input_state(TextInputState {
                     text: held.text,
@@ -537,10 +541,12 @@ enum ActivityCall {
     /// `LjosActivity.setBackTaken`.
     BackTaken(bool),
     /// `LjosActivity.inputStateChanged`: the keyboard is told where the
-    /// selection and the composition are, in UTF-16 units; -1 for none.
+    /// selection and the composition are, in UTF-16 units; -1 for none;
+    /// and whether the text is another.
     InputStateChanged {
         selection: [i32; 2],
         compose: [i32; 2],
+        replaced: bool,
     },
 }
 
@@ -577,16 +583,21 @@ fn call_activity(app: &AndroidApp, call: ActivityCall) -> bool {
                     &[JValue::Bool(taken)],
                 )?;
             }
-            ActivityCall::InputStateChanged { selection, compose } => {
+            ActivityCall::InputStateChanged {
+                selection,
+                compose,
+                replaced,
+            } => {
                 env.call_method(
                     &activity,
                     jni_str!("inputStateChanged"),
-                    jni_sig!((jint, jint, jint, jint) -> void),
+                    jni_sig!((jint, jint, jint, jint, jboolean) -> void),
                     &[
                         JValue::Int(selection[0]),
                         JValue::Int(selection[1]),
                         JValue::Int(compose[0]),
                         JValue::Int(compose[1]),
+                        JValue::Bool(replaced),
                     ],
                 )?;
             }

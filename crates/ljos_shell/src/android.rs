@@ -333,6 +333,8 @@ where
         };
         // The activity may be a new one, which takes Back until told.
         self.back_taken.surface_came();
+        // And its input method knows no editor until told.
+        self.keyboard.surface_changed();
         if let Err(e) = self.make_surface(&window) {
             log::error!("nothing can be drawn: {e}");
             return;

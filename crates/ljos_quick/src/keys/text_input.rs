@@ -73,6 +73,20 @@ pub trait TextInputClient {
         let s = self.surrounding(engine, item);
         self.replace(engine, item, s.cursor.saturating_sub(units)..s.cursor, "");
     }
+    /// Puts `text` in place of the `units` UTF-16 units before the cursor
+    /// as one edit, which a validator takes or refuses whole, also in a
+    /// field that hides its text. Returns whether the item took all of
+    /// it: a validator, a mask or `maximumLength` may take part or none.
+    fn replace_before_cursor(
+        &self,
+        engine: &Engine,
+        item: ObjectId,
+        units: usize,
+        text: &str,
+    ) -> bool {
+        self.delete_before_cursor(engine, item, units);
+        text.is_empty() || self.commit(engine, item, text)
+    }
     /// A digest of the item's text and selection, also of a text it hides,
     /// that changes when they do. It never leaves the process: what an
     /// input method typed into a hidden field is kept only for as long as

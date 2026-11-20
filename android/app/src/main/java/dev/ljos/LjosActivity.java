@@ -99,13 +99,21 @@ public class LjosActivity extends GameActivity {
      * The application set what the input method holds; GameTextInput does
      * not tell the keyboard, so a cursor the user moved by touch, or text
      * the application changed, would be unknown to it until it restarts.
-     * Positions in UTF-16 units; -1 for no composition.
+     * Positions in UTF-16 units; -1 for no composition. Text that is
+     * another ({@code replaced}) is read anew by restarting the input: the
+     * keyboard's own copy of the text around the cursor would be stale.
      */
-    public void inputStateChanged(int selStart, int selEnd, int composeStart, int composeEnd) {
+    public void inputStateChanged(
+            int selStart, int selEnd, int composeStart, int composeEnd, boolean replaced) {
         runOnUiThread(() -> {
             View view = getWindow().getDecorView().findFocus();
             InputMethodManager imm = getSystemService(InputMethodManager.class);
-            if (view != null && imm != null) {
+            if (view == null || imm == null) {
+                return;
+            }
+            if (replaced) {
+                imm.restartInput(view);
+            } else {
                 imm.updateSelection(view, selStart, selEnd, composeStart, composeEnd);
             }
         });

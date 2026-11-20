@@ -83,6 +83,9 @@ pub(crate) struct SoftKeyboard {
     asked: Vec<Request>,
     /// The keyboard was asked to show for the editor with focus.
     shown: bool,
+    /// The application hid the keyboard since the last sync: an editor
+    /// focused meanwhile does not show it.
+    hidden: bool,
 }
 
 impl PlatformTextInput for SoftKeyboard {
@@ -111,8 +114,14 @@ impl PlatformTextInput for SoftKeyboard {
     }
 
     fn set_keyboard_wanted(&mut self, wanted: bool) {
-        if self.hints.is_some() || !wanted {
-            self.asked.push(Request::Keyboard(wanted));
+        self.hidden = !wanted;
+        if !wanted {
+            self.asked.push(Request::Keyboard(false));
+        } else if self.hints.is_some() {
+            // Shown by `sync`, after the editor focused meanwhile is set up
+            // and holds its text: the hints held now may be of the editor
+            // focus left.
+            self.shown = false;
         }
     }
 }
@@ -131,6 +140,17 @@ impl SoftKeyboard {
         self.told = Some(now);
     }
 
+    /// The window has a new surface, and the platform's method a new
+    /// editor: the editor with focus is set up, told what it holds and
+    /// shown again.
+    pub(crate) fn surface_changed(&mut self) {
+        if let Some(hints) = self.hints {
+            self.asked.push(Request::Editor(editor_kind(hints)));
+            self.told = None;
+            self.shown = false;
+        }
+    }
+
     /// What the platform is to be asked after the scene handled input or
     /// made a frame: the keyboard for the editor with focus, what it is to
     /// hold, and to show itself for an editor newly focused.
@@ -138,6 +158,7 @@ impl SoftKeyboard {
         let mut state = std::mem::take(&mut self.state);
         state.sync(scene, engine, self);
         self.state = state;
+        let hidden = std::mem::take(&mut self.hidden);
         if self.hints.is_some()
             && let Some(now) = scene.ime_text(engine).map(held)
         {
@@ -148,7 +169,7 @@ impl SoftKeyboard {
                 self.asked.push(Request::Held(now));
             }
             // What it holds is set before the keyboard shows.
-            if !shown {
+            if !shown && !hidden {
                 self.asked.push(Request::Keyboard(true));
             }
         }
@@ -292,6 +313,127 @@ mod tests {
         assert_eq!(
             e.read_by_name(input, "text").to_js_string().to_string(),
             "1234"
+        );
+    }
+
+    fn position(asked: &[Request], want: fn(&Request) -> bool) -> Option<usize> {
+        asked.iter().position(want)
+    }
+
+    #[test]
+    fn focus_moved_by_a_tap_shows_the_keyboard_once_the_new_editor_is_set_up() {
+        let (e, s, _) = editor("ab", &[]);
+        let mut keyboard = SoftKeyboard::default();
+        keyboard.sync(&s, &e);
+        // The tap asks for the keyboard while the editor it left is the
+        // one the method knows; the editor it focused is told after.
+        keyboard.set_keyboard_wanted(true);
+        keyboard.enable(hint::DIGITS_ONLY);
+        let asked = keyboard.sync(&s, &e);
+        let editor = position(&asked, |r| matches!(r, Request::Editor(_))).expect("told");
+        let held = position(&asked, |r| matches!(r, Request::Held(_))).expect("held");
+        let shown = position(&asked, |r| *r == Request::Keyboard(true)).expect("shown");
+        assert!(editor < held && held < shown, "{asked:?}");
+    }
+
+    #[test]
+    fn a_keyboard_hidden_as_an_editor_takes_focus_stays_hidden() {
+        let (e, s, _) = editor("ab", &[]);
+        let mut keyboard = SoftKeyboard::default();
+        // `Qt.inputMethod.hide()` before the editor's first sync.
+        keyboard.set_keyboard_wanted(false);
+        let asked = keyboard.sync(&s, &e);
+        assert!(position(&asked, |r| matches!(r, Request::Editor(_))).is_some());
+        assert!(!asked.contains(&Request::Keyboard(true)), "{asked:?}");
+        // Asked for again, it shows.
+        keyboard.set_keyboard_wanted(true);
+        assert!(keyboard.sync(&s, &e).contains(&Request::Keyboard(true)));
+    }
+
+    #[test]
+    fn a_new_surface_tells_the_focused_editor_again() {
+        let (e, s, _) = editor("ab", &[]);
+        let mut keyboard = SoftKeyboard::default();
+        keyboard.sync(&s, &e);
+        keyboard.surface_changed();
+        let asked = keyboard.sync(&s, &e);
+        let editor = position(&asked, |r| matches!(r, Request::Editor(_))).expect("told");
+        let held = position(&asked, |r| matches!(r, Request::Held(_))).expect("held");
+        let shown = position(&asked, |r| *r == Request::Keyboard(true)).expect("shown");
+        assert!(editor < held && held < shown, "{asked:?}");
+        assert_eq!(helds(&asked), ["ab"]);
+    }
+
+    #[test]
+    fn a_hidden_field_composing_keeps_what_the_method_typed_before() {
+        let (e, mut s, input) = editor("", &[("echoMode", Value::from(2))]);
+        let mut keyboard = SoftKeyboard::default();
+        keyboard.sync(&s, &e);
+        keyboard.held(&s, &e, text("a", 1, None));
+        s.frame(&e, Time::ZERO);
+        keyboard.sync(&s, &e);
+        keyboard.held(&s, &e, text("ab", 2, Some(1..2)));
+        s.frame(&e, Time::ZERO);
+        assert_eq!(helds(&keyboard.sync(&s, &e)), Vec::<String>::new());
+        assert_eq!(
+            e.read_by_name(input, "text").to_js_string().to_string(),
+            "a"
+        );
+    }
+
+    #[test]
+    fn a_hidden_replacement_the_validator_refuses_leaves_the_text_whole() {
+        let (e, mut s, input) = editor("", &[("echoMode", Value::from(2))]);
+        let validator = e
+            .create_native(
+                ljos_quick::IntValidator {
+                    bottom: 0,
+                    top: 999,
+                    ..Default::default()
+                },
+                None,
+            )
+            .unwrap();
+        e.complete(validator).unwrap();
+        e.write_by_name(input, "validator", Value::Object(validator))
+            .unwrap();
+        let mut keyboard = SoftKeyboard::default();
+        keyboard.sync(&s, &e);
+        keyboard.held(&s, &e, text("123", 3, None));
+        s.frame(&e, Time::ZERO);
+        keyboard.sync(&s, &e);
+        keyboard.held(&s, &e, text("1x3", 3, None));
+        s.frame(&e, Time::ZERO);
+        assert_eq!(
+            e.read_by_name(input, "text").to_js_string().to_string(),
+            "123"
+        );
+    }
+
+    #[test]
+    fn a_hidden_field_that_took_part_of_the_typing_starts_the_method_anew() {
+        let (e, mut s, input) = editor(
+            "",
+            &[
+                ("echoMode", Value::from(2)),
+                ("maximumLength", Value::from(2)),
+            ],
+        );
+        let mut keyboard = SoftKeyboard::default();
+        keyboard.sync(&s, &e);
+        keyboard.held(&s, &e, text("abc", 3, None));
+        s.frame(&e, Time::ZERO);
+        assert_eq!(
+            e.read_by_name(input, "text").to_js_string().to_string(),
+            "ab"
+        );
+        // The method is not left holding the "c" the field cut.
+        assert_eq!(helds(&keyboard.sync(&s, &e)), [""]);
+        keyboard.held(&s, &e, text("", 0, None));
+        s.frame(&e, Time::ZERO);
+        assert_eq!(
+            e.read_by_name(input, "text").to_js_string().to_string(),
+            "ab"
         );
     }
 }
