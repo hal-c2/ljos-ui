@@ -116,7 +116,9 @@ public final class LjosServices {
     private static final int IV_LENGTH = 12;
     private static final int TAG_BITS = 128;
 
-    private static SecretKey key() throws GeneralSecurityException, IOException {
+    // Synchronized: two threads that both found no key would each make one,
+    // and the second would replace the key the first sealed a secret with.
+    private static synchronized SecretKey key() throws GeneralSecurityException, IOException {
         KeyStore store = KeyStore.getInstance(KEYSTORE);
         store.load(null);
         KeyStore.Entry entry = store.getEntry(ALIAS, null);
