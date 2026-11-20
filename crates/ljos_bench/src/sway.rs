@@ -153,6 +153,22 @@ impl Sway {
         Ok(find(&tree, pid))
     }
 
+    /// Where the window of `pid` is ([`Sway::window_rect`]), and whether
+    /// that place is the size its client last committed. A floating
+    /// window's place takes a size the client commits only once the
+    /// compositor's transaction for it ends, up to its timeout later, so
+    /// the place read meanwhile is the old one.
+    ///
+    /// # Errors
+    /// The compositor cannot be reached, or does not answer by `by`
+    /// (`WouldBlock` or `TimedOut`).
+    pub fn window_place(&self, pid: u32, by: Option<Instant>) -> std::io::Result<Option<Place>> {
+        let mut stream = self.connect()?;
+        send(&mut stream, GET_TREE, "")?;
+        let (_, tree) = receive(&mut stream, by)?;
+        Ok(find_node(&tree, pid).and_then(place))
+    }
+
     /// The size of the whole layout, which absolute pointer motion is
     /// relative to.
     ///
@@ -204,17 +220,46 @@ fn focused(node: &Value) -> Option<u32> {
         .find_map(focused)
 }
 
+/// A window's place in the layout ([`Sway::window_place`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Place {
+    /// x, y, width, height of its content, in the layout's pixels.
+    pub rect: (i32, i32, i32, i32),
+    /// The place is not yet the size the client last committed. Only a
+    /// floating window is held to the size it commits; a tiled one is
+    /// given its tile's whatever it draws.
+    pub resizing: bool,
+}
+
 fn find(node: &Value, pid: u32) -> Option<(i32, i32, i32, i32)> {
+    find_node(node, pid).and_then(place).map(|p| p.rect)
+}
+
+fn find_node(node: &Value, pid: u32) -> Option<&Value> {
     if node["pid"].as_u64() == Some(u64::from(pid)) {
-        let r = &node["rect"];
-        let get = |k: &str| r[k].as_i64().and_then(|v| i32::try_from(v).ok());
-        return Some((get("x")?, get("y")?, get("width")?, get("height")?));
+        return Some(node);
     }
     ["nodes", "floating_nodes"]
         .iter()
         .filter_map(|k| node[*k].as_array())
         .flatten()
-        .find_map(|child| find(child, pid))
+        .find_map(|child| find_node(child, pid))
+}
+
+fn place(node: &Value) -> Option<Place> {
+    let get = |r: &Value, k: &str| r[k].as_i64().and_then(|v| i32::try_from(v).ok());
+    let r = &node["rect"];
+    let rect = (
+        get(r, "x")?,
+        get(r, "y")?,
+        get(r, "width")?,
+        get(r, "height")?,
+    );
+    let g = &node["geometry"];
+    let committed = get(g, "width").zip(get(g, "height"));
+    let resizing = node["type"] == "floating_con"
+        && committed.is_some_and(|(w, h)| w > 0 && (w, h) != (rect.2, rect.3));
+    Some(Place { rect, resizing })
 }
 
 #[cfg(test)]
@@ -230,6 +275,31 @@ mod tests {
         });
         assert_eq!(find(&tree, 7), Some((10, 20, 300, 200)));
         assert_eq!(find(&tree, 8), None);
+    }
+
+    /// A floating window that committed another size than its place is
+    /// still being resized; a tiled one drawn smaller than its tile is not.
+    #[test]
+    fn a_floating_window_is_resizing_until_its_place_is_its_committed_size() {
+        let node = |kind: &str, w: i64, h: i64| {
+            serde_json::json!({"type": kind, "pid": 7,
+                "rect": {"x": 10, "y": 20, "width": 200, "height": 100},
+                "geometry": {"x": 0, "y": 0, "width": w, "height": h}})
+        };
+        let tree = |n: Value| serde_json::json!({"nodes": [], "floating_nodes": [n]});
+        let at = |n: Value| find_node(&tree(n), 7).and_then(place);
+        assert_eq!(
+            at(node("floating_con", 300, 200)),
+            Some(Place {
+                rect: (10, 20, 200, 100),
+                resizing: true
+            })
+        );
+        assert_eq!(
+            at(node("floating_con", 200, 100)).map(|p| p.resizing),
+            Some(false)
+        );
+        assert_eq!(at(node("con", 150, 80)).map(|p| p.resizing), Some(false));
     }
 
     /// A compositor that answers a byte at a time, each well inside the

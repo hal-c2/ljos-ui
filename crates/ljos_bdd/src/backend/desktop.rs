@@ -559,16 +559,13 @@ impl DesktopBackend {
         Ok(self.dir.as_ref().expect("just made").path())
     }
 
+    /// The program `features:run` built and pinned for this run
+    /// (`LJOS_BIN`), as the other backends run it. The target's own
+    /// `debug/ljos` is whatever was built there last, by this checkout or
+    /// another that shares the target, so a scenario run on it tests
+    /// another program than the branch's.
     fn ljos() -> Result<PathBuf> {
-        let bin = crate::runner::target_dir().join("debug/ljos");
-        if bin.is_file() {
-            Ok(bin)
-        } else {
-            Err(BackendError::Failed(format!(
-                "{} is not built (cargo build -p ljos_cli)",
-                bin.display()
-            )))
-        }
+        super::testrun::ljos_bin()
     }
 
     fn start(&mut self, entry: &str) -> Result<()> {
@@ -1014,7 +1011,6 @@ impl Backend for DesktopBackend {
         // a moment later.
         let deadline = Instant::now() + PICTURE;
         self.running()?.presented(deadline)?;
-        let rect = self.running()?.rect;
         let display = self
             .sandbox
             .as_ref()
@@ -1023,14 +1019,44 @@ impl Backend for DesktopBackend {
         let failed = |e: ljos_bench::wayland::Error| {
             BackendError::Failed(format!("the sandbox's screencopy: {e}"))
         };
-        ljos_bench::wayland::quiet(&display, rect, STILL, deadline)
-            .map_err(failed)?
-            .ok_or_else(|| {
-                BackendError::Failed(format!(
-                    "the window kept changing for {} s",
-                    PICTURE.as_secs()
-                ))
-            })?;
+        // The window may have taken another size since it was first shown
+        // (a root of another size put in it), and the compositor another
+        // place for it. The application rests once it has drawn at the
+        // size, and the compositor moves the window's place to it only
+        // when its transaction ends, a moment later. So the picture is
+        // taken once the window is still in the place the compositor
+        // says, and that place is the size the application drew.
+        let pid = self.running()?.app.id();
+        let rect = loop {
+            let rect = self.running()?.rect;
+            ljos_bench::wayland::quiet(&display, rect, STILL, deadline)
+                .map_err(failed)?
+                .ok_or_else(|| {
+                    BackendError::Failed(format!(
+                        "the window kept changing for {} s",
+                        PICTURE.as_secs()
+                    ))
+                })?;
+            let place = in_time(self.sway()?.window_place(pid, Some(deadline)), || {
+                BackendError::Failed("the compositor did not say where the window is".into())
+            })?
+            .filter(|p| p.rect.2 > 0);
+            match place {
+                Some(p) if p.resizing => {
+                    if Instant::now() >= deadline {
+                        return Err(BackendError::Failed(format!(
+                            "the compositor kept the window at {} by {} for {} s after it drew at another size",
+                            p.rect.2,
+                            p.rect.3,
+                            PICTURE.as_secs()
+                        )));
+                    }
+                    std::thread::sleep(STILL / 5);
+                }
+                Some(p) if p.rect != rect => self.running()?.rect = p.rect,
+                _ => break rect,
+            }
+        };
         let (width, height, rgba) =
             ljos_bench::wayland::picture(&display, rect, deadline).map_err(failed)?;
         let encoding =
