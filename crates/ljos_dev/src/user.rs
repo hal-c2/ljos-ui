@@ -270,10 +270,13 @@ type Make = Box<dyn FnOnce(Making) -> Built + Send>;
 /// application whose user has none would do for nothing.
 type Later = Box<dyn FnOnce(&Engine) -> Make>;
 
+/// Reads the program's oracle from the engine.
+type ReadOracle<O> = Box<dyn FnOnce(&Engine) -> O>;
+
 /// The program's oracle, read from the engine once, by the first that
 /// needs it: the user's first file, or the first text a script makes.
 struct Oracle<O> {
-    make: Cell<Option<Box<dyn FnOnce(&Engine) -> O>>>,
+    make: Cell<Option<ReadOracle<O>>>,
     made: std::cell::OnceCell<O>,
 }
 
@@ -965,7 +968,7 @@ impl UserSession {
             prepare(engine);
         }
         let oracle = Rc::new(Oracle {
-            make: Cell::new(Some(Box::new(oracle) as Box<dyn FnOnce(&Engine) -> O>)),
+            make: Cell::new(Some(Box::new(oracle) as ReadOracle<O>)),
             made: std::cell::OnceCell::new(),
         });
         // From the root, as the address of a file in one is.
