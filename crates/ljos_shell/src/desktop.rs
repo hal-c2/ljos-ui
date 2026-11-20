@@ -631,8 +631,13 @@ impl<M: Send + 'static> Desktop<M> {
                 spec.title.clone_from(&self.config.title);
             }
             if spec.size[0] <= 0.0 || spec.size[1] <= 0.0 {
-                let [w, h] = self.config.size;
-                spec.size = [f64::from(w), f64::from(h)];
+                // A root put in the window of another keeps the size that
+                // window has; the application's size is the one a window
+                // is opened with.
+                spec.size = self.slots[i].told_size.unwrap_or_else(|| {
+                    let [w, h] = self.config.size;
+                    [f64::from(w), f64::from(h)]
+                });
             }
         }
         Some(spec)
