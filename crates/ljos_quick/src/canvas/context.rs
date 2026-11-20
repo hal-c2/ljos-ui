@@ -533,6 +533,9 @@ impl Op<'_> {
                 // the state.
                 *self.ctx.borrow_mut() = Ctx::default();
                 self.run.borrow_mut().painter.clear();
+                // An empty canvas is a new picture, so a reset outside a
+                // paint is shown like any other drawing.
+                drew = true;
                 Value::Undefined
             }
             "scale" | "rotate" | "translate" | "transform" | "setTransform" | "shear"
