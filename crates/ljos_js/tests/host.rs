@@ -370,6 +370,37 @@ fn a_null_thrown_in_a_nested_run_after_another_ran_out_is_its_own() {
     );
 }
 
+/// Each job a pump runs judges a thrown `null` by its own peak: a job
+/// before it that ran out and was freed is not its.
+#[test]
+fn a_null_thrown_by_a_job_after_another_job_ran_out_is_its_own() {
+    let host = JsHost::new(JsConfig {
+        memory_limit: Some(16 * 1024 * 1024),
+        ..JsConfig::default()
+    })
+    .unwrap();
+    host.collect_now();
+    let held = host.memory_stats().unwrap().malloc_size;
+    assert!(host.set_memory_limit(Some(held + 4 * 1024 * 1024)));
+    host.enter("setup", host.config().slice, |s| {
+        s.eval::<(), _>(
+            "queueMicrotask(function fill() { let h = null; for (;;) h = { n: h } });\n\
+             queueMicrotask(() => { throw null })",
+        )
+    })
+    .unwrap();
+    let pumped = host.pump_jobs(Instant::now() + Duration::from_secs(5));
+    assert_eq!(pumped.ran, 2);
+    assert!(
+        matches!(
+            &pumped.faults[..],
+            [JsFault::JsOutOfMemory { .. }, JsFault::JsException { .. }]
+        ),
+        "{:?}",
+        pumped.faults
+    );
+}
+
 #[test]
 fn out_of_memory_is_reported_and_context_survives() {
     let host = JsHost::new(JsConfig {
