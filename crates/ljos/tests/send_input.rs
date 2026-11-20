@@ -260,7 +260,9 @@ fn a_gone_item_takes_nothing() {
     let engine = ljos::engine();
     let (frame, pad) = setup(&engine);
     engine.destroy(pad);
-    let _ = frame;
+    // Destroying is deferred to the turn's end; the item is gone after it.
+    engine.process_deferred_deletes();
+    assert!(engine.is_alive(frame) && !engine.is_alive(pad));
     assert!(!input::send_input(
         &engine,
         pad,
