@@ -571,9 +571,9 @@ enum Count {
 /// After a script was stopped at `at`: loads again, now or after a wait.
 /// The log has the fault already; this says what becomes of the item.
 fn load_again(e: &Engine, me: ObjectId, at: Time, again: Again, cut: Cut) {
-    // Nothing was loaded since the last fault: this is the same failure
-    // told again (the load's own error, then its fault report). The wait
-    // stands, for the generation the report moved on to.
+    // A fault while it waits (in the Loader's own code: it holds no item)
+    // is not another load's: the wait stands, for the generation the
+    // fault moved on to.
     if let Some(Some((old, due, count))) = with_run(e, me, |r| r.waiting.take()) {
         e.cancel_call(old);
         wait_until(e, me, due, count);
@@ -894,14 +894,8 @@ fn finish(e: &Engine, me: ObjectId, generation: u64, made: Result<ObjectId, Engi
             }
         }
         Err(err) => {
-            // A load cut short with no fault reported to the Loader (a
-            // module that ran out of heap in a job of its own) loads again
-            // as a reported one does.
-            let cut = match err {
-                EngineError::JsInterrupted(_) => Some(Cut::Interrupted),
-                EngineError::JsOutOfMemory(_) => Some(Cut::OutOfMemory),
-                _ => None,
-            };
+            // A script cut short while the item is made is no error here:
+            // making it goes on, and its fault reaches `stop`.
             warn(e, err.to_string());
             set(e, me, Loader::STATUS.index, loader_status::ERROR.into());
             set(e, me, Loader::ITEM.index, Value::Null);
@@ -909,12 +903,6 @@ fn finish(e: &Engine, me: ObjectId, generation: u64, made: Result<ObjectId, Engi
                 let _ = e.notify(me, Loader::ITEM.index);
             }
             set(e, me, Loader::PROGRESS.index, 1.0.into());
-            if let Some(cut) = cut {
-                if cut == Cut::OutOfMemory {
-                    e.collect_garbage();
-                }
-                load_again(e, me, e.now(), Again::Counted, cut);
-            }
         }
     }
     if is_current(e, me, generation) {
