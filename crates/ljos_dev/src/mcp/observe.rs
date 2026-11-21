@@ -875,8 +875,12 @@ fn fault_rows(engine: &Engine, secrets: &SecretBook, text: &mut String) -> Vec<V
             TakenBy::Log => ("log".to_owned(), None),
             TakenBy::Application => ("application".to_owned(), None),
             TakenBy::Discarded => ("discarded".to_owned(), None),
-            TakenBy::Boundary { object, name } => (name.clone(), alive(*object)),
+            TakenBy::Boundary { object, name } | TakenBy::Kept { object, name } => {
+                (name.clone(), alive(*object))
+            }
         };
+        // The boundary took it and left its content shown.
+        let kept = matches!(f.taken_by, TakenBy::Kept { .. });
         let origin_handle = f.origin.and_then(alive);
         let masked = |s: &str| {
             let mut s = s.to_owned();
@@ -911,6 +915,7 @@ fn fault_rows(engine: &Engine, secrets: &SecretBook, text: &mut String) -> Vec<V
             "origin_gone": f.origin.is_some() && origin_handle.is_none(),
             "taken_by": taken_by,
             "taken_by_handle": taken_handle,
+            "kept": kept,
             "stack": stack,
         }));
         let file = fault_file
@@ -918,12 +923,13 @@ fn fault_rows(engine: &Engine, secrets: &SecretBook, text: &mut String) -> Vec<V
             .map(|p| p.rsplit('/').next().unwrap_or(p));
         let _ = writeln!(
             text,
-            "fault {} {} at {}:{}: {}, taken by {taken_by}",
+            "fault {} {} at {}:{}: {}, taken by {taken_by}{}",
             f.seq,
             f.kind(),
             file.unwrap_or("?"),
             f.line,
-            message
+            message,
+            if kept { ", which kept its content" } else { "" }
         );
     }
     if faults.is_empty() {

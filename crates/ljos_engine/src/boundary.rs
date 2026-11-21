@@ -89,6 +89,29 @@ pub trait Boundary {
     fn failed(&self, _engine: &Engine, _boundary: ObjectId) -> bool {
         false
     }
+
+    /// Whether `report`, a resource fault in the content
+    /// ([`crate::backoff::is_resource_fault`]), leaves the content shown:
+    /// the boundary takes it, may note it where its users can see it (an
+    /// `ErrorBoundary`'s `fault`), and stops and starts nothing; the fault
+    /// is on record as [`TakenBy::Kept`]. A script of the content stopped for
+    /// its time is one: the engine runs the binding it cut short again,
+    /// and content made again would run over again. `false`, the default,
+    /// asks [`Boundary::resource_fault`] next.
+    fn keeps(&self, _engine: &Engine, _boundary: ObjectId, _report: &FaultReport) -> bool {
+        false
+    }
+
+    /// Takes `report`, a resource fault in the content (a full script
+    /// heap, a script stopped for its time that [`Boundary::keeps`] does
+    /// not keep, a panic in native work:
+    /// [`crate::backoff::is_resource_fault`]), outside the supervisor: it
+    /// stops the content and starts it again by itself, after a wait, and
+    /// the fault is not counted toward the restart intensity. `false`,
+    /// the default, leaves the fault to the supervisor like any other.
+    fn resource_fault(&self, _engine: &Engine, _boundary: ObjectId, _report: &FaultReport) -> bool {
+        false
+    }
 }
 
 /// The owner of everything no boundary is around.
@@ -359,6 +382,25 @@ impl Engine {
         let Some(first) = first else {
             return unhandled();
         };
+        // A resource fault the code did not cause is not counted toward
+        // giving up: a boundary that takes it itself waits and starts its
+        // content again for as long as it takes.
+        let (nearest, behaviour) = &chain[first];
+        if crate::backoff::is_resource_fault(&report.fault) {
+            let name = || self.label_of(*nearest).unwrap_or_default();
+            if self.untrack(|| behaviour.keeps(self, *nearest, report)) {
+                return Tripped::Handled(TakenBy::Kept {
+                    object: *nearest,
+                    name: name(),
+                });
+            }
+            if self.untrack(|| behaviour.resource_fault(self, *nearest, report)) {
+                return Tripped::Handled(TakenBy::Boundary {
+                    object: *nearest,
+                    name: name(),
+                });
+            }
+        }
         let ids: Vec<ObjectId> = chain[first..].iter().map(|(o, _)| *o).collect();
         let Some(content) = self.boundary_node(ids[0], &ids[1..]) else {
             return unhandled();
