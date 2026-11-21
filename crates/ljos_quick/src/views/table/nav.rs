@@ -23,12 +23,12 @@ use super::{
     TableState, TableView, edit, edit_trigger, index_of_cell, layout, resize, select,
     selection_behavior, selection_mode, state_of,
 };
+use crate::DOUBLE_CLICK_INTERVAL;
 use crate::flickable::{Flickable, drag};
 use crate::input::{KeyEvent, Modifiers, MouseButtons, PointerEvent};
 use crate::item::Item;
 use crate::keys::{KeyItem, key};
 use crate::pointer_item::PointerItem;
-use crate::DOUBLE_CLICK_INTERVAL;
 
 /// `ItemSelectionModel`'s flags a view selects with.
 const CLEAR_AND_SELECT: i32 = 0x3;

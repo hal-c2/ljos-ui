@@ -297,7 +297,9 @@ pub(crate) fn moved(engine: &Engine, area: ObjectId, f: Fingers) {
     *st.last.borrow_mut() = Some(f);
     let Some(mut run) = st.run.get() else {
         let start = (f.press[1] - f.press[0]).hypot();
-        if st.refused.get() || (f.distance() - start).abs() < crate::system_prefs::start_drag_distance(engine) {
+        if st.refused.get()
+            || (f.distance() - start).abs() < crate::system_prefs::start_drag_distance(engine)
+        {
             return;
         }
         let target = index("pinch.target")
