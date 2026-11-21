@@ -163,7 +163,7 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: mise exec -- rustup target add aarch64-linux-android x86_64-linux-android
       # Pinned like every other tool here; downloaded when the job runs, which is only
-      # when the change reaches ljos_js, so no cache of gigabytes is kept for it.
+      # when the change reaches ljos_js, ljos_host or ljos_shell, so no cache of gigabytes is kept for it.
       # r30, the NDK the bundled bindings were generated with. r27 ships its libclang
       # only as a musl build, which a glibc bindgen cannot load.
       - uses: nttld/setup-ndk@v1
