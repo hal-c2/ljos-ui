@@ -391,3 +391,54 @@ fn a_list_view_delegate_whose_scripts_ran_over_their_time_is_shown_and_its_bindi
     frame(&mut s, &e);
     assert_eq!(e.next_timer_deadline(), None, "nothing more to wait for");
 }
+
+/// A delegate that holds a boundary of its own, whose content fills the
+/// heap as it is made: that boundary takes the fault, so the delegate is
+/// whole, is shown at once and is not made again (ljos-ui#712).
+const GUARDED_LINE: &str = r#"
+import QtQuick
+import Ljos
+Item {
+    width: 12; height: 10
+    ErrorBoundary {
+        objectName: "inner"
+        Item {
+            property var lots: []
+            Component.onCompleted: {
+                for (let i = 0; i < 20000; i++) lots.push({ i: i, s: "row " + i });
+            }
+        }
+    }
+}
+"#;
+
+#[test]
+fn a_list_view_delegate_whose_own_boundary_took_a_full_heap_is_shown_at_once() {
+    let (e, _clock) = timed();
+    compile(&e, &[("Main", LIST_VIEW), ("Line", GUARDED_LINE)]);
+    let root = e.create_from_url("Main", None, Vec::new()).unwrap();
+    let view = find(&e, root, "view");
+    fill(&e, root, 64 * 1024);
+    set(&e, root, "on", Value::Bool(true));
+    let mut s = scene(&e, root, 200.0, 200.0);
+    frame(&mut s, &e);
+    assert_eq!(delegate_widths(&e, view), [12.0, 12.0, 12.0]);
+    let first: Vec<_> = (0..3)
+        .map(|i| e.invoke_by_name(view, "itemAtIndex", &[Value::from(f64::from(i))]))
+        .map(|v| v.ok().and_then(|v| v.as_object()))
+        .collect();
+    for d in first.iter().flatten() {
+        let inner = find(&e, *d, "inner");
+        assert!(
+            get(&e, inner, "failed").to_boolean(),
+            "the inner one took it"
+        );
+    }
+    frame(&mut s, &e);
+    let again: Vec<_> = (0..3)
+        .map(|i| e.invoke_by_name(view, "itemAtIndex", &[Value::from(f64::from(i))]))
+        .map(|v| v.ok().and_then(|v| v.as_object()))
+        .collect();
+    assert_eq!(first, again, "the delegates are not made again");
+    assert!(e.application_fault().is_none());
+}
