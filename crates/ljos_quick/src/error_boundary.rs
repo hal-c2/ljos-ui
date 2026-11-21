@@ -310,12 +310,12 @@ impl Boundary for Behaviour {
 
     fn start(&self, e: &Engine, me: ObjectId) -> Result<(), Fault> {
         match show_fallback(e, me) {
-            // No room for the fallback either: the content is made again
-            // after a wait, outside the supervisor's count.
-            Some(Err(fault @ (Fault::JsOutOfMemory | Fault::JsInterrupted { .. }))) => {
-                again_after(e, me, &fault);
-                Ok(())
-            }
+            // `start` follows a counted fault, the content's own bug: the
+            // content waits for `retry()` whether the fallback shows or
+            // not. One with no room to be made leaves nothing shown (it
+            // warned), and is neither counted nor a reason to make the
+            // content again.
+            Some(Err(Fault::JsOutOfMemory | Fault::JsInterrupted { .. })) => Ok(()),
             Some(shown) => shown,
             None => {
                 bump_restarts(e, me);

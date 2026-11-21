@@ -541,14 +541,71 @@ fn a_fallback_that_cannot_be_made_while_the_heap_is_short_is_counted() {
     assert!(warned.iter().any(|w| w.contains("fallback:")), "{warned:?}");
 }
 
+/// A fallback that fills the heap as it is made.
+const HUNGRY_FALLBACK: &str = r#"fallback: Item {
+            objectName: "sorry"
+            property var lots: []
+            Component.onCompleted: {
+                for (let i = 0; i < 20000; i++) lots.push({ i: i, s: "row " + i });
+            }
+        }"#;
+
+/// After a bug in the content, counted, a fallback with no room to be
+/// made leaves the content down until it is given again or `retry()`, as
+/// a fallback that shows does: nothing makes the buggy content again.
+#[test]
+fn a_fallback_with_no_room_after_a_bug_in_the_content_leaves_it_down() {
+    let source = with_fallback(HUNGRY_FALLBACK).replace(
+        "    property Component other: Component {",
+        "    property Component broken: Component {\n        Item { objectName: \"broken\"; required property int n }\n    }\n    property Component other: Component {",
+    );
+    let e = engine();
+    let clock = Arc::new(VirtualClock::new());
+    e.set_clock(Rc::new(clock.clone()));
+    compile(&e, &[("Main", &source)]);
+    let root = e.create_from_url("Main", None, Vec::new()).unwrap();
+    let boundary = find(&e, root, "boundary");
+    assert_eq!(shown(&e, boundary), "content");
+    e.invoke_by_name(root, "litter", &[Value::from(0.0)])
+        .unwrap();
+    assert!(e.collect_garbage());
+    let held = e.script_memory().unwrap().bytes;
+    assert!(e.set_script_heap_limit(Some(held + 64 * 1024)));
+    let _ = e.take_warnings();
+
+    set(&e, boundary, "content", get(&e, root, "broken"));
+    settle(&e, &clock, boundary);
+    assert!(get(&e, boundary, "failed").to_boolean());
+    assert_eq!(shown(&e, boundary), "");
+    assert_eq!(
+        e.next_timer_deadline(),
+        None,
+        "the buggy content is not made again on a timer"
+    );
+    assert!(e.application_fault().is_none());
+    let warned = e.take_warnings();
+    assert!(
+        warned
+            .iter()
+            .any(|w| w.contains("ErrorBoundary: fallback:") && w.contains("not shown")),
+        "{warned:?}"
+    );
+
+    // Content given again is made at once.
+    assert!(e.set_script_heap_limit(None));
+    set(&e, boundary, "content", get(&e, root, "other"));
+    settle(&e, &clock, boundary);
+    assert!(!get(&e, boundary, "failed").to_boolean());
+    assert_eq!(shown(&e, boundary), "other");
+    assert!(e.application_fault().is_none());
+}
+
 /// A fallback that itself has no room to be made is a resource fault, as
 /// the content's is: the boundary waits and tries again, and never gives
 /// up, however many times that happens.
 #[test]
 fn a_fallback_that_also_runs_out_of_heap_waits_with_the_content_and_never_gives_up() {
-    let source = with_fallback(
-        "fallback: Item {\n            objectName: \"sorry\"\n            property var lots: []\n            Component.onCompleted: {\n                for (let i = 0; i < 20000; i++) lots.push({ i: i, s: \"row \" + i });\n            }\n        }",
-    );
+    let source = with_fallback(HUNGRY_FALLBACK);
     let (e, clock, _, boundary) = out_of_heap(&source);
     assert!(get(&e, boundary, "failed").to_boolean());
     assert_ne!(shown(&e, boundary), "sorry");
