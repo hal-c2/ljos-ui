@@ -2808,14 +2808,38 @@ impl JsHost {
         true
     }
 
+    /// Every collection, whoever asked for it, warns once while the heap
+    /// stays past three quarters of its limit after collecting, naming the
+    /// runs that grew it most, and again once it went below five eighths
+    /// and came back: only a collection tells live from garbage.
     fn collect(&self) {
+        // What grew the heap is cleared with it.
+        let most = self.pressure.borrow().most();
         self.state.let_go.set(false);
         self.rt.run_gc();
         self.collected.set(self.objects.get());
         self.last_collect.set(self.heap_bytes());
         self.collections.set(self.collections.get() + 1);
         self.flush_released();
-        self.pressure.borrow_mut().growers.clear();
+        let mut p = self.pressure.borrow_mut();
+        p.growers.clear();
+        let Some(limit) = self.memory_limit.get().filter(|l| *l > 0) else {
+            return;
+        };
+        let size = self.heap_bytes();
+        if size >= limit / 4 * 3 {
+            if !p.warned {
+                p.warned = true;
+                tracing::warn!(
+                    heap = size,
+                    limit,
+                    grew_most = most,
+                    "the JS heap is past three quarters of its limit after collecting"
+                );
+            }
+        } else if size < limit / 8 * 5 {
+            p.warned = false;
+        }
     }
 
     /// After a run: collects when the heap is past three quarters of its
@@ -2827,9 +2851,10 @@ impl JsHost {
     /// collection off: one is owed until it runs
     /// ([`JsHost::wants_idle_collect`]). QuickJS collects only when an
     /// object is made past its threshold, and a run of strings and arrays
-    /// goes past the limit without one. Warns once while it stays past three quarters
-    /// after collecting, naming the runs that grew it most, and again once
-    /// it went below five eighths and came back.
+    /// goes past the limit without one. The collection warns
+    /// ([`JsHost::collect`]); a run that does not collect only notes that
+    /// the heap went below five eighths, so the next time it is past three
+    /// quarters is warned of again.
     fn mind_heap(&self, ran_out: bool) {
         let Some(limit) = self.memory_limit.get().filter(|l| *l > 0) else {
             return;
@@ -2840,29 +2865,10 @@ impl JsHost {
         let size = self.heap_bytes();
         let due = (ran_out && self.may_hold_garbage())
             || (size >= high && size >= last.saturating_add(step));
-        let most = if due {
-            let most = self.pressure.borrow().most();
+        if due {
             self.collect();
-            most
-        } else {
-            String::new()
-        };
-        let size = self.heap_bytes();
-        let mut p = self.pressure.borrow_mut();
-        // Only a collection tells live from garbage.
-        if due && size >= high {
-            if !p.warned {
-                p.warned = true;
-                let most = if most.is_empty() { p.most() } else { most };
-                tracing::warn!(
-                    heap = size,
-                    limit,
-                    grew_most = most,
-                    "the JS heap is past three quarters of its limit after collecting"
-                );
-            }
         } else if size < limit / 8 * 5 {
-            p.warned = false;
+            self.pressure.borrow_mut().warned = false;
         }
     }
 

@@ -410,6 +410,20 @@ fn a_heap_past_three_quarters_is_warned_of_once_and_named() {
     assert!(!host.heap_pressure().warned);
 }
 
+/// An explicit collection that leaves the heap past three quarters warns
+/// as the one after a run does: every collection follows one rule.
+#[test]
+fn an_explicit_collection_past_three_quarters_is_warned_of() {
+    let host = small(64);
+    keep(&host, 25);
+    assert!(!host.heap_pressure().warned, "{:?}", host.heap_pressure());
+    assert!(host.set_memory_limit(Some(32 * MIB)));
+    assert!(host.collect_now());
+    let p = host.heap_pressure();
+    assert!(p.warned, "{p:?}");
+    assert!(p.growers.is_empty(), "{p:?}");
+}
+
 /// A heap past three quarters that a collection would bring back under
 /// it is not warned of: the warning follows a collection.
 #[test]
