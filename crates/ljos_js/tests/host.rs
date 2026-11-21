@@ -462,7 +462,14 @@ fn an_explicit_collection_past_three_quarters_is_warned_of() {
 /// past three quarters it collects and warns, with no run after it.
 #[test]
 fn promise_jobs_are_held_to_the_heap_as_runs_are() {
-    let host = small(32);
+    // One job here grows by more than a job's share of what is left, so the
+    // share is off: this is about pressure, which the share would cut short.
+    let host = JsHost::new(JsConfig {
+        memory_limit: Some(32 * MIB),
+        dispatch_heap_share: None,
+        ..JsConfig::default()
+    })
+    .unwrap();
     keep(&host, 20);
     host.collect_now();
     assert!(!host.heap_pressure().warned, "{:?}", host.heap_pressure());
