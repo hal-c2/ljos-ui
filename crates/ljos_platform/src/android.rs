@@ -1,7 +1,8 @@
 //! An Android application's services, through its Java side
 //! (`dev.ljos.LjosServices` of Ljós's Android template, reached with
-//! `ljos_jni`): the system's clipboard, its opener of links, and the
-//! directories the system keeps for the application.
+//! `ljos_jni`): the system's clipboard, its opener of links, the
+//! directories the system keeps for the application, and how far a finger
+//! goes before a touch is a drag.
 //!
 //! Each call waits for the Java side, which runs the clipboard's calls on
 //! the main thread: call them from the application's thread, never from
@@ -157,6 +158,24 @@ pub fn app_directories() -> Option<(PathBuf, PathBuf)> {
             None
         }
     }
+}
+
+/// How far a finger goes before a touch is a drag, in the application's
+/// pixels (dp): `ViewConfiguration.getScaledTouchSlop`, which is 8 dp on
+/// most devices. `None` without the Java side.
+pub fn touch_slop() -> Option<f32> {
+    with_java(|env, context| {
+        let class = services(env, context)?;
+        env.call_static_method(
+            &class,
+            jni_str!("touchSlop"),
+            jni_sig!("(Landroid/content/Context;)F"),
+            &[JValue::Object(context)],
+        )?
+        .f()
+    })
+    .inspect_err(|e| log::warn!("the touch slop is not known: {e}"))
+    .ok()
 }
 
 #[cfg(test)]

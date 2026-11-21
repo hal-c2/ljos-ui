@@ -26,7 +26,6 @@ use ljos_engine::{Engine, LogLevel, ObjectId, Timer, Value};
 use ljos_render::kurbo;
 
 use super::{TableState, TableView, index_of_cell, layout, nav, selection_behavior, state_of};
-use crate::DRAG_THRESHOLD;
 use crate::flickable::{Flickable, keep_pointer_grab};
 use crate::item::Item;
 
@@ -256,7 +255,7 @@ pub(crate) fn moved(e: &Engine, view: ObjectId, st: &TableState, at: kurbo::Poin
     };
     match grab {
         Grab::Pressed { at: from, cell } => {
-            if (at - from).hypot() <= DRAG_THRESHOLD {
+            if (at - from).hypot() <= crate::system_prefs::start_drag_distance(e) {
                 return;
             }
             // A drag is no tap.
@@ -277,7 +276,7 @@ pub(crate) fn moved(e: &Engine, view: ObjectId, st: &TableState, at: kurbo::Poin
         }
         Grab::Dragging { anchor, handle } => drag_to(e, view, st, anchor, handle, at),
         Grab::Holding { at: from, .. } => {
-            if (at - from).hypot() > DRAG_THRESHOLD {
+            if (at - from).hypot() > crate::system_prefs::start_drag_distance(e) {
                 st.select.grab.set(None);
                 stop(e, st);
             }
