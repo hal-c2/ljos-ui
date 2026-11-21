@@ -281,6 +281,224 @@ fn out_of_memory_is_reported_and_context_survives() {
     assert!(host.memory_stats().unwrap().malloc_size < 4 * 1024 * 1024);
 }
 
+/// A dispatch that keeps all it allocates is stopped once it took its
+/// share of the room under the limit, and told as the heap running out:
+/// the rest of the application keeps the room left, instead of every
+/// script after it running out too.
+#[test]
+fn a_dispatch_that_keeps_allocating_leaves_room_for_the_rest() {
+    let limit = 16 * 1024 * 1024;
+    let host = JsHost::new(JsConfig {
+        memory_limit: Some(limit),
+        ..JsConfig::default()
+    })
+    .unwrap();
+    let slice = Slice {
+        soft: Duration::from_secs(5),
+        hard: Duration::from_secs(10),
+    };
+    let err = host
+        .enter("hog", slice, |s| {
+            s.eval::<(), _>("globalThis.hog = []; for (;;) hog.push(new Array(100).fill(1))")
+        })
+        .unwrap_err();
+    assert!(matches!(err, JsFault::JsOutOfMemory { .. }), "{err:?}");
+    // What it kept stays, but a quarter of the room is someone else's.
+    let held = host.heap_bytes();
+    assert!(held < limit / 8 * 7, "the hog holds {held} of {limit}");
+    let other = host.enter("other", slice, |s| {
+        s.eval::<f64, _>("'x'.repeat(2 * 1024 * 1024).length")
+    });
+    assert_eq!(other.unwrap(), (2 * 1024 * 1024) as f64);
+}
+
+#[test]
+fn a_promise_job_that_keeps_allocating_leaves_room_for_the_rest() {
+    let limit = 16 * 1024 * 1024;
+    let host = JsHost::new(JsConfig {
+        memory_limit: Some(limit),
+        ..JsConfig::default()
+    })
+    .unwrap();
+    let slice = Slice {
+        soft: Duration::from_secs(5),
+        hard: Duration::from_secs(10),
+    };
+    host.enter("queue", slice, |s| {
+        s.eval::<(), _>(
+            "globalThis.hog = []; globalThis.why = undefined; \
+             Promise.resolve() \
+                 .then(() => { for (;;) hog.push(new Array(100).fill(1)) }) \
+                 .catch(e => { why = String(e) })",
+        )
+    })
+    .unwrap();
+    let pumped = host.pump_jobs(Instant::now() + Duration::from_secs(5));
+    assert!(pumped.faults.is_empty(), "{:?}", pumped.faults);
+    // A callback that throws rejects its promise rather than failing the
+    // job, so the refusal reaches the script, not the pump.
+    let why = host
+        .enter("why", slice, |s| s.eval::<String, _>("String(why)"))
+        .unwrap();
+    assert!(why.contains("out of memory") || why == "null", "{why}");
+    let held = host.heap_bytes();
+    assert!(held < limit / 8 * 7, "the job holds {held} of {limit}");
+    let other = host.enter("other", slice, |s| {
+        s.eval::<f64, _>("'x'.repeat(2 * 1024 * 1024).length")
+    });
+    assert_eq!(other.unwrap(), (2 * 1024 * 1024) as f64);
+}
+
+/// A dispatch's share is of the room under the limit the heap has now,
+/// not the one it started with.
+#[test]
+fn a_dispatch_shares_the_room_under_a_limit_set_later() {
+    let host = JsHost::new(JsConfig {
+        memory_limit: Some(16 * 1024 * 1024),
+        ..JsConfig::default()
+    })
+    .unwrap();
+    assert!(host.set_memory_limit(Some(64 * 1024 * 1024)));
+    let slice = Slice {
+        soft: Duration::from_secs(5),
+        hard: Duration::from_secs(10),
+    };
+    let big = host.enter("big", slice, |s| {
+        s.eval::<f64, _>("globalThis.big = 'x'.repeat(20 * 1024 * 1024); big.length")
+    });
+    assert_eq!(big.unwrap(), (20 * 1024 * 1024) as f64);
+}
+
+#[test]
+fn an_error_thrown_after_a_caught_refusal_is_the_scripts_own() {
+    let host = JsHost::new(JsConfig {
+        memory_limit: Some(16 * 1024 * 1024),
+        ..JsConfig::default()
+    })
+    .unwrap();
+    let slice = Slice {
+        soft: Duration::from_secs(5),
+        hard: Duration::from_secs(10),
+    };
+    let err = host
+        .enter("caught", slice, |s| {
+            s.eval::<(), _>(
+                "let hog = []; \
+                 try { for (;;) hog.push(new Array(100).fill(1)) } catch (e) {} \
+                 hog = null; \
+                 throw new TypeError('load failed')",
+            )
+        })
+        .unwrap_err();
+    match err {
+        JsFault::JsException { message, .. } => {
+            assert!(message.contains("load failed"), "{message}")
+        }
+        other => panic!("told as {other:?}"),
+    }
+}
+
+/// A script's error that says what QuickJS's does, under another name, is
+/// still the script's own.
+#[test]
+fn a_script_error_saying_out_of_memory_after_a_caught_refusal_is_the_scripts_own() {
+    let host = JsHost::new(JsConfig {
+        memory_limit: Some(16 * 1024 * 1024),
+        ..JsConfig::default()
+    })
+    .unwrap();
+    let slice = Slice {
+        soft: Duration::from_secs(5),
+        hard: Duration::from_secs(10),
+    };
+    let err = host
+        .enter("caught", slice, |s| {
+            s.eval::<(), _>(
+                "let hog = []; \
+                 try { for (;;) hog.push(new Array(100).fill(1)) } catch (e) {} \
+                 hog = null; \
+                 throw new TypeError('out of memory')",
+            )
+        })
+        .unwrap_err();
+    match err {
+        JsFault::JsException { message, .. } => {
+            assert!(message.contains("TypeError"), "{message}")
+        }
+        other => panic!("told as {other:?}"),
+    }
+}
+
+/// A script's exception left pending behind an unknown error, after the
+/// run caught a refusal, is the script's, as it is on a heap with room.
+#[test]
+fn an_exception_pending_behind_an_unknown_error_after_a_caught_refusal_is_the_scripts_own() {
+    let host = JsHost::new(JsConfig {
+        memory_limit: Some(16 * 1024 * 1024),
+        ..JsConfig::default()
+    })
+    .unwrap();
+    let slice = Slice {
+        soft: Duration::from_secs(5),
+        hard: Duration::from_secs(10),
+    };
+    let err = host
+        .enter("caught", slice, |s| {
+            let v = s.eval::<ljos_js::rquickjs::Value, _>(
+                "let hog = []; \
+                 try { for (;;) hog.push(new Array(100).fill(1)) } catch (e) {} \
+                 hog = null; \
+                 new TypeError('mine')",
+            )?;
+            let _ = s.ctx().throw(v);
+            Err::<(), _>(ljos_js::rquickjs::Error::Unknown)
+        })
+        .unwrap_err();
+    match err {
+        JsFault::JsException {
+            message, thrown, ..
+        } => {
+            assert!(message.contains("mine"), "{message}");
+            assert!(thrown.is_some(), "the value thrown is kept");
+        }
+        other => panic!("told as {other:?}"),
+    }
+}
+
+/// A run nested in a dispatch that fails for its own reason does not make
+/// the dispatch forget it was refused room: rethrowing what the refusal
+/// threw is still the heap running out.
+#[test]
+fn a_refusal_rethrown_after_a_nested_run_failed_is_running_out_of_memory() {
+    let host = JsHost::new(JsConfig {
+        memory_limit: Some(16 * 1024 * 1024),
+        ..JsConfig::default()
+    })
+    .unwrap();
+    let slice = Slice {
+        soft: Duration::from_secs(5),
+        hard: Duration::from_secs(10),
+    };
+    let err = host
+        .enter("outer", slice, |s| {
+            s.eval::<(), _>(
+                "let hog = []; \
+                 try { for (;;) hog.push(new Array(100).fill(1)) } catch (e) { globalThis.saved = e } \
+                 hog = null",
+            )?;
+            let inner = host.enter("inner", slice, |s| {
+                s.eval::<(), _>("throw new TypeError('its own')")
+            });
+            assert!(
+                matches!(inner, Err(JsFault::JsException { .. })),
+                "{inner:?}"
+            );
+            s.eval::<(), _>("throw saved")
+        })
+        .unwrap_err();
+    assert!(matches!(err, JsFault::JsOutOfMemory { .. }), "{err:?}");
+}
+
 /// A script that calls itself `n` deep: `n`, or -1 once a RangeError
 /// says the stack ran out.
 fn recurse(n: u32) -> String {
@@ -1500,4 +1718,168 @@ fn an_unknown_error_with_nothing_pending_after_the_heap_came_near_its_limit_is_r
         .unwrap_err();
     assert!(matches!(err, JsFault::Internal(_)), "{err:?}");
     assert_eq!(eval_num(&host, "40 + 2").unwrap(), 42.0);
+}
+
+/// What a value reaches is counted for the first group that holds it, a
+/// getter is not run to find it, and the walk stops at its budget.
+#[test]
+fn what_each_group_holds_is_counted_once_without_running_getters() {
+    let host = plain();
+    let (big, small) = host
+        .enter("make", host.config().slice, |s| {
+            let big = s.eval::<rquickjs::Value, _>(
+                "globalThis.shared = []; \
+                 for (let i = 0; i < 10000; i++) shared.push({ i, s: 'row ' + i }); \
+                 ({ rows: shared })",
+            )?;
+            let small = s.eval::<rquickjs::Value, _>(
+                "globalThis.ran = false; \
+                 ({ rows: shared, get spy() { globalThis.ran = true; return [] } })",
+            )?;
+            Ok((s.keep(big), s.keep(small)))
+        })
+        .unwrap();
+
+    let held = host
+        .enter("walk", host.config().slice, |s| {
+            Ok(s.held_by([vec![&big], vec![&small]], usize::MAX))
+        })
+        .unwrap();
+    assert!(!held.truncated);
+    assert!(held.values > 20_000, "{held:?}");
+    assert!(held.bytes[0] > 10_000 * 64, "{held:?}");
+    assert!(
+        held.bytes[1] < 1024,
+        "the rows were the first group's: {held:?}"
+    );
+    assert_eq!(
+        eval_num(&host, "ran ? 1 : 0").unwrap(),
+        0.0,
+        "no getter ran"
+    );
+
+    let cut = host
+        .enter("walk", host.config().slice, |s| {
+            Ok(s.held_by([vec![&big]], 100))
+        })
+        .unwrap();
+    assert!(cut.truncated);
+    assert!(cut.values <= 100, "{cut:?}");
+}
+
+#[test]
+fn reading_numbers_counts_against_the_walk_budget() {
+    let host = plain();
+    let nums = host
+        .enter("make", host.config().slice, |s| {
+            let v = s.eval::<rquickjs::Value, _>("Array.from({ length: 1000 }, (_, i) => i)")?;
+            Ok(s.keep(v))
+        })
+        .unwrap();
+    let held = host
+        .enter("walk", host.config().slice, |s| {
+            Ok(s.held_by([vec![&nums]], 2))
+        })
+        .unwrap();
+    assert!(held.truncated, "{held:?}");
+}
+
+/// The budget is the walk's, not each object's: many arrays, each within
+/// it, are cut when together they are past it.
+#[test]
+fn reads_across_many_objects_count_against_one_budget() {
+    let host = plain();
+    let rows = host
+        .enter("make", host.config().slice, |s| {
+            let v = s.eval::<rquickjs::Value, _>(
+                "Array.from({ length: 50 }, () => Array.from({ length: 100 }, (_, i) => i))",
+            )?;
+            Ok(s.keep(v))
+        })
+        .unwrap();
+    let whole = host
+        .enter("walk", host.config().slice, |s| {
+            Ok(s.held_by([vec![&rows]], usize::MAX))
+        })
+        .unwrap();
+    assert!(!whole.truncated, "{whole:?}");
+    let cut = host
+        .enter("walk", host.config().slice, |s| {
+            Ok(s.held_by([vec![&rows]], 1000))
+        })
+        .unwrap();
+    assert!(
+        cut.truncated,
+        "5,050 reads under a budget of 1,000: {cut:?}"
+    );
+}
+
+/// A string doubled by concatenation is a chain of halves sharing one
+/// leaf: what it holds is the leaf and the chain, not its length.
+#[test]
+fn a_rope_is_counted_by_what_it_holds_not_its_length() {
+    let host = plain();
+    let rope = host
+        .enter("make", host.config().slice, |s| {
+            let v = s.eval::<rquickjs::Value, _>(
+                "(() => { let t = 'x'.repeat(8192); \
+                 for (let i = 0; i < 12; i++) t = t + t; return t })()",
+            )?;
+            Ok(s.keep(v))
+        })
+        .unwrap();
+    let held = host
+        .enter("walk", host.config().slice, |s| {
+            Ok(s.held_by([vec![&rope]], usize::MAX))
+        })
+        .unwrap();
+    assert!(!held.truncated, "{held:?}");
+    assert!(held.bytes[0] >= 8192, "the leaf is counted: {held:?}");
+    assert!(
+        held.bytes[0] < 64 * 1024,
+        "32 MiB long, about 8 KiB held: {held:?}"
+    );
+}
+
+/// QuickJS makes a built-in's methods when they are first read; a walk
+/// that only measures must not make them, nor grow the heap it measures.
+#[test]
+fn a_walk_does_not_make_what_quickjs_makes_on_first_read() {
+    let host = plain();
+    let math = host
+        .enter("make", host.config().slice, |s| {
+            let v = s.eval::<rquickjs::Value, _>("Math")?;
+            Ok(s.keep(v))
+        })
+        .unwrap();
+    let (before, after, held) = host
+        .enter("walk", host.config().slice, |s| {
+            let before = host.heap_bytes();
+            let held = s.held_by([vec![&math]], usize::MAX);
+            Ok((before, host.heap_bytes(), held))
+        })
+        .unwrap();
+    assert!(!held.truncated, "{held:?}");
+    assert!(
+        after <= before,
+        "the walk grew the heap from {before} to {after} bytes"
+    );
+}
+
+#[test]
+fn an_array_no_script_has_read_is_not_made_to_be_measured() {
+    let host = plain();
+    eval_num(
+        &host,
+        "globalThis.made = 0; globalThis.__ljos_arrayMade = () => { made++ }; 0",
+    )
+    .unwrap();
+    let pending = ljos_js::JsRef::array_of_kind(vec![JsValue::Number(1.0)], "rows");
+    let held = host
+        .enter("walk", host.config().slice, |s| {
+            Ok(s.held_by([vec![&pending]], usize::MAX))
+        })
+        .unwrap();
+    assert_eq!(held.bytes, [0], "{held:?}");
+    assert_eq!(eval_num(&host, "made").unwrap(), 0.0, "nothing was made");
 }

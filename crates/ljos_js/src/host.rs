@@ -1557,10 +1557,10 @@ impl<'js> Scope<'js> {
 const COPY_DEPTH: u32 = 32;
 
 /// The own keys `JS_GetOwnPropertyNames` gave, freed with it.
-struct OwnNames {
-    ctx: *mut rquickjs::qjs::JSContext,
-    tab: *mut rquickjs::qjs::JSPropertyEnum,
-    len: u32,
+pub(crate) struct OwnNames {
+    pub(crate) ctx: *mut rquickjs::qjs::JSContext,
+    pub(crate) tab: *mut rquickjs::qjs::JSPropertyEnum,
+    pub(crate) len: u32,
 }
 
 impl Drop for OwnNames {
@@ -1574,10 +1574,10 @@ impl Drop for OwnNames {
 
 /// QuickJS's class of an ordinary object (`JS_CLASS_OBJECT`, which its
 /// header keeps first).
-const JS_CLASS_OBJECT: rquickjs::qjs::JSClassID = 1;
+pub(crate) const JS_CLASS_OBJECT: rquickjs::qjs::JSClassID = 1;
 
 /// QuickJS's class of an array, next after [`JS_CLASS_OBJECT`].
-const JS_CLASS_ARRAY: rquickjs::qjs::JSClassID = 2;
+pub(crate) const JS_CLASS_ARRAY: rquickjs::qjs::JSClassID = 2;
 
 /// The array behind `v`, an array's reference, and its length. A proxy
 /// standing for one (a host's kind of array: see [`JsRef::array_of_kind`])
@@ -1665,7 +1665,8 @@ pub struct JsHost {
     interrupt: Rc<InterruptState>,
     cfg: JsConfig,
     /// The heap's limit now: the config's, until
-    /// [`JsHost::set_memory_limit`] puts another.
+    /// [`JsHost::set_memory_limit`] puts another, which a dispatch's
+    /// share is then taken from.
     memory_limit: Cell<Option<usize>>,
     last_collect: Cell<usize>,
     /// Full collections run, by [`JsHost::collect_now`] and
@@ -1903,6 +1904,8 @@ impl JsHost {
         self.state.drain_handles();
         self.peak.mark();
         self.interrupt.fired.set(false);
+        self.heap.clear_over_share();
+        self.heap.set_cap(self.heap_cap());
         self.interrupt.stopped_in.take();
         self.state.stopped.set(false);
         let start = self.interrupt.now(Timing::Enter);
@@ -1931,6 +1934,8 @@ impl JsHost {
         let elapsed = self.interrupt.now(Timing::Leave) - start;
         let native = self.interrupt.native.get();
         self.interrupt.arm(start, None);
+        self.heap.set_cap(None);
+        self.heap.clear_over_share();
         self.state.stopped.set(false);
         drop(guard);
 
@@ -2026,12 +2031,17 @@ impl JsHost {
         // outer one may have filled the heap long before and been
         // collected since.
         let outer_peak = self.peak.mark();
+        // And its own refusals: one the outer run met before says nothing
+        // of an error thrown in here.
+        let outer_refused = self.heap.over_share();
+        self.heap.clear_over_share();
         let r = f(&scope);
         let took = st.now(Timing::Leave) - start;
         st.deadline.set(st.outer.borrow_mut().pop());
         st.give_back(took, before, false);
         let fault = r.map_err(|e| self.classify(&scope, e, label, took));
         self.peak.resume(outer_peak);
+        self.heap.resume_over_share(outer_refused);
         let fault = match fault {
             Ok(v) => return Ok(v),
             Err(fault) => fault,
@@ -2058,6 +2068,11 @@ impl JsHost {
         label: &str,
         elapsed: Duration,
     ) -> JsFault {
+        if self.heap.over_share() && !self.interrupt.fired.get() && refused_room(&scope.ctx, &err) {
+            return JsFault::JsOutOfMemory {
+                label: label.to_owned(),
+            };
+        }
         let mapper = self.state.mapper.borrow().clone();
         let text = self.state.text.borrow().clone();
         classify_error(
@@ -2461,6 +2476,14 @@ impl JsHost {
             // Each job judges a thrown `null` by its own peak, as a nested
             // run does; the pump's is the most of them.
             most = most.max(self.peak.mark());
+            // Each job is a dispatch of its own, held to its share as
+            // `enter` holds one, so one job that keeps allocating is
+            // stopped there. A loop that awaits between allocations is a
+            // job per turn, each well under its share: a share does not
+            // stop it filling the heap over many, and `script_holders`
+            // is what says who holds it then.
+            self.heap.clear_over_share();
+            self.heap.set_cap(self.heap_cap());
             match self.rt.execute_pending_job() {
                 Ok(true) => pumped.ran += 1,
                 Ok(false) => break,
@@ -2473,7 +2496,16 @@ impl JsHost {
                     let after = self.interrupt.now(Timing::Leave) - now;
                     let mapper = self.state.mapper.borrow().clone();
                     let text = self.state.text.borrow().clone();
+                    let refused = self.heap.over_share();
                     let fault = e.0.with(|ctx| {
+                        if refused
+                            && !self.interrupt.fired.get()
+                            && refused_room(&ctx, &rquickjs::Error::Exception)
+                        {
+                            return JsFault::JsOutOfMemory {
+                                label: "promise job".to_owned(),
+                            };
+                        }
                         classify_error(
                             &ctx,
                             None,
@@ -2494,6 +2526,8 @@ impl JsHost {
         }
         self.peak.resume(most);
         self.interrupt.arm(now, None);
+        self.heap.set_cap(None);
+        self.heap.clear_over_share();
         self.state.stopped.set(false);
         drop(guard);
         if let Some(panic) = self.state.panicked.borrow_mut().take() {
@@ -2617,6 +2651,16 @@ impl JsHost {
         self.rt.set_memory_limit(limit.unwrap_or(0));
         self.memory_limit.set(limit);
         true
+    }
+
+    /// The most the heap may hold before the dispatch beginning now is
+    /// stopped: what it holds plus its share of the room left.
+    fn heap_cap(&self) -> Option<usize> {
+        let limit = self.memory_limit.get().filter(|l| *l > 0)?;
+        let share = self.cfg.dispatch_heap_share?.clamp(0.0, 1.0);
+        let held = self.heap_bytes();
+        let room = limit.saturating_sub(held);
+        Some(held + (room as f64 * f64::from(share)) as usize)
     }
 
     /// Unconditional collection (memory pressure). Not available inside a run.
@@ -3241,6 +3285,54 @@ pub(crate) struct Sources<'a> {
     pub(crate) text: Option<&'a SourceText>,
     /// The run's heap, for how full it was at its fullest.
     pub(crate) peak: Option<&'a MallocPeak>,
+}
+
+/// Whether `err`, from a run that was refused room past its share
+/// ([`HeapCount`]), is how QuickJS fails for want of room: a call that gave
+/// nothing back, its "out of memory" error, or the `null` it throws where
+/// even that error does not fit. Anything else is the script's own error,
+/// thrown after it caught the refusal, and is told as such. The pending
+/// exception is taken only when it is the heap's.
+///
+/// A script's own `throw null`, or an `InternalError` it makes saying
+/// "out of memory", in a dispatch that caught a refusal earlier is told
+/// as the heap running out too: QuickJS's `null` carries nothing to tell
+/// it from the script's, and the refusal is the likelier cause.
+fn refused_room(ctx: &Ctx<'_>, err: &rquickjs::Error) -> bool {
+    match err {
+        rquickjs::Error::Allocation => {
+            let _ = ctx.catch();
+            true
+        }
+        rquickjs::Error::Unknown if !ctx.has_exception() => true,
+        // An unknown error with an exception pending is that exception, as
+        // `classify_error` tells it: judged by what was thrown.
+        rquickjs::Error::Exception | rquickjs::Error::Unknown => {
+            let thrown = ctx.catch();
+            let ran_out = thrown.is_null() || is_quickjs_out_of_memory(&thrown);
+            if !ran_out {
+                // Left for `classify_error` to describe.
+                let _ = ctx.throw(thrown);
+            }
+            ran_out
+        }
+        _ => false,
+    }
+}
+
+/// QuickJS's own error for want of room (`JS_ThrowOutOfMemory`): an
+/// `InternalError` saying "out of memory". A `TypeError` saying the same
+/// is a script's.
+fn is_quickjs_out_of_memory(v: &rquickjs::Value<'_>) -> bool {
+    v.as_object().is_some_and(|o| {
+        let says = |key: &str, want: &str| {
+            o.get::<_, Option<String>>(key)
+                .ok()
+                .flatten()
+                .is_some_and(|s| s == want)
+        };
+        says("name", "InternalError") && says("message", "out of memory")
+    })
 }
 
 /// Turns an rquickjs error into a [`JsFault`], draining the pending exception.

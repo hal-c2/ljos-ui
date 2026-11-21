@@ -24,6 +24,20 @@ pub struct JsConfig {
     /// at least this much since the last collection, so an idle frame with
     /// nothing allocated costs nothing.
     pub idle_collect_min_growth: usize,
+    /// How much of the room left under the heap's limit
+    /// ([`JsConfig::memory_limit`], or the one
+    /// [`crate::JsHost::set_memory_limit`] put since) when a dispatch
+    /// begins it may take, between 0 and 1: past that the
+    /// dispatch is refused room, as at the limit, and told as the heap
+    /// running out ([`crate::JsFault::JsOutOfMemory`]); what is left stays for
+    /// the rest of the application. One script that keeps allocating then
+    /// fails alone instead of filling the heap for every other. Each
+    /// promise job [`crate::JsHost::pump_jobs`] runs is a dispatch of its
+    /// own, with its own share; a run nested in a dispatch shares its cap.
+    /// A loop that awaits between allocations is a job per turn, so a
+    /// share does not stop it growing the heap over many turns.
+    /// `None` lets a dispatch take all the room there is.
+    pub dispatch_heap_share: Option<f32>,
 }
 
 /// The stack JS may use where the thread's stack bounds are unknown and
@@ -42,6 +56,13 @@ impl Default for JsConfig {
                 hard: Duration::from_secs(2),
             },
             idle_collect_min_growth: 256 * 1024,
+            // A quarter of the room is left for the rest. QuickJS collects
+            // once the heap passes 1.5 times what survived its last
+            // collection, so where more than some 60 % of the limit
+            // survived, a dispatch that makes garbage in cycles may be
+            // refused room before a collection runs, and is told as out of
+            // memory as it would be at the limit itself.
+            dispatch_heap_share: Some(0.75),
         }
     }
 }
