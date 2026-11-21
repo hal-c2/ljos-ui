@@ -250,7 +250,7 @@ mod texts;
 pub mod types;
 
 #[cfg(not(target_arch = "wasm32"))]
-pub use app::{App, create_root};
+pub use app::{App, create_root, register_pack_files};
 
 #[cfg(not(target_arch = "wasm32"))]
 pub mod window;

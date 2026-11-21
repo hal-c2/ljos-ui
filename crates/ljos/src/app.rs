@@ -1092,6 +1092,10 @@ fn install(engine: &Engine, modules: Vec<Module>, source: Source) {
         module(engine);
     }
     #[cfg(feature = "dev-qml")]
+    if let Some(source) = &source.source {
+        register_pack_files(engine, source);
+    }
+    #[cfg(feature = "dev-qml")]
     match source {
         Source {
             source,
@@ -1105,7 +1109,32 @@ fn install(engine: &Engine, modules: Vec<Module>, source: Source) {
     }
     #[cfg(not(feature = "dev-qml"))]
     if let Some(source) = source {
+        register_pack_files(engine, &source);
         engine.set_component_source(source);
+    }
+}
+
+/// Makes the files `source` carries besides its QML (a pack's fonts and
+/// pictures, [`build::Options::with_files`](crate::build::Options::with_files))
+/// what their URLs load: beside the QML files that name them, and at
+/// each other address the pack gives one (a module's `qrc:` address).
+/// Their bytes stay where the pack has them. [`App::source`] and
+/// [`create_root`] call this; a setup that gives the Engine a pack
+/// itself calls it first.
+pub fn register_pack_files(engine: &Engine, source: &MapSource) {
+    let platform = ljos_platform::Platform::of(engine);
+    let images = ljos_quick::ImageStore::of(engine);
+    let register = |url: &str, bytes: &ljos_engine::ResourceBytes| {
+        platform.register_kept_resource(url, bytes.clone());
+        images.register_kept_resource(url, bytes.clone());
+    };
+    for (path, bytes) in source.resources() {
+        register(&source.resource_url(path), bytes);
+    }
+    for (address, path) in source.resource_addresses() {
+        if let Some(bytes) = source.resource(path) {
+            register(address, bytes);
+        }
     }
 }
 
@@ -1128,6 +1157,7 @@ pub fn create_root(
     source: MapSource,
     root: &str,
 ) -> Result<ObjectId, EngineError> {
+    register_pack_files(engine, &source);
     engine.set_component_source(source);
     engine.create_from_url(root, None, Vec::new())
 }
