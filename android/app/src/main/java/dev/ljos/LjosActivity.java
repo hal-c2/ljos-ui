@@ -144,15 +144,17 @@ public class LjosActivity extends GameActivity {
      */
     @Override
     public boolean dispatchKeyEvent(KeyEvent event) {
+        int code = event.getKeyCode();
+        // A key this typed has its release swallowed even when editing
+        // stopped while it was held: the release is the press's.
+        if (event.getAction() == KeyEvent.ACTION_UP && typed.get(code)) {
+            typed.delete(code);
+            return true;
+        }
         InputConnection editing = TextInputOf.connection(mSurfaceView);
         if (editing == null || !editing.getSoftKeyboardActive()) {
             accent = 0;
             return super.dispatchKeyEvent(event);
-        }
-        int code = event.getKeyCode();
-        if (event.getAction() == KeyEvent.ACTION_UP && typed.get(code)) {
-            typed.delete(code);
-            return true;
         }
         if (event.getAction() != KeyEvent.ACTION_DOWN) {
             return super.dispatchKeyEvent(event);

@@ -461,7 +461,12 @@ fn translate(
                 {
                     Some(KeyMapChar::Unicode(c)) => Typed::Char(c),
                     Some(KeyMapChar::CombiningAccent(a)) => Typed::Accent(a),
-                    _ => return InputStatus::Unhandled,
+                    _ => {
+                        if state == ButtonState::Pressed {
+                            dead_key.untyped(is_modifier(key.key_code()));
+                        }
+                        return InputStatus::Unhandled;
+                    }
                 };
                 // A dead key's accent goes onto the key after it, so what a
                 // press types is only known once that key is down; a
@@ -571,6 +576,25 @@ fn named_key(code: Keycode) -> Option<&'static str> {
         Keycode::PageDown => "PageDown",
         _ => return None,
     })
+}
+
+/// A key held for the one after it, which an accent waits through: the
+/// keys `KeyEvent.isModifierKey` names, as the activity's own check is.
+fn is_modifier(code: Keycode) -> bool {
+    matches!(
+        code,
+        Keycode::ShiftLeft
+            | Keycode::ShiftRight
+            | Keycode::AltLeft
+            | Keycode::AltRight
+            | Keycode::CtrlLeft
+            | Keycode::CtrlRight
+            | Keycode::MetaLeft
+            | Keycode::MetaRight
+            | Keycode::Function
+            | Keycode::Sym
+            | Keycode::Num
+    )
 }
 
 enum ActivityCall {

@@ -56,6 +56,15 @@ impl DeadKey {
     pub(crate) fn other(&mut self) {
         self.accent = None;
     }
+
+    /// A key the keyboard has no character for (F1, a media key) drops the
+    /// accent too, except a modifier: Shift is held for the letter the
+    /// accent goes on, so the accent then Shift+E is É.
+    pub(crate) fn untyped(&mut self, modifier: bool) {
+        if !modifier {
+            self.other();
+        }
+    }
 }
 
 #[cfg(test)]
@@ -92,6 +101,17 @@ mod tests {
             typing(&[Typed::Accent(ACUTE), Typed::Char('E'), Typed::Char('e')]),
             [None, Some("É".into()), Some("e".into())]
         );
+    }
+
+    #[test]
+    fn a_modifier_keeps_the_accent_and_a_key_without_a_character_drops_it() {
+        let mut dead = DeadKey::default();
+        assert_eq!(dead.press(Typed::Accent(ACUTE), compose), None);
+        dead.untyped(true);
+        assert_eq!(dead.press(Typed::Char('E'), compose), Some("É".into()));
+        assert_eq!(dead.press(Typed::Accent(ACUTE), compose), None);
+        dead.untyped(false);
+        assert_eq!(dead.press(Typed::Char('e'), compose), Some("e".into()));
     }
 
     #[test]
