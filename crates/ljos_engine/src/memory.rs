@@ -6,7 +6,7 @@
 //! is not followed. Nothing is kept up to date for this: it is one pass
 //! over the objects, made when asked.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::mem::size_of;
 use std::sync::Arc;
 
@@ -73,44 +73,100 @@ pub struct ScriptHolders {
     pub truncated: bool,
 }
 
-/// The script values `v` holds, gone through with a stack of its own, so a
-/// nesting deeper than the thread's stack is no danger, and at most `left`
-/// list and map entries in all; false when that ran out. A list or map
-/// shared at several places is gone through once (`seen`, by where it
-/// lives): a value that holds the same one twice at each level would
-/// otherwise be gone through exponentially often.
+/// Whether `v` holds a script value, pushing to `out` the ones it reaches
+/// through lists and maps no earlier call went through. Gone through with a
+/// stack of its own, so a nesting deeper than the thread's stack is no
+/// danger, and at most `left` list and map entries in all; `None` when
+/// that ran out. `seen` remembers, by where it lives, each list or map gone
+/// through and whether it holds a script value, across every call: a list
+/// many objects share is charged to `left` and copied out once, and each of
+/// them is still told it holds one. Its values are counted for the first
+/// object to reach it either way (`held_by` counts each once). A value
+/// that holds the same list twice at each level is gone through once too,
+/// not exponentially often.
 fn push_js<'v>(
     v: &'v Value,
-    seen: &mut HashSet<usize>,
+    seen: &mut HashMap<usize, bool>,
     left: &mut usize,
     out: &mut Vec<&'v ljos_js::JsRef>,
-) -> bool {
+) -> Option<bool> {
+    /// A list or map being gone through.
+    struct Open<'v> {
+        at: usize,
+        rest: Box<dyn Iterator<Item = &'v Value> + 'v>,
+        holds: bool,
+    }
     // Takes `n` entries from what is left, or nothing when they are more.
     let take = |left: &mut usize, n: usize| {
         let enough = n <= *left;
         *left = if enough { *left - n } else { 0 };
         enough
     };
-    let mut stack = vec![v];
-    while let Some(v) = stack.pop() {
-        match v {
-            Value::Js(h) => out.push(&h.0),
-            Value::List(items) if seen.insert(Arc::as_ptr(items) as usize) => {
-                if !take(left, items.len()) {
-                    return false;
+    let mut open: Vec<Open<'v>> = Vec::new();
+    let mut next = Some(v);
+    let mut holds = false;
+    loop {
+        if let Some(v) = next.take() {
+            let done = match v {
+                Value::Js(h) => {
+                    out.push(&h.0);
+                    Some(true)
                 }
-                stack.extend(items.iter());
-            }
-            Value::Map(fields) if seen.insert(Arc::as_ptr(fields) as usize) => {
-                if !take(left, fields.len()) {
-                    return false;
+                Value::List(items) => {
+                    let at = Arc::as_ptr(items) as usize;
+                    match seen.get(&at) {
+                        Some(&h) => Some(h),
+                        None if take(left, items.len()) => {
+                            open.push(Open {
+                                at,
+                                rest: Box::new(items.iter()),
+                                holds: false,
+                            });
+                            None
+                        }
+                        None => return None,
+                    }
                 }
-                stack.extend(fields.iter().map(|(_, v)| v));
+                Value::Map(fields) => {
+                    let at = Arc::as_ptr(fields) as usize;
+                    match seen.get(&at) {
+                        Some(&h) => Some(h),
+                        None if take(left, fields.len()) => {
+                            open.push(Open {
+                                at,
+                                rest: Box::new(fields.iter().map(|(_, v)| v)),
+                                holds: false,
+                            });
+                            None
+                        }
+                        None => return None,
+                    }
+                }
+                _ => Some(false),
+            };
+            if let Some(h) = done {
+                match open.last_mut() {
+                    Some(up) => up.holds |= h,
+                    None => holds = h,
+                }
             }
-            _ => {}
+        }
+        let Some(top) = open.last_mut() else {
+            return Some(holds);
+        };
+        if let Some(v) = top.rest.next() {
+            next = Some(v);
+            continue;
+        }
+        let Some(done) = open.pop() else {
+            return Some(holds);
+        };
+        seen.insert(done.at, done.holds);
+        match open.last_mut() {
+            Some(up) => up.holds |= done.holds,
+            None => holds = done.holds,
         }
     }
-    true
 }
 
 /// The objects of one type.
@@ -249,21 +305,24 @@ impl Engine {
             let store = self.inner.store.borrow();
             let mut at: HashMap<Atom, usize> = HashMap::new();
             let mut refs = Vec::new();
-            let mut seen = HashSet::new();
+            let mut seen = HashMap::new();
             let mut left = budget;
             for header in store.objects.values() {
                 refs.clear();
-                // Each object's own: a list two objects share makes both
-                // holders. What it reaches is counted once all the same,
-                // by `held_by`, and `left` bounds the work.
-                if !seen.is_empty() {
-                    seen.clear();
+                // A list two objects share makes both holders; what it
+                // reaches is gone through once, for the first (`seen`).
+                let mut holds = false;
+                let mut whole = true;
+                for v in header.dynamic.iter() {
+                    match push_js(v, &mut seen, &mut left, &mut refs) {
+                        Some(h) => holds |= h,
+                        None => {
+                            whole = false;
+                            break;
+                        }
+                    }
                 }
-                let whole = header
-                    .dynamic
-                    .iter()
-                    .all(|v| push_js(v, &mut seen, &mut left, &mut refs));
-                if !refs.is_empty() {
+                if holds || !refs.is_empty() {
                     let i = *at.entry(header.meta.name.clone()).or_insert_with(|| {
                         groups.push((header.meta.name.clone(), 0, Vec::new()));
                         groups.len() - 1
