@@ -3026,6 +3026,10 @@ ApplicationWindow {
                                     Text {
                                         width: 64
                                         anchors.verticalCenter: parent.verticalCenter
+                                        // A line of the log has no name of its own: each of its words
+                                        // is read out by itself, as it is shown.
+                                        Accessible.role: Accessible.StaticText
+                                        Accessible.name: text
                                         text: entry.level
                                         color: logs.tone(entry.level)
                                         font.bold: entry.level === "warning" || entry.level === "critical"
@@ -3034,6 +3038,8 @@ ApplicationWindow {
                                     Text {
                                         width: 110
                                         anchors.verticalCenter: parent.verticalCenter
+                                        Accessible.role: Accessible.StaticText
+                                        Accessible.name: text
                                         text: entry.category
                                         color: theme.subtle
                                         elide: Text.ElideRight
@@ -3042,6 +3048,8 @@ ApplicationWindow {
                                     Text {
                                         width: entry.width - 64 - 110 - 160 - 50
                                         anchors.verticalCenter: parent.verticalCenter
+                                        Accessible.role: Accessible.StaticText
+                                        Accessible.name: text
                                         text: entry.message
                                         color: theme.text
                                         elide: Text.ElideRight
@@ -3052,6 +3060,8 @@ ApplicationWindow {
                                         width: 160
                                         anchors.verticalCenter: parent.verticalCenter
                                         horizontalAlignment: Text.AlignRight
+                                        Accessible.role: Accessible.StaticText
+                                        Accessible.name: text
                                         text: entry.where
                                         color: theme.subtle
                                         elide: Text.ElideLeft
@@ -3352,6 +3362,10 @@ ApplicationWindow {
                                         width: 80
                                         anchors.verticalCenter: parent.verticalCenter
                                         horizontalAlignment: Text.AlignRight
+                                        // An event has no name of its own: each of its words is read
+                                        // out by itself, as it is shown.
+                                        Accessible.role: Accessible.StaticText
+                                        Accessible.name: text
                                         text: traceRow.at
                                         color: theme.subtle
                                         font.family: theme.mono
@@ -3360,6 +3374,8 @@ ApplicationWindow {
                                     Text {
                                         width: 180
                                         anchors.verticalCenter: parent.verticalCenter
+                                        Accessible.role: Accessible.StaticText
+                                        Accessible.name: text
                                         text: traceRow.object
                                         color: theme.text
                                         elide: Text.ElideRight
@@ -3368,6 +3384,8 @@ ApplicationWindow {
                                     Text {
                                         width: 70
                                         anchors.verticalCenter: parent.verticalCenter
+                                        Accessible.role: Accessible.StaticText
+                                        Accessible.name: text
                                         text: traceRow.kind
                                         color: trace.tone(traceRow.kind)
                                         font.pixelSize: 12
@@ -3375,6 +3393,8 @@ ApplicationWindow {
                                     Text {
                                         width: 150
                                         anchors.verticalCenter: parent.verticalCenter
+                                        Accessible.role: Accessible.StaticText
+                                        Accessible.name: text
                                         text: traceRow.name
                                         color: theme.text
                                         font.bold: true
@@ -3384,6 +3404,8 @@ ApplicationWindow {
                                     Text {
                                         width: traceRow.width - 80 - 180 - 70 - 150 - 50
                                         anchors.verticalCenter: parent.verticalCenter
+                                        Accessible.role: Accessible.StaticText
+                                        Accessible.name: text
                                         text: traceRow.what
                                         color: theme.text
                                         elide: Text.ElideRight
@@ -4708,9 +4730,10 @@ ApplicationWindow {
                                 required property string scene
                                 required property string render
                                 Layout.fillWidth: true
-                                Text { text: windowRow.name; color: theme.text; font.pixelSize: 12; font.bold: true }
-                                Text { text: "scene: " + windowRow.scene; color: theme.subtle; font.pixelSize: 12 }
-                                Text { text: "renderer: " + windowRow.render; color: theme.subtle; font.pixelSize: 12 }
+                                // Read out line by line, as each is shown.
+                                Text { Accessible.role: Accessible.StaticText; Accessible.name: text; text: windowRow.name; color: theme.text; font.pixelSize: 12; font.bold: true }
+                                Text { Accessible.role: Accessible.StaticText; Accessible.name: text; text: "scene: " + windowRow.scene; color: theme.subtle; font.pixelSize: 12 }
+                                Text { Accessible.role: Accessible.StaticText; Accessible.name: text; text: "renderer: " + windowRow.render; color: theme.subtle; font.pixelSize: 12 }
                             }
                         }
                     }
@@ -6014,6 +6037,10 @@ ApplicationWindow {
                                             width: 50
                                             anchors.verticalCenter: parent.verticalCenter
                                             horizontalAlignment: Text.AlignRight
+                                            // The row's name says what the counts are; these say where
+                                            // they are drawn, so that an agent finds them past an edge.
+                                            Accessible.role: Accessible.StaticText
+                                            Accessible.name: text + (compRow.modelData.instances === 1 ? " instance" : " instances")
                                             text: compRow.modelData.instances
                                             color: compRow.modelData.instances > 0 ? theme.text : theme.subtle
                                             font.family: theme.mono
@@ -6023,6 +6050,8 @@ ApplicationWindow {
                                             width: 80
                                             anchors.verticalCenter: parent.verticalCenter
                                             horizontalAlignment: Text.AlignRight
+                                            Accessible.role: Accessible.StaticText
+                                            Accessible.name: text
                                             text: window.bytes(compRow.modelData.bytes)
                                             color: theme.text
                                             font.family: theme.mono
