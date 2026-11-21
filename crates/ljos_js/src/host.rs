@@ -2199,6 +2199,7 @@ impl JsHost {
         if self.heap.over_share() && !self.interrupt.fired.get() && refused_room(&scope.ctx, &err) {
             return JsFault::JsOutOfMemory {
                 label: label.to_owned(),
+                what: String::new(),
             };
         }
         let mapper = self.state.mapper.borrow().clone();
@@ -2640,6 +2641,7 @@ impl JsHost {
                         {
                             return JsFault::JsOutOfMemory {
                                 label: "promise job".to_owned(),
+                                what: String::new(),
                             };
                         }
                         classify_error(
