@@ -950,11 +950,29 @@ mod tests {
     /// listed first.
     #[cfg(unix)]
     fn fake_adb(dir: &Path, token_file: &str, stale: Option<&str>) -> PathBuf {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::write(dir.join("token.json"), token_file).unwrap();
-        std::fs::write(dir.join("stale.json"), stale.unwrap_or("")).unwrap();
-        std::fs::write(dir.join("pidof"), "printf '4321\\r\\npidof-exit:0\\r\\n'\n").unwrap();
-        std::fs::write(dir.join("forwards"), "").unwrap();
+        fake_adb_writing(dir, token_file, stale).0
+    }
+
+    /// [`fake_adb`], and every file this process opened for writing on
+    /// the way: a test thread that forks meanwhile holds those open in
+    /// its child until the child's `exec`.
+    #[cfg(unix)]
+    fn fake_adb_writing(
+        dir: &Path,
+        token_file: &str,
+        stale: Option<&str>,
+    ) -> (PathBuf, Vec<PathBuf>) {
+        let mut written = Vec::new();
+        let mut write = |name: &str, text: &str| {
+            let path = dir.join(name);
+            std::fs::write(&path, text).unwrap();
+            written.push(path.clone());
+            path
+        };
+        write("token.json", token_file);
+        write("stale.json", stale.unwrap_or(""));
+        write("pidof", "printf '4321\\r\\npidof-exit:0\\r\\n'\n");
+        write("forwards", "");
         // The application names its files: one that is no inspector's
         // would run what it names in the device's shell.
         let listed = if stale.is_some() {
@@ -991,10 +1009,38 @@ esac
             forwards = dir.join("forwards").display(),
             taken = dir.join("taken").display(),
         );
+        // The script this process writes is only read. What runs is a copy
+        // a child process made and closed, a file no descriptor of this
+        // process ever pointed at, so no fork can keep it busy. Renaming
+        // would not do: the name changes, the open file is the same.
+        let source = write("adb.sh", &script);
         let adb = dir.join("adb");
-        std::fs::write(&adb, script).unwrap();
-        std::fs::set_permissions(&adb, std::fs::Permissions::from_mode(0o755)).unwrap();
-        adb
+        let installed = std::process::Command::new("install")
+            .args(["-m", "755"])
+            .arg(&source)
+            .arg(&adb)
+            .status()
+            .unwrap();
+        assert!(installed.success(), "install the fake adb: {installed}");
+        (adb, written)
+    }
+
+    /// The race behind #718, made certain: another test thread forked
+    /// while `fake_adb` wrote, and its child still holds what it wrote.
+    #[cfg(unix)]
+    #[test]
+    fn a_fake_adb_runs_while_a_forked_child_holds_what_was_written() {
+        let dir = tempfile::tempdir().unwrap();
+        let (program, written) = fake_adb_writing(dir.path(), "", None);
+        let _held: Vec<_> = written
+            .iter()
+            .map(|p| std::fs::OpenOptions::new().append(true).open(p).unwrap())
+            .collect();
+        let adb = Adb {
+            program,
+            device: Some("phone".into()),
+        };
+        assert_eq!(adb.output(&["forward", "--list"]).unwrap(), "");
     }
 
     fn on_phone(pid: u32, port: u16) -> TokenFileBody {
