@@ -3651,6 +3651,7 @@ fn describe_exception(
             {
                 return JsFault::JsOutOfMemory {
                     label: label.to_owned(),
+                    what: String::new(),
                 };
             }
             let message = match name {
