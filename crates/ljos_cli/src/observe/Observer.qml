@@ -411,8 +411,9 @@ ApplicationWindow {
     // `gap` to take so that the items after it end at the row's end. When
     // they do not fit one row, the gap takes a whole row, so that the items
     // after it start a row of their own together rather than one of them
-    // trailing the words. It reads the items' implicit widths, never their
-    // places, so it does not depend on itself.
+    // trailing the words. It reads the widths the items take, an item that
+    // sets its own as much as one left at its implicit width, and never
+    // their places, so it does not depend on itself.
     function spare(flow, gap) {
         var used = 0
         var shown = 0
@@ -422,7 +423,7 @@ ApplicationWindow {
                 continue
             shown += 1
             if (item !== gap)
-                used += item.implicitWidth
+                used += item.width
         }
         used += flow.spacing * Math.max(0, shown - 1)
         // A pixel to spare, so that rounding never wraps the last item.
