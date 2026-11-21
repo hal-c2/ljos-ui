@@ -70,6 +70,50 @@ fn widths(e: &Engine, repeater: ObjectId) -> Vec<f64> {
 }
 
 #[test]
+fn repeater_rows_tried_again_on_a_full_heap_collect_once_a_round() {
+    let (e, clock) = timed();
+    // Its script runs while it is made: the Repeater makes the row again
+    // in its own timer, which runs out again before the next row's timer.
+    let line = row().replace(
+        "    width: f0(1, 2).length; height: 10\n",
+        "    height: 10\n    Component.onCompleted: width = f0(1, 2).length\n",
+    );
+    compile(&e, &[("Main", REPEATER), ("Line", &line)]);
+    let root = e.create_from_url("Main", None, Vec::new()).unwrap();
+    let repeater = find(&e, root, "repeater");
+    fill(&e, root, 4 * 1024);
+    set(&e, root, "on", Value::Bool(true));
+    let mut s = scene(&e, root, 200.0, 200.0);
+    frame(&mut s, &e);
+    assert_eq!(widths(&e, repeater), [-1.0, -1.0, -1.0], "no row is made");
+    // Every row is tried again together, and each try runs out again:
+    // the first one's collection covers the rest, whose faults came
+    // before it, round after round.
+    for _ in 0..2 {
+        let collections = e.script_memory().unwrap().collections;
+        let due = e.next_timer_deadline().expect("the rows are tried again");
+        clock.set(due);
+        e.advance_timers(clock.now());
+        frame(&mut s, &e);
+        assert_eq!(widths(&e, repeater), [-1.0, -1.0, -1.0], "no row is made");
+        assert_eq!(
+            e.script_memory().unwrap().collections,
+            collections + 1,
+            "{:?}",
+            e.take_warnings()
+        );
+    }
+    // No retry went without the collection it needed: with room, they all
+    // come back on the next round.
+    assert!(e.set_script_heap_limit(None));
+    let due = e.next_timer_deadline().expect("the rows are tried again");
+    clock.set(due);
+    e.advance_timers(clock.now());
+    frame(&mut s, &e);
+    assert_eq!(widths(&e, repeater), [12.0, 12.0, 12.0]);
+}
+
+#[test]
 fn a_repeater_row_whose_script_ran_out_of_heap_comes_back_once_there_is_room() {
     let (e, clock) = timed();
     compile(&e, &[("Main", REPEATER), ("Line", &row())]);
