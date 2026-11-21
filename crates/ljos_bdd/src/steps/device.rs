@@ -204,3 +204,21 @@ fn back_taken(w: &mut LjosWorld, what: String) -> StepResult {
         }
     })
 }
+
+#[given(regex = r#"^the phone's Downloads hold the file "([^"]+)" with the text "([^"]*)"$"#)]
+fn download_put(w: &mut LjosWorld, path: String, text: String) -> StepResult {
+    w.each(|b| b.device()?.put_download(&path, &text))
+}
+
+#[then(regex = r#"^the phone's Downloads hold the file "([^"]+)"$"#)]
+fn download_held(w: &mut LjosWorld, path: String) -> StepResult {
+    w.each(|b| {
+        if b.device()?.download_exists(&path)? {
+            Ok(())
+        } else {
+            Err(BackendError::Failed(format!(
+                "the phone's Downloads hold no file {path:?}"
+            )))
+        }
+    })
+}

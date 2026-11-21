@@ -603,6 +603,24 @@ pub trait Device: Backend {
             "searching the application's files",
         ))
     }
+
+    /// The phone's Downloads hold the file `path` (a `/` in it is a folder)
+    /// with `text` in it, put there as the user would, before the
+    /// application looks.
+    fn put_download(&mut self, path: &str, text: &str) -> Result<()> {
+        let _ = (path, text);
+        Err(BackendError::NotImplemented(
+            "files in the phone's Downloads",
+        ))
+    }
+
+    /// Whether the phone's Downloads hold the file `path`.
+    fn download_exists(&mut self, path: &str) -> Result<bool> {
+        let _ = path;
+        Err(BackendError::NotImplemented(
+            "files in the phone's Downloads",
+        ))
+    }
 }
 
 /// Input besides a click by name, a key and the pointer's steps.
