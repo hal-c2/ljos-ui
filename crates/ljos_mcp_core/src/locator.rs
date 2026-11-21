@@ -4,7 +4,7 @@
 //! ```text
 //! role=button[name="Delete"]     #objectName        text=notes
 //! role=toolbar >> role=button    name~=^Row \d+$    ref=e9
-//! role=button[disabled] >> nth=0
+//! role=button[disabled] >> nth=0   role=listitem >> nth=-1
 //! at=40,40                       at=40,40 >> nth=1
 //! ```
 //!
@@ -123,8 +123,8 @@ impl StepFilter {
 pub enum Step {
     /// `ref=e9`: the node with that reference.
     Ref(String),
-    /// `nth=1`: the second of what was found so far.
-    Nth(usize),
+    /// `nth=1`: the second of what was found so far; `nth=-1` the last.
+    Nth(isize),
     /// Every node that meets all the conditions.
     Match(Vec<StepFilter>),
     /// `at=40,40`: the items drawn at that point of the window.
@@ -366,10 +366,10 @@ impl Parser<'_> {
             return self.point(point.trim()).map(Step::At);
         }
         if let Some(n) = text.strip_prefix("nth=") {
-            return match n.trim().parse::<usize>() {
+            return match n.trim().parse::<isize>() {
                 Ok(n) => Ok(Step::Nth(n)),
                 Err(_) => Err(self.err(format!(
-                    "`nth={}` needs a whole number counted from 0",
+                    "`nth={}` needs a whole number counted from 0, or from -1 for the last",
                     n.trim()
                 ))),
             };
@@ -476,6 +476,15 @@ impl Locator {
                          window, which no step before it can narrow",
                     ));
                 }
+                // The items at a point are counted from the topmost only: the
+                // stack under it runs down to the window, so its last is the
+                // window's background.
+                Step::Nth(n) if i == 1 && *n < 0 => {
+                    return Err(p.err(
+                        "after `at=` `nth=` counts from the topmost, from 0: `nth=-1` would be \
+                         the window itself",
+                    ));
+                }
                 Step::Nth(_) if i == 1 => {}
                 _ if starts_at => {
                     return Err(p.err(
@@ -519,7 +528,8 @@ impl Locator {
             }),
             [Step::At(point), Step::Nth(n)] => Some(At {
                 point: *point,
-                nth: Some(*n),
+                // Never below 0: `parse` refuses it after `at=`.
+                nth: usize::try_from(*n).ok(),
             }),
             _ => None,
         }
@@ -577,10 +587,19 @@ impl Locator {
                         Some(f) => below(tree, f).filter(|i| *i == index).collect(),
                     }
                 }
-                Step::Nth(n) => match &found {
-                    None => (*n < tree.len()).then_some(*n).into_iter().collect(),
-                    Some(f) => f.get(*n).copied().into_iter().collect(),
-                },
+                Step::Nth(n) => {
+                    let len = found.as_ref().map_or(tree.len(), Vec::len);
+                    let at = if *n < 0 {
+                        len.checked_sub(n.unsigned_abs())
+                    } else {
+                        Some(n.unsigned_abs()).filter(|i| *i < len)
+                    };
+                    match (&found, at) {
+                        (_, None) => Vec::new(),
+                        (None, Some(i)) => vec![i],
+                        (Some(f), Some(i)) => vec![f[i]],
+                    }
+                }
                 Step::At(_) => {
                     return Err(SurfaceError::invalid_argument(format!(
                         "`{}`: `at=` names what is drawn at a point, which the outline does \
@@ -692,6 +711,17 @@ mod tests {
         // Both the window and the toolbar hold the button: it is found once.
         assert_eq!(find("name~=^(Tools)?$ >> role=button[name=Delete]"), [2, 3]);
         assert_eq!(find("nth=1"), [1]);
+    }
+
+    #[test]
+    fn nth_below_zero_counts_from_the_last() {
+        assert_eq!(find("role=button[name=\"Delete\"] >> nth=-1"), [3]);
+        assert_eq!(find("role=button[name=\"Delete\"] >> nth=-2"), [2]);
+        assert_eq!(
+            find("role=button[name=\"Delete\"] >> nth=-3"),
+            Vec::<usize>::new()
+        );
+        assert_eq!(find("role=checkbox >> nth=-1"), Vec::<usize>::new());
     }
 
     #[test]
@@ -813,6 +843,7 @@ mod tests {
             ("at=1,1 >> at=2,2", "first step"),
             ("at=40,40 >> #chip", "only `nth=`"),
             ("at=40,40 >> nth=0 >> nth=0", "only `nth=`"),
+            ("at=40,40 >> nth=-1", "from the topmost"),
         ] {
             let e = Locator::parse(locator).expect_err(locator);
             assert!(e.reason.contains(part), "{locator}: {}", e.reason);
