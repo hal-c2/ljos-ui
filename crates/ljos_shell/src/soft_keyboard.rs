@@ -305,6 +305,44 @@ mod tests {
         assert_eq!(over.as_deref(), Some("abc"));
     }
 
+    /// What GameTextInput held, in order, while a Japanese input method
+    /// typed にほん, turned it into 日本, typed ご and chose 語, recorded on
+    /// an Android 16 emulator (API 36, x86_64) through a test input method
+    /// calling setComposingText and commitText.
+    #[test]
+    fn a_japanese_composition_recorded_on_android_ends_as_its_text() {
+        let (e, mut s, input) = editor("", &[]);
+        let mut keyboard = SoftKeyboard::default();
+        keyboard.sync(&s, &e);
+        let field = |name| e.read_by_name(input, name).to_js_string().to_string();
+        let recorded = [
+            (text("に", 1, Some(0..1)), "", "に"),
+            (text("にほ", 2, Some(0..2)), "", "にほ"),
+            (text("にほん", 3, Some(0..3)), "", "にほん"),
+            (text("日本", 2, Some(0..2)), "", "日本"),
+            (text("日本", 2, None), "日本", ""),
+            (text("日本ご", 3, Some(2..3)), "日本", "ご"),
+            (text("日本語", 3, None), "日本語", ""),
+        ];
+        for (held, typed, composing) in recorded {
+            let told = held.text.clone();
+            keyboard.held(&s, &e, held);
+            s.frame(&e, Time::ZERO);
+            assert_eq!(
+                (field("text"), field("preeditText")),
+                (typed.into(), composing.into()),
+                "{told}"
+            );
+            // The field took it as held: nothing is told back.
+            assert_eq!(
+                helds(&keyboard.sync(&s, &e)),
+                Vec::<String>::new(),
+                "{told}"
+            );
+        }
+        assert_eq!(field("cursorPosition"), "3");
+    }
+
     #[test]
     fn a_hidden_field_leaves_the_method_its_own_typing() {
         // `TextInput.Password`.
