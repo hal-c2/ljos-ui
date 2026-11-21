@@ -34,6 +34,11 @@ Feature: An input method that tells the whole of what it holds
           echoMode: TextInput.Password
           text: "12"
         }
+        TextInput {
+          objectName: "secret"; y: 100; width: 200
+          echoMode: TextInput.PasswordEchoOnEdit
+          text: "xy"
+        }
       }
       """
 
@@ -157,6 +162,15 @@ Feature: An input method that tells the whole of what it holds
       And the input method holds "abc" selecting from 1 to 3
       Then the property "selectionStart" of "pin" is 3
       And the property "selectionEnd" of "pin" is 5
+
+    Scenario: A field that clears on edit, focused again, holds none of what the input method typed before
+      When the property "focus" of "secret" is set to true
+      And the input method holds "abc" with the cursor at 3
+      And the property "focus" of "input" is set to true
+      And the property "focus" of "secret" is set to true
+      And the input method holds "abcd" with the cursor at 4
+      And the input method holds "abc" with the cursor at 3
+      Then the property "text" of "secret" is "abc"
 
     Scenario: An input method that typed nothing yet leaves the field's selection
       When the property "focus" of "pin" is set to true
