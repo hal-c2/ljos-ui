@@ -7,21 +7,29 @@
 //! save is applied while it runs, the typed text kept, and a file that
 //! does not compile leaves the application as it was and is printed here.
 //! `--second` opens a second window beside the first, which every save
-//! reaches too.
+//! reaches too. `--when-asked` keeps no watch: a save is applied when the
+//! Reload button asks for the files to be read again.
 
 use std::path::PathBuf;
 
 fn main() -> Result<(), ljos::ShellError> {
-    let (second, dirs): (Vec<_>, Vec<_>) =
-        std::env::args_os().skip(1).partition(|a| a == "--second");
+    let (flags, dirs): (Vec<_>, Vec<_>) = std::env::args_os()
+        .skip(1)
+        .partition(|a| a == "--second" || a == "--when-asked");
+    let second = flags.iter().any(|a| a == "--second");
+    let watch = !flags.iter().any(|a| a == "--when-asked");
     let dir = dirs
         .into_iter()
         .next()
         .map_or_else(|| PathBuf::from("user-shell"), PathBuf::from);
     let app = ljos::App::new("User shell")
         .source(ljos::include_qml!("qml.pack"))
-        .user_qml(ljos::UserQml::dir(dir).on_fault(|fault| eprintln!("user-shell: {fault}")));
-    if second.is_empty() {
+        .user_qml(
+            ljos::UserQml::dir(dir)
+                .watch(watch)
+                .on_fault(|fault| eprintln!("user-shell: {fault}")),
+        );
+    if !second {
         return app.root("Main").run();
     }
     app.run_with(|setup| {
