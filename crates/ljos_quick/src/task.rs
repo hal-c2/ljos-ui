@@ -180,7 +180,15 @@ fn args_changed(cx: &Cx<'_>, _: PropIndex) {
     let Ok(args) = e.get(me, Task::ARGS) else {
         return;
     };
-    let last = tasks.entries.borrow().get(&me).map(|t| t.args.clone());
+    // A start waiting to be tried again is the one to compare with: its
+    // args never reached the entry, and a change away from them drops it.
+    let waiting = tasks
+        .again
+        .borrow()
+        .get(&me)
+        .filter(|w| w.timer.is_some())
+        .map(|w| w.args.clone());
+    let last = waiting.or_else(|| tasks.entries.borrow().get(&me).map(|t| t.args.clone()));
     if let Some(last) = last
         && tasks.same(e, &last, &args)
     {
@@ -392,6 +400,8 @@ struct Tasks {
 struct Again {
     backoff: Backoff,
     timer: Option<TimerId>,
+    /// What the waiting start is to be called with.
+    args: Value,
 }
 
 #[derive(Default)]
@@ -479,6 +489,7 @@ impl Tasks {
         let mut again = self.again.borrow_mut();
         let waiting = again.entry(me).or_default();
         let wait = waiting.backoff.fault(now);
+        waiting.args = args.clone();
         if let Some(old) = waiting.timer.take() {
             e.cancel_call(old);
         }
@@ -568,18 +579,23 @@ const DRIVER: &str = r#"(function (helper) {
     // run that starts the Task again, or changes its args, as it starts
     // aborts this one rather than a run with nothing to abort it by. A
     // run aborted before its microtask (args changed twice in one turn,
-    // or its item gone) is never called.
+    // or its item gone) is never called, nor is one whose start failed
+    // after this was queued: that start is tried again on its own.
+    let started = false;
     Promise.resolve().then(() => {
+      if (!started) throw abortError();
       controller.signal.throwIfAborted();
       return run(...given, controller.signal);
     }).then(
       (value) => helper.settle(number, true, value),
       (error) => helper.settle(number, false, error),
     );
-    return {
+    const handle = {
       args: given,
       abort: () => { controller.abort(); return controller.signal.reason; },
     };
+    started = true;
+    return handle;
   };
   const same = (a, b) => {
     a = elements(a);
