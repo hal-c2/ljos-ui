@@ -27,14 +27,13 @@ Feature: Colour glyphs
       import QtQuick
       Rectangle {
         width: 200; height: 80; color: "black"
-        FontLoader { id: font; source: "LjosColorTest-Regular.ttf" }
-        component G: Text { text: ""; font.family: font.name; font.pixelSize: 20; color: "white" }
-        G { x: 10; y: 10 }
-        G { x: 50; y: 10; color: "transparent" }
-        G { x: 90; y: 10; color: "#8000ff00" }
-        G { x: 130; y: 10; font.pixelSize: 40 }
-        G { x: 10; y: 50; opacity: 0.5 }
-        G { x: 50; y: 50; style: Text.Raised; styleColor: "lime" }
+        FontLoader { id: emoji; source: "LjosColorTest-Regular.ttf" }
+        Text { x: 10; y: 10; text: ""; font.family: emoji.name; font.pixelSize: 20; color: "white" }
+        Text { x: 50; y: 10; text: ""; font.family: emoji.name; font.pixelSize: 20; color: "transparent" }
+        Text { x: 90; y: 10; text: ""; font.family: emoji.name; font.pixelSize: 20; color: "#8000ff00" }
+        Text { x: 130; y: 10; text: ""; font.family: emoji.name; font.pixelSize: 40; color: "white" }
+        Text { x: 10; y: 50; text: ""; font.family: emoji.name; font.pixelSize: 20; color: "white"; opacity: 0.5 }
+        Text { x: 50; y: 50; text: ""; font.family: emoji.name; font.pixelSize: 20; color: "white"; style: Text.Raised; styleColor: "lime" }
       }
       """
     When 100 milliseconds pass
