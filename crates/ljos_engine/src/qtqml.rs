@@ -653,10 +653,13 @@ pub(crate) struct TimerState {
     calls_due: Option<Time>,
     /// While the queue drains, when it began to.
     draining: Option<Time>,
-    /// The clock when the last [`Engine::advance_timers`] call ended. The
-    /// runs of a repeating timer due before then came while handlers ran,
-    /// so they are dropped rather than caught up on.
+    /// When the engine last stopped working: the end of the last turn, or
+    /// of an [`Engine::advance_timers`] call, that took time on the clock.
+    /// The runs of a repeating timer due before then came while the engine
+    /// was busy, so they are dropped rather than caught up on.
     busy_until: Time,
+    /// When the turn in progress began.
+    turn_from: Option<Time>,
     quit: bool,
     wake: Option<Rc<dyn Fn()>>,
     /// The pinned wall clock: a UNIX epoch in milliseconds and the value
@@ -679,6 +682,7 @@ impl Default for TimerState {
             calls_due: None,
             draining: None,
             busy_until: Time::ZERO,
+            turn_from: None,
             quit: false,
             wake: None,
             wall: None,
@@ -830,6 +834,7 @@ impl Engine {
         st.clock = clock;
         // A time on the old clock means nothing on the new one.
         st.busy_until = Time::ZERO;
+        st.turn_from = None;
     }
 
     pub fn now(&self) -> Time {
@@ -945,11 +950,12 @@ impl Engine {
 
     /// Fires every timer due at `now`, in deadline order, then runs the
     /// promise jobs and the `Qt.callLater` queue. A repeating timer whose
-    /// deadlines came while handlers ran, in this call or the last, fires
-    /// once and keeps its phase: those runs are dropped, as qml6 drops
-    /// them, so a handler that outlasts its interval does not make a turn
-    /// longer. Runs that came due while the host slept or a virtual clock
-    /// jumped are caught up on, as if the host had woken for each, up to
+    /// runs came due while the engine was busy (a turn, or a call of this,
+    /// that took time on the clock) fires once and keeps its phase: those
+    /// runs are dropped, as qml6 drops them, so a handler or a frame that
+    /// outlasts its interval does not make the next turn longer. Runs that
+    /// came due between turns, while the host waited or a virtual clock
+    /// jumped, are caught up on, as if the host had woken for each, up to
     /// a hundred runs.
     pub fn advance_timers(&self, now: Time) {
         self.advance_timers_with(now, None);
@@ -978,6 +984,7 @@ impl Engine {
     }
 
     fn advance_timers_with(&self, now: Time, made: Option<(Range<TimerId>, Time)>) {
+        let began = self.now();
         let mut fired: FxHashMap<ObjectId, u32> = FxHashMap::default();
         loop {
             let next = {
@@ -1017,7 +1024,7 @@ impl Engine {
                     // Until when the engine was busy: the timer's next run
                     // is after that. The clock moves on while handlers run
                     // here, so the deadlines a slow handler covered are
-                    // read at the next call, as `busy_until`.
+                    // read at the next call, from `busy_until`.
                     let n = fired.entry(o).or_default();
                     *n += 1;
                     let busy = self.inner.timers.borrow().busy_until;
@@ -1036,8 +1043,41 @@ impl Engine {
         }
         self.run_pending_calls();
         self.process_deferred_deletes();
-        let end = self.now();
-        self.inner.timers.borrow_mut().busy_until = end;
+        self.note_busy(began);
+    }
+
+    /// The engine worked from `from` until now: on a clock that moved
+    /// meanwhile, what came due in that time came while it was busy. A
+    /// virtual clock stands still while the engine works, so its jumps
+    /// stay time at rest.
+    fn note_busy(&self, from: Time) {
+        let Ok(mut st) = self.inner.timers.try_borrow_mut() else {
+            return;
+        };
+        let end = st.clock.now();
+        if end > from {
+            st.busy_until = st.busy_until.max(end);
+        }
+    }
+
+    /// An outermost turn begins ([`Engine::begin_turn`]).
+    pub(crate) fn timers_turn_began(&self) {
+        if let Ok(mut st) = self.inner.timers.try_borrow_mut() {
+            st.turn_from = Some(st.clock.now());
+        }
+    }
+
+    /// The outermost turn ends.
+    pub(crate) fn timers_turn_ended(&self) {
+        let from = self
+            .inner
+            .timers
+            .try_borrow_mut()
+            .ok()
+            .and_then(|mut st| st.turn_from.take());
+        if let Some(from) = from {
+            self.note_busy(from);
+        }
     }
 
     /// Runs the promise jobs that wait (a `then` callback, the rest of an

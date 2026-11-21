@@ -144,6 +144,32 @@ Item {
     assert_eq!(due(&h), Some(ljos_runtime::Time::from_millis(700)));
 }
 
+/// A slow turn between timers, such as an input handler or the rest of a
+/// frame, holds the timer up as a slow handler does: it fires once, late.
+#[test]
+fn a_repeating_timer_held_up_by_a_slow_turn_triggers_once_and_keeps_its_phase() {
+    let h = engine();
+    let root = h.load(
+        r#"import QtQuick
+Item {
+  property int ticks: 0
+  Timer { interval: 100; running: true; repeat: true; onTriggered: ticks++ }
+}
+"#,
+    );
+    h.pass_ms(100);
+    assert_eq!(h.num(root, "ticks"), 1.0);
+    h.engine
+        .turn(None, || {
+            h.clock.advance(std::time::Duration::from_millis(250))
+        })
+        .unwrap();
+    let late = h.clock.now();
+    h.engine.advance_timers(late);
+    assert_eq!(h.num(root, "ticks"), 2.0);
+    assert_eq!(due(&h), Some(ljos_runtime::Time::from_millis(400)));
+}
+
 /// Time that passed while the engine was idle, as a virtual clock that
 /// jumps several intervals in one frame, is caught up on: every run that
 /// came due fires.
