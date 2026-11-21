@@ -89,7 +89,9 @@ impl MallocPeak {
         // SAFETY: a live runtime (`of`).
         let peak = unsafe { JS_MarkMallocPeak(self.rt) };
         // SAFETY: as above.
-        let nulls_from = self.nulls_from.replace(unsafe { JS_NullErrorCount(self.rt) });
+        let nulls_from = self
+            .nulls_from
+            .replace(unsafe { JS_NullErrorCount(self.rt) });
         Mark { peak, nulls_from }
     }
 

@@ -149,7 +149,10 @@ fn a_null_a_script_throws_on_a_nearly_full_heap_is_its_own() {
         &format!("kept = null; let b = new ArrayBuffer({bytes}); b = null; throw null"),
     )
     .unwrap_err();
-    assert!(matches!(err, JsFault::JsException { .. }), "let go: {err:?}");
+    assert!(
+        matches!(err, JsFault::JsException { .. }),
+        "let go: {err:?}"
+    );
     assert_eq!(eval_num(&host, "40 + 2").unwrap(), 42.0);
 }
 
