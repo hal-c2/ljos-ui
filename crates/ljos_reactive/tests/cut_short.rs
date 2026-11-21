@@ -235,3 +235,73 @@ fn a_binding_cut_short_on_its_first_run_wakes_only_on_what_it_read() {
     g.set(a, 2);
     assert_eq!(g.get(v), 7, "a was");
 }
+
+#[test]
+fn a_read_without_a_node_by_a_run_that_panicked_between_cut_short_ones_wakes_it_once() {
+    // A panicked run never finishes, so its reads count for nothing on
+    // their own. Between cut-short runs, though, a reader counts by its
+    // stamp lying in the kept range, and a panicked run's stamp lies there
+    // too: what it read without a node wakes the binding once. That run is
+    // whole, so it runs on what holds now and drops the read it does not
+    // make; the cost is one run, never a wrong value.
+    let g = Graph::new();
+    let r = g.root();
+    let a = g.property(r, 1).unwrap();
+    let readers: Rc<RefCell<Vec<Reader>>> = Rc::default();
+    let mode = Rc::new(Cell::new(0));
+    let runs = Rc::new(Cell::new(0));
+    let (rs, m, n) = (readers.clone(), mode.clone(), runs.clone());
+    let v = g
+        .binding(r, 0, move |g| {
+            n.set(n.get() + 1);
+            let x = g.get(a);
+            match m.get() {
+                2 => g.cut_short(),
+                3 => {
+                    rs.borrow_mut().extend(g.reader());
+                    panic!("the binding failed");
+                }
+                _ => {}
+            }
+            x
+        })
+        .unwrap();
+    assert_eq!(g.get(v), 1);
+    mode.set(2);
+    g.set(a, 2);
+    assert_eq!(g.get(v), 2);
+    mode.set(3);
+    g.set(a, 3);
+    let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| g.get(v)));
+    assert!(res.is_err());
+    mode.set(2);
+    assert_eq!(g.get(v), 3, "retried, and cut short again");
+    g.check_invariants().unwrap();
+
+    let read: Vec<Reader> = readers.borrow().clone();
+    assert_eq!(read.len(), 1);
+    assert!(
+        read.iter().all(|k| g.is_current(*k)),
+        "the panicked run's stamp lies in the kept range: {read:?}"
+    );
+    mode.set(0);
+    let c = g.property(r, 0).unwrap();
+    g.adopt_readers(c, read.clone());
+    let before = runs.get();
+    g.set(c, 1);
+    assert_eq!(g.get(v), 3, "the extra run gives what holds now");
+    assert_eq!(runs.get(), before + 1, "it woke the binding once");
+
+    assert!(
+        read.iter().all(|k| !g.is_current(*k)),
+        "the whole run ended the kept range"
+    );
+    g.set(c, 2);
+    g.get(v);
+    assert_eq!(
+        runs.get(),
+        before + 1,
+        "and dropped the read it did not make"
+    );
+    g.check_invariants().unwrap();
+}

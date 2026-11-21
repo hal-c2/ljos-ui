@@ -1436,3 +1436,68 @@ fn an_exception_pending_behind_an_unknown_error_keeps_its_value() {
     assert!(message.contains("mine"), "{message}");
     assert!(thrown.is_some(), "the value thrown is kept");
 }
+
+/// rquickjs's unknown error with nothing pending is a call into QuickJS
+/// that gave nothing back. With no limit, or with room to spare, that is
+/// a bug in the engine, not the heap running out.
+#[test]
+fn an_unknown_error_with_nothing_pending_and_room_to_spare_is_internal() {
+    // The default limit (96 MiB), with room to spare, and no limit at all.
+    let unlimited = JsHost::new(JsConfig {
+        memory_limit: None,
+        ..JsConfig::default()
+    })
+    .unwrap();
+    for host in [plain(), unlimited] {
+        let err = host
+            .enter("unknown", host.config().slice, |s| {
+                assert!(!s.ctx().has_exception());
+                Err::<(), _>(ljos_js::rquickjs::Error::Unknown)
+            })
+            .unwrap_err();
+        assert!(
+            matches!(err, JsFault::Internal(_)),
+            "{:?}: {err:?}",
+            host.config().memory_limit
+        );
+    }
+}
+
+/// With nothing pending the heap is judged by the most the run held, as
+/// for a thrown `null`: the call that failed may have freed what it took.
+/// So a run that came near its limit and let go, then met an unknown
+/// error that has nothing to do with the heap, is told as running out.
+/// Kept on purpose: a Loader told of it collects and loads again a
+/// counted number of times (`Again::Counted`), where taking a full heap
+/// for a bug would leave it stopped for good.
+#[test]
+fn an_unknown_error_with_nothing_pending_after_the_heap_came_near_its_limit_is_running_out() {
+    let host = JsHost::new(JsConfig {
+        memory_limit: Some(16 * 1024 * 1024),
+        ..JsConfig::default()
+    })
+    .unwrap();
+    host.collect_now();
+    let held = host.memory_stats().unwrap().malloc_size;
+    assert!(host.set_memory_limit(Some(held + 4 * 1024 * 1024)));
+    let err = host
+        .enter("unknown", host.config().slice, |s| {
+            // A chain no cycle holds: freed as the catch leaves the block.
+            let filled = s.eval::<bool, _>(
+                "(() => { try { let h = null; for (;;) h = { n: h } } catch (e) { return true } })()",
+            )?;
+            assert!(filled);
+            assert!(!s.ctx().has_exception());
+            Err::<(), _>(ljos_js::rquickjs::Error::Unknown)
+        })
+        .unwrap_err();
+    assert!(matches!(err, JsFault::JsOutOfMemory { .. }), "{err:?}");
+    // The next run's peak is its own: with room, the same error is a bug.
+    let err = host
+        .enter("unknown", host.config().slice, |_| {
+            Err::<(), _>(ljos_js::rquickjs::Error::Unknown)
+        })
+        .unwrap_err();
+    assert!(matches!(err, JsFault::Internal(_)), "{err:?}");
+    assert_eq!(eval_num(&host, "40 + 2").unwrap(), 42.0);
+}
