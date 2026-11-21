@@ -4545,6 +4545,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "ljos_jni"
+version = "0.0.0"
+dependencies = [
+ "jni",
+ "log",
+ "ndk-context",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "ljos_js"
 version = "0.0.0"
 dependencies = [
@@ -4712,16 +4722,19 @@ version = "0.0.0"
 dependencies = [
  "arboard",
  "futures",
+ "jni",
  "ljos_a11y",
  "ljos_compiler",
  "ljos_controls",
  "ljos_engine",
  "ljos_ir",
+ "ljos_jni",
  "ljos_quick",
  "ljos_reactive",
  "ljos_render",
  "ljos_runtime",
  "ljos_test",
+ "log",
  "qml_front",
  "qt_types",
  "quick-xml 0.42.0",
@@ -4878,6 +4891,8 @@ name = "ljos_secrets"
 version = "0.0.0"
 dependencies = [
  "blocking",
+ "jni",
+ "ljos_jni",
  "objc2-core-foundation",
  "tempfile",
  "thiserror 2.0.21",

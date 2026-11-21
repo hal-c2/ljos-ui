@@ -32,7 +32,7 @@ const ABIS: [&str; 2] = ["arm64-v8a", "x86_64"];
 const ACTIVITY: &str = "dev.ljos.LjosActivity";
 
 /// The Gradle template, by the path it is written to in the project.
-const TEMPLATE: [(&str, &str); 8] = [
+const TEMPLATE: [(&str, &str); 9] = [
     (
         "settings.gradle.kts",
         include_str!("../../../android/settings.gradle.kts"),
@@ -62,6 +62,10 @@ const TEMPLATE: [(&str, &str); 8] = [
         include_str!(
             "../../../android/app/src/main/java/com/google/androidgamesdk/TextInputOf.java"
         ),
+    ),
+    (
+        "app/src/main/java/dev/ljos/LjosServices.java",
+        include_str!("../../../android/app/src/main/java/dev/ljos/LjosServices.java"),
     ),
     ("README.md", include_str!("../../../android/README.md")),
 ];
@@ -512,6 +516,32 @@ mod tests {
             java.iter()
                 .any(|(p, _)| p.ends_with("com/google/androidgamesdk/TextInputOf.java"))
         );
+    }
+
+    #[test]
+    fn the_services_are_what_the_native_side_calls() {
+        let java = TEMPLATE
+            .iter()
+            .find(|(p, _)| p.ends_with("LjosServices.java"))
+            .map(|(_, t)| *t)
+            .unwrap();
+        // ljos_jni::SERVICES, and the methods ljos_platform and
+        // ljos_secrets call by name and signature.
+        assert!(java.contains("package dev.ljos;"));
+        assert!(java.contains("public final class LjosServices"));
+        for method in [
+            "public static String clipboardText(Context context)",
+            "public static void setClipboardText(Context context, String text)",
+            "public static void clearClipboard(Context context)",
+            "public static boolean openUrl(Context context, String url)",
+            "public static String filesDir(Context context)",
+            "public static String cacheDir(Context context)",
+            "public static void secretWrite(Context context, String service, String key, byte[] secret)",
+            "public static byte[] secretRead(Context context, String service, String key)",
+            "public static boolean secretRemove(Context context, String service, String key)",
+        ] {
+            assert!(java.contains(method), "{method}");
+        }
     }
 
     #[test]

@@ -566,6 +566,11 @@ What the user and the system do to an application on a phone, which owns its scr
 | `Then the application is in front` / `Then the application is in the background` | which one the user sees |
 | `Then the application is no longer running` | its process has ended, so the next start is a new process with a new application |
 | `Then the system has not found the application unresponsive` | no "not responding" since the scenario started |
+| `When the system ends the application's process` | as a system short of memory ends a hidden application's process; `When the user opens the application again` then starts a new one |
+| `When the application keeps the secret "s" as "k" of "svc"` / `When the application removes the secret "k" of "svc"` | the application keeps a secret in the system's store of secrets (`ljos_secrets`), or removes it |
+| `Then the application reads the secret "s" as "k" of "svc"` / `Then the application reads no secret as "k" of "svc"` | what the application reads back from that store |
+| `Then the property "p" of "o" is a directory of the application's own` | the property is the path of a directory the system keeps for the application alone (on Android, below its data directory) |
+| `Then no file of the application holds "s"` | no file in the application's own directories holds the text as it is: a secret is kept encrypted |
 
 The system's Back, as the application's `Back` handlers get it. These are Ljós's own (no Qt
 type takes Back), so Ljós runs them anywhere; they take no phone.

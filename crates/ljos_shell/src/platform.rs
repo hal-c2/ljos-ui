@@ -1,5 +1,6 @@
-//! The desktop's platform services (ARCHITECTURE.md §15): the system
-//! clipboard and dialogs, the system's opener of URLs, an HTTPS fetcher,
+//! The desktop's platform services (ARCHITECTURE.md §15), and a phone's:
+//! the system clipboard and dialogs, the system's opener of URLs, the
+//! application's own directories on a phone, an HTTPS fetcher,
 //! the application's badge where the desktop has one (`badge.rs`), what the
 //! system prefers beyond the colour scheme (`settings.rs`), and the window
 //! system's name for `Qt.platform`. A run with no display (`headless`)
@@ -40,8 +41,19 @@ pub(crate) fn install(engine: &Engine, display: Display, wake: impl Fn() + Send 
 /// opener and badge are the user's own, which a run nobody sees must not
 /// take over.
 fn install_desktop(engine: &Engine, platform: &std::rc::Rc<Platform>) {
-    // A phone's clipboard, pickers and opener are the system's, reached
-    // through its Java side: Android keeps the in-process ones until then.
+    // A phone's clipboard and opener are the system's, reached through its
+    // Java side; its files are in the directories the system keeps for the
+    // application, and a picker is the system's (not yet given).
+    #[cfg(target_os = "android")]
+    let opener = {
+        use ljos_platform::android::{AndroidClipboard, AndroidOpener, app_directories};
+        platform.set_clipboard(std::rc::Rc::new(AndroidClipboard));
+        platform.set_open_url(std::rc::Rc::new(AndroidOpener));
+        if let Some((files, cache)) = app_directories() {
+            platform.set_env(ljos_platform::PathEnv::application(&files, &cache));
+        }
+        true
+    };
     #[cfg(not(target_os = "android"))]
     let opener = {
         if let Some(clipboard) = ljos_platform::native::SystemClipboard::connect() {
@@ -52,8 +64,6 @@ fn install_desktop(engine: &Engine, platform: &std::rc::Rc<Platform>) {
         ));
         ljos_platform::native::SystemOpener::AVAILABLE
     };
-    #[cfg(target_os = "android")]
-    let opener = false;
     if opener {
         #[cfg(not(target_os = "android"))]
         platform.set_open_url(std::rc::Rc::new(ljos_platform::native::SystemOpener));
