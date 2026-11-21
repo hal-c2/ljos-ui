@@ -280,6 +280,38 @@ fn a_run_out_after_a_run_that_only_dropped_cycles_collects_them() {
         .unwrap();
 }
 
+/// The same of a promise job: one that only drops the last reference to
+/// cycles frees nothing, but a run that then finds no room still leaves
+/// them collected.
+#[test]
+fn a_run_out_after_a_job_that_only_dropped_cycles_collects_them() {
+    let host = small(16);
+    keep(&host, 9);
+    host.enter("tie", host.config().slice, |s| {
+        s.eval::<(), _>("kept.self = kept; queueMicrotask(() => { globalThis.kept = null })")
+    })
+    .unwrap();
+    // The collection reviews what the run let go of: nothing is owed
+    // until the job runs.
+    assert!(host.collect_now());
+    assert!(!host.may_hold_garbage());
+    let held = host.heap_bytes();
+    let collections = host.collections();
+    let pumped = host.pump_jobs(Instant::now() + Duration::from_secs(5));
+    assert_eq!(pumped.ran, 1);
+    assert!(pumped.faults.is_empty(), "{:?}", pumped.faults);
+    assert!(host.may_hold_garbage(), "what the job let go of");
+    let fill = "globalThis.s = 'x'.repeat(8 * 1024 * 1024)";
+    let err = host
+        .enter("fill", host.config().slice, |s| s.eval::<(), _>(fill))
+        .unwrap_err();
+    assert!(matches!(err, JsFault::JsOutOfMemory { .. }), "{err:?}");
+    assert_eq!(host.collections(), collections + 1);
+    assert!(host.heap_bytes() < held / 2, "{}", host.heap_bytes());
+    host.enter("fill", host.config().slice, |s| s.eval::<(), _>(fill))
+        .unwrap();
+}
+
 /// A run can make a cycle unreachable and leave every object's count as
 /// it was, by rewiring references. The digest the host compares cannot
 /// tell, but the run ran out, so a collection is owed for it all the same:

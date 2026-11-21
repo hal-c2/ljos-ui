@@ -2645,6 +2645,11 @@ impl JsHost {
                 message: panic_message(panic.as_ref()),
             });
         }
+        // As after a run: jobs that ran with room may have dropped cycles,
+        // which free nothing a size or peak can see.
+        if pumped.ran > 0 && !ran_out {
+            self.state.let_go.set(true);
+        }
         self.flush_released();
         self.mind_heap(ran_out);
         self.tell_queued_jobs();
