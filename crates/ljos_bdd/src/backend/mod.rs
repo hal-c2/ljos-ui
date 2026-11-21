@@ -89,6 +89,8 @@ pub struct UserSeen {
     /// A compiler was made for QML a script holds as text, or for a file
     /// the application was not built with.
     pub texts: bool,
+    /// How often the application was woken while it was last left alone.
+    pub woken: u64,
 }
 
 /// Why a changed file was not applied.
@@ -1224,6 +1226,19 @@ pub trait Application: Backend {
     /// The user's directory is removed and made again at the same path,
     /// both before the application hears of either.
     fn user_qml_dir_made_again(&mut self) -> Result<()> {
+        Err(BackendError::NotImplemented("a user's directory"))
+    }
+
+    /// The user's directory is listed, as a file manager or a shell lists
+    /// it: nothing in it changes.
+    fn user_qml_dir_read(&mut self) -> Result<()> {
+        Err(BackendError::NotImplemented("a user's directory"))
+    }
+
+    /// For `wall` of real time nobody touches the application, which
+    /// answers every wake as a host does: it takes what the wake brought.
+    /// The wakes are counted, from the last step's on.
+    fn user_qml_left_alone(&mut self, _wall: std::time::Duration) -> Result<()> {
         Err(BackendError::NotImplemented("a user's directory"))
     }
 

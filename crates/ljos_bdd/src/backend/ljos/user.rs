@@ -42,6 +42,8 @@ pub(super) struct User {
     /// The directory the application loads its plugins from while it
     /// runs (`UserQml::loads_from`).
     plugins: tempfile::TempDir,
+    /// The wakes answered while the application was last left alone.
+    woken: u64,
 }
 
 impl User {
@@ -62,6 +64,7 @@ impl User {
             modules: None,
             own_theme: false,
             plugins,
+            woken: 0,
         })
     }
 }
@@ -337,6 +340,43 @@ impl Live {
         self.settle()
     }
 
+    /// Lists the user's directory, as a file manager or a shell does.
+    pub(super) fn user_qml_dir_read(&mut self) -> Result<()> {
+        let dir = self.user()?.dir.path().to_owned();
+        for entry in std::fs::read_dir(&dir).map_err(failed)? {
+            entry.map_err(failed)?;
+        }
+        Ok(())
+    }
+
+    /// Answers every wake for `wall` of real time, as a host that sleeps
+    /// until it is woken: each takes what the session was told. Wakes
+    /// left from earlier steps are counted too, as a host would answer
+    /// them now.
+    pub(super) fn user_qml_left_alone(&mut self, wall: Duration) -> Result<()> {
+        let until = std::time::Instant::now() + wall;
+        let mut woken = 0;
+        loop {
+            let left = until.saturating_duration_since(std::time::Instant::now());
+            if left.is_zero() {
+                break;
+            }
+            match self.user()?.woke.recv_timeout(left) {
+                Ok(()) => {
+                    woken += 1;
+                    self.pump_user()?;
+                    self.settle()?;
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => break,
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    return Err(failed("the application's wake is gone"));
+                }
+            }
+        }
+        self.user()?.woken = woken;
+        Ok(())
+    }
+
     fn take_user_save(&mut self, name: &str) -> Result<()> {
         loop {
             let user = self.user.as_ref().expect("written above");
@@ -386,6 +426,7 @@ impl Live {
                 .trim_end_matches('/')
                 .to_owned(),
             texts: session.compiles_texts(),
+            woken: user.woken,
         })
     }
 }
