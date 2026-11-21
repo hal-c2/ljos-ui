@@ -369,7 +369,8 @@ fn input_method_told_composing(w: &mut LjosWorld, step: &Step) -> StepResult {
             ));
         }
         for (i, (told, want)) in g.composing.iter().zip(&want).enumerate() {
-            same_rect(&format!("composed unit {i}"), *told, *want)?;
+            same_rect(&format!("composed unit {i}"), *told, *want)
+                .map_err(|e| format!("{e}; all it is told: {:?}", g.composing))?;
         }
         Ok(())
     })

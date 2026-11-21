@@ -418,7 +418,9 @@ mod tests {
         keyboard.held(&s, &e, text("abni", 3, Some(2..4)));
         s.frame(&e, Time::ZERO);
         let told = anchors(&keyboard.sync(&s, &e));
-        assert_eq!(told.last().map(|a| a.selection), Some([3, 3]));
+        let last = told.last().expect("the composition is told");
+        assert_eq!(last.selection, [3, 3]);
+        assert_eq!(last.composing.as_ref().map(|c| c.start), Some(2));
     }
 
     #[test]
@@ -427,6 +429,17 @@ mod tests {
         let mut keyboard = SoftKeyboard::default();
         keyboard.set_scale(1.0);
         assert_eq!(anchors(&keyboard.sync(&s, &e)).len(), 1);
+        // Another editor takes focus: the first is forgotten before the
+        // method is told where the new one is.
+        keyboard.enable(0);
+        let asked = keyboard.sync(&s, &e);
+        let cleared = asked
+            .iter()
+            .position(|r| matches!(r, Request::Anchor(None)));
+        let told = asked
+            .iter()
+            .position(|r| matches!(r, Request::Anchor(Some(_))));
+        assert!(cleared.is_some() && cleared < told, "{asked:?}");
         keyboard.disable();
         let asked = keyboard.sync(&s, &e);
         assert!(

@@ -32,6 +32,12 @@ Feature: An input method is told where the text is
             text: "ab"
           }
         }
+        TextEdit {
+          objectName: "edit"
+          x: 30; y: 100; width: 30
+          font.family: "Liberation Sans"; font.pixelSize: 14
+          wrapMode: TextEdit.Wrap
+        }
       }
       """
 
@@ -65,6 +71,10 @@ Feature: An input method is told where the text is
       Then the input method is told nothing is composed
       And the input method is told the cursor is at 56.453125, 40 sized 1 by 16
 
+    Scenario: The cursor inside a composition is where the method put it
+      When the input method holds "abni" composing 2 to 4 with the cursor at 3
+      Then the input method is told the cursor is at 53.34375, 40 sized 1 by 16
+
     Scenario: A character outside the Basic Multilingual Plane is two units in one box
       When the input method holds "ab𝄞n" composing 2 to 5 with the cursor at 5
       Then the input method is told of 3 composed units
@@ -90,8 +100,28 @@ Feature: An input method is told where the text is
       And the input method is told each composed unit has a width
       And the input method is told no two composed characters overlap
 
+    # The é is an e and U+0301 COMBINING ACUTE ACCENT, two characters:
+    # kept decomposed, never normalised to the one character U+00E9.
     Scenario: A mark composed onto its letter shares the letter's box
       When the input method holds "abé" composing 2 to 4 with the cursor at 4
       Then the input method is told of 2 composed units
       And the input method is told composed units 0 and 1 share a box
       And the input method is told each composed unit has a width
+
+  Rule: A composed character keeps its own box where the line changes
+
+    Scenario: Characters that read right to left each have their own box
+      When the input method holds "abאב" composing 2 to 4 with the cursor at 4
+      Then the input method is told the composed characters are at:
+        | x         | y  | width    | height |
+        | 53.921875 | 40 | 8.78125  | 16     |
+        | 45.5625   | 40 | 8.359375 | 16     |
+
+    Scenario: The characters on each side of a soft wrap keep their width
+      When the property "focus" of "edit" is set to true
+      And the input method holds "abc def" composing 2 to 5 with the cursor at 5
+      Then the input method is told the composed characters are at:
+        | x        | y   | width    | height |
+        | 45.5625  | 100 | 7        | 16     |
+        | 52.5625  | 100 | 3.875    | 16     |
+        | 30       | 116 | 7.78125  | 16     |

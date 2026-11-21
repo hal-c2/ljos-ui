@@ -2,6 +2,7 @@ package dev.ljos;
 
 import android.content.pm.ApplicationInfo;
 import android.graphics.Matrix;
+import android.graphics.Rect;
 import android.graphics.RectF;
 import android.os.Build;
 import android.os.Bundle;
@@ -100,6 +101,14 @@ public class LjosActivity extends GameActivity {
     /** An input method asked to be told at once, before anything was known. */
     private boolean immediate;
 
+    /**
+     * Where on screen the surface was, and what of it was seen, when the
+     * input method was last told: a window that moves, or bars that come
+     * and go over it, move the text without the application drawing.
+     */
+    private final int[] toldAt = new int[2];
+    private final Rect toldSeen = new Rect();
+
     /** Where the text is, in the surface's pixels. */
     private static final class Anchor {
         float[] editor;
@@ -156,6 +165,31 @@ public class LjosActivity extends GameActivity {
             }
         };
         getOnBackPressedDispatcher().addCallback(this, back);
+        // A window moved on screen (split screen, a freeform window) is
+        // laid out again; the application is told nothing, as its surface
+        // keeps its size, so the input method is told here.
+        mSurfaceView.getViewTreeObserver().addOnGlobalLayoutListener(this::surfaceLaidOut);
+    }
+
+    /**
+     * The window was laid out, on the UI thread: an input method watching
+     * the text is told again if the surface moved on screen or shows
+     * another part of itself.
+     */
+    private void surfaceLaidOut() {
+        View view = mSurfaceView;
+        if (!monitored || anchor == null || view == null) {
+            return;
+        }
+        int[] at = new int[2];
+        view.getLocationOnScreen(at);
+        Rect surface = new Rect();
+        if (!view.getLocalVisibleRect(surface)) {
+            surface.setEmpty();
+        }
+        if (at[0] != toldAt[0] || at[1] != toldAt[1] || !surface.equals(toldSeen)) {
+            tellAnchor(anchor);
+        }
     }
 
     /**
@@ -262,12 +296,20 @@ public class LjosActivity extends GameActivity {
         // The surface's pixels are the view's: it fills the window.
         int[] at = new int[2];
         view.getLocationOnScreen(at);
+        Rect surface = new Rect();
+        if (!view.getLocalVisibleRect(surface)) {
+            surface.setEmpty();
+        }
+        toldAt[0] = at[0];
+        toldAt[1] = at[1];
+        toldSeen.set(surface);
         Matrix toScreen = new Matrix();
         toScreen.setTranslate(at[0], at[1]);
         RectF editor = new RectF(a.editor[0], a.editor[1], a.editor[2], a.editor[3]);
-        // Seen only where the surface shows it as well.
+        // What of the editor is on screen: a window partly off it, or
+        // covered by the system's bars, shows only part of the surface.
         RectF seen = new RectF(editor);
-        if (!seen.intersect(0, 0, view.getWidth(), view.getHeight())) {
+        if (surface.isEmpty() || !seen.intersect(new RectF(surface))) {
             seen.setEmpty();
         }
         CursorAnchorInfo.Builder info = new CursorAnchorInfo.Builder()

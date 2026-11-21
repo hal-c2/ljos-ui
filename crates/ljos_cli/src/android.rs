@@ -845,6 +845,11 @@ mod tests {
         // `cursorAnchorCleared`, `()V`.
         assert!(activity.contains("publicvoidcursorAnchorCleared()"));
         assert!(activity.contains("TextInputOf.surface(this,"));
+        // A window moved on screen moves the text with nothing redrawn: the
+        // activity tells a watching input method again once laid out.
+        assert!(activity.contains("addOnGlobalLayoutListener(this::surfaceLaidOut)"));
+        // Only what of the surface is on screen is seen.
+        assert!(activity.contains("view.getLocalVisibleRect(surface)"));
         // GameTextInput's own connection refuses an input method that asks.
         assert!(java("TextInputOf.java").contains("public boolean requestCursorUpdates(int mode)"));
     }
