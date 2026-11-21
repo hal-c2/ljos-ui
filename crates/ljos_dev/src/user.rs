@@ -1536,7 +1536,13 @@ impl UserSession {
                 self.flushing = false;
                 if std::mem::take(&mut self.again) {
                     // Asked again after this flush was sent: the flush
-                    // that answers is the next one.
+                    // that answers is the next one. It reads every file as
+                    // it is now, so a file this one found failing is that
+                    // one's to tell; a change this one applied runs, and
+                    // stays in the answer.
+                    if self.reading == Some(Reread::Failed) {
+                        self.reading = Some(Reread::Unchanged);
+                    }
                     self.read_again(engine);
                     return;
                 }
