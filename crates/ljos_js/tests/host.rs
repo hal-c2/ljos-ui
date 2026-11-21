@@ -1209,6 +1209,51 @@ fn a_promise_job_that_keeps_allocating_leaves_room_for_the_rest() {
     assert_eq!(other.unwrap(), (2 * 1024 * 1024) as f64);
 }
 
+/// A refusal over the share, with the heap far under its limit, is the
+/// heap running out to main's pressure bookkeeping: the fault names what
+/// grew it, the run that ran out owes a collection and gets it at once
+/// (it grew the heap), so a boundary or Loader waiting on
+/// `collected_since_ran_out` retries, and the heap, about half full, is
+/// not warned of.
+#[test]
+fn a_refusal_over_the_share_is_running_out_to_the_heap_pressure() {
+    let limit = 32 * MIB;
+    let host = JsHost::new(JsConfig {
+        memory_limit: Some(limit),
+        dispatch_heap_share: Some(0.5),
+        ..JsConfig::default()
+    })
+    .unwrap();
+    assert!(!host.collected_since_ran_out());
+    let collections = host.collections();
+    let err = host
+        .enter("hog", host.config().slice, |s| {
+            s.eval::<(), _>("globalThis.hog = []; for (;;) hog.push(new Array(100).fill(1))")
+        })
+        .unwrap_err();
+    let JsFault::JsOutOfMemory { what, .. } = &err else {
+        panic!("{err:?}");
+    };
+    assert!(
+        what.contains("grew it most since it was last collected") && what.contains("hog"),
+        "{what}"
+    );
+    // Refused at about half, far under the limit.
+    let held = host.heap_bytes();
+    assert!(
+        held > limit / 4 && held < limit / 8 * 5,
+        "{held} of {limit}"
+    );
+    assert!(host.collections() > collections);
+    assert!(host.collected_since_ran_out());
+    assert!(!host.wants_idle_collect());
+    let p = host.heap_pressure();
+    assert_eq!(p.limit, Some(limit));
+    assert!(!p.warned, "{p:?}");
+    assert!(p.growers.is_empty(), "the collection let them go: {p:?}");
+    assert_eq!(p.after_last_collection, held);
+}
+
 /// A dispatch's share is of the room under the limit the heap has now,
 /// not the one it started with.
 #[test]
