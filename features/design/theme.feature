@@ -193,6 +193,41 @@ Feature: A theme file sets the roles of Ljos.Design
     And the property "body" of "root" is 15
     And the property "line" of "root" is 24
 
+  Scenario: The spacing unit sets every step of the scale
+    Given the theme file "theme.json" is:
+      """json
+      { "Spacing": { "unit": 5 } }
+      """
+    And the QML:
+      """qml
+      import QtQuick
+      import Ljos.Design
+      Item {
+        objectName: "root"
+        property string steps: [Spacing.unit, Spacing.none, Spacing.xxs, Spacing.xs,
+          Spacing.sm, Spacing.md, Spacing.lg, Spacing.xl, Spacing.xxl, Spacing.xxxl].join(" ")
+      }
+      """
+    Then the property "steps" of "root" is "5 0 5 10 15 20 30 40 60 80"
+
+  Scenario: A step the theme sets keeps its value whatever the unit
+    Given the theme file "theme.json" is:
+      """json
+      { "Spacing": { "unit": 5, "md": 18 } }
+      """
+    And the QML:
+      """qml
+      import QtQuick
+      import Ljos.Design
+      Item {
+        objectName: "root"
+        property int gap: Spacing.md
+        property int wide: Spacing.lg
+      }
+      """
+    Then the property "gap" of "root" is 18
+    And the property "wide" of "root" is 30
+
   Scenario: An edit of the theme sets the roles again and keeps what the user did
     Given the theme file "theme.json" is:
       """json
