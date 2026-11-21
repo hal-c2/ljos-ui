@@ -64,7 +64,7 @@ public final class LjosDocuments {
             case SAVE:
                 intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
                 intent.addCategory(Intent.CATEGORY_OPENABLE);
-                intent.setType(types == null ? "application/octet-stream" : types[0]);
+                intent.setType(saved(name, types));
                 if (!name.isEmpty()) {
                     intent.putExtra(Intent.EXTRA_TITLE, name);
                 }
@@ -172,6 +172,24 @@ public final class LjosDocuments {
         return out.isEmpty() ? null : out.toArray(new String[0]);
     }
 
+    /**
+     * The type of the document a save creates, which the provider keeps:
+     * the suggested name's, as the application names the format it writes
+     * there; else the first filter's, the dialog having no other choice of
+     * format to go by.
+     */
+    private static String saved(String name, String[] types) {
+        int dot = name.lastIndexOf('.');
+        if (dot > 0) {
+            String type = MimeTypeMap.getSingleton()
+                    .getMimeTypeFromExtension(name.substring(dot + 1).toLowerCase(java.util.Locale.ROOT));
+            if (type != null) {
+                return type;
+            }
+        }
+        return types == null ? "application/octet-stream" : types[0];
+    }
+
     private static void offer(Intent intent, String[] types) {
         if (types == null) {
             intent.setType("*/*");
@@ -196,7 +214,8 @@ public final class LjosDocuments {
     /**
      * Copies each document into the cache's {@code documents/<code>/<n>/},
      * under its own name; the copies' paths, a line each, or null when one
-     * could not be read.
+     * could not be read. A selection that fails leaves no copy behind: the
+     * application is told of none, so nothing else would remove them.
      */
     private static String copy(Context context, int code, List<Uri> uris) {
         File dir = new File(context.getCacheDir(), "documents/" + code);
@@ -208,6 +227,7 @@ public final class LjosDocuments {
             File file = new File(into, name(context, uri));
             if (!into.mkdirs() && !into.isDirectory()) {
                 Log.w("ljos", "no directory for the copy of " + uri);
+                remove(dir);
                 return null;
             }
             try (InputStream in = context.getContentResolver().openInputStream(uri);
@@ -221,6 +241,7 @@ public final class LjosDocuments {
                 }
             } catch (IOException | SecurityException e) {
                 Log.w("ljos", "the document " + uri + " was not read", e);
+                remove(dir);
                 return null;
             }
             out.append(file.getAbsolutePath()).append('\n');
