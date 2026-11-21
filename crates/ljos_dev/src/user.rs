@@ -2359,6 +2359,109 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_session_no_thread_could_build_for_answers_every_ask_that_it_failed() {
+        let root = tempfile::tempdir().expect("a directory");
+        let engine = engine();
+        let (mut session, woke) = session(&engine, root.path(), false);
+        let clock = ljos_runtime::SystemClock::new();
+        let _ = session.pump(&engine, &clock, &mut NoWindow);
+        session.no_threads = true;
+        write(&root.path().join("Card.qml"), "import QtQuick\nItem { }\n");
+        session.read_again(&engine);
+        let _ = answered(&engine, &mut session, &woke);
+        // Asked again, nothing is read: the files are no more read than
+        // they were.
+        session.read_again(&engine);
+        let reports = answered(&engine, &mut session, &woke);
+        assert!(
+            !reports.contains(&Report::Unchanged),
+            "files nothing could read are not as they were: {reports:?}"
+        );
+        assert_eq!(
+            session.answers,
+            [Reread::Failed, Reread::Failed],
+            "the user's files still cannot be built"
+        );
+    }
+
+    #[test]
+    fn an_ask_after_one_answered_failed_is_answered_failed_until_the_theme_is_mended() {
+        let root = tempfile::tempdir().expect("a directory");
+        let theme = root.path().join(THEME_FILE);
+        write(&theme, THEME);
+        let engine = engine();
+        let (mut session, woke) = session(&engine, root.path(), false);
+        let clock = ljos_runtime::SystemClock::new();
+        let _ = session.pump(&engine, &clock, &mut NoWindow);
+        while woke.try_recv().is_ok() {}
+        write(&theme, "{ \"Colors\": ");
+        session.read_again(&engine);
+        let _ = answered(&engine, &mut session, &woke);
+        // Read again as it is, the broken theme has nothing new to tell.
+        session.read_again(&engine);
+        let reports = answered(&engine, &mut session, &woke);
+        assert!(
+            !reports.contains(&Report::Unchanged),
+            "a theme that does not work is not as it was: {reports:?}"
+        );
+        // Mended, it is applied; read again as it is then, it is as it was.
+        write(&theme, THEME);
+        session.read_again(&engine);
+        let _ = answered(&engine, &mut session, &woke);
+        session.read_again(&engine);
+        let _ = answered(&engine, &mut session, &woke);
+        assert_eq!(
+            session.answers,
+            [
+                Reread::Failed,
+                Reread::Failed,
+                Reread::Applied,
+                Reread::Unchanged
+            ],
+            "the theme fails until it is mended"
+        );
+    }
+
+    #[test]
+    fn an_ask_after_one_answered_failed_is_answered_failed_until_the_file_is_mended() {
+        let root = tempfile::tempdir().expect("a directory");
+        let card = root.path().join("Card.qml");
+        write(&card, "import QtQuick\nItem { }\n");
+        let engine = engine();
+        let (mut session, woke) = session(&engine, root.path(), false);
+        session.read_again(&engine);
+        let _ = answered(&engine, &mut session, &woke);
+        assert!(session.is_active(), "the user's file runs");
+        let asked = session.answers.len();
+        write(&card, "import QtQuick\nItem {\n");
+        session.read_again(&engine);
+        let _ = answered(&engine, &mut session, &woke);
+        // Read again as it is, the broken file has nothing new to tell.
+        session.read_again(&engine);
+        let reports = answered(&engine, &mut session, &woke);
+        assert!(
+            !reports.contains(&Report::Unchanged),
+            "a file that does not compile is not as it was: {reports:?}"
+        );
+        // Mended, it is applied; read again as it is then, it is as it was.
+        write(&card, "import QtQuick\nItem { width: 2 }\n");
+        session.read_again(&engine);
+        let _ = answered(&engine, &mut session, &woke);
+        session.read_again(&engine);
+        let _ = answered(&engine, &mut session, &woke);
+        assert_eq!(
+            session.answers[asked..],
+            [
+                Reread::Failed,
+                Reread::Failed,
+                Reread::Applied,
+                Reread::Unchanged
+            ],
+            "the file fails until it is mended"
+        );
+    }
+
     /// Files no watcher can be made over.
     struct Refusing;
 

@@ -963,6 +963,39 @@ fn a_watcher_that_has_stopped_says_so_when_asked_to_build() {
     assert!(!watcher.flush(), "a stopped watcher says it takes nothing");
 }
 
+/// A watcher whose thread panics on its way to answering a flush still
+/// answers it, as failed: whoever asked does not wait for good.
+#[test]
+fn a_watcher_whose_thread_panics_answers_the_flush_it_took_that_it_failed() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().canonicalize().unwrap();
+    write(&dir, "Main.qml", MAIN);
+    let mut reloader = ljos_dev::Reloader::open(&dir, QtTypeOracle).unwrap();
+    reloader.start();
+    let (tx, rx) = mpsc::channel();
+    let mut panicked = false;
+    let watcher =
+        ljos_dev::Watcher::on_request_shared(Arc::new(std::sync::Mutex::new(reloader)), move |m| {
+            // Where the answer goes, as a build that panics would.
+            if m == ljos_dev::DevMsg::Idle && !std::mem::replace(&mut panicked, true) {
+                panic!("the build panics");
+            }
+            tx.send(m).is_ok()
+        })
+        .unwrap();
+    assert!(watcher.flush(), "a running watcher takes the flush");
+    let first = rx.recv_timeout(PATIENCE).expect("the flush is answered");
+    assert!(
+        matches!(&first, ljos_dev::DevMsg::Failed(faults) if !faults.is_empty()),
+        "the fault comes first: {first:?}"
+    );
+    assert_eq!(
+        rx.recv_timeout(PATIENCE),
+        Ok(ljos_dev::DevMsg::Idle),
+        "then the answer"
+    );
+}
+
 /// A project in a directory whose name holds what a URL gives a meaning
 /// to (`#`, `?`, `%`) runs, and its files are named by URLs that mean
 /// that directory.
