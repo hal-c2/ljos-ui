@@ -104,6 +104,30 @@ fn a_file_dialog_asks_the_system_and_the_answer_arrives_as_a_message() {
 }
 
 #[test]
+fn a_dialog_one_engine_closes_leaves_another_engines_shown() {
+    // One system for the whole process, as a phone's picker is: a ticket
+    // names one engine's dialog among every engine's.
+    let dir = tempfile::tempdir().expect("temp dir");
+    let fake = FakeDialogs::default();
+    let open = |title: &str| {
+        let e = engine(dir.path());
+        Platform::of(&e).set_dialogs(Rc::new(fake.clone()));
+        let d = make::<FileDialog>(&e);
+        e.write_by_name(d, "title", Value::from(title))
+            .expect("titled");
+        e.invoke_by_name(d, "open", &[]).expect("opened");
+        (e, d)
+    };
+    let (_first, _) = open("First");
+    let (second, d) = open("Second");
+    second.invoke_by_name(d, "close", &[]).expect("closed");
+    assert_eq!(
+        fake.shown(),
+        vec![(DialogKind::OpenFile, "First".to_owned())]
+    );
+}
+
+#[test]
 fn a_document_the_system_hands_out_is_selected_by_its_url() {
     let dir = tempfile::tempdir().expect("temp dir");
     let e = engine(dir.path());
