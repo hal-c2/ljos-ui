@@ -1275,9 +1275,29 @@ fn group_proxy<'js>(
     scope.from_value(&v)
 }
 
-/// Whether `v` is or holds a script's own value. With its own stack: a
-/// host's nesting can go deeper than the thread's.
+/// Whether `v` is or holds a script's own value. Recursion allocates
+/// nothing, and almost every value is shallow (this runs on every call's
+/// arguments, which `ljos_quick`'s budget counts); past
+/// [`HOLDS_JS_DEPTH`] it goes on with its own stack, since a host's
+/// nesting can go deeper than the thread's.
 pub(crate) fn holds_js(v: &Value) -> bool {
+    holds_js_within(v, HOLDS_JS_DEPTH)
+}
+
+/// How deep [`holds_js`] recurses before it walks with a stack of its own.
+const HOLDS_JS_DEPTH: u32 = 64;
+
+fn holds_js_within(v: &Value, depth: u32) -> bool {
+    match v {
+        Value::Js(_) => true,
+        Value::List(_) | Value::Map(_) if depth == 0 => holds_js_deep(v),
+        Value::List(items) => items.iter().any(|v| holds_js_within(v, depth - 1)),
+        Value::Map(fields) => fields.iter().any(|(_, v)| holds_js_within(v, depth - 1)),
+        _ => false,
+    }
+}
+
+fn holds_js_deep(v: &Value) -> bool {
     let mut stack = vec![v];
     while let Some(v) = stack.pop() {
         match v {
