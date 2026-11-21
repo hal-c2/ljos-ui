@@ -60,6 +60,10 @@ module's value.
 | `Motion` | `easeOut`, `easeOutSoft`, `easeInOut`, `decelerate`, `drawer`, `linear` | a list of numbers, as `bezierCurve` takes |
 | `Motion` | `enterScale`, `pressScale`, `gesture{Small,Panel,Screen}{Spring,Damping,Mass,Epsilon}` | a number, at least 0 |
 
+`Spacing`'s steps are multiples of `unit` (`xxs` 1, `xs` 2, `sm` 3, `md` 4,
+`lg` 6, `xl` 8, `xxl` 12, `xxxl` 16), so a theme that sets only `unit`
+moves the whole scale; a step the theme sets itself keeps its value.
+
 The colour roles: `canvas`, `surface`, `surfaceRaised`, `surfaceHover`,
 `surfacePressed`, `surfaceSelected`, `border`, `borderStrong`, `focusRing`,
 `accent`, `accentHover`, `accentPressed`, `textOnAccent`, `text`,

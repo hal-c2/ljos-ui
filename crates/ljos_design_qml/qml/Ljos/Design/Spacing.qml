@@ -2,16 +2,17 @@
 pragma Singleton
 import QtQuick
 
-// Gaps and padding in logical pixels, steps of 4 px.
+// Gaps and padding in logical pixels, steps of the unit (4 px).
+// A theme that sets the unit moves every step with it.
 QtObject {
     readonly property int unit: 4
     readonly property int none: 0
-    readonly property int xxs: 4
-    readonly property int xs: 8
-    readonly property int sm: 12
-    readonly property int md: 16
-    readonly property int lg: 24
-    readonly property int xl: 32
-    readonly property int xxl: 48
-    readonly property int xxxl: 64
+    readonly property int xxs: unit
+    readonly property int xs: unit * 2
+    readonly property int sm: unit * 3
+    readonly property int md: unit * 4
+    readonly property int lg: unit * 6
+    readonly property int xl: unit * 8
+    readonly property int xxl: unit * 12
+    readonly property int xxxl: unit * 16
 }
