@@ -15,14 +15,28 @@ ApplicationWindow {
         anchors.margins: 16
         spacing: 12
 
-        TextField {
-            objectName: "note"
+        RowLayout {
             Layout.fillWidth: true
-            placeholderText: "Type here, then save a Shell.qml"
-            focus: true
+            spacing: 8
+
+            TextField {
+                objectName: "note"
+                Layout.fillWidth: true
+                placeholderText: "Type here, then save a Shell.qml"
+                focus: true
+            }
+
+            // For a save the application did not see: it keeps no watch
+            // (--when-asked), or the watch was lost.
+            Button {
+                objectName: "reload"
+                text: "Reload"
+                onClicked: shell.reload()
+            }
         }
 
         ShellLoader {
+            id: shell
             objectName: "shell"
             Layout.fillWidth: true
             Layout.fillHeight: true
