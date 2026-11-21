@@ -974,6 +974,9 @@ pub struct UserSession {
     /// What each ask was answered, for the tests.
     #[cfg(test)]
     answers: Vec<Reread>,
+    /// Whether no thread can be started, for the tests.
+    #[cfg(test)]
+    no_threads: bool,
 }
 
 impl Drop for UserSession {
@@ -1080,6 +1083,8 @@ impl UserSession {
             again: false,
             #[cfg(test)]
             answers: Vec::new(),
+            #[cfg(test)]
+            no_threads: false,
         };
         if reads {
             // Before any object is made: what was made earlier is unknown
@@ -1516,12 +1521,18 @@ impl UserSession {
         // The application's files are read on a thread of their own, so
         // that its frames go on while they are.
         let handle = self.handle.clone();
-        let spawned = std::thread::Builder::new()
-            .name("ljos-user-qml".to_owned())
-            .spawn(move || {
-                let built = make(making);
-                let _ = handle.send_coalesced(READY_KEY, UserMsg::Ready(Box::new(built)));
-            });
+        let compile = move || {
+            let built = make(making);
+            let _ = handle.send_coalesced(READY_KEY, UserMsg::Ready(Box::new(built)));
+        };
+        #[cfg(test)]
+        let spawned = if self.no_threads {
+            Err(std::io::Error::other("no thread can be started"))
+        } else {
+            spawn_compiler(compile)
+        };
+        #[cfg(not(test))]
+        let spawned = spawn_compiler(compile);
         if let Err(e) = spawned {
             let fault = self.fault(format!("cannot start the compiler's thread: {e}"));
             self.tell(engine, &[fault]);
@@ -1743,6 +1754,14 @@ fn failed(faults: &[CompileFault]) -> Report {
         }),
         more: faults.len().saturating_sub(1),
     }
+}
+
+/// Starts the thread the application's files are read on.
+fn spawn_compiler(compile: impl FnOnce() + Send + 'static) -> std::io::Result<()> {
+    std::thread::Builder::new()
+        .name("ljos-user-qml".to_owned())
+        .spawn(compile)
+        .map(drop)
 }
 
 #[cfg(test)]
@@ -2196,6 +2215,84 @@ mod tests {
         assert!(
             !reports.contains(&Report::Unchanged),
             "a first file was brought in: {reports:?}"
+        );
+    }
+
+    #[test]
+    fn an_ask_after_a_read_that_failed_is_answered_failed_while_the_theme_stays_broken() {
+        let root = tempfile::tempdir().expect("a directory");
+        let theme = root.path().join(THEME_FILE);
+        write(&theme, THEME);
+        let engine = engine();
+        let (mut session, woke) = session(&engine, root.path(), false);
+        let clock = ljos_runtime::SystemClock::new();
+        let _ = session.pump(&engine, &clock, &mut NoWindow);
+        while woke.try_recv().is_ok() {}
+        // The first read finds the theme broken, and it is asked for
+        // again, the theme left as it is, before that read is answered:
+        // the second read finds nothing new of it to tell.
+        write(&theme, "{ \"Colors\": ");
+        session.read_again(&engine);
+        woke.recv_timeout(PATIENCE)
+            .expect("the first read is answered");
+        session.read_again(&engine);
+        let reports = answered(&engine, &mut session, &woke);
+        assert!(
+            !reports.contains(&Report::Unchanged),
+            "a theme that does not work is not as it was: {reports:?}"
+        );
+        assert_eq!(
+            session.answers,
+            [Reread::Failed],
+            "the theme still fails, and that is the answer"
+        );
+    }
+
+    #[test]
+    fn an_ask_after_a_read_that_failed_is_answered_failed_while_the_file_stays_broken() {
+        let root = tempfile::tempdir().expect("a directory");
+        let card = root.path().join("Card.qml");
+        write(&card, "import QtQuick\nItem { }\n");
+        let engine = engine();
+        let (mut session, woke) = session(&engine, root.path(), false);
+        session.read_again(&engine);
+        let _ = answered(&engine, &mut session, &woke);
+        assert!(session.is_active(), "the user's file runs");
+        while woke.try_recv().is_ok() {}
+        // The first read finds the file broken, and it is asked for again,
+        // the file left as it is, before that read is answered.
+        write(&card, "import QtQuick\nItem {\n");
+        session.read_again(&engine);
+        woke.recv_timeout(PATIENCE)
+            .expect("the first read is answered");
+        session.read_again(&engine);
+        let reports = answered(&engine, &mut session, &woke);
+        assert!(
+            !reports.contains(&Report::Unchanged),
+            "a file that does not compile is not as it was: {reports:?}"
+        );
+        assert_eq!(
+            session.answers.last(),
+            Some(&Reread::Failed),
+            "the file still fails, and that is the answer"
+        );
+    }
+
+    #[test]
+    fn an_ask_whose_first_file_cannot_be_built_is_answered_that_it_failed() {
+        let root = tempfile::tempdir().expect("a directory");
+        let engine = engine();
+        let (mut session, woke) = session(&engine, root.path(), false);
+        let clock = ljos_runtime::SystemClock::new();
+        let _ = session.pump(&engine, &clock, &mut NoWindow);
+        session.no_threads = true;
+        write(&root.path().join("Card.qml"), "import QtQuick\nItem { }\n");
+        session.read_again(&engine);
+        let _ = answered(&engine, &mut session, &woke);
+        assert_eq!(
+            session.answers,
+            [Reread::Failed],
+            "no thread could build the first file"
         );
     }
 
