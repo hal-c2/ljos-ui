@@ -1674,8 +1674,9 @@ pub trait Probes: Backend {
     /// Calls the application's inspector itself until it turns a call
     /// away for asking too often, and goes on calling it for `kept` more,
     /// so that what its observer asks of it meanwhile is turned away too
-    /// (ARCHITECTURE.md §19.7). Answers when the application's second was
-    /// full; [`Probes::calls_answered_again`] waits for the rest.
+    /// (ARCHITECTURE.md §19.7). Answers when the first of the calls that
+    /// filled the application's second was made: it has room again a
+    /// second later. [`Probes::calls_answered_again`] waits for the rest.
     fn turn_calls_away(&mut self, _kept: std::time::Duration) -> Result<std::time::Instant> {
         Err(BackendError::Unsupported {
             backend: self.name(),
