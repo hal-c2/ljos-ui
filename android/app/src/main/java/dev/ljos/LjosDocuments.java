@@ -242,7 +242,11 @@ public final class LjosDocuments {
         if (name == null) {
             name = uri.getLastPathSegment();
         }
-        name = name == null ? "" : name.replace('/', '_').replace('\0', '_');
+        // The answer to the native side is a line per document: a name
+        // keeps to one line, and to one path segment.
+        name = name == null
+                ? ""
+                : name.replace('/', '_').replace('\0', '_').replace('\n', '_').replace('\r', '_');
         return name.isEmpty() || name.equals(".") || name.equals("..") ? "document" : name;
     }
 
