@@ -854,8 +854,7 @@ fn a_component_that_cannot_be_made_leaves_no_context_behind() {
     assert_eq!(h.engine.context_count(), before);
 }
 
-const PANICS_NOW: &str =
-    "import QtQuick\nItem {\n  Component { id: comp; Item { Item { Text {} } } }\n  property Component c: comp\n}\n";
+const PANICS_NOW: &str = "import QtQuick\nItem {\n  Component { id: comp; Item { Item { Text {} } } }\n  property Component c: comp\n}\n";
 
 /// Made at once, as a job is in slices: a constructor's panic gives back
 /// what was allocated.
