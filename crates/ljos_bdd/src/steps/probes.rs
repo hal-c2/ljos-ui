@@ -1,6 +1,8 @@
 //! What the runtime can say of itself: passes, text measures, wakes, the
 //! observer's work, what is scheduled, kept pictures and the pointer's cursor.
 
+use std::time::{Duration, Instant};
+
 use cucumber::{given, then, when};
 
 use crate::backend::BackendError;
@@ -143,6 +145,100 @@ fn observer_clicked(w: &mut LjosWorld, locator: String) -> StepResult {
             .observer_call("app_click", serde_json::json!({ "target": locator }))
             .map(|_| ())
     })
+}
+
+// While the application's second is kept full, what the observer asks of
+// it is turned away for asking too often, and so is the one time its wire
+// asks again a second later (ARCHITECTURE.md §19.7): only the observer
+// itself can ask once more.
+#[when(
+    regex = r#"^the observer's "((?:[^"\\]|\\.)+)" is clicked while the application turns every call away$"#
+)]
+fn observer_clicked_turned_away(w: &mut LjosWorld, locator: String) -> StepResult {
+    // Past the wire's second try, which follows the first's refusal by
+    // the second its `Retry-After` names.
+    const KEPT: Duration = Duration::from_millis(2500);
+    let locator = unquoted(&locator);
+    w.each(|b| {
+        let probes = b.probes()?;
+        let looked = observer_until(probes, &locator, true)?;
+        if looked.count == 0 {
+            return Err(observer_missed(
+                probes,
+                &locator,
+                &looked,
+                "nothing to click",
+            ));
+        }
+        let full = probes.turn_calls_away(KEPT)?;
+        probes.observer_call_now("app_click", serde_json::json!({ "target": locator }))?;
+        let took = full.elapsed();
+        let answered = probes.calls_answered_again();
+        if took > Duration::from_secs(1) {
+            return Err(BackendError::Failed(format!(
+                "the observer was clicked {} ms after the application's second was full: \
+                 too late for its call and the one asked again to be turned away",
+                took.as_millis()
+            )));
+        }
+        answered
+    })
+}
+
+// The object clicked first is asked of while the application's second is
+// full, and its wire asks again a second later; the one clicked next is
+// asked of in between, once there is room, and is answered first.
+#[when(
+    regex = r#"^the observer's "((?:[^"\\]|\\.)+)" is clicked while the application turns calls away for a moment, and its "((?:[^"\\]|\\.)+)" once it answers again$"#
+)]
+fn observer_clicked_answered_late(w: &mut LjosWorld, first: String, then: String) -> StepResult {
+    let (first, then) = (unquoted(&first), unquoted(&then));
+    w.each(|b| {
+        let probes = b.probes()?;
+        for locator in [&first, &then] {
+            let looked = observer_until(probes, locator, true)?;
+            if looked.count == 0 {
+                return Err(observer_missed(
+                    probes,
+                    locator,
+                    &looked,
+                    "nothing to click",
+                ));
+            }
+        }
+        // The second has room again once the calls that filled it are a
+        // second old, and the first object's call is asked again a second
+        // after it was turned away: each click has half a second.
+        let full = probes.turn_calls_away(Duration::ZERO)?;
+        sleep_until(full + Duration::from_millis(500));
+        let asked = Instant::now();
+        probes.observer_call_now("app_click", serde_json::json!({ "target": first }))?;
+        let late = |what: &str, at: Instant, by: Instant| {
+            BackendError::Failed(format!(
+                "the observer was clicked on {what} {} ms after the application's second \
+                 was full, past the {} ms it had",
+                at.duration_since(full).as_millis(),
+                by.duration_since(full).as_millis()
+            ))
+        };
+        let refused_by = full + Duration::from_millis(850);
+        if Instant::now() > refused_by {
+            return Err(late(&first, Instant::now(), refused_by));
+        }
+        sleep_until(full + Duration::from_millis(1050));
+        probes.observer_call_now("app_click", serde_json::json!({ "target": then }))?;
+        let before_again = asked + Duration::from_millis(850);
+        if Instant::now() > before_again {
+            return Err(late(&then, Instant::now(), before_again));
+        }
+        // The first object's answer has come by then.
+        sleep_until(asked + Duration::from_millis(1500));
+        probes.calls_answered_again()
+    })
+}
+
+fn sleep_until(at: Instant) {
+    std::thread::sleep(at.saturating_duration_since(Instant::now()));
 }
 
 // A part of a page that does not fit is scrolled to, as a person turns

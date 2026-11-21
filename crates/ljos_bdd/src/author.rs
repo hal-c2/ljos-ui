@@ -25,7 +25,7 @@ use serde_json::{Value, json};
 
 mod desktop;
 mod packed;
-mod rate;
+pub(crate) mod rate;
 pub use desktop::Setting;
 pub use packed::{Errors, Log, Packing};
 
