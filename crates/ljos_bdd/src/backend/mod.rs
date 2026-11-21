@@ -519,6 +519,16 @@ pub trait Device: Backend {
         ))
     }
 
+    /// The developer connects to the inspector of the application on the
+    /// phone from the computer (`ljos android connect`: a port forwarded
+    /// over adb, the token read with `run-as`); the inspector steps then
+    /// ask that inspector.
+    fn connect_inspector(&mut self) -> Result<()> {
+        Err(BackendError::NotImplemented(
+            "connecting to the inspector of the application on the phone",
+        ))
+    }
+
     /// The system ends the application's process, as it ends a hidden
     /// one to save memory; the user opening it again starts a new one.
     fn end_process(&mut self) -> Result<()> {
