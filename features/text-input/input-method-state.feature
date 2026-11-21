@@ -39,6 +39,11 @@ Feature: An input method that tells the whole of what it holds
           echoMode: TextInput.PasswordEchoOnEdit
           text: "xy"
         }
+        TextInput {
+          objectName: "guarded"; y: 150; width: 200
+          echoMode: TextInput.Password
+          onCursorPositionChanged: if (cursorPosition === 1) text = ""
+        }
       }
       """
 
@@ -171,6 +176,13 @@ Feature: An input method that tells the whole of what it holds
       And the input method holds "abcd" with the cursor at 4
       And the input method holds "abc" with the cursor at 3
       Then the property "text" of "secret" is "abc"
+
+    Scenario: A field its handler clears as the input method moves the cursor holds none of what the method typed
+      When the property "focus" of "guarded" is set to true
+      And the input method holds "abc" with the cursor at 3
+      And the input method holds "abc" with the cursor at 1
+      And the input method holds "abxc" with the cursor at 3
+      Then the property "text" of "guarded" is "abxc"
 
     Scenario: An input method that typed nothing yet leaves the field's selection
       When the property "focus" of "pin" is set to true
