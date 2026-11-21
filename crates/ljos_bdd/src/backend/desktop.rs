@@ -1336,11 +1336,18 @@ impl Probes for DesktopBackend {
             .observer
             .as_mut()
             .ok_or_else(|| BackendError::Failed("the application is not observed".into()))?;
-        let answer = observer.ask(tool, arguments)?;
+        let answer = observer.call(tool, arguments)?;
+        if let Some(r) = answer.refusal {
+            return Err(BackendError::Refused {
+                tool: tool.to_owned(),
+                code: r.code,
+                message: r.message,
+            });
+        }
         // What the call woke is done before the next step looks.
         observer.settle()?;
         self.running()?.settle()?;
-        Ok(answer)
+        Ok(answer.structured)
     }
 
     fn count_work(&mut self) -> Result<()> {
