@@ -704,8 +704,10 @@ where
             if !shown && let Some(gpu) = &mut self.gpu {
                 // What the trim let go of is freed by the next frame's
                 // delta, and a window off the screen draws none.
-                let textures = self.ctx.tex_manager().write().take_delta();
+                let mut textures = self.ctx.tex_manager().write().take_delta();
                 gpu.apply(&textures);
+                // Handed over: a delta dropped with entries asserts.
+                textures.clear();
             }
             app.engine().collect_if_idle();
             log::info!("short of memory: trimmed at {level:?}, {freed} bytes given back");
