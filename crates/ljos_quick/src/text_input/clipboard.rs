@@ -146,7 +146,10 @@ impl Clipboard {
         // A copy that did not reach the system still fills the text
         // items' own clipboard, as Qt's copy() ignores the system's answer.
         let _ = match html {
-            Some(html) => svc.set_html(html, text),
+            // A service that took no HTML still gets the characters.
+            Some(html) => svc
+                .set_html(html, text)
+                .or_else(|_| svc.set_text(ClipboardMode::Clipboard, text)),
             None => svc.set_text(ClipboardMode::Clipboard, text),
         };
         if !self.store(engine, text) {

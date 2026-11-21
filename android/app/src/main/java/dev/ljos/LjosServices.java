@@ -16,6 +16,7 @@ import android.security.keystore.KeyGenParameterSpec;
 import android.security.keystore.KeyProperties;
 import android.view.ViewConfiguration;
 import androidx.core.content.FileProvider;
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
@@ -90,13 +91,17 @@ public final class LjosServices {
             return null;
         }
         Uri uri = item.getUri();
-        if (uri != null && item.getText() == null && item.getHtmlText() == null) {
-            // A URI of anything but text (a copied picture) is no text:
+        if (uri != null && item.getText() == null && item.getHtmlText() == null
+                && ContentResolver.SCHEME_CONTENT.equals(uri.getScheme())) {
+            // Content that gives no text (a copied picture) is no text:
             // coerceToText would give the URI itself, and a paste would
-            // insert it. Empty, not null: null is "the clipboard could not
-            // be read", and a paste would get what was copied here before.
-            String type = context.getContentResolver().getType(uri);
-            if (type == null || !type.startsWith("text/")) {
+            // insert it. Any other URI (a copied link) is its own text.
+            // Empty, not null: null is "the clipboard could not be read",
+            // and a paste would get what was copied here before.
+            ContentResolver resolver = context.getContentResolver();
+            String type = resolver.getType(uri);
+            boolean text = type != null && type.startsWith("text/");
+            if (!text && resolver.getStreamTypes(uri, "text/*") == null) {
                 return "";
             }
         }
@@ -160,25 +165,27 @@ public final class LjosServices {
         if (type == null || !type.startsWith("image/")) {
             return null;
         }
+        // Read once, into the application's own bytes: a provider asked
+        // twice may answer with another picture the second time, larger
+        // than the size the first answer was shrunk for.
+        byte[] encoded;
+        try (InputStream in = resolver.openInputStream(uri)) {
+            encoded = in == null ? null : readAtMost(in, MOST_PASTED_BYTES);
+        }
+        if (encoded == null) {
+            return null;
+        }
         // Its size first: a camera's picture at full size would be three
         // copies of hundreds of megabytes on its way to the application.
         BitmapFactory.Options bounds = new BitmapFactory.Options();
         bounds.inJustDecodeBounds = true;
-        try (InputStream in = resolver.openInputStream(uri)) {
-            if (in == null) {
-                return null;
-            }
-            BitmapFactory.decodeStream(in, null, bounds);
-        }
+        BitmapFactory.decodeByteArray(encoded, 0, encoded.length, bounds);
         if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
             return null;
         }
         BitmapFactory.Options decode = new BitmapFactory.Options();
         decode.inSampleSize = sampleSize(bounds.outWidth, bounds.outHeight);
-        Bitmap bitmap;
-        try (InputStream in = resolver.openInputStream(uri)) {
-            bitmap = in == null ? null : BitmapFactory.decodeStream(in, null, decode);
-        }
+        Bitmap bitmap = BitmapFactory.decodeByteArray(encoded, 0, encoded.length, decode);
         if (bitmap == null) {
             return null;
         }
@@ -195,6 +202,23 @@ public final class LjosServices {
 
     /** The most pixels a pasted picture keeps: 32 MB as ARGB ints. */
     static final long MOST_PASTED_PIXELS = 8L << 20;
+
+    /** The most bytes of a pasted picture read, as its file holds it. */
+    static final int MOST_PASTED_BYTES = 64 << 20;
+
+    /** All of {@code in}, or null when it holds more than {@code most} bytes. */
+    static byte[] readAtMost(InputStream in, int most) throws IOException {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        byte[] chunk = new byte[64 << 10];
+        int n;
+        while ((n = in.read(chunk)) != -1) {
+            if (out.size() > most - n) {
+                return null;
+            }
+            out.write(chunk, 0, n);
+        }
+        return out.toByteArray();
+    }
 
     /**
      * The power of two a picture of {@code width} by {@code height} is
