@@ -1042,9 +1042,13 @@ impl Probes for DesktopBackend {
         // its end.
         std::thread::sleep(Duration::from_secs(1));
         let started = Instant::now();
+        // The second has room again a second after the first call it
+        // counts was answered.
+        let mut first = None;
         let mut id = 0;
         loop {
             id += 1;
+            let sent = Instant::now();
             if rate::call(addr, &token, id)
                 .map_err(BackendError::Failed)?
                 .status
@@ -1052,6 +1056,7 @@ impl Probes for DesktopBackend {
             {
                 break;
             }
+            first.get_or_insert(sent);
             if started.elapsed() > SEEN {
                 return Err(BackendError::Failed(format!(
                     "the application's inspector answered {id} calls in {} s and turned none away",
@@ -1059,14 +1064,20 @@ impl Probes for DesktopBackend {
                 )));
             }
         }
-        let full = Instant::now();
+        let first = first.ok_or_else(|| {
+            BackendError::Failed(
+                "the application's inspector turned the first call away: something else \
+                 filled its second"
+                    .into(),
+            )
+        })?;
         if !kept.is_zero() {
             // Room comes free a second after each call answered, and a
             // call follows at once to take it: the observer's calls find
             // none. A pause between them keeps the loopback's ports to a
             // few thousand.
             self.turning_away = Some(std::thread::spawn(move || {
-                while full.elapsed() < kept {
+                while first.elapsed() < kept {
                     id += 1;
                     rate::call(addr, &token, id)?;
                     std::thread::sleep(Duration::from_micros(500));
@@ -1074,7 +1085,7 @@ impl Probes for DesktopBackend {
                 Ok(())
             }));
         }
-        Ok(full)
+        Ok(first)
     }
 
     fn observer_call_now(&mut self, tool: &str, arguments: Value) -> Result<Value> {

@@ -206,30 +206,37 @@ fn observer_clicked_answered_late(w: &mut LjosWorld, first: String, then: String
                 ));
             }
         }
-        // The second has room again once the calls that filled it are a
-        // second old, and the first object's call is asked again a second
-        // after it was turned away: each click has half a second.
+        // The second has room again a second after the first call that
+        // filled it, and the first object's call is asked again a second
+        // after it was turned away (`Retry-After: 1`). The first click is
+        // made half way: the second has as long as the first click to
+        // come, and each click as long as there is of that second.
         let full = probes.turn_calls_away(Duration::ZERO)?;
+        let room = full + Duration::from_secs(1);
         sleep_until(full + Duration::from_millis(500));
         let asked = Instant::now();
         probes.observer_call_now("app_click", serde_json::json!({ "target": first }))?;
-        let late = |what: &str, at: Instant, by: Instant| {
+        // A frame for what the click asks, once it is answered.
+        let frame = Duration::from_millis(40);
+        let late = |what: &str, clicked: Instant, by: Instant| {
             BackendError::Failed(format!(
-                "the observer was clicked on {what} {} ms after the application's second \
-                 was full, past the {} ms it had",
-                at.duration_since(full).as_millis(),
-                by.duration_since(full).as_millis()
+                "the observer answered a click on {what} {} ms after it was clicked; the order \
+                 of the answers needs it within {} ms, so it was too busy to tell",
+                clicked.elapsed().as_millis(),
+                by.saturating_duration_since(clicked).as_millis()
             ))
         };
-        let refused_by = full + Duration::from_millis(850);
-        if Instant::now() > refused_by {
-            return Err(late(&first, Instant::now(), refused_by));
+        // Turned away: asked before the second has room.
+        if Instant::now() + frame > room {
+            return Err(late(&first, asked, room - frame));
         }
-        sleep_until(full + Duration::from_millis(1050));
+        sleep_until(room + Duration::from_millis(20));
+        let next = Instant::now();
         probes.observer_call_now("app_click", serde_json::json!({ "target": then }))?;
-        let before_again = asked + Duration::from_millis(850);
-        if Instant::now() > before_again {
-            return Err(late(&then, Instant::now(), before_again));
+        // Answered before the first object's call is asked again.
+        let again = asked + Duration::from_secs(1);
+        if Instant::now() + frame > again {
+            return Err(late(&then, next, again - frame));
         }
         // The first object's answer has come by then.
         sleep_until(asked + Duration::from_millis(1500));
