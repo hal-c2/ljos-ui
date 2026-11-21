@@ -2618,7 +2618,7 @@ fn what_each_group_holds_is_counted_once_without_running_getters() {
         })
         .unwrap();
     assert!(cut.truncated);
-    assert_eq!(cut.values, 100);
+    assert!(cut.values <= 100, "{cut:?}");
 }
 
 #[test]

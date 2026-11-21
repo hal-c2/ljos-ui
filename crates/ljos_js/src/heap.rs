@@ -244,7 +244,9 @@ unsafe impl Allocator for Counted {
             // SAFETY: a live allocation of ours (caller's contract).
             unsafe { system::usable(ptr) }
         };
-        if self.count.refuses(new_size.saturating_sub(old)) {
+        // A shrink gives memory back, so it is never refused, even with the
+        // count past the cap (the allocator rounds up what it records).
+        if new_size > old && self.count.refuses(new_size - old) {
             return std::ptr::null_mut();
         }
         // SAFETY: as above.
@@ -308,7 +310,8 @@ unsafe impl Allocator for Counted {
         }
         // SAFETY: a live allocation of ours (caller's contract).
         let old = unsafe { Self::usable_size(ptr) };
-        if self.count.refuses(new_size.saturating_sub(old)) {
+        // A shrink is never refused, as above.
+        if new_size > old && self.count.refuses(new_size - old) {
             return std::ptr::null_mut();
         }
         // SAFETY: as above.
