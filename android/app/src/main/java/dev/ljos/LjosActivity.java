@@ -1,6 +1,8 @@
 package dev.ljos;
 
 import android.content.pm.ApplicationInfo;
+import android.graphics.Matrix;
+import android.graphics.RectF;
 import android.os.Build;
 import android.os.Bundle;
 import android.system.ErrnoException;
@@ -10,6 +12,8 @@ import android.view.KeyCharacterMap;
 import android.view.KeyEvent;
 import android.view.View;
 import android.view.WindowManager;
+import android.view.inputmethod.CursorAnchorInfo;
+import android.view.inputmethod.EditorBoundsInfo;
 import android.view.inputmethod.InputMethodManager;
 import androidx.activity.BackEventCompat;
 import androidx.activity.OnBackPressedCallback;
@@ -82,6 +86,34 @@ public class LjosActivity extends GameActivity {
         } catch (ErrnoException e) {
             android.util.Log.w("ljos", "the inspector is not served", e);
         }
+    }
+
+    /**
+     * Where the application last said the editor, its cursor and what it
+     * composes are (cursorAnchorChanged), or null; on the UI thread.
+     */
+    private Anchor anchor;
+
+    /** An input method asked to be told each time the text moves. */
+    private boolean monitored;
+
+    /** An input method asked to be told at once, before anything was known. */
+    private boolean immediate;
+
+    /** Where the text is, in the surface's pixels. */
+    private static final class Anchor {
+        float[] editor;
+        float[] cursor;
+        int selStart;
+        int selEnd;
+        int composeStart;
+        String composing;
+        float[] chars;
+    }
+
+    @Override
+    protected InputEnabledSurfaceView createSurfaceView() {
+        return TextInputOf.surface(this, this::cursorUpdatesRequested);
     }
 
     @Override
@@ -160,6 +192,107 @@ public class LjosActivity extends GameActivity {
                 imm.updateSelection(view, selStart, selEnd, composeStart, composeEnd);
             }
         });
+    }
+
+    /**
+     * An input method asked where the text is on screen, at once, each
+     * time it moves, or both; 0 when its connection closed. On the UI
+     * thread.
+     */
+    private boolean cursorUpdatesRequested(int mode) {
+        monitored = (mode & android.view.inputmethod.InputConnection.CURSOR_UPDATE_MONITOR) != 0;
+        immediate = (mode & android.view.inputmethod.InputConnection.CURSOR_UPDATE_IMMEDIATE) != 0;
+        // The system notes an immediate request only once this returns, and
+        // until then drops an anchor unchanged from the last; tell it after.
+        if (immediate && anchor != null) {
+            mSurfaceView.post(() -> {
+                if (immediate && anchor != null) {
+                    immediate = false;
+                    tellAnchor(anchor);
+                }
+            });
+        }
+        return mode != 0;
+    }
+
+    /**
+     * Where the editor with focus, its cursor and what it composes are,
+     * from the application's thread; in the surface's pixels, each box as
+     * left, top, right, bottom. Positions in UTF-16 units; {@code
+     * composeStart} -1 for nothing composed; {@code chars} four floats a
+     * composed unit. An input method that asked is told.
+     */
+    public void cursorAnchorChanged(
+            float[] editor, float[] cursor, int selStart, int selEnd,
+            int composeStart, String composing, float[] chars) {
+        Anchor now = new Anchor();
+        now.editor = editor;
+        now.cursor = cursor;
+        now.selStart = selStart;
+        now.selEnd = selEnd;
+        now.composeStart = composeStart;
+        now.composing = composing;
+        now.chars = chars;
+        runOnUiThread(() -> {
+            anchor = now;
+            if (monitored || immediate) {
+                immediate = false;
+                tellAnchor(now);
+            }
+        });
+    }
+
+    /** Tells the input method where the text is, on the UI thread. */
+    private void tellAnchor(Anchor a) {
+        View view = mSurfaceView;
+        InputMethodManager imm = getSystemService(InputMethodManager.class);
+        if (view == null || imm == null) {
+            return;
+        }
+        // The surface's pixels are the view's: it fills the window.
+        int[] at = new int[2];
+        view.getLocationOnScreen(at);
+        Matrix toScreen = new Matrix();
+        toScreen.setTranslate(at[0], at[1]);
+        RectF editor = new RectF(a.editor[0], a.editor[1], a.editor[2], a.editor[3]);
+        CursorAnchorInfo.Builder info = new CursorAnchorInfo.Builder()
+                .setMatrix(toScreen)
+                .setSelectionRange(a.selStart, a.selEnd);
+        if (a.composeStart >= 0) {
+            info.setComposingText(a.composeStart, a.composing);
+            for (int i = 0; i + 3 < a.chars.length; i += 4) {
+                info.addCharacterBounds(
+                        a.composeStart + i / 4,
+                        a.chars[i], a.chars[i + 1], a.chars[i + 2], a.chars[i + 3],
+                        shown(editor, a.chars[i], a.chars[i + 1], a.chars[i + 2], a.chars[i + 3]));
+            }
+        }
+        // The text's baseline is not known here: the cursor's bottom is the
+        // nearest to it.
+        float[] c = a.cursor;
+        info.setInsertionMarkerLocation(
+                c[0], c[1], c[3], c[3], shown(editor, c[0], c[1], c[2], c[3]));
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            info.setEditorBoundsInfo(new EditorBoundsInfo.Builder()
+                    .setEditorBounds(editor)
+                    .setHandwritingBounds(editor)
+                    .build());
+        }
+        imm.updateCursorAnchorInfo(view, info.build());
+    }
+
+    /** Whether a box is seen in the editor, as CursorAnchorInfo flags it. */
+    private static int shown(RectF editor, float l, float t, float r, float b) {
+        boolean in = l >= editor.left && r <= editor.right && t >= editor.top && b <= editor.bottom;
+        boolean out = r < editor.left || l > editor.right || b < editor.top || t > editor.bottom;
+        int flags = 0;
+        if (!out) {
+            flags |= CursorAnchorInfo.FLAG_HAS_VISIBLE_REGION;
+        }
+        if (!in) {
+            flags |= CursorAnchorInfo.FLAG_HAS_INVISIBLE_REGION;
+        }
+        return flags;
     }
 
     /**
