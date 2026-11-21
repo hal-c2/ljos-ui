@@ -713,3 +713,88 @@ fn a_making_that_runs_out_of_heap_after_its_content_was_swapped_leaves_the_new_c
     assert!(e.application_fault().is_none());
     assert!(e.set_script_heap_limit(None));
 }
+
+/// A fallback that holds a boundary of its own, whose content fills the
+/// heap as it is made: that boundary takes the fault, so the fallback is
+/// whole and is shown at once (ljos-ui#712).
+const FALLBACK_WITH_ITS_OWN_BOUNDARY: &str = r#"fallback: Item {
+            objectName: "sorry"
+            ErrorBoundary {
+                objectName: "inner"
+                fallback: Text { objectName: "inner sorry" }
+                Item {
+                    objectName: "hungry"
+                    property var lots: []
+                    Component.onCompleted: {
+                        for (let i = 0; i < 20000; i++) lots.push({ i: i, s: "row " + i });
+                    }
+                }
+            }
+        }"#;
+
+#[test]
+fn a_fallback_whose_own_boundary_took_a_full_heap_is_shown_at_once() {
+    let source = with_fallback(FALLBACK_WITH_ITS_OWN_BOUNDARY);
+    let (e, clock, _, boundary) = out_of_heap(&source);
+    assert!(get(&e, boundary, "failed").to_boolean());
+    assert_eq!(shown(&e, boundary), "sorry");
+    // The first try again is at once: the content fills the heap again,
+    // and the fallback is made and shown again, as whole as before.
+    settle(&e, &clock, boundary);
+    assert_eq!(shown(&e, boundary), "sorry");
+    let fallback = get(&e, boundary, "item").as_object().unwrap();
+    let inner = find(&e, fallback, "inner");
+    assert!(
+        get(&e, inner, "failed").to_boolean(),
+        "the inner one took it"
+    );
+    assert_eq!(shown(&e, inner), "inner sorry");
+    assert!(e.application_fault().is_none());
+    let warned = e.take_warnings();
+    assert!(
+        !warned
+            .iter()
+            .any(|w| w.contains("ErrorBoundary: fallback:") && w.contains("not shown")),
+        "{warned:?}"
+    );
+
+    // Room again: the content comes back as before.
+    assert!(e.set_script_heap_limit(None));
+    while get(&e, boundary, "failed").to_boolean() {
+        let due = e.next_timer_deadline().expect("still trying");
+        clock.set(due);
+        settle(&e, &clock, boundary);
+    }
+    assert_eq!(shown(&e, boundary), "content");
+    assert!(e.application_fault().is_none());
+}
+
+/// A fallback whose own code, outside any boundary of its own, fills the
+/// heap is still not whole: [`HUNGRY_FALLBACK`] is not shown. Its child's
+/// fault is the fallback's as much as its root's.
+#[test]
+fn a_fallback_whose_child_outside_its_own_boundary_fills_the_heap_is_not_shown() {
+    let source = with_fallback(
+        r#"fallback: Item {
+            objectName: "sorry"
+            ErrorBoundary { objectName: "inner"; Item {} }
+            Item {
+                objectName: "hungry"
+                property var lots: []
+                Component.onCompleted: {
+                    for (let i = 0; i < 20000; i++) lots.push({ i: i, s: "row " + i });
+                }
+            }
+        }"#,
+    );
+    let (e, _, _, boundary) = out_of_heap(&source);
+    assert!(get(&e, boundary, "failed").to_boolean());
+    assert_ne!(shown(&e, boundary), "sorry");
+    let warned = e.take_warnings();
+    assert!(
+        warned
+            .iter()
+            .any(|w| w.contains("ErrorBoundary: fallback:") && w.contains("not shown")),
+        "{warned:?}"
+    );
+}
