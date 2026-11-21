@@ -120,6 +120,7 @@ module Ljos.Blocks
 		signal errorChanged
 		signal itemChanged
 		signal statusChanged
+		method reload
 	type Ljos.Blocks.Slot Slot
 		prototype QtQuick.Item named
 		default delegate
