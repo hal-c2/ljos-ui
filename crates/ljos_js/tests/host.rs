@@ -725,6 +725,31 @@ fn a_null_thrown_for_want_of_heap_and_thrown_again_is_running_out_of_memory() {
     assert!(matches!(err, JsFault::JsOutOfMemory { .. }), "{err:?}");
 }
 
+/// A run that catches running out and swallows it has room again; a
+/// `null` it then throws itself is its own exception, not the heap
+/// running out, so the host does not wait for room and run it again.
+#[test]
+fn a_null_thrown_after_running_out_was_swallowed_in_the_same_run_is_its_own() {
+    let host = JsHost::new(JsConfig {
+        memory_limit: Some(16 * 1024 * 1024),
+        ..JsConfig::default()
+    })
+    .unwrap();
+    host.collect_now();
+    let held = host.memory_stats().unwrap().malloc_size;
+    assert!(host.set_memory_limit(Some(held + 4 * 1024 * 1024)));
+    let err = eval_num(
+        &host,
+        "function fill() { let h = null; for (;;) h = { n: h } }\n\
+         let ran_out = false;\n\
+         try { fill() } catch (e) { ran_out = true }\n\
+         if (!ran_out) throw new Error('did not run out');\n\
+         throw null",
+    )
+    .unwrap_err();
+    assert!(matches!(err, JsFault::JsException { .. }), "{err:?}");
+}
+
 /// Each job in a pump counts QuickJS's `null`s from its own start: a job
 /// that ran out and caught the `null` leaves the next job's own `throw
 /// null` its exception.
