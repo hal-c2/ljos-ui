@@ -549,6 +549,21 @@ Items are text; an item `key=value` is coalesced by its key, any other by all of
 | `Then the stream "name" handed over "a, b"` | every item its handler was given, in order |
 | `Then the stream "name" holds N items` | queued, not handled yet |
 
+### A phone (`mobile/`; `@android`, `@ios`)
+
+What the user and the system do to an application on a phone, which owns its screen
+(ARCHITECTURE.md 10.2). Only a phone's runner does them; anywhere else they are not implemented.
+
+| Step | Meaning |
+|---|---|
+| `When the user goes to the home screen` / `When the user opens the application again` | the application leaves the screen and comes back, from its icon or the recent applications |
+| `When the user turns the phone to landscape` / `… to portrait` | a quarter turn, or back |
+| `When the user presses Back` | the system's Back, as a button or a swipe |
+| `When the system ends the application's screen` | as a system short of memory ends a hidden application's screen and keeps the application (Android's activity destroyed, its process kept) |
+| `Then the application is in front` / `Then the application is in the background` | which one the user sees |
+| `Then the application is no longer running` | its process has ended, so the next start is a new process with a new application |
+| `Then the system has not found the application unresponsive` | no "not responding" since the scenario started |
+
 ### Planned (backlog scenarios may use them; not built yet)
 
 `When the agent clicks the reference of the "role" named "name"` · `When the object "o" is destroyed` ·

@@ -49,6 +49,7 @@ mod a11y;
 mod application;
 mod authoring;
 mod design_audit;
+mod device;
 mod environment;
 mod files;
 mod input;
@@ -65,7 +66,7 @@ mod user_qml;
 
 /// The text of every file of steps, in the order they are read: what the
 /// catalogue and `features:lint` read the step patterns from.
-pub const SOURCES: [&str; 17] = [
+pub const SOURCES: [&str; 18] = [
     include_str!("files.rs"),
     include_str!("scene.rs"),
     include_str!("input.rs"),
@@ -83,6 +84,7 @@ pub const SOURCES: [&str; 17] = [
     include_str!("design_audit.rs"),
     include_str!("lsp.rs"),
     include_str!("streams.rs"),
+    include_str!("device.rs"),
 ];
 
 /// Every file of steps, one after the other.

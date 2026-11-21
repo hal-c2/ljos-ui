@@ -40,13 +40,22 @@ pub(crate) fn install(engine: &Engine, display: Display, wake: impl Fn() + Send 
 /// opener and badge are the user's own, which a run nobody sees must not
 /// take over.
 fn install_desktop(engine: &Engine, platform: &std::rc::Rc<Platform>) {
-    if let Some(clipboard) = ljos_platform::native::SystemClipboard::connect() {
-        platform.set_clipboard(std::rc::Rc::new(clipboard));
-    }
-    platform.set_dialogs(std::rc::Rc::new(
-        ljos_platform::native::SystemDialogs::default(),
-    ));
-    if ljos_platform::native::SystemOpener::AVAILABLE {
+    // A phone's clipboard, pickers and opener are the system's, reached
+    // through its Java side: Android keeps the in-process ones until then.
+    #[cfg(not(target_os = "android"))]
+    let opener = {
+        if let Some(clipboard) = ljos_platform::native::SystemClipboard::connect() {
+            platform.set_clipboard(std::rc::Rc::new(clipboard));
+        }
+        platform.set_dialogs(std::rc::Rc::new(
+            ljos_platform::native::SystemDialogs::default(),
+        ));
+        ljos_platform::native::SystemOpener::AVAILABLE
+    };
+    #[cfg(target_os = "android")]
+    let opener = false;
+    if opener {
+        #[cfg(not(target_os = "android"))]
         platform.set_open_url(std::rc::Rc::new(ljos_platform::native::SystemOpener));
     } else {
         engine.log(

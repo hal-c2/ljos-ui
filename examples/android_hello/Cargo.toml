@@ -1,0 +1,26 @@
+[package]
+name = "ljos_example_android_hello"
+description = "The smallest Ljós application for Android: QML compiled ahead of time into a library GameActivity loads, which `ljos android run` builds, packs and starts on a phone or emulator"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+# The library the activity loads (`android.app.lib_name`), and the same
+# code as a Rust library for the test that starts it without a phone.
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+ljos = { path = "../../crates/ljos", default-features = false, features = ["shell"] }
+
+[target.'cfg(target_os = "android")'.dependencies]
+ljos = { path = "../../crates/ljos", default-features = false, features = ["android"] }
+
+[build-dependencies]
+ljos = { path = "../../crates/ljos", default-features = false, features = ["build"] }
+
+[lints]
+workspace = true

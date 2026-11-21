@@ -27,7 +27,7 @@ pub(crate) enum At {
     /// The surface's logical pixels, as Wayland says it.
     Logical(f64, f64),
     /// The window's pixels, as X11 and Windows say it.
-    #[cfg_attr(target_os = "macos", allow(dead_code))]
+    #[cfg_attr(any(target_os = "macos", target_os = "android"), allow(dead_code))]
     Physical(f64, f64),
 }
 
@@ -64,7 +64,9 @@ pub(crate) enum DragStep {
         answer: Answer,
     },
     /// Not a step of a drag in: the drag out of the application ended,
-    /// which wakes the loop to settle it ([`DragOut::settle`]).
+    /// which wakes the loop to settle it ([`DragOut::settle`]). Android
+    /// has no drag out of the application yet.
+    #[cfg_attr(target_os = "android", allow(dead_code))]
     OutEnded,
 }
 
