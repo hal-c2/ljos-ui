@@ -192,21 +192,24 @@ ApplicationWindow {
             window.waiting = next
             // A refresh the inspector turned away for being asked too
             // often keeps what is shown; the next change asks again. An
-            // edit turned away is told. The values of an object just
-            // picked were put away, so they are asked again in a while.
+            // edit turned away is told. The values and the picture of the
+            // object picked are asked again in a while, a refresh of them
+            // too: an application at rest tells of no next change, and
+            // the values of an object just picked were put away.
             var edit = route !== undefined && route.indexOf("edited:") === 0
             var picture = route !== undefined && route.indexOf("picture:") === 0
             var values = route !== undefined && route.indexOf("inspect:") === 0
             if (!ok && route !== "watch" && !edit
                     && String(result).indexOf("rate_limited") >= 0) {
-                if ((values || picture) && objects.shownOf !== route.substring(8))
+                var again = (values || picture) && objects.valuesTurnedAway(route.substring(8), picture)
+                if (again && objects.shownOf !== route.substring(8))
                     status.text = "The application is asked too often; its values are asked again in a moment"
+                else if (again)
+                    status.text = "The application is asked too often; showing the last answer until it is asked again"
                 else
                     status.text = "The application is asked too often; showing the last answer"
                 if (route && route.indexOf("objects") === 0)
                     objects.turnedAway(parseInt(route.substring(route.indexOf(":") + 1)))
-                else if (values || picture)
-                    objects.valuesTurnedAway(route.substring(8), picture)
                 return
             }
             // A picture that cannot be taken is said where the picture
@@ -2142,15 +2145,18 @@ ApplicationWindow {
                     property bool valuesOwed: false
                     property bool pictureOwed: false
 
+                    // Whether it will be asked again: what was asked of
+                    // an object picked before is not.
                     function valuesTurnedAway(of, isPicture) {
                         if (of !== picked)
-                            return
+                            return false
                         if (isPicture)
                             pictureOwed = true
                         else
                             valuesOwed = true
                         if (!askAgain.running)
                             askAgain.start()
+                        return true
                     }
 
                     Timer {
