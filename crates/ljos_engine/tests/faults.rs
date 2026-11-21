@@ -1049,6 +1049,28 @@ fn a_creation_job_whose_on_done_panics_on_its_error_still_closes_the_creation() 
     DUDS_PANIC.set(false);
     assert_eq!(faults.len(), 1, "{faults:?}");
     assert_eq!(handle.result().map(|r| r.is_err()), Some(true));
+    // The job's owner reports the making's panic after the job is done:
+    // it names the object whose making panicked, and the panic in
+    // `on_done`, reported first, does not take that name from it.
+    let (_, making) = faults.into_iter().next().expect("the making's fault");
+    e.report_fault(None, making);
+    let filed = e.faults();
+    let told = filed
+        .iter()
+        .find(|f| f.fault.to_string().contains("told twice over"))
+        .expect("on_done's panic is filed");
+    let made = filed
+        .iter()
+        .find(|f| f.fault.to_string().contains("a dud"))
+        .expect("the making's panic is filed");
+    assert!(
+        made.origin.is_some(),
+        "the making's panic names no object: {filed:?}"
+    );
+    assert_ne!(
+        told.origin, made.origin,
+        "on_done's panic took the making's object"
+    );
     let ran = Rc::new(Cell::new(false));
     let r = ran.clone();
     e.after_creation(move |_| r.set(true));
