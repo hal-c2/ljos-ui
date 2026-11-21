@@ -537,6 +537,35 @@ come after the QML. Showing it runs no frame: it is given the frames the applica
 | `Then the top overlay has charged "owner"` / `Then the top overlay has charged nobody` | an owner charged for scheduled work in any frame since it was shown: `application`, `inspector`, or a boundary by type and name (`Loader \"loader\"`) |
 | `Then the top overlay keeps no frame coming` | with it shown, the scene asks for no frame and for no wake |
 
+### The observer (`tooling/observe-*.feature`; all `@ljos-only`)
+
+`ljos observe` (ARCHITECTURE.md 19.5) opened on the application, and driven through its own
+inspector as an agent drives it: found by locator and pressed, never reached into. A quote in a
+locator is written `\"`. A step that looks at the observer's window waits for what it asked the
+application to arrive, looking again after each frame it runs, never on a timer. A look whose answer
+leaves items out fails rather than check part of them.
+
+| Step | Meaning |
+|---|---|
+| `When the application is observed` | the observer opens on the application, in a window of its own |
+| `When the observer's window is W by H pixels` | its window is given that size, as a window manager or a page holding it would |
+| `When the observer's "locator" is clicked` | once the observer shows it |
+| `When the observer's "locator" is scrolled N notches right` / `left` / `up` / `down` | the wheel turned over it, once the observer shows it; whatever scrolls under the pointer takes it |
+| `When the observer's "locator" is shown` | waits for what an answer still on its way lays out, failing if it never comes |
+| `Then the observer shows "text"` / `does not show "text"` | an item whose words contain the text, whatever the case |
+| `Then the observer shows "text" whole` | every item with those words has room for all of them inside its window, is drawn at each of its corners (no panel around it clips it), and none is elided; an inspection cut short of saying whether it is elided fails |
+| `Then the observer has "locator"` / `does not have "locator"` | an item the locator finds |
+| `Then the observer's "locator" is at least N pixels wide` / `high` | every item it finds is given that much room |
+| `Then every "locator" in the observer lies within the width of its window` | across only: a list holds rows below its window's bottom on purpose; a locator that finds nothing fails |
+| `Then no two "locator" in the observer overlap` | no item it finds is drawn over another |
+| `Then the observer's "a" lies above its "b"` / `left of its "b"` | where one lies from the other |
+| `Then the observer's "a" ends level with its "b"` | the bottoms of the first each finds are level |
+| `Then the observer's log has no warning matching "regex"` | what the observer itself warned of, read from its inspector |
+| `Then the observer's own audit finds no "code", "code" or "code"` | its audit of its current window, with only those rules; a rule the audit did not check fails the step |
+| `Then the observer passes its own audit` | its audit of its current window finds no error |
+| `When the work of the application and its observer is counted` / `Then the application and its observer did no work since it was counted` | neither ran a frame, a binding or a script since |
+| `Then the application has nothing scheduled` | no timer, animation or frame is waiting in the application |
+
 ### Side streams (`runtime/batch_streams.feature`; all `@ljos-only`)
 
 A thread's side stream (ARCHITECTURE.md 3.3) fed from the step and handled as the UI thread handles

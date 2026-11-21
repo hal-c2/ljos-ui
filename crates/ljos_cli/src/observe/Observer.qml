@@ -407,6 +407,43 @@ ApplicationWindow {
         return (n / (1024 * 1024)).toFixed(1) + " MiB"
     }
 
+    // The room left in a one-row Flow once its other items are in, for
+    // `gap` to take so that the items after it end at the row's end. When
+    // they do not fit one row, the gap takes a whole row, so that the items
+    // after it start a row of their own together rather than one of them
+    // trailing the words. It reads the widths the items take, an item that
+    // sets its own as much as one left at its implicit width, and never
+    // their places, so it does not depend on itself.
+    //
+    // A Flow with such a gap asks for no width of its own (its
+    // Layout.preferredWidth is 0) and takes the width its page gives it.
+    // Left at its implicit width it would ask for what it was given, less
+    // the pixel kept to spare, and a page that follows what it holds, as a
+    // page of a StackLayout not shown does, would shrink by that pixel at
+    // every pass and never settle.
+    function spare(flow, gap) {
+        var used = 0
+        var shown = 0
+        for (var i = 0; i < flow.children.length; ++i) {
+            var item = flow.children[i]
+            // The Flow places no item that is hidden or has no size, such
+            // as the Repeater making the buttons, and leaves no spacing
+            // after it. The gap counts whatever its width, as it is what
+            // this gives a width to.
+            if (!item.visible)
+                continue
+            if (item !== gap && (item.width <= 0 || item.height <= 0))
+                continue
+            shown += 1
+            if (item !== gap)
+                used += item.width
+        }
+        used += flow.spacing * Math.max(0, shown - 1)
+        // A pixel to spare, so that rounding never wraps the last item.
+        var left = flow.width - used - 1
+        return left >= 0 ? left : flow.width
+    }
+
     function stateColor(state) {
         if (state === "running" || state === "busy")
             return theme.warn
@@ -415,126 +452,183 @@ ApplicationWindow {
         return theme.good
     }
 
-    RowLayout {
+    // Below this width the list of pages folds into tabs above the page,
+    // so that the page has the whole width: the window may be a dock
+    // beside a page or a sheet on a phone, not only a window of its own.
+    readonly property bool compact: width < 900
+
+    // A page's header: its words stand as tall as its buttons, so that
+    // a row of both shares one centre line.
+    readonly property real headHeight: headProbe.implicitHeight
+    readonly property real titleHeight: headTitleProbe.implicitHeight
+    Button { id: headProbe; visible: false; text: "Clear" }
+    Text { id: headTitleProbe; visible: false; text: "Mailboxes"; font.pixelSize: 19; font.bold: true }
+
+    GridLayout {
         anchors.fill: parent
-        spacing: 0
+        columns: window.compact ? 1 : 2
+        rowSpacing: 0
+        columnSpacing: 0
 
         // ----- The pages, and whom the window observes ------------------
         Rectangle {
-            Layout.fillHeight: true
+            Layout.fillHeight: !window.compact
+            Layout.fillWidth: window.compact
             Layout.preferredWidth: 210
+            Layout.preferredHeight: window.compact ? nav.implicitHeight + 2 * nav.anchors.margins : -1
             color: theme.side
 
             ColumnLayout {
+                id: nav
                 anchors.fill: parent
-                anchors.margins: 14
-                spacing: 2
+                anchors.margins: window.compact ? 8 : 14
+                spacing: window.compact ? 6 : 2
 
                 Text {
+                    visible: !window.compact
                     text: "Observer"
                     color: theme.text
                     font.pixelSize: 21
                     font.bold: true
                 }
                 Text {
+                    visible: !window.compact
                     Layout.bottomMargin: 18
                     text: processes.process ? "pid " + processes.process.pid : "ljos observe"
                     color: theme.subtle
                 }
 
-                Repeater {
-                    model: window.pages
-                    delegate: Rectangle {
-                        required property string modelData
-                        required property int index
-                        Layout.fillWidth: true
-                        height: 34
-                        radius: 7
-                        color: window.page === index ? theme.accentSoft
-                             : hover.containsMouse ? Qt.rgba(theme.text.r, theme.text.g, theme.text.b, 0.05)
-                             : "transparent"
-                        Rectangle {
-                            visible: window.page === index
-                            width: 3; height: 16; radius: 2
-                            anchors.left: parent.left
-                            anchors.verticalCenter: parent.verticalCenter
-                            color: theme.accent
-                        }
-                        Text {
-                            anchors.left: parent.left
-                            anchors.leftMargin: 14
-                            anchors.verticalCenter: parent.verticalCenter
-                            text: modelData
-                            color: window.page === index ? theme.accent : theme.text
-                            font.bold: window.page === index
-                        }
-                        Text {
-                            anchors.right: parent.right
-                            anchors.rightMargin: 10
-                            anchors.verticalCenter: parent.verticalCenter
-                            visible: (index === 4 && logs.unread > 0) || (index === 5 && trace.unread > 0)
-                            text: index === 4 ? logs.unread : trace.unread
-                            color: theme.subtle
-                            font.pixelSize: 11
-                        }
-                        MouseArea {
-                            id: hover
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            Accessible.role: Accessible.PageTab
-                            Accessible.name: modelData
-                            onClicked: {
-                                window.page = index
-                                window.refresh()
+                // One list of tabs for both forms: beside the page each is
+                // as wide as the list, above it each is as wide as its name
+                // and they wrap, so that every page is one press away.
+                Flow {
+                    id: tabs
+                    Layout.fillWidth: true
+                    spacing: window.compact ? 4 : 2
+                    Repeater {
+                        model: window.pages
+                        delegate: Rectangle {
+                            id: tab
+                            required property string modelData
+                            required property int index
+                            readonly property bool shown: window.page === index
+                            width: window.compact
+                                   ? label.implicitWidth + 20 + (unread.visible ? unread.implicitWidth + 6 : 0)
+                                   : tabs.width
+                            height: window.compact ? 28 : 34
+                            radius: 7
+                            color: shown ? theme.accentSoft
+                                 : hover.containsMouse ? Qt.rgba(theme.text.r, theme.text.g, theme.text.b, 0.05)
+                                 : "transparent"
+                            // Which page is shown: a bar at the start of a
+                            // row of the list, under the name of a tab.
+                            Rectangle {
+                                visible: tab.shown
+                                x: window.compact ? 8 : 0
+                                y: window.compact ? tab.height - 3 : (tab.height - height) / 2
+                                width: window.compact ? tab.width - 16 : 3
+                                height: window.compact ? 2 : 16
+                                radius: 2
+                                color: theme.accent
+                            }
+                            Text {
+                                id: label
+                                anchors.left: parent.left
+                                anchors.leftMargin: window.compact ? 10 : 14
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: tab.modelData
+                                color: tab.shown ? theme.accent : theme.text
+                                font.bold: tab.shown
+                            }
+                            Text {
+                                id: unread
+                                anchors.right: parent.right
+                                anchors.rightMargin: 10
+                                anchors.verticalCenter: parent.verticalCenter
+                                visible: (tab.index === 4 && logs.unread > 0) || (tab.index === 5 && trace.unread > 0)
+                                text: tab.index === 4 ? logs.unread : trace.unread
+                                color: theme.subtle
+                                font.pixelSize: 11
+                            }
+                            MouseArea {
+                                id: hover
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                Accessible.role: Accessible.PageTab
+                                Accessible.name: tab.modelData
+                                onClicked: {
+                                    window.page = tab.index
+                                    window.refresh()
+                                }
                             }
                         }
                     }
                 }
 
-                Item { Layout.fillHeight: true }
+                Item {
+                    visible: !window.compact
+                    Layout.fillHeight: true
+                }
 
-                RowLayout {
+                // Whom the window follows, and how: below the list, or in
+                // one row under the tabs.
+                GridLayout {
                     Layout.fillWidth: true
-                    spacing: 8
-                    Rectangle {
-                        width: 9; height: 9; radius: 5
-                        color: !client.connected ? theme.bad
-                             : watcher.live ? theme.good : theme.subtle
+                    columns: window.compact ? 2 : 1
+                    columnSpacing: 8
+                    rowSpacing: 2
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 8
+                        Rectangle {
+                            width: 9; height: 9; radius: 5
+                            color: !client.connected ? theme.bad
+                                 : watcher.live ? theme.good : theme.subtle
+                        }
+                        Text {
+                            Layout.fillWidth: true
+                            elide: Text.ElideRight
+                            text: !client.connected ? "not connected"
+                                : !watcher.live ? "paused"
+                                : watcher.quietSince !== "" ? "idle since " + watcher.quietSince
+                                : "live"
+                            color: theme.subtle
+                        }
                     }
+                    // The window's title names it too, which is where a
+                    // narrow window leaves it.
                     Text {
+                        visible: !window.compact
                         Layout.fillWidth: true
-                        elide: Text.ElideRight
-                        text: !client.connected ? "not connected"
-                            : !watcher.live ? "paused"
-                            : watcher.quietSince !== "" ? "idle since " + watcher.quietSince
-                            : "live"
+                        text: client.url
+                        elide: Text.ElideMiddle
                         color: theme.subtle
+                        font.pixelSize: 11
                     }
-                }
-                Text {
-                    Layout.fillWidth: true
-                    text: client.url
-                    elide: Text.ElideMiddle
-                    color: theme.subtle
-                    font.pixelSize: 11
-                }
-                RowLayout {
-                    Layout.topMargin: 6
-                    Button {
-                        Layout.fillWidth: true
-                        text: watcher.live ? "Pause" : "Follow"
-                        onClicked: watcher.live = !watcher.live
-                    }
-                    Button {
-                        Layout.fillWidth: true
-                        text: "Refresh"
-                        onClicked: window.refresh()
+                    RowLayout {
+                        Layout.topMargin: window.compact ? 0 : 6
+                        Layout.fillWidth: !window.compact
+                        Button {
+                            Layout.fillWidth: true
+                            text: watcher.live ? "Pause" : "Follow"
+                            onClicked: watcher.live = !watcher.live
+                        }
+                        Button {
+                            Layout.fillWidth: true
+                            text: "Refresh"
+                            onClicked: window.refresh()
+                        }
                     }
                 }
             }
+            // The rule between the list and the page: on its right
+            // beside the page, along its bottom above it.
             Rectangle {
-                anchors.right: parent.right
-                width: 1; height: parent.height
+                x: window.compact ? 0 : parent.width - 1
+                y: window.compact ? parent.height - 1 : 0
+                width: window.compact ? parent.width : 1
+                height: window.compact ? 1 : parent.height
                 color: theme.rule
             }
         }
@@ -548,387 +642,439 @@ ApplicationWindow {
                 currentIndex: window.page
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                Layout.margins: 18
+                Layout.margins: window.compact ? 12 : 18
                 // A page is as wide as the window leaves it, not as the
                 // widest page wants: the one shown makes do, each in its
                 // own way, and nothing goes past the window's edge.
                 Layout.minimumWidth: 0
 
                 // ----- Overview ----------------------------------------
-                ColumnLayout {
-                    id: overview
-                    spacing: 12
+                // The page scrolls when the window is too short for its
+                // figures and charts, as on a phone, rather than squeeze
+                // the charts below what they can show.
+                Flickable {
+                    id: overviewScroll
+                    clip: true
+                    contentWidth: width
+                    contentHeight: Math.max(height, overview.implicitHeight)
+                    interactive: contentHeight > height
+                    boundsBehavior: Flickable.StopAtBounds
+                    ScrollBar.vertical: ScrollBar {}
 
-                    // One point per answer of the watch: what moved since
-                    // the point before, kept as one list per chart so
-                    // that a chart reads its own without going through
-                    // every point.
-                    property var series: ({ frameMs: [], drawn: [], skipped: [], rss: [], wakeups: [], inbox: [] })
-                    property int version: 0
-                    property var last: null
-                    property var parts: ({})
-                    property var latest: ({})
-                    // What the platform does not measure, by figure.
-                    property var unmeasured: ({})
+                    ColumnLayout {
+                        id: overview
+                        width: overviewScroll.width
+                        height: overviewScroll.contentHeight
+                        spacing: 12
 
-                    function sample() {
-                        parts = {}
-                        window.ask("app_metrics", {}, "sample-metrics")
-                    }
+                        // One point per answer of the watch: what moved since
+                        // the point before, kept as one list per chart so
+                        // that a chart reads its own without going through
+                        // every point.
+                        property var series: ({ frameMs: [], drawn: [], skipped: [], rss: [], wakeups: [], inbox: [] })
+                        property int version: 0
+                        property var last: null
+                        property var parts: ({})
+                        property var latest: ({})
+                        // What the platform does not measure, by figure.
+                        property var unmeasured: ({})
 
-                    function part(name, s) {
-                        var next = parts
-                        next[name] = s
-                        parts = next
-                        // The threads are asked once the metrics are
-                        // answered. Their mailboxes are counted after the
-                        // UI thread answered, so that the depth is not
-                        // this window's own questions waiting.
-                        if (name === "metrics")
-                            window.ask("app_processes", {}, "sample-threads")
-                        else if (parts.metrics)
-                            add(parts.metrics, s, s)
-                    }
+                        function sample() {
+                            parts = {}
+                            window.ask("app_metrics", {}, "sample-metrics")
+                        }
 
-                    function add(m, t, b) {
-                        if (t.process)
-                            processes.process = t.process
-                        var now = Date.now()
-                        // The process's own count where the platform
-                        // keeps one, else its threads' added up; neither
-                        // is unknown, not 0.
-                        var wakeups = window.measured(t.process, "wakeups") ? t.process.wakeups : null
-                        var counted = 0
-                        var everyCounted = true
-                        var threadCount = 0
-                        for (var i = 0; i < t.processes.length; ++i) {
-                            var th = t.processes[i]
-                            if (th.kind !== "thread")
-                                continue
-                            threadCount += 1
-                            if (typeof th.wakeups === "number")
-                                counted += th.wakeups
-                            else
-                                everyCounted = false
+                        function part(name, s) {
+                            var next = parts
+                            next[name] = s
+                            parts = next
+                            // The threads are asked once the metrics are
+                            // answered. Their mailboxes are counted after the
+                            // UI thread answered, so that the depth is not
+                            // this window's own questions waiting.
+                            if (name === "metrics")
+                                window.ask("app_processes", {}, "sample-threads")
+                            else if (parts.metrics)
+                                add(parts.metrics, s, s)
                         }
-                        if (wakeups === null && threadCount > 0 && everyCounted)
-                            wakeups = counted
-                        var rss = window.measured(t.process, "rss_bytes") ? t.process.rss_bytes : null
-                        var threads = window.measured(t.process, "threads") ? t.process.threads
-                            : t.process ? null : threadCount
-                        unmeasured = { rss: rss === null, wakeups: wakeups === null, threads: threads === null }
-                        var depth = 0
-                        var boxes = b.mailboxes || []
-                        for (var j = 0; j < boxes.length; ++j)
-                            depth += boxes[j].depth
-                        var p = m.paint || {}
-                        var here = {
-                            t: now,
-                            frames: m.frames.count,
-                            frameTotal: m.frames.total_us,
-                            drawn: (p.presented || 0) + (p.presented_in_part || 0),
-                            skipped: p.unchanged || 0,
-                            wakeups: wakeups,
-                        }
-                        var point = {
-                            frameMs: 0, drawn: 0, skipped: 0, wakeups: 0,
-                            rss: rss === null ? 0 : rss / (1024 * 1024),
-                            inbox: depth,
-                        }
-                        if (last !== null) {
-                            var secs = Math.max(0.001, (now - last.t) / 1000)
-                            var frames = here.frames - last.frames
-                            point.frameMs = frames > 0 ? (here.frameTotal - last.frameTotal) / frames / 1000 : 0
-                            point.drawn = here.drawn - last.drawn
-                            point.skipped = here.skipped - last.skipped
-                            if (here.wakeups !== null && last.wakeups !== null)
-                                point.wakeups = (here.wakeups - last.wakeups) / secs
-                        }
-                        last = here
-                        latest = {
-                            frames: m.frames.count,
-                            overruns: m.frames.overruns,
-                            objects: m.objects,
-                            threads: threads,
-                            rss: rss,
-                            drawn: here.drawn,
-                            skipped: here.skipped,
-                            painter: p.painter || "",
-                        }
-                        var next = {}
-                        for (var key in point) {
-                            var was = series[key]
-                            var kept = was.slice(Math.max(0, was.length - 119))
-                            kept.push(point[key])
-                            next[key] = kept
-                        }
-                        // The version first: a chart reads it to
-                        // number the values it is given.
-                        version += 1
-                        series = next
-                        // The count comes after the change that made
-                        // the objects, and an application at rest tells
-                        // of no other.
-                        if (window.page === 3)
-                            objects.follow(false)
-                    }
 
-                    RowLayout {
-                        Layout.fillWidth: true
-                        Text { text: "Overview"; color: theme.text; font.pixelSize: 19; font.bold: true }
-                        Item { Layout.fillWidth: true }
-                        Text {
-                            color: theme.subtle
-                            text: "one point each time the application changed"
+                        function add(m, t, b) {
+                            if (t.process)
+                                processes.process = t.process
+                            var now = Date.now()
+                            // The process's own count where the platform
+                            // keeps one, else its threads' added up; neither
+                            // is unknown, not 0.
+                            var wakeups = window.measured(t.process, "wakeups") ? t.process.wakeups : null
+                            var counted = 0
+                            var everyCounted = true
+                            var threadCount = 0
+                            for (var i = 0; i < t.processes.length; ++i) {
+                                var th = t.processes[i]
+                                if (th.kind !== "thread")
+                                    continue
+                                threadCount += 1
+                                if (typeof th.wakeups === "number")
+                                    counted += th.wakeups
+                                else
+                                    everyCounted = false
+                            }
+                            if (wakeups === null && threadCount > 0 && everyCounted)
+                                wakeups = counted
+                            var rss = window.measured(t.process, "rss_bytes") ? t.process.rss_bytes : null
+                            var threads = window.measured(t.process, "threads") ? t.process.threads
+                                : t.process ? null : threadCount
+                            unmeasured = { rss: rss === null, wakeups: wakeups === null, threads: threads === null }
+                            var depth = 0
+                            var boxes = b.mailboxes || []
+                            for (var j = 0; j < boxes.length; ++j)
+                                depth += boxes[j].depth
+                            var p = m.paint || {}
+                            var here = {
+                                t: now,
+                                frames: m.frames.count,
+                                frameTotal: m.frames.total_us,
+                                drawn: (p.presented || 0) + (p.presented_in_part || 0),
+                                skipped: p.unchanged || 0,
+                                wakeups: wakeups,
+                            }
+                            var point = {
+                                frameMs: 0, drawn: 0, skipped: 0, wakeups: 0,
+                                rss: rss === null ? 0 : rss / (1024 * 1024),
+                                inbox: depth,
+                            }
+                            if (last !== null) {
+                                var secs = Math.max(0.001, (now - last.t) / 1000)
+                                var frames = here.frames - last.frames
+                                point.frameMs = frames > 0 ? (here.frameTotal - last.frameTotal) / frames / 1000 : 0
+                                point.drawn = here.drawn - last.drawn
+                                point.skipped = here.skipped - last.skipped
+                                if (here.wakeups !== null && last.wakeups !== null)
+                                    point.wakeups = (here.wakeups - last.wakeups) / secs
+                            }
+                            last = here
+                            latest = {
+                                frames: m.frames.count,
+                                overruns: m.frames.overruns,
+                                objects: m.objects,
+                                threads: threads,
+                                rss: rss,
+                                drawn: here.drawn,
+                                skipped: here.skipped,
+                                painter: p.painter || "",
+                            }
+                            var next = {}
+                            for (var key in point) {
+                                var was = series[key]
+                                var kept = was.slice(Math.max(0, was.length - 119))
+                                kept.push(point[key])
+                                next[key] = kept
+                            }
+                            // The version first: a chart reads it to
+                            // number the values it is given.
+                            version += 1
+                            series = next
+                            // The count comes after the change that made
+                            // the objects, and an application at rest tells
+                            // of no other.
+                            if (window.page === 3)
+                                objects.follow(false)
                         }
-                    }
 
-                    // The figures now.
-                    RowLayout {
-                        Layout.fillWidth: true
-                        spacing: 10
-                        Repeater {
-                            model: [
-                                ["Frames", "frames"], ["Over budget", "overruns"], ["Objects", "objects"],
-                                ["Threads", "threads"], ["Resident", "rss"], ["Passes drawn", "drawn"],
-                                ["Passes skipped", "skipped"]
-                            ]
-                            delegate: Rectangle {
-                                required property var modelData
+                        RowLayout {
+                            Layout.fillWidth: true
+                            Text {
+                                Accessible.role: Accessible.Heading
+                                text: "Overview"; color: theme.text; font.pixelSize: 19; font.bold: true
+                            }
+                            Text {
                                 Layout.fillWidth: true
-                                height: 62
-                                radius: 9
-                                color: theme.card
-                                border.color: theme.rule
-                                Column {
-                                    anchors.fill: parent
-                                    anchors.margins: 10
-                                    spacing: 2
-                                    Text {
-                                        text: modelData[0]
-                                        color: theme.subtle
-                                        font.pixelSize: 11
-                                    }
-                                    Text {
-                                        property var v: overview.latest[modelData[1]]
-                                        readonly property bool unknown: overview.unmeasured[modelData[1]] === true
-                                        width: parent.width
-                                        text: unknown ? "not measured on this platform"
-                                            : v === undefined || v === null ? "—"
-                                            : modelData[1] === "rss" ? window.bytes(v) : v
-                                        color: unknown ? theme.subtle
-                                            : modelData[1] === "overruns" && v > 0 ? theme.bad : theme.text
-                                        font.pixelSize: unknown ? 12 : 19
-                                        font.bold: !unknown
-                                        wrapMode: unknown ? Text.WordWrap : Text.NoWrap
-                                        maximumLineCount: 2
-                                        elide: Text.ElideRight
+                                Layout.minimumWidth: 0
+                                horizontalAlignment: Text.AlignRight
+                                elide: Text.ElideRight
+                                color: theme.subtle
+                                text: "one point each time the application changed"
+                            }
+                        }
+
+                        // The figures now: in one row when there is room
+                        // for them, else in as many columns as there is room
+                        // for, each wide enough for its name.
+                        GridLayout {
+                            Layout.fillWidth: true
+                            columns: Math.max(1, Math.min(7, Math.floor((width + columnSpacing) / 130)))
+                            columnSpacing: 10
+                            rowSpacing: 10
+                            Repeater {
+                                model: [
+                                    ["Frames", "frames"], ["Over budget", "overruns"], ["Objects", "objects"],
+                                    ["Threads", "threads"], ["Resident", "rss"], ["Passes drawn", "drawn"],
+                                    ["Passes skipped", "skipped"]
+                                ]
+                                delegate: Rectangle {
+                                    required property var modelData
+                                    Layout.fillWidth: true
+                                    // Two lines of "not measured" are taller
+                                    // than one figure.
+                                    Layout.preferredHeight: Math.max(62, figure.implicitHeight + 20)
+                                    radius: 9
+                                    color: theme.card
+                                    border.color: theme.rule
+                                    Column {
+                                        id: figure
+                                        anchors.fill: parent
+                                        anchors.margins: 10
+                                        spacing: 2
+                                        Text {
+                                            width: parent.width
+                                            elide: Text.ElideRight
+                                            text: modelData[0]
+                                            color: theme.subtle
+                                            font.pixelSize: 11
+                                        }
+                                        Text {
+                                            property var v: overview.latest[modelData[1]]
+                                            readonly property bool unknown: overview.unmeasured[modelData[1]] === true
+                                            width: parent.width
+                                            text: unknown ? "not measured on this platform"
+                                                : v === undefined || v === null ? "—"
+                                                : modelData[1] === "rss" ? window.bytes(v) : v
+                                            color: unknown ? theme.subtle
+                                                : modelData[1] === "overruns" && v > 0 ? theme.bad : theme.text
+                                            font.pixelSize: unknown ? 12 : 19
+                                            font.bold: !unknown
+                                            wrapMode: unknown ? Text.WordWrap : Text.NoWrap
+                                            maximumLineCount: 2
+                                            elide: Text.ElideRight
+                                        }
                                     }
                                 }
                             }
                         }
-                    }
 
-                    GridLayout {
-                        Layout.fillWidth: true
-                        Layout.fillHeight: true
-                        columns: 2
-                        columnSpacing: 12
-                        rowSpacing: 12
+                        GridLayout {
+                            id: charts
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+                            // Side by side only where a chart keeps room for
+                            // the line it draws.
+                            columns: width >= 560 ? 2 : 1
+                            columnSpacing: 12
+                            rowSpacing: 12
 
-                        Repeater {
-                            model: [
-                                { title: "Frame time", key: "frameMs", unit: "ms", tone: "accent" },
-                                { title: "Passes drawn and skipped", key: "drawn", second: "skipped", unit: "", tone: "good" },
-                                { title: "Memory, resident", key: "rss", unit: "MiB", tone: "violet" },
-                                { title: "Wakeups per second, all threads", key: "wakeups", unit: "/s", tone: "warn" },
-                                { title: "Messages waiting in the mailboxes", key: "inbox", unit: "", tone: "bad" }
-                            ]
-                            delegate: Rectangle {
-                                id: chart
-                                required property var modelData
-                                required property int index
-                                readonly property color tone: theme[modelData.tone]
-                                Layout.fillWidth: true
-                                Layout.fillHeight: true
-                                Layout.columnSpan: index === 4 ? 2 : 1
-                                Layout.minimumHeight: 120
-                                radius: 9
-                                color: theme.card
-                                border.color: theme.rule
+                            Repeater {
+                                model: [
+                                    { title: "Frame time", key: "frameMs", unit: "ms", tone: "accent" },
+                                    { title: "Passes drawn and skipped", key: "drawn", second: "skipped", unit: "", tone: "good" },
+                                    { title: "Memory, resident", key: "rss", unit: "MiB", tone: "violet" },
+                                    { title: "Wakeups per second, all threads", key: "wakeups", unit: "/s", tone: "warn" },
+                                    { title: "Messages waiting in the mailboxes", key: "inbox", unit: "", tone: "bad" }
+                                ]
+                                delegate: Rectangle {
+                                    id: chart
+                                    required property var modelData
+                                    required property int index
+                                    readonly property color tone: theme[modelData.tone]
+                                    Layout.fillWidth: true
+                                    Layout.fillHeight: true
+                                    // The last one alone fills its row.
+                                    Layout.columnSpan: index === 4 ? charts.columns : 1
+                                    Layout.minimumHeight: 120
+                                    radius: 9
+                                    color: theme.card
+                                    border.color: theme.rule
 
-                                readonly property var values: overview.series[modelData.key]
-                                readonly property var seconds: modelData.second ? overview.series[modelData.second] : []
-                                readonly property real now: values.length === 0 ? 0 : values[values.length - 1]
-                                readonly property bool unknown: overview.unmeasured[modelData.key] === true
+                                    readonly property var values: overview.series[modelData.key]
+                                    readonly property var seconds: modelData.second ? overview.series[modelData.second] : []
+                                    readonly property real now: values.length === 0 ? 0 : values[values.length - 1]
+                                    readonly property bool unknown: overview.unmeasured[modelData.key] === true
+                                    // The value goes under the title when the
+                                    // two do not fit on one line, and either
+                                    // elides rather than run into the other or
+                                    // past the chart.
+                                    readonly property bool stacked:
+                                        chartTitle.implicitWidth + chartValue.implicitWidth + 36 > width
 
-                                Text {
-                                    x: 12; y: 10
-                                    text: chart.modelData.title
-                                    color: theme.subtle
-                                }
-                                Text {
-                                    anchors.right: parent.right
-                                    anchors.rightMargin: 12
-                                    y: 8
-                                    text: chart.unknown ? "not measured on this platform"
-                                        : chart.values.length === 0 ? "—"
-                                        : (Math.round(chart.now * 10) / 10) + (chart.modelData.unit === "" ? "" : " " + chart.modelData.unit)
-                                          + (chart.modelData.second && chart.seconds.length > 0
-                                             ? " drawn  ·  " + chart.seconds[chart.seconds.length - 1] + " skipped" : "")
-                                    color: theme.text
-                                    font.bold: true
-                                }
-                                // Lines, not a canvas: a canvas keeps a
-                                // picture of itself the size of the chart and
-                                // draws its text through the canvas's own
-                                // path, which cost more memory than the rest
-                                // of the page and took the first frame over
-                                // its budget.
-                                Item {
-                                    id: plot
-                                    anchors.fill: parent
-                                    anchors.topMargin: 34
-                                    anchors.margins: 12
-                                    visible: !chart.unknown
-                                    // A point stays where it was drawn and
-                                    // the lines move left under the plot, so
-                                    // a sample makes one point per line, not
-                                    // all of them again: making them all was
-                                    // most of what a sample cost. They are
-                                    // made again when the scale or the size
-                                    // changes, and the scale moves in steps
-                                    // so that it seldom does.
-                                    property real top: 1
-                                    property var line: []
-                                    property var second: []
-                                    readonly property real step: width / 119
-                                    // Where the newest point is drawn in the
-                                    // lines' own frame.
-                                    readonly property real head: (overview.version - 1) * step
-
-                                    onWidthChanged: refresh(true)
-                                    onHeightChanged: refresh(true)
-                                    Component.onCompleted: refresh(true)
-                                    Connections {
-                                        target: chart
-                                        function onValuesChanged() { plot.refresh(false) }
-                                        function onSecondsChanged() { plot.refresh(false) }
-                                    }
-
-                                    function refresh(whole) {
-                                        // Nothing to number points by before
-                                        // the plot has a width.
-                                        if (!(step > 0)) {
-                                            line = []
-                                            second = []
-                                            return
-                                        }
-                                        var t = scaleOf(chart.values, chart.seconds)
-                                        if (t !== top) {
-                                            top = t
-                                            whole = true
-                                        }
-                                        var l = follow(whole ? [] : line, chart.values)
-                                        if (l !== line)
-                                            line = l
-                                        var s = follow(whole ? [] : second, chart.seconds)
-                                        if (s !== second)
-                                            second = s
-                                    }
-                                    // One of 1, 1.5, 2, 3, 4, 5, 6 or 8
-                                    // times a power of ten, above the
-                                    // highest value.
-                                    function scaleOf(a, b) {
-                                        var most = 0
-                                        for (var i = 0; i < a.length; ++i)
-                                            most = Math.max(most, a[i])
-                                        for (var k = 0; k < b.length; ++k)
-                                            most = Math.max(most, b[k])
-                                        if (!(most > 0))
-                                            return 1
-                                        var p = Math.pow(10, Math.floor(Math.log10(most * 1.1)))
-                                        var f = most * 1.1 / p
-                                        var nice = [1, 1.5, 2, 3, 4, 5, 6, 8, 10]
-                                        var n = 0
-                                        while (nice[n] < f)
-                                            n += 1
-                                        return nice[n] * p
-                                    }
-                                    // `had` with the points that fell off
-                                    // the left taken away and those for new
-                                    // values added; the overview's version
-                                    // numbers the newest value.
-                                    function follow(had, vs) {
-                                        var first = overview.version - vs.length
-                                        var from = had.length > 0 ? Math.round(had[0].x / step) : first
-                                        var to = from + had.length
-                                        if (from > first || to < first)
-                                            return follow([], vs)
-                                        if (from === first && to === overview.version)
-                                            return had
-                                        var out = had.slice(first - from)
-                                        for (var n = Math.max(to, first); n < overview.version; ++n)
-                                            out.push(Qt.point(n * step, height - vs[n - first] / top * height))
-                                        return out
-                                    }
-
-                                    Rectangle { width: plot.width; height: 1; color: theme.rule }
-                                    Rectangle { y: Math.round(plot.height / 2); width: plot.width; height: 1; color: theme.rule }
-                                    Rectangle { y: plot.height - 1; width: plot.width; height: 1; color: theme.rule }
-                                    Shape {
-                                        x: plot.width - plot.head
-                                        width: Math.max(0, plot.head)
-                                        height: plot.height
-                                        // The line taken down to the bottom
-                                        // and filled under. The same points,
-                                        // not a copy with two more: a copy
-                                        // cost as much again to make and to
-                                        // hand over. Less than two points
-                                        // enclose nothing.
-                                        ShapePath {
-                                            strokeWidth: -1
-                                            fillColor: plot.line.length < 2 ? "transparent"
-                                                : Qt.rgba(chart.tone.r, chart.tone.g, chart.tone.b, 0.14)
-                                            PathPolyline { path: plot.line }
-                                            PathLine { x: plot.head; y: plot.height }
-                                            PathLine { x: plot.line.length > 0 ? plot.line[0].x : 0; y: plot.height }
-                                        }
-                                        ShapePath {
-                                            strokeColor: theme.accent
-                                            strokeWidth: 2
-                                            fillColor: "transparent"
-                                            PathPolyline { path: plot.second }
-                                        }
-                                        ShapePath {
-                                            strokeColor: chart.tone
-                                            strokeWidth: 2
-                                            fillColor: "transparent"
-                                            PathPolyline { path: plot.line }
-                                        }
-                                    }
-                                    // A single point is no line.
-                                    Rectangle {
-                                        visible: chart.values.length === 1
-                                        x: plot.width - 2
-                                        y: plot.line.length === 1 ? plot.line[0].y - 2 : 0
-                                        width: 4; height: 4
-                                        color: chart.tone
+                                    Text {
+                                        id: chartTitle
+                                        x: 12; y: 10
+                                        width: Math.max(0, chart.stacked ? chart.width - 24
+                                                                          : chart.width - 36 - chartValue.width)
+                                        elide: Text.ElideRight
+                                        text: chart.modelData.title
+                                        color: theme.subtle
                                     }
                                     Text {
-                                        x: 2
-                                        visible: chart.values.length > 0
-                                        text: String(Math.round(plot.top * 10) / 10)
-                                        color: theme.subtle
-                                        font.pixelSize: 10
+                                        id: chartValue
+                                        x: chart.stacked ? 12 : chart.width - 12 - width
+                                        y: chart.stacked ? 30 : 8
+                                        width: Math.max(0, Math.min(implicitWidth, chart.width - 24))
+                                        elide: Text.ElideRight
+                                        text: chart.unknown ? "not measured on this platform"
+                                            : chart.values.length === 0 ? "—"
+                                            : (Math.round(chart.now * 10) / 10) + (chart.modelData.unit === "" ? "" : " " + chart.modelData.unit)
+                                              + (chart.modelData.second && chart.seconds.length > 0
+                                                 ? " drawn  ·  " + chart.seconds[chart.seconds.length - 1] + " skipped" : "")
+                                        color: theme.text
+                                        font.bold: true
                                     }
-                                    Text {
-                                        x: 4
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        visible: chart.values.length === 0
-                                        text: "waiting for the application to change"
-                                        color: theme.subtle
-                                        font.pixelSize: 12
+                                    // Lines, not a canvas: a canvas keeps a
+                                    // picture of itself the size of the chart and
+                                    // draws its text through the canvas's own
+                                    // path, which cost more memory than the rest
+                                    // of the page and took the first frame over
+                                    // its budget.
+                                    Item {
+                                        id: plot
+                                        anchors.fill: parent
+                                        anchors.topMargin: chart.stacked ? 52 : 34
+                                        anchors.margins: 12
+                                        visible: !chart.unknown
+                                        // A point stays where it was drawn and
+                                        // the lines move left under the plot, so
+                                        // a sample makes one point per line, not
+                                        // all of them again: making them all was
+                                        // most of what a sample cost. They are
+                                        // made again when the scale or the size
+                                        // changes, and the scale moves in steps
+                                        // so that it seldom does.
+                                        property real top: 1
+                                        property var line: []
+                                        property var second: []
+                                        readonly property real step: width / 119
+                                        // Where the newest point is drawn in the
+                                        // lines' own frame.
+                                        readonly property real head: (overview.version - 1) * step
+
+                                        onWidthChanged: refresh(true)
+                                        onHeightChanged: refresh(true)
+                                        Component.onCompleted: refresh(true)
+                                        // Told once per sample, and both lines
+                                        // read from the one series then: told
+                                        // by each line's own property, the
+                                        // first would be read beside the other's
+                                        // values of the sample before.
+                                        Connections {
+                                            target: overview
+                                            function onSeriesChanged() { plot.refresh(false) }
+                                        }
+
+                                        function refresh(whole) {
+                                            // Nothing to number points by before
+                                            // the plot has a width.
+                                            if (!(step > 0)) {
+                                                line = []
+                                                second = []
+                                                return
+                                            }
+                                            var vs = overview.series[chart.modelData.key]
+                                            var ss = chart.modelData.second ? overview.series[chart.modelData.second] : []
+                                            var t = scaleOf(vs, ss)
+                                            if (t !== top) {
+                                                top = t
+                                                whole = true
+                                            }
+                                            var l = follow(whole ? [] : line, vs)
+                                            if (l !== line)
+                                                line = l
+                                            var s = follow(whole ? [] : second, ss)
+                                            if (s !== second)
+                                                second = s
+                                        }
+                                        // One of 1, 1.5, 2, 3, 4, 5, 6 or 8
+                                        // times a power of ten, above the
+                                        // highest value.
+                                        function scaleOf(a, b) {
+                                            var most = 0
+                                            for (var i = 0; i < a.length; ++i)
+                                                most = Math.max(most, a[i])
+                                            for (var k = 0; k < b.length; ++k)
+                                                most = Math.max(most, b[k])
+                                            if (!(most > 0))
+                                                return 1
+                                            var p = Math.pow(10, Math.floor(Math.log10(most * 1.1)))
+                                            var f = most * 1.1 / p
+                                            var nice = [1, 1.5, 2, 3, 4, 5, 6, 8, 10]
+                                            var n = 0
+                                            while (nice[n] < f)
+                                                n += 1
+                                            return nice[n] * p
+                                        }
+                                        // `had` with the points that fell off
+                                        // the left taken away and those for new
+                                        // values added; the overview's version
+                                        // numbers the newest value.
+                                        function follow(had, vs) {
+                                            var first = overview.version - vs.length
+                                            var from = had.length > 0 ? Math.round(had[0].x / step) : first
+                                            var to = from + had.length
+                                            if (from > first || to < first)
+                                                return follow([], vs)
+                                            if (from === first && to === overview.version)
+                                                return had
+                                            var out = had.slice(first - from)
+                                            for (var n = Math.max(to, first); n < overview.version; ++n)
+                                                out.push(Qt.point(n * step, height - vs[n - first] / top * height))
+                                            return out
+                                        }
+
+                                        Rectangle { width: plot.width; height: 1; color: theme.rule }
+                                        Rectangle { y: Math.round(plot.height / 2); width: plot.width; height: 1; color: theme.rule }
+                                        Rectangle { y: plot.height - 1; width: plot.width; height: 1; color: theme.rule }
+                                        Shape {
+                                            x: plot.width - plot.head
+                                            width: Math.max(0, plot.head)
+                                            height: plot.height
+                                            // The line taken down to the bottom
+                                            // and filled under. The same points,
+                                            // not a copy with two more: a copy
+                                            // cost as much again to make and to
+                                            // hand over. Less than two points
+                                            // enclose nothing.
+                                            ShapePath {
+                                                strokeWidth: -1
+                                                fillColor: plot.line.length < 2 ? "transparent"
+                                                    : Qt.rgba(chart.tone.r, chart.tone.g, chart.tone.b, 0.14)
+                                                PathPolyline { path: plot.line }
+                                                PathLine { x: plot.head; y: plot.height }
+                                                PathLine { x: plot.line.length > 0 ? plot.line[0].x : 0; y: plot.height }
+                                            }
+                                            ShapePath {
+                                                strokeColor: theme.accent
+                                                strokeWidth: 2
+                                                fillColor: "transparent"
+                                                PathPolyline { path: plot.second }
+                                            }
+                                            ShapePath {
+                                                strokeColor: chart.tone
+                                                strokeWidth: 2
+                                                fillColor: "transparent"
+                                                PathPolyline { path: plot.line }
+                                            }
+                                        }
+                                        // A single point is no line.
+                                        Rectangle {
+                                            visible: chart.values.length === 1
+                                            x: plot.width - 2
+                                            y: plot.line.length === 1 ? plot.line[0].y - 2 : 0
+                                            width: 4; height: 4
+                                            color: chart.tone
+                                        }
+                                        Text {
+                                            x: 2
+                                            visible: chart.values.length > 0
+                                            text: String(Math.round(plot.top * 10) / 10)
+                                            color: theme.subtle
+                                            font.pixelSize: 10
+                                        }
+                                        Text {
+                                            x: 4
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            visible: chart.values.length === 0
+                                            text: "waiting for the application to change"
+                                            color: theme.subtle
+                                            font.pixelSize: 12
+                                        }
                                     }
                                 }
                             }
@@ -1060,16 +1206,49 @@ ApplicationWindow {
                         return Math.max(120, total - rest - 16)
                     }
 
-                    RowLayout {
+                    // A table narrower than its columns lays each row out
+                    // over more lines: kind and name on the first, the rest
+                    // under them. The heads wrap as the rows do, so each
+                    // value stays under its head.
+                    function column(i, line) {
+                        var rest = widths[2] + widths[3] + widths[4]
+                        if (!procTable.narrow)
+                            return i === 1 ? nameWidth(line + 16) : widths[i]
+                        if (i === 1)
+                            return Math.max(0, line - widths[0])
+                        if (i === 5)
+                            return line - rest >= 120 ? line - rest : line
+                        return widths[i]
+                    }
+
+                    // In one row while it fits, the kinds at its end;
+                    // wrapped onto more where it does not.
+                    Flow {
+                        id: processesHead
                         Layout.fillWidth: true
-                        Text { text: "Processes"; color: theme.text; font.pixelSize: 19; font.bold: true }
+                        // Asks for no width of its own: see window.spare.
+                        Layout.preferredWidth: 0
+                        spacing: 10
                         Text {
-                            Layout.leftMargin: 12
+                            height: window.headHeight
+                            verticalAlignment: Text.AlignVCenter
+                            Accessible.role: Accessible.Heading
+                            text: "Processes"; color: theme.text; font.pixelSize: 19; font.bold: true
+                        }
+                        Text {
+                            width: Math.min(implicitWidth, processesHead.width)
+                            height: window.headHeight
+                            verticalAlignment: Text.AlignVCenter
+                            elide: Text.ElideRight
                             visible: processes.process !== null
                             color: theme.subtle
                             text: processes.summary(processes.process)
                         }
-                        Item { Layout.fillWidth: true }
+                        Item {
+                            id: processesGap
+                            width: window.spare(processesHead, processesGap)
+                            height: 1
+                        }
                         Repeater {
                             model: [["All", ""], ["Threads", "thread"], ["Timers", "timer"],
                                     ["Animations", "animation"], ["Owners", "owner"]]
@@ -1087,26 +1266,31 @@ ApplicationWindow {
                     }
 
                     Rectangle {
+                        id: procTable
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         radius: 9
                         color: theme.card
                         border.color: theme.rule
                         clip: true
+                        readonly property real line: width - 16
+                        // The columns past the name, and the least a name has.
+                        readonly property bool narrow: line < 640 + 120
+                        readonly property real lineHeight: narrow ? 24 : 32
 
                         // Column heads, laid out as the rows are.
-                        Row {
+                        Flow {
                             id: heads
                             x: 8
                             y: 0
-                            height: 32
+                            width: procTable.line
                             Repeater {
                                 model: ["Kind", "Name", "State", "Work", "Wakeups", "Detail"]
                                 delegate: Text {
                                     required property string modelData
                                     required property int index
-                                    width: index === 1 ? processes.nameWidth(heads.parent.width) : processes.widths[index]
-                                    height: 32
+                                    width: processes.column(index, procTable.line)
+                                    height: procTable.lineHeight
                                     verticalAlignment: Text.AlignVCenter
                                     horizontalAlignment: index === 3 || index === 4 ? Text.AlignRight : Text.AlignLeft
                                     rightPadding: index === 3 || index === 4 ? 12 : 0
@@ -1117,14 +1301,16 @@ ApplicationWindow {
                                 }
                             }
                         }
-                        Rectangle { y: 32; width: parent.width; height: 1; color: theme.rule }
+                        Rectangle { y: heads.height; width: parent.width; height: 1; color: theme.rule }
 
                         // Where the platform lists no threads, the table
                         // says so rather than leaving them out unsaid.
                         Text {
                             id: noThreads
                             x: 8
-                            y: 33
+                            y: heads.height + 1
+                            width: procTable.line
+                            elide: Text.ElideRight
                             visible: processes.threadsUnmeasured
                                 && (processes.kind === "" || processes.kind === "thread")
                             height: visible ? 32 : 0
@@ -1135,7 +1321,7 @@ ApplicationWindow {
 
                         ListView {
                             anchors.fill: parent
-                            anchors.topMargin: 33 + noThreads.height
+                            anchors.topMargin: heads.height + 1 + noThreads.height
                             clip: true
                             // A page out of sight lets its rows go: they
                             // are most of what a page costs to hold.
@@ -1155,21 +1341,22 @@ ApplicationWindow {
                                 required property string handle
                                 required property bool pickable
                                 width: ListView.view.width
-                                height: 32
+                                height: procTable.narrow ? procCells.height : 32
                                 color: rowHover.containsMouse ? theme.accentSoft
                                      : index % 2 ? theme.cardAlt : "transparent"
-                                Row {
+                                Flow {
+                                    id: procCells
                                     x: 8
-                                    height: parent.height
+                                    width: procTable.line
                                     Text {
-                                        width: processes.widths[0]; height: parent.height
+                                        width: processes.column(0, procTable.line); height: procTable.lineHeight
                                         verticalAlignment: Text.AlignVCenter
                                         text: prow.what
                                         color: theme.subtle
                                         elide: Text.ElideRight
                                     }
                                     Text {
-                                        width: processes.nameWidth(prow.width); height: parent.height
+                                        width: processes.column(1, procTable.line); height: procTable.lineHeight
                                         verticalAlignment: Text.AlignVCenter
                                         text: prow.name + (prow.truncated ? "…" : "")
                                         color: prow.pickable ? theme.accent : theme.text
@@ -1177,7 +1364,7 @@ ApplicationWindow {
                                         font.bold: prow.name === "UI thread"
                                     }
                                     Item {
-                                        width: processes.widths[2]; height: parent.height
+                                        width: processes.column(2, procTable.line); height: procTable.lineHeight
                                         Rectangle {
                                             id: dot
                                             visible: prow.hasStatus
@@ -1194,7 +1381,7 @@ ApplicationWindow {
                                         }
                                     }
                                     Text {
-                                        width: processes.widths[3]; height: parent.height
+                                        width: processes.column(3, procTable.line); height: procTable.lineHeight
                                         verticalAlignment: Text.AlignVCenter
                                         horizontalAlignment: Text.AlignRight
                                         rightPadding: 12
@@ -1203,7 +1390,7 @@ ApplicationWindow {
                                         font.family: theme.mono
                                     }
                                     Text {
-                                        width: processes.widths[4]; height: parent.height
+                                        width: processes.column(4, procTable.line); height: procTable.lineHeight
                                         verticalAlignment: Text.AlignVCenter
                                         horizontalAlignment: Text.AlignRight
                                         rightPadding: 12
@@ -1212,7 +1399,7 @@ ApplicationWindow {
                                         font.family: theme.mono
                                     }
                                     Text {
-                                        width: processes.widths[5]; height: parent.height
+                                        width: processes.column(5, procTable.line); height: procTable.lineHeight
                                         verticalAlignment: Text.AlignVCenter
                                         elide: Text.ElideRight
                                         color: theme.subtle
@@ -1295,10 +1482,21 @@ ApplicationWindow {
                         window.ask("app_processes", { kind: "mailbox", peek: 5 }, "mailboxes")
                     }
 
-                    RowLayout {
-                        Text { text: "Mailboxes"; color: theme.text; font.pixelSize: 19; font.bold: true }
+                    Flow {
+                        id: mailboxesHead
+                        Layout.fillWidth: true
+                        spacing: 12
                         Text {
-                            Layout.leftMargin: 12
+                            Accessible.role: Accessible.Heading
+                            text: "Mailboxes"; color: theme.text; font.pixelSize: 19; font.bold: true
+                        }
+                        Text {
+                            width: Math.min(implicitWidth, mailboxesHead.width)
+                            // Beside the title's centre in one line; below
+                            // it, wrapped, where there is no room.
+                            height: Math.max(implicitHeight, window.titleHeight)
+                            verticalAlignment: Text.AlignVCenter
+                            wrapMode: Text.WordWrap
                             text: "counted since the inspector started · kinds only, never contents"
                             color: theme.subtle
                         }
@@ -2751,17 +2949,31 @@ ApplicationWindow {
                         }
                     }
 
-                    RowLayout {
+                    Flow {
+                        id: logsHead
                         Layout.fillWidth: true
+                        // Asks for no width of its own: see window.spare.
+                        Layout.preferredWidth: 0
                         spacing: 10
-                        Text { text: "Logs"; color: theme.text; font.pixelSize: 19; font.bold: true }
                         Text {
+                            height: window.headHeight
+                            verticalAlignment: Text.AlignVCenter
+                            Accessible.role: Accessible.Heading
+                            text: "Logs"; color: theme.text; font.pixelSize: 19; font.bold: true
+                        }
+                        Text {
+                            height: window.headHeight
+                            verticalAlignment: Text.AlignVCenter
                             text: shownLines.count + " of " + logs.entries.length + " lines"
                             color: theme.subtle
                         }
-                        Item { Layout.fillWidth: true }
+                        Item {
+                            id: logsGap
+                            width: window.spare(logsHead, logsGap)
+                            height: 1
+                        }
                         TextField {
-                            Layout.preferredWidth: 260
+                            width: Math.min(260, logsHead.width)
                             placeholderText: "Filter text or category"
                             Accessible.name: "Filter logs"
                             onTextChanged: logs.filter = text
@@ -2802,49 +3014,70 @@ ApplicationWindow {
                                 required property string message
                                 required property string where
                                 width: ListView.view.width
-                                height: 24
+                                // Too narrow for the message beside the rest,
+                                // it takes the whole width of a line below,
+                                // wrapped: elided there it would show nothing.
+                                readonly property bool narrow: width < 560
+                                height: narrow ? 24 + entryMessage.height + 4 : 24
                                 Rectangle {
                                     anchors.fill: parent
                                     color: entry.index % 2 ? theme.cardAlt : "transparent"
                                 }
-                                Row {
+                                Text {
                                     x: 6
-                                    height: parent.height
-                                    spacing: 10
-                                    Text {
-                                        width: 64
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        text: entry.level
-                                        color: logs.tone(entry.level)
-                                        font.bold: entry.level === "warning" || entry.level === "critical"
-                                        font.pixelSize: 12
-                                    }
-                                    Text {
-                                        width: 110
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        text: entry.category
-                                        color: theme.subtle
-                                        elide: Text.ElideRight
-                                        font.pixelSize: 12
-                                    }
-                                    Text {
-                                        width: entry.width - 64 - 110 - 160 - 50
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        text: entry.message
-                                        color: theme.text
-                                        elide: Text.ElideRight
-                                        font.family: theme.mono
-                                        font.pixelSize: 12
-                                    }
-                                    Text {
-                                        width: 160
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        horizontalAlignment: Text.AlignRight
-                                        text: entry.where
-                                        color: theme.subtle
-                                        elide: Text.ElideLeft
-                                        font.pixelSize: 11
-                                    }
+                                    width: 64
+                                    height: 24
+                                    verticalAlignment: Text.AlignVCenter
+                                    // A line of the log has no name of its own: each of its words
+                                    // is read out by itself, as it is shown.
+                                    Accessible.role: Accessible.StaticText
+                                    Accessible.name: text
+                                    text: entry.level
+                                    color: logs.tone(entry.level)
+                                    font.bold: entry.level === "warning" || entry.level === "critical"
+                                    font.pixelSize: 12
+                                }
+                                Text {
+                                    x: 80
+                                    width: 110
+                                    height: 24
+                                    verticalAlignment: Text.AlignVCenter
+                                    Accessible.role: Accessible.StaticText
+                                    Accessible.name: text
+                                    text: entry.category
+                                    color: theme.subtle
+                                    elide: Text.ElideRight
+                                    font.pixelSize: 12
+                                }
+                                Text {
+                                    id: entryMessage
+                                    x: entry.narrow ? 6 : 200
+                                    y: entry.narrow ? 24 : 0
+                                    width: entry.narrow ? entry.width - 12 : entry.width - 200 - 10 - 160 - 6
+                                    height: entry.narrow ? implicitHeight : 24
+                                    verticalAlignment: Text.AlignVCenter
+                                    Accessible.role: Accessible.StaticText
+                                    Accessible.name: text
+                                    text: entry.message
+                                    color: theme.text
+                                    wrapMode: entry.narrow ? Text.WrapAnywhere : Text.NoWrap
+                                    maximumLineCount: entry.narrow ? 6 : 1
+                                    elide: Text.ElideRight
+                                    font.family: theme.mono
+                                    font.pixelSize: 12
+                                }
+                                Text {
+                                    x: entry.narrow ? 200 : entry.width - 6 - 160
+                                    width: entry.narrow ? entry.width - 200 - 6 : 160
+                                    height: 24
+                                    verticalAlignment: Text.AlignVCenter
+                                    horizontalAlignment: Text.AlignRight
+                                    Accessible.role: Accessible.StaticText
+                                    Accessible.name: text
+                                    text: entry.where
+                                    color: theme.subtle
+                                    elide: Text.ElideLeft
+                                    font.pixelSize: 11
                                 }
                             }
                         }
@@ -2989,18 +3222,34 @@ ApplicationWindow {
                         }
                     }
 
-                    RowLayout {
+                    Flow {
+                        id: traceHead
                         Layout.fillWidth: true
+                        // Asks for no width of its own: see window.spare.
+                        Layout.preferredWidth: 0
                         spacing: 10
-                        Text { text: "Trace"; color: theme.text; font.pixelSize: 19; font.bold: true }
                         Text {
+                            height: window.headHeight
+                            verticalAlignment: Text.AlignVCenter
+                            Accessible.role: Accessible.Heading
+                            text: "Trace"; color: theme.text; font.pixelSize: 19; font.bold: true
+                        }
+                        Text {
+                            width: Math.min(implicitWidth, traceHead.width)
+                            height: window.headHeight
+                            verticalAlignment: Text.AlignVCenter
+                            elide: Text.ElideRight
                             text: traceLines.count + " events"
                                   + (trace.dropped > 0 ? " · " + trace.dropped + " older gave way" : "")
                             color: theme.subtle
                         }
-                        Item { Layout.fillWidth: true }
+                        Item {
+                            id: traceGap
+                            width: window.spare(traceHead, traceGap)
+                            height: 1
+                        }
                         TextField {
-                            Layout.preferredWidth: 230
+                            width: Math.min(230, traceHead.width)
                             placeholderText: "Only these names (blank: all)"
                             Accessible.name: "Trace only these properties and signals"
                             onTextChanged: trace.only = text
@@ -3018,10 +3267,13 @@ ApplicationWindow {
 
                     // Whom the trace follows: Stop on each.
                     Flow {
+                        id: tracedFlow
                         Layout.fillWidth: true
                         spacing: 6
                         Text {
                             visible: trace.tracing.length === 0
+                            width: Math.min(implicitWidth, tracedFlow.width)
+                            wrapMode: Text.WordWrap
                             text: "Nothing is traced. Pick an object on the Objects page and press Trace; "
                                   + "a traced object's bindings are followed with + bindings."
                             color: theme.subtle
@@ -3095,6 +3347,8 @@ ApplicationWindow {
                             anchors.fill: parent
                             anchors.margins: 6
                             clip: true
+                            Accessible.role: Accessible.List
+                            Accessible.name: "Trace"
                             model: window.page === 5 ? traceLines : null
                             onModelChanged: if (model !== null) Qt.callLater(traceView.positionViewAtEnd)
                             ScrollBar.vertical: ScrollBar {}
@@ -3108,27 +3362,42 @@ ApplicationWindow {
                                 required property string name
                                 required property string what
                                 width: ListView.view.width
-                                height: 24
+                                // Too narrow for one line, what changed and
+                                // its value go on a line below, under the
+                                // object, so that neither runs past the edge.
+                                // One line holds the columns before the value
+                                // (time, object, kind, name, their gaps and
+                                // the insets) and a value still worth reading.
+                                readonly property real fixedColumns: 6 + 80 + 10 + 180 + 10 + 70 + 10 + 150 + 10 + 6
+                                readonly property real valueAtLeast: 160
+                                readonly property bool narrow: width < fixedColumns + valueAtLeast
+                                height: narrow ? 44 : 24
                                 Rectangle {
                                     anchors.fill: parent
                                     color: traceRow.index % 2 ? theme.cardAlt : "transparent"
                                 }
                                 Row {
                                     x: 6
-                                    height: parent.height
+                                    height: 24
                                     spacing: 10
                                     Text {
                                         width: 80
                                         anchors.verticalCenter: parent.verticalCenter
                                         horizontalAlignment: Text.AlignRight
+                                        // An event has no name of its own: each of its words is read
+                                        // out by itself, as it is shown.
+                                        Accessible.role: Accessible.StaticText
+                                        Accessible.name: text
                                         text: traceRow.at
                                         color: theme.subtle
                                         font.family: theme.mono
                                         font.pixelSize: 12
                                     }
                                     Text {
-                                        width: 180
+                                        width: traceRow.narrow ? Math.max(40, traceRow.width - 6 - 80 - 10 - 10 - 70 - 6) : 180
                                         anchors.verticalCenter: parent.verticalCenter
+                                        Accessible.role: Accessible.StaticText
+                                        Accessible.name: text
                                         text: traceRow.object
                                         color: theme.text
                                         elide: Text.ElideRight
@@ -3137,13 +3406,23 @@ ApplicationWindow {
                                     Text {
                                         width: 70
                                         anchors.verticalCenter: parent.verticalCenter
+                                        Accessible.role: Accessible.StaticText
+                                        Accessible.name: text
                                         text: traceRow.kind
                                         color: trace.tone(traceRow.kind)
                                         font.pixelSize: 12
                                     }
+                                }
+                                Row {
+                                    x: traceRow.narrow ? 6 + 80 + 10 : 6 + 80 + 10 + 180 + 10 + 70 + 10
+                                    y: traceRow.narrow ? 20 : 0
+                                    height: 24
+                                    spacing: 10
                                     Text {
                                         width: 150
                                         anchors.verticalCenter: parent.verticalCenter
+                                        Accessible.role: Accessible.StaticText
+                                        Accessible.name: text
                                         text: traceRow.name
                                         color: theme.text
                                         font.bold: true
@@ -3151,8 +3430,10 @@ ApplicationWindow {
                                         font.pixelSize: 12
                                     }
                                     Text {
-                                        width: traceRow.width - 80 - 180 - 70 - 150 - 50
+                                        width: Math.max(0, traceRow.width - parent.x - 150 - 10 - 6)
                                         anchors.verticalCenter: parent.verticalCenter
+                                        Accessible.role: Accessible.StaticText
+                                        Accessible.name: text
                                         text: traceRow.what
                                         color: theme.text
                                         elide: Text.ElideRight
@@ -3175,325 +3456,368 @@ ApplicationWindow {
                 // Erlang's observer shows an application's supervisors:
                 // here every boundary, each under the one around it, and
                 // the faults each took.
-                ColumnLayout {
-                    id: supervision
-                    spacing: 10
-                    // Row by row, as the mailboxes are: a row whose
-                    // values are the same is left alone.
-                    ListModel { id: supRows }
-                    ListModel { id: faultRows }
-                    property var held: []
-                    property var heldFaults: []
-                    // The fault whose stack is shown, by its number.
-                    property int opened: -1
+                // Scrolls where the window is too short for the supervisors
+                // and the room the faults keep below them.
+                Flickable {
+                    id: supervisionScroll
+                    clip: true
+                    contentWidth: width
+                    contentHeight: Math.max(height, supervision.implicitHeight)
+                    interactive: contentHeight > height
+                    boundsBehavior: Flickable.StopAtBounds
+                    ScrollBar.vertical: ScrollBar {}
 
-                    function load() {
-                        window.ask("app_processes", { kind: "supervisor" }, "supervisors")
-                        window.ask("app_processes", { kind: "fault" }, "faults")
-                    }
+                    ColumnLayout {
+                        id: supervision
+                        width: supervisionScroll.width
+                        height: supervisionScroll.contentHeight
+                        spacing: 10
+                        // Row by row, as the mailboxes are: a row whose
+                        // values are the same is left alone.
+                        ListModel { id: supRows }
+                        ListModel { id: faultRows }
+                        property var held: []
+                        property var heldFaults: []
+                        // The fault whose stack is shown, by its number.
+                        property int opened: -1
 
-                    function into(model, h, rows) {
-                        for (var i = 0; i < rows.length; ++i) {
-                            if (i >= h.length) {
-                                model.append(rows[i])
-                                h.push(rows[i])
-                            } else if (processes.differs(h[i], rows[i])) {
-                                model.set(i, rows[i])
-                                h[i] = rows[i]
-                            }
+                        function load() {
+                            window.ask("app_processes", { kind: "supervisor" }, "supervisors")
+                            window.ask("app_processes", { kind: "fault" }, "faults")
                         }
-                        if (h.length > rows.length) {
-                            model.remove(rows.length, h.length - rows.length)
-                            h.splice(rows.length, h.length - rows.length)
-                        }
-                        return h
-                    }
 
-                    function showTree(list) {
-                        held = into(supRows, held, list.map(flatSupervisor))
-                    }
-
-                    // The newest fault first.
-                    function showFaults(list) {
-                        heldFaults = into(faultRows, heldFaults, list.slice().reverse().map(flatFault))
-                    }
-
-                    function flatSupervisor(s) {
-                        return {
-                            depth: s.depth,
-                            name: s.name,
-                            strategy: s.strategy.replace(/_/g, " "),
-                            used: s.restarts + " of " + s.max_restarts + " in " + window.ms(s.within_ms * 1000),
-                            status: s.state,
-                            content: s.content === undefined ? ""
-                                : s.content + (s.content_restart ? " · " + s.content_restart : ""),
-                            handle: s.handle === undefined ? "" : s.handle
-                        }
-                    }
-
-                    function flatFault(f) {
-                        var file = f.file ? f.file.substring(f.file.lastIndexOf("/") + 1) : ""
-                        return {
-                            seq: f.seq,
-                            fault: f.fault,
-                            message: f.message,
-                            place: file === "" ? "" : file + ":" + f.line,
-                            at: "at " + window.ms(f.at_ms * 1000),
-                            origin: f.origin === null || f.origin === undefined ? ""
-                                : f.origin + (f.origin_gone ? " (gone)" : ""),
-                            originHandle: f.origin_handle ? f.origin_handle : "",
-                            takenBy: f.taken_by,
-                            takenHandle: f.taken_by_handle ? f.taken_by_handle : "",
-                            stack: f.stack.map(function(s) {
-                                var at = s.file ? s.file.substring(s.file.lastIndexOf("/") + 1) + ":" + s.line : ""
-                                return (s.function || "(anonymous)") + "  " + at
-                            }).join("\n"),
-                            depth: f.stack.length
-                        }
-                    }
-
-                    // To the Objects page, with the object picked.
-                    function show(handle, name) {
-                        window.page = 3
-                        objects.load(true)
-                        objects.pick(handle, name)
-                    }
-
-                    RowLayout {
-                        Text { text: "Supervision"; color: theme.text; font.pixelSize: 19; font.bold: true }
-                        Text {
-                            Layout.leftMargin: 12
-                            text: "every boundary, from when it is made · the last 32 faults"
-                            color: theme.subtle
-                        }
-                    }
-
-                    Rectangle {
-                        Layout.fillWidth: true
-                        // Up to ten rows; more scroll. A height taken from
-                        // the page's would lay the page out again.
-                        Layout.preferredHeight: 33 + Math.min(10, Math.max(1, supRows.count)) * 30
-                        radius: 9
-                        color: theme.card
-                        border.color: theme.rule
-                        clip: true
-                        Row {
-                            x: 8
-                            height: 32
-                            Repeater {
-                                model: ["Supervisor", "Strategy", "Restarts used", "State", "Content"]
-                                delegate: Text {
-                                    required property string modelData
-                                    required property int index
-                                    width: [Math.max(160, supervision.width - 560), 120, 170, 110, 160][index]
-                                    height: 32
-                                    verticalAlignment: Text.AlignVCenter
-                                    text: modelData
-                                    color: theme.subtle
-                                    font.pixelSize: 12
-                                    font.bold: true
+                        function into(model, h, rows) {
+                            for (var i = 0; i < rows.length; ++i) {
+                                if (i >= h.length) {
+                                    model.append(rows[i])
+                                    h.push(rows[i])
+                                } else if (processes.differs(h[i], rows[i])) {
+                                    model.set(i, rows[i])
+                                    h[i] = rows[i]
                                 }
                             }
+                            if (h.length > rows.length) {
+                                model.remove(rows.length, h.length - rows.length)
+                                h.splice(rows.length, h.length - rows.length)
+                            }
+                            return h
                         }
-                        Rectangle { y: 32; width: parent.width; height: 1; color: theme.rule }
-                        ListView {
-                            anchors.fill: parent
-                            anchors.topMargin: 33
+
+                        function showTree(list) {
+                            held = into(supRows, held, list.map(flatSupervisor))
+                        }
+
+                        // The newest fault first.
+                        function showFaults(list) {
+                            heldFaults = into(faultRows, heldFaults, list.slice().reverse().map(flatFault))
+                        }
+
+                        function flatSupervisor(s) {
+                            return {
+                                depth: s.depth,
+                                name: s.name,
+                                strategy: s.strategy.replace(/_/g, " "),
+                                used: s.restarts + " of " + s.max_restarts + " in " + window.ms(s.within_ms * 1000),
+                                status: s.state,
+                                content: s.content === undefined ? ""
+                                    : s.content + (s.content_restart ? " · " + s.content_restart : ""),
+                                handle: s.handle === undefined ? "" : s.handle
+                            }
+                        }
+
+                        function flatFault(f) {
+                            var file = f.file ? f.file.substring(f.file.lastIndexOf("/") + 1) : ""
+                            return {
+                                seq: f.seq,
+                                fault: f.fault,
+                                message: f.message,
+                                place: file === "" ? "" : file + ":" + f.line,
+                                at: "at " + window.ms(f.at_ms * 1000),
+                                origin: f.origin === null || f.origin === undefined ? ""
+                                    : f.origin + (f.origin_gone ? " (gone)" : ""),
+                                originHandle: f.origin_handle ? f.origin_handle : "",
+                                takenBy: f.taken_by,
+                                takenHandle: f.taken_by_handle ? f.taken_by_handle : "",
+                                stack: f.stack.map(function(s) {
+                                    var at = s.file ? s.file.substring(s.file.lastIndexOf("/") + 1) + ":" + s.line : ""
+                                    return (s.function || "(anonymous)") + "  " + at
+                                }).join("\n"),
+                                depth: f.stack.length
+                            }
+                        }
+
+                        // To the Objects page, with the object picked.
+                        function show(handle, name) {
+                            window.page = 3
+                            objects.load(true)
+                            objects.pick(handle, name)
+                        }
+
+                        Flow {
+                            id: supervisionHead
+                            Layout.fillWidth: true
+                            spacing: 12
+                            Text {
+                                Accessible.role: Accessible.Heading
+                                text: "Supervision"; color: theme.text; font.pixelSize: 19; font.bold: true
+                            }
+                            Text {
+                                width: Math.min(implicitWidth, supervisionHead.width)
+                                // Beside the title's centre in one line; below
+                                // it, wrapped, where there is no room.
+                                height: Math.max(implicitHeight, window.titleHeight)
+                                verticalAlignment: Text.AlignVCenter
+                                wrapMode: Text.WordWrap
+                                text: "every boundary, from when it is made · the last 32 faults"
+                                color: theme.subtle
+                            }
+                        }
+
+                        Rectangle {
+                            id: supTable
+                            Layout.fillWidth: true
+                            // Up to ten rows; more scroll. A height taken from
+                            // the page's would lay the page out again. A row
+                            // laid out over more lines is taller, and three of
+                            // them leave the faults below room of their own.
+                            Layout.preferredHeight: supHeads.height + 1 + Math.min(narrow ? 3 : 10, Math.max(1, supRows.count)) * rowHeight
+                            radius: 9
+                            color: theme.card
+                            border.color: theme.rule
                             clip: true
-                            model: window.page === 6 ? supRows : null
-                            ScrollBar.vertical: ScrollBar {}
-                            delegate: Rectangle {
-                                id: srow
-                                required property int index
-                                required property int depth
-                                required property string name
-                                required property string strategy
-                                required property string used
-                                required property string status
-                                required property string content
-                                required property string handle
-                                width: ListView.view.width
-                                height: 30
-                                color: supHover.containsMouse ? theme.accentSoft
-                                     : index % 2 ? theme.cardAlt : "transparent"
-                                Row {
-                                    x: 8
-                                    height: parent.height
-                                    Text {
-                                        width: Math.max(160, supervision.width - 560); height: parent.height
+                            // Narrower than its columns, a row is laid out over
+                            // more lines, the supervisor on the first; the heads
+                            // wrap as the rows do.
+                            readonly property real line: width - 16
+                            readonly property bool narrow: line < 720
+                            readonly property real lineHeight: narrow ? 24 : 30
+                            readonly property real rowHeight: narrow ? supHeads.height : 30
+                            function column(i) {
+                                return i === 0 ? (narrow ? line : Math.max(160, line - 560)) : [0, 120, 170, 110, 160][i]
+                            }
+                            Flow {
+                                id: supHeads
+                                x: 8
+                                width: supTable.line
+                                Repeater {
+                                    model: ["Supervisor", "Strategy", "Restarts used", "State", "Content"]
+                                    delegate: Text {
+                                        required property string modelData
+                                        required property int index
+                                        width: supTable.column(index)
+                                        height: supTable.narrow ? supTable.lineHeight : 32
                                         verticalAlignment: Text.AlignVCenter
-                                        leftPadding: srow.depth * 18
-                                        text: srow.name
-                                        color: srow.handle !== "" ? theme.accent : theme.text
-                                        elide: Text.ElideMiddle
-                                    }
-                                    Text {
-                                        width: 120; height: parent.height
-                                        verticalAlignment: Text.AlignVCenter
-                                        text: srow.strategy
+                                        text: modelData
                                         color: theme.subtle
+                                        font.pixelSize: 12
+                                        font.bold: true
                                     }
-                                    Text {
-                                        width: 170; height: parent.height
-                                        verticalAlignment: Text.AlignVCenter
-                                        text: srow.used
-                                        color: theme.text
-                                        font.family: theme.mono
-                                    }
-                                    Item {
-                                        width: 110; height: parent.height
-                                        Rectangle {
-                                            id: supDot
-                                            width: 8; height: 8; radius: 4
-                                            anchors.verticalCenter: parent.verticalCenter
-                                            color: srow.status === "down" ? theme.bad : theme.good
-                                        }
-                                        Text {
-                                            anchors.left: supDot.right
-                                            anchors.leftMargin: 7
-                                            anchors.verticalCenter: parent.verticalCenter
-                                            text: srow.status
-                                            color: theme.text
-                                        }
-                                    }
-                                    Text {
-                                        width: 160; height: parent.height
-                                        verticalAlignment: Text.AlignVCenter
-                                        text: srow.content
-                                        color: srow.content.indexOf("stopped") === 0 ? theme.bad : theme.subtle
-                                        elide: Text.ElideRight
-                                    }
-                                }
-                                MouseArea {
-                                    id: supHover
-                                    anchors.fill: parent
-                                    hoverEnabled: srow.handle !== ""
-                                    enabled: srow.handle !== ""
-                                    Accessible.role: Accessible.ListItem
-                                    Accessible.name: srow.name
-                                    onClicked: supervision.show(srow.handle, srow.name)
                                 }
                             }
-                        }
-                    }
-
-                    Rectangle {
-                        Layout.fillWidth: true
-                        Layout.fillHeight: true
-                        radius: 9
-                        color: theme.card
-                        border.color: theme.rule
-                        clip: true
-                        ListView {
-                            anchors.fill: parent
-                            anchors.margins: 6
-                            clip: true
-                            spacing: 2
-                            model: window.page === 6 ? faultRows : null
-                            ScrollBar.vertical: ScrollBar {}
-                            delegate: Rectangle {
-                                id: frow
-                                required property int index
-                                required property int seq
-                                required property string fault
-                                required property string message
-                                required property string place
-                                required property string at
-                                required property string origin
-                                required property string originHandle
-                                required property string takenBy
-                                required property string takenHandle
-                                required property string stack
-                                required property int depth
-                                readonly property bool open: supervision.opened === seq
-                                width: ListView.view.width
-                                height: 52 + (open ? stackText.implicitHeight + 6 : 0)
-                                radius: 6
-                                color: index % 2 ? theme.cardAlt : "transparent"
-                                MouseArea {
-                                    anchors.fill: parent
-                                    enabled: frow.depth > 0
-                                    Accessible.role: Accessible.ListItem
-                                    Accessible.name: frow.fault + ": " + frow.message
-                                    onClicked: supervision.opened = frow.open ? -1 : frow.seq
-                                }
-                                Column {
-                                    x: 8
-                                    y: 5
-                                    width: parent.width - 16
-                                    spacing: 3
-                                    Row {
-                                        spacing: 10
+                            Rectangle { y: supHeads.height; width: parent.width; height: 1; color: theme.rule }
+                            ListView {
+                                anchors.fill: parent
+                                anchors.topMargin: supHeads.height + 1
+                                clip: true
+                                model: window.page === 6 ? supRows : null
+                                ScrollBar.vertical: ScrollBar {}
+                                delegate: Rectangle {
+                                    id: srow
+                                    required property int index
+                                    required property int depth
+                                    required property string name
+                                    required property string strategy
+                                    required property string used
+                                    required property string status
+                                    required property string content
+                                    required property string handle
+                                    width: ListView.view.width
+                                    height: supTable.rowHeight
+                                    color: supHover.containsMouse ? theme.accentSoft
+                                         : index % 2 ? theme.cardAlt : "transparent"
+                                    Flow {
+                                        x: 8
+                                        width: supTable.line
                                         Text {
-                                            text: frow.fault
-                                            color: frow.takenBy === "log" ? theme.warn : theme.bad
-                                            font.bold: true
+                                            width: supTable.column(0); height: supTable.lineHeight
+                                            verticalAlignment: Text.AlignVCenter
+                                            leftPadding: srow.depth * 18
+                                            text: srow.name
+                                            color: srow.handle !== "" ? theme.accent : theme.text
+                                            elide: Text.ElideMiddle
                                         }
                                         Text {
-                                            width: frow.width - 300
-                                            text: frow.message
+                                            width: supTable.column(1); height: supTable.lineHeight
+                                            verticalAlignment: Text.AlignVCenter
+                                            text: srow.strategy
+                                            color: theme.subtle
+                                        }
+                                        Text {
+                                            width: supTable.column(2); height: supTable.lineHeight
+                                            verticalAlignment: Text.AlignVCenter
+                                            text: srow.used
                                             color: theme.text
+                                            font.family: theme.mono
+                                        }
+                                        Item {
+                                            width: supTable.column(3); height: supTable.lineHeight
+                                            Rectangle {
+                                                id: supDot
+                                                width: 8; height: 8; radius: 4
+                                                anchors.verticalCenter: parent.verticalCenter
+                                                color: srow.status === "down" ? theme.bad : theme.good
+                                            }
+                                            Text {
+                                                anchors.left: supDot.right
+                                                anchors.leftMargin: 7
+                                                anchors.verticalCenter: parent.verticalCenter
+                                                text: srow.status
+                                                color: theme.text
+                                            }
+                                        }
+                                        Text {
+                                            width: supTable.column(4); height: supTable.lineHeight
+                                            verticalAlignment: Text.AlignVCenter
+                                            text: srow.content
+                                            color: srow.content.indexOf("stopped") === 0 ? theme.bad : theme.subtle
                                             elide: Text.ElideRight
                                         }
                                     }
-                                    Row {
-                                        spacing: 14
-                                        Text { text: frow.at; color: theme.subtle; font.family: theme.mono; font.pixelSize: 12 }
-                                        Text { text: frow.place; color: theme.subtle; font.family: theme.mono; font.pixelSize: 12 }
-                                        Text {
-                                            text: frow.origin === "" ? "" : "in " + frow.origin
-                                            color: frow.originHandle !== "" ? theme.accent : theme.subtle
-                                            font.pixelSize: 12
-                                            MouseArea {
-                                                anchors.fill: parent
-                                                visible: frow.originHandle !== ""
-                                                Accessible.role: Accessible.Link
-                                                Accessible.name: frow.origin
-                                                onClicked: supervision.show(frow.originHandle, frow.origin)
-                                            }
-                                        }
-                                        Text {
-                                            text: "taken by " + frow.takenBy
-                                            color: frow.takenHandle !== "" ? theme.accent : theme.subtle
-                                            font.pixelSize: 12
-                                            MouseArea {
-                                                anchors.fill: parent
-                                                visible: frow.takenHandle !== ""
-                                                Accessible.role: Accessible.Link
-                                                Accessible.name: frow.takenBy
-                                                onClicked: supervision.show(frow.takenHandle, frow.takenBy)
-                                            }
-                                        }
-                                        Text {
-                                            visible: frow.depth > 0
-                                            text: (frow.open ? "▾ " : "▸ ") + frow.depth + (frow.depth === 1 ? " frame" : " frames")
-                                            color: theme.subtle
-                                            font.pixelSize: 12
-                                            MouseArea {
-                                                anchors.fill: parent
-                                                Accessible.role: Accessible.Button
-                                                Accessible.name: (frow.open ? "Hide the stack of fault " : "Show the stack of fault ") + frow.seq
-                                                onClicked: supervision.opened = frow.open ? -1 : frow.seq
-                                            }
-                                        }
-                                    }
-                                    Text {
-                                        id: stackText
-                                        visible: frow.open
-                                        leftPadding: 12
-                                        text: frow.stack
-                                        color: theme.text
-                                        font.family: theme.mono
-                                        font.pixelSize: 12
+                                    MouseArea {
+                                        id: supHover
+                                        anchors.fill: parent
+                                        hoverEnabled: srow.handle !== ""
+                                        enabled: srow.handle !== ""
+                                        Accessible.role: Accessible.ListItem
+                                        Accessible.name: srow.name
+                                        onClicked: supervision.show(srow.handle, srow.name)
                                     }
                                 }
                             }
                         }
-                        Text {
-                            anchors.centerIn: parent
-                            visible: faultRows.count === 0
-                            text: "No faults"
-                            color: theme.subtle
+
+                        Rectangle {
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+                            // The supervisors above never take all the room.
+                            Layout.minimumHeight: 160
+                            radius: 9
+                            color: theme.card
+                            border.color: theme.rule
+                            clip: true
+                            ListView {
+                                anchors.fill: parent
+                                anchors.margins: 6
+                                clip: true
+                                spacing: 2
+                                model: window.page === 6 ? faultRows : null
+                                Accessible.role: Accessible.List
+                                Accessible.name: "Faults"
+                                ScrollBar.vertical: ScrollBar {}
+                                delegate: Rectangle {
+                                    id: frow
+                                    required property int index
+                                    required property int seq
+                                    required property string fault
+                                    required property string message
+                                    required property string place
+                                    required property string at
+                                    required property string origin
+                                    required property string originHandle
+                                    required property string takenBy
+                                    required property string takenHandle
+                                    required property string stack
+                                    required property int depth
+                                    readonly property bool open: supervision.opened === seq
+                                    width: ListView.view.width
+                                    height: 52 + (open ? stackText.implicitHeight + 6 : 0)
+                                    radius: 6
+                                    color: index % 2 ? theme.cardAlt : "transparent"
+                                    MouseArea {
+                                        anchors.fill: parent
+                                        enabled: frow.depth > 0
+                                        Accessible.role: Accessible.ListItem
+                                        Accessible.name: frow.fault + ": " + frow.message
+                                        onClicked: supervision.opened = frow.open ? -1 : frow.seq
+                                    }
+                                    Column {
+                                        x: 8
+                                        y: 5
+                                        width: parent.width - 16
+                                        spacing: 3
+                                        Row {
+                                            spacing: 10
+                                            Text {
+                                                text: frow.fault
+                                                color: frow.takenBy === "log" ? theme.warn : theme.bad
+                                                font.bold: true
+                                            }
+                                            Text {
+                                                width: frow.width - 300
+                                                text: frow.message
+                                                color: theme.text
+                                                elide: Text.ElideRight
+                                            }
+                                        }
+                                        Row {
+                                            spacing: 14
+                                            Text { text: frow.at; color: theme.subtle; font.family: theme.mono; font.pixelSize: 12 }
+                                            Text { text: frow.place; color: theme.subtle; font.family: theme.mono; font.pixelSize: 12 }
+                                            Text {
+                                                text: frow.origin === "" ? "" : "in " + frow.origin
+                                                color: frow.originHandle !== "" ? theme.accent : theme.subtle
+                                                font.pixelSize: 12
+                                                MouseArea {
+                                                    anchors.fill: parent
+                                                    visible: frow.originHandle !== ""
+                                                    Accessible.role: Accessible.Link
+                                                    Accessible.name: frow.origin
+                                                    onClicked: supervision.show(frow.originHandle, frow.origin)
+                                                }
+                                            }
+                                            Text {
+                                                text: "taken by " + frow.takenBy
+                                                color: frow.takenHandle !== "" ? theme.accent : theme.subtle
+                                                font.pixelSize: 12
+                                                MouseArea {
+                                                    anchors.fill: parent
+                                                    visible: frow.takenHandle !== ""
+                                                    Accessible.role: Accessible.Link
+                                                    Accessible.name: frow.takenBy
+                                                    onClicked: supervision.show(frow.takenHandle, frow.takenBy)
+                                                }
+                                            }
+                                            Text {
+                                                visible: frow.depth > 0
+                                                text: (frow.open ? "▾ " : "▸ ") + frow.depth + (frow.depth === 1 ? " frame" : " frames")
+                                                color: theme.subtle
+                                                font.pixelSize: 12
+                                                MouseArea {
+                                                    anchors.fill: parent
+                                                    Accessible.role: Accessible.Button
+                                                    Accessible.name: (frow.open ? "Hide the stack of fault " : "Show the stack of fault ") + frow.seq
+                                                    onClicked: supervision.opened = frow.open ? -1 : frow.seq
+                                                }
+                                            }
+                                        }
+                                        Text {
+                                            id: stackText
+                                            visible: frow.open
+                                            leftPadding: 12
+                                            text: frow.stack
+                                            color: theme.text
+                                            font.family: theme.mono
+                                            font.pixelSize: 12
+                                        }
+                                    }
+                                }
+                            }
+                            Text {
+                                anchors.centerIn: parent
+                                visible: faultRows.count === 0
+                                text: "No faults"
+                                color: theme.subtle
+                            }
                         }
                     }
                 }
@@ -3510,8 +3834,10 @@ ApplicationWindow {
                     property int dropped: 0
                     property var summary: null
                     // The longest frame since Clear, and never less than a
-                    // frame of a 60 Hz display, so that bars compare.
-                    property real scale: 16667
+                    // frame of a 60 Hz display, so that bars compare. Not
+                    // `scale`, which is the item's own and would draw the
+                    // whole page at that size.
+                    property real barScale: 16667
                     // Every frame kept, shown or not: the frames this
                     // window's own requests alone woke are hidden while
                     // `hideOwn`, and come back when it is turned off.
@@ -3642,7 +3968,7 @@ ApplicationWindow {
                         if (row.own)
                             ownCount += 1
                         if (!(hideOwn && row.own)) {
-                            scale = Math.max(scale, row.total)
+                            barScale = Math.max(barScale, row.total)
                             frameRows.append(row)
                         }
                     }
@@ -3653,7 +3979,7 @@ ApplicationWindow {
                             var row = kept[i]
                             if (hideOwn && row.own)
                                 continue
-                            scale = Math.max(scale, row.total)
+                            barScale = Math.max(barScale, row.total)
                             frameRows.append(row)
                         }
                         frameView.positionViewAtEnd()
@@ -3664,7 +3990,7 @@ ApplicationWindow {
                         kept = []
                         ownCount = 0
                         summary = null
-                        scale = 16667
+                        barScale = 16667
                     }
 
                     // "p50 · p95 · max" of a part, as the last answer
@@ -3684,11 +4010,25 @@ ApplicationWindow {
 
                     ListModel { id: frameRows }
 
-                    RowLayout {
+                    // In one row while it fits, the controls at its end;
+                    // wrapped onto more where it does not.
+                    Flow {
+                        id: framesHead
                         Layout.fillWidth: true
+                        // Asks for no width of its own: see window.spare.
+                        Layout.preferredWidth: 0
                         spacing: 10
-                        Text { text: "Frames"; color: theme.text; font.pixelSize: 19; font.bold: true }
                         Text {
+                            height: recordButton.implicitHeight
+                            verticalAlignment: Text.AlignVCenter
+                            Accessible.role: Accessible.Heading
+                            text: "Frames"; color: theme.text; font.pixelSize: 19; font.bold: true
+                        }
+                        Text {
+                            width: Math.min(implicitWidth, framesHead.width)
+                            height: recordButton.implicitHeight
+                            verticalAlignment: Text.AlignVCenter
+                            elide: Text.ElideRight
                             text: (timeline.recording ? "recording" : "not recording") + " · "
                                   + frameRows.count + " frames"
                                   + (timeline.hideOwn && timeline.ownCount > 0
@@ -3696,7 +4036,11 @@ ApplicationWindow {
                                   + (timeline.dropped > 0 ? " · " + timeline.dropped + " older gave way" : "")
                             color: timeline.recording ? theme.good : theme.subtle
                         }
-                        Item { Layout.fillWidth: true }
+                        Item {
+                            id: framesGap
+                            width: window.spare(framesHead, framesGap)
+                            height: 1
+                        }
                         // This window asks the application too; what only
                         // its asking woke is not the application's work.
                         CheckBox {
@@ -3705,6 +4049,7 @@ ApplicationWindow {
                             onToggled: timeline.hideOwn = checked
                         }
                         Button {
+                            id: recordButton
                             text: timeline.recording ? "Stop" : "Record"
                             onClicked: timeline.record(!timeline.recording)
                         }
@@ -3807,9 +4152,20 @@ ApplicationWindow {
                                 required property int runs
                                 required property real text
                                 required property int layouts
-                                readonly property real barWidth: Math.max(40, width - 630)
+                                // Below this width a row takes two lines:
+                                // the frame, what woke it and its time,
+                                // then when it ran, its bar and what it ran.
+                                // On one line the bar gets what is left after
+                                // the cells before it (to 446), its gap, the
+                                // 180 of what it ran and the right inset, and
+                                // the row is one line only while that is a
+                                // bar worth reading.
+                                readonly property real wideBar: width - 446 - 10 - 180 - 6
+                                readonly property real barAtLeast: 80
+                                readonly property bool narrow: wideBar < barAtLeast
+                                readonly property real barWidth: narrow ? Math.max(40, width - 12 - 270) : wideBar
                                 width: ListView.view.width
-                                height: 24
+                                height: narrow ? 46 : 24
                                 Accessible.role: Accessible.ListItem
                                 Accessible.name: "frame " + seq + " of " + (win === "main" ? "the main window" : win)
                                                  + ", woke by " + (woke === "" ? "nothing" : woke)
@@ -3818,80 +4174,87 @@ ApplicationWindow {
                                     anchors.fill: parent
                                     color: frameRow.index % 2 ? theme.cardAlt : "transparent"
                                 }
-                                Row {
+                                // Placed by hand, not in a Row, so that one
+                                // set of cells takes either form.
+                                Text {
                                     x: 6
-                                    height: parent.height
-                                    spacing: 10
-                                    Text {
-                                        width: 50
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        horizontalAlignment: Text.AlignRight
-                                        text: frameRow.seq
-                                        color: theme.subtle
-                                        font.family: theme.mono
-                                        font.pixelSize: 12
-                                    }
-                                    Text {
-                                        width: 70
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        horizontalAlignment: Text.AlignRight
-                                        text: frameRow.at
-                                        color: theme.subtle
-                                        font.family: theme.mono
-                                        font.pixelSize: 12
-                                    }
-                                    // Which window's scene ran it.
-                                    Text {
-                                        width: 60
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        text: frameRow.win
-                                        color: frameRow.win === "main" ? theme.subtle : theme.accent
-                                        elide: Text.ElideRight
-                                        font.family: theme.mono
-                                        font.pixelSize: 12
-                                    }
-                                    Text {
-                                        width: 140
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        text: frameRow.woke === "" ? "—" : frameRow.woke
-                                        color: timeline.wokeTone(frameRow.woke)
-                                        elide: Text.ElideRight
-                                        font.pixelSize: 12
-                                    }
-                                    Text {
-                                        width: 70
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        horizontalAlignment: Text.AlignRight
-                                        text: window.ms(frameRow.total)
-                                        color: theme.text
-                                        font.family: theme.mono
-                                        font.pixelSize: 12
-                                    }
-                                    // The passes, then painting, to one
-                                    // scale for every row.
-                                    Row {
-                                        width: frameRow.barWidth
-                                        height: 12
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        Repeater {
-                                            model: timeline.parts
-                                            delegate: Rectangle {
-                                                required property var modelData
-                                                height: 12
-                                                width: frameRow.barWidth * frameRow[modelData.key] / timeline.scale
-                                                color: modelData.tone
-                                            }
+                                    width: 50; height: 24
+                                    verticalAlignment: Text.AlignVCenter
+                                    horizontalAlignment: Text.AlignRight
+                                    text: frameRow.seq
+                                    color: theme.subtle
+                                    font.family: theme.mono
+                                    font.pixelSize: 12
+                                }
+                                Text {
+                                    x: frameRow.narrow ? 6 : 66
+                                    y: frameRow.narrow ? 22 : 0
+                                    width: 70; height: 24
+                                    verticalAlignment: Text.AlignVCenter
+                                    horizontalAlignment: Text.AlignRight
+                                    text: frameRow.at
+                                    color: theme.subtle
+                                    font.family: theme.mono
+                                    font.pixelSize: 12
+                                }
+                                // Which window's scene ran it.
+                                Text {
+                                    x: frameRow.narrow ? 66 : 146
+                                    width: 60; height: 24
+                                    verticalAlignment: Text.AlignVCenter
+                                    text: frameRow.win
+                                    color: frameRow.win === "main" ? theme.subtle : theme.accent
+                                    elide: Text.ElideRight
+                                    font.family: theme.mono
+                                    font.pixelSize: 12
+                                }
+                                Text {
+                                    x: frameRow.narrow ? 136 : 216
+                                    width: frameRow.narrow ? Math.max(0, frameRow.width - 6 - 70 - 10 - 136) : 140
+                                    height: 24
+                                    verticalAlignment: Text.AlignVCenter
+                                    text: frameRow.woke === "" ? "—" : frameRow.woke
+                                    color: timeline.wokeTone(frameRow.woke)
+                                    elide: Text.ElideRight
+                                    font.pixelSize: 12
+                                }
+                                Text {
+                                    x: frameRow.narrow ? frameRow.width - 6 - 70 : 366
+                                    width: 70; height: 24
+                                    verticalAlignment: Text.AlignVCenter
+                                    horizontalAlignment: Text.AlignRight
+                                    text: window.ms(frameRow.total)
+                                    color: theme.text
+                                    font.family: theme.mono
+                                    font.pixelSize: 12
+                                }
+                                // The passes, then painting, to one scale
+                                // for every row.
+                                Row {
+                                    x: frameRow.narrow ? 86 : 446
+                                    y: (frameRow.narrow ? 22 : 0) + 6
+                                    width: frameRow.barWidth
+                                    height: 12
+                                    Repeater {
+                                        model: timeline.parts
+                                        delegate: Rectangle {
+                                            required property var modelData
+                                            height: 12
+                                            width: frameRow.barWidth * frameRow[modelData.key] / timeline.barScale
+                                            color: modelData.tone
                                         }
                                     }
-                                    Text {
-                                        width: 180
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        text: "bindings " + window.ms(frameRow.bindings) + " (" + frameRow.runs + ")"
-                                              + " · text " + window.ms(frameRow.text) + " (" + frameRow.layouts + ")"
-                                        color: theme.subtle
-                                        elide: Text.ElideRight
-                                        font.pixelSize: 11
-                                    }
+                                }
+                                Text {
+                                    x: frameRow.narrow ? frameRow.width - 6 - 180 : 456 + frameRow.barWidth
+                                    y: frameRow.narrow ? 22 : 0
+                                    width: 180; height: 24
+                                    verticalAlignment: Text.AlignVCenter
+                                    text: "bindings " + window.ms(frameRow.bindings) + " (" + frameRow.runs + ")"
+                                          + " · text " + window.ms(frameRow.text) + " (" + frameRow.layouts + ")"
+                                    color: theme.subtle
+                                    elide: Text.ElideRight
+                                    font.pixelSize: 11
                                 }
                             }
                         }
@@ -3911,485 +4274,535 @@ ApplicationWindow {
                 // objects by type, and each window. Asked when shown and
                 // when a pass is drawn, at most once a second as the watch
                 // settles; nothing is asked while another page is shown.
-                ColumnLayout {
-                    id: memory
-                    spacing: 10
-                    property var last: null
-                    // What each owner held, a sample each time the page
-                    // asked, the oldest first: the chart over time.
-                    property var history: []
-                    readonly property int kept: 120
-                    // The stacked bands drawn, bottom first, each as a
-                    // polygon in the chart's own pixels.
-                    property var bands: []
-                    property real stackTop: 1
-                    // The owners stacked, bottom first: together they are
-                    // what the process holds. Textures are not among them.
-                    readonly property var stack: [
-                        { key: "program", tone: "#8a8f99" },
-                        { key: "compiled", tone: "#6b7fb5" },
-                        { key: "script", tone: theme.warn },
-                        { key: "objects", tone: theme.accent },
-                        { key: "reactive", tone: theme.violet },
-                        { key: "scene", tone: "#d77fae" },
-                        { key: "text", tone: theme.good },
-                        { key: "glyph_atlas", tone: "#8fcf6f" },
-                        { key: "meshes", tone: theme.bad },
-                        { key: "images", tone: "#3fa7a0" },
-                        { key: "models", tone: "#c9a35a" },
-                        { key: "allocator_free", tone: "#b7bcc5" },
-                        { key: "not_attributed", tone: theme.rule }
-                    ]
-                    // The largest part, so that bars compare.
-                    property real most: 1
-                    readonly property var parts: [
-                        { key: "objects", name: "objects", tone: theme.accent },
-                        { key: "script", name: "script heap", tone: theme.warn },
-                        { key: "reactive", name: "reactive graph", tone: theme.violet },
-                        { key: "text", name: "text caches", tone: theme.good },
-                        { key: "images", name: "images", tone: "#3fa7a0" },
-                        { key: "scenes", name: "scenes", tone: "#d77fae" },
-                        { key: "renderers", name: "renderers", tone: theme.bad }
-                    ]
+                // Scrolls where the window is too short for the page.
+                Flickable {
+                    id: memoryScroll
+                    clip: true
+                    contentWidth: width
+                    contentHeight: Math.max(height, memory.implicitHeight)
+                    interactive: contentHeight > height
+                    boundsBehavior: Flickable.StopAtBounds
+                    ScrollBar.vertical: ScrollBar {}
 
-                    function load() {
-                        window.ask("app_metrics", { memory: { max: 200, mappings: true } }, "memory")
-                    }
-
-                    function sum(windows, of) {
-                        var n = 0
-                        for (var i = 0; i < windows.length; ++i) {
-                            var w = of(windows[i])
-                            n += w ? w.bytes : 0
-                        }
-                        return n
-                    }
-
-                    function sample(s) {
-                        if (!s.owners)
-                            return
-                        var at = {}
-                        var gpu = 0
-                        for (var i = 0; i < s.owners.length; ++i) {
-                            var o = s.owners[i]
-                            if (o.gpu)
-                                gpu += o.bytes
-                            else
-                                at[o.owner] = o.bytes
-                        }
-                        var h = history.slice(Math.max(0, history.length - kept + 1))
-                        h.push({ t: Date.now(), bytes: at, gpu: gpu })
-                        history = h
-                        draw()
-                    }
-
-                    // The bands for the samples kept, to the chart's width:
-                    // each sample at its time, so that a quiet stretch with
-                    // nothing asked reads as one.
-                    function draw() {
-                        var h = history
-                        var w = memoryChart.width, ht = memoryChart.height
-                        if (h.length === 0 || !(w > 0)) {
-                            bands = []
-                            return
-                        }
-                        var top = 1
-                        var totals = []
-                        for (var i = 0; i < h.length; ++i) {
-                            var n = 0
-                            for (var k = 0; k < stack.length; ++k)
-                                n += h[i].bytes[stack[k].key] || 0
-                            totals.push(n)
-                            top = Math.max(top, n)
-                        }
-                        top *= 1.05
-                        var t0 = h[0].t, span = h[h.length - 1].t - t0
-                        var xs = []
-                        for (var j = 0; j < h.length; ++j)
-                            xs.push(span > 0 ? (h[j].t - t0) / span * w : (h.length === 1 ? 0 : j / (h.length - 1) * w))
-                        // One sample is a column across the whole width.
-                        var one = h.length === 1
-                        var below = []
-                        for (var b = 0; b < h.length; ++b)
-                            below.push(0)
-                        var out = []
-                        for (var s = 0; s < stack.length; ++s) {
-                            var key = stack[s].key
-                            var upper = [], lower = []
-                            var any = false
-                            for (var m = 0; m < h.length; ++m) {
-                                var v = h[m].bytes[key] || 0
-                                any = any || v > 0
-                                var y0 = ht - below[m] / top * ht
-                                below[m] += v
-                                var y1 = ht - below[m] / top * ht
-                                upper.push(Qt.point(xs[m], y1))
-                                lower.unshift(Qt.point(xs[m], y0))
-                                if (one) {
-                                    upper.push(Qt.point(w, y1))
-                                    lower.unshift(Qt.point(w, y0))
-                                }
-                            }
-                            if (any)
-                                out.push({ tone: String(stack[s].tone), points: upper.concat(lower) })
-                        }
-                        stackTop = top
-                        bands = out
-                    }
-
-                    function show(s) {
-                        last = s
-                        sample(s)
-                        var sizes = {
-                            objects: s.objects.bytes,
-                            script: s.script ? s.script.bytes : 0,
-                            reactive: s.reactive.bytes,
-                            text: s.text ? s.text.bytes : 0,
-                            images: s.images.bytes,
-                            scenes: sum(s.windows, function (w) { return w.scene }),
-                            renderers: sum(s.windows, function (w) { return w.render })
-                        }
-                        partRows.clear()
-                        var top = 1
-                        for (var i = 0; i < parts.length; ++i) {
-                            var p = parts[i]
-                            top = Math.max(top, sizes[p.key])
-                            partRows.append({ name: p.name, tone: String(p.tone), bytes: sizes[p.key] })
-                        }
-                        typeRows.clear()
-                        for (var j = 0; j < s.objects.types.length; ++j) {
-                            var t = s.objects.types[j]
-                            top = Math.max(top, t.bytes)
-                            typeRows.append({ type: t.type, count: t.count, bytes: t.bytes })
-                        }
-                        most = top
-                        windowRows.clear()
-                        for (var k = 0; k < s.windows.length; ++k) {
-                            var w = s.windows[k]
-                            var r = w.render
-                            windowRows.append({
-                                name: w.window === null ? "window " + k : w.window,
-                                scene: w.scene.items + " items, " + w.scene.lists + " display lists, "
-                                       + window.bytes(w.scene.bytes),
-                                render: r === null ? "nothing draws it"
-                                      : r.meshes + " meshes, " + (r.textures + r.pages + r.shape_textures)
-                                        + " textures, glyph atlas " + window.bytes(r.glyph_atlas_bytes)
-                                        + ", " + window.bytes(r.bytes)
-                                        + (r.glyph_runs_incomplete > 0
-                                           ? ", " + r.glyph_runs_incomplete + " text runs missing glyphs" : "")
-                                        + (r.warnings > 0 ? ", " + r.warnings + " drawing warnings" : "")
-                            })
-                        }
-                    }
-
-                    ListModel { id: partRows }
-                    ListModel { id: typeRows }
-                    ListModel { id: windowRows }
-
-                    RowLayout {
-                        Layout.fillWidth: true
+                    ColumnLayout {
+                        id: memory
+                        width: memoryScroll.width
+                        height: memoryScroll.contentHeight
                         spacing: 10
-                        Text { text: "Memory"; color: theme.text; font.pixelSize: 19; font.bold: true }
-                        Text {
-                            Layout.fillWidth: true
-                            elide: Text.ElideRight
-                            text: !memory.last ? ""
-                                : (memory.last.process
-                                   ? window.bytes(memory.last.process.resident_bytes) + " resident, "
-                                     + window.bytes(memory.last.process.own_bytes) + " of it its own · "
-                                   : "")
-                                  + window.bytes(memory.last.counted_bytes) + " counted below"
-                                  + (memory.last.reconciled
-                                     ? " · " + window.bytes(Math.max(0, memory.last.reconciled.not_attributed_bytes))
-                                       + " not attributed (" + Math.round(memory.last.reconciled.not_attributed_share * 100) + " %)"
-                                     : "")
-                            color: theme.subtle
-                        }
-                        Button {
-                            text: "Refresh"
-                            onClicked: memory.load()
-                        }
-                    }
+                        property var last: null
+                        // What each owner held, a sample each time the page
+                        // asked, the oldest first: the chart over time.
+                        property var history: []
+                        readonly property int kept: 120
+                        // The stacked bands drawn, bottom first, each as a
+                        // polygon in the chart's own pixels.
+                        property var bands: []
+                        property real stackTop: 1
+                        // The owners stacked, bottom first: together they are
+                        // what the process holds. Textures are not among them.
+                        readonly property var stack: [
+                            { key: "program", tone: "#8a8f99" },
+                            { key: "compiled", tone: "#6b7fb5" },
+                            { key: "script", tone: theme.warn },
+                            { key: "objects", tone: theme.accent },
+                            { key: "reactive", tone: theme.violet },
+                            { key: "scene", tone: "#d77fae" },
+                            { key: "text", tone: theme.good },
+                            { key: "glyph_atlas", tone: "#8fcf6f" },
+                            { key: "meshes", tone: theme.bad },
+                            { key: "images", tone: "#3fa7a0" },
+                            { key: "models", tone: "#c9a35a" },
+                            { key: "allocator_free", tone: "#b7bcc5" },
+                            { key: "not_attributed", tone: theme.rule }
+                        ]
+                        // The largest part, so that bars compare.
+                        property real most: 1
+                        readonly property var parts: [
+                            { key: "objects", name: "objects", tone: theme.accent },
+                            { key: "script", name: "script heap", tone: theme.warn },
+                            { key: "reactive", name: "reactive graph", tone: theme.violet },
+                            { key: "text", name: "text caches", tone: theme.good },
+                            { key: "images", name: "images", tone: "#3fa7a0" },
+                            { key: "scenes", name: "scenes", tone: "#d77fae" },
+                            { key: "renderers", name: "renderers", tone: theme.bad }
+                        ]
 
-                    // What the process holds, by owner, over the samples
-                    // kept: the bands stack to what is resident.
-                    Rectangle {
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: 150 + legend.implicitHeight
-                        radius: 9
-                        color: theme.card
-                        border.color: theme.rule
-                        visible: memory.history.length > 0
-                        Item {
-                            id: memoryChart
-                            x: 8; y: 8
-                            width: parent.width - 16
-                            height: 120
-                            onWidthChanged: memory.draw()
-                            Accessible.role: Accessible.Chart
-                            Accessible.name: "Memory by owner over the last " + memory.history.length + " samples"
-                            Rectangle { width: parent.width; height: 1; color: theme.rule }
-                            Rectangle { y: parent.height - 1; width: parent.width; height: 1; color: theme.rule }
-                            Repeater {
-                                model: window.page === 8 ? memory.bands : null
-                                delegate: Shape {
-                                    id: band
-                                    required property var modelData
-                                    width: memoryChart.width
-                                    height: memoryChart.height
-                                    ShapePath {
-                                        strokeWidth: -1
-                                        fillColor: band.modelData.tone
-                                        PathPolyline { path: band.modelData.points }
+                        function load() {
+                            window.ask("app_metrics", { memory: { max: 200, mappings: true } }, "memory")
+                        }
+
+                        function sum(windows, of) {
+                            var n = 0
+                            for (var i = 0; i < windows.length; ++i) {
+                                var w = of(windows[i])
+                                n += w ? w.bytes : 0
+                            }
+                            return n
+                        }
+
+                        function sample(s) {
+                            if (!s.owners)
+                                return
+                            var at = {}
+                            var gpu = 0
+                            for (var i = 0; i < s.owners.length; ++i) {
+                                var o = s.owners[i]
+                                if (o.gpu)
+                                    gpu += o.bytes
+                                else
+                                    at[o.owner] = o.bytes
+                            }
+                            var h = history.slice(Math.max(0, history.length - kept + 1))
+                            h.push({ t: Date.now(), bytes: at, gpu: gpu })
+                            history = h
+                            draw()
+                        }
+
+                        // The bands for the samples kept, to the chart's width:
+                        // each sample at its time, so that a quiet stretch with
+                        // nothing asked reads as one.
+                        function draw() {
+                            var h = history
+                            var w = memoryChart.width, ht = memoryChart.height
+                            if (h.length === 0 || !(w > 0)) {
+                                bands = []
+                                return
+                            }
+                            var top = 1
+                            var totals = []
+                            for (var i = 0; i < h.length; ++i) {
+                                var n = 0
+                                for (var k = 0; k < stack.length; ++k)
+                                    n += h[i].bytes[stack[k].key] || 0
+                                totals.push(n)
+                                top = Math.max(top, n)
+                            }
+                            top *= 1.05
+                            var t0 = h[0].t, span = h[h.length - 1].t - t0
+                            var xs = []
+                            for (var j = 0; j < h.length; ++j)
+                                xs.push(span > 0 ? (h[j].t - t0) / span * w : (h.length === 1 ? 0 : j / (h.length - 1) * w))
+                            // One sample is a column across the whole width.
+                            var one = h.length === 1
+                            var below = []
+                            for (var b = 0; b < h.length; ++b)
+                                below.push(0)
+                            var out = []
+                            for (var s = 0; s < stack.length; ++s) {
+                                var key = stack[s].key
+                                var upper = [], lower = []
+                                var any = false
+                                for (var m = 0; m < h.length; ++m) {
+                                    var v = h[m].bytes[key] || 0
+                                    any = any || v > 0
+                                    var y0 = ht - below[m] / top * ht
+                                    below[m] += v
+                                    var y1 = ht - below[m] / top * ht
+                                    upper.push(Qt.point(xs[m], y1))
+                                    lower.unshift(Qt.point(xs[m], y0))
+                                    if (one) {
+                                        upper.push(Qt.point(w, y1))
+                                        lower.unshift(Qt.point(w, y0))
                                     }
                                 }
+                                if (any)
+                                    out.push({ tone: String(stack[s].tone), points: upper.concat(lower) })
+                            }
+                            stackTop = top
+                            bands = out
+                        }
+
+                        function show(s) {
+                            last = s
+                            sample(s)
+                            var sizes = {
+                                objects: s.objects.bytes,
+                                script: s.script ? s.script.bytes : 0,
+                                reactive: s.reactive.bytes,
+                                text: s.text ? s.text.bytes : 0,
+                                images: s.images.bytes,
+                                scenes: sum(s.windows, function (w) { return w.scene }),
+                                renderers: sum(s.windows, function (w) { return w.render })
+                            }
+                            partRows.clear()
+                            var top = 1
+                            for (var i = 0; i < parts.length; ++i) {
+                                var p = parts[i]
+                                top = Math.max(top, sizes[p.key])
+                                partRows.append({ name: p.name, tone: String(p.tone), bytes: sizes[p.key] })
+                            }
+                            typeRows.clear()
+                            for (var j = 0; j < s.objects.types.length; ++j) {
+                                var t = s.objects.types[j]
+                                top = Math.max(top, t.bytes)
+                                typeRows.append({ type: t.type, count: t.count, bytes: t.bytes })
+                            }
+                            most = top
+                            windowRows.clear()
+                            for (var k = 0; k < s.windows.length; ++k) {
+                                var w = s.windows[k]
+                                var r = w.render
+                                windowRows.append({
+                                    name: w.window === null ? "window " + k : w.window,
+                                    scene: w.scene.items + " items, " + w.scene.lists + " display lists, "
+                                           + window.bytes(w.scene.bytes),
+                                    render: r === null ? "nothing draws it"
+                                          : r.meshes + " meshes, " + (r.textures + r.pages + r.shape_textures)
+                                            + " textures, glyph atlas " + window.bytes(r.glyph_atlas_bytes)
+                                            + ", " + window.bytes(r.bytes)
+                                            + (r.glyph_runs_incomplete > 0
+                                               ? ", " + r.glyph_runs_incomplete + " text runs missing glyphs" : "")
+                                            + (r.warnings > 0 ? ", " + r.warnings + " drawing warnings" : "")
+                                })
+                            }
+                        }
+
+                        ListModel { id: partRows }
+                        ListModel { id: typeRows }
+                        ListModel { id: windowRows }
+
+                        // In one row while it fits, the controls at its end;
+                        // wrapped onto more where it does not.
+                        Flow {
+                            id: memoryHead
+                            Layout.fillWidth: true
+                            // Asks for no width of its own: see window.spare.
+                            Layout.preferredWidth: 0
+                            spacing: 10
+                            Text {
+                                height: window.headHeight
+                                verticalAlignment: Text.AlignVCenter
+                                Accessible.role: Accessible.Heading
+                                text: "Memory"; color: theme.text; font.pixelSize: 19; font.bold: true
                             }
                             Text {
-                                x: 4; y: 2
-                                text: window.bytes(memory.stackTop)
+                                width: Math.min(implicitWidth, memoryHead.width)
+                                height: window.headHeight
+                                verticalAlignment: Text.AlignVCenter
+                                elide: Text.ElideRight
+                                text: !memory.last ? ""
+                                    : (memory.last.process
+                                       ? window.bytes(memory.last.process.resident_bytes) + " resident, "
+                                         + window.bytes(memory.last.process.own_bytes) + " of it its own · "
+                                       : "")
+                                      + window.bytes(memory.last.counted_bytes) + " counted below"
+                                      + (memory.last.reconciled
+                                         ? " · " + window.bytes(Math.max(0, memory.last.reconciled.not_attributed_bytes))
+                                           + " not attributed (" + Math.round(memory.last.reconciled.not_attributed_share * 100) + " %)"
+                                         : "")
                                 color: theme.subtle
-                                font.pixelSize: 10
+                            }
+                            Item {
+                                id: memoryGap
+                                width: window.spare(memoryHead, memoryGap)
+                                height: 1
+                            }
+                            Button {
+                                text: "Refresh"
+                                onClicked: memory.load()
                             }
                         }
-                        Flow {
-                            id: legend
-                            x: 8
-                            y: memoryChart.y + memoryChart.height + 8
-                            width: parent.width - 16
-                            spacing: 12
-                            Repeater {
-                                model: window.page === 8 && memory.last && memory.last.owners ? memory.last.owners : null
-                                delegate: Row {
-                                    id: key
-                                    required property var modelData
-                                    spacing: 4
-                                    property string tone: {
-                                        for (var i = 0; i < memory.stack.length; ++i)
-                                            if (memory.stack[i].key === modelData.owner)
-                                                return String(memory.stack[i].tone)
-                                        return "transparent"
+
+                        // What the process holds, by owner, over the samples
+                        // kept: the bands stack to what is resident.
+                        Rectangle {
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 150 + legend.implicitHeight
+                            radius: 9
+                            color: theme.card
+                            border.color: theme.rule
+                            visible: memory.history.length > 0
+                            Item {
+                                id: memoryChart
+                                x: 8; y: 8
+                                width: parent.width - 16
+                                height: 120
+                                onWidthChanged: memory.draw()
+                                Accessible.role: Accessible.Chart
+                                Accessible.name: "Memory by owner over the last " + memory.history.length + " samples"
+                                Rectangle { width: parent.width; height: 1; color: theme.rule }
+                                Rectangle { y: parent.height - 1; width: parent.width; height: 1; color: theme.rule }
+                                Repeater {
+                                    model: window.page === 8 ? memory.bands : null
+                                    delegate: Shape {
+                                        id: band
+                                        required property var modelData
+                                        width: memoryChart.width
+                                        height: memoryChart.height
+                                        ShapePath {
+                                            strokeWidth: -1
+                                            fillColor: band.modelData.tone
+                                            PathPolyline { path: band.modelData.points }
+                                        }
                                     }
-                                    Rectangle {
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        width: 9; height: 9; radius: 2
-                                        color: key.tone
-                                        border.color: key.modelData.gpu ? theme.subtle : "transparent"
-                                    }
-                                    Text {
-                                        text: key.modelData.label + " " + window.bytes(key.modelData.bytes)
-                                              + (key.modelData.of !== "" && key.modelData.count > 0
-                                                 ? " · " + key.modelData.count + " " + key.modelData.of : "")
-                                              + (key.modelData.gpu ? " (GPU, not stacked)" : "")
-                                        color: key.modelData.owner === "not_attributed" ? theme.warn : theme.subtle
-                                        font.pixelSize: 11
+                                }
+                                Text {
+                                    x: 4; y: 2
+                                    text: window.bytes(memory.stackTop)
+                                    color: theme.subtle
+                                    font.pixelSize: 10
+                                }
+                            }
+                            Flow {
+                                id: legend
+                                x: 8
+                                y: memoryChart.y + memoryChart.height + 8
+                                width: parent.width - 16
+                                spacing: 12
+                                Repeater {
+                                    model: window.page === 8 && memory.last && memory.last.owners ? memory.last.owners : null
+                                    delegate: Row {
+                                        id: key
+                                        required property var modelData
+                                        spacing: 4
+                                        property string tone: {
+                                            for (var i = 0; i < memory.stack.length; ++i)
+                                                if (memory.stack[i].key === modelData.owner)
+                                                    return String(memory.stack[i].tone)
+                                            return "transparent"
+                                        }
+                                        Rectangle {
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            width: 9; height: 9; radius: 2
+                                            color: key.tone
+                                            border.color: key.modelData.gpu ? theme.subtle : "transparent"
+                                        }
+                                        Text {
+                                            text: key.modelData.label + " " + window.bytes(key.modelData.bytes)
+                                                  + (key.modelData.of !== "" && key.modelData.count > 0
+                                                     ? " · " + key.modelData.count + " " + key.modelData.of : "")
+                                                  + (key.modelData.gpu ? " (GPU, not stacked)" : "")
+                                            color: key.modelData.owner === "not_attributed" ? theme.warn : theme.subtle
+                                            font.pixelSize: 11
+                                        }
                                     }
                                 }
                             }
                         }
-                    }
 
-                    // What the owners above leave out, by mapping: the
-                    // program and each library it loaded, and of what is
-                    // not attributed, where it lies. Only where the
-                    // platform tells; elsewhere it says so.
-                    Rectangle {
-                        id: mapped
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: (split !== null && split.known ? mappedRow.implicitHeight : 18) + 16
-                        radius: 9
-                        color: theme.card
-                        border.color: theme.rule
-                        visible: memory.last !== null && memory.last.mappings !== null
-                                 && memory.last.mappings !== undefined
-                        readonly property var split: visible ? memory.last.mappings : null
-                        Text {
-                            x: 8; y: 8
-                            visible: mapped.split !== null && !mapped.split.known
-                            text: "By mapping: not known on this platform"
-                            color: theme.subtle
-                        }
-                        Row {
-                            id: mappedRow
-                            x: 8; y: 8
-                            width: parent.width - 16
-                            spacing: 16
-                            visible: mapped.split !== null && mapped.split.known === true
-                            Repeater {
-                                model: [["The program and its libraries", "program_split"],
-                                        ["Not attributed, by where it is", "not_attributed_split"]]
-                                delegate: Column {
-                                    id: half
-                                    required property var modelData
-                                    width: (mappedRow.width - 16) / 2
-                                    spacing: 2
-                                    Text {
-                                        text: half.modelData[0]
-                                        color: theme.subtle
-                                        font.pixelSize: 12
-                                        font.bold: true
-                                    }
-                                    Repeater {
-                                        model: window.page === 8 && mapped.split !== null && mapped.split.known
-                                               ? mapped.split[half.modelData[1]] : null
-                                        delegate: Row {
-                                            id: mapRow
-                                            required property var modelData
-                                            spacing: 8
-                                            Accessible.role: Accessible.ListItem
-                                            Accessible.name: modelData.label + ", " + window.bytes(modelData.bytes)
-                                            Text {
-                                                width: half.width - 88
-                                                text: mapRow.modelData.label
-                                                elide: Text.ElideRight
-                                                color: theme.text
-                                                font.pixelSize: 12
-                                            }
-                                            Text {
-                                                width: 80
-                                                horizontalAlignment: Text.AlignRight
-                                                text: window.bytes(mapRow.modelData.bytes)
-                                                color: theme.text
-                                                font.family: theme.mono
-                                                font.pixelSize: 12
+                        // What the owners above leave out, by mapping: the
+                        // program and each library it loaded, and of what is
+                        // not attributed, where it lies. Only where the
+                        // platform tells; elsewhere it says so.
+                        Rectangle {
+                            id: mapped
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: (split !== null && split.known ? mappedRow.implicitHeight : 18) + 16
+                            radius: 9
+                            color: theme.card
+                            border.color: theme.rule
+                            visible: memory.last !== null && memory.last.mappings !== null
+                                     && memory.last.mappings !== undefined
+                            readonly property var split: visible ? memory.last.mappings : null
+                            Text {
+                                x: 8; y: 8
+                                visible: mapped.split !== null && !mapped.split.known
+                                text: "By mapping: not known on this platform"
+                                color: theme.subtle
+                            }
+                            Row {
+                                id: mappedRow
+                                x: 8; y: 8
+                                width: parent.width - 16
+                                spacing: 16
+                                visible: mapped.split !== null && mapped.split.known === true
+                                Repeater {
+                                    model: [["The program and its libraries", "program_split"],
+                                            ["Not attributed, by where it is", "not_attributed_split"]]
+                                    delegate: Column {
+                                        id: half
+                                        required property var modelData
+                                        width: (mappedRow.width - 16) / 2
+                                        spacing: 2
+                                        Text {
+                                            text: half.modelData[0]
+                                            color: theme.subtle
+                                            font.pixelSize: 12
+                                            font.bold: true
+                                        }
+                                        Repeater {
+                                            model: window.page === 8 && mapped.split !== null && mapped.split.known
+                                                   ? mapped.split[half.modelData[1]] : null
+                                            delegate: Row {
+                                                id: mapRow
+                                                required property var modelData
+                                                spacing: 8
+                                                Accessible.role: Accessible.ListItem
+                                                Accessible.name: modelData.label + ", " + window.bytes(modelData.bytes)
+                                                Text {
+                                                    width: half.width - 88
+                                                    text: mapRow.modelData.label
+                                                    elide: Text.ElideRight
+                                                    color: theme.text
+                                                    font.pixelSize: 12
+                                                }
+                                                Text {
+                                                    width: 80
+                                                    horizontalAlignment: Text.AlignRight
+                                                    text: window.bytes(mapRow.modelData.bytes)
+                                                    color: theme.text
+                                                    font.family: theme.mono
+                                                    font.pixelSize: 12
+                                                }
                                             }
                                         }
                                     }
                                 }
                             }
                         }
-                    }
 
-                    // One bar a part, to the scale of the largest part or
-                    // type. Bytes no allocator counts are estimates.
-                    Rectangle {
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: partColumn.implicitHeight + 16
-                        radius: 9
-                        color: theme.card
-                        border.color: theme.rule
-                        Column {
-                            id: partColumn
-                            x: 8; y: 8
-                            width: parent.width - 16
-                            spacing: 4
-                            Repeater {
-                                model: window.page === 8 ? partRows : null
-                                delegate: Row {
-                                    id: partRow
-                                    required property string name
-                                    required property string tone
-                                    required property real bytes
-                                    spacing: 10
-                                    Accessible.role: Accessible.ListItem
-                                    Accessible.name: name + ", " + window.bytes(bytes)
-                                    Text { width: 120; text: partRow.name; color: theme.text; font.pixelSize: 12 }
-                                    Text {
-                                        width: 80
-                                        horizontalAlignment: Text.AlignRight
-                                        text: window.bytes(partRow.bytes)
-                                        color: theme.text
-                                        font.family: theme.mono
-                                        font.pixelSize: 12
-                                    }
-                                    Rectangle {
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        height: 10
-                                        radius: 2
-                                        width: Math.max(1, (partColumn.width - 230) * partRow.bytes / memory.most)
-                                        color: partRow.tone
+                        // One bar a part, to the scale of the largest part or
+                        // type. Bytes no allocator counts are estimates.
+                        Rectangle {
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: partColumn.implicitHeight + 16
+                            radius: 9
+                            color: theme.card
+                            border.color: theme.rule
+                            Column {
+                                id: partColumn
+                                x: 8; y: 8
+                                width: parent.width - 16
+                                spacing: 4
+                                Repeater {
+                                    model: window.page === 8 ? partRows : null
+                                    delegate: Row {
+                                        id: partRow
+                                        required property string name
+                                        required property string tone
+                                        required property real bytes
+                                        spacing: 10
+                                        Accessible.role: Accessible.ListItem
+                                        Accessible.name: name + ", " + window.bytes(bytes)
+                                        Text { width: 120; text: partRow.name; color: theme.text; font.pixelSize: 12 }
+                                        Text {
+                                            width: 80
+                                            horizontalAlignment: Text.AlignRight
+                                            text: window.bytes(partRow.bytes)
+                                            color: theme.text
+                                            font.family: theme.mono
+                                            font.pixelSize: 12
+                                        }
+                                        Rectangle {
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            height: 10
+                                            radius: 2
+                                            width: Math.max(1, (partColumn.width - 230) * partRow.bytes / memory.most)
+                                            color: partRow.tone
+                                        }
                                     }
                                 }
                             }
                         }
-                    }
 
-                    Text {
-                        text: !memory.last ? "" : "Objects by type · " + memory.last.objects.count + " objects"
-                              + (memory.last.objects.types_left_out > 0
-                                 ? " · " + memory.last.objects.types_left_out + " smaller types not listed" : "")
-                        color: theme.subtle
-                    }
-                    Rectangle {
-                        Layout.fillWidth: true
-                        Layout.fillHeight: true
-                        radius: 9
-                        color: theme.card
-                        border.color: theme.rule
-                        clip: true
-                        ListView {
-                            anchors.fill: parent
-                            anchors.margins: 6
+                        Text {
+                            text: !memory.last ? "" : "Objects by type · " + memory.last.objects.count + " objects"
+                                  + (memory.last.objects.types_left_out > 0
+                                     ? " · " + memory.last.objects.types_left_out + " smaller types not listed" : "")
+                            color: theme.subtle
+                        }
+                        Rectangle {
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+                            // Its own list scrolls, so on a short window it keeps
+                            // room for some rows and the page scrolls instead.
+                            Layout.minimumHeight: 200
+                            radius: 9
+                            color: theme.card
+                            border.color: theme.rule
                             clip: true
-                            model: window.page === 8 ? typeRows : null
-                            ScrollBar.vertical: ScrollBar {}
-                            delegate: Item {
-                                id: typeRow
-                                required property int index
-                                required property string type
-                                required property int count
-                                required property real bytes
-                                width: ListView.view.width
-                                height: 22
-                                Accessible.role: Accessible.ListItem
-                                Accessible.name: type + ", " + count + (count === 1 ? " object, " : " objects, ") + window.bytes(bytes)
-                                Rectangle {
-                                    anchors.fill: parent
-                                    color: typeRow.index % 2 ? theme.cardAlt : "transparent"
-                                }
-                                Row {
-                                    x: 6
-                                    height: parent.height
-                                    spacing: 10
-                                    Text {
-                                        width: 180
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        text: typeRow.type
-                                        color: theme.text
-                                        elide: Text.ElideRight
-                                        font.pixelSize: 12
+                            ListView {
+                                anchors.fill: parent
+                                anchors.margins: 6
+                                clip: true
+                                model: window.page === 8 ? typeRows : null
+                                ScrollBar.vertical: ScrollBar {}
+                                delegate: Item {
+                                    id: typeRow
+                                    required property int index
+                                    required property string type
+                                    required property int count
+                                    required property real bytes
+                                    width: ListView.view.width
+                                    // Where the bar would have too little room
+                                    // beside the words to compare one type with
+                                    // another, it has a line of its own below.
+                                    readonly property bool narrow: width - 370 < 120
+                                    height: narrow ? 34 : 22
+                                    Accessible.role: Accessible.ListItem
+                                    Accessible.name: type + ", " + count + (count === 1 ? " object, " : " objects, ") + window.bytes(bytes)
+                                    Rectangle {
+                                        anchors.fill: parent
+                                        color: typeRow.index % 2 ? theme.cardAlt : "transparent"
                                     }
-                                    Text {
-                                        width: 60
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        horizontalAlignment: Text.AlignRight
-                                        text: typeRow.count
-                                        color: theme.subtle
-                                        font.family: theme.mono
-                                        font.pixelSize: 12
-                                    }
-                                    Text {
-                                        width: 80
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        horizontalAlignment: Text.AlignRight
-                                        text: window.bytes(typeRow.bytes)
-                                        color: theme.text
-                                        font.family: theme.mono
-                                        font.pixelSize: 12
+                                    Row {
+                                        x: 6
+                                        height: 22
+                                        spacing: 10
+                                        Text {
+                                            width: typeRow.narrow ? Math.max(40, typeRow.width - 6 - 60 - 10 - 80 - 10 - 6 - 10) : 180
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            text: typeRow.type
+                                            color: theme.text
+                                            elide: Text.ElideRight
+                                            font.pixelSize: 12
+                                        }
+                                        Text {
+                                            width: 60
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            horizontalAlignment: Text.AlignRight
+                                            text: typeRow.count
+                                            color: theme.subtle
+                                            font.family: theme.mono
+                                            font.pixelSize: 12
+                                        }
+                                        Text {
+                                            width: 80
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            horizontalAlignment: Text.AlignRight
+                                            text: window.bytes(typeRow.bytes)
+                                            color: theme.text
+                                            font.family: theme.mono
+                                            font.pixelSize: 12
+                                        }
+                                        Rectangle {
+                                            visible: !typeRow.narrow
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            height: 10
+                                            radius: 2
+                                            width: Math.max(1, (typeRow.width - 370) * typeRow.bytes / memory.most)
+                                            color: theme.accent
+                                        }
                                     }
                                     Rectangle {
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        height: 10
+                                        visible: typeRow.narrow
+                                        x: 6
+                                        y: 23
+                                        height: 6
                                         radius: 2
-                                        width: Math.max(1, (typeRow.width - 370) * typeRow.bytes / memory.most)
+                                        width: Math.max(1, (typeRow.width - 12) * typeRow.bytes / memory.most)
                                         color: theme.accent
                                     }
                                 }
                             }
                         }
-                    }
 
-                    // Each window: its scene, and what its renderer keeps.
-                    Repeater {
-                        model: window.page === 8 ? windowRows : null
-                        delegate: Column {
-                            id: windowRow
-                            required property string name
-                            required property string scene
-                            required property string render
-                            Layout.fillWidth: true
-                            Text { text: windowRow.name; color: theme.text; font.pixelSize: 12; font.bold: true }
-                            Text { text: "scene: " + windowRow.scene; color: theme.subtle; font.pixelSize: 12 }
-                            Text { text: "renderer: " + windowRow.render; color: theme.subtle; font.pixelSize: 12 }
+                        // Each window: its scene, and what its renderer keeps.
+                        Repeater {
+                            model: window.page === 8 ? windowRows : null
+                            delegate: Column {
+                                id: windowRow
+                                required property string name
+                                required property string scene
+                                required property string render
+                                Layout.fillWidth: true
+                                // Wrapped, so that a renderer with much to say
+                                // grows the page, which scrolls only up and down.
+                                // Read out line by line, as each is shown.
+                                Text { Accessible.role: Accessible.StaticText; Accessible.name: text; width: windowRow.width; wrapMode: Text.Wrap; text: windowRow.name; color: theme.text; font.pixelSize: 12; font.bold: true }
+                                Text { Accessible.role: Accessible.StaticText; Accessible.name: text; width: windowRow.width; wrapMode: Text.Wrap; text: "scene: " + windowRow.scene; color: theme.subtle; font.pixelSize: 12 }
+                                Text { Accessible.role: Accessible.StaticText; Accessible.name: text; width: windowRow.width; wrapMode: Text.Wrap; text: "renderer: " + windowRow.render; color: theme.subtle; font.pixelSize: 12 }
+                            }
                         }
                     }
                 }
@@ -4415,7 +4828,11 @@ ApplicationWindow {
                     property string editing: ""
                     readonly property var columns: !table ? []
                         : table.roles.length > 0 ? table.roles : ["modelData"]
-                    readonly property real columnWidth: Math.max(90, (rowsView.width - 70) / Math.max(1, columns.length))
+                    // Shared out over the panel, each role at least 90
+                    // wide: where they do not fit, the header and the rows
+                    // scroll sideways together.
+                    readonly property real columnWidth: Math.max(90, (tableScroll.width - 70) / Math.max(1, columns.length))
+                    readonly property real tableWidth: 70 + columns.length * columnWidth
 
                     function load() {
                         window.ask("app_objects", { models: true }, "models")
@@ -4485,15 +4902,32 @@ ApplicationWindow {
                                    "model-edited")
                     }
 
-                    RowLayout {
+                    // In one row while it fits, the controls at its end;
+                    // wrapped onto more where it does not.
+                    Flow {
+                        id: modelsHead
                         Layout.fillWidth: true
+                        // Asks for no width of its own: see window.spare.
+                        Layout.preferredWidth: 0
                         spacing: 10
-                        Text { text: "Models"; color: theme.text; font.pixelSize: 19; font.bold: true }
                         Text {
-                            Layout.fillWidth: true
+                            height: window.headHeight
+                            verticalAlignment: Text.AlignVCenter
+                            Accessible.role: Accessible.Heading
+                            text: "Models"; color: theme.text; font.pixelSize: 19; font.bold: true
+                        }
+                        Text {
+                            width: Math.min(implicitWidth, modelsHead.width)
+                            height: window.headHeight
+                            verticalAlignment: Text.AlignVCenter
                             elide: Text.ElideRight
                             text: models.list.length + (models.list.length === 1 ? " model" : " models")
                             color: theme.subtle
+                        }
+                        Item {
+                            id: modelsGap
+                            width: window.spare(modelsHead, modelsGap)
+                            height: 1
                         }
                         Button {
                             text: "Refresh"
@@ -4501,15 +4935,23 @@ ApplicationWindow {
                         }
                     }
 
-                    RowLayout {
+                    // Beside the rows on a wide page, above them on a
+                    // narrow one, where the rows need the whole width.
+                    GridLayout {
+                        id: modelsBody
+                        readonly property bool narrow: width < 560
                         Layout.fillWidth: true
                         Layout.fillHeight: true
-                        spacing: 10
+                        columns: narrow ? 1 : 2
+                        columnSpacing: 10
+                        rowSpacing: 10
 
                         // The models, each with what has it and its rows.
                         Rectangle {
-                            Layout.preferredWidth: Math.max(180, Math.min(300, models.width * 0.3))
-                            Layout.fillHeight: true
+                            Layout.preferredWidth: modelsBody.narrow ? -1 : Math.max(180, Math.min(300, models.width * 0.3))
+                            Layout.fillWidth: modelsBody.narrow
+                            Layout.preferredHeight: modelsBody.narrow ? 160 : -1
+                            Layout.fillHeight: !modelsBody.narrow
                             radius: 9
                             color: theme.card
                             border.color: theme.rule
@@ -4601,11 +5043,18 @@ ApplicationWindow {
                             Layout.fillHeight: true
                             spacing: 6
 
-                            RowLayout {
+                            // In one row while it fits, the buttons at its
+                            // end; wrapped onto more where it does not.
+                            Flow {
+                                id: rowsHead
                                 Layout.fillWidth: true
+                                // Asks for no width of its own: see window.spare.
+                                Layout.preferredWidth: 0
                                 spacing: 8
                                 Text {
-                                    Layout.fillWidth: true
+                                    width: Math.min(implicitWidth, rowsHead.width)
+                                    height: window.headHeight
+                                    verticalAlignment: Text.AlignVCenter
                                     elide: Text.ElideRight
                                     color: theme.subtle
                                     text: !models.table
@@ -4614,6 +5063,11 @@ ApplicationWindow {
                                         : models.table.type + " · rows " + models.table.offset + " to "
                                           + (models.table.offset + models.table.rows.length - 1) + " of " + models.table.count
                                           + (models.table.writable ? " · click a cell to edit it" : "")
+                                }
+                                Item {
+                                    id: rowsGap
+                                    width: window.spare(rowsHead, rowsGap)
+                                    height: 1
                                 }
                                 // The views that draw it, each opening on Objects.
                                 Repeater {
@@ -4644,115 +5098,141 @@ ApplicationWindow {
                                 border.color: theme.rule
                                 clip: true
 
-                                // The roles, over their columns.
-                                Row {
-                                    id: header
-                                    x: 12; y: 8
-                                    spacing: 0
-                                    Text {
-                                        width: 60
-                                        text: "row"
-                                        color: theme.subtle
-                                        font.pixelSize: 11
-                                        font.bold: true
+                                Flickable {
+                                    id: tableScroll
+                                    anchors.fill: parent
+                                    anchors.margins: 6
+                                    clip: true
+                                    contentWidth: Math.max(width, models.tableWidth)
+                                    contentHeight: height
+                                    flickableDirection: Flickable.HorizontalFlick
+                                    interactive: contentWidth > width
+                                    boundsBehavior: Flickable.StopAtBounds
+                                    ScrollBar.horizontal: ScrollBar {
+                                        id: tableBar
                                     }
-                                    Repeater {
-                                        model: window.page === 9 ? models.columns : []
-                                        delegate: Text {
-                                            required property string modelData
-                                            width: models.columnWidth
-                                            elide: Text.ElideRight
-                                            text: modelData
+                                    // The roles, over their columns.
+                                    Row {
+                                        id: header
+                                        x: 6; y: 2
+                                        spacing: 0
+                                        Text {
+                                            width: 60
+                                            text: "row"
                                             color: theme.subtle
                                             font.pixelSize: 11
                                             font.bold: true
                                         }
-                                    }
-                                }
-
-                                ListView {
-                                    id: rowsView
-                                    anchors.fill: parent
-                                    anchors.margins: 6
-                                    anchors.topMargin: 28
-                                    clip: true
-                                    model: window.page === 9 && models.table ? models.table.rows : []
-                                    ScrollBar.vertical: ScrollBar {}
-                                    delegate: Item {
-                                        id: tableRow
-                                        required property var modelData
-                                        required property int index
-                                        width: ListView.view.width
-                                        height: 24
-                                        Rectangle {
-                                            anchors.fill: parent
-                                            color: tableRow.index % 2 ? theme.cardAlt : "transparent"
-                                        }
-                                        Row {
-                                            x: 6
-                                            height: parent.height
-                                            Text {
-                                                width: 60
-                                                anchors.verticalCenter: parent.verticalCenter
-                                                text: tableRow.modelData.index
+                                        Repeater {
+                                            model: window.page === 9 ? models.columns : []
+                                            delegate: Text {
+                                                required property string modelData
+                                                width: models.columnWidth
+                                                elide: Text.ElideRight
+                                                text: modelData
                                                 color: theme.subtle
-                                                font.family: theme.mono
-                                                font.pixelSize: 12
+                                                font.pixelSize: 11
+                                                font.bold: true
                                             }
-                                            Repeater {
-                                                model: models.columns
-                                                delegate: Item {
-                                                    id: cell
-                                                    required property string modelData
-                                                    readonly property var value: tableRow.modelData.values[modelData]
-                                                    readonly property string key: tableRow.modelData.index + "/" + modelData
-                                                    width: models.columnWidth
-                                                    height: tableRow.height
-                                                    Text {
-                                                        anchors.fill: parent
-                                                        anchors.rightMargin: 8
-                                                        verticalAlignment: Text.AlignVCenter
-                                                        elide: Text.ElideRight
-                                                        visible: models.editing !== cell.key
-                                                        text: window.shown(cell.value)
-                                                        color: theme.text
-                                                        font.pixelSize: 12
-                                                    }
-                                                    MouseArea {
-                                                        anchors.fill: parent
-                                                        enabled: !!models.table && models.table.writable
-                                                        Accessible.role: Accessible.Cell
-                                                        Accessible.name: cell.modelData + " " + tableRow.modelData.index
-                                                        onClicked: models.editing = cell.key
-                                                    }
-                                                    Loader {
-                                                        anchors.fill: parent
-                                                        anchors.rightMargin: 8
-                                                        active: models.editing === cell.key
-                                                        // Focus is given once the click that made
-                                                        // the field is over.
-                                                        onLoaded: Qt.callLater(function() {
-                                                            if (!item)
-                                                                return
-                                                            item.forceActiveFocus()
-                                                            item.selectAll()
-                                                        })
-                                                        sourceComponent: TextField {
-                                                            topPadding: 2
-                                                            bottomPadding: 2
-                                                            leftPadding: 4
-                                                            clip: true
-                                                            color: theme.text
-                                                            Accessible.name: cell.modelData + " " + tableRow.modelData.index
-                                                            background: Rectangle {
-                                                                radius: 4
-                                                                color: theme.bg
-                                                                border.color: theme.accent
-                                                            }
+                                        }
+                                    }
+
+                                    ListView {
+                                        id: rowsView
+                                        y: 22
+                                        width: tableScroll.contentWidth
+                                        height: tableScroll.height - 22
+                                        clip: true
+                                        model: window.page === 9 && models.table ? models.table.rows : []
+                                        Accessible.role: Accessible.List
+                                        Accessible.name: "Rows"
+                                        // Held to the part of the table in view: at the list's own edge it
+                                        // would be off to the side until the last column is scrolled to.
+                                        ScrollBar.vertical: ScrollBar {
+                                            parent: tableScroll
+                                            x: tableScroll.width - width
+                                            y: rowsView.y - tableScroll.contentY
+                                            // Short of the sideways bar when there is one to cross in the
+                                            // corner: the bar is always visible, only its handle fades.
+                                            height: rowsView.height - (tableScroll.contentWidth > tableScroll.width ? tableBar.height : 0)
+                                            Accessible.name: "Rows"
+                                        }
+                                        delegate: Item {
+                                            id: tableRow
+                                            required property var modelData
+                                            required property int index
+                                            width: ListView.view.width
+                                            height: 24
+                                            Rectangle {
+                                                anchors.fill: parent
+                                                color: tableRow.index % 2 ? theme.cardAlt : "transparent"
+                                            }
+                                            Row {
+                                                x: 6
+                                                height: parent.height
+                                                Text {
+                                                    width: 60
+                                                    anchors.verticalCenter: parent.verticalCenter
+                                                    text: tableRow.modelData.index
+                                                    color: theme.subtle
+                                                    font.family: theme.mono
+                                                    font.pixelSize: 12
+                                                }
+                                                Repeater {
+                                                    model: models.columns
+                                                    delegate: Item {
+                                                        id: cell
+                                                        required property string modelData
+                                                        readonly property var value: tableRow.modelData.values[modelData]
+                                                        readonly property string key: tableRow.modelData.index + "/" + modelData
+                                                        width: models.columnWidth
+                                                        height: tableRow.height
+                                                        Text {
+                                                            anchors.fill: parent
+                                                            anchors.rightMargin: 8
+                                                            verticalAlignment: Text.AlignVCenter
+                                                            elide: Text.ElideRight
+                                                            visible: models.editing !== cell.key
                                                             text: window.shown(cell.value)
-                                                            onAccepted: models.write(tableRow.modelData.index, cell.modelData,
-                                                                                     cell.value, text)
-                                                            Keys.onEscapePressed: models.editing = ""
+                                                            color: theme.text
+                                                            font.pixelSize: 12
+                                                        }
+                                                        MouseArea {
+                                                            anchors.fill: parent
+                                                            enabled: !!models.table && models.table.writable
+                                                            Accessible.role: Accessible.Cell
+                                                            Accessible.name: cell.modelData + " " + tableRow.modelData.index
+                                                            onClicked: models.editing = cell.key
+                                                        }
+                                                        Loader {
+                                                            anchors.fill: parent
+                                                            anchors.rightMargin: 8
+                                                            active: models.editing === cell.key
+                                                            // Focus is given once the click that made
+                                                            // the field is over.
+                                                            onLoaded: Qt.callLater(function() {
+                                                                if (!item)
+                                                                    return
+                                                                item.forceActiveFocus()
+                                                                item.selectAll()
+                                                            })
+                                                            sourceComponent: TextField {
+                                                                topPadding: 2
+                                                                bottomPadding: 2
+                                                                leftPadding: 4
+                                                                clip: true
+                                                                color: theme.text
+                                                                Accessible.name: cell.modelData + " " + tableRow.modelData.index
+                                                                background: Rectangle {
+                                                                    radius: 4
+                                                                    color: theme.bg
+                                                                    border.color: theme.accent
+                                                                }
+                                                                text: window.shown(cell.value)
+                                                                onAccepted: models.write(tableRow.modelData.index, cell.modelData,
+                                                                                         cell.value, text)
+                                                                Keys.onEscapePressed: models.editing = ""
+                                                            }
                                                         }
                                                     }
                                                 }
@@ -4971,15 +5451,26 @@ ApplicationWindow {
 
                     ListModel { id: wakeRows }
 
-                    RowLayout {
+                    // In one row while it fits, the controls at its end;
+                    // wrapped onto more where it does not.
+                    Flow {
+                        id: wakesHead
                         Layout.fillWidth: true
+                        // Asks for no width of its own: see window.spare.
+                        Layout.preferredWidth: 0
                         spacing: 10
-                        Text { text: "Wakes"; color: theme.text; font.pixelSize: 19; font.bold: true }
-                        // Takes what the buttons leave, so that a narrow
-                        // window cuts the summary, never a button.
                         Text {
-                            Layout.fillWidth: true
-                            Layout.minimumWidth: 0
+                            height: window.headHeight
+                            verticalAlignment: Text.AlignVCenter
+                            Accessible.role: Accessible.Heading
+                            text: "Wakes"; color: theme.text; font.pixelSize: 19; font.bold: true
+                        }
+                        // Elided where the row is narrower than it; the
+                        // buttons go onto a row of their own then.
+                        Text {
+                            width: Math.min(implicitWidth, wakesHead.width)
+                            height: window.headHeight
+                            verticalAlignment: Text.AlignVCenter
                             elide: Text.ElideRight
                             text: (wakes.recording ? "keeping" : "not keeping") + " · "
                                   + wakeRows.count + " wakes"
@@ -4987,6 +5478,11 @@ ApplicationWindow {
                                      ? " · " + wakes.ownCount + " woken by this window hidden" : "")
                                   + (wakes.dropped > 0 ? " · " + wakes.dropped + " older gave way" : "")
                             color: wakes.recording ? theme.good : theme.subtle
+                        }
+                        Item {
+                            id: wakesGap
+                            width: window.spare(wakesHead, wakesGap)
+                            height: 1
                         }
                         CheckBox {
                             text: "Hide this window's requests"
@@ -5055,259 +5551,306 @@ ApplicationWindow {
                         }
                     }
 
-                    RowLayout {
+                    // Beside the list where the panels shown leave it room
+                    // for a row, under it where they do not: a wake opened
+                    // adds its panel, which must not squeeze the list away.
+                    // Stacked, the panels may need more height than the
+                    // window has: the body then scrolls, as the overview
+                    // does, rather than squeeze them below what they show.
+                    Flickable {
+                        id: wakesScroll
                         Layout.fillWidth: true
                         Layout.fillHeight: true
-                        spacing: 10
+                        clip: true
+                        contentWidth: width
+                        contentHeight: Math.max(height, wakesBody.implicitHeight)
+                        interactive: contentHeight > height
+                        boundsBehavior: Flickable.StopAtBounds
+                        ScrollBar.vertical: ScrollBar {}
 
-                        Rectangle {
-                            Layout.fillWidth: true
-                            Layout.fillHeight: true
-                            radius: 9
-                            color: theme.card
-                            border.color: theme.rule
-                            clip: true
-                            ListView {
-                                id: wakeView
-                                anchors.fill: parent
-                                anchors.margins: 6
+                        GridLayout {
+                            id: wakesBody
+                            readonly property real dueWidth: Math.max(200, Math.min(320, wakes.width * 0.3))
+                            readonly property bool narrow: width < 350 + 10 + dueWidth + (wakes.one !== null ? 440 + 10 : 0)
+                            width: wakesScroll.width
+                            height: wakesScroll.contentHeight
+                            columns: narrow ? 1 : 3
+                            columnSpacing: 10
+                            rowSpacing: 10
+
+                            Rectangle {
+                                Layout.fillWidth: true
+                                Layout.fillHeight: true
+                                Layout.minimumHeight: wakesBody.narrow ? 120 : 0
+                                radius: 9
+                                color: theme.card
+                                border.color: theme.rule
                                 clip: true
-                                model: window.page === 10 ? wakeRows : null
-                                onModelChanged: if (model !== null) Qt.callLater(wakeView.positionViewAtEnd)
-                                ScrollBar.vertical: ScrollBar {}
-                                delegate: Item {
-                                    id: wakeRow
-                                    required property int index
-                                    required property int seq
-                                    required property string at
-                                    required property string causes
-                                    required property color tone
-                                    required property string ledTo
-                                    required property string detail
-                                    required property bool detailed
-                                    width: ListView.view.width
-                                    height: 24
-                                    Accessible.role: Accessible.ListItem
-                                    Accessible.name: "wake " + seq + ", woke by " + (causes === "" ? "nothing known" : causes)
-                                                     + ", led to " + ledTo
-                                    Rectangle {
-                                        anchors.fill: parent
-                                        color: wakeRow.index % 2 ? theme.cardAlt : "transparent"
-                                    }
-                                    Row {
-                                        x: 6
-                                        height: parent.height
-                                        spacing: 10
-                                        Text {
-                                            width: 50
-                                            anchors.verticalCenter: parent.verticalCenter
-                                            horizontalAlignment: Text.AlignRight
-                                            text: wakeRow.seq
-                                            color: theme.subtle
-                                            font.family: theme.mono
-                                            font.pixelSize: 12
+                                ListView {
+                                    id: wakeView
+                                    anchors.fill: parent
+                                    anchors.margins: 6
+                                    clip: true
+                                    model: window.page === 10 ? wakeRows : null
+                                    Accessible.role: Accessible.List
+                                    Accessible.name: "Wakes"
+                                    onModelChanged: if (model !== null) Qt.callLater(wakeView.positionViewAtEnd)
+                                    ScrollBar.vertical: ScrollBar {}
+                                    delegate: Item {
+                                        id: wakeRow
+                                        required property int index
+                                        required property int seq
+                                        required property string at
+                                        required property string causes
+                                        required property color tone
+                                        required property string ledTo
+                                        required property string detail
+                                        required property bool detailed
+                                        width: ListView.view.width
+                                        // Its detail goes on a line of its own where the row is
+                                        // too narrow to have it beside the rest.
+                                        readonly property bool narrow: width < 560
+                                        height: narrow ? 40 : 24
+                                        Accessible.role: Accessible.ListItem
+                                        Accessible.name: "wake " + seq + ", woke by " + (causes === "" ? "nothing known" : causes)
+                                                         + ", led to " + ledTo
+                                        Rectangle {
+                                            anchors.fill: parent
+                                            color: wakeRow.index % 2 ? theme.cardAlt : "transparent"
+                                        }
+                                        Row {
+                                            x: 6
+                                            height: 24
+                                            spacing: 10
+                                            Text {
+                                                width: 50
+                                                anchors.verticalCenter: parent.verticalCenter
+                                                horizontalAlignment: Text.AlignRight
+                                                text: wakeRow.seq
+                                                color: theme.subtle
+                                                font.family: theme.mono
+                                                font.pixelSize: 12
+                                            }
+                                            Text {
+                                                width: 80
+                                                anchors.verticalCenter: parent.verticalCenter
+                                                horizontalAlignment: Text.AlignRight
+                                                text: wakeRow.at
+                                                color: theme.subtle
+                                                font.family: theme.mono
+                                                font.pixelSize: 12
+                                            }
+                                            Text {
+                                                width: wakeRow.narrow ? Math.max(40, wakeRow.width - 6 - 50 - 80 - 90 - 30 - 6) : 170
+                                                anchors.verticalCenter: parent.verticalCenter
+                                                text: wakeRow.causes === "" ? "—" : wakeRow.causes
+                                                color: wakeRow.tone
+                                                elide: Text.ElideRight
+                                                font.pixelSize: 12
+                                            }
+                                            Text {
+                                                width: 90
+                                                anchors.verticalCenter: parent.verticalCenter
+                                                text: wakeRow.ledTo
+                                                color: wakeRow.ledTo === "nothing" ? theme.subtle : theme.text
+                                                font.pixelSize: 12
+                                            }
+                                            Text {
+                                                visible: !wakeRow.narrow
+                                                width: Math.max(0, wakeRow.width - 446)
+                                                anchors.verticalCenter: parent.verticalCenter
+                                                text: wakeRow.detail
+                                                color: theme.subtle
+                                                elide: Text.ElideRight
+                                                font.pixelSize: 11
+                                            }
                                         }
                                         Text {
-                                            width: 80
-                                            anchors.verticalCenter: parent.verticalCenter
-                                            horizontalAlignment: Text.AlignRight
-                                            text: wakeRow.at
-                                            color: theme.subtle
-                                            font.family: theme.mono
-                                            font.pixelSize: 12
-                                        }
-                                        Text {
-                                            width: 170
-                                            anchors.verticalCenter: parent.verticalCenter
-                                            text: wakeRow.causes === "" ? "—" : wakeRow.causes
-                                            color: wakeRow.tone
-                                            elide: Text.ElideRight
-                                            font.pixelSize: 12
-                                        }
-                                        Text {
-                                            width: 90
-                                            anchors.verticalCenter: parent.verticalCenter
-                                            text: wakeRow.ledTo
-                                            color: wakeRow.ledTo === "nothing" ? theme.subtle : theme.text
-                                            font.pixelSize: 12
-                                        }
-                                        Text {
-                                            width: wakeRow.width - 440
-                                            anchors.verticalCenter: parent.verticalCenter
+                                            visible: wakeRow.narrow
+                                            x: 6 + 50 + 10 + 80 + 10
+                                            y: 22
+                                            width: wakeRow.width - x - 6
                                             text: wakeRow.detail
                                             color: theme.subtle
                                             elide: Text.ElideRight
                                             font.pixelSize: 11
                                         }
-                                    }
-                                    MouseArea {
-                                        anchors.fill: parent
-                                        enabled: wakeRow.detailed
-                                        cursorShape: Qt.PointingHandCursor
-                                        onClicked: wakes.openOne(wakeRow.seq)
-                                    }
-                                }
-                            }
-                            Text {
-                                anchors.centerIn: parent
-                                visible: wakeRows.count === 0
-                                text: wakes.recording ? "No wake since keeping began: the application is at rest"
-                                                      : "Press Record to keep each wake and its causes"
-                                color: theme.subtle
-                            }
-                        }
-
-                        // What the wake picked did, in order.
-                        Rectangle {
-                            Layout.preferredWidth: 440
-                            Layout.fillHeight: true
-                            visible: wakes.one !== null
-                            radius: 9
-                            color: theme.card
-                            border.color: theme.accent
-                            clip: true
-                            Text {
-                                id: oneTitle
-                                x: 10; y: 6
-                                width: parent.width - 80
-                                elide: Text.ElideRight
-                                text: wakes.one ? wakes.one.title : ""
-                                color: theme.text
-                                font.pixelSize: 12
-                                font.bold: true
-                            }
-                            Button {
-                                anchors.right: parent.right
-                                anchors.rightMargin: 4
-                                y: 2
-                                text: "Close"
-                                flat: true
-                                onClicked: wakes.one = null
-                            }
-                            Text {
-                                x: 10; y: 26
-                                // Clear of the Close button.
-                                width: parent.width - 80
-                                wrapMode: Text.Wrap
-                                text: wakes.one ? wakes.one.took : ""
-                                color: theme.subtle
-                                font.pixelSize: 11
-                            }
-                            ListView {
-                                anchors.fill: parent
-                                anchors.margins: 6
-                                anchors.topMargin: 60
-                                clip: true
-                                model: window.page === 10 && wakes.one ? wakes.one.rows : []
-                                ScrollBar.vertical: ScrollBar {}
-                                delegate: Row {
-                                    id: oneRow
-                                    required property var modelData
-                                    width: ListView.view.width
-                                    height: 18
-                                    spacing: 6
-                                    Accessible.role: Accessible.ListItem
-                                    Accessible.name: modelData.kind + " " + modelData.what
-                                    Text {
-                                        width: 70 + oneRow.modelData.depth * 12
-                                        leftPadding: oneRow.modelData.depth * 12
-                                        text: oneRow.modelData.kind
-                                        color: oneRow.modelData.kind === "handler" ? theme.accent
-                                             : oneRow.modelData.kind === "binding" ? theme.violet
-                                             : oneRow.modelData.kind === "changed" ? theme.good : theme.subtle
-                                        font.pixelSize: 11
-                                    }
-                                    Text {
-                                        width: oneRow.width - 150 - oneRow.modelData.depth * 12
-                                        text: oneRow.modelData.what + (oneRow.modelData.at !== "" ? "  " + oneRow.modelData.at : "")
-                                        elide: Text.ElideRight
-                                        color: theme.text
-                                        font.pixelSize: 11
-                                    }
-                                    Text {
-                                        width: 60
-                                        horizontalAlignment: Text.AlignRight
-                                        text: oneRow.modelData.took
-                                        color: theme.subtle
-                                        font.family: theme.mono
-                                        font.pixelSize: 11
-                                    }
-                                }
-                            }
-                        }
-
-                        // What wakes it next.
-                        Rectangle {
-                            Layout.preferredWidth: Math.max(200, Math.min(320, wakes.width * 0.3))
-                            Layout.fillHeight: true
-                            radius: 9
-                            color: theme.card
-                            border.color: theme.rule
-                            clip: true
-                            Text {
-                                x: 10; y: 8
-                                width: parent.width - 20
-                                elide: Text.ElideRight
-                                text: "Why awake · " + wakes.scheduled + " scheduled"
-                                      + (wakes.listening > 0 ? ", " + wakes.listening + " listening" : "")
-                                color: wakes.scheduled > 0 ? theme.warn : theme.subtle
-                                font.pixelSize: 11
-                                font.bold: true
-                            }
-                            ListView {
-                                anchors.fill: parent
-                                anchors.margins: 6
-                                anchors.topMargin: 28
-                                clip: true
-                                model: window.page === 10 ? wakes.due : []
-                                ScrollBar.vertical: ScrollBar {}
-                                // A row with an object opens it on the Objects page.
-                                delegate: Column {
-                                    id: dueRow
-                                    required property var modelData
-                                    width: ListView.view.width
-                                    bottomPadding: 6
-                                    Accessible.role: Accessible.ListItem
-                                    Accessible.name: dueRow.modelData.source + " " + dueRow.modelData.owner
-                                    Text {
-                                        width: parent.width
-                                        elide: Text.ElideRight
-                                        text: dueRow.modelData.source + " · " + dueRow.modelData.owner
-                                        color: !dueRow.modelData.scheduled ? theme.subtle
-                                               : dueRow.modelData.source === "timer" ? theme.warn
-                                               : dueRow.modelData.source === "animation" ? theme.violet
-                                               : theme.accent
-                                        font.pixelSize: 12
-                                        font.underline: dueHover.containsMouse
                                         MouseArea {
-                                            id: dueHover
                                             anchors.fill: parent
-                                            enabled: dueRow.modelData.handle !== ""
-                                            hoverEnabled: enabled
-                                            onClicked: {
-                                                window.page = 3
-                                                objects.load(true)
-                                                objects.pick(dueRow.modelData.handle, dueRow.modelData.owner)
-                                            }
+                                            enabled: wakeRow.detailed
+                                            cursorShape: Qt.PointingHandCursor
+                                            onClicked: wakes.openOne(wakeRow.seq)
                                         }
                                     }
-                                    Text {
-                                        width: parent.width
-                                        elide: Text.ElideRight
-                                        text: (dueRow.modelData.scheduled ? "" : "listens · ") + dueRow.modelData.detail
-                                        color: theme.subtle
-                                        font.pixelSize: 11
+                                }
+                                Text {
+                                    anchors.centerIn: parent
+                                    width: parent.width - 24
+                                    horizontalAlignment: Text.AlignHCenter
+                                    wrapMode: Text.Wrap
+                                    visible: wakeRows.count === 0
+                                    text: wakes.recording ? "No wake since keeping began: the application is at rest"
+                                                          : "Press Record to keep each wake and its causes"
+                                    color: theme.subtle
+                                }
+                            }
+
+                            // What the wake picked did, in order.
+                            Rectangle {
+                                Layout.preferredWidth: wakesBody.narrow ? -1 : 440
+                                Layout.fillWidth: wakesBody.narrow
+                                Layout.preferredHeight: wakesBody.narrow ? 220 : -1
+                                Layout.fillHeight: !wakesBody.narrow
+                                visible: wakes.one !== null
+                                radius: 9
+                                color: theme.card
+                                border.color: theme.accent
+                                clip: true
+                                Text {
+                                    id: oneTitle
+                                    x: 10; y: 6
+                                    width: parent.width - 80
+                                    elide: Text.ElideRight
+                                    text: wakes.one ? wakes.one.title : ""
+                                    color: theme.text
+                                    font.pixelSize: 12
+                                    font.bold: true
+                                }
+                                Button {
+                                    anchors.right: parent.right
+                                    anchors.rightMargin: 4
+                                    y: 2
+                                    text: "Close"
+                                    flat: true
+                                    onClicked: wakes.one = null
+                                }
+                                Text {
+                                    x: 10; y: 26
+                                    // Clear of the Close button.
+                                    width: parent.width - 80
+                                    wrapMode: Text.Wrap
+                                    text: wakes.one ? wakes.one.took : ""
+                                    color: theme.subtle
+                                    font.pixelSize: 11
+                                }
+                                ListView {
+                                    anchors.fill: parent
+                                    anchors.margins: 6
+                                    anchors.topMargin: 60
+                                    clip: true
+                                    model: window.page === 10 && wakes.one ? wakes.one.rows : []
+                                    ScrollBar.vertical: ScrollBar {}
+                                    delegate: Row {
+                                        id: oneRow
+                                        required property var modelData
+                                        width: ListView.view.width
+                                        height: 18
+                                        spacing: 6
+                                        Accessible.role: Accessible.ListItem
+                                        Accessible.name: modelData.kind + " " + modelData.what
+                                        Text {
+                                            width: 70 + oneRow.modelData.depth * 12
+                                            leftPadding: oneRow.modelData.depth * 12
+                                            text: oneRow.modelData.kind
+                                            color: oneRow.modelData.kind === "handler" ? theme.accent
+                                                 : oneRow.modelData.kind === "binding" ? theme.violet
+                                                 : oneRow.modelData.kind === "changed" ? theme.good : theme.subtle
+                                            font.pixelSize: 11
+                                        }
+                                        Text {
+                                            width: oneRow.width - 150 - oneRow.modelData.depth * 12
+                                            text: oneRow.modelData.what + (oneRow.modelData.at !== "" ? "  " + oneRow.modelData.at : "")
+                                            elide: Text.ElideRight
+                                            color: theme.text
+                                            font.pixelSize: 11
+                                        }
+                                        Text {
+                                            width: 60
+                                            horizontalAlignment: Text.AlignRight
+                                            text: oneRow.modelData.took
+                                            color: theme.subtle
+                                            font.family: theme.mono
+                                            font.pixelSize: 11
+                                        }
                                     }
                                 }
                             }
-                            Text {
-                                anchors.centerIn: parent
-                                width: parent.width - 20
-                                horizontalAlignment: Text.AlignHCenter
-                                wrapMode: Text.Wrap
-                                visible: wakes.due.length === 0
-                                text: "Nothing will wake the UI thread"
-                                color: theme.subtle
+
+                            // What wakes it next.
+                            Rectangle {
+                                Layout.preferredWidth: wakesBody.narrow ? -1 : wakesBody.dueWidth
+                                Layout.fillWidth: wakesBody.narrow
+                                Layout.preferredHeight: wakesBody.narrow ? 140 : -1
+                                Layout.fillHeight: !wakesBody.narrow
+                                radius: 9
+                                color: theme.card
+                                border.color: theme.rule
+                                clip: true
+                                Text {
+                                    x: 10; y: 8
+                                    width: parent.width - 20
+                                    elide: Text.ElideRight
+                                    text: "Why awake · " + wakes.scheduled + " scheduled"
+                                          + (wakes.listening > 0 ? ", " + wakes.listening + " listening" : "")
+                                    color: wakes.scheduled > 0 ? theme.warn : theme.subtle
+                                    font.pixelSize: 11
+                                    font.bold: true
+                                }
+                                ListView {
+                                    anchors.fill: parent
+                                    anchors.margins: 6
+                                    anchors.topMargin: 28
+                                    clip: true
+                                    model: window.page === 10 ? wakes.due : []
+                                    ScrollBar.vertical: ScrollBar {}
+                                    // A row with an object opens it on the Objects page.
+                                    delegate: Column {
+                                        id: dueRow
+                                        required property var modelData
+                                        width: ListView.view.width
+                                        bottomPadding: 6
+                                        Accessible.role: Accessible.ListItem
+                                        Accessible.name: dueRow.modelData.source + " " + dueRow.modelData.owner
+                                        Text {
+                                            width: parent.width
+                                            elide: Text.ElideRight
+                                            text: dueRow.modelData.source + " · " + dueRow.modelData.owner
+                                            color: !dueRow.modelData.scheduled ? theme.subtle
+                                                   : dueRow.modelData.source === "timer" ? theme.warn
+                                                   : dueRow.modelData.source === "animation" ? theme.violet
+                                                   : theme.accent
+                                            font.pixelSize: 12
+                                            font.underline: dueHover.containsMouse
+                                            MouseArea {
+                                                id: dueHover
+                                                anchors.fill: parent
+                                                enabled: dueRow.modelData.handle !== ""
+                                                hoverEnabled: enabled
+                                                onClicked: {
+                                                    window.page = 3
+                                                    objects.load(true)
+                                                    objects.pick(dueRow.modelData.handle, dueRow.modelData.owner)
+                                                }
+                                            }
+                                        }
+                                        Text {
+                                            width: parent.width
+                                            elide: Text.ElideRight
+                                            text: (dueRow.modelData.scheduled ? "" : "listens · ") + dueRow.modelData.detail
+                                            color: theme.subtle
+                                            font.pixelSize: 11
+                                        }
+                                    }
+                                }
+                                Text {
+                                    anchors.centerIn: parent
+                                    width: parent.width - 20
+                                    horizontalAlignment: Text.AlignHCenter
+                                    wrapMode: Text.Wrap
+                                    visible: wakes.due.length === 0
+                                    text: "Nothing will wake the UI thread"
+                                    color: theme.subtle
+                                }
                             }
                         }
                     }
@@ -5408,16 +5951,33 @@ ApplicationWindow {
                         shown = s
                     }
 
-                    RowLayout {
+                    // In one row while it fits, the controls at its end;
+                    // wrapped onto more where it does not.
+                    Flow {
+                        id: componentsHead
                         Layout.fillWidth: true
+                        // Asks for no width of its own: see window.spare.
+                        Layout.preferredWidth: 0
                         spacing: 10
-                        Text { text: "Components"; color: theme.text; font.pixelSize: 19; font.bold: true }
                         Text {
-                            Layout.fillWidth: true
+                            height: window.headHeight
+                            verticalAlignment: Text.AlignVCenter
+                            Accessible.role: Accessible.Heading
+                            text: "Components"; color: theme.text; font.pixelSize: 19; font.bold: true
+                        }
+                        Text {
+                            width: Math.min(implicitWidth, componentsHead.width)
+                            height: window.headHeight
+                            verticalAlignment: Text.AlignVCenter
                             elide: Text.ElideRight
                             text: components.list.length + " loaded · " + components.live + " instances live"
                                   + (components.leftOut > 0 ? " · " + components.leftOut + " not listed" : "")
                             color: theme.subtle
+                        }
+                        Item {
+                            id: componentsGap
+                            width: window.spare(componentsHead, componentsGap)
+                            height: 1
                         }
                         Button {
                             text: "Mark"
@@ -5516,10 +6076,16 @@ ApplicationWindow {
                         }
                     }
 
-                    RowLayout {
+                    // Beside the instances on a wide page, above them on a
+                    // narrow one, where both need the whole width.
+                    GridLayout {
+                        id: componentsBody
+                        readonly property bool narrow: width < 560
                         Layout.fillWidth: true
                         Layout.fillHeight: true
-                        spacing: 10
+                        columns: narrow ? 1 : 2
+                        columnSpacing: 10
+                        rowSpacing: 10
 
                         Rectangle {
                             Layout.fillWidth: true
@@ -5533,6 +6099,8 @@ ApplicationWindow {
                                 anchors.margins: 6
                                 clip: true
                                 model: window.page === 11 ? components.list : []
+                                Accessible.role: Accessible.List
+                                Accessible.name: "Components"
                                 ScrollBar.vertical: ScrollBar {}
                                 delegate: Item {
                                     id: compRow
@@ -5540,7 +6108,11 @@ ApplicationWindow {
                                     required property var modelData
                                     readonly property bool current: modelData.component === components.picked
                                     width: ListView.view.width
-                                    height: 24
+                                    // Too narrow for one line, the counts and
+                                    // their bar go on a line below, under the
+                                    // name, so that none is past the edge.
+                                    readonly property bool narrow: width < 600
+                                    height: narrow ? 44 : 24
                                     Rectangle {
                                         anchors.fill: parent
                                         radius: 4
@@ -5550,7 +6122,7 @@ ApplicationWindow {
                                     }
                                     Row {
                                         x: 6
-                                        height: parent.height
+                                        height: 24
                                         spacing: 10
                                         Text {
                                             width: 60
@@ -5571,7 +6143,7 @@ ApplicationWindow {
                                         // by where in its file it is, so that
                                         // two delegates of one type differ.
                                         Text {
-                                            width: 200
+                                            width: compRow.narrow ? Math.max(40, compRow.width - 6 - 60 - 10 - 120 - 10 - 6) : 200
                                             anchors.verticalCenter: parent.verticalCenter
                                             text: compRow.modelData.kind === "file"
                                                   ? compRow.modelData.url.substring(compRow.modelData.url.lastIndexOf("/") + 1)
@@ -5580,10 +6152,21 @@ ApplicationWindow {
                                             elide: Text.ElideLeft
                                             font.pixelSize: 11
                                         }
+                                    }
+                                    Row {
+                                        id: compCounts
+                                        x: compRow.narrow ? 6 + 60 + 10 : 6 + 60 + 10 + 120 + 10 + 200 + 10
+                                        y: compRow.narrow ? 20 : 0
+                                        height: 24
+                                        spacing: 10
                                         Text {
                                             width: 50
                                             anchors.verticalCenter: parent.verticalCenter
                                             horizontalAlignment: Text.AlignRight
+                                            // The row's name says what the counts are; these say where
+                                            // they are drawn, so that an agent finds them past an edge.
+                                            Accessible.role: Accessible.StaticText
+                                            Accessible.name: text + (compRow.modelData.instances === 1 ? " instance" : " instances")
                                             text: compRow.modelData.instances
                                             color: compRow.modelData.instances > 0 ? theme.text : theme.subtle
                                             font.family: theme.mono
@@ -5593,6 +6176,8 @@ ApplicationWindow {
                                             width: 80
                                             anchors.verticalCenter: parent.verticalCenter
                                             horizontalAlignment: Text.AlignRight
+                                            Accessible.role: Accessible.StaticText
+                                            Accessible.name: text
                                             text: window.bytes(compRow.modelData.bytes)
                                             color: theme.text
                                             font.family: theme.mono
@@ -5602,7 +6187,10 @@ ApplicationWindow {
                                             anchors.verticalCenter: parent.verticalCenter
                                             height: 10
                                             radius: 2
-                                            width: Math.max(1, (compRow.width - 580) * compRow.modelData.bytes / components.most)
+                                            // The room left on its line, so that bars
+                                            // compare at any width.
+                                            width: Math.max(1, (compRow.width - compCounts.x - 50 - 10 - 80 - 10 - 6)
+                                                               * compRow.modelData.bytes / components.most)
                                             color: theme.accent
                                         }
                                     }
@@ -5628,7 +6216,8 @@ ApplicationWindow {
                         // The instances of the one picked; each opens on
                         // the Objects page.
                         Rectangle {
-                            Layout.preferredWidth: 300
+                            Layout.preferredWidth: componentsBody.narrow ? -1 : 300
+                            Layout.fillWidth: componentsBody.narrow
                             Layout.fillHeight: true
                             radius: 9
                             color: theme.card
@@ -5766,12 +6355,24 @@ ApplicationWindow {
                         objects.pick(handle, name)
                     }
 
-                    RowLayout {
+                    // In one row while it fits, the controls at its end;
+                    // wrapped onto more where it does not.
+                    Flow {
+                        id: bindingsHead
                         Layout.fillWidth: true
+                        // Asks for no width of its own: see window.spare.
+                        Layout.preferredWidth: 0
                         spacing: 10
-                        Text { text: "Bindings"; color: theme.text; font.pixelSize: 19; font.bold: true }
                         Text {
-                            Layout.fillWidth: true
+                            height: window.headHeight
+                            verticalAlignment: Text.AlignVCenter
+                            Accessible.role: Accessible.Heading
+                            text: "Bindings"; color: theme.text; font.pixelSize: 19; font.bold: true
+                        }
+                        Text {
+                            width: Math.min(implicitWidth, bindingsHead.width)
+                            height: window.headHeight
+                            verticalAlignment: Text.AlignVCenter
                             elide: Text.ElideRight
                             text: (hot.recording ? "profiling for " + (hot.windowMs / 1000).toFixed(1) + " s"
                                                  : "not profiling")
@@ -5779,6 +6380,11 @@ ApplicationWindow {
                                   + (hot.rows.length < hot.count ? " · " + hot.rows.length + " shown" : "")
                                   + (hot.dropped > 0 ? " · " + hot.dropped + " runs not told apart" : "")
                             color: hot.recording ? theme.good : theme.subtle
+                        }
+                        Item {
+                            id: bindingsGap
+                            width: window.spare(bindingsHead, bindingsGap)
+                            height: 1
                         }
                         Button {
                             text: hot.recording ? "Stop" : "Record"
@@ -5791,22 +6397,45 @@ ApplicationWindow {
                     }
 
                     Rectangle {
+                        id: hotTable
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         radius: 9
                         color: theme.card
                         border.color: theme.rule
                         clip: true
+                        // Narrower than its columns, a row is laid out over
+                        // more lines: the binding on the first, its numbers
+                        // on the next, where it is and what set it off
+                        // under them. The heads wrap as the rows do.
+                        readonly property real line: width - 24
+                        // A row is on one line only where all seven of its
+                        // cells fit there, 10 apart: the binding, its runs,
+                        // its three times, where it is, and at least
+                        // `causeLeast` of what set it off.
+                        readonly property real causeLeast: 60
+                        readonly property real wide: 260 + 60 + 3 * 76 + 150 + causeLeast + 6 * 10
+                        readonly property bool narrow: line < wide
+                        readonly property real lineHeight: narrow ? 20 : 22
+                        function column(name) {
+                            if (name === "binding")
+                                return narrow ? line : 260
+                            if (name === "where")
+                                return 150
+                            // What set it off takes what is left of its line.
+                            return narrow ? Math.max(120, line - 160) : -1
+                        }
 
                         // The headings: a number's sorts by it.
-                        Row {
+                        Flow {
                             id: hotHead
                             x: 12; y: 8
-                            height: 22
+                            width: hotTable.line
                             spacing: 10
                             Text {
-                                width: 260
-                                anchors.verticalCenter: parent.verticalCenter
+                                width: hotTable.column("binding")
+                                height: hotTable.lineHeight
+                                verticalAlignment: Text.AlignVCenter
                                 text: "binding or handler"
                                 color: theme.subtle
                                 font.pixelSize: 11
@@ -5817,7 +6446,8 @@ ApplicationWindow {
                                 delegate: Text {
                                     required property var modelData
                                     width: modelData.width
-                                    anchors.verticalCenter: parent.verticalCenter
+                                    height: hotTable.lineHeight
+                                    verticalAlignment: Text.AlignVCenter
                                     horizontalAlignment: Text.AlignRight
                                     text: modelData.name + (hot.sort === modelData.key ? " ▾" : "")
                                     color: hot.sort === modelData.key ? theme.accent : theme.subtle
@@ -5832,16 +6462,19 @@ ApplicationWindow {
                                 }
                             }
                             Text {
-                                width: 150
+                                width: hotTable.column("where")
+                                height: hotTable.lineHeight
+                                verticalAlignment: Text.AlignVCenter
                                 leftPadding: 14
-                                anchors.verticalCenter: parent.verticalCenter
                                 text: "where"
                                 color: theme.subtle
                                 font.pixelSize: 11
                                 font.bold: true
                             }
                             Text {
-                                anchors.verticalCenter: parent.verticalCenter
+                                width: hotTable.narrow ? hotTable.column("cause") : implicitWidth
+                                height: hotTable.lineHeight
+                                verticalAlignment: Text.AlignVCenter
                                 text: "set off by"
                                 color: theme.subtle
                                 font.pixelSize: 11
@@ -5852,7 +6485,7 @@ ApplicationWindow {
                         ListView {
                             anchors.fill: parent
                             anchors.margins: 6
-                            anchors.topMargin: 34
+                            anchors.topMargin: hotHead.height + 12
                             clip: true
                             model: window.page === 12 ? hot.rows : []
                             ScrollBar.vertical: ScrollBar {}
@@ -5863,7 +6496,7 @@ ApplicationWindow {
                                 readonly property real share: (modelData[hot.sort + "_us"] !== undefined
                                                                ? modelData[hot.sort + "_us"] : modelData.runs) / hot.most
                                 width: ListView.view.width
-                                height: 26
+                                height: hotTable.narrow ? hotCells.height + 6 : 26
                                 Rectangle {
                                     anchors.fill: parent
                                     radius: 4
@@ -5877,13 +6510,16 @@ ApplicationWindow {
                                     color: hotRow.modelData.kind === "handler" ? theme.violet : theme.accent
                                     opacity: 0.6
                                 }
-                                Row {
+                                Flow {
+                                    id: hotCells
                                     x: 6
-                                    height: parent.height
+                                    y: hotTable.narrow ? 2 : (parent.height - hotTable.lineHeight) / 2
+                                    width: hotTable.line
                                     spacing: 10
                                     Text {
-                                        width: 260
-                                        anchors.verticalCenter: parent.verticalCenter
+                                        width: hotTable.column("binding")
+                                        height: hotTable.lineHeight
+                                        verticalAlignment: Text.AlignVCenter
                                         elide: Text.ElideRight
                                         text: hotRow.modelData.type + "." + hotRow.modelData.name
                                               + "  " + hotRow.modelData.object
@@ -5892,7 +6528,8 @@ ApplicationWindow {
                                     }
                                     Text {
                                         width: 60
-                                        anchors.verticalCenter: parent.verticalCenter
+                                        height: hotTable.lineHeight
+                                        verticalAlignment: Text.AlignVCenter
                                         horizontalAlignment: Text.AlignRight
                                         text: hotRow.modelData.runs
                                         color: theme.text
@@ -5904,7 +6541,8 @@ ApplicationWindow {
                                         delegate: Text {
                                             required property string modelData
                                             width: 76
-                                            anchors.verticalCenter: parent.verticalCenter
+                                            height: hotTable.lineHeight
+                                            verticalAlignment: Text.AlignVCenter
                                             horizontalAlignment: Text.AlignRight
                                             text: window.ms(hotRow.modelData[modelData])
                                             color: theme.text
@@ -5913,17 +6551,19 @@ ApplicationWindow {
                                         }
                                     }
                                     Text {
-                                        width: 150
+                                        width: hotTable.column("where")
+                                        height: hotTable.lineHeight
+                                        verticalAlignment: Text.AlignVCenter
                                         leftPadding: 14
-                                        anchors.verticalCenter: parent.verticalCenter
                                         elide: Text.ElideLeft
                                         text: hot.place(hotRow.modelData.at)
                                         color: theme.subtle
                                         font.pixelSize: 11
                                     }
                                     Text {
-                                        width: Math.max(60, hotRow.width - 790)
-                                        anchors.verticalCenter: parent.verticalCenter
+                                        width: hotTable.narrow ? hotTable.column("cause") : hotTable.line - hotTable.wide + hotTable.causeLeast
+                                        height: hotTable.lineHeight
+                                        verticalAlignment: Text.AlignVCenter
                                         elide: Text.ElideRight
                                         text: hot.causes(hotRow.modelData) || "—"
                                         color: theme.subtle
@@ -6041,18 +6681,35 @@ ApplicationWindow {
                         list = s.components
                     }
 
-                    RowLayout {
+                    // In one row while it fits, the controls at its end;
+                    // wrapped onto more where it does not.
+                    Flow {
+                        id: growthHead
                         Layout.fillWidth: true
+                        // Asks for no width of its own: see window.spare.
+                        Layout.preferredWidth: 0
                         spacing: 10
-                        Text { text: "Growth"; color: theme.text; font.pixelSize: 19; font.bold: true }
                         Text {
-                            Layout.fillWidth: true
+                            height: window.headHeight
+                            verticalAlignment: Text.AlignVCenter
+                            Accessible.role: Accessible.Heading
+                            text: "Growth"; color: theme.text; font.pixelSize: 19; font.bold: true
+                        }
+                        Text {
+                            width: Math.min(implicitWidth, growthHead.width)
+                            height: window.headHeight
+                            verticalAlignment: Text.AlignVCenter
                             elide: Text.ElideRight
                             text: (growth.recording ? "sampling for " + (growth.windowMs / 1000).toFixed(1) + " s · "
                                                       + growth.samples + " samples"
                                                     : "not sampling")
                                   + " · " + growth.growing + " of " + growth.count + " keep growing"
                             color: growth.growing > 0 ? theme.bad : growth.recording ? theme.good : theme.subtle
+                        }
+                        Item {
+                            id: growthGap
+                            width: window.spare(growthHead, growthGap)
+                            height: 1
                         }
                         Button {
                             text: growth.recording ? "Stop" : "Record"
@@ -6307,14 +6964,24 @@ ApplicationWindow {
                                   ? "; " + report.notChecked.length + " acting checks skipped" : "")
                     }
 
-                    RowLayout {
+                    // In one row while it fits, the controls at its end;
+                    // wrapped onto more where it does not.
+                    Flow {
+                        id: auditHead
                         Layout.fillWidth: true
                         spacing: 10
-                        Text { text: "Audit"; color: theme.text; font.pixelSize: 19; font.bold: true }
+                        Text {
+                            height: window.headHeight
+                            verticalAlignment: Text.AlignVCenter
+                            Accessible.role: Accessible.Heading
+                            text: "Audit"; color: theme.text; font.pixelSize: 19; font.bold: true
+                        }
                         Text {
                             Accessible.role: Accessible.StaticText
                             Accessible.name: text
-                            Layout.fillWidth: true
+                            width: Math.min(implicitWidth, auditHead.width)
+                            height: window.headHeight
+                            verticalAlignment: Text.AlignVCenter
                             elide: Text.ElideRight
                             text: audit.summary()
                             color: audit.report && (audit.report.counts.error > 0) ? theme.bad : theme.subtle
