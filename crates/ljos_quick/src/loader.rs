@@ -25,7 +25,7 @@
 //! up for good, unlike Qt, which has neither limit (a script that never
 //! returns hangs it, and running out of memory ends it). A fault soon after
 //! the Loader loaded again ([`SECOND_CHANCE`]) makes it wait before the
-//! next load, twice as long each time up to [`LONGEST_WAIT`] ([`Backoff`]),
+//! next load, twice as long each time up to a minute ([`Backoff`]),
 //! so an item that runs out each time costs one load in that long, and one
 //! that ran out while something else filled the heap comes back when that
 //! has let go. Told to load (a change of `active`, `source` or
@@ -49,6 +49,7 @@
 use std::rc::Rc;
 use std::time::Duration;
 
+use ljos_engine::backoff::{Backoff, SECOND_CHANCE, seconds, wait_for};
 use ljos_engine::{
     Atom, Boundary, BoundaryConfig, CreationHandle, Cx, Engine, EngineError, FaultReport, Initial,
     Interception, LogLevel, MetaRef, Migrate, ObjectId, PropIndex, QmlObject, QmlType, Request,
@@ -59,19 +60,6 @@ use ljos_runtime::{Fault, Intensity, Lane, Restart, Time};
 use crate::enums::loader_status;
 use crate::item::{Item, is_a, is_item, size_follows_implicit, write_computed};
 use crate::tree;
-
-/// How long after loading again for an interrupted script or a full heap a
-/// Loader takes another such fault as its item's doing, and waits before it
-/// loads again ([`Backoff`]).
-const SECOND_CHANCE: Duration = Duration::from_secs(10);
-
-/// The wait before the first load that follows a fault soon after the last
-/// load; each such fault after it doubles the wait.
-const FIRST_WAIT: Duration = Duration::from_secs(1);
-
-/// The longest wait between loads: an item that runs out of time or memory
-/// each time it is made is made once in this long, and never given up on.
-const LONGEST_WAIT: Duration = Duration::from_secs(60);
 
 /// How many interrupts in a row of scripts an item set off elsewhere by
 /// itself (a timer of its own, not input someone gave it) a Loader takes,
@@ -511,51 +499,6 @@ enum Cut {
     OutOfMemory,
 }
 
-/// When a Loader loads again after faults that are not its item's code's
-/// own (an interrupted script, a full heap): at once after the first, and
-/// after a wait for each that comes within [`SECOND_CHANCE`] of the load
-/// before it, from [`FIRST_WAIT`] doubling up to [`LONGEST_WAIT`]. There is
-/// no last time: the fault may have been something else's (another item
-/// filling the heap), and what caused it may go away.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) struct Backoff {
-    /// When the Loader last loaded again for such a fault.
-    last_load: Option<Time>,
-    /// How many such faults in a row came soon after the load before.
-    streak: u32,
-}
-
-impl Backoff {
-    /// A fault at `at` the Loader loads again for: how long it waits first.
-    pub(crate) fn fault(&mut self, at: Time) -> Duration {
-        let soon = self
-            .last_load
-            .is_some_and(|t| at.saturating_since(t) < SECOND_CHANCE);
-        self.streak = if soon {
-            self.streak.saturating_add(1)
-        } else {
-            0
-        };
-        wait_for(self.streak)
-    }
-
-    /// The Loader loads again at `at`.
-    pub(crate) fn loading(&mut self, at: Time) {
-        self.last_load = Some(at);
-    }
-}
-
-/// The wait before a load that follows `streak` faults in a row, each soon
-/// after the load before: none for the first.
-pub(crate) fn wait_for(streak: u32) -> Duration {
-    match streak {
-        0 => Duration::ZERO,
-        n => FIRST_WAIT
-            .saturating_mul(1_u32.checked_shl(n - 1).unwrap_or(u32::MAX))
-            .min(LONGEST_WAIT),
-    }
-}
-
 /// What the Loader notes when it loads again for a fault.
 #[derive(Clone, Copy, Debug)]
 enum Count {
@@ -666,7 +609,7 @@ fn wait_until(e: &Engine, me: ObjectId, due: Time, count: Count) {
 fn load_counted(e: &Engine, me: ObjectId, at: Time, count: Count) {
     let before = with_run(e, me, |r| {
         if let Count::Backoff = count {
-            r.backoff.loading(e.now());
+            r.backoff.trying(e.now());
         }
         r.generation
     });
@@ -681,11 +624,6 @@ fn load_counted(e: &Engine, me: ObjectId, at: Time, count: Count) {
     } else if let Count::Acted = count {
         with_run(e, me, |r| r.elsewhere = None);
     }
-}
-
-/// `1 s`, `1.5 s`.
-fn seconds(d: Duration) -> String {
-    format!("{} s", d.as_secs_f64())
 }
 
 /// Called when `child` is appended to `parent`'s `data`: a Loader with a
@@ -961,93 +899,4 @@ fn resize(e: &Engine, me: ObjectId, horizontal: bool) -> Result<(), EngineError>
     }
     let v = e.read(item, implicit);
     write_computed(e, me, implicit, v)
-}
-
-#[cfg(test)]
-mod tests {
-    use proptest::prelude::*;
-
-    use super::*;
-
-    /// What happens to a Loader whose item faults over and over: when, after
-    /// each load, the next fault comes, or `None` when the item stays up.
-    #[derive(Clone, Debug)]
-    enum Step {
-        /// The item faults this long after it was loaded.
-        Faults(Duration),
-        /// The item stays up this long, then faults.
-        Lasts(Duration),
-    }
-
-    fn step() -> impl Strategy<Value = Step> {
-        prop_oneof![
-            (0..SECOND_CHANCE.as_millis() as u64)
-                .prop_map(|ms| Step::Faults(Duration::from_millis(ms))),
-            (SECOND_CHANCE.as_millis() as u64..10 * SECOND_CHANCE.as_millis() as u64)
-                .prop_map(|ms| Step::Lasts(Duration::from_millis(ms))),
-        ]
-    }
-
-    proptest! {
-        /// Run against a model of the state machine: every fault is followed
-        /// by a load (never a last time), a fault after an item that lasted
-        /// is loaded again at once, and a streak of quick faults waits
-        /// twice as long each time, from a second up to a minute.
-        #[test]
-        fn a_loader_always_loads_again_and_waits_as_the_model_says(
-            steps in proptest::collection::vec(step(), 1..40),
-        ) {
-            let mut b = Backoff::default();
-            let mut now = Time::ZERO + Duration::from_secs(1);
-            // The first load is the application's own, not counted.
-            let mut model_streak: Option<u32> = None;
-            for s in steps {
-                let (quick, after) = match s {
-                    Step::Faults(d) => (true, d),
-                    Step::Lasts(d) => (false, d),
-                };
-                now += after;
-                let wait = b.fault(now);
-                let streak = match (model_streak, quick) {
-                    (Some(n), true) => n + 1,
-                    _ => 0,
-                };
-                let expected = if streak == 0 {
-                    Duration::ZERO
-                } else {
-                    Duration::from_secs(1u64 << (streak - 1).min(6)).min(LONGEST_WAIT)
-                };
-                prop_assert_eq!(wait, expected);
-                prop_assert!(wait <= LONGEST_WAIT);
-                now += wait;
-                b.loading(now);
-                model_streak = Some(streak);
-            }
-        }
-
-        /// An item that faults at once every time is loaded at most once a
-        /// minute once the waits are long, and still loaded.
-        #[test]
-        fn a_runaway_item_is_loaded_at_a_bounded_rate(n in 8u32..200) {
-            let mut b = Backoff::default();
-            let mut now = Time::ZERO;
-            let mut loads = Vec::new();
-            for _ in 0..n {
-                now += b.fault(now);
-                b.loading(now);
-                loads.push(now);
-            }
-            prop_assert_eq!(loads.len() as u32, n);
-            for w in loads.windows(2).skip(7) {
-                prop_assert_eq!(w[1].saturating_since(w[0]), LONGEST_WAIT);
-            }
-        }
-    }
-
-    #[test]
-    fn waits_double_from_a_second_to_a_minute() {
-        let waits: Vec<u64> = (0..10).map(|n| wait_for(n).as_secs()).collect();
-        assert_eq!(waits, [0, 1, 2, 4, 8, 16, 32, 60, 60, 60]);
-        assert_eq!(wait_for(u32::MAX), LONGEST_WAIT);
-    }
 }

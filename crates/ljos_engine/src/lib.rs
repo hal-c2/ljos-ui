@@ -42,6 +42,7 @@ extern crate self as ljos_engine;
 
 pub mod aot;
 mod atom;
+pub mod backoff;
 mod boundary;
 mod builtins;
 mod chooser;

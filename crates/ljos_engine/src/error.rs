@@ -72,6 +72,16 @@ pub enum EngineError {
     /// not by searching the words.
     #[error("{0}")]
     JsInterrupted(String),
+    /// JS that found the script heap full. Apart from [`EngineError::Js`]
+    /// so a caller can load again once there is room, as it may after an
+    /// interrupt, not give up as on an error in the script.
+    #[error("{0}")]
+    JsOutOfMemory(String),
+    /// Native work panicked while it ran: a fault of the work, not of the
+    /// script or component that asked for it, so what it stopped may be
+    /// tried again ([`crate::backoff`]).
+    #[error("{0}")]
+    Panic(String),
 }
 
 /// Why [`Engine::try_call_js`](crate::Engine::try_call_js) or
@@ -144,11 +154,14 @@ impl EngineError {
         Self::DeadObject(obj)
     }
 
-    /// [`EngineError::Js`], or [`EngineError::JsInterrupted`] for an
-    /// interrupt, for `map_err` on a [`ljos_js::JsFault`].
+    /// [`EngineError::Js`], or the kind of fault that is not the script's
+    /// own ([`EngineError::is_resource_fault`]), for `map_err` on a
+    /// [`ljos_js::JsFault`].
     pub(crate) fn js(e: ljos_js::JsFault) -> Self {
         match e {
             ljos_js::JsFault::JsInterrupted { .. } => Self::JsInterrupted(e.to_string()),
+            ljos_js::JsFault::JsOutOfMemory { .. } => Self::JsOutOfMemory(e.to_string()),
+            ljos_js::JsFault::Panic { .. } => Self::Panic(e.to_string()),
             e => Self::Js(e.to_string()),
         }
     }

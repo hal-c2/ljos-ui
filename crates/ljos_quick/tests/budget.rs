@@ -390,7 +390,9 @@ fn ten_listview_delegates() {
     // A font holds what few fonts set, its families after the first,
     // `features` and `variableAxes`, behind one pointer: 24 bytes fewer a
     // font, and a delegate's text holds one. A text's style has room for
-    // that list, one pointer: 16 bytes a delegate's text.
+    // that list, one pointer: 16 bytes a delegate's text. A row's way back
+    // from a resource fault (its backoff, boxed at the first fault) is one
+    // pointer a row: 128 bytes here, the row list's room for 16.
     assert_eq!(
         b,
         Budget {
@@ -408,7 +410,7 @@ fn ten_listview_delegates() {
                 atoms: 0,
             },
             allocations: 1209,
-            bytes: 155224,
+            bytes: 155352,
         }
     );
 }
@@ -443,6 +445,9 @@ fn ten_wrapped_listview_delegates() {
     // in pages of 1024 that stay where they are, not in one vector that
     // doubles, make one fewer and keep 53 kB less, the doubling's spare
     // room (MEM3). The scene's list of what moved, reused, one fewer (MIR).
+    // A row's way back from a resource fault (its backoff, boxed at the
+    // first fault) is one pointer a row: 128 bytes here, the row list's
+    // room for 16.
     // 23.2 kB kept a delegate.
     assert_eq!(
         b,
@@ -461,7 +466,7 @@ fn ten_wrapped_listview_delegates() {
                 atoms: 0,
             },
             allocations: 1231,
-            bytes: 207521,
+            bytes: 207649,
         }
     );
 }
@@ -602,13 +607,15 @@ fn bytes_a_thousand_instances_keep() {
     // 11.1 kB before). `fetch`'s helper, one more object an engine, moves
     // that growth again: 12 bytes more `plain` (11.1 kB before). A
     // context's file, which an id a Bound inline component reads stops at,
-    // is 8 bytes an instance. The rest
+    // is 8 bytes an instance. A delegate row's way back from a resource
+    // fault, boxed at the first, is 8 bytes more one-line and wrapped
+    // (20.9 and 23.2 kB before). The rest
     // is mostly the graph's nodes, the objects and the text's runs.
     assert_eq!(
         kept,
         Kept {
-            one_line: 20906,
-            wrapped: 23213,
+            one_line: 20914,
+            wrapped: 23221,
             plain: 11151,
         }
     );

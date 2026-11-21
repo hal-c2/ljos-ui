@@ -712,6 +712,12 @@ impl Engine {
         self.inner.graph.len()
     }
 
+    /// Live component contexts: one for each component instance, and
+    /// those made for a scope. A tool watching for leaks reads this.
+    pub fn context_count(&self) -> usize {
+        self.inner.contexts.borrow().len()
+    }
+
     /// The object's scope in the graph, if it has nodes yet.
     pub fn object_scope(&self, obj: ObjectId) -> Option<ScopeId> {
         self.inner.store.borrow().objects.get(obj)?.scope
