@@ -248,7 +248,8 @@ Feature: A shipped application its users change while it runs
     QML (`ShellLoader.reload()`) or from Rust (`UserSession::read_again`).
     What was saved is applied as a save the watch saw is, with the state of
     the application kept; one that does not compile is told as one is.
-    Files that are as they were keep what runs, and that is said.
+    Files that are as they were keep what runs, and that is said. An
+    application that reads them only when it starts keeps what runs too.
 
     Scenario: A save no watch saw is applied once a ShellLoader asks for the files to be read again
       Given the user's file "Card.qml":
@@ -346,6 +347,25 @@ Feature: A shipped application its users change while it runs
       And the user's files are not compiled
       And the object "loader/default-shell" exists
       And the property "status" of "loader" is 2
+
+    Scenario: An application that reads its user's files only when it starts keeps what runs when asked, and says so
+      Given the user's file "Card.qml":
+        """qml
+        import QtQuick
+        Rectangle { property string by: "the user"; width: 30; height: 10 }
+        """
+      And the application reads its user's files only when it starts
+      When the application runs "Main.qml" built ahead, with the user's directory over it
+      And the user saves the file "Card.qml" as:
+        """qml
+        import QtQuick
+        Rectangle { property string by: "the user"; width: 60; height: 10 }
+        """
+      And the application asks for its user's files to be read again
+      Then the user's files read again were as they were
+      And the property "width" of "card" is 30
+      And 0 saves of the user's files have been applied
+      And the user's directory is not watched
 
   Rule: A user's shell that is a Window is the application's window
 

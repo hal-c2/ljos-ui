@@ -1372,6 +1372,9 @@ impl Backend for LjosBackend {
         .map_err(|e| failed(format!("cannot call {method}: {e}")))?;
         let out = live.to_json(&out);
         live.settle()?;
+        // What the call asked the user's session for (a ShellLoader's
+        // `reload()`) is taken as the host's next frames take it.
+        live.user_qml_answer()?;
         Ok(out)
     }
 
@@ -1844,6 +1847,22 @@ impl Application for LjosBackend {
     fn user_qml_own_theme(&mut self) -> Result<()> {
         self.live()?.user()?.own_theme = true;
         Ok(())
+    }
+
+    fn user_qml_unwatched(&mut self) -> Result<()> {
+        self.live()?.user()?.watch = false;
+        Ok(())
+    }
+
+    fn user_qml_read_once(&mut self) -> Result<()> {
+        let user = self.live()?.user()?;
+        user.watch = false;
+        user.when_asked = false;
+        Ok(())
+    }
+
+    fn user_qml_read_again(&mut self) -> Result<()> {
+        self.live()?.user_qml_read_again()
     }
 
     fn run_with_user_qml(

@@ -53,6 +53,13 @@ pub(super) struct User {
     plugins: tempfile::TempDir,
     /// The wakes answered while the application was last left alone.
     woken: u64,
+    /// Whether the application follows its user's saves (`UserQml::watch`).
+    pub(super) watch: bool,
+    /// Whether the application reads them again when it asks
+    /// (`UserQml::reads_when_asked`).
+    pub(super) when_asked: bool,
+    /// The files were last read again, as asked, and were as they were.
+    read_unchanged: bool,
 }
 
 impl User {
@@ -74,6 +81,9 @@ impl User {
             own_theme: false,
             plugins,
             woken: 0,
+            watch: true,
+            when_asked: true,
+            read_unchanged: false,
         })
     }
 }
@@ -142,6 +152,8 @@ impl Live {
         let told = Rc::clone(&user.told);
         let mut config = UserQml::dir(user.dir.path())
             .theme(!user.own_theme)
+            .watch(user.watch)
+            .reads_when_asked(user.when_asked)
             .loads_from(user.plugins.path())
             .on_fault(move |fault| {
                 told.borrow_mut().push(fault.to_string());
@@ -291,6 +303,54 @@ impl Live {
             return self.take_user_wake(name);
         }
         self.take_user_save(name)
+    }
+
+    /// Asks the session to read the user's files again, as the
+    /// application's code does, and takes what that brings.
+    pub(super) fn user_qml_read_again(&mut self) -> Result<()> {
+        let user = self
+            .user
+            .as_mut()
+            .ok_or_else(|| failed("the application has no user's directory"))?;
+        let session = user
+            .session
+            .as_mut()
+            .ok_or_else(|| failed("the application does not run yet"))?;
+        session.read_again(&self.engine);
+        self.user_qml_answer()
+    }
+
+    /// Takes what reading the user's files again brings, frame by frame
+    /// as the session wakes, until it is answered: asked by the
+    /// application's code or by a `ShellLoader`. Nothing when nothing
+    /// asked.
+    pub(super) fn user_qml_answer(&mut self) -> Result<()> {
+        let reading = self
+            .user
+            .as_ref()
+            .and_then(|u| u.session.as_ref())
+            .is_some_and(UserSession::is_reading);
+        if !reading && !ljos_quick::Rereads::of(&self.engine).is_asked() {
+            return Ok(());
+        }
+        let mut unchanged = false;
+        loop {
+            let reports = self.pump_user()?;
+            unchanged |= reports.contains(&ljos_dev::Report::Unchanged);
+            let user = self.user.as_ref().expect("pumped above");
+            let session = user.session.as_ref().expect("pumped above");
+            if !session.is_reading() {
+                break;
+            }
+            user.woke
+                .recv_timeout(PATIENCE)
+                .map_err(|_| failed("the files asked for were not read again"))?;
+        }
+        self.user.as_mut().expect("pumped above").read_unchanged = unchanged;
+        self.settle()?;
+        // What the new generation refused while it was made.
+        self.pump_user()?;
+        self.settle()
     }
 
     /// Takes the wake a save brings when it brings no report: one wake is
@@ -464,7 +524,7 @@ impl Live {
                 .to_owned(),
             texts: session.compiles_texts(),
             woken: user.woken,
-            read_unchanged: false,
+            read_unchanged: user.read_unchanged,
         })
     }
 }
