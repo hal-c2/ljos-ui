@@ -1,6 +1,7 @@
 package dev.ljos;
 
 import android.content.ClipboardManager;
+import android.content.Intent;
 import android.content.pm.ApplicationInfo;
 import android.graphics.Matrix;
 import android.graphics.RectF;
@@ -21,6 +22,7 @@ import androidx.activity.OnBackPressedCallback;
 import androidx.core.graphics.Insets;
 import androidx.core.view.WindowCompat;
 import androidx.core.view.WindowInsetsCompat;
+import java.lang.ref.WeakReference;
 import com.google.androidgamesdk.GameActivity;
 import com.google.androidgamesdk.TextInputOf;
 import com.google.androidgamesdk.gametextinput.InputConnection;
@@ -64,6 +66,18 @@ public class LjosActivity extends GameActivity {
 
     private final ClipboardManager.OnPrimaryClipChangedListener clipChanged =
             LjosActivity::nativeClipboardChanged;
+
+    /**
+     * The activity on screen, which the system's services ask the user
+     * from (a permission's dialog, the document picker). Weak: the system
+     * may end an activity whose process it keeps.
+     */
+    private static volatile WeakReference<LjosActivity> current = new WeakReference<>(null);
+
+    /** The activity on screen, or null between one and the next. */
+    static LjosActivity current() {
+        return current.get();
+    }
 
     /**
      * The combining accent a dead key left waiting for the next key, or 0.
@@ -131,6 +145,7 @@ public class LjosActivity extends GameActivity {
     protected void onCreate(Bundle savedInstanceState) {
         serveInspector();
         super.onCreate(savedInstanceState);
+        current = new WeakReference<>(this);
         // The application draws under the system's bars and the cutout and
         // keeps clear of them itself (SafeArea), as on any phone.
         WindowCompat.setDecorFitsSystemWindows(getWindow(), false);
@@ -179,7 +194,16 @@ public class LjosActivity extends GameActivity {
         if (clipboard != null) {
             clipboard.removePrimaryClipChangedListener(clipChanged);
         }
+        if (current.get() == this) {
+            current = new WeakReference<>(null);
+        }
         super.onDestroy();
+    }
+
+    @Override
+    protected void onActivityResult(int code, int result, Intent data) {
+        super.onActivityResult(code, result, data);
+        LjosDocuments.answered(this, code, result, data);
     }
 
     /**
