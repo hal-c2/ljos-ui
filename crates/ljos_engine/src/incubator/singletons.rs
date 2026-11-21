@@ -222,6 +222,23 @@ pub(crate) struct Singletons {
     listeners: RefCell<Vec<Listener>>,
 }
 
+/// One more making that is not a window's own, for as long as it is held:
+/// a panic that cuts the making short leaves the count as it was.
+struct Unscoped<'a>(&'a Cell<u32>);
+
+impl<'a> Unscoped<'a> {
+    fn enter(count: &'a Cell<u32>) -> Self {
+        count.set(count.get() + 1);
+        Self(count)
+    }
+}
+
+impl Drop for Unscoped<'_> {
+    fn drop(&mut self) {
+        self.0.set(self.0.get() - 1);
+    }
+}
+
 /// A native singleton type and how its one object is made. Its own
 /// constructor, not the type's QML-facing one: a type QML may not write
 /// (`uncreatable`) is still made by the engine.
@@ -854,37 +871,47 @@ impl Engine {
         let faults = self.resource_faults_seen();
         // Whoever reads the name first does not depend on what making the
         // object reads.
-        let made = self.untrack(|| match &kind {
-            Kind::File(key) => {
-                let template = self.file_template(key)?;
-                let file = template.file.clone();
-                let allocated = |obj| {
-                    all.entries.borrow_mut()[handle].state = State::Making(Some(obj));
-                    // A window's own: what its scripts read is the window's.
-                    if let Some(s) = scope
-                        && let Some(c) = self.context_of(obj)
-                    {
-                        let mut scopes = all.scopes.borrow_mut();
-                        scopes.by_context.insert(c, s);
-                        scopes.members.insert(obj, (c, s));
-                    }
-                };
-                // Not a root of a window, whoever reads it first.
-                all.unscoped.set(all.unscoped.get() + 1);
-                let made = self
-                    .make(
+        let made = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            self.untrack(|| match &kind {
+                Kind::File(key) => {
+                    let template = self.file_template(key)?;
+                    let file = template.file.clone();
+                    let allocated = |obj| {
+                        all.entries.borrow_mut()[handle].state = State::Making(Some(obj));
+                        // A window's own: what its scripts read is the window's.
+                        if let Some(s) = scope
+                            && let Some(c) = self.context_of(obj)
+                        {
+                            let mut scopes = all.scopes.borrow_mut();
+                            scopes.by_context.insert(c, s);
+                            scopes.members.insert(obj, (c, s));
+                        }
+                    };
+                    // Not a root of a window, whoever reads it first.
+                    let _unscoped = Unscoped::enter(&all.unscoped);
+                    self.make(
                         Request::template(Rc::new(template))
                             .allocated(move |_: &Engine, root, _| allocated(root)),
                     )
-                    .map(|(root, _)| root);
-                all.unscoped.set(all.unscoped.get() - 1);
-                made.map(|obj| (obj, Some(file)))
+                    .map(|(root, _)| (root, Some(file)))
+                }
+                Kind::Native(native) => self
+                    .create_with(MetaRef::Static(native.meta), (native.make)(self), None)
+                    .map(|obj| (obj, None)),
+                Kind::Keys(_) => unreachable!("returned above"),
+            })
+        }));
+        // A panic is a resource fault here as it is for a delegate: the
+        // entry waits to be made again, then the panic goes on. Left
+        // `Making`, every later lookup would read nothing, with no warning.
+        let (made, panicked) = match made {
+            Ok(made) => (made, None),
+            Err(payload) => {
+                let message = crate::delegates::panic_message(payload.as_ref());
+                let err = EngineError::Panic(format!("a panic while it was made: {message}"));
+                (Err(err), Some(payload))
             }
-            Kind::Native(native) => self
-                .create_with(MetaRef::Static(native.meta), (native.make)(self), None)
-                .map(|obj| (obj, None)),
-            Kind::Keys(_) => unreachable!("returned above"),
-        });
+        };
         // Made, but its script did not load or a binding was cut short
         // while it was made: not whole, and nothing would run it again.
         let made = match made {
@@ -918,6 +945,9 @@ impl Engine {
                                 type_name(&ty)
                             ));
                             all.entries.borrow_mut()[handle].state = State::Failed;
+                            if let Some(payload) = panicked {
+                                std::panic::resume_unwind(payload);
+                            }
                             return None;
                         }
                     },
@@ -948,6 +978,9 @@ impl Engine {
                 let _ = self.inner.graph.dispose(woken);
             }
             (None, None) => {}
+        }
+        if let Some(payload) = panicked {
+            std::panic::resume_unwind(payload);
         }
         if let (Some(obj), Some(scope), Kind::Native(native)) = (out, scope, &kind) {
             let root = all.scopes.borrow().owners.get(&scope).and_then(|o| o.root);
