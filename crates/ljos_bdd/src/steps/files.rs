@@ -62,7 +62,7 @@ fn the_example(w: &mut LjosWorld, id: String) -> StepResult {
             let text = String::from_utf8(bytes).map_err(|e| format!("{name}: {e}"))?;
             w.stage(&name, &text);
         } else {
-            w.each(|b| b.files()?.resource(&name, &bytes))?;
+            w.resource(&name, &bytes)?;
         }
     }
     Ok(())
@@ -127,7 +127,7 @@ fn an_image_file(
     colour: String,
 ) -> StepResult {
     let bytes = fixture::image_file(&name, width, height, &colour)?;
-    w.each(|b| b.files()?.resource(&name, &bytes))
+    w.resource(&name, &bytes)
 }
 
 // An image of four quadrants, each of one colour, so that where each part
@@ -143,7 +143,7 @@ fn a_quadrants_image_file(
 ) -> StepResult {
     let colours: Vec<String> = colours.split(',').map(|c| c.trim().to_owned()).collect();
     let bytes = fixture::quadrants_png(width, height, &colours)?;
-    w.each(|b| b.files()?.resource(&name, &bytes))
+    w.resource(&name, &bytes)
 }
 
 // An image of rows of tiles, each of one colour ("#ff0000, #00ff00 /
@@ -162,7 +162,7 @@ fn a_tiles_image_file(
         .map(|row| row.split(',').map(|c| c.trim().to_owned()).collect())
         .collect();
     let bytes = fixture::tiles_png(width, height, &rows)?;
-    w.each(|b| b.files()?.resource(&name, &bytes))
+    w.resource(&name, &bytes)
 }
 
 // A picture of single-pixel squares of two colours ("#000000, #ffffff",
@@ -178,7 +178,7 @@ fn a_checkers_image_file(
 ) -> StepResult {
     let colours: Vec<String> = colours.split(',').map(|c| c.trim().to_owned()).collect();
     let bytes = fixture::checkers_png(width, height, &colours)?;
-    w.each(|b| b.files()?.resource(&name, &bytes))
+    w.resource(&name, &bytes)
 }
 
 // A Radiance HDR picture of linear radiance ("0.5, 0.5, 0.5"), which goes
@@ -193,7 +193,7 @@ fn a_radiance_file(
 ) -> StepResult {
     let c = parse_radiance(&radiance)?;
     let bytes = fixture::radiance(width, height, c, c)?;
-    w.each(|b| b.files()?.resource(&name, &bytes))
+    w.resource(&name, &bytes)
 }
 
 #[given(
@@ -209,7 +209,7 @@ fn a_radiance_file_of_halves(
 ) -> StepResult {
     let (upper, lower) = (parse_radiance(&upper)?, parse_radiance(&lower)?);
     let bytes = fixture::radiance(width, height, upper, lower)?;
-    w.each(|b| b.files()?.resource(&name, &bytes))
+    w.resource(&name, &bytes)
 }
 
 // What light probes are baked into; see `fixture::ktx_cube`.
@@ -224,7 +224,7 @@ fn a_ktx_cube_file(
     lower: f32,
 ) -> StepResult {
     let bytes = fixture::ktx_cube(side, upper, lower)?;
-    w.each(|b| b.files()?.resource(&name, &bytes))
+    w.resource(&name, &bytes)
 }
 
 // A cube whose last bytes are gone, as a download that stopped would leave.
@@ -232,7 +232,7 @@ fn a_ktx_cube_file(
 fn a_ktx_cube_file_cut_short(w: &mut LjosWorld, side: u32, name: String) -> StepResult {
     let mut bytes = fixture::ktx_cube(side, 0.5, 0.5)?;
     bytes.truncate(bytes.len() - 8);
-    w.each(|b| b.files()?.resource(&name, &bytes))
+    w.resource(&name, &bytes)
 }
 
 /// "R, G, B" as three numbers of linear radiance.
@@ -265,7 +265,7 @@ fn the_file_of_hex(w: &mut LjosWorld, name: String, step: &Step) -> StepResult {
                 .ok_or_else(|| format!("{:?} is not a byte", String::from_utf8_lossy(pair)))
         })
         .collect::<Result<Vec<u8>, String>>()?;
-    w.each(|b| b.files()?.resource(&name, &bytes))
+    w.resource(&name, &bytes)
 }
 
 // A PDF document beside the QML, with a page of each size in points
@@ -283,7 +283,7 @@ fn a_pdf_file(w: &mut LjosWorld, name: String, pages: String, colour: String) ->
         })
         .collect::<Result<Vec<_>, String>>()?;
     let bytes = fixture::pdf(&pages, &colour)?;
-    w.each(|b| b.files()?.resource(&name, &bytes))
+    w.resource(&name, &bytes)
 }
 
 // A PDF of the objects in the doc string, from the catalogue on: what a
@@ -292,7 +292,7 @@ fn a_pdf_file(w: &mut LjosWorld, name: String, pages: String, colour: String) ->
 #[given(regex = r#"^a PDF file "([^"]+)" of objects:$"#)]
 fn a_pdf_file_of_objects(w: &mut LjosWorld, name: String, step: &Step) -> StepResult {
     let bytes = fixture::pdf_of_objects(&docstring(step)?)?;
-    w.each(|b| b.files()?.resource(&name, &bytes))
+    w.resource(&name, &bytes)
 }
 
 // An animated GIF beside the QML, one colour a frame, each frame shown
@@ -310,7 +310,7 @@ fn an_animated_image_file(
 ) -> StepResult {
     let colours: Vec<String> = colours.split(',').map(|c| c.trim().to_owned()).collect();
     let bytes = fixture::animated_gif(width, height, &colours, delay)?;
-    w.each(|b| b.files()?.resource(&name, &bytes))
+    w.resource(&name, &bytes)
 }
 
 // The same, at `$SERVER/X.gif` on the scenario's web server.
@@ -334,12 +334,12 @@ fn a_served_animated_image_file(
 // A file with an image's name and something else inside.
 #[given(regex = r#"^the data file "([^"]+)" holds "([^"]*)"$"#)]
 fn data_file(w: &mut LjosWorld, name: String, text: String) -> StepResult {
-    w.each(|b| b.files()?.resource(&name, text.as_bytes()))
+    w.resource(&name, text.as_bytes())
 }
 
 #[given(regex = r#"^a file "([^"]+)" that is not an image$"#)]
 fn not_an_image(w: &mut LjosWorld, name: String) -> StepResult {
-    w.each(|b| b.files()?.resource(&name, &fixture::not_an_image()))
+    w.resource(&name, &fixture::not_an_image())
 }
 
 // The same, at `$SERVER/X.png` on the scenario's web server.
@@ -382,7 +382,7 @@ fn served_not_an_image(w: &mut LjosWorld, name: String) -> StepResult {
 #[given(regex = r#"^the font file "([^"]+)"$"#)]
 fn the_font_file(w: &mut LjosWorld, name: String) -> StepResult {
     let bytes = feature_file("text/fonts", &name)?;
-    w.each(|b| b.files()?.resource(&name, &bytes))
+    w.resource(&name, &bytes)
 }
 
 // A sound or a film of features/multimedia/media, beside the QML under its
@@ -390,7 +390,7 @@ fn the_font_file(w: &mut LjosWorld, name: String) -> StepResult {
 #[given(regex = r#"^the media file "([^"]+)"$"#)]
 fn the_media_file(w: &mut LjosWorld, name: String) -> StepResult {
     let bytes = feature_file("multimedia/media", &name)?;
-    w.each(|b| b.files()?.resource(&name, &bytes))
+    w.resource(&name, &bytes)
 }
 
 // The same, at `$SERVER/X` on the scenario's web server.
@@ -406,7 +406,7 @@ fn a_served_media_file(w: &mut LjosWorld, name: String) -> StepResult {
 #[given(regex = r#"^the sprite sheet "([^"]+)"$"#)]
 fn the_sprite_sheet(w: &mut LjosWorld, name: String) -> StepResult {
     let bytes = feature_file("animation/sprites", &name)?;
-    w.each(|b| b.files()?.resource(&name, &bytes))
+    w.resource(&name, &bytes)
 }
 
 // A Lottie file of features/lottie/avatars, beside the QML under its own
@@ -414,7 +414,7 @@ fn the_sprite_sheet(w: &mut LjosWorld, name: String) -> StepResult {
 #[given(regex = r#"^the Lottie file "([^"]+\.json)"$"#)]
 fn the_lottie_file(w: &mut LjosWorld, name: String) -> StepResult {
     let bytes = feature_file("lottie/avatars", &name)?;
-    w.each(|b| b.files()?.resource(&name, &bytes))
+    w.resource(&name, &bytes)
 }
 
 // A glTF model of features/quick3d/models, beside the QML under its own
@@ -422,20 +422,20 @@ fn the_lottie_file(w: &mut LjosWorld, name: String) -> StepResult {
 #[given(regex = r#"^the model file "([^"]+)"$"#)]
 fn the_model_file(w: &mut LjosWorld, name: String) -> StepResult {
     let bytes = feature_file("quick3d/models", &name)?;
-    w.each(|b| b.files()?.resource(&name, &bytes))
+    w.resource(&name, &bytes)
 }
 
 // A file with a font's name and something else inside.
 #[given(regex = r#"^a file "([^"]+)" that is not a font$"#)]
 fn not_a_font(w: &mut LjosWorld, name: String) -> StepResult {
-    w.each(|b| b.files()?.resource(&name, &fixture::not_an_image()))
+    w.resource(&name, &fixture::not_an_image())
 }
 
 // A text file beside the QML (a settings file, say).
 #[given(regex = r#"^the text file "([^"]+)":$"#)]
 fn the_text_file(w: &mut LjosWorld, name: String, step: &Step) -> StepResult {
     let text = docstring(step)?;
-    w.each(|b| b.files()?.text_file(&name, &text))
+    w.text_file(&name, &text)
 }
 
 // The same, at `$SERVER/X` on the scenario's web server.

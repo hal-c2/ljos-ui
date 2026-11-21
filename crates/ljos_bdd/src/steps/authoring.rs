@@ -7,7 +7,7 @@
 use cucumber::{given, then, when};
 use gherkin::Step;
 
-use crate::author::{Errors, Log};
+use crate::author::{Errors, Log, Packing};
 use crate::value;
 use crate::world::LjosWorld;
 
@@ -415,6 +415,95 @@ fn packed_ended_within(w: &mut LjosWorld, seconds: u64) -> StepResult {
     w.author()
         .0
         .packed_took_at_most(std::time::Duration::from_secs(seconds))
+}
+
+// A pack as a build script writes it (features/tooling/pack-files.feature).
+
+#[when(
+    regex = r#"^the project is packed( with the files that do not compile| carrying only "([^"]+)" files| carrying no other files)?$"#
+)]
+fn project_packed(w: &mut LjosWorld, how: String, kinds: String) -> StepResult {
+    let packing = match how.as_str() {
+        "" => Packing::default(),
+        " with the files that do not compile" => Packing {
+            keep_failing: true,
+            ..Packing::default()
+        },
+        " carrying no other files" => Packing {
+            kinds: Some(Vec::new()),
+            ..Packing::default()
+        },
+        _ => Packing {
+            kinds: Some(kinds.split(',').map(|k| k.trim().to_owned()).collect()),
+            ..Packing::default()
+        },
+    };
+    let (author, files) = w.author_acts();
+    author.pack(files, &packing)
+}
+
+/// The cells of a table's column `column` below its heading.
+fn column(step: &Step, column: usize) -> Result<Vec<String>, String> {
+    let table = step.table.as_ref().ok_or("the step needs a table")?;
+    table
+        .rows
+        .iter()
+        .skip(1)
+        .map(|row| {
+            row.get(column)
+                .map(|cell| cell.trim().to_owned())
+                .ok_or_else(|| format!("a row of the table has no column {}", column + 1))
+        })
+        .collect()
+}
+
+#[then("the pack carries the files:")]
+fn pack_carries(w: &mut LjosWorld, step: &Step) -> StepResult {
+    let want = column(step, 0)?;
+    let source = w.author().0.packed_source()?;
+    let carried: Vec<&str> = source.resources().map(|(path, _)| path).collect();
+    if carried == want {
+        Ok(())
+    } else {
+        Err(format!("the pack carries {carried:?}, not {want:?}"))
+    }
+}
+
+#[then("the pack carries no files besides its QML")]
+fn pack_carries_none(w: &mut LjosWorld) -> StepResult {
+    let source = w.author().0.packed_source()?;
+    let carried: Vec<&str> = source.resources().map(|(path, _)| path).collect();
+    if carried.is_empty() {
+        Ok(())
+    } else {
+        Err(format!("the pack carries {carried:?}"))
+    }
+}
+
+// Each file by its key, and a part of why it did not compile; no file
+// that did is among them.
+#[then("the pack says these files did not compile:")]
+fn pack_failures(w: &mut LjosWorld, step: &Step) -> StepResult {
+    let (keys, whys) = (column(step, 0)?, column(step, 1)?);
+    let source = w.author().0.packed_source()?;
+    let failed: Vec<(&str, &str)> = source.failures().collect();
+    let said = || format!("the pack says {failed:?}");
+    if failed.len() != keys.len() {
+        return Err(format!("{}, not {} files", said(), keys.len()));
+    }
+    for (key, why) in keys.iter().zip(&whys) {
+        match failed.iter().find(|(k, _)| k == key) {
+            Some((_, reason)) if reason.contains(why.as_str()) => {}
+            Some(_) => {
+                return Err(format!(
+                    "{}: why {key} failed does not mention {why:?}",
+                    said()
+                ));
+            }
+            None => return Err(format!("{}: {key} is not among them", said())),
+        }
+    }
+    Ok(())
 }
 
 #[then(regex = r"^the application has started (no|a) thread to write its errors$")]

@@ -59,6 +59,18 @@ impl Log {
     }
 }
 
+/// How the project is packed: as a build script packs it unless said
+/// otherwise.
+#[derive(Clone, Debug, Default)]
+pub struct Packing {
+    /// The kinds of files carried besides the QML, by extension; `None`
+    /// for the build's own choice.
+    pub kinds: Option<Vec<String>>,
+    /// A file that does not compile is packed as a failure, where a build
+    /// would stop.
+    pub keep_failing: bool,
+}
+
 /// A packed application that ran to its end.
 pub(super) struct Packed {
     took: Duration,
@@ -67,16 +79,37 @@ pub(super) struct Packed {
 }
 
 impl Rig {
-    /// The project compiled into a pack beside it, and the program that
-    /// runs a pack.
-    fn packed_command(&self, log: Log) -> Result<Command, String> {
-        let source = ljos::dev::compile(self.dir.path(), None, ljos::dev::OnError::Fail)
+    /// The project compiled into a pack beside it, as `packing` says, and
+    /// read back as the program reads it.
+    pub(super) fn pack(&mut self, packing: &Packing) -> Result<PathBuf, String> {
+        let on_error = if packing.keep_failing {
+            ljos::dev::OnError::Record
+        } else {
+            ljos::dev::OnError::Fail
+        };
+        let source = ljos::dev::compile(self.dir.path(), None, on_error)
             .map_err(|e| format!("the project does not compile: {e}"))?;
-        let pack = source
-            .to_pack()
+        let options = ljos::build::Options::new().without_sources();
+        let options = match &packing.kinds {
+            Some(kinds) => options.with_files(kinds.iter().map(String::as_str)),
+            None => options,
+        };
+        let pack = options
+            .pack(&source, &[self.dir.path()])
             .map_err(|e| format!("the project cannot be packed: {e}"))?;
         let file: PathBuf = self.outside.path().join("app.pack");
-        std::fs::write(&file, pack).map_err(|e| format!("cannot write the pack: {e}"))?;
+        std::fs::write(&file, &pack).map_err(|e| format!("cannot write the pack: {e}"))?;
+        self.pack = Some(
+            ljos_engine::MapSource::from_pack(&pack)
+                .map_err(|e| format!("the pack cannot be read: {e}"))?,
+        );
+        Ok(file)
+    }
+
+    /// The project compiled into a pack beside it, and the program that
+    /// runs a pack.
+    fn packed_command(&mut self, log: Log) -> Result<Command, String> {
+        let file = self.pack(&Packing::default())?;
         let bin = testrun::example_bin("LJOS_PACKED_LOG_BIN", "ljos", "packed_log")
             .map_err(|e| e.to_string())?;
         // As `Rig::command` runs `ljos`: no display, no session bus.
