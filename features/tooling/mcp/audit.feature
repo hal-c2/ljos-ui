@@ -83,7 +83,7 @@ Feature: An agent audits the design of the running application
 
   Scenario: The checks that act are left out unless asked, and named
     When the agent calls the tool "app_audit"
-    Then the answer's "/notChecked" has 12 entries
+    Then the answer's "/notChecked" has 14 entries
     And the answer's "/notChecked/0" is "color-state-only"
 
   Scenario: Acting on the application needs the input capability

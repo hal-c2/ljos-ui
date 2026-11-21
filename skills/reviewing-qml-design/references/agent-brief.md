@@ -9,6 +9,7 @@
 - Focus and input
 - Motion
 - Content
+- Health
 - Sources
 
 Follow every line. `[code]` is the rule that finds the mistake; its section is `docs/design/<page>#<code>` (README.md has the model and the tools). Before you write, call `design_rules`; for colours `design_palette` / `design_contrast`; for motion `design_motion`. After you write, run `ljos check` and `ljos audit`. Keep a Warning only with `// ljos-allow(<code>): <reason>` [lint-allow-without-reason] and delete allows that keep nothing [lint-allow-unused].
@@ -122,6 +123,13 @@ Follow every line. `[code]` is the rule that finds the mistake; its section is `
 - End a menu item that opens a dialog for more input with `…`. [content-menu-ellipsis]
 - Write toasts with what, how many and an undo; title settings pages one way.
 - Show a row's state on the row; never mention features the build lacks; avoid ambiguous one-word statuses.
+
+## Health
+- Keep a turn's script under 750 interpreter polls (about 110 ms in an optimised build), and every turn within the turn budget on the wall clock (100 ms unless the application sets another); apply what changed, not the whole value. [health-turn-over-budget] [health-turn-slow]
+- Guard handlers against data that is not there yet; a fault leaves work half done. [health-fault]
+- Leave no Loader at `Loader.Error`, or active with a `source` or `sourceComponent` and nothing made once it is no longer `Loader.Loading`. [health-loader-failed]
+- Keep the script heap well under its cap, and keep nothing per update. [health-heap-headroom] [health-heap-growth]
+- Draw nothing while idle: no repeating timer that moves things. [health-never-settles]
 
 ## Sources
 - The full guide and its sources: docs/design/README.md

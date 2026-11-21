@@ -4008,6 +4008,7 @@ dependencies = [
  "ljos_compiler",
  "ljos_controls",
  "ljos_design",
+ "ljos_drive",
  "ljos_engine",
  "ljos_quick",
  "ljos_render",

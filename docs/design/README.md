@@ -11,6 +11,7 @@ These pages are the reference every design finding links to, and what an author 
 | [interaction.md](interaction.md) | focus, keyboard, pointer, hover | `focus-` |
 | [motion.md](motion.md) | easing, duration, springs, reduced motion | `motion-` |
 | [content.md](content.md) | words, empty states, identifiers | `content-` |
+| [health.md](health.md) | frozen turns, faults, failed Loaders, the script heap, idle frames | `health-` |
 | [agent-brief.md](agent-brief.md) | every rule as one imperative line, for agents | all |
 
 ## The model

@@ -2227,7 +2227,7 @@ impl Engine {
             };
             let _profiled = e.profile_handler(scope, obj, expr.0, &signal_name, at);
             let _journaled = e.journal_handler(scope, &signal_name, at);
-            let _phase = e.turn_handler(&signal_name, obj);
+            let _phase = e.turn_handler(&signal_name, obj, at);
             e.call_expr(&i, expr, args);
         })
     }
