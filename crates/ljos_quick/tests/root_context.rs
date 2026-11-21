@@ -121,7 +121,10 @@ Item {
 }
 
 /// A delegate writes a key through an id of the root context, and the map
-/// and every reader see it, as a write in a file's item does.
+/// and every reader see it, as a write in a file's item does. `hold` also
+/// assigns the id itself on a branch that never runs: a script that assigns
+/// a name reads it through where it is held, which is the delegate's write
+/// lookup, so `hold` finds the id the way an assignment to it would.
 #[test]
 fn a_delegate_writes_through_a_root_context_id() {
     let e = engine();
@@ -136,13 +139,18 @@ Item {
     Item { objectName: "direct"; property real g: owner.gap }
     Repeater {
         model: 1
-        Item { objectName: "repeater"; function write(v) { owner.gap = v } }
+        Item {
+            objectName: "repeater"
+            function write(v) { owner.gap = v }
+            function hold(v) { if (v < 0) owner = null; owner.gap = v }
+        }
     }
     ListView {
         width: 100; height: 100; model: 1
         delegate: Item {
             objectName: "listView"; width: 10; height: 10
             function write(v) { owner.gap = v }
+            function hold(v) { if (v < 0) owner = null; owner.gap = v }
         }
     }
 }
@@ -150,19 +158,24 @@ Item {
     );
     let mut s = scene(&e, root, 400.0, 400.0);
     frame(&mut s, &e);
-    for (writer, v) in [("repeater", 4.0), ("listView", 6.0)] {
-        e.invoke_by_name(find(&e, root, writer), "write", &[Value::Real(v)])
-            .unwrap_or_else(|err| panic!("{writer}: {err}"));
+    for (writer, how, v) in [
+        ("repeater", "write", 4.0),
+        ("repeater", "hold", 5.0),
+        ("listView", "write", 6.0),
+        ("listView", "hold", 7.0),
+    ] {
+        e.invoke_by_name(find(&e, root, writer), how, &[Value::Real(v)])
+            .unwrap_or_else(|err| panic!("{writer}.{how}: {err}"));
         frame(&mut s, &e);
         assert_eq!(
             owner.value(&e, "gap"),
             Value::Real(v),
-            "{writer} wrote the map"
+            "{writer}.{how} wrote the map"
         );
         assert_eq!(
             num(&e, find(&e, root, "direct"), "g"),
             v,
-            "{writer}'s write is read"
+            "{writer}.{how}'s write is read"
         );
     }
 }
