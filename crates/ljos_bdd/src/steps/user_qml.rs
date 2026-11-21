@@ -50,6 +50,11 @@ fn unwatched(w: &mut LjosWorld) -> StepResult {
     w.each(|b| b.application()?.user_qml_unwatched())
 }
 
+#[given("the application reads its user's files only when it starts")]
+fn read_once(w: &mut LjosWorld) -> StepResult {
+    w.each(|b| b.application()?.user_qml_read_once())
+}
+
 #[when("the application asks for its user's files to be read again")]
 fn read_again(w: &mut LjosWorld) -> StepResult {
     w.each(|b| b.application()?.user_qml_read_again())

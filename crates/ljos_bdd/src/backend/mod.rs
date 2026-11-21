@@ -1336,6 +1336,13 @@ pub trait Application: Backend {
         Err(BackendError::NotImplemented("a user's directory"))
     }
 
+    /// The application reads its user's files once, when it starts
+    /// (`UserQml::watch(false)` and `reads_when_asked(false)`). Set before
+    /// it runs.
+    fn user_qml_read_once(&mut self) -> Result<()> {
+        Err(BackendError::NotImplemented("a user's directory"))
+    }
+
     /// The application's own code asks for its user's files to be read
     /// again (`UserSession::read_again`), and takes what that brings.
     fn user_qml_read_again(&mut self) -> Result<()> {
