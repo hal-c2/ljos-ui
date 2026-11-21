@@ -718,6 +718,64 @@ fn a_null_thrown_for_want_of_heap_and_thrown_again_is_running_out_of_memory() {
     assert!(matches!(err, JsFault::JsOutOfMemory { .. }), "{err:?}");
 }
 
+/// Each job in a pump counts QuickJS's `null`s from its own start: a job
+/// that ran out and caught the `null` leaves the next job's own `throw
+/// null` its exception.
+#[test]
+fn a_null_a_job_throws_after_another_caught_running_out_is_its_own() {
+    let host = JsHost::new(JsConfig {
+        memory_limit: Some(16 * 1024 * 1024),
+        ..JsConfig::default()
+    })
+    .unwrap();
+    host.collect_now();
+    let held = host.memory_stats().unwrap().malloc_size;
+    assert!(host.set_memory_limit(Some(held + 4 * 1024 * 1024)));
+    host.enter("setup", host.config().slice, |s| {
+        s.eval::<(), _>(
+            "function fill() { let h = null; for (;;) h = { n: h } }\n\
+             queueMicrotask(() => { try { fill() } catch (e) { if (e !== null) throw new Error('not null: ' + e) } });\n\
+             queueMicrotask(() => { throw null })",
+        )
+    })
+    .unwrap();
+    let pumped = host.pump_jobs(Instant::now() + Duration::from_secs(5));
+    assert_eq!(pumped.ran, 2);
+    assert!(
+        matches!(&pumped.faults[..], [JsFault::JsException { .. }]),
+        "{:?}",
+        pumped.faults
+    );
+}
+
+/// A nested run counts from its own start, and the run around it from its
+/// own again once the nested one is done: a `null` QuickJS threw in the
+/// outer run before it, caught and thrown again after, is out of memory.
+#[test]
+fn a_null_thrown_for_want_of_heap_before_a_nested_run_is_still_out_of_memory_after() {
+    let host = JsHost::new(JsConfig {
+        memory_limit: Some(16 * 1024 * 1024),
+        ..JsConfig::default()
+    })
+    .unwrap();
+    host.collect_now();
+    let held = host.memory_stats().unwrap().malloc_size;
+    assert!(host.set_memory_limit(Some(held + 4 * 1024 * 1024)));
+    let slice = host.config().slice;
+    let err = host
+        .enter("outer", slice, |s| {
+            s.eval::<(), _>(
+                "function fill() { let h = null; for (;;) h = { n: h } }\n\
+                 try { fill() } catch (e) { if (e !== null) throw new Error('not null: ' + e); globalThis.caught = e }",
+            )?;
+            let inner = host.enter("inner", slice, |s| s.eval::<f64, _>("40 + 2"));
+            assert_eq!(inner, Ok(42.0));
+            s.eval::<(), _>("throw caught")
+        })
+        .unwrap_err();
+    assert!(matches!(err, JsFault::JsOutOfMemory { .. }), "{err:?}");
+}
+
 /// QuickJS carves small objects out of arenas and lets an arena go only
 /// once all of it is free. Objects that stay among the freed ones keep
 /// their arenas held, so what the system gave back says little about
