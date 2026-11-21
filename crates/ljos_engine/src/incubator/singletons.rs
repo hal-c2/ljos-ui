@@ -915,7 +915,7 @@ impl Engine {
         // Made, but its script did not load or a binding was cut short
         // while it was made: not whole, and nothing would run it again.
         let made = match made {
-            Ok((obj, _)) if let Some(e) = self.resource_fault_since(faults) => {
+            Ok((obj, _)) if let Some(e) = self.resource_fault_since(faults, Some(obj)) => {
                 self.destroy(obj);
                 Err(e)
             }
