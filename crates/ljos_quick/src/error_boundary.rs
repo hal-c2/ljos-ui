@@ -240,9 +240,8 @@ fn again_after(e: &Engine, me: ObjectId, fault: &Fault, report: Option<&FaultRep
     // says whether a collection since already made that room.
     match report {
         Some(report) => e.collect_garbage_for_fault(report),
-        None if matches!(fault, Fault::JsOutOfMemory) => e.collect_garbage_for_full_heap(),
-        None => {}
-    }
+        None => matches!(fault, Fault::JsOutOfMemory) && e.collect_garbage_for_full_heap(),
+    };
     let place = e.declared_at(me).unwrap_or_default();
     warn(
         e,
