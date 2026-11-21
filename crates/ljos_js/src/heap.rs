@@ -282,3 +282,25 @@ unsafe impl Allocator for Counted {
         unsafe { rquickjs::allocator::RustAllocator::usable_size(ptr) }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The allocator's rounding can leave the count past a cap set just
+    /// above what was asked for: giving memory back must still work then.
+    #[test]
+    fn a_block_shrinks_when_the_heap_is_past_its_cap() {
+        let count = HeapCount::default();
+        let mut heap = Counted::new(count.clone());
+        let block = heap.alloc(4096);
+        assert!(!block.is_null());
+        count.set_cap(Some(count.bytes() - 1));
+        // SAFETY: `block` is a live allocation of `heap`'s.
+        let smaller = unsafe { heap.realloc(block, 1024) };
+        assert!(!smaller.is_null(), "a shrink past the cap was refused");
+        assert!(!count.over_share(), "a shrink is not a refusal");
+        // SAFETY: as above.
+        unsafe { heap.dealloc(smaller) };
+    }
+}
