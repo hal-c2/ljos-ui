@@ -90,15 +90,22 @@ impl TextInputClient for Client {
         // A field that starts over on its first edit has done so before
         // the edit is measured: what was in it is not what was refused.
         ops::begin_editing(engine, item);
-        let (range, len) = {
-            let len = st.borrow().model.len();
-            (range.start.min(len)..range.end.min(len), len)
+        let (range, len, before, same) = {
+            let s = st.borrow();
+            let len = s.model.len();
+            let range = range.start.min(len)..range.end.min(len);
+            let same = s.model.slice(range.start, range.end) == text;
+            (range, len, s.model.text().to_owned(), same)
         };
         let (start, removed) = (range.start, range.len());
         self.replace(engine, item, range, text);
         let s = st.borrow();
         let end = start + units_of(text);
-        s.model.len() == len - removed + units_of(text) && s.model.cursor() == end
+        // A refused edit is rolled back, which a change of the same length
+        // ending at the cursor would pass for taken by its length alone.
+        s.model.len() == len - removed + units_of(text)
+            && s.model.cursor() == end
+            && (same || s.model.text() != before)
     }
 
     fn digest(&self, engine: &Engine, item: ObjectId) -> u64 {
