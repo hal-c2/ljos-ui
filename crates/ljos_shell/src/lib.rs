@@ -738,7 +738,14 @@ impl<M: Send + 'static> ShellApp<M> {
     /// desktop clears a root window.
     #[cfg_attr(not(all(feature = "android", target_os = "android")), allow(dead_code))]
     pub(crate) fn clear_color(&self) -> egui::Color32 {
-        self.background
+        if let Some(folded) = self.view.backdrop() {
+            return folded;
+        }
+        self.view
+            .scene()
+            .root()
+            .and_then(|root| window_color(self.engine(), root))
+            .map_or(self.background, window_spec::clear)
     }
 
     /// Calls `changed` whenever the colour of the root, a `Window`,
@@ -747,8 +754,12 @@ impl<M: Send + 'static> ShellApp<M> {
     /// scene asks for. The root watched; `None` when it is no `Window`.
     #[cfg_attr(not(all(feature = "android", target_os = "android")), allow(dead_code))]
     pub(crate) fn on_root_color(&self, changed: impl Fn() + 'static) -> Option<ObjectId> {
-        let _ = changed;
-        None
+        let engine = self.engine();
+        let root = self.view.scene().root()?;
+        window_color(engine, root)?;
+        let color = ljos_quick::Rectangle::COLOR.index;
+        engine.watch(root, color, move |_, _| changed()).ok()?;
+        Some(root)
     }
 }
 
@@ -855,6 +866,21 @@ pub(crate) fn give_back_freed_heap() {
     unsafe {
         libc::malloc_trim(0);
     }
+}
+
+/// The colour of `obj` if it is a `Window`, as its [`WindowSpec`] would
+/// say it, read without the rest of the spec: a host reads it every frame.
+///
+/// [`WindowSpec`]: ljos_controls::WindowSpec
+#[cfg_attr(not(all(feature = "android", target_os = "android")), allow(dead_code))]
+fn window_color(engine: &Engine, obj: ObjectId) -> Option<[u8; 4]> {
+    engine.with::<ljos_controls::Window, _>(obj, |_| ()).ok()?;
+    Some(
+        match engine.untrack(|| engine.read(obj, ljos_quick::Rectangle::COLOR.index)) {
+            ljos_engine::Value::Color(c) => c.to_rgba8(),
+            _ => [255; 4],
+        },
+    )
 }
 
 /// Locks `m` whether or not a thread went down holding it: what the
