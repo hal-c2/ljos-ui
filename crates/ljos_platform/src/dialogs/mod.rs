@@ -706,16 +706,19 @@ pub(crate) fn clicked(engine: &Engine, obj: ObjectId, button: i32) {
 
 /// The files or folder chosen go into the dialog's properties.
 pub(crate) fn chose(engine: &Engine, obj: ObjectId, files: &[PathBuf]) -> Result<(), EngineError> {
-    let urls: Vec<Value> = files
+    let urls: Vec<String> = files.iter().map(|p| file_url(p)).collect();
+    chose_urls(engine, obj, &urls)
+}
+
+/// The files, documents or folder chosen, as URLs, go into the dialog's
+/// properties.
+fn chose_urls(engine: &Engine, obj: ObjectId, chosen: &[String]) -> Result<(), EngineError> {
+    let urls: Vec<Value> = chosen
         .iter()
-        .map(|p| Value::Url(Atom::from(file_url(p).as_str())))
+        .map(|u| Value::Url(Atom::from(u.as_str())))
         .collect();
     let first = Url(Atom::from(
-        files
-            .first()
-            .map(|p| file_url(p))
-            .unwrap_or_default()
-            .as_str(),
+        chosen.first().map(String::as_str).unwrap_or_default(),
     ));
     if is_a::<FolderDialog>(engine, obj) {
         engine.set(obj, FolderDialog::SELECTED_FOLDER, first.clone())?;
@@ -751,8 +754,14 @@ pub(crate) fn system_answered(engine: &Engine, ticket: u64, reply: DialogReply) 
             let chosen = chose(engine, obj, &files);
             report(engine, chosen.and_then(|()| done(engine, obj, 1)));
         }
+        DialogReply::Documents(urls) if !urls.is_empty() => {
+            let chosen = chose_urls(engine, obj, &urls);
+            report(engine, chosen.and_then(|()| done(engine, obj, 1)));
+        }
         DialogReply::Button(button) => clicked(engine, obj, button),
-        DialogReply::Files(_) | DialogReply::Dismissed => report(engine, done(engine, obj, 0)),
+        DialogReply::Files(_) | DialogReply::Documents(_) | DialogReply::Dismissed => {
+            report(engine, done(engine, obj, 0))
+        }
     }
 }
 

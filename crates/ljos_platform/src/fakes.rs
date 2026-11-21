@@ -61,6 +61,15 @@ impl FakeDialogs {
             .is_some()
     }
 
+    /// The user chooses these documents, by their URLs, in the newest
+    /// dialog, as a system that hands out documents answers. `false` when
+    /// no dialog is shown.
+    pub fn choose_documents(&self, urls: Vec<String>) -> bool {
+        self.take()
+            .map(|a| a.send(DialogReply::Documents(urls)))
+            .is_some()
+    }
+
     /// The user presses the button with this text (`"OK"`) in the newest
     /// dialog. `false` when no dialog is shown or it has no such button.
     pub fn answer(&self, button: &str) -> bool {

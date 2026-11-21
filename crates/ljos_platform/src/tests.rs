@@ -104,6 +104,46 @@ fn a_file_dialog_asks_the_system_and_the_answer_arrives_as_a_message() {
 }
 
 #[test]
+fn a_document_the_system_hands_out_is_selected_by_its_url() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let e = engine(dir.path());
+    let fake = FakeDialogs::default();
+    let platform = Platform::of(&e);
+    platform.set_dialogs(Rc::new(fake.clone()));
+    let d = make::<FileDialog>(&e);
+    e.write_by_name(d, "fileMode", Value::Int(2)).expect("save");
+    let accepted = counter(&e, d, "accepted");
+    e.invoke_by_name(d, "open", &[]).expect("opened");
+    let url = "content://com.android.providers.downloads.documents/document/msf%3A31";
+    assert!(fake.choose_documents(vec![url.to_owned()]));
+    platform.finish(&e);
+    assert_eq!(accepted.get(), 1, "{:?}", e.take_log());
+    assert_eq!(
+        e.read_by_name(d, "selectedFile").to_js_string().as_str(),
+        url
+    );
+    assert_eq!(
+        e.read_by_name(d, "currentFile").to_js_string().as_str(),
+        url
+    );
+}
+
+#[test]
+fn a_system_that_hands_out_no_document_rejects() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let e = engine(dir.path());
+    let fake = FakeDialogs::default();
+    let platform = Platform::of(&e);
+    platform.set_dialogs(Rc::new(fake.clone()));
+    let d = make::<FileDialog>(&e);
+    let rejected = counter(&e, d, "rejected");
+    e.invoke_by_name(d, "open", &[]).expect("opened");
+    assert!(fake.choose_documents(Vec::new()));
+    platform.finish(&e);
+    assert_eq!(rejected.get(), 1, "{:?}", e.take_log());
+}
+
+#[test]
 fn a_dismissed_system_dialog_is_rejected() {
     let dir = tempfile::tempdir().expect("temp dir");
     let e = engine(dir.path());
