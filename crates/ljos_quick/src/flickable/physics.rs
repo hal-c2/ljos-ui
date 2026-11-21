@@ -796,13 +796,15 @@ mod tests {
 
     /// The fixture is Android's own `OverScroller` on the emulator (see its
     /// header): every sample of every fling, from a slow flick to a hard
-    /// throw, is where Ljós's spline puts it to within a logical pixel,
-    /// and each fling ends where Android's does.
+    /// throw, is where Ljós's spline puts it to within a logical pixel and
+    /// goes as fast to within 2 % of the throw (the speed a fling hands
+    /// on at a bound or a snap), and each fling ends where Android's does.
     #[test]
     fn an_android_fling_follows_the_trace_android_recorded() {
         let fixture = include_str!("fixtures/android_fling.txt");
         let mut density = 0.0;
         let mut fling: Option<(f64, f64)> = None;
+        let mut before: Option<f64> = None;
         let mut samples = 0;
         for line in fixture
             .lines()
@@ -821,16 +823,27 @@ mod tests {
                         "{speed} dp/s: Android ends at {last}, Ljós at {distance}"
                     );
                     fling = Some((speed, last));
+                    before = None;
                 }
                 ms => {
                     let (speed, _) = fling.expect("a sample before its fling");
                     let ms: u64 = ms.parse().unwrap();
                     let android = words[1].parse::<f64>().unwrap() / density;
-                    let (ours, _) = spline_at(0.0, speed, Duration::from_millis(ms));
+                    let android_speed = words[2].parse::<f64>().unwrap() / density;
+                    let (ours, ours_speed) = spline_at(0.0, speed, Duration::from_millis(ms));
                     assert!(
                         (ours - android).abs() < 1.0,
                         "{speed} dp/s at {ms} ms: Android at {android}, Ljós at {ours}"
                     );
+                    // Once Android's fling stops moving it still reports a
+                    // little speed left, where Ljós's is rightly 0.
+                    if before != Some(android) {
+                        assert!(
+                            (ours_speed - android_speed).abs() < 0.02 * speed,
+                            "{speed} dp/s at {ms} ms: Android goes {android_speed}, Ljós {ours_speed}"
+                        );
+                    }
+                    before = Some(android);
                     samples += 1;
                 }
             }
