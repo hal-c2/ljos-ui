@@ -166,6 +166,10 @@ fn holder(source: &str, line: u32) -> Option<u32> {
     None
 }
 
+/// The script heap fixtures run in: the least `ljos_js::default_memory_limit`
+/// gives, a phone's.
+const FIXTURE_HEAP_LIMIT: usize = 96 * 1024 * 1024;
+
 /// Mounts the fixture as a viewer does, the root filling the window, and
 /// audits it.
 fn run(source: &str, point: Option<MatrixPoint>, bad: bool) -> Result<Report, String> {
@@ -177,6 +181,12 @@ fn run(source: &str, point: Option<MatrixPoint>, bad: bool) -> Result<Report, St
         // against one no runner misses: what it shows is that its script
         // is light, which the counted rule says on any machine.
         e.set_turn_budget(Some(GOOD_TURN_BUDGET));
+    }
+    // The default script heap follows the machine's memory (96 MiB on a
+    // phone, up to 512 MiB on a desktop): a fixture is judged against the
+    // phone's, so a heap fixture holds the same share of it on any runner.
+    if !e.set_script_heap_limit(Some(FIXTURE_HEAP_LIMIT)) {
+        return Err("the script heap's limit could not be set".into());
     }
     let clock = Arc::new(VirtualClock::new());
     e.set_clock(Rc::new(Arc::clone(&clock)));
