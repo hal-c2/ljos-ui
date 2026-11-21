@@ -1393,10 +1393,14 @@ impl Backend for LjosBackend {
             // whatever covers it there takes the click, as on screen. One a
             // user could not click there (disabled, outside the window) is
             // not clicked, and the step goes on, as the user would.
-            b.live()?.drive(|d| match d.click_accessible(role, name) {
+            let live = b.live()?;
+            live.drive(|d| match d.click_accessible(role, name) {
                 Err(DriveError::Refused { .. }) => Ok(()),
                 r => r,
-            })
+            })?;
+            // What the click asked the user's session for (a ShellLoader's
+            // `reload()`) is taken as the host's next frames take it.
+            live.user_qml_answer()
         })
     }
 

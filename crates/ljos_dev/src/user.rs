@@ -1532,6 +1532,11 @@ impl UserSession {
         match msg {
             DevMsg::DataFiles(_) => {}
             DevMsg::Idle => {
+                // The first file's build answers what was asked: an answer
+                // sent before it began is not that one's.
+                if matches!(self.state, State::Making) {
+                    return;
+                }
                 // The answer to a flush: everything it brought came first.
                 self.flushing = false;
                 if std::mem::take(&mut self.again) {
