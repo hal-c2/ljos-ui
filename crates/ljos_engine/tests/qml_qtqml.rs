@@ -100,12 +100,17 @@ Item {
     assert_eq!(h.num(root, "ticks"), 5.0);
 }
 
-/// A host that wakes late, or a handler that ran long, finds a repeating
-/// timer several intervals behind: it triggers once and keeps its phase,
-/// as qml6 does, rather than replaying every interval it missed in one
-/// turn.
+/// When a repeating timer next fires, as the engine holds it: the host's
+/// wake is rounded, this is not.
+fn due(h: &support::Harness) -> Option<ljos_runtime::Time> {
+    h.engine.running_timers().first().and_then(|t| t.due)
+}
+
+/// A handler that ran long finds a repeating timer several intervals
+/// behind: it triggers once and keeps its phase, as qml6 does, rather
+/// than replaying every interval that came due while the engine was busy.
 #[test]
-fn a_late_repeating_timer_triggers_once_and_keeps_its_phase() {
+fn a_repeating_timer_held_up_by_a_slow_handler_triggers_once_and_keeps_its_phase() {
     let h = engine();
     let root = h.load(
         r#"import QtQuick
@@ -115,28 +120,54 @@ Item {
 }
 "#,
     );
-    let late = ljos_runtime::Time::from_millis(350);
-    h.clock.set(late);
-    h.engine.advance_timers(late);
+    // Other work at 100 ms holds the engine up for 250 ms, as a slow
+    // handler on the real clock does.
+    let clock = h.clock.clone();
+    h.engine
+        .call_at(ljos_runtime::Time::from_millis(100), move |_| {
+            clock.advance(std::time::Duration::from_millis(250));
+        });
+    h.clock.set(ljos_runtime::Time::from_millis(100));
+    h.engine
+        .advance_timers(ljos_runtime::Time::from_millis(100));
     assert_eq!(h.num(root, "ticks"), 1.0);
-    assert_eq!(
-        h.engine.next_timer_deadline(),
-        Some(ljos_runtime::Time::from_millis(400))
-    );
-    h.pass_ms(50);
+    // Its runs at 200 and 300 came due while the engine was busy: one,
+    // late, stands for them.
+    let late = h.clock.now();
+    assert_eq!(late, ljos_runtime::Time::from_millis(350));
+    h.engine.advance_timers(late);
     assert_eq!(h.num(root, "ticks"), 2.0);
+    assert_eq!(due(&h), Some(ljos_runtime::Time::from_millis(400)));
     // Back on its phase: every 100 ms from 400 on.
-    h.pass_ms(200);
-    assert_eq!(h.num(root, "ticks"), 4.0);
-    assert_eq!(
-        h.engine.next_timer_deadline(),
-        Some(ljos_runtime::Time::from_millis(700))
+    h.pass_ms(250);
+    assert_eq!(h.num(root, "ticks"), 5.0);
+    assert_eq!(due(&h), Some(ljos_runtime::Time::from_millis(700)));
+}
+
+/// Time that passed while the engine was idle, as a virtual clock that
+/// jumps several intervals in one frame, is caught up on: every run that
+/// came due fires.
+#[test]
+fn a_repeating_timer_catches_up_on_time_that_passed_at_rest() {
+    let h = engine();
+    let root = h.load(
+        r#"import QtQuick
+Item {
+  property int ticks: 0
+  Timer { interval: 100; running: true; repeat: true; onTriggered: ticks++ }
+}
+"#,
     );
+    let later = ljos_runtime::Time::from_millis(350);
+    h.clock.set(later);
+    h.engine.advance_timers(later);
+    assert_eq!(h.num(root, "ticks"), 3.0);
+    assert_eq!(due(&h), Some(ljos_runtime::Time::from_millis(400)));
 }
 
 /// What some work arms runs up to `by` in one call, and a repeating timer
-/// among it still runs once there: its next run is the first of its phase
-/// after `by`.
+/// among it still runs once there: the work was busy until `by`, so its
+/// next run is the first of its phase after that.
 #[test]
 fn a_repeating_timer_armed_by_some_work_triggers_once_up_to_its_by() {
     let h = engine();
@@ -158,10 +189,7 @@ Item {
         ljos_runtime::Time::from_millis(350),
     );
     assert_eq!(h.num(root, "ticks"), 1.0);
-    assert_eq!(
-        h.engine.next_timer_deadline(),
-        Some(ljos_runtime::Time::from_millis(400))
-    );
+    assert_eq!(due(&h), Some(ljos_runtime::Time::from_millis(400)));
 }
 
 #[test]

@@ -653,6 +653,10 @@ pub(crate) struct TimerState {
     calls_due: Option<Time>,
     /// While the queue drains, when it began to.
     draining: Option<Time>,
+    /// The clock when the last [`Engine::advance_timers`] call ended. The
+    /// runs of a repeating timer due before then came while handlers ran,
+    /// so they are dropped rather than caught up on.
+    busy_until: Time,
     quit: bool,
     wake: Option<Rc<dyn Fn()>>,
     /// The pinned wall clock: a UNIX epoch in milliseconds and the value
@@ -674,6 +678,7 @@ impl Default for TimerState {
             calls: Vec::new(),
             calls_due: None,
             draining: None,
+            busy_until: Time::ZERO,
             quit: false,
             wake: None,
             wall: None,
@@ -692,6 +697,10 @@ pub struct RunningTimer {
     /// Fires seen while an observer was attached.
     pub fired: u64,
 }
+
+/// Most timer fires one [`Engine::advance_timers`] call catches up on, so a
+/// long stall does not replay thousands of ticks.
+const MAX_CATCH_UP: u32 = 100;
 
 pub(crate) fn register(engine: &Engine) {
     engine.register_module(crate::module!("QtQml" 2.0 => [
@@ -817,7 +826,10 @@ pub(crate) fn unpark_timers(engine: &Engine) {
 impl Engine {
     /// The clock timers read. A [`SystemClock`] unless set.
     pub fn set_clock(&self, clock: Rc<dyn Clock>) {
-        self.inner.timers.borrow_mut().clock = clock;
+        let mut st = self.inner.timers.borrow_mut();
+        st.clock = clock;
+        // A time on the old clock means nothing on the new one.
+        st.busy_until = Time::ZERO;
     }
 
     pub fn now(&self) -> Time {
@@ -932,10 +944,13 @@ impl Engine {
     }
 
     /// Fires every timer due at `now`, in deadline order, then runs the
-    /// promise jobs and the `Qt.callLater` queue. A repeating timer that
-    /// fell several intervals behind fires once and keeps its phase: the
-    /// intervals it missed are dropped, as qml6 drops them. A host that
-    /// wants every run wakes at each deadline.
+    /// promise jobs and the `Qt.callLater` queue. A repeating timer whose
+    /// deadlines came while handlers ran, in this call or the last, fires
+    /// once and keeps its phase: those runs are dropped, as qml6 drops
+    /// them, so a handler that outlasts its interval does not make a turn
+    /// longer. Runs that came due while the host slept or a virtual clock
+    /// jumped are caught up on, as if the host had woken for each, up to
+    /// a hundred runs.
     pub fn advance_timers(&self, now: Time) {
         self.advance_timers_with(now, None);
     }
@@ -963,6 +978,7 @@ impl Engine {
     }
 
     fn advance_timers_with(&self, now: Time, made: Option<(Range<TimerId>, Time)>) {
+        let mut fired: FxHashMap<ObjectId, u32> = FxHashMap::default();
         loop {
             let next = {
                 let mut st = self.inner.timers.borrow_mut();
@@ -998,19 +1014,30 @@ impl Engine {
                         // shot or a stopped timer is no longer due.
                         st.due_at.remove(&o);
                     }
-                    // How far this call fires the timer: its next run is
-                    // after that, so it runs at most once here however
-                    // long its handler takes.
-                    let upto = match &made {
-                        Some((ids, by)) if ids.contains(&due.origin) => now.max(*by),
-                        _ => now,
+                    // Until when the engine was busy: the timer's next run
+                    // is after that. The clock moves on while handlers run
+                    // here, so the deadlines a slow handler covered are
+                    // read at the next call, as `busy_until`.
+                    let n = fired.entry(o).or_default();
+                    *n += 1;
+                    let busy = self.inner.timers.borrow().busy_until;
+                    let busy = match &made {
+                        Some((ids, by)) if ids.contains(&due.origin) => busy.max(*by),
+                        _ => busy,
                     };
-                    self.timer_fire(o, due.deadline, upto, due.origin);
+                    let busy = if *n >= MAX_CATCH_UP {
+                        busy.max(now)
+                    } else {
+                        busy
+                    };
+                    self.timer_fire(o, due.deadline, busy, due.origin);
                 }
             }
         }
         self.run_pending_calls();
         self.process_deferred_deletes();
+        let end = self.now();
+        self.inner.timers.borrow_mut().busy_until = end;
     }
 
     /// Runs the promise jobs that wait (a `then` callback, the rest of an
@@ -1217,10 +1244,10 @@ impl Engine {
         self.wake_host();
     }
 
-    /// A timer came due at `at` and is fired now, with the clock at
-    /// `upto`: re-arm (repeat) or stop, then emit. `origin` is its first
-    /// run's id, which the next run keeps.
-    fn timer_fire(&self, obj: ObjectId, at: Time, upto: Time, origin: TimerId) {
+    /// A timer came due at `at` and is fired now, with the engine busy
+    /// until `busy`: re-arm (repeat) or stop, then emit. `origin` is its
+    /// first run's id, which the next run keeps.
+    fn timer_fire(&self, obj: ObjectId, at: Time, busy: Time, origin: TimerId) {
         let Ok((running, repeat, interval)) =
             self.with::<Timer, _>(obj, |t| (t.running, t.repeat, t.interval))
         else {
@@ -1233,11 +1260,11 @@ impl Engine {
             *self.inner.timers.borrow_mut().fired.entry(obj).or_default() += 1;
         }
         if repeat {
-            // A run late by whole intervals skips them: the next is the
-            // first of its phase after `upto`.
+            // Runs that came due while the engine was busy are skipped:
+            // the next is the first of its phase after `busy`.
             let step = u64::try_from(interval.max(1)).unwrap_or(1) * 1000;
             // Both are microseconds on the same clock, so this fits.
-            let late = u64::try_from(upto.saturating_since(at).as_micros()).unwrap_or(u64::MAX);
+            let late = u64::try_from(busy.saturating_since(at).as_micros()).unwrap_or(u64::MAX);
             let from = at + Duration::from_micros(late - late % step);
             self.timer_schedule(obj, from, interval.max(1), Some(origin));
         } else {
