@@ -204,6 +204,9 @@ struct Phone<M, S> {
     due: Arc<Mutex<Option<Instant>>>,
     waker: ljos_host::Waker,
     focused: bool,
+    /// The activity was stopped: the user cannot see the application,
+    /// whether or not its surface has gone yet.
+    hidden: bool,
     /// What of the screen the system keeps, in physical pixels.
     insets: Insets,
     /// What the activity was last told about Back: whether the
@@ -271,6 +274,7 @@ where
             due,
             waker,
             focused: true,
+            hidden: false,
             insets: Insets::default(),
             back_taken: crate::back_told::BackTold::default(),
             keyboard: SoftKeyboard::default(),
@@ -314,6 +318,7 @@ where
         ) {
             Ok(mut app) => {
                 app.view_mut().set_resize_mode(ResizeMode::RootToView);
+                app.view_mut().set_drawn(!self.hidden);
                 // Content is thrown and stopped as Android's own lists do.
                 ljos_quick::flickable::set_scroll_physics(
                     app.engine(),
@@ -688,6 +693,32 @@ where
         }
     }
 
+    /// The system is short of memory (`onTrimMemory`, `onLowMemory`): the
+    /// view gives back what it can draw again, and the scripts what they
+    /// no longer hold. The application's objects and values stay.
+    fn trim(&mut self, host: &mut RelayControl<'_, NativeWindow>) {
+        let shown = self.surface.is_some() && !self.hidden;
+        if let Stage::Running(app) = &mut self.stage {
+            let level = crate::pressure::pressure_for(shown);
+            let freed = app.view_mut().trim(level);
+            if !shown && let Some(gpu) = &mut self.gpu {
+                // What the trim let go of is freed by the next frame's
+                // delta, and a window off the screen draws none.
+                let mut textures = self.ctx.tex_manager().write().take_delta();
+                gpu.apply(&textures);
+                // Handed over: a delta dropped with entries asserts.
+                textures.clear();
+            }
+            app.engine().collect_if_idle();
+            log::info!("short of memory: trimmed at {level:?}, {freed} bytes given back");
+            if shown {
+                // What it gave back is built again by the next frame.
+                host.request_redraw(WINDOW);
+            }
+        }
+        crate::give_back_freed_heap();
+    }
+
     fn quit_requested(&self) -> bool {
         match &self.stage {
             Stage::Running(app) => app.engine().quit_requested(),
@@ -759,14 +790,18 @@ where
                     host.request_redraw(WINDOW);
                 }
             },
-            Event::AppState(AppState::Active) => host.request_redraw(WINDOW),
-            Event::AppState(_) => {}
-            Event::MemoryPressure => {
-                if let Stage::Running(app) = &self.stage {
-                    app.engine().collect_if_idle();
+            Event::AppState(state) => {
+                self.hidden = matches!(state, AppState::Hidden | AppState::Suspended);
+                // A stopped activity's passes still run; not drawn, they do
+                // not build again what a trim gave back.
+                if let Stage::Running(app) = &mut self.stage {
+                    app.view_mut().set_drawn(!self.hidden);
                 }
-                crate::give_back_freed_heap();
+                if state == AppState::Active {
+                    host.request_redraw(WINDOW);
+                }
             }
+            Event::MemoryPressure => self.trim(host),
             Event::Wake | Event::User(Message::Wake) => host.request_redraw(WINDOW),
             Event::AboutToWait => {
                 if self.quit_requested() {
@@ -786,6 +821,19 @@ where
 }
 
 impl Gpu {
+    /// Gives the renderer what changed in egui's textures outside a pass.
+    fn apply(&mut self, textures: &egui::TexturesDelta) {
+        for (id, deltas) in &textures.set {
+            for delta in deltas {
+                self.renderer
+                    .update_texture(&self.device, &self.queue, *id, delta);
+            }
+        }
+        for id in &textures.free {
+            self.renderer.free_texture(id);
+        }
+    }
+
     fn new(window: &NativeWindow) -> Result<Self, String> {
         let mut descriptor = wgpu::InstanceDescriptor::new_without_display_handle_from_env();
         if std::env::var_os("WGPU_BACKEND").is_none() {

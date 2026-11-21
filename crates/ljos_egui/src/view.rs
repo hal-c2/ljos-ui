@@ -565,12 +565,17 @@ impl QmlView {
     /// renderer's meshes, glyph atlas and textures, and the scene's
     /// copies of pictures. A host calls it when the platform reports
     /// memory pressure or the view's window is hidden; the next pass
-    /// builds again what it draws.
-    pub fn trim(&mut self, pressure: MemoryPressure) {
+    /// builds again what it draws. Returns the bytes the renderer and the
+    /// decoded pictures gave back, for the host to report; the canvases'
+    /// copies of pictures and glyph outlines are freed too but not counted.
+    pub fn trim(&mut self, pressure: MemoryPressure) -> usize {
+        let before = self.backend.memory().bytes();
         self.backend.trim(pressure);
-        self.scene.trim(&self.engine, pressure);
+        let rendered = before.saturating_sub(self.backend.memory().bytes());
+        let pictures = self.scene.trim(&self.engine, pressure);
         // The renderer may have forgotten the nodes of the last snapshot.
         self.painted_frame = None;
+        rendered + pictures
     }
 
     /// Whether passes paint. A host turns it off for a window that is not

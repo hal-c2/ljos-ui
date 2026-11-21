@@ -1,6 +1,7 @@
 //! What the user and the system do to an application on a phone
 //! (`mobile/`): the home screen, turning the phone, Back, the system
-//! ending a hidden application's screen or process, the system's store
+//! ending a hidden application's screen or process, the system short of
+//! memory, the system's store
 //! of secrets and places for the application's files, and the developer
 //! reaching the application's inspector over adb.
 
@@ -34,6 +35,21 @@ fn back(w: &mut LjosWorld) -> StepResult {
 #[when("the system ends the application's screen")]
 fn end_screen(w: &mut LjosWorld) -> StepResult {
     w.each(|b| b.device()?.end_screen())
+}
+
+#[when("the system is short of memory")]
+fn short_of_memory(w: &mut LjosWorld) -> StepResult {
+    w.each(|b| b.device()?.short_of_memory())
+}
+
+#[then("the application gave back memory it can rebuild")]
+fn gave_back(w: &mut LjosWorld) -> StepResult {
+    w.each(|b| match b.device()?.memory_given_back()? {
+        0 => Err(BackendError::Failed(
+            "the application gave back no memory".into(),
+        )),
+        _ => Ok(()),
+    })
 }
 
 #[then(regex = r"^the application is (in front|in the background)$")]

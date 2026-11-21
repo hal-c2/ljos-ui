@@ -1160,11 +1160,7 @@ impl<M: Send + 'static> Desktop<M> {
     /// can rebuild, shown ones what they did not draw lately.
     fn trim(&mut self) {
         for i in 0..self.slots.len() {
-            let level = if self.slots[i].surface.is_some() {
-                MemoryPressure::Moderate
-            } else {
-                MemoryPressure::Critical
-            };
+            let level = crate::pressure::pressure_for(self.slots[i].surface.is_some());
             let view = view_of_mut(&mut self.slots[i].view, &mut self.app);
             view.trim(level);
         }

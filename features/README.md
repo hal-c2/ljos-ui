@@ -600,6 +600,8 @@ What the user and the system do to an application on a phone, which owns its scr
 | `Then the application is in front` / `Then the application is in the background` | which one the user sees |
 | `Then the application is no longer running` | its process has ended, so the next start is a new process with a new application |
 | `Then the system has not found the application unresponsive` | no "not responding" since the scenario started |
+| `When the system is short of memory` | as Android's `onTrimMemory` (`adb shell am send-trim-memory`) or an iOS memory warning |
+| `Then the application gave back memory it can rebuild` | the application said it freed bytes of what it draws again (glyph atlas, textures, decoded pictures); its objects and values stay |
 | `When the system ends the application's process` | as a system short of memory ends a hidden application's process; `When the user opens the application again` then starts a new one |
 | `When the application keeps the secret "s" as "k" of "svc"` / `When the application removes the secret "k" of "svc"` | the application keeps a secret in the system's store of secrets (`ljos_secrets`), or removes it |
 | `Then the application reads the secret "s" as "k" of "svc"` / `Then the application reads no secret as "k" of "svc"` | what the application reads back from that store |
