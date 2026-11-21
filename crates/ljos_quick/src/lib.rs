@@ -211,8 +211,8 @@ pub use text::{
 };
 pub use text::{RichHandle, SelectionScope};
 pub use text_input::{
-    AccessibleTextAction, Clipboard, DoubleValidator, ImeState, IntValidator, PlatformTextInput,
-    RegularExpressionValidator, TextEdit, TextEditor, TextInput,
+    AccessibleTextAction, Clipboard, DoubleValidator, ImeState, ImeText, IntValidator,
+    PlatformTextInput, RegularExpressionValidator, TextEdit, TextEditor, TextInput,
 };
 pub use tree::{
     add_data, child_items, list_put_before, resources, set_parent_item, set_parent_item_before,

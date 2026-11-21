@@ -66,6 +66,39 @@ pub trait TextInputClient {
     fn preedit(&self, _engine: &Engine, _item: ObjectId) -> String {
         String::new()
     }
+    /// Takes back the selection and the `units` UTF-16 units before it, as
+    /// Backspaces would: also in a field that hides its text, where the
+    /// cursor is not shown.
+    fn delete_before_cursor(&self, engine: &Engine, item: ObjectId, units: usize) {
+        let s = self.surrounding(engine, item);
+        let start = s.anchor.min(s.cursor).saturating_sub(units);
+        self.replace(engine, item, start..s.anchor.max(s.cursor), "");
+    }
+    /// Puts `text` in place of the selection and the `units` UTF-16 units
+    /// before it as one edit, which a validator takes or refuses whole, also in a
+    /// field that hides its text. Returns whether the item took all of
+    /// it: a validator, a mask or `maximumLength` may take part or none.
+    fn replace_before_cursor(
+        &self,
+        engine: &Engine,
+        item: ObjectId,
+        units: usize,
+        text: &str,
+    ) -> bool {
+        self.delete_before_cursor(engine, item, units);
+        text.is_empty() || self.commit(engine, item, text)
+    }
+    /// A digest of the item's text and selection, also of a text it hides,
+    /// that changes when they do. It never leaves the process: what an
+    /// input method typed into a hidden field is kept only for as long as
+    /// the field is as the method left it.
+    fn digest(&self, engine: &Engine, item: ObjectId) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let s = self.surrounding(engine, item);
+        let mut h = std::hash::DefaultHasher::new();
+        (s.text, s.anchor, s.cursor).hash(&mut h);
+        h.finish()
+    }
     /// Ends the composition and types `text` over the selection. Returns
     /// whether the item took it.
     fn commit(&self, engine: &Engine, item: ObjectId, text: &str) -> bool {

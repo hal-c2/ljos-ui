@@ -97,6 +97,50 @@ pub enum Request {
     /// not, the platform does Back by itself (Android plays its own
     /// predictive animation for it).
     BackTaken(bool),
+    /// The on-screen keyboard is for this kind of editor; told before it
+    /// is shown.
+    Editor(crate::EditorKind),
+    /// What the input method is to hold now: the application changed the
+    /// editor's text or selection, or refused what the method typed.
+    Held {
+        now: crate::HeldText,
+        /// What the application last knew the method to hold. A method that
+        /// holds other text by the time the platform gets to this has typed
+        /// since, and the request is dropped (see [`held_is_stale`]).
+        over: Option<crate::HeldText>,
+    },
+}
+
+/// Whether a [`Request::Held`] made `over` what the method held is stale
+/// now that it `holds` this: the method typed, moved its cursor or changed
+/// its composition meanwhile, and what it did is on its way to the
+/// application, which asks again if the editor took other than that.
+/// Applied, the request would put the older state back over the newer, and
+/// the application, told of the newer, would not know to correct it. The
+/// ends of the selection and of the composition are compared in either
+/// order, and an empty composition is none: what the platform keeps either
+/// way is the same.
+///
+/// What the application wrote is then lost to the method's typing: the
+/// method's report, of its older text with the typing, reaches the editor
+/// and is taken whole. Keeping both would need to know which text a
+/// report was made from, which the platform does not say; it takes typing
+/// inside the one turn between the application's write and the platform
+/// getting to it.
+#[must_use]
+pub fn held_is_stale(over: Option<&crate::HeldText>, holds: &crate::HeldText) -> bool {
+    let ends = |a: usize, b: usize| (a.min(b), a.max(b));
+    let compose = |held: &crate::HeldText| {
+        held.compose
+            .as_ref()
+            .map(|c| ends(c.start, c.end))
+            .filter(|(start, end)| start < end)
+    };
+    over.is_some_and(|over| {
+        over.text != holds.text
+            || ends(over.anchor, over.cursor) != ends(holds.anchor, holds.cursor)
+            || compose(over) != compose(holds)
+    })
 }
 
 enum Msg<S, U> {

@@ -10,16 +10,18 @@
 use std::sync::{Arc, Mutex};
 
 use android_activity::input::{
-    Axis, InputEvent, KeyAction, KeyMapChar, Keycode, MotionAction, MotionEvent,
+    Axis, ImeOptions, InputEvent, InputType, KeyAction, KeyMapChar, Keycode, MotionAction,
+    MotionEvent, TextInputAction, TextInputState, TextSpan,
 };
 use android_activity::{AndroidApp, AndroidAppWaker, InputStatus, MainEvent, PollEvent};
 use ndk::native_window::NativeWindow;
 
+use crate::dead_key::{DeadKey, Typed};
 use crate::pump::{exiting, keeps_pumping};
 use crate::relay::{Arrival, Relay, RelayHost, Request};
 use crate::{
-    AppState, BackPhase, ButtonState, Capabilities, Insets, Key, KeyEvent, TouchEvent, TouchPhase,
-    Wake, WindowEvent,
+    AppState, BackPhase, ButtonState, Capabilities, HeldText, Insets, Key, KeyEvent, TextEvent,
+    TouchEvent, TouchPhase, Wake, WindowEvent,
 };
 
 /// The Android host: the application's side, run on its own thread.
@@ -115,6 +117,7 @@ impl<U: Send + 'static> Attach<U> {
             destroyed: false,
             closed: false,
             finishing: false,
+            dead_key: DeadKey::default(),
         };
         while keeps_pumping(pump.destroyed, pump.closed, pump.finishing) {
             // Sleeps until the activity has something or a request wakes it.
@@ -262,6 +265,8 @@ struct Pump<'a, U: Send + 'static> {
     closed: bool,
     /// The activity was asked to finish.
     finishing: bool,
+    /// The accent a dead key on a hardware keyboard left waiting.
+    dead_key: DeadKey,
 }
 
 impl<U: Send + 'static> Pump<'_, U> {
@@ -348,7 +353,8 @@ impl<U: Send + 'static> Pump<'_, U> {
             return;
         };
         let mut out = Vec::new();
-        while events.next(|event| translate(self.app, event, &mut out)) {}
+        let dead_key = &mut self.dead_key;
+        while events.next(|event| translate(self.app, dead_key, event, &mut out)) {}
         for event in out {
             self.send(Arrival::Window(event));
         }
@@ -368,6 +374,50 @@ impl<U: Send + 'static> Pump<'_, U> {
             Request::BackTaken(taken) => {
                 call_activity(self.app, ActivityCall::BackTaken(taken));
             }
+            Request::Editor(editor) => {
+                let (input_type, action, options) = crate::android_editor::editor_info(&editor);
+                self.app.set_ime_editor_info(
+                    InputType::from_bits_retain(input_type),
+                    TextInputAction::from(action),
+                    ImeOptions::from_bits_retain(options),
+                );
+            }
+            Request::Held { now: held, over } => {
+                let holds = self.app.text_input_state();
+                let holds = HeldText {
+                    text: holds.text,
+                    anchor: holds.selection.start,
+                    cursor: holds.selection.end,
+                    compose: holds.compose_region.map(|c| c.start..c.end),
+                };
+                if crate::relay::held_is_stale(over.as_ref(), &holds) {
+                    return;
+                }
+                let span = |r: &std::ops::Range<usize>| TextSpan {
+                    start: r.start,
+                    end: r.end,
+                };
+                let compose = held.compose.as_ref().filter(|c| c.start < c.end);
+                let unit = |n: usize| i32::try_from(n).unwrap_or(i32::MAX);
+                // The keyboard is told of a cursor that moved, but must
+                // read text that changed anew.
+                let replaced = self.app.text_input_state().text != held.text;
+                let told = ActivityCall::InputStateChanged {
+                    selection: [unit(held.anchor), unit(held.cursor)],
+                    compose: compose.map_or([-1, -1], |c| [unit(c.start), unit(c.end)]),
+                    replaced,
+                };
+                self.app.set_text_input_state(TextInputState {
+                    text: held.text,
+                    selection: TextSpan {
+                        start: held.anchor,
+                        end: held.cursor,
+                    },
+                    compose_region: compose.map(span),
+                });
+                // GameTextInput does not tell the keyboard itself.
+                call_activity(self.app, told);
+            }
         }
     }
 }
@@ -378,7 +428,12 @@ fn size_of(window: &NativeWindow) -> [u32; 2] {
     [w, h]
 }
 
-fn translate(app: &AndroidApp, event: &InputEvent<'_>, out: &mut Vec<WindowEvent>) -> InputStatus {
+fn translate(
+    app: &AndroidApp,
+    dead_key: &mut DeadKey,
+    event: &InputEvent<'_>,
+    out: &mut Vec<WindowEvent>,
+) -> InputStatus {
     match event {
         InputEvent::MotionEvent(motion) => {
             touches(motion, out);
@@ -399,22 +454,45 @@ fn translate(app: &AndroidApp, event: &InputEvent<'_>, out: &mut Vec<WindowEvent
                 return InputStatus::Unhandled;
             }
             let Some(named) = named_key(key.key_code()) else {
-                let typed = app
-                    .device_key_character_map(key.device_id())
-                    .ok()
-                    .and_then(|map| map.get(key.key_code(), key.meta_state()).ok());
-                let Some(KeyMapChar::Unicode(c)) = typed else {
-                    return InputStatus::Unhandled;
+                let map = app.device_key_character_map(key.device_id()).ok();
+                let typed = match map
+                    .as_ref()
+                    .and_then(|map| map.get(key.key_code(), key.meta_state()).ok())
+                {
+                    Some(KeyMapChar::Unicode(c)) => Typed::Char(c),
+                    Some(KeyMapChar::CombiningAccent(a)) => Typed::Accent(a),
+                    _ => {
+                        if state == ButtonState::Pressed {
+                            dead_key.untyped(is_modifier(key.key_code()));
+                        }
+                        return InputStatus::Unhandled;
+                    }
+                };
+                // A dead key's accent goes onto the key after it, so what a
+                // press types is only known once that key is down; a
+                // release types nothing.
+                let text = match state {
+                    ButtonState::Pressed => dead_key.press(typed, |accent, c| {
+                        map.as_ref()?.get_dead_char(accent, c).ok().flatten()
+                    }),
+                    ButtonState::Released => None,
+                };
+                // The key is the one pressed; what it typed is its text.
+                let shown = match typed {
+                    Typed::Char(c) | Typed::Accent(c) => c.to_string(),
                 };
                 out.push(WindowEvent::Key(KeyEvent {
-                    key: Key::Character(c.to_string()),
+                    key: Key::Character(shown),
                     code: None,
                     state,
                     repeat: key.repeat_count() > 0,
-                    text: Some(c.to_string()),
+                    text,
                 }));
                 return InputStatus::Handled;
             };
+            if state == ButtonState::Pressed {
+                dead_key.other();
+            }
             out.push(WindowEvent::Key(KeyEvent {
                 key: Key::Named(named.to_owned()),
                 code: None,
@@ -422,6 +500,23 @@ fn translate(app: &AndroidApp, event: &InputEvent<'_>, out: &mut Vec<WindowEvent
                 repeat: key.repeat_count() > 0,
                 text: None,
             }));
+            InputStatus::Handled
+        }
+        InputEvent::TextEvent(state) => {
+            let compose = state
+                .compose_region
+                .map(|c| c.start.min(c.end)..c.start.max(c.end))
+                .filter(|c| c.start < c.end);
+            out.push(WindowEvent::Text(TextEvent::Held(HeldText {
+                text: state.text.clone(),
+                anchor: state.selection.start,
+                cursor: state.selection.end,
+                compose,
+            })));
+            InputStatus::Handled
+        }
+        InputEvent::TextAction(_) => {
+            out.push(WindowEvent::Text(TextEvent::Action));
             InputStatus::Handled
         }
         _ => InputStatus::Unhandled,
@@ -483,11 +578,38 @@ fn named_key(code: Keycode) -> Option<&'static str> {
     })
 }
 
+/// A key held for the one after it, which an accent waits through: the
+/// keys `KeyEvent.isModifierKey` names, as the activity's own check is.
+fn is_modifier(code: Keycode) -> bool {
+    matches!(
+        code,
+        Keycode::ShiftLeft
+            | Keycode::ShiftRight
+            | Keycode::AltLeft
+            | Keycode::AltRight
+            | Keycode::CtrlLeft
+            | Keycode::CtrlRight
+            | Keycode::MetaLeft
+            | Keycode::MetaRight
+            | Keycode::Function
+            | Keycode::Sym
+            | Keycode::Num
+    )
+}
+
 enum ActivityCall {
     MoveTaskToBack,
     Finish,
     /// `LjosActivity.setBackTaken`.
     BackTaken(bool),
+    /// `LjosActivity.inputStateChanged`: the keyboard is told where the
+    /// selection and the composition are, in UTF-16 units; -1 for none;
+    /// and whether the text is another.
+    InputStateChanged {
+        selection: [i32; 2],
+        compose: [i32; 2],
+        replaced: bool,
+    },
 }
 
 /// Calls the activity on this thread, which android-activity attached to
@@ -521,6 +643,24 @@ fn call_activity(app: &AndroidApp, call: ActivityCall) -> bool {
                     jni_str!("setBackTaken"),
                     jni_sig!((jboolean) -> void),
                     &[JValue::Bool(taken)],
+                )?;
+            }
+            ActivityCall::InputStateChanged {
+                selection,
+                compose,
+                replaced,
+            } => {
+                env.call_method(
+                    &activity,
+                    jni_str!("inputStateChanged"),
+                    jni_sig!((jint, jint, jint, jint, jboolean) -> void),
+                    &[
+                        JValue::Int(selection[0]),
+                        JValue::Int(selection[1]),
+                        JValue::Int(compose[0]),
+                        JValue::Int(compose[1]),
+                        JValue::Bool(replaced),
+                    ],
                 )?;
             }
         }

@@ -32,7 +32,7 @@ const ABIS: [&str; 2] = ["arm64-v8a", "x86_64"];
 const ACTIVITY: &str = "dev.ljos.LjosActivity";
 
 /// The Gradle template, by the path it is written to in the project.
-const TEMPLATE: [(&str, &str); 7] = [
+const TEMPLATE: [(&str, &str); 8] = [
     (
         "settings.gradle.kts",
         include_str!("../../../android/settings.gradle.kts"),
@@ -56,6 +56,12 @@ const TEMPLATE: [(&str, &str); 7] = [
     (
         "app/src/main/java/dev/ljos/LjosActivity.java",
         include_str!("../../../android/app/src/main/java/dev/ljos/LjosActivity.java"),
+    ),
+    (
+        "app/src/main/java/com/google/androidgamesdk/TextInputOf.java",
+        include_str!(
+            "../../../android/app/src/main/java/com/google/androidgamesdk/TextInputOf.java"
+        ),
     ),
     ("README.md", include_str!("../../../android/README.md")),
 ];
@@ -483,6 +489,29 @@ mod tests {
         assert!(java.contains("package dev.ljos;"));
         assert!(java.contains("class LjosActivity extends GameActivity"));
         assert!(java.contains("static native void nativeBack()"));
+    }
+
+    #[test]
+    fn each_java_file_is_written_where_its_package_says() {
+        let java: Vec<_> = TEMPLATE
+            .iter()
+            .filter(|(p, _)| p.ends_with(".java"))
+            .collect();
+        for (path, text) in &java {
+            let package = text
+                .lines()
+                .find_map(|l| l.strip_prefix("package "))
+                .and_then(|l| l.strip_suffix(';'))
+                .unwrap();
+            let dir = format!("app/src/main/java/{}/", package.replace('.', "/"));
+            assert!(path.starts_with(&dir), "{path} is not in {dir}");
+        }
+        // LjosActivity reaches GameTextInput's connection through it, to
+        // type what a dead key composes into the field being edited.
+        assert!(
+            java.iter()
+                .any(|(p, _)| p.ends_with("com/google/androidgamesdk/TextInputOf.java"))
+        );
     }
 
     #[test]

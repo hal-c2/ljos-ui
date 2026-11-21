@@ -272,6 +272,30 @@ fn what_qt_input_method_is_asked_reaches_the_platform_once() {
 }
 
 #[test]
+fn a_press_in_an_editor_asks_for_the_keyboard_again() {
+    let e = engine();
+    let (root, mut s) = ready(&e, EDITORS);
+    let input = find(&e, root, "input");
+    let mut ime = ImeState::new();
+    let mut told = Told::default();
+    focus(&e, &mut s, input);
+    ime.sync(&s, &e, &mut told);
+    told.take();
+
+    // The user put the keyboard away; the editor keeps the focus, and a
+    // tap in it brings the keyboard back.
+    let press = ljos_quick::PointerEvent::press(20.0, 10.0, Time::from_millis(10));
+    s.pointer_event(&e, &press);
+    let release = ljos_quick::PointerEvent::release(20.0, 10.0, Time::from_millis(20));
+    s.pointer_event(&e, &release);
+    ime.sync(&s, &e, &mut told);
+    assert!(
+        told.take().contains(&"keyboard true".to_owned()),
+        "the keyboard is asked for"
+    );
+}
+
+#[test]
 fn a_host_says_what_the_on_screen_keyboard_covers() {
     let e = engine();
     let (_root, _s) = ready(&e, EDITORS);

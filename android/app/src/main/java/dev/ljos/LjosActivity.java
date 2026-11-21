@@ -2,14 +2,20 @@ package dev.ljos;
 
 import android.os.Build;
 import android.os.Bundle;
+import android.util.SparseBooleanArray;
+import android.view.KeyCharacterMap;
+import android.view.KeyEvent;
 import android.view.View;
 import android.view.WindowManager;
+import android.view.inputmethod.InputMethodManager;
 import androidx.activity.BackEventCompat;
 import androidx.activity.OnBackPressedCallback;
 import androidx.core.graphics.Insets;
 import androidx.core.view.WindowCompat;
 import androidx.core.view.WindowInsetsCompat;
 import com.google.androidgamesdk.GameActivity;
+import com.google.androidgamesdk.TextInputOf;
+import com.google.androidgamesdk.gametextinput.InputConnection;
 
 /**
  * The activity a Ljós application runs in. The application itself lives on
@@ -40,6 +46,16 @@ public class LjosActivity extends GameActivity {
             int imeLeft, int imeTop, int imeRight, int imeBottom);
 
     private OnBackPressedCallback back;
+
+    /**
+     * The combining accent a dead key left waiting for the next key, or 0.
+     * Only while a field is being edited: otherwise the keys reach the
+     * application, which composes them itself (ljos_host's DeadKey).
+     */
+    private int accent;
+
+    /** Keys whose press this activity typed, so their release is its too. */
+    private final SparseBooleanArray typed = new SparseBooleanArray();
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -92,6 +108,100 @@ public class LjosActivity extends GameActivity {
             return;
         }
         runOnUiThread(() -> back.setEnabled(taken));
+    }
+
+    /**
+     * The application set what the input method holds; GameTextInput does
+     * not tell the keyboard, so a cursor the user moved by touch, or text
+     * the application changed, would be unknown to it until it restarts.
+     * Positions in UTF-16 units; -1 for no composition. Text that is
+     * another ({@code replaced}) is read anew by restarting the input: the
+     * keyboard's own copy of the text around the cursor would be stale.
+     */
+    public void inputStateChanged(
+            int selStart, int selEnd, int composeStart, int composeEnd, boolean replaced) {
+        runOnUiThread(() -> {
+            View view = getWindow().getDecorView().findFocus();
+            InputMethodManager imm = getSystemService(InputMethodManager.class);
+            if (view == null || imm == null) {
+                return;
+            }
+            if (replaced) {
+                imm.restartInput(view);
+            } else {
+                imm.updateSelection(view, selStart, selEnd, composeStart, composeEnd);
+            }
+        });
+    }
+
+    /**
+     * While a field is being edited GameTextInput takes a hardware key's
+     * press and types its character at once, so a dead key's accent comes
+     * out on its own (´e, not é). Here the accent waits for the next key
+     * and goes onto it, as ljos_host's DeadKey does when no field is being
+     * edited: what the keyboard's map does not compose types the accent,
+     * then the key; a key that types nothing drops the accent.
+     */
+    @Override
+    public boolean dispatchKeyEvent(KeyEvent event) {
+        int code = event.getKeyCode();
+        // A key this typed has its release swallowed even when editing
+        // stopped while it was held: the release is the press's.
+        if (event.getAction() == KeyEvent.ACTION_UP && typed.get(code)) {
+            typed.delete(code);
+            return true;
+        }
+        InputConnection editing = TextInputOf.connection(mSurfaceView);
+        if (editing == null || !editing.getSoftKeyboardActive()) {
+            accent = 0;
+            return super.dispatchKeyEvent(event);
+        }
+        if (event.getAction() != KeyEvent.ACTION_DOWN) {
+            return super.dispatchKeyEvent(event);
+        }
+        int c = event.getUnicodeChar(event.getMetaState());
+        if (c == 0) {
+            if (!KeyEvent.isModifierKey(code)) {
+                accent = 0;
+            }
+            return super.dispatchKeyEvent(event);
+        }
+        boolean dead = (c & KeyCharacterMap.COMBINING_ACCENT) != 0;
+        int pressed = c & KeyCharacterMap.COMBINING_ACCENT_MASK;
+        String text = null;
+        if (accent == 0) {
+            if (!dead) {
+                return super.dispatchKeyEvent(event);
+            }
+            accent = pressed;
+        } else {
+            int both = KeyEvent.getDeadChar(accent, pressed);
+            if (both != 0) {
+                text = codePoint(both);
+                accent = 0;
+            } else if (dead) {
+                text = spacing(accent);
+                accent = pressed;
+            } else {
+                text = spacing(accent) + codePoint(pressed);
+                accent = 0;
+            }
+        }
+        if (text != null) {
+            editing.commitText(text, 1);
+        }
+        typed.put(code, true);
+        return true;
+    }
+
+    /** The accent as a character of its own, as the accent typed before a space. */
+    private static String spacing(int accent) {
+        int alone = KeyEvent.getDeadChar(accent, ' ');
+        return codePoint(alone != 0 ? alone : accent);
+    }
+
+    private static String codePoint(int c) {
+        return new String(Character.toChars(c));
     }
 
     @Override

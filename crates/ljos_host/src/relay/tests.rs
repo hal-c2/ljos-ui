@@ -562,3 +562,61 @@ fn insets_told_before_a_window_made_while_waiting_come_before_newer_ones() {
         ]
     );
 }
+
+/// What the method holds: `text`, a selection from `anchor` to `cursor`,
+/// and a composition over `compose`.
+fn holds(text: &str, [anchor, cursor]: [usize; 2], compose: Option<[usize; 2]>) -> crate::HeldText {
+    crate::HeldText {
+        text: text.to_owned(),
+        anchor,
+        cursor,
+        compose: compose.map(|[start, end]| start..end),
+    }
+}
+
+#[test]
+fn a_held_request_is_dropped_once_the_method_has_typed_since_it_was_made() {
+    // Made while the method held "ab"; it has typed "c" since.
+    let over = holds("ab", [0, 0], None);
+    assert!(held_is_stale(Some(&over), &holds("abc", [0, 0], None)));
+    assert!(!held_is_stale(Some(&over), &holds("ab", [0, 0], None)));
+    // A method newly set up holds nothing the application knows of.
+    assert!(!held_is_stale(None, &holds("abc", [0, 0], None)));
+}
+
+#[test]
+fn a_held_request_is_dropped_once_the_method_has_moved_its_cursor_since() {
+    let over = holds("ab", [2, 0], None);
+    // The user put the cursor at the start; the application's move, made
+    // before it, would put it back.
+    assert!(held_is_stale(Some(&over), &holds("ab", [0, 0], None)));
+    // The same selection, its ends in the order the platform keeps them.
+    assert!(!held_is_stale(Some(&over), &holds("ab", [0, 2], None)));
+    assert!(!held_is_stale(Some(&over), &holds("ab", [2, 0], None)));
+}
+
+#[test]
+fn a_held_request_is_dropped_once_the_method_has_changed_its_composition_since() {
+    let over = holds("ab", [2, 2], None);
+    // The method took "ab" up as a composition again, its text and cursor
+    // as they were; the request, made before, would end the composition.
+    assert!(held_is_stale(
+        Some(&over),
+        &holds("ab", [2, 2], Some([0, 2]))
+    ));
+    let composing = holds("ab", [2, 2], Some([0, 2]));
+    assert!(held_is_stale(
+        Some(&composing),
+        &holds("ab", [2, 2], Some([1, 2]))
+    ));
+    assert!(held_is_stale(Some(&composing), &holds("ab", [2, 2], None)));
+    // The same composition, its ends in either order; an empty one is none.
+    assert!(!held_is_stale(
+        Some(&composing),
+        &holds("ab", [2, 2], Some([2, 0]))
+    ));
+    assert!(!held_is_stale(
+        Some(&over),
+        &holds("ab", [2, 2], Some([1, 1]))
+    ));
+}

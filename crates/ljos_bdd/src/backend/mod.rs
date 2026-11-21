@@ -519,6 +519,17 @@ pub trait Device: Backend {
 }
 
 /// Input besides a click by name, a key and the pointer's steps.
+/// What an input method that tells the whole of what it holds holds;
+/// positions count UTF-16 units.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct HeldText {
+    pub text: String,
+    pub anchor: usize,
+    pub cursor: usize,
+    /// The part still being composed.
+    pub compose: Option<std::ops::Range<usize>>,
+}
+
 pub trait Input: Backend {
     /// Hold a chord down until the keyboard has repeated it `repeats` times,
     /// then let go.
@@ -608,6 +619,15 @@ pub trait Input: Backend {
     /// An input method ends the composition and types `text`.
     fn commit(&mut self, _text: &str) -> Result<()> {
         Err(BackendError::NotImplemented("an input method"))
+    }
+
+    /// An input method tells the whole of what it holds: `text`, its
+    /// selection and the part of it still being composed, in UTF-16
+    /// units (Android's GameTextInput).
+    fn input_method_holds(&mut self, _held: &HeldText) -> Result<()> {
+        Err(BackendError::NotImplemented(
+            "an input method that tells all it holds",
+        ))
     }
 }
 

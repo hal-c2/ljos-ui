@@ -24,13 +24,14 @@ use ljos_host::android::{AndroidHost, Attach};
 use ljos_host::relay::{RelayControl, Request, WINDOW};
 use ljos_host::{
     AppState, BackPhase, ButtonState, Event, HostApp, HostControl, Insets, Key, PlatformHost,
-    TouchPhase, Wake, WindowAttributes, WindowEvent,
+    TextEvent, TouchPhase, Wake, WindowAttributes, WindowEvent,
 };
 use ljos_runtime::SystemClock;
 use ndk::native_window::NativeWindow;
 
 use crate::desktop::use_fonts;
 use crate::platform::Display;
+use crate::soft_keyboard::SoftKeyboard;
 use crate::wake::{Next, next_wake, posted_met};
 use crate::{Hosting, Setup, SetupError, ShellApp, ShellConfig};
 
@@ -208,6 +209,8 @@ struct Phone<M, S> {
     /// What the activity was last told about Back: whether the
     /// application takes it.
     back_taken: crate::back_told::BackTold,
+    /// The on-screen keyboard and its input method.
+    keyboard: SoftKeyboard,
     /// Frames tried again since one was last drawn.
     retries: u32,
 }
@@ -267,6 +270,7 @@ where
             focused: true,
             insets: Insets::default(),
             back_taken: crate::back_told::BackTold::default(),
+            keyboard: SoftKeyboard::default(),
             retries: 0,
         }
     }
@@ -329,6 +333,8 @@ where
         };
         // The activity may be a new one, which takes Back until told.
         self.back_taken.surface_came();
+        // And its input method knows no editor until told.
+        self.keyboard.surface_changed();
         if let Err(e) = self.make_surface(&window) {
             log::error!("nothing can be drawn: {e}");
             return;
@@ -440,6 +446,42 @@ where
         let taken = ljos_quick::wants_back(app.engine());
         if let Some(taken) = self.back_taken.tell(taken) {
             host.request(Request::BackTaken(taken));
+        }
+    }
+
+    /// Tells the input method what the scene's editors want of it: the
+    /// keyboard for the editor with focus, and what it is to hold.
+    fn tell_keyboard(&mut self, host: &mut RelayControl<'_, NativeWindow>) {
+        let Stage::Running(app) = &self.stage else {
+            return;
+        };
+        for request in self.keyboard.sync(app.view().scene(), app.engine()) {
+            host.request(request);
+        }
+    }
+
+    /// What the input method did to the editor with focus.
+    fn text(&mut self, event: TextEvent) {
+        match event {
+            TextEvent::Held(now) => {
+                if let Stage::Running(app) = &self.stage {
+                    self.keyboard.held(app.view().scene(), app.engine(), now);
+                }
+            }
+            // The keyboard's action key is the editor's Enter: Done ends
+            // a line edit as Enter does (`accepted`, `editingFinished`).
+            TextEvent::Action => {
+                for pressed in [true, false] {
+                    self.events.push(egui::Event::Key {
+                        key: egui::Key::Enter,
+                        physical_key: None,
+                        pressed,
+                        repeat: false,
+                        modifiers: egui::Modifiers::NONE,
+                    });
+                }
+            }
+            _ => {}
         }
     }
 
@@ -679,6 +721,10 @@ where
                     host.request_redraw(WINDOW);
                 }
                 WindowEvent::Theme { .. } => host.request_redraw(WINDOW),
+                WindowEvent::Text(text) => {
+                    self.text(text);
+                    host.request_redraw(WINDOW);
+                }
                 other => {
                     self.input(other);
                     host.request_redraw(WINDOW);
@@ -701,6 +747,7 @@ where
                     host.exit();
                 } else {
                     self.tell_back_taken(host);
+                    self.tell_keyboard(host);
                     self.next_wake(host);
                 }
             }

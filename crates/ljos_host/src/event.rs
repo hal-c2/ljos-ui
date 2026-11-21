@@ -166,6 +166,53 @@ pub enum TextEvent {
     },
     /// Text to insert; it ends the composition.
     Commit(String),
+    /// The whole of what an input method holds now, from a platform that
+    /// tells that rather than what changed (Android's GameTextInput).
+    Held(HeldText),
+    /// The editor's action key of the on-screen keyboard (Done, Go, Next):
+    /// the editor is finished with.
+    Action,
+}
+
+/// What an input method holds: its text, its selection and the part of
+/// the text it is still composing. Positions count UTF-16 code units.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct HeldText {
+    pub text: String,
+    /// Where the selection starts; equal to `cursor` without one.
+    pub anchor: usize,
+    pub cursor: usize,
+    pub compose: Option<std::ops::Range<usize>>,
+}
+
+/// What kind of text an editor takes, for the on-screen keyboard to suit.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TextKind {
+    #[default]
+    Text,
+    /// Digits only.
+    Digits,
+    /// A number with a sign and a decimal point.
+    Number,
+    Phone,
+    Email,
+    Url,
+}
+
+/// What the on-screen keyboard is told about the editor that has focus.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct EditorKind {
+    pub kind: TextKind,
+    /// The text is hidden as it is typed (a password).
+    pub hidden: bool,
+    /// What is typed is not to be learnt (sensitive data).
+    pub private: bool,
+    /// Many lines: Enter types a new line rather than finishing.
+    pub multi_line: bool,
+    /// No suggestions or corrections.
+    pub no_suggestions: bool,
+    /// No capital at the start of a sentence.
+    pub no_capitals: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
