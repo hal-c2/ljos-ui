@@ -741,11 +741,15 @@ impl<M: Send + 'static> ShellApp<M> {
         if let Some(folded) = self.view.backdrop() {
             return folded;
         }
-        self.view
+        // A translucent background is painted behind the root
+        // (`set_backdrop`): clearing to it as well would blend it twice.
+        let color = self
+            .view
             .scene()
             .root()
             .and_then(|root| window_color(self.engine(), root))
-            .map_or(self.background, window_spec::clear)
+            .unwrap_or_else(|| self.background.to_srgba_unmultiplied());
+        window_spec::clear(color)
     }
 
     /// Calls `changed` whenever the colour of the root, a `Window`,
@@ -1022,7 +1026,8 @@ mod tests {
     }
 
     /// A plain root has no colour of its own: the window is cleared to
-    /// the background.
+    /// an opaque background, and to nothing under a translucent one,
+    /// which is painted behind the root instead.
     #[cfg(feature = "dev")]
     #[test]
     fn a_plain_root_is_cleared_to_the_background() {
@@ -1033,16 +1038,21 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let entry = dir.path().canonicalize().unwrap().join("Main.qml");
         std::fs::write(&entry, "import QtQuick\nItem {}\n").unwrap();
-        let config = super::ShellConfig::default()
-            .with_background(ljos_engine::Color::from_rgba8(1, 2, 3, 255));
-        let app = super::ShellApp::new(
-            &egui::Context::default(),
-            &config,
-            Arc::new(SystemClock::new()),
-            |setup: &mut super::Setup<'_, ()>| setup.watch(&entry),
-        )
-        .unwrap();
-        assert_eq!(app.clear_color(), egui::Color32::from_rgb(1, 2, 3));
-        assert_eq!(app.on_root_color(|| {}), None, "nothing to watch");
+        for (alpha, cleared) in [
+            (255, egui::Color32::from_rgb(1, 2, 3)),
+            (128, egui::Color32::TRANSPARENT),
+        ] {
+            let config = super::ShellConfig::default()
+                .with_background(ljos_engine::Color::from_rgba8(1, 2, 3, alpha));
+            let app = super::ShellApp::new(
+                &egui::Context::default(),
+                &config,
+                Arc::new(SystemClock::new()),
+                |setup: &mut super::Setup<'_, ()>| setup.watch(&entry),
+            )
+            .unwrap();
+            assert_eq!(app.clear_color(), cleared, "background alpha {alpha}");
+            assert_eq!(app.on_root_color(|| {}), None, "nothing to watch");
+        }
     }
 }
