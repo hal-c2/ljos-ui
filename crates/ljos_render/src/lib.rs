@@ -47,7 +47,8 @@ pub use display_list::{
     TileMode, fill_area,
 };
 pub use glyph::{
-    FontTables, Os2Table, font_tables, glyph_advances, glyph_ink_bounds, run_has_color_glyphs,
+    FontTables, Os2Table, color_glyph_ink, font_tables, glyph_advances, glyph_ink_bounds,
+    run_has_color_glyphs,
 };
 pub use image::{
     ImageAlign, ImageBlit, ImageEncoding, ImageError, ImageFit, ImageHandle, ImagePlacement,

@@ -68,7 +68,7 @@ use crate::display_list::{
     Decorations, DisplayList, DisplayListId, DrawOp, GlyphRun, LinearGradient, Paint, PathStyle,
     TextAlign, fill_area,
 };
-use crate::glyph::{ColorGlyphCache, baseline_snap, is_upright, snap_bar};
+use crate::glyph::{ColorGlyph, ColorGlyphCache, baseline_snap, is_upright, snap_bar};
 use crate::glyph_atlas::{BINS, Full, GlyphAtlas, GlyphKey, Slot};
 use crate::image::{ImageBlit, ImageHandle, WeakImage, image_blit, nine_patch_blits};
 use crate::image_atlas::{ImageAtlas, Place};
@@ -1045,6 +1045,11 @@ struct ListEntry {
     /// painted again) is drawn by no one, and an idle window draws too few
     /// frames for the age of an entry to say so soon.
     owner: Weak<DisplayList>,
+    /// The colour glyph pictures its quads draw. The quads hold them only
+    /// weakly, and the cache lets go of pictures a frame didn't ask for,
+    /// which a cached list never does again; so the list keeps them.
+    #[expect(dead_code, reason = "held only to keep the pictures alive")]
+    pictures: Box<[Arc<ColorGlyph>]>,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -1618,6 +1623,7 @@ impl EpaintBackend {
     fn build_list(&mut self, list: &Arc<DisplayList>) -> ListEntry {
         self.tessellations += 1;
         let mut segs: Vec<LocalSeg> = Vec::new();
+        let mut pictures = Vec::new();
         let mut cur = Mesh::default();
         let mut warnings = 0u32;
         let mut warn = |what: &str| {
@@ -1847,6 +1853,7 @@ impl EpaintBackend {
                         ) + at;
                         let blit = image_blit(picture.image.rect(), dst, None, [false, false]);
                         image_segs(&mut segs, &picture.image, &[blit], true, 1.0, None, || 1);
+                        pictures.push(picture);
                     }
                     if color.is_transparent() {
                         continue;
@@ -1897,6 +1904,7 @@ impl EpaintBackend {
             warnings,
             last_used: self.frame,
             owner: Arc::downgrade(list),
+            pictures: pictures.into(),
         }
     }
 

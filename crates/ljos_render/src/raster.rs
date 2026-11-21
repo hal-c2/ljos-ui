@@ -471,7 +471,10 @@ impl VelloCpuReference {
         warned: &mut HashSet<&'static str>,
     ) {
         let src = picture.image.rect();
-        let (place, dst) = if is_upright(snapped) {
+        // Placed on whole pixels only when the picture was made at the
+        // size it shows: a scale that differs across and down stretches it.
+        let [sx, _, _, sy, _, _] = snapped.as_coeffs();
+        let (place, dst) = if is_upright(snapped) && (sx - sy).abs() <= 1e-6 * sx.max(sy) {
             let o = snapped * vello_cpu::kurbo::Point::new(at.x, at.y);
             let (x, y) = (
                 (o.x + picture.rect.x0).round(),

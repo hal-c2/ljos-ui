@@ -521,6 +521,36 @@ fn r_fills_text_coloured_layers_in_the_texts_colour() {
     }
 }
 
+/// One renderer keeps its pictures from frame to frame, so a text whose
+/// colour changes must not be drawn from the picture made for the old colour.
+#[test]
+fn r_redraws_text_coloured_layers_when_the_texts_colour_changes() {
+    let lime = Rgba::rgb(0, 255, 0);
+    for id in [1, 2] {
+        let mut r = VelloCpuReference::new(WHITE_BG);
+        for (colour, want) in [
+            (Rgba::BLACK, [0, 0, 0, 255]),
+            (lime, [0, 255, 0, 255]),
+            (Rgba::TRANSPARENT, BLUE),
+            (Rgba::BLACK, [0, 0, 0, 255]),
+        ] {
+            let mut s = colr_scene(id, colour, 1.0);
+            s.frame += 1;
+            let snap = s.tree.compose(s.vp, s.frame);
+            let img = r.render(&FrameView::new(&snap, 1.0)).unwrap();
+            let got = img.pixel(20, 27);
+            if colour == Rgba::TRANSPARENT {
+                // The blue layer, or the gradient, under the square shows.
+                assert_eq!(got[0], 0, "glyph {id} in {colour:?}");
+                assert_ne!(got, PAPER, "glyph {id} in {colour:?}");
+            } else {
+                assert_eq!(got, want, "glyph {id} in {colour:?}");
+            }
+            assert_eq!(img.pixel(15, 18), RED, "glyph {id} in {colour:?}");
+        }
+    }
+}
+
 #[test]
 fn r_fades_colour_layers_with_the_items_opacity() {
     let img = colr_scene(1, Rgba::WHITE, 0.5).render(1.0);
@@ -1111,6 +1141,8 @@ mod b0 {
             for v in quads[0] {
                 assert!((126..=129).contains(&v.color.a()), "{:?}", v.color);
                 assert_eq!(v.color.r(), v.color.a(), "{:?}", v.color);
+                assert_eq!(v.color.g(), v.color.a(), "{:?}", v.color);
+                assert_eq!(v.color.b(), v.color.a(), "{:?}", v.color);
             }
         }
     }
@@ -1142,6 +1174,60 @@ mod b0 {
                 );
             }
         }
+    }
+
+    /// A text that stays put keeps its emoji while another text runs
+    /// through hundreds of sizes: its list is cached, so it asks for its
+    /// picture only once, and the cache letting go of pictures a frame
+    /// didn't ask for must not take that one from it.
+    #[test]
+    fn b0_keeps_a_cached_lists_pictures_while_others_come_and_go() {
+        let mut s = Scene::new(200.0, 60.0);
+        let still = s.node(None, 0.0, 0.0, 60.0, 60.0);
+        let moving = s.node(None, 60.0, 0.0, 140.0, 60.0);
+        s.paint(still, |b| {
+            b.glyphs(
+                Arc::new(colr_run(1, 20.0, 0.0)),
+                Vec2::new(10.0, 30.0),
+                Rgba::BLACK,
+                Decorations::default(),
+            );
+        });
+        let ctx = Context::default();
+        let mut be = EpaintBackend::new();
+        for step in 0..300 {
+            let size = 2.0 + step as f32 * 0.25;
+            s.paint(moving, |b| {
+                b.glyphs(
+                    Arc::new(colr_run(2, size, 0.0)),
+                    Vec2::new(0.0, 50.0),
+                    Rgba::BLACK,
+                    Decorations::default(),
+                );
+            });
+            frame(&mut s, &mut be, &ctx, 1.0);
+        }
+        let (shapes, _) = frame(&mut s, &mut be, &ctx, 1.0);
+        let gpu = gpu(&ctx);
+        let gpu = gpu.0.lock().unwrap();
+        let drawn = shapes.iter().any(|c| {
+            let Shape::Mesh(m) = &c.shape else {
+                return false;
+            };
+            let Some((width, alpha)) = gpu.held.get(&m.texture_id) else {
+                return false;
+            };
+            m.vertices.as_chunks::<4>().0.iter().any(|q| {
+                let (tl, br) = (q[0], q[2]);
+                let at = (tl.pos.x, tl.pos.y, br.pos.x, br.pos.y);
+                let height = alpha.len() / width;
+                let (u, v) = ((tl.uv.x + br.uv.x) / 2.0, (tl.uv.y + br.uv.y) / 2.0);
+                let texel =
+                    alpha[(v * height as f32) as usize * width + (u * *width as f32) as usize];
+                at == (10.0, 14.0, 30.0, 34.0) && texel > 0
+            })
+        });
+        assert!(drawn, "the still text's picture is still drawn");
     }
 
     /// Two lines on a GPU that takes textures no wider than 256: each fits
