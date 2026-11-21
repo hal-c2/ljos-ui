@@ -11,7 +11,9 @@ import com.google.androidgamesdk.gametextinput.Settings;
  * keeps it to its own package; LjosActivity needs it to type what a dead key
  * composes into the field being edited, the way an input method would, and
  * to hear an input method ask where the text is on screen, which
- * GameTextInput's own connection refuses.
+ * GameTextInput's own connection refuses, and to pass on a selection or
+ * composing region an input method sets without changing the text, which
+ * GameTextInput's own connection keeps to its Editable.
  */
 public final class TextInputOf {
     private TextInputOf() {}
@@ -47,8 +49,33 @@ public final class TextInputOf {
         return view;
     }
 
+    /**
+     * Runs {@code push}, which sets the state the native side asked for,
+     * without telling the native side that state back: GameTextInput sets
+     * it through the same setSelection and setComposingRegion an input
+     * method calls, and an echo arriving late would undo a newer edit.
+     */
+    public static void quietly(GameActivity.InputEnabledSurfaceView view, Runnable push) {
+        InputConnection connection = connection(view);
+        if (!(connection instanceof Connection)) {
+            push.run();
+            return;
+        }
+        Connection ours = (Connection) connection;
+        Thread before = ours.pushing;
+        ours.pushing = Thread.currentThread();
+        try {
+            push.run();
+        } finally {
+            ours.pushing = before;
+        }
+    }
+
     private static final class Connection extends InputConnection {
         private final CursorUpdates updates;
+
+        /** The thread setting a state from the native side, or null. */
+        volatile Thread pushing;
 
         Connection(Context context, View view, Settings settings, CursorUpdates updates) {
             super(context, view, settings);
@@ -64,6 +91,31 @@ public final class TextInputOf {
         public boolean requestCursorUpdates(int mode, int filter) {
             // What is told is told whole: the filter only narrows it.
             return updates.cursorUpdatesRequested(mode | filter);
+        }
+
+        @Override
+        public boolean setSelection(int start, int end) {
+            boolean set = super.setSelection(start, end);
+            tell();
+            return set;
+        }
+
+        @Override
+        public boolean setComposingRegion(int start, int end) {
+            boolean set = super.setComposingRegion(start, end);
+            tell();
+            return set;
+        }
+
+        // GameTextInput's own setSelection and setComposingRegion change
+        // only its Editable; the end of a batch edit is where it tells its
+        // listener the state, so close one to pass the new cursor on. Its
+        // base class keeps no batch count, so an input method's own batch
+        // is not cut short.
+        private void tell() {
+            if (pushing != Thread.currentThread()) {
+                endBatchEdit();
+            }
         }
 
         @Override
