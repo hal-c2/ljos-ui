@@ -962,6 +962,15 @@ pub struct UserSession {
     /// Whether the files are read while the application runs: watched,
     /// or when it asks.
     reads: bool,
+    /// Whether the watcher keeps a watch on the disk: where one cannot be
+    /// made, it reads only when asked.
+    follows: bool,
+    /// Whether a flush waits for its answer ([`DevMsg::Idle`]).
+    flushing: bool,
+    /// Whether the files were asked to be read again while a flush was on
+    /// its way: it may have read them before the ask, so they are read
+    /// once more when it is answered.
+    again: bool,
 }
 
 impl Drop for UserSession {
@@ -1063,6 +1072,9 @@ impl UserSession {
             reading: None,
             rereads,
             reads,
+            follows: false,
+            flushing: false,
+            again: false,
         };
         if reads {
             // Before any object is made: what was made earlier is unknown
@@ -1171,13 +1183,11 @@ impl UserSession {
         self.state = State::Active { watcher };
     }
 
-    /// The watcher over the user's files, which reads them now when
-    /// `flush`: it keeps a watch on the disk unless saves are not
-    /// followed. Why there is none is told.
-    fn spawn(&mut self, engine: &Engine, layers: &dyn Layers, flush: bool) -> Option<Watcher> {
+    /// What the watcher sends, to the session's inbox.
+    fn sink(&self) -> Sink {
         let handle = self.handle.clone();
         let pictures = self.pictures.clone();
-        let sink: Sink = Box::new(move |msg| {
+        Box::new(move |msg| {
             let key = match &msg {
                 DevMsg::Idle => IDLE_KEY,
                 DevMsg::Theme { .. } | DevMsg::ThemeFailed(_) => THEME_KEY,
@@ -1193,16 +1203,44 @@ impl UserSession {
             !handle
                 .send_coalesced(key, UserMsg::Dev(msg))
                 .is_err_and(|e| e.is_disconnected())
-        });
-        match layers.spawn(sink, flush, self.watch) {
-            Ok(watcher) => Some(watcher),
+        })
+    }
+
+    /// The watcher over the user's files, which reads them now when
+    /// `flush`: it keeps a watch on the disk unless saves are not
+    /// followed, and reads only when asked where that watch cannot be
+    /// made. Why there is none is told, and a read it was to answer is
+    /// answered.
+    fn spawn(&mut self, engine: &Engine, layers: &dyn Layers, flush: bool) -> Option<Watcher> {
+        let mut follow = self.watch;
+        let mut made = layers.spawn(self.sink(), flush, follow);
+        let unfollowed = match &made {
+            Err(e) if follow => Some(format!("saves are not followed: {e}")),
+            _ => None,
+        };
+        if let Some(why) = unfollowed {
+            // What kept the watch from being made (no watch left, a root
+            // that cannot be watched) would keep the next ask's from
+            // being made too: the files are still read when asked.
+            self.tell(engine, &[self.fault(why)]);
+            follow = false;
+            made = layers.spawn(self.sink(), flush, false);
+        }
+        match made {
+            Ok(watcher) => {
+                self.follows = follow;
+                self.flushing = flush;
+                Some(watcher)
+            }
             Err(e) => {
-                let why = if self.watch {
-                    format!("saves are not followed: {e}")
-                } else {
-                    format!("the files cannot be read again: {e}")
-                };
+                self.follows = false;
+                self.flushing = false;
+                let why = format!("the files cannot be read again: {e}");
                 self.tell(engine, &[self.fault(why)]);
+                if flush {
+                    // Nothing will answer the flush.
+                    self.answer_read(Reread::Failed);
+                }
                 None
             }
         }
@@ -1214,7 +1252,9 @@ impl UserSession {
     /// is kept ([`UserQml::watch`]), or the one kept was lost. A later
     /// [`pump`](Self::pump) applies it and says what it did, with
     /// [`Report::Unchanged`] when the files are as they were; a
-    /// `ShellLoader` that asked tries its source again then.
+    /// `ShellLoader` that asked tries its source again then, unless a file
+    /// failed. Where no watch on the disk can be made, one that reads
+    /// only when asked reads them.
     pub fn read_again(&mut self, engine: &Engine) {
         self.reading.get_or_insert(Reread::Unchanged);
         if !self.reads {
@@ -1226,15 +1266,27 @@ impl UserSession {
         match &self.state {
             State::Active {
                 watcher: Some(watcher),
-            } if watcher.flush() => {}
+            } if self.flushing && watcher.is_running() => {
+                // The flush on its way may have read the files before this
+                // ask: they are read once more when it is answered, and
+                // only that answer is this ask's.
+                self.again = true;
+            }
+            State::Active {
+                watcher: Some(watcher),
+            } if watcher.flush() => self.flushing = true,
             State::Active { .. } => {
                 // None was kept, or its thread ended: one is started that
-                // reads now.
+                // reads now, and answers.
+                self.flushing = false;
                 let layers = self.shared.layers.borrow().clone();
-                let watcher = layers.and_then(|layers| self.spawn(engine, &*layers, true));
-                if watcher.is_none() {
-                    self.answer_read(Reread::Failed);
-                }
+                let watcher = match layers {
+                    Some(layers) => self.spawn(engine, &*layers, true),
+                    None => {
+                        self.answer_read(Reread::Failed);
+                        None
+                    }
+                };
                 self.state = State::Active { watcher };
             }
             State::Dormant { .. } => {
@@ -1375,7 +1427,7 @@ impl UserSession {
             State::Dormant { watch, .. } => watch.is_some(),
             State::Making => self.watch,
             // A watcher that reads only when asked keeps no watch.
-            State::Active { watcher } => self.watch && watcher.is_some(),
+            State::Active { watcher } => self.follows && watcher.is_some(),
             State::Off => false,
         }
     }
@@ -1476,6 +1528,13 @@ impl UserSession {
             DevMsg::DataFiles(_) => {}
             DevMsg::Idle => {
                 // The answer to a flush: everything it brought came first.
+                self.flushing = false;
+                if std::mem::take(&mut self.again) {
+                    // Asked again after this flush was sent: the flush
+                    // that answers is the next one.
+                    self.read_again(engine);
+                    return;
+                }
                 let Some(did) = self.reading.take() else {
                     return;
                 };
@@ -1888,6 +1947,7 @@ mod tests {
             dir
         ));
     }
+
     /// Long enough for a watcher's thread to read a directory of a file.
     const PATIENCE: std::time::Duration = std::time::Duration::from_secs(20);
 

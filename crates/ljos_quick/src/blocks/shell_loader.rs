@@ -36,10 +36,10 @@
 //!
 //! `reload()` asks for the same where nothing watches the files, or the
 //! watch missed a save: a host that reads them ([`Rereads`]) reads every
-//! one again and applies what changed as it applies a save. Where nothing
-//! changed, or no host reads the files, the loader tries its source again:
-//! a shell that is shown is kept, and one that did not work replaces the
-//! fallback once it does.
+//! one again and applies what changed as it applies a save. Unless a file
+//! failed, or where no host reads the files, the loader tries its source
+//! again then: a shell that is shown is kept, and one that did not work
+//! replaces the fallback once it does.
 
 use std::time::Duration;
 
@@ -154,7 +154,7 @@ impl ShellLoader {
         let (e, me) = (cx.engine, cx.this);
         // A host that reads the files applies what changed by making the
         // roots again, this loader with them; it answers with `retry`
-        // when nothing did.
+        // unless a file failed.
         if !Rereads::of(e).ask_for(me) {
             retry(e, me);
         }

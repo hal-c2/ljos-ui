@@ -422,6 +422,12 @@ impl Watcher {
         self.tx.send(Cmd::Flush).is_ok()
     }
 
+    /// Whether the watcher's thread still runs: one that ended answers no
+    /// flush sent before it did either.
+    pub fn is_running(&self) -> bool {
+        self.thread.as_ref().is_some_and(|t| !t.is_finished())
+    }
+
     /// How often the watcher's thread has woken: for a test that it does
     /// not while nothing changes.
     pub fn wakes(&self) -> u64 {

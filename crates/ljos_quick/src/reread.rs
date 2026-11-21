@@ -5,7 +5,7 @@
 //! directory under `user-qml`) serves the asks: it reads every file again,
 //! as a save its watch saw would be, and applies what changed. A save its
 //! watch never saw (it keeps none, or the one it kept was lost) is applied
-//! then. Where no host serves them, or the files are as they were, a
+//! then. Where no host serves them, or unless a file failed, a
 //! `ShellLoader` that asked tries its source again.
 
 use std::cell::{Cell, RefCell};
@@ -104,12 +104,13 @@ impl Rereads {
     }
 
     /// The host read the files again, as asked, and `did` this. A
-    /// `ShellLoader` that asked tries its source again where nothing
-    /// changed; what was applied made it again already, and a file that
-    /// failed leaves it as a save that failed does.
+    /// `ShellLoader` that asked and shows its fallback tries its source
+    /// again unless a file failed, which leaves it as a save that failed
+    /// does: what was applied may not have made it again (a new theme
+    /// makes nothing), and a shell that works is kept.
     pub fn answered(&self, engine: &Engine, did: Reread) {
         let loaders = std::mem::take(&mut *self.loaders.borrow_mut());
-        if did != Reread::Unchanged {
+        if did == Reread::Failed {
             return;
         }
         for loader in loaders {
