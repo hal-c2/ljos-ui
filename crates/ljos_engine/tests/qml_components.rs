@@ -853,3 +853,56 @@ fn a_component_that_cannot_be_made_leaves_no_context_behind() {
     attempt();
     assert_eq!(h.engine.context_count(), before);
 }
+
+const PANICS_NOW: &str =
+    "import QtQuick\nItem {\n  Component { id: comp; Item { Item { Text {} } } }\n  property Component c: comp\n}\n";
+
+/// Made at once, as a job is in slices: a constructor's panic gives back
+/// what was allocated.
+#[test]
+fn a_creation_made_now_that_panics_leaves_no_context_behind() {
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+
+    let h = engine();
+    h.engine
+        .register_module(ljos_engine::module!("QtQuick" 2.0 => [Dud]));
+    let root = h.load(PANICS_NOW);
+    let comp = h.get(root, "c").as_object().unwrap();
+    let attempt = || {
+        let made = catch_unwind(AssertUnwindSafe(|| {
+            h.engine
+                .make(ljos_engine::Request::component(comp).parent(Some(root)))
+        }));
+        assert!(made.is_err(), "the panic goes on");
+        h.warnings();
+    };
+    attempt();
+    let before = h.engine.context_count();
+    attempt();
+    assert_eq!(h.engine.context_count(), before);
+}
+
+/// A creation a panic cut short is closed all the same: left open, what
+/// waits for no creation to be running would never run.
+#[test]
+fn a_creation_made_now_that_panics_is_closed() {
+    use std::cell::Cell;
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+    use std::rc::Rc;
+
+    let h = engine();
+    h.engine
+        .register_module(ljos_engine::module!("QtQuick" 2.0 => [Dud]));
+    let root = h.load(PANICS_NOW);
+    let comp = h.get(root, "c").as_object().unwrap();
+    let made = catch_unwind(AssertUnwindSafe(|| {
+        h.engine
+            .make(ljos_engine::Request::component(comp).parent(Some(root)))
+    }));
+    assert!(made.is_err(), "the panic goes on");
+    h.warnings();
+    let ran = Rc::new(Cell::new(false));
+    let r = ran.clone();
+    h.engine.after_creation(move |_| r.set(true));
+    assert!(ran.get(), "no creation is running");
+}
