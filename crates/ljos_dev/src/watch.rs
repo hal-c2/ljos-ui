@@ -176,8 +176,13 @@ impl Follower {
         lock(&self.followed).insert(path.to_owned());
         let mut watching = lock(&watching);
         let watching = &mut *watching;
+        // A watcher that reads only when asked follows nothing.
+        let Some(fs) = watching.fs.as_mut() else {
+            lock(&self.followed).remove(path);
+            return;
+        };
         if !watching.watched.contains(dir) {
-            if watching.fs.watch(dir, RecursiveMode::NonRecursive).is_err() {
+            if fs.watch(dir, RecursiveMode::NonRecursive).is_err() {
                 lock(&self.followed).remove(path);
                 return;
             }
@@ -185,6 +190,63 @@ impl Follower {
         }
         watching.follow_dirs.insert(dir.to_owned());
     }
+}
+
+/// The file system's watch over the roots and the theme's directories,
+/// with the directories it is on put in `watched`.
+fn watch_disk(
+    roots: &[PathBuf],
+    theme: &[PathBuf],
+    events: Events,
+    watched: &mut BTreeSet<PathBuf>,
+) -> Result<notify::RecommendedWatcher, WatchError> {
+    let root = roots.first().ok_or(WatchError::NoRoot)?.clone();
+    let mut fs =
+        notify::recommended_watcher(move |event| events.on_event(event)).map_err(|source| {
+            WatchError::Watch {
+                path: root.clone(),
+                source,
+            }
+        })?;
+    for dir in roots.iter().flat_map(|root| project_dirs(root)) {
+        match fs.watch(&dir, RecursiveMode::NonRecursive) {
+            Ok(()) => {
+                watched.insert(dir);
+            }
+            // The roots have to be watched; a directory below that
+            // went away since the walk is no loss.
+            Err(source) if roots.contains(&dir) => {
+                return Err(WatchError::Watch { path: dir, source });
+            }
+            Err(_) => {}
+        }
+    }
+    // A theme outside the project, or in a directory the walk did not
+    // find (the place a theme is written first), is watched in its
+    // directory alone; Events lets only the theme through from there.
+    // Directories, not the files: a file made later has no watch to
+    // be on, and an editor's save replaces the file.
+    let theme_dirs: BTreeSet<&Path> = theme.iter().filter_map(|p| p.parent()).collect();
+    for dir in theme_dirs {
+        if watched.contains(dir) {
+            continue;
+        }
+        match fs.watch(dir, RecursiveMode::NonRecursive) {
+            Ok(()) => {
+                watched.insert(dir.to_owned());
+            }
+            // A place the theme may be made in later; the project is
+            // rescanned when its directories change.
+            Err(_) if !dir.exists() => {}
+            Err(source) => {
+                return Err(WatchError::Watch {
+                    path: dir.to_owned(),
+                    source,
+                });
+            }
+        }
+    }
+    Ok(fs)
 }
 
 impl std::fmt::Debug for Watcher {
@@ -238,11 +300,41 @@ impl Watcher {
         O: TypeOracle + Clone + Send + 'static,
         Reloader<O>: Send,
     {
+        Self::start(reloader, Some(quiet), sink)
+    }
+
+    /// A watcher of `reloader` that keeps no watch on the disk: it reads
+    /// the files only when [`flush`](Self::flush) asks, and builds what
+    /// they say then, as a save is built. For an application that reads
+    /// its files again only when asked, or whose watch was lost.
+    pub fn on_request_shared<O>(
+        reloader: Arc<Mutex<Reloader<O>>>,
+        sink: impl FnMut(DevMsg) -> bool + Send + 'static,
+    ) -> Result<Self, WatchError>
+    where
+        O: TypeOracle + Clone + Send + 'static,
+        Reloader<O>: Send,
+    {
+        Self::start(reloader, None, sink)
+    }
+
+    /// `quiet`: the quiet time of a watch on the disk; None keeps none.
+    fn start<O>(
+        reloader: Arc<Mutex<Reloader<O>>>,
+        quiet: Option<Duration>,
+        sink: impl FnMut(DevMsg) -> bool + Send + 'static,
+    ) -> Result<Self, WatchError>
+    where
+        O: TypeOracle + Clone + Send + 'static,
+        Reloader<O>: Send,
+    {
         // The directories outside the roots an alias may name are
         // watched as the roots are, aliased or not, so naming one needs no
         // new watch.
         let roots = lock(&reloader).places();
-        let root = roots.first().ok_or(WatchError::NoRoot)?.clone();
+        if roots.is_empty() {
+            return Err(WatchError::NoRoot);
+        }
         let (tx, rx) = mpsc::sync_channel(EVENT_QUEUE);
         let overflow = Arc::new(AtomicBool::new(false));
         let theme = lock(&reloader).theme_paths();
@@ -254,52 +346,11 @@ impl Watcher {
             tx: tx.clone(),
             overflow: overflow.clone(),
         };
-        let mut fs =
-            notify::recommended_watcher(move |event| events.on_event(event)).map_err(|source| {
-                WatchError::Watch {
-                    path: root.clone(),
-                    source,
-                }
-            })?;
         let mut watched = BTreeSet::new();
-        for dir in roots.iter().flat_map(|root| project_dirs(root)) {
-            match fs.watch(&dir, RecursiveMode::NonRecursive) {
-                Ok(()) => {
-                    watched.insert(dir);
-                }
-                // The roots have to be watched; a directory below that
-                // went away since the walk is no loss.
-                Err(source) if roots.contains(&dir) => {
-                    return Err(WatchError::Watch { path: dir, source });
-                }
-                Err(_) => {}
-            }
-        }
-        // A theme outside the project, or in a directory the walk did not
-        // find (the place a theme is written first), is watched in its
-        // directory alone; Events lets only the theme through from there.
-        // Directories, not the files: a file made later has no watch to
-        // be on, and an editor's save replaces the file.
-        let theme_dirs: BTreeSet<&Path> = theme.iter().filter_map(|p| p.parent()).collect();
-        for dir in theme_dirs {
-            if watched.contains(dir) {
-                continue;
-            }
-            match fs.watch(dir, RecursiveMode::NonRecursive) {
-                Ok(()) => {
-                    watched.insert(dir.to_owned());
-                }
-                // A place the theme may be made in later; the project is
-                // rescanned when its directories change.
-                Err(_) if !dir.exists() => {}
-                Err(source) => {
-                    return Err(WatchError::Watch {
-                        path: dir.to_owned(),
-                        source,
-                    });
-                }
-            }
-        }
+        let fs = match quiet {
+            Some(_) => Some(watch_disk(&roots, &theme, events, &mut watched)?),
+            None => None,
+        };
         let wakes = Arc::new(AtomicU64::new(0));
         let watching = Arc::new(Mutex::new(Watching {
             fs,
@@ -319,7 +370,7 @@ impl Watcher {
             roots,
             overflow,
             wakes: wakes.clone(),
-            debounce: Debounce::with_quiet(quiet),
+            debounce: Debounce::with_quiet(quiet.unwrap_or(QUIET)),
             writing: BTreeSet::new(),
             saved: None,
             in_flight: None,
@@ -459,7 +510,8 @@ pub(crate) fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 /// only for as long as that takes: no build holds it. The thread `notify`
 /// keeps never takes it, so waiting for a watch to be set cannot deadlock.
 struct Watching {
-    fs: notify::RecommendedWatcher,
+    /// None for a watcher that reads only when asked.
+    fs: Option<notify::RecommendedWatcher>,
     watched: BTreeSet<PathBuf>,
     /// The directories of followed files: watched though the project may
     /// not hold them.
@@ -700,10 +752,13 @@ impl<O: TypeOracle + Clone> Run<O> {
     fn watch_new_dirs(&mut self) {
         let mut watching = lock(&self.watching);
         let Watching {
-            fs,
+            fs: Some(fs),
             watched,
             follow_dirs,
-        } = &mut *watching;
+        } = &mut *watching
+        else {
+            return;
+        };
         let now: BTreeSet<PathBuf> = self
             .roots
             .iter()
