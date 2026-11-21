@@ -513,6 +513,7 @@ JS_EXTERN void JS_SetMemoryLimit(JSRuntime *rt, size_t limit);
 JS_EXTERN size_t JS_MarkMallocPeak(JSRuntime *rt);
 JS_EXTERN size_t JS_ResumeMallocPeak(JSRuntime *rt, size_t outer);
 JS_EXTERN uint64_t JS_GCObjectDigest(JSRuntime *rt);
+JS_EXTERN uint64_t JS_NullErrorCount(JSRuntime *rt);
 JS_EXTERN void JS_SetDumpFlags(JSRuntime *rt, uint64_t flags);
 JS_EXTERN uint64_t JS_GetDumpFlags(JSRuntime *rt);
 JS_EXTERN size_t JS_GetGCThreshold(JSRuntime *rt);

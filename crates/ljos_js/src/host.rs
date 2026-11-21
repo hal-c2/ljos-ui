@@ -27,7 +27,7 @@ use crate::{
     Bytecode, HostError, HostObjects, HostTypeId, JsConfig, JsFault, JsRef, JsValue, MethodDef,
     MethodFace, PlainValue, PropDef, SignalDef, Slice, SourceMapper, SourceText, TypeDef,
     ValueKind,
-    heap::{Counted, HeapCount, MallocPeak, ObjectDigest},
+    heap::{Counted, HeapCount, MallocPeak, Mark, ObjectDigest},
     objects::{HostWrapper, new_wrapper, register_wrapper_class, wrapper_id},
     value::{Pending, WeakRef},
 };
@@ -2591,11 +2591,12 @@ impl JsHost {
         self.peak.mark();
         let heap_before = self.heap_bytes();
         let mut ran_out = false;
-        let mut most = 0;
+        let mut most: Option<Mark> = None;
         while self.interrupt.now(Timing::Poll) < until {
             // Each job judges a thrown `null` by its own peak, as a nested
             // run does; the pump's is the most of them.
-            most = most.max(self.peak.mark());
+            let mark = self.peak.mark();
+            most = Some(most.map_or(mark, |most| most.join(mark)));
             match self.rt.execute_pending_job() {
                 Ok(true) => pumped.ran += 1,
                 Ok(false) => break,
@@ -2629,7 +2630,9 @@ impl JsHost {
                 }
             }
         }
-        self.peak.resume(most);
+        if let Some(most) = most {
+            self.peak.resume(most);
+        }
         // The heap is minded after jobs as after a run: what they grew is
         // named, and the pressure policy applies with no run after them.
         let grew = self.heap_bytes().saturating_sub(heap_before);
@@ -3665,10 +3668,12 @@ fn describe_exception(
         }
         // QuickJS throws `null` when it cannot make the error it meant to
         // throw (quickjs.c `JS_ThrowError2`): the heap is out, and that
-        // `null` is all that is left of an "out of memory". A script's own
-        // `throw null` is told apart by the heap having had room all run.
+        // `null` is all that is left of an "out of memory". QuickJS counts
+        // each such `null`, so a script's own `throw null` is told apart
+        // however full the heap was. Without a run to count in, the heap
+        // being full now is all there is to go by.
         None if thrown.is_null()
-            && heap_nearly_full(thrown.ctx(), peak.map_or(0, MallocPeak::get)) =>
+            && peak.map_or_else(|| heap_nearly_full(thrown.ctx(), 0), MallocPeak::ran_out) =>
         {
             return JsFault::JsOutOfMemory {
                 label: label.to_owned(),
@@ -3715,14 +3720,15 @@ fn describe_exception(
 /// Whether the heap is within a sixteenth of its limit: too full for
 /// QuickJS to have made an error object, at `peak`, the most the run held
 /// before unwinding it let go. False with no limit. Walks the heap, which
-/// only a thrown `null`, an unworded `InternalError` or an unknown error
-/// asks for.
+/// only an unworded `InternalError`, an unknown error, or a thrown `null`
+/// outside a run asks for.
 ///
 /// The peak is the run's, not the throw's: a script that fills the heap
-/// within a sixteenth of its limit, lets it go and then throws `null`
-/// (or an unworded `InternalError`) itself in the same run reads as out
-/// of memory. Telling them apart would take the size at the throw,
-/// which QuickJS does not keep.
+/// within a sixteenth of its limit, lets it go and then throws an unworded
+/// `InternalError` itself in the same run reads as out of memory. Telling
+/// them apart would take the size at the throw, which QuickJS does not
+/// keep. A thrown `null` in a run is told apart by QuickJS's count of its
+/// own (`MallocPeak::ran_out`).
 fn heap_nearly_full(ctx: &Ctx<'_>, peak: usize) -> bool {
     // SAFETY: the context is live while `ctx` is, and so its runtime.
     let usage = unsafe {

@@ -364,6 +364,9 @@ struct JSRuntime {
     /* Ljós: the most malloc_size held since JS_MarkMallocPeak, in the units
        malloc_limit is checked in. */
     size_t malloc_peak;
+    /* Ljós: how many times JS_ThrowError2 threw `null` for want of heap to
+       make its error, so that `null` is told from a script's own. */
+    uint64_t null_errors;
 #ifdef ENABLE_DUMPS // JS_DUMP_LEAKS
     struct list_head string_list; /* list of JSString.link */
 #endif
@@ -2507,6 +2510,14 @@ uint64_t JS_GCObjectDigest(JSRuntime *rt)
         d += h ^ (h >> 31);
     }
     return d;
+}
+
+/* Ljós: how many times QuickJS has thrown `null` because the heap had no
+   room for the error it meant to throw. A script's `throw null` is not
+   counted. */
+uint64_t JS_NullErrorCount(JSRuntime *rt)
+{
+    return rt->null_errors;
 }
 
 void JS_SetDumpFlags(JSRuntime *rt, uint64_t flags)
@@ -8511,6 +8522,7 @@ JS_ThrowError2(JSContext *ctx, JSErrorEnum error_num, bool add_backtrace,
     if (unlikely(JS_IsException(obj))) {
         /* out of memory: throw JS_NULL to avoid recursing */
         obj = JS_NULL;
+        ctx->rt->null_errors++; /* Ljós */
     }
     return JS_Throw(ctx, obj);
 }

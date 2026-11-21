@@ -77,7 +77,9 @@ fn the_memory_limit_read_is_the_one_put_last() {
     assert_eq!(host.memory_limit(), None);
 }
 
-/// `throw null` with room to spare stays an exception.
+/// `throw null` with room to spare stays an exception. With no room at all,
+/// the run fails before the script throws anything, and the `null` QuickJS
+/// throws for it is running out of memory.
 #[test]
 fn a_null_thrown_on_a_full_heap_is_running_out_of_memory() {
     let host = JsHost::new(JsConfig {
@@ -89,7 +91,9 @@ fn a_null_thrown_on_a_full_heap_is_running_out_of_memory() {
     assert!(matches!(err, JsFault::JsException { .. }), "{err:?}");
     host.collect_now();
     let held = host.memory_stats().unwrap().malloc_size;
-    assert!(host.set_memory_limit(Some(held + 1024)));
+    // Not a byte to spare: a kilobyte more holds what `throw null` compiles
+    // to, and the script's own null is then its exception.
+    assert!(host.set_memory_limit(Some(held)));
     let err = eval_num(&host, "throw null").unwrap_err();
     assert!(matches!(err, JsFault::JsOutOfMemory { .. }), "{err:?}");
     // With room again, scripts run.
@@ -664,6 +668,119 @@ fn a_null_thrown_on_a_full_heap_is_running_out_of_memory_after_its_locals_go() {
     // A script's own `throw null` in the next run, with room, is its own.
     let err = eval_num(&host, "throw null").unwrap_err();
     assert!(matches!(err, JsFault::JsException { .. }), "{err:?}");
+}
+
+/// A script may throw `null` itself on a heap within a sixteenth of its
+/// limit, held or just let go: QuickJS made no `null` of its own, so it is
+/// the script's exception, not the heap running out.
+#[test]
+fn a_null_a_script_throws_on_a_nearly_full_heap_is_its_own() {
+    let host = JsHost::new(JsConfig {
+        memory_limit: Some(16 * 1024 * 1024),
+        ..JsConfig::default()
+    })
+    .unwrap();
+    host.collect_now();
+    let held = host.memory_stats().unwrap().malloc_size;
+    let limit = held + 4 * 1024 * 1024;
+    assert!(host.set_memory_limit(Some(limit)));
+    // Room for the buffer, and less than a sixteenth of the limit left.
+    let bytes = 4 * 1024 * 1024 - 128 * 1024;
+    eval_num(&host, &format!("var kept = new ArrayBuffer({bytes}); 0")).unwrap();
+    let now = host.memory_stats().unwrap().malloc_size;
+    assert!(now + limit / 16 >= limit, "nearly full: {now} of {limit}");
+    let err = eval_num(&host, "throw null").unwrap_err();
+    assert!(matches!(err, JsFault::JsException { .. }), "held: {err:?}");
+    // Filled, let go and thrown in one run.
+    let err = eval_num(
+        &host,
+        &format!("kept = null; let b = new ArrayBuffer({bytes}); b = null; throw null"),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(err, JsFault::JsException { .. }),
+        "let go: {err:?}"
+    );
+    assert_eq!(eval_num(&host, "40 + 2").unwrap(), 42.0);
+}
+
+/// The `null` QuickJS throws for want of heap is out of memory however it
+/// reaches the host: caught and thrown again by the script, too.
+#[test]
+fn a_null_thrown_for_want_of_heap_and_thrown_again_is_running_out_of_memory() {
+    let host = JsHost::new(JsConfig {
+        memory_limit: Some(16 * 1024 * 1024),
+        ..JsConfig::default()
+    })
+    .unwrap();
+    host.collect_now();
+    let held = host.memory_stats().unwrap().malloc_size;
+    assert!(host.set_memory_limit(Some(held + 4 * 1024 * 1024)));
+    let err = eval_num(
+        &host,
+        "function fill() { let h = null; for (;;) h = { n: h } }\n\
+         try { fill() } catch (e) { if (e !== null) throw new Error('not null: ' + e); throw e }",
+    )
+    .unwrap_err();
+    assert!(matches!(err, JsFault::JsOutOfMemory { .. }), "{err:?}");
+}
+
+/// Each job in a pump counts QuickJS's `null`s from its own start: a job
+/// that ran out and caught the `null` leaves the next job's own `throw
+/// null` its exception.
+#[test]
+fn a_null_a_job_throws_after_another_caught_running_out_is_its_own() {
+    let host = JsHost::new(JsConfig {
+        memory_limit: Some(16 * 1024 * 1024),
+        ..JsConfig::default()
+    })
+    .unwrap();
+    host.collect_now();
+    let held = host.memory_stats().unwrap().malloc_size;
+    assert!(host.set_memory_limit(Some(held + 4 * 1024 * 1024)));
+    host.enter("setup", host.config().slice, |s| {
+        s.eval::<(), _>(
+            "function fill() { let h = null; for (;;) h = { n: h } }\n\
+             queueMicrotask(() => { try { fill() } catch (e) { if (e !== null) throw new Error('not null: ' + e) } });\n\
+             queueMicrotask(() => { throw null })",
+        )
+    })
+    .unwrap();
+    let pumped = host.pump_jobs(Instant::now() + Duration::from_secs(5));
+    assert_eq!(pumped.ran, 2);
+    assert!(
+        matches!(&pumped.faults[..], [JsFault::JsException { .. }]),
+        "{:?}",
+        pumped.faults
+    );
+}
+
+/// A nested run counts from its own start, and the run around it from its
+/// own again once the nested one is done: a `null` QuickJS threw in the
+/// outer run before it, caught and thrown again after, is out of memory.
+#[test]
+fn a_null_thrown_for_want_of_heap_before_a_nested_run_is_still_out_of_memory_after() {
+    let host = JsHost::new(JsConfig {
+        memory_limit: Some(16 * 1024 * 1024),
+        ..JsConfig::default()
+    })
+    .unwrap();
+    host.collect_now();
+    let held = host.memory_stats().unwrap().malloc_size;
+    assert!(host.set_memory_limit(Some(held + 4 * 1024 * 1024)));
+    let slice = host.config().slice;
+    let err = host
+        .enter("outer", slice, |s| {
+            s.eval::<(), _>(
+                "function fill() { let h = null; for (;;) h = { n: h } }\n\
+                 try { fill() } catch (e) { if (e !== null) throw new Error('not null: ' + e); globalThis.caught = e }",
+            )?;
+            let inner = host.enter("inner", slice, |s| s.eval::<f64, _>("40 + 2"));
+            assert_eq!(inner, Ok(42.0));
+            s.eval::<(), _>("throw caught")
+        })
+        .unwrap_err();
+    assert!(matches!(err, JsFault::JsOutOfMemory { .. }), "{err:?}");
 }
 
 /// QuickJS carves small objects out of arenas and lets an arena go only
