@@ -45,6 +45,16 @@ fn reads_own_theme(w: &mut LjosWorld) -> StepResult {
     w.each(|b| b.application()?.user_qml_own_theme())
 }
 
+#[given("the application reads its user's files only when it starts and when asked")]
+fn unwatched(w: &mut LjosWorld) -> StepResult {
+    w.each(|b| b.application()?.user_qml_unwatched())
+}
+
+#[when("the application asks for its user's files to be read again")]
+fn read_again(w: &mut LjosWorld) -> StepResult {
+    w.each(|b| b.application()?.user_qml_read_again())
+}
+
 #[when("the user's directory is removed and made again")]
 fn user_dir_made_again(w: &mut LjosWorld) -> StepResult {
     w.each(|b| b.application()?.user_qml_dir_made_again())
@@ -253,6 +263,15 @@ fn not_watched(w: &mut LjosWorld) -> StepResult {
         (!s.watching)
             .then_some(())
             .ok_or_else(|| "a watch is kept".to_owned())
+    })
+}
+
+#[then("the user's files read again were as they were")]
+fn read_unchanged(w: &mut LjosWorld) -> StepResult {
+    seen(w, |s| {
+        s.read_unchanged
+            .then_some(())
+            .ok_or_else(|| "the files were not read again, or brought something".to_owned())
     })
 }
 

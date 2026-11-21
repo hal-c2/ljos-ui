@@ -464,6 +464,7 @@ impl Live {
                 .to_owned(),
             texts: session.compiles_texts(),
             woken: user.woken,
+            read_unchanged: false,
         })
     }
 }

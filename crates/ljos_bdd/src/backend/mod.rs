@@ -100,6 +100,8 @@ pub struct UserSeen {
     pub texts: bool,
     /// How often the application was woken while it was last left alone.
     pub woken: u64,
+    /// The files were last read again, as asked, and were as they were.
+    pub read_unchanged: bool,
 }
 
 /// Why a changed file was not applied.
@@ -1324,6 +1326,19 @@ pub trait Application: Backend {
     /// The application reads its user's `theme.json` itself
     /// (`UserQml::theme(false)`); set before it runs.
     fn user_qml_own_theme(&mut self) -> Result<()> {
+        Err(BackendError::NotImplemented("a user's directory"))
+    }
+
+    /// The application keeps no watch on its user's files
+    /// (`UserQml::watch(false)`): it reads them when it starts and when it
+    /// asks. Set before it runs.
+    fn user_qml_unwatched(&mut self) -> Result<()> {
+        Err(BackendError::NotImplemented("a user's directory"))
+    }
+
+    /// The application's own code asks for its user's files to be read
+    /// again (`UserSession::read_again`), and takes what that brings.
+    fn user_qml_read_again(&mut self) -> Result<()> {
         Err(BackendError::NotImplemented("a user's directory"))
     }
 

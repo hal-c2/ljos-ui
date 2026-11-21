@@ -371,6 +371,96 @@ Feature: A ShellLoader shows a user's shell, or the application's own when the u
       And the object "loader/default-window" exists
       And the log has no warning matching "TypeError"
 
+  Rule: Asked to load again, a loader tries its source again and keeps a shell that works
+
+    `reload()` asks whatever reads the application's files to read them
+    again (see features/hot-reload/user-qml.feature). Where nothing reads
+    them, or they are as they were, a loader showing its fallback tries its
+    source again, and the fallback goes only once the source's shell is
+    shown; a loader showing its source's shell keeps it.
+
+    Scenario: A shell whose fault went away is shown in place of the fallback once the loader is asked to load again
+      Given the file "Shell.qml":
+        """qml
+        import QtQuick
+        Rectangle { objectName: "user-shell"; width: root.ready ? 50 : root.missing.width; height: 20 }
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        import Ljos.Blocks
+        Item {
+          id: root
+          objectName: "root"
+          property bool ready: false
+          ShellLoader { objectName: "loader"; source: "Shell.qml"; fallback: "Default.qml" }
+        }
+        """
+      Then the object "loader/default-shell" exists
+      And the property "status" of "loader" is 2
+      When the property "ready" of "root" is set to true
+      And the method "reload" of "loader" is called
+      Then the object "loader/user-shell" exists
+      And the object "default-shell" does not exist
+      And the property "status" of "loader" is 1
+      And the property "error" of "loader" is ""
+      And the property "width" of "loader" is 50
+
+    Scenario: A shell that works, asked to load again, is kept
+      Given the file "Shell.qml":
+        """qml
+        import QtQuick
+        Rectangle {
+          objectName: "user-shell"; width: 50; height: 20
+          Component.onCompleted: console.log("the user's shell is made")
+        }
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        import Ljos.Blocks
+        Item {
+          objectName: "root"
+          ShellLoader { objectName: "loader"; source: "Shell.qml"; fallback: "Default.qml" }
+        }
+        """
+      When the method "reload" of "loader" is called
+      Then the object "loader/user-shell" exists
+      And the property "status" of "loader" is 1
+      And the log has 1 info matching "the user's shell is made"
+
+    Scenario: A shell that still does not work, asked to load again, leaves the fallback shown and says why again
+      Given the file "Shell.qml":
+        """qml
+        import QtQuick
+        Rectangle { NoSuchThing { } }
+        """
+      And the file "Default.qml":
+        """qml
+        import QtQuick
+        Rectangle {
+          objectName: "default-shell"; width: 40; height: 30
+          Component.onCompleted: console.log("the application's shell is made")
+        }
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        import Ljos.Blocks
+        Item {
+          id: root
+          objectName: "root"
+          ShellLoader { id: loader; objectName: "loader"; source: "Shell.qml"; fallback: "Default.qml" }
+          property bool named: /Shell\.qml:2.*NoSuchThing/.test(loader.error)
+        }
+        """
+      When the method "reload" of "loader" is called
+      Then the object "loader/default-shell" exists
+      And the property "status" of "loader" is 2
+      And the property "named" of "root" is true
+      And the log has 1 info matching "the application's shell is made"
+      And the log has 2 warnings matching "^ShellLoader: .*NoSuchThing"
+
   Rule: A shell that is a Window is the application's window
 
     Where each `Window` is a platform window, a loader at the root of an
