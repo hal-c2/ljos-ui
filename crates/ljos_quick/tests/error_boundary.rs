@@ -84,6 +84,70 @@ Item {
     );
 }
 
+/// Content whose own handler gives the boundary other content and then its
+/// own back as it is made (A→B→A): the content watch makes and shows a new
+/// item of the first content, and the item whose making started it all is
+/// discarded once that making returns, so only one item of it is left.
+#[test]
+fn content_that_gives_other_content_and_then_its_own_back_as_it_is_made_leaves_one_item() {
+    let e = engine();
+    let root = load(
+        &e,
+        r#"
+import QtQuick
+import Ljos
+Item {
+    id: root
+    property int made: 0
+    property Component other: Component { Item { objectName: "other" } }
+    property Component first: Component {
+        Item {
+            objectName: "first"
+            Component.onCompleted: {
+                root.made += 1
+                if (root.made === 1) {
+                    boundary.content = root.other
+                    boundary.content = root.first
+                }
+            }
+        }
+    }
+    ErrorBoundary {
+        id: boundary
+        objectName: "boundary"
+        content: root.first
+    }
+}
+"#,
+    );
+    let boundary = find(&e, root, "boundary");
+    e.process_deferred_deletes();
+    assert_eq!(e.take_warnings(), Vec::<String>::new());
+    assert_eq!(num(&e, root, "made"), 2.0, "the first content is made twice");
+    let item = get(&e, boundary, "item")
+        .as_object()
+        .expect("an item is shown");
+    assert_eq!(text(&e, item, "objectName"), "first");
+    assert!(!get(&e, boundary, "failed").to_boolean());
+    assert_eq!(count(&e, root, "first"), 1, "one item of the first content is left");
+    assert!(!exists(&e, root, "other"), "the other content is discarded");
+}
+
+fn count(e: &Engine, root: ObjectId, name: &str) -> usize {
+    let mut n = 0;
+    let mut stack = vec![root];
+    while let Some(o) = stack.pop() {
+        if !e.is_alive(o) {
+            continue;
+        }
+        if text(e, o, "objectName") == name {
+            n += 1;
+        }
+        stack.extend(e.children(o));
+    }
+    n
+}
+
 /// A panic in a native handler of `obj`, as a host's turn catches it.
 fn panic_in(e: &Engine, obj: ObjectId, message: &'static str) {
     let r: Option<()> = e.turn(Some(obj), || panic!("{message}"));
