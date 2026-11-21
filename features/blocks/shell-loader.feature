@@ -377,7 +377,8 @@ Feature: A ShellLoader shows a user's shell, or the application's own when the u
     again (see features/hot-reload/user-qml.feature). Where nothing reads
     them, or they are as they were, a loader showing its fallback tries its
     source again, and the fallback goes only once the source's shell is
-    shown; a loader showing its source's shell keeps it.
+    shown, through the tries after a resource fault too; a loader with no
+    source keeps its fallback, and one showing its source's shell keeps it.
 
     Scenario: A shell whose fault went away is shown in place of the fallback once the loader is asked to load again
       Given the file "Shell.qml":
@@ -460,6 +461,29 @@ Feature: A ShellLoader shows a user's shell, or the application's own when the u
       And the property "named" of "root" is true
       And the log has 1 info matching "the application's shell is made"
       And the log has 2 warnings matching "^ShellLoader: .*NoSuchThing"
+
+    Scenario: A loader with no source, asked to load again, keeps the fallback it shows
+      Given the file "Default.qml":
+        """qml
+        import QtQuick
+        Rectangle {
+          objectName: "default-shell"; width: 40; height: 30
+          Component.onCompleted: console.info("the application's shell is made")
+        }
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        import Ljos.Blocks
+        Item {
+          objectName: "root"
+          ShellLoader { objectName: "loader"; fallback: "Default.qml" }
+        }
+        """
+      When the method "reload" of "loader" is called
+      Then the object "loader/default-shell" exists
+      And the property "status" of "loader" is 2
+      And the log has 1 info matching "the application's shell is made"
 
   Rule: A shell that is a Window is the application's window
 
