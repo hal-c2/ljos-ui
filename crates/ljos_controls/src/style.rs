@@ -1,4 +1,4 @@
-//! The built-in styles (`Basic`, `Material`, `Fusion`, `Universal`): QML files
+//! The built-in styles (`Basic`, `Material`, `Fusion`, `Universal`, `macOS`): QML files
 //! of this crate (`qml/`), compiled to IR by the build script and embedded
 //! here, plus the native style types `Material`, `Fusion` and `Universal`.
 //! Nothing parses QML at run time.
@@ -37,6 +37,12 @@ pub(crate) const MATERIAL: &str = "QtQuick/Controls/Material";
 pub(crate) const FUSION: &str = "QtQuick/Controls/Fusion";
 /// The directory of the Universal style in the pack.
 pub(crate) const UNIVERSAL: &str = "QtQuick/Controls/Universal";
+/// The directory of the macOS style in the pack. Qt ships this style
+/// only on macOS, drawn with native frameworks; Ljós compiles it on
+/// every platform, drawing what it can (Button) and falling back to
+/// Basic for the rest, where Qt falls back to Fusion for the controls
+/// its macOS style does not support yet.
+pub(crate) const MACOS: &str = "QtQuick/Controls/macOS";
 
 /// The library directory of the style `obj` is drawn by: that of the
 /// first type of it, or of a type it is built on, that a style has, and

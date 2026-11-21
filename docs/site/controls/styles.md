@@ -10,12 +10,13 @@ Use styles to switch the look and metrics of your controls across the whole appl
 
 ## Selecting a style
 
-Every control (`Button`, `SpinBox`, `ComboBox`, and the rest) is present in all four built-in style modules:
+Every control (`Button`, `SpinBox`, `ComboBox`, and the rest) is present in all five built-in style modules:
 
 - `QtQuick.Controls.Basic`
 - `QtQuick.Controls.Fusion`
 - `QtQuick.Controls.Material`
 - `QtQuick.Controls.Universal`
+- `QtQuick.Controls.macOS`
 
 When your QML files import the unstyled `QtQuick.Controls` module, Ljós chooses the active style at startup in this order:
 
@@ -31,6 +32,7 @@ Each style brings its own default control sizes:
 - **Fusion**: `Button` is `80 × 24` with `padding: 4`
 - **Material**: `Button` is `64 × 52` and `TextField` is `120 × 56`
 - **Universal**: `Button` is `32 × 32`
+- **macOS**: `Button` is `64 × 21`, a small rounded rectangle; a flat button has no plate until held down, which is the shape of a toolbar item
 
 ## Material and Universal attached properties
 
@@ -132,7 +134,8 @@ To build a custom style for your application, create a `qmldir` module containin
 
 ## Limits
 
-- There are no macOS, Windows or iOS styles; on Linux the platform style is Fusion.
+- There are no Windows or iOS styles; on Linux the platform style is Fusion.
+- The macOS style differs from Qt's: Qt ships it only on macOS, drawn with native frameworks, and falls back to Fusion for the controls it does not support yet. Ljós compiles it on every platform, draws `Button` itself and takes every other control from Basic. An `icon.name` naming an SF Symbol shows nothing, because Ljós has no icon theme and no SF Symbols; give the button an `icon.source`, or let its `text` be its tooltip and accessible name, as a toolbar item does.
 - Material's `variant` and `shade()` are not available, and the built-in styles draw Basic's shapes in each style's metrics and colours rather than the full Material or Fluent visual effects.
 
 ## See also
