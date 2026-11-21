@@ -296,7 +296,8 @@ fn spacing() -> String {
     let mut s = format!("{HEADER}pragma Singleton\nimport QtQuick\n\n");
     let _ = writeln!(
         s,
-        "// Gaps and padding in logical pixels, steps of {} px.\nQtObject {{",
+        "// Gaps and padding in logical pixels, steps of the unit ({} px).\n\
+         // A theme that sets the unit moves every step with it.\nQtObject {{",
         number(crate::limits::SPACING_UNIT_PX)
     );
     let _ = writeln!(
@@ -305,12 +306,14 @@ fn spacing() -> String {
         number(crate::limits::SPACING_UNIT_PX)
     );
     for step in scale::spacing() {
-        let _ = writeln!(
-            s,
-            "    readonly property int {}: {}",
-            step.name,
-            number(step.px)
-        );
+        // A binding on the unit rather than a number, so one value loosens
+        // or tightens the whole rhythm; a step a theme sets still wins.
+        let value = match step.units {
+            0 => "0".to_owned(),
+            1 => "unit".to_owned(),
+            n => format!("unit * {n}"),
+        };
+        let _ = writeln!(s, "    readonly property int {}: {value}", step.name);
     }
     s.push_str("}\n");
     s
