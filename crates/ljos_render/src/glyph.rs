@@ -690,12 +690,31 @@ fn colr_rect(font: &FontRef<'_>, survey: &ColrSurvey, size_px: f64) -> Option<Re
     (rect.width() >= 1.0 && rect.height() >= 1.0).then_some(rect)
 }
 
-/// From glyph pixels in `rect` to the pixels of its `pw` by `ph` picture.
-/// Each axis is scaled by its own rounded side, so a capped glyph much
-/// taller than wide still fits its picture.
-fn picture_transform(rect: Rect, pw: f64, ph: f64) -> Affine {
-    Affine::scale_non_uniform(pw / rect.width(), ph / rect.height())
-        * Affine::translate((-rect.x0, -rect.y0))
+/// The picture a `COLR` glyph covering `rect` is drawn into: its side in
+/// pixels on each axis, the one scale from glyph pixels to picture pixels,
+/// and the box the picture is placed over. A capped glyph keeps its shape:
+/// both axes take the same scale and each side is rounded up, so the
+/// picture may hold a sliver of empty pixels past `rect`, and the box grows
+/// by the same sliver so the picture is never stretched.
+fn colr_picture(rect: Rect) -> (f64, f64, f64, Rect) {
+    let (w, h) = (rect.width(), rect.height());
+    let shrink = (MAX_COLOR_SIDE / w.max(h)).min(1.0);
+    // The long side lands on MAX_COLOR_SIDE up to rounding; don't let that
+    // rounding add a pixel past the cap.
+    let side = |v: f64| ((v * shrink - 1e-6).ceil()).clamp(1.0, MAX_COLOR_SIDE);
+    let (pw, ph) = (side(w), side(h));
+    let placed = Rect::new(
+        rect.x0,
+        rect.y0,
+        rect.x0 + pw / shrink,
+        rect.y0 + ph / shrink,
+    );
+    (pw, ph, shrink, placed)
+}
+
+/// From glyph pixels to the pixels of a picture placed at `placed`.
+fn picture_transform(placed: Rect, shrink: f64) -> Affine {
+    Affine::scale(shrink) * Affine::translate((-placed.x0, -placed.y0))
 }
 
 /// Draws a `COLR` glyph (the colour outline tables Windows' and newer
@@ -705,8 +724,7 @@ fn load_colr(run: &GlyphRun, glyph: u32, size_px: f64, foreground: Rgba) -> Opti
     let font = FontRef::from_index(run.font.data.as_ref(), run.font.index).ok()?;
     let coords = coords(run);
     let survey = colr_survey(&font, glyph, &coords)?;
-    let rect = colr_rect(&font, &survey, size_px)?;
-    let (pw, ph) = picture_size(rect);
+    let (pw, ph, shrink, rect) = colr_picture(colr_rect(&font, &survey, size_px)?);
     let (w, h) = (pw as u16, ph as u16);
     let mut ctx = RenderContext::new_with(
         w,
@@ -721,7 +739,7 @@ fn load_colr(run: &GlyphRun, glyph: u32, size_px: f64, foreground: Rgba) -> Opti
     ctx.set_paint(vello_cpu::color::AlphaColor::<vello_cpu::color::Srgb>::new(
         [r, g, b, a],
     ));
-    ctx.set_transform(picture_transform(rect, pw, ph));
+    ctx.set_transform(picture_transform(rect, shrink));
     ctx.glyph_run(&mut resources, &run.font)
         .font_size(size_px as f32)
         .normalized_coords(&run.normalized_coords)
@@ -978,16 +996,50 @@ mod tests {
     #[test]
     fn a_capped_picture_holds_a_glyph_much_taller_than_wide() {
         let rect = Rect::new(-1.0, -2000.0, 2.0, 48.0);
-        let (pw, ph) = picture_size(rect);
+        let (pw, ph, shrink, placed) = colr_picture(rect);
         assert_eq!((pw, ph), (2.0, 1024.0));
-        let t = picture_transform(rect, pw, ph);
+        let t = picture_transform(placed, shrink);
         let corner = |x, y| {
             let p = t * vello_cpu::kurbo::Point::new(x, y);
             (p.x, p.y)
         };
-        assert_eq!(corner(rect.x0, rect.y0), (0.0, 0.0));
-        let (x, y) = corner(rect.x1, rect.y1);
+        assert_eq!(corner(placed.x0, placed.y0), (0.0, 0.0));
+        let (x, y) = corner(placed.x1, placed.y1);
         assert!((x - pw).abs() < 1e-9 && (y - ph).abs() < 1e-9, "{x}, {y}");
+        // Everything the glyph covers is inside its picture.
+        let (x, y) = corner(rect.x1, rect.y1);
+        assert!(x <= pw + 1e-9 && y <= ph + 1e-9, "{x}, {y}");
+    }
+
+    #[test]
+    fn a_capped_thin_glyph_is_scaled_alike_on_both_axes() {
+        // 3 px by 2050 px: rounding each side on its own would draw the
+        // short side at 1/3 of its width and the long one at about 1/2.
+        for rect in [
+            Rect::new(0.0, -2050.0, 3.0, 0.0),
+            Rect::new(0.0, -3.0, 2050.0, 0.0),
+            Rect::new(-7.0, -1500.0, 4.0, 500.0),
+        ] {
+            let (pw, ph, shrink, placed) = colr_picture(rect);
+            let [a, b, c, d, _, _] = picture_transform(placed, shrink).as_coeffs();
+            assert_eq!((b, c), (0.0, 0.0));
+            assert_eq!(a, d, "{rect:?} is stretched");
+            assert!(pw.max(ph) <= MAX_COLOR_SIDE, "{rect:?}: {pw} x {ph}");
+            assert!(placed.contains(rect.origin()));
+            assert!(
+                placed.x1 >= rect.x1 && placed.y1 >= rect.y1,
+                "{rect:?} in {placed:?}"
+            );
+            // The empty sliver is less than one picture pixel on each axis.
+            assert!(placed.x1 - rect.x1 < 1.0 / shrink && placed.y1 - rect.y1 < 1.0 / shrink);
+        }
+    }
+
+    #[test]
+    fn an_uncapped_colr_picture_is_the_glyph_box_itself() {
+        let rect = Rect::new(-2.0, -30.0, 26.0, 6.0);
+        let (pw, ph, shrink, placed) = colr_picture(rect);
+        assert_eq!((pw, ph, shrink, placed), (28.0, 36.0, 1.0, rect));
     }
 
     #[test]
