@@ -12,6 +12,11 @@
 # width says whether it was set in that font or drawn as a box. Private-use
 # characters belong to no script: a fallback chosen by script finds nothing
 # for them.
+# LjosColorTest-Regular.ttf (made by make-color-test.py there) is a colour
+# bitmap font like Noto Color Emoji: its U+F8F1 is a picture red above and
+# blue below, the top 16 of its 20 pixels above the baseline at 20 pixels.
+# Qt 6.12 (qml6, offscreen, Linux) draws an emoji a Text falls back to, as
+# "\u{1F4A7} Water" in the default family, in Noto Color Emoji's colours.
 
 Feature: A character no font of the style has
   When neither a text's families nor the fonts its script falls back to
@@ -54,3 +59,21 @@ Feature: A character no font of the style has
       """
     When 100 milliseconds pass
     Then the property "symbol" of "root" is 11.984375
+
+  # As above. The rows sampled are red, then blue, whatever the default
+  # family's ascent puts the baseline at between 16 and 22 pixels down.
+  @qt-diverges
+  Scenario: A colour glyph a text falls back to is drawn as its picture
+    Given the font file "LjosColorTest-Regular.ttf"
+    And the QML:
+      """qml
+      import QtQuick
+      Rectangle {
+        width: 120; height: 50; color: "black"
+        FontLoader { source: "LjosColorTest-Regular.ttf" }
+        Text { x: 10; y: 10; text: String.fromCodePoint(0xF8F1) + " Water"; font.pixelSize: 20; color: "white" }
+      }
+      """
+    When 100 milliseconds pass
+    Then the pixel at 19, 18 of the window is "#ff0000"
+    And the pixel at 19, 28 of the window is "#0000ff"
