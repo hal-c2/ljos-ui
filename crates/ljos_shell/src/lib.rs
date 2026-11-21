@@ -53,6 +53,7 @@ mod cpu;
 mod desktop;
 mod desktop_font;
 mod drags;
+// The Android shell's; built everywhere so that its tests run on any host.
 #[cfg(target_os = "linux")]
 mod drivers;
 #[cfg(gl_painter)]
@@ -63,6 +64,8 @@ mod gl_mesh;
 mod gl_scene3d;
 #[cfg(gl_painter)]
 mod gl_shader;
+#[cfg_attr(not(all(feature = "android", target_os = "android")), allow(dead_code))]
+mod gpu_flags;
 mod headless;
 #[cfg(target_os = "macos")]
 mod layer_color_space;
