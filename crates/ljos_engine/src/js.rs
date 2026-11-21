@@ -1275,14 +1275,19 @@ fn group_proxy<'js>(
     scope.from_value(&v)
 }
 
-/// Whether `v` is or holds a script's own value.
+/// Whether `v` is or holds a script's own value. With its own stack: a
+/// host's nesting can go deeper than the thread's.
 pub(crate) fn holds_js(v: &Value) -> bool {
-    match v {
-        Value::Js(_) => true,
-        Value::List(items) => items.iter().any(holds_js),
-        Value::Map(fields) => fields.iter().any(|(_, v)| holds_js(v)),
-        _ => false,
+    let mut stack = vec![v];
+    while let Some(v) = stack.pop() {
+        match v {
+            Value::Js(_) => return true,
+            Value::List(items) => stack.extend(items.iter()),
+            Value::Map(fields) => stack.extend(fields.iter().map(|(_, v)| v)),
+            _ => {}
+        }
     }
+    false
 }
 
 /// How deep [`Engine::deep_copy`] goes: past it an object is left to the

@@ -68,25 +68,49 @@ pub struct ScriptHolders {
     pub holders: Vec<ScriptHolder>,
     /// The script values walked.
     pub values: usize,
-    /// The walk reached its budget; the rest was not counted.
+    /// The walk reached its budget, or a read failed; the rest was not
+    /// counted.
     pub truncated: bool,
 }
 
-/// The script values `v` holds. A list or map shared at several places is
-/// gone through once (`seen`, by where it lives): a value that holds the
-/// same one twice at each level would otherwise be gone through
-/// exponentially often.
-fn push_js<'v>(v: &'v Value, seen: &mut HashSet<usize>, out: &mut Vec<&'v ljos_js::JsRef>) {
-    match v {
-        Value::Js(h) => out.push(&h.0),
-        Value::List(items) if seen.insert(Arc::as_ptr(items) as usize) => {
-            items.iter().for_each(|v| push_js(v, seen, out));
+/// The script values `v` holds, gone through with a stack of its own, so a
+/// nesting deeper than the thread's stack is no danger, and at most `left`
+/// list and map entries in all; false when that ran out. A list or map
+/// shared at several places is gone through once (`seen`, by where it
+/// lives): a value that holds the same one twice at each level would
+/// otherwise be gone through exponentially often.
+fn push_js<'v>(
+    v: &'v Value,
+    seen: &mut HashSet<usize>,
+    left: &mut usize,
+    out: &mut Vec<&'v ljos_js::JsRef>,
+) -> bool {
+    // Takes `n` entries from what is left, or nothing when they are more.
+    let take = |left: &mut usize, n: usize| {
+        let enough = n <= *left;
+        *left = if enough { *left - n } else { 0 };
+        enough
+    };
+    let mut stack = vec![v];
+    while let Some(v) = stack.pop() {
+        match v {
+            Value::Js(h) => out.push(&h.0),
+            Value::List(items) if seen.insert(Arc::as_ptr(items) as usize) => {
+                if !take(left, items.len()) {
+                    return false;
+                }
+                stack.extend(items.iter());
+            }
+            Value::Map(fields) if seen.insert(Arc::as_ptr(fields) as usize) => {
+                if !take(left, fields.len()) {
+                    return false;
+                }
+                stack.extend(fields.iter().map(|(_, v)| v));
+            }
+            _ => {}
         }
-        Value::Map(fields) if seen.insert(Arc::as_ptr(fields) as usize) => {
-            fields.iter().for_each(|(_, v)| push_js(v, seen, out));
-        }
-        _ => {}
     }
+    true
 }
 
 /// The objects of one type.
@@ -213,32 +237,44 @@ impl Engine {
     /// reach them. What only a running function's closure or a script's
     /// globals hold is not reached from any object, so the holders may add
     /// up to less than [`Engine::script_heap_bytes`]. Walks up to `budget`
-    /// values, when asked, never on its own. `None` before any script ran.
+    /// values and property reads, and as many list and map entries in the
+    /// objects' properties, when asked, never on its own. `None` before any script ran.
     pub fn script_heap_holders(&self, budget: usize) -> Option<ScriptHolders> {
         if !self.js_started() {
             return None;
         }
         let mut groups: Vec<(Atom, usize, Vec<ljos_js::JsRef>)> = Vec::new();
+        let mut cut = false;
         {
             let store = self.inner.store.borrow();
             let mut at: HashMap<Atom, usize> = HashMap::new();
             let mut refs = Vec::new();
             let mut seen = HashSet::new();
+            let mut left = budget;
             for header in store.objects.values() {
                 refs.clear();
-                header
+                // Each object's own: a list two objects share makes both
+                // holders. What it reaches is counted once all the same,
+                // by `held_by`, and `left` bounds the work.
+                if !seen.is_empty() {
+                    seen.clear();
+                }
+                let whole = header
                     .dynamic
                     .iter()
-                    .for_each(|v| push_js(v, &mut seen, &mut refs));
-                if refs.is_empty() {
-                    continue;
+                    .all(|v| push_js(v, &mut seen, &mut left, &mut refs));
+                if !refs.is_empty() {
+                    let i = *at.entry(header.meta.name.clone()).or_insert_with(|| {
+                        groups.push((header.meta.name.clone(), 0, Vec::new()));
+                        groups.len() - 1
+                    });
+                    groups[i].1 += 1;
+                    groups[i].2.extend(refs.iter().map(|r| (*r).clone()));
                 }
-                let i = *at.entry(header.meta.name.clone()).or_insert_with(|| {
-                    groups.push((header.meta.name.clone(), 0, Vec::new()));
-                    groups.len() - 1
-                });
-                groups[i].1 += 1;
-                groups[i].2.extend(refs.iter().map(|r| (*r).clone()));
+                if !whole {
+                    cut = true;
+                    break;
+                }
             }
         }
         // Entering and leaving the script context may reach the store (a
@@ -259,7 +295,7 @@ impl Engine {
         Some(ScriptHolders {
             holders,
             values: held.values,
-            truncated: held.truncated,
+            truncated: held.truncated || cut,
         })
     }
 
