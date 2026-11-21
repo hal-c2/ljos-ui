@@ -624,7 +624,8 @@ impl Shared {
                         .delegate(setup),
                 )
                 .map(|(root, _)| root);
-            let r = whole(engine, r, engine.resource_fault_since(faults), |_| {});
+            let fault = engine.resource_fault_since(faults, r.as_ref().ok().copied());
+            let r = whole(engine, r, fault, |_| {});
             Shared::finish_row(s, engine, id, component, r);
             return;
         }
@@ -1867,7 +1868,8 @@ impl ViewDelegates {
                         std::panic::resume_unwind(payload);
                     }
                 };
-                let r = whole(engine, r, engine.resource_fault_since(faults), |o| {
+                let fault = engine.resource_fault_since(faults, r.as_ref().ok().copied());
+                let r = whole(engine, r, fault, |o| {
                     s.discarded(engine, o);
                 });
                 ViewShared::finish(s, engine, id, component, r, false).map(|o| (o, Made::Created))

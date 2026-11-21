@@ -47,7 +47,7 @@ use crate::object::{ObjectFlags, QmlType};
 
 /// How deep a search for the boundary around an object goes. Ownership
 /// has no cycles; this is for a bug that makes one.
-const MAX_DEPTH: usize = 4096;
+pub(crate) const MAX_DEPTH: usize = 4096;
 
 /// How a boundary wants its content supervised.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -759,7 +759,7 @@ impl Engine {
     ) -> Result<ObjectId, crate::EngineError> {
         let faults = self.resource_faults_seen();
         let made = self.component_create_owned(component, owner, placed)?;
-        match self.resource_fault_since(faults) {
+        match self.resource_fault_since(faults, Some(made)) {
             Some(fault) => {
                 discard(self, made);
                 Err(fault)

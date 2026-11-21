@@ -21,6 +21,7 @@ use ljos_runtime::{Fault, Time, TimerId};
 
 use crate::engine::Engine;
 use crate::error::EngineError;
+use crate::ids::ObjectId;
 use crate::value::Value;
 
 /// How long after a try a fault counts as that try's own, and makes the
@@ -121,14 +122,21 @@ struct RunAgain {
     /// one: the binding it cut short runs again here, and a script that
     /// always runs over its slice would otherwise be made forever.
     seen: Cell<u64>,
-    last: std::cell::RefCell<Option<Fault>>,
+    /// The latest of those, each with its number in `seen` and the
+    /// boundary nearest where it was met then: a fault a boundary inside
+    /// what was made took leaves that whole (the boundary shows its
+    /// fallback). Bounded: a count past what it holds is taken as breaking.
+    recent: std::cell::RefCell<std::collections::VecDeque<(u64, Fault, Option<ObjectId>)>>,
 }
+
+/// How many of the latest breaking faults [`RunAgain`] keeps.
+const RECENT_FAULTS: usize = 32;
 
 impl Engine {
     /// A resource fault (`fault`) cut short what runs now: the binding
     /// running, if any, is run again after a wait, as is every other one
     /// cut short until then. Called where every fault is reported.
-    pub(crate) fn run_again_after(&self, fault: &Fault) {
+    pub(crate) fn run_again_after(&self, origin: Option<ObjectId>, fault: &Fault) {
         if matches!(fault, Fault::JsOutOfMemory) {
             self.note_heap_ran_out();
         }
@@ -144,8 +152,16 @@ impl Engine {
             return;
         }
         if !matches!(fault, Fault::JsInterrupted { .. }) {
-            r.seen.set(r.seen.get() + 1);
-            *r.last.borrow_mut() = Some(fault.clone());
+            let seq = r.seen.get() + 1;
+            r.seen.set(seq);
+            // Who takes it is known now, while what met it is still where
+            // it was met: it may be gone by the time anyone asks.
+            let taker = self.boundaries_around(origin).first().copied();
+            let mut recent = r.recent.borrow_mut();
+            if recent.len() == RECENT_FAULTS {
+                recent.pop_front();
+            }
+            recent.push_back((seq, fault.clone(), taker));
         }
         let g = &self.inner.graph;
         // Outside a binding, what met the fault has its own way back (a
@@ -202,21 +218,61 @@ impl Engine {
         self.extension::<RunAgain>().seen.get()
     }
 
-    /// The last full heap or panic, if there was one after `seen`
-    /// ([`Engine::resource_faults_seen`]): what something made since then
-    /// met, and is not whole for, though no error came back. Interrupted
+    /// The last full heap or panic after `seen`
+    /// ([`Engine::resource_faults_seen`]) that `made` is not whole for,
+    /// though no error came back: one a boundary inside `made` (or `made`
+    /// itself) took is that boundary's, which shows its fallback, and
+    /// leaves `made` whole. With no `made`, every one counts. Interrupted
     /// scripts are left out: [`Engine::run_again_after`] runs them again.
-    pub(crate) fn resource_fault_since(&self, seen: u64) -> Option<EngineError> {
+    pub(crate) fn resource_fault_since(
+        &self,
+        seen: u64,
+        made: Option<ObjectId>,
+    ) -> Option<EngineError> {
         let r = self.extension::<RunAgain>();
-        if r.seen.get() == seen {
+        let now = r.seen.get();
+        if now == seen {
             return None;
         }
-        Some(match r.last.borrow().as_ref()? {
+        let recent = r.recent.borrow();
+        // Faults past what is kept are not known to be taken inside.
+        let all_kept = recent.front().is_some_and(|(n, ..)| *n <= seen + 1);
+        let breaking = recent
+            .iter()
+            .rev()
+            .take_while(|(n, ..)| *n > seen)
+            .find(|(_, _, taker)| {
+                !all_kept || !matches!((made, taker), (Some(m), Some(t)) if self.is_within(*t, m))
+            });
+        let fault = match breaking {
+            Some((_, f, _)) => f,
+            None if all_kept => return None,
+            None => &recent.back()?.1,
+        };
+        Some(match fault {
             Fault::JsOutOfMemory => {
                 EngineError::JsOutOfMemory("it ran out of script memory while it was made".into())
             }
             Fault::Panic(m) => EngineError::Panic(format!("a panic while it was made: {m}")),
             _ => return None,
+        })
+    }
+
+    /// Whether `obj` is `root` or under it, by what owns or shows it: the
+    /// walk [`Engine::boundaries_around`] takes.
+    fn is_within(&self, obj: ObjectId, root: ObjectId) -> bool {
+        self.untrack(|| {
+            let mut cur = obj;
+            for _ in 0..crate::boundary::MAX_DEPTH {
+                if cur == root {
+                    return true;
+                }
+                match self.owner(cur).or_else(|| self.visual_parent(cur)) {
+                    Some(p) => cur = p,
+                    None => return false,
+                }
+            }
+            false
         })
     }
 
@@ -367,7 +423,7 @@ mod tests {
                 .binding(g.root(), Value::Int(0), move |_| {
                     r.set(r.get() + 1);
                     if f.get() {
-                        me.run_again_after(&Fault::JsOutOfMemory);
+                        me.run_again_after(None, &Fault::JsOutOfMemory);
                         Value::Int(-1)
                     } else {
                         Value::Int(1)

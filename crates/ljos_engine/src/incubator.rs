@@ -3348,7 +3348,7 @@ impl CreationJob {
         }));
         // Steps run one at a time, so what was met in between is this
         // job's; told before whoever waits is.
-        if let Some(f) = e.resource_fault_since(faults) {
+        if let Some(f) = e.resource_fault_since(faults, self.handle.0.root.get()) {
             self.handle.0.fault.set(match f {
                 EngineError::JsOutOfMemory(_) => Some(Resource::OutOfMemory),
                 EngineError::Panic(_) => Some(Resource::Panic),
