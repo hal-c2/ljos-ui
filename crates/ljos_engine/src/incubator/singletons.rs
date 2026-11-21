@@ -1307,12 +1307,22 @@ impl Engine {
             }
             _ => {}
         }
+        let waits = match e.state {
+            State::Again { woken, .. } => Some(woken),
+            _ => None,
+        };
         e.given = true;
         e.state = State::Made {
             obj,
             file: None,
             seen: all.sources.get(),
         };
+        drop(entries);
+        // A retry was due: what read the name while it waited reads the
+        // given object now, or it would hold the miss until the next change.
+        if let Some(woken) = waits {
+            let _ = self.inner.graph.dispose(woken);
+        }
         Ok(())
     }
 
