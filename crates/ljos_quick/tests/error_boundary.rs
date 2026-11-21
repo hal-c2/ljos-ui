@@ -632,7 +632,7 @@ fn rows_that_run_out_of_a_full_heap_together_do_not_each_collect_it() {
     let loader = find(&e, root, "loader");
     assert_eq!(num(&e, loader, "status"), 3.0);
     let collected = e.script_memory().unwrap().collections - before;
-    assert!(collected <= 2, "{collected} collections");
+    assert_eq!(collected, 2, "one collection a batch");
 }
 
 #[test]
