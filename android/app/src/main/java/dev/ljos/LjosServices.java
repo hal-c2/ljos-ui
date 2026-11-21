@@ -11,6 +11,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.security.keystore.KeyGenParameterSpec;
 import android.security.keystore.KeyProperties;
+import android.view.ViewConfiguration;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
@@ -148,6 +149,17 @@ public final class LjosServices {
 
     public static String cacheDir(Context context) {
         return context.getCacheDir().getAbsolutePath();
+    }
+
+    // Touch.
+
+    /**
+     * How far a finger goes before a touch is a scroll (the touch slop),
+     * in dp: what the application's pixels are.
+     */
+    public static float touchSlop(Context context) {
+        float density = context.getResources().getDisplayMetrics().density;
+        return ViewConfiguration.get(context).getScaledTouchSlop() / density;
     }
 
     // Secrets. Each is a file of its own in the application's no-backup
