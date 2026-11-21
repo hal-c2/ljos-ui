@@ -423,8 +423,8 @@ fn move_point(
 
 /// Whether the finger is further than the drag threshold from where it
 /// came down, along either axis.
-fn past_threshold(f: &Finger) -> bool {
-    (f.pos.x - f.down.x).abs() > DRAG_THRESHOLD || (f.pos.y - f.down.y).abs() > DRAG_THRESHOLD
+fn past_threshold(f: &Finger, threshold: f64) -> bool {
+    (f.pos.x - f.down.x).abs() > threshold || (f.pos.y - f.down.y).abs() > threshold
 }
 
 /// Lets go of a finger without telling the area: what Qt 6.11 does when
@@ -585,15 +585,17 @@ pub(crate) fn deliver(engine: &Engine, area: ObjectId, changes: &[Change]) {
         return;
     }
     let down: Vec<ObjectId> = st.fingers.borrow().iter().filter_map(|f| f.point).collect();
+    let threshold = crate::system_prefs::start_drag_distance(engine);
     let moving = st
         .fingers
         .borrow()
         .iter()
-        .any(|f| f.point.is_some_and(|p| updated.contains(&p)) && past_threshold(f));
+        .any(|f| f.point.is_some_and(|p| updated.contains(&p)) && past_threshold(f, threshold));
     if !st.grabbed.get() && moving {
         let grabbed = Rc::new(Cell::new(false));
         let gesture = GestureEvent {
             grabbed: grabbed.clone(),
+            drag_threshold: threshold,
             ..GestureEvent::default()
         };
         if let Ok(g) = engine.create_native_incomplete(gesture, Some(area)) {

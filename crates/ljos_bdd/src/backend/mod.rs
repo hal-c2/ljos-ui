@@ -193,6 +193,9 @@ pub enum SystemSetting {
     FontScale(f64),
     /// Whether an assistive technology reads the application.
     ScreenReader(bool),
+    /// How far, in pixels, a pointer goes before a press is a drag: what a
+    /// platform such as Android says its touch slop is.
+    DragDistance(i32),
 }
 
 /// A step of a drag that comes from another application.

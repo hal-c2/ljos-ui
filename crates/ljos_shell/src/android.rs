@@ -321,6 +321,11 @@ where
                         ljos_quick::flickable::Kinetic::ANDROID,
                     ),
                 );
+                // A drag starts where Android's own views start a scroll.
+                if let Some(slop) = ljos_platform::android::touch_slop() {
+                    log::info!("touch slop {slop} dp");
+                    ljos_quick::set_start_drag_distance(app.engine(), slop.round() as i32);
+                }
                 self.stage = Stage::Running(Box::new(app));
                 self.apply_insets();
             }

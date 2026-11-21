@@ -15,7 +15,7 @@ use crate::input::{MouseArea, MouseButtons, PointerEvent, PointerId, PointerKind
 use crate::item::is_a;
 use crate::multi_touch;
 use crate::pinch_area::{self, Fingers};
-use crate::scene::{DRAG_THRESHOLD, QuickScene};
+use crate::scene::QuickScene;
 
 /// What a touch point did.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -350,9 +350,10 @@ impl QuickScene {
             Owner::Area(a) => self.area_moved(engine, a),
             Owner::Pointer { recognise, .. } => {
                 if recognise && let Some(f) = self.touch.fingers() {
+                    let threshold = crate::system_prefs::start_drag_distance(engine);
                     let far = self.touch.points.iter().any(|p| {
                         let d = p.now - p.press;
-                        d.x.abs() > DRAG_THRESHOLD || d.y.abs() > DRAG_THRESHOLD
+                        d.x.abs() > threshold || d.y.abs() > threshold
                     });
                     if far {
                         let center = f.now[0].midpoint(f.now[1]);

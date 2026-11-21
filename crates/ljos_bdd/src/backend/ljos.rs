@@ -275,6 +275,12 @@ enum HostSetting {
 
 fn apply(engine: &Engine, said: HostSetting) {
     match said {
+        // Not one of the preferences: the platform says it, and nothing an
+        // application sets stands over it.
+        HostSetting::System(super::SystemSetting::DragDistance(pixels))
+        | HostSetting::App(super::SystemSetting::DragDistance(pixels)) => {
+            ljos_quick::set_start_drag_distance(engine, pixels)
+        }
         // The platform's say, which an assistive technology that listens no
         // longer stands in for.
         HostSetting::System(super::SystemSetting::ScreenReader(active)) => {
@@ -341,6 +347,8 @@ fn change_setting(p: &mut ljos_a11y::SystemPrefs, setting: super::SystemSetting)
         S::ReducedMotion(reduced) => p.reduced_motion = reduced,
         S::FontScale(scale) => p.font_scale = scale,
         S::ScreenReader(active) => p.screen_reader_active = active,
+        // Not a preference; `apply` hands it to the engine before this.
+        S::DragDistance(_) => {}
     }
 }
 

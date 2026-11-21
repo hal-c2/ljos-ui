@@ -23,12 +23,12 @@ use super::{
     TableState, TableView, edit, edit_trigger, index_of_cell, layout, resize, select,
     selection_behavior, selection_mode, state_of,
 };
+use crate::DOUBLE_CLICK_INTERVAL;
 use crate::flickable::{Flickable, drag};
 use crate::input::{KeyEvent, Modifiers, MouseButtons, PointerEvent};
 use crate::item::Item;
 use crate::keys::{KeyItem, key};
 use crate::pointer_item::PointerItem;
-use crate::{DOUBLE_CLICK_INTERVAL, DRAG_THRESHOLD};
 
 /// `ItemSelectionModel`'s flags a view selects with.
 const CLEAR_AND_SELECT: i32 = 0x3;
@@ -380,7 +380,7 @@ fn pointer_release(e: &Engine, view: ObjectId, ev: &PointerEvent, at: kurbo::Poi
         real(e, view, Flickable::CONTENT_Y.index),
     );
     // A press that moved the content, or went far, was a drag.
-    if now != content || (at - pressed).hypot() > DRAG_THRESHOLD {
+    if now != content || (at - pressed).hypot() > crate::system_prefs::start_drag_distance(e) {
         return;
     }
     let (x, y) = (at.x + now.0, at.y + now.1);

@@ -20,7 +20,6 @@ use ljos_engine::{Engine, ObjectId};
 use ljos_render::kurbo;
 
 use super::{TableState, TableView, layout, state_of};
-use crate::DRAG_THRESHOLD;
 use crate::flickable::Flickable;
 use crate::item::{Item, is_a};
 
@@ -230,12 +229,13 @@ pub(crate) fn holds(st: &TableState) -> bool {
 /// The pointer moved to `at` while `view` holds a press that resizes.
 pub(crate) fn moved(e: &Engine, view: ObjectId, st: &TableState, at: kurbo::Point) {
     let mut grab = st.resize.grab.get();
+    let threshold = crate::system_prefs::start_drag_distance(e);
     for (axis, line) in grab.iter_mut().enumerate() {
         let Some(line) = line else {
             continue;
         };
         let now = if axis == COLUMNS { at.x } else { at.y };
-        if line.from.is_none() && (now - line.pressed).abs() > DRAG_THRESHOLD {
+        if line.from.is_none() && (now - line.pressed).abs() > threshold {
             line.from = Some(now);
         }
         if let Some(from) = line.from {
