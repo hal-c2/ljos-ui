@@ -315,7 +315,7 @@ impl Boundary for Behaviour {
             // No room for the fallback either: the content is made again
             // after a wait, outside the supervisor's count.
             Some(Err(fault @ (Fault::JsOutOfMemory | Fault::JsInterrupted { .. }))) => {
-                again_after(e, me, &fault);
+                again_after(e, me, &fault, None);
                 Ok(())
             }
             Some(shown) => shown,
