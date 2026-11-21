@@ -229,10 +229,11 @@ impl Engine {
     /// together share one collection: one the Engine ran after they were
     /// reported, or one the JS host ran after the last run that ran out,
     /// when nothing was let go of since (held objects no property holds
-    /// any more, values Rust dropped, runs that changed a count). It does
-    /// not ask whether the heap looks like it holds garbage: what a run
-    /// let go of before it ran out need not show
-    /// ([`ljos_js::JsHost::may_hold_garbage`]). Whether it collected.
+    /// any more, values Rust dropped, runs that changed a count) and the
+    /// heap does not look like it holds garbage
+    /// ([`ljos_js::JsHost::may_hold_garbage`]). That look alone never
+    /// skips it: what a run let go of before it ran out need not show.
+    /// Whether it collected.
     pub fn collect_for_full_heap(&self, seq: u64) -> bool {
         if !self.js_started() {
             return false;
