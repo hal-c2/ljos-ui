@@ -429,11 +429,17 @@ mod tests {
         assert_eq!(anchors(&keyboard.sync(&s, &e)).len(), 1);
         keyboard.disable();
         let asked = keyboard.sync(&s, &e);
-        assert!(asked.iter().any(|r| matches!(r, Request::Anchor(None))), "{asked:?}");
+        assert!(
+            asked.iter().any(|r| matches!(r, Request::Anchor(None))),
+            "{asked:?}"
+        );
         // Nothing was anchored: nothing to clear.
         keyboard.disable();
         let asked = keyboard.sync(&s, &e);
-        assert!(!asked.iter().any(|r| matches!(r, Request::Anchor(_))), "{asked:?}");
+        assert!(
+            !asked.iter().any(|r| matches!(r, Request::Anchor(_))),
+            "{asked:?}"
+        );
     }
 
     #[test]
