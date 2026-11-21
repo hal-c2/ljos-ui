@@ -105,6 +105,7 @@ impl<U: Send + 'static> Attach<U> {
             finishing: false,
             dead_key: DeadKey::default(),
             writes: crate::relay::Writes::default(),
+            method_holds: false,
         };
         while keeps_pumping(pump.destroyed, pump.closed, pump.finishing) {
             // Sleeps until the activity has something or a request wakes it.
@@ -255,6 +256,11 @@ struct Pump<'a, U: Send + 'static> {
     /// What was written to the method that the main thread may not have
     /// applied yet.
     writes: crate::relay::Writes,
+    /// This activity's input method was given text, or reported some.
+    /// Until then it holds none at all, not even an empty text: reading it
+    /// hands android-activity a null pointer, which a debug build's
+    /// `slice::from_raw_parts` refuses with a panic.
+    method_holds: bool,
 }
 
 impl<U: Send + 'static> Pump<'_, U> {
@@ -344,6 +350,12 @@ impl<U: Send + 'static> Pump<'_, U> {
         let dead_key = &mut self.dead_key;
         let writes = &mut self.writes;
         while events.next(|event| translate(self.app, dead_key, writes, event, &mut out)) {}
+        if out
+            .iter()
+            .any(|e| matches!(e, WindowEvent::Text(TextEvent::Held(_))))
+        {
+            self.method_holds = true;
+        }
         for event in out {
             self.send(Arrival::Window(event));
         }
@@ -377,12 +389,18 @@ impl<U: Send + 'static> Pump<'_, U> {
                 // against the newest text, so it never writes over text the
                 // user typed since the last read.
                 self.input();
-                let reported = self.app.text_input_state();
-                let reported = HeldText {
-                    text: reported.text,
-                    anchor: reported.selection.start,
-                    cursor: reported.selection.end,
-                    compose: reported.compose_region.map(|c| c.start..c.end),
+                // A method that holds nothing yet holds what an empty one
+                // would.
+                let reported = if self.method_holds {
+                    let reported = self.app.text_input_state();
+                    HeldText {
+                        text: reported.text,
+                        anchor: reported.selection.start,
+                        cursor: reported.selection.end,
+                        compose: reported.compose_region.map(|c| c.start..c.end),
+                    }
+                } else {
+                    HeldText::default()
                 };
                 // A write of ours still on its way to the main thread is
                 // what the method is about to hold.
@@ -413,6 +431,7 @@ impl<U: Send + 'static> Pump<'_, U> {
                     },
                     compose_region: compose.map(span),
                 });
+                self.method_holds = true;
                 // GameTextInput does not tell the keyboard itself.
                 call_activity(self.app, told);
             }
