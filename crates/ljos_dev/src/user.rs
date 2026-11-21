@@ -2166,6 +2166,34 @@ mod tests {
         );
     }
 
+    #[test]
+    fn an_ask_whose_first_file_is_being_built_is_answered_by_that_build() {
+        let root = tempfile::tempdir().expect("a directory");
+        let engine = engine();
+        let (mut session, woke) = session(&engine, root.path(), false);
+        let clock = ljos_runtime::SystemClock::new();
+        let _ = session.pump(&engine, &clock, &mut NoWindow);
+        // Asked before the user has a file: answered as they were, with
+        // the answer not yet taken when the first file comes and is
+        // asked for.
+        session.read_again(&engine);
+        write(&root.path().join("Card.qml"), "import QtQuick\nItem { }\n");
+        session.read_again(&engine);
+        assert!(
+            matches!(session.state, State::Making),
+            "the first file is built"
+        );
+        let reports = answered(&engine, &mut session, &woke);
+        assert!(
+            session.is_active(),
+            "the ask is answered once its first file is built: {reports:?}"
+        );
+        assert!(
+            !reports.contains(&Report::Unchanged),
+            "a first file was brought in: {reports:?}"
+        );
+    }
+
     /// Files no watcher can be made over.
     struct Refusing;
 
