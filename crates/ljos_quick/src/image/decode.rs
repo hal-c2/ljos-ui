@@ -124,6 +124,8 @@ impl LoadError {
 pub(crate) enum Origin {
     /// Bytes the host registered for the URL, or an inline `data:` URL.
     Bytes(Arc<[u8]>),
+    /// Bytes the program itself holds: a picture its pack carries.
+    Embedded(&'static [u8]),
     /// A file to read.
     File(std::path::PathBuf),
     /// A URL to fetch (`http`, `https`): only ever in the background.
@@ -179,6 +181,7 @@ pub(crate) fn load(url: &str, origin: &Origin, request: Request) -> Result<Loade
     match origin {
         Origin::File(path) => made_again_from_file(&loaded, url, path, request),
         Origin::Bytes(bytes) => made_again_from_bytes(&loaded, url, bytes, request),
+        Origin::Embedded(bytes) => made_again_from_embedded(&loaded, url, bytes, request),
         Origin::Remote => {}
     }
     Ok(loaded)
@@ -225,6 +228,24 @@ pub(crate) fn made_again_from_bytes(
     });
 }
 
+/// As [`made_again_from_bytes`], from bytes the program holds: keeping
+/// them costs nothing, so the pixels are always let go.
+pub(crate) fn made_again_from_embedded(
+    loaded: &Loaded,
+    url: &str,
+    bytes: &'static [u8],
+    request: Request,
+) {
+    if loaded.frames.is_some() {
+        return;
+    }
+    let url = url.to_owned();
+    loaded.image.make_again_with(ljos_render::MakeAgain {
+        holds: 0,
+        make: Arc::new(move || Some(load_bytes(&url, bytes, request).ok()?.image.into_data())),
+    });
+}
+
 /// The image file `bytes` as a texture reads it. Slow: not for the UI thread.
 /// The bytes are kept to make the pixels again, so the pixels can be let go
 /// after their upload, when the bytes are fewer.
@@ -242,6 +263,7 @@ pub(crate) fn read<'a>(
 ) -> Result<std::borrow::Cow<'a, [u8]>, LoadError> {
     match origin {
         Origin::Bytes(b) => Ok(std::borrow::Cow::Borrowed(b)),
+        Origin::Embedded(b) => Ok(std::borrow::Cow::Borrowed(b)),
         Origin::File(path) => read_file(path)
             .map(std::borrow::Cow::Owned)
             .ok_or_else(|| LoadError::CannotOpen(url.to_owned())),
@@ -1013,6 +1035,7 @@ pub(crate) fn header_size(origin: &Origin) -> Option<(u32, u32)> {
     use std::io::Read;
     match origin {
         Origin::Bytes(bytes) if !is_svg(bytes) => dimensions(bytes),
+        Origin::Embedded(bytes) if !is_svg(bytes) => dimensions(bytes),
         Origin::File(path) => {
             let mut file = open_file(path)?;
             let mut bytes = Vec::new();
@@ -1028,7 +1051,7 @@ pub(crate) fn header_size(origin: &Origin) -> Option<(u32, u32)> {
             }
             None
         }
-        Origin::Bytes(_) | Origin::Remote => None,
+        Origin::Bytes(_) | Origin::Embedded(_) | Origin::Remote => None,
     }
 }
 

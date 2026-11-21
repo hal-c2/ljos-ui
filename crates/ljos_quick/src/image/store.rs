@@ -493,6 +493,22 @@ impl ImageStore {
             .insert(url.into(), Origin::Bytes(bytes.into()));
     }
 
+    /// [`register_resource`](Self::register_resource) of bytes held
+    /// elsewhere (a picture a pack carries), uncopied. A picture let go
+    /// after its upload is decoded from them again, and from those the
+    /// program itself holds whatever their size.
+    pub fn register_kept_resource(
+        &self,
+        url: impl Into<String>,
+        bytes: impl Into<ljos_engine::ResourceBytes>,
+    ) {
+        let origin = match bytes.into() {
+            ljos_engine::ResourceBytes::Embedded(bytes) => Origin::Embedded(bytes),
+            ljos_engine::ResourceBytes::Shared(bytes) => Origin::Bytes(bytes),
+        };
+        self.state.borrow_mut().resources.insert(url.into(), origin);
+    }
+
     /// Makes the file at `path` what `url` loads, read when a picture of
     /// it is first asked for: a program's resources staged from where the
     /// build would take them, of which a run shows few or none. A
@@ -1488,6 +1504,9 @@ impl ImageStore {
                     }
                     Some(Origin::Bytes(held)) => {
                         decode::made_again_from_bytes(&loaded, &key.url, held, key.request);
+                    }
+                    Some(Origin::Embedded(held)) => {
+                        decode::made_again_from_embedded(&loaded, &key.url, held, key.request);
                     }
                     // Fetched: kept only when fewer than the pixels.
                     _ if bytes.len() < loaded.image.byte_len() => {
