@@ -32,7 +32,7 @@ use ljos_quick::{
 use ljos_render::kurbo;
 
 use crate::control::{Control, hover, ignore, ignore_cancel, is_left, takes_input};
-use crate::util::{check, flag, is_a, is_unset, num, object, set_derived};
+use crate::util::{author_set, check, flag, is_a, is_unset, num, object, set_derived};
 
 /// `Qt.Orientation`.
 pub(crate) mod orientation {
@@ -883,9 +883,20 @@ fn place(
     bar: ObjectId,
     horizontal: bool,
 ) -> Result<Vec<(PropIndex, OverrideId)>, EngineError> {
-    let elsewhere = engine
-        .untrack(|| engine.visual_parent(bar))
-        .is_some_and(|p| p != owner);
+    // The parent the author gave is read from the property: while the bar
+    // is being made the scene has not taken it on yet, and a bar placed
+    // here would keep its place over the author's own geometry.
+    let given = engine.untrack(|| {
+        author_set(engine, bar, Item::PARENT.index)
+            .then(|| object(engine, bar, Item::PARENT.index))
+            .flatten()
+    });
+    let elsewhere = match given {
+        Some(p) => p != owner,
+        None => engine
+            .untrack(|| engine.visual_parent(bar))
+            .is_some_and(|p| p != owner),
+    };
     if elsewhere {
         return Ok(Vec::new());
     }
