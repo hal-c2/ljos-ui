@@ -256,10 +256,11 @@ struct Pump<'a, U: Send + 'static> {
     /// What was written to the method that the main thread may not have
     /// applied yet.
     writes: crate::relay::Writes,
-    /// This activity's input method was given text, or reported some.
-    /// Until then it holds none at all, not even an empty text: reading it
-    /// hands android-activity a null pointer, which a debug build's
-    /// `slice::from_raw_parts` refuses with a panic.
+    /// This activity's input method reported a text. Until then it may hold
+    /// none at all, not even an empty text: a write of ours is applied on
+    /// the main thread later, or dropped while no keyboard is connected.
+    /// Reading it then hands android-activity a null pointer, which a debug
+    /// build's `slice::from_raw_parts` refuses with a panic.
     method_holds: bool,
 }
 
@@ -389,8 +390,8 @@ impl<U: Send + 'static> Pump<'_, U> {
                 // against the newest text, so it never writes over text the
                 // user typed since the last read.
                 self.input();
-                // A method that holds nothing yet holds what an empty one
-                // would.
+                // Before the method reports, it holds what an empty one
+                // would, plus the writes of ours still on their way.
                 let reported = if self.method_holds {
                     let reported = self.app.text_input_state();
                     HeldText {
@@ -431,7 +432,6 @@ impl<U: Send + 'static> Pump<'_, U> {
                     },
                     compose_region: compose.map(span),
                 });
-                self.method_holds = true;
                 // GameTextInput does not tell the keyboard itself.
                 call_activity(self.app, told);
             }
