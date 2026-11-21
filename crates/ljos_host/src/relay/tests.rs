@@ -495,3 +495,70 @@ fn a_pending_redraw_is_drawn_while_messages_keep_coming() {
     drop(stopper);
     assert_eq!(lines(&log), ["drawn", "drawn"]);
 }
+
+#[test]
+fn insets_told_before_the_window_reach_it_once_it_is_made() {
+    let log = Log::default();
+    let requests = Arc::default();
+    let (host, relay) = host(&requests);
+    let insets = crate::Insets {
+        system_bars: [0.0, 63.0, 0.0, 126.0],
+        ..crate::Insets::default()
+    };
+    // The activity tells its insets as it starts, before the application
+    // has a surface to make its window at.
+    relay
+        .send(Arrival::Window(WindowEvent::Insets(insets)))
+        .unwrap();
+    relay
+        .send(Arrival::SurfaceCreated {
+            surface: 7,
+            px: [1080, 2400],
+            scale: 2.75,
+        })
+        .unwrap();
+    relay.post(Msg::Stop).unwrap();
+    host.run(App::new(&log)).unwrap();
+    let told = format!("{:?}", WindowEvent::Insets(insets));
+    assert!(lines(&log).contains(&told), "{:?}", lines(&log));
+}
+
+#[test]
+fn insets_told_before_a_window_made_while_waiting_come_before_newer_ones() {
+    let log = Log::default();
+    let requests = Arc::default();
+    let (host, relay) = host(&requests);
+    let older = crate::Insets {
+        system_bars: [0.0, 63.0, 0.0, 126.0],
+        ..crate::Insets::default()
+    };
+    let newer = crate::Insets {
+        system_bars: [0.0, 63.0, 0.0, 0.0],
+        ..crate::Insets::default()
+    };
+    relay
+        .send(Arrival::Window(WindowEvent::Insets(older)))
+        .unwrap();
+    let mut app = App::new(&log);
+    let later = relay.clone();
+    // The window is made as the loop is about to wait, not at a message.
+    app.on_first = Some(Box::new(move |host| {
+        host.create_window(&WindowAttributes::default()).unwrap();
+        later
+            .send(Arrival::Window(WindowEvent::Insets(newer)))
+            .unwrap();
+        later.post(Msg::Stop).unwrap();
+    }));
+    host.run(app).unwrap();
+    let told: Vec<String> = lines(&log)
+        .into_iter()
+        .filter(|line| line.starts_with("Insets"))
+        .collect();
+    assert_eq!(
+        told,
+        [
+            format!("{:?}", WindowEvent::Insets(older)),
+            format!("{:?}", WindowEvent::Insets(newer)),
+        ]
+    );
+}

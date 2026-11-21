@@ -93,6 +93,10 @@ pub enum Request {
     /// from: the platform does what it does then (Android: the task goes
     /// to the background; the activity is not finished).
     Background,
+    /// Whether the application takes the system's Back now. While it does
+    /// not, the platform does Back by itself (Android plays its own
+    /// predictive animation for it).
+    BackTaken(bool),
 }
 
 enum Msg<S, U> {
@@ -241,6 +245,8 @@ struct State<S> {
     /// The size the window was last told of.
     told: Option<([u32; 2], f64)>,
     redraw: bool,
+    /// Insets told before there was a window, for the window once made.
+    insets: Option<crate::Insets>,
     deadline: Option<Instant>,
     exit: bool,
     app: AppState,
@@ -363,6 +369,7 @@ impl<S: Send + 'static, U: From<Wake> + Send + 'static> PlatformHost for RelayHo
             scale: 1.0,
             told: None,
             redraw: false,
+            insets: None,
             deadline: None,
             exit: false,
             app: AppState::Hidden,
@@ -370,8 +377,21 @@ impl<S: Send + 'static, U: From<Wake> + Send + 'static> PlatformHost for RelayHo
             capabilities,
             requests,
         };
+        // Insets kept until there was a window are told right after what
+        // made it, whatever that was (a message, or the wait that follows a
+        // turn), and so before any newer ones.
         let mut deliver = |state: &mut State<S>, event: Event<'static, (), U>| {
             app.event(&mut RelayControl { state }, event);
+            if state.window
+                && let Some(insets) = state.insets.take()
+            {
+                let told = Event::Window {
+                    id: WINDOW,
+                    event: WindowEvent::Insets(insets),
+                    raw: None,
+                };
+                app.event(&mut RelayControl { state }, told);
+            }
         };
         loop {
             // The first message: sleep until one comes, or the time asked
@@ -492,6 +512,11 @@ fn arrive<S, U>(
             drop(done);
         }
         Arrival::Window(WindowEvent::Resized { px, scale }) => resize(state, px, scale),
+        // Told once, as they change: kept until there is a window to
+        // tell them.
+        Arrival::Window(WindowEvent::Insets(insets)) if !state.window => {
+            state.insets = Some(insets);
+        }
         Arrival::Window(event) => {
             if state.window {
                 deliver(state, window(event));

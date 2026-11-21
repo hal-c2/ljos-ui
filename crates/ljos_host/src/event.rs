@@ -72,6 +72,36 @@ pub struct Insets {
     pub ime: [f64; 4],
 }
 
+impl Insets {
+    /// What the application keeps clear while it lays out at the height
+    /// [`Insets::keyboard`] leaves it: the system's bars and the cutout,
+    /// whichever reaches further at each edge. With the keyboard up the
+    /// bottom is the keyboard's, which the window gives up already.
+    #[must_use]
+    pub fn safe_area(&self) -> [f64; 4] {
+        let mut v = [0.0; 4];
+        for (i, out) in v.iter_mut().enumerate() {
+            *out = clear(self.system_bars[i]).max(clear(self.cutout[i]));
+        }
+        if self.keyboard() > 0.0 {
+            v[3] = 0.0;
+        }
+        v
+    }
+
+    /// How much of the window's bottom the on-screen keyboard covers, which
+    /// the application gives up as a window that resizes for it does
+    /// (Android's `adjustResize`); 0 while it is down.
+    #[must_use]
+    pub fn keyboard(&self) -> f64 {
+        clear(self.ime[3])
+    }
+}
+
+fn clear(n: f64) -> f64 {
+    if n.is_finite() { n.max(0.0) } else { 0.0 }
+}
+
 /// Where the system's back gesture is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BackPhase {
@@ -227,4 +257,42 @@ pub struct Modifiers {
     pub alt: bool,
     /// The Windows key, or Command.
     pub meta: bool,
+}
+
+#[cfg(test)]
+mod insets_tests {
+    use super::Insets;
+
+    #[test]
+    fn the_safe_area_is_the_bars_or_the_cutout_whichever_reaches_further() {
+        let i = Insets {
+            system_bars: [0.0, 63.0, 0.0, 42.0],
+            cutout: [0.0, 80.0, 30.0, 0.0],
+            ime: [0.0; 4],
+        };
+        assert_eq!(i.safe_area(), [0.0, 80.0, 30.0, 42.0]);
+        assert!(i.keyboard() == 0.0);
+    }
+
+    #[test]
+    fn with_the_keyboard_up_the_bottom_is_the_keyboards() {
+        let i = Insets {
+            system_bars: [0.0, 63.0, 0.0, 42.0],
+            cutout: [0.0; 4],
+            ime: [0.0, 0.0, 0.0, 700.0],
+        };
+        assert_eq!(i.safe_area(), [0.0, 63.0, 0.0, 0.0]);
+        assert!((i.keyboard() - 700.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn nonsense_is_nothing_to_keep_clear() {
+        let i = Insets {
+            system_bars: [-5.0, f64::NAN, f64::INFINITY, 0.0],
+            cutout: [0.0; 4],
+            ime: [0.0, 0.0, 0.0, -1.0],
+        };
+        assert_eq!(i.safe_area(), [0.0; 4]);
+        assert!(i.keyboard() == 0.0);
+    }
 }

@@ -4,7 +4,7 @@
 
 use cucumber::{then, when};
 
-use crate::backend::BackendError;
+use crate::backend::{BackSwipe, BackendError};
 use crate::world::LjosWorld;
 
 use super::StepResult;
@@ -72,6 +72,45 @@ fn responding(w: &mut LjosWorld) -> StepResult {
             ))
         } else {
             Ok(())
+        }
+    })
+}
+
+#[when("the user presses the system's Back")]
+fn system_back(w: &mut LjosWorld) -> StepResult {
+    w.each(|b| b.platform()?.system_back(BackSwipe::Invoked, 1.0))
+}
+
+#[when("the user starts the back swipe")]
+fn swipe_starts(w: &mut LjosWorld) -> StepResult {
+    w.each(|b| b.platform()?.system_back(BackSwipe::Started, 0.0))
+}
+
+#[when(regex = r"^the user's back swipe has come ([0-9.]+) of the way$")]
+fn swipe_moves(w: &mut LjosWorld, progress: f64) -> StepResult {
+    w.each(|b| b.platform()?.system_back(BackSwipe::Progressed, progress))
+}
+
+#[when("the user cancels the back swipe")]
+fn swipe_cancelled(w: &mut LjosWorld) -> StepResult {
+    w.each(|b| b.platform()?.system_back(BackSwipe::Cancelled, 0.0))
+}
+
+#[when("the user completes the back swipe")]
+fn swipe_completes(w: &mut LjosWorld) -> StepResult {
+    w.each(|b| b.platform()?.system_back(BackSwipe::Invoked, 1.0))
+}
+
+#[then(regex = r"^the application (took Back|left Back to the system)$")]
+fn back_taken(w: &mut LjosWorld, what: String) -> StepResult {
+    let want = what == "took Back";
+    w.each(|b| {
+        if b.platform()?.back_taken()? == want {
+            Ok(())
+        } else {
+            Err(BackendError::Failed(format!(
+                "the application did not: {what}"
+            )))
         }
     })
 }

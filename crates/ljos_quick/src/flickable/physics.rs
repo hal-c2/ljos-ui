@@ -12,7 +12,8 @@
 //!
 //! [`Kinetic::DESKTOP`] has the values a running Qt 6.11 shows, measured
 //! frame by frame on `qml6` (Flickable's `flick()`, drags let go at known
-//! speeds, pulls past the ends).
+//! speeds, pulls past the ends). [`Kinetic::ANDROID`] throws content as
+//! Android's own lists do ([`Fling::Spline`]) and stops it at the ends.
 
 use ljos_engine::Engine;
 use ljos_runtime::Time;
@@ -106,6 +107,87 @@ pub enum Segment {
     /// Straight to `to`: content that a fling carried as far past a
     /// bound as it may go is put back at once (measured on qml6).
     Snap { to: f64 },
+    /// Android's fling from `from` at `velocity`: it goes
+    /// [`spline_fling`]'s distance in its time along its curve. A fling
+    /// cut short by a bound ends at `cut`, still moving.
+    Spline {
+        from: f64,
+        velocity: f64,
+        cut: Duration,
+    },
+}
+
+/// Android's fling (`OverScroller`'s spline): how far content thrown at
+/// `speed` logical pixels a second goes, and for how long. Logical pixels
+/// are Android's density-independent ones, in which the curve is the same
+/// at every density.
+#[must_use]
+pub fn spline_fling(speed: f64) -> (f64, Duration) {
+    let speed = speed.abs();
+    if !speed.is_finite() || speed <= 0.0 {
+        return (0.0, Duration::ZERO);
+    }
+    let rate = spline::deceleration_rate();
+    let l = (spline::INFLEXION * speed / (spline::FRICTION * spline::PHYSICAL)).ln();
+    let secs = (l / (rate - 1.0)).exp();
+    let distance = spline::FRICTION * spline::PHYSICAL * (rate / (rate - 1.0) * l).exp();
+    (distance, Duration::from_secs_f64(secs))
+}
+
+/// The curve of Android's fling: a cubic in a parameter `x`, read as the
+/// share of the time gone (`time`) against the share of the way gone
+/// (`way`).
+mod spline {
+    /// Where the curve turns from speeding the deceleration up to slowing
+    /// it down, as a share of the time.
+    pub(super) const INFLEXION: f64 = 0.35;
+    const START_TENSION: f64 = 0.5;
+    const END_TENSION: f64 = 1.0;
+    const P1: f64 = START_TENSION * INFLEXION;
+    const P2: f64 = 1.0 - END_TENSION * (1.0 - INFLEXION);
+    /// `ViewConfiguration`'s scroll friction.
+    pub(super) const FRICTION: f64 = 0.015;
+    /// Gravity in inches a second squared at 160 dots an inch (one logical
+    /// pixel a dot), times the 0.84 Android takes as a phone's friction.
+    pub(super) const PHYSICAL: f64 = 9.806_65 * 39.37 * 160.0 * 0.84;
+
+    /// `ln(0.78) / ln(0.9)`.
+    pub(super) fn deceleration_rate() -> f64 {
+        0.78f64.ln() / 0.9f64.ln()
+    }
+
+    /// `3x(1-x)(a(1-x) + bx) + x³` and its slope.
+    fn cubic(x: f64, a: f64, b: f64) -> (f64, f64) {
+        let g = 3.0 * x * (1.0 - x);
+        let h = a + (b - a) * x;
+        (
+            g * h + x * x * x,
+            (3.0 - 6.0 * x) * h + g * (b - a) + 3.0 * x * x,
+        )
+    }
+
+    /// The share of the way gone when `time` (0 to 1) of the time has, and
+    /// how fast the share grows against the time's.
+    pub(super) fn at(time: f64) -> (f64, f64) {
+        let time = time.clamp(0.0, 1.0);
+        let (mut lo, mut hi) = (0.0f64, 1.0f64);
+        let mut x = time;
+        for _ in 0..60 {
+            x = (lo + hi) / 2.0;
+            let (t, _) = cubic(x, P1, P2);
+            if (t - time).abs() < 1e-9 {
+                break;
+            }
+            if t > time {
+                hi = x;
+            } else {
+                lo = x;
+            }
+        }
+        let (way, dway) = cubic(x, START_TENSION, END_TENSION);
+        let (_, dtime) = cubic(x, P1, P2);
+        (way, if dtime > 0.0 { dway / dtime } else { 0.0 })
+    }
 }
 
 /// `1 - 2^(-10x)`, which reaches 1 at `x = 1` (it is 0.999 there).
@@ -130,6 +212,7 @@ impl Segment {
     pub fn duration(&self, k: &Kinetic) -> Duration {
         match *self {
             Segment::Decelerate { duration, .. } | Segment::Glide { duration, .. } => duration,
+            Segment::Spline { cut, .. } => cut,
             Segment::Rebound { .. } => k.rebound_in + k.rebound_out,
             Segment::Snap { .. } => Duration::ZERO,
         }
@@ -185,6 +268,7 @@ impl Segment {
                 }
             }
             Segment::Snap { to } => (to, 0.0),
+            Segment::Spline { from, velocity, .. } => spline_at(from, velocity, t),
             Segment::Glide { from, to, duration } => {
                 let d = duration.as_secs_f64().max(f64::EPSILON);
                 if t >= duration {
@@ -200,8 +284,43 @@ impl Segment {
     }
 }
 
+/// The share of its way Android's fling has gone when `share` of its time
+/// has.
+pub(crate) fn spline_way(share: f64) -> f64 {
+    spline::at(share.clamp(0.0, 1.0)).0
+}
+
+/// Where Android's fling from `from` at `velocity` is `t` after it began,
+/// and how fast it goes there.
+fn spline_at(from: f64, velocity: f64, t: Duration) -> (f64, f64) {
+    let (distance, total) = spline_fling(velocity);
+    let total = total.as_secs_f64();
+    if total <= 0.0 {
+        return (from, 0.0);
+    }
+    let (way, slope) = spline::at(t.as_secs_f64() / total);
+    let dir = velocity.signum();
+    let v = if t.as_secs_f64() >= total {
+        0.0
+    } else {
+        dir * distance * slope / total
+    };
+    (from + dir * distance * way, v)
+}
+
+/// How content let go slows down.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Fling {
+    /// Evenly, by [`FlickSettings::deceleration`] (Qt's).
+    Even,
+    /// Along Android's curve ([`spline_fling`]): fast at first, then a
+    /// long tail. `FlickSettings::deceleration` does not change it.
+    Spline,
+}
+
 /// The values of a physics in which content keeps moving when it is let
-/// go, slows down evenly, and gives way past its bounds.
+/// go, slows down, and gives way past its bounds.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Kinetic {
     /// Past a bound a fling slows down this many times faster.
@@ -222,6 +341,8 @@ pub struct Kinetic {
     /// How long the content glides to where a wheel turn sends it; `None`
     /// puts it there at once.
     pub wheel_glide: Option<Duration>,
+    /// How content let go slows down.
+    pub fling: Fling,
 }
 
 impl Kinetic {
@@ -237,6 +358,24 @@ impl Kinetic {
         release_rest: Duration::from_millis(100),
         min_flick: 75.0,
         wheel_glide: Some(Duration::from_millis(300)),
+        fling: Fling::Even,
+    };
+
+    /// Android's: a throw follows [`Fling::Spline`] from 50 logical pixels
+    /// a second (`ViewConfiguration`'s least fling velocity), and content
+    /// stops at its ends rather than going past them: Android stretches
+    /// the content there instead, which is drawn, not moved. A wheel turn
+    /// scrolls at once, as Android's lists do.
+    pub const ANDROID: Kinetic = Kinetic {
+        overshoot_brake: 8.0,
+        max_overshoot: 0.0,
+        drag_resistance: 0.5,
+        rebound_in: Duration::from_millis(100),
+        rebound_out: Duration::from_millis(300),
+        release_rest: Duration::from_millis(100),
+        min_flick: 50.0,
+        wheel_glide: None,
+        fling: Fling::Spline,
     };
 }
 
@@ -294,6 +433,9 @@ impl Kinetic {
         if v == 0.0 {
             return rebound();
         }
+        if self.fling == Fling::Spline {
+            return Self::plan_spline(p, v, min, max, outside).or_else(rebound);
+        }
         let speed = v.abs();
         let reach = speed * speed / (2.0 * rate);
         let end = p + v.signum() * reach;
@@ -313,6 +455,42 @@ impl Kinetic {
             velocity: v,
             rate,
             duration: Duration::from_secs_f64(secs),
+        })
+    }
+}
+
+impl Kinetic {
+    /// A spline fling from `p` at `v`, cut where it reaches the bound it
+    /// is going to; `None` when it cannot bring content that is outside
+    /// back in by itself.
+    fn plan_spline(p: f64, v: f64, min: f64, max: f64, outside: bool) -> Option<Segment> {
+        let (distance, total) = spline_fling(v);
+        let end = p + v.signum() * distance;
+        if outside && ((p > max && end >= max) || (p < min && end <= min)) {
+            return None;
+        }
+        let far = if v > 0.0 { max } else { min };
+        let past = (v > 0.0 && end > far) || (v < 0.0 && end < far);
+        let cut = if past {
+            // The way gone only grows: halve the time to the bound.
+            let (mut lo, mut hi) = (0.0, total.as_secs_f64());
+            for _ in 0..60 {
+                let mid = (lo + hi) / 2.0;
+                let (at, _) = spline_at(p, v, Duration::from_secs_f64(mid));
+                if (at - far) * v.signum() >= 0.0 {
+                    hi = mid;
+                } else {
+                    lo = mid;
+                }
+            }
+            Duration::from_secs_f64(hi)
+        } else {
+            total
+        };
+        Some(Segment::Spline {
+            from: p,
+            velocity: v,
+            cut,
         })
     }
 }
@@ -598,6 +776,131 @@ mod tests {
 
     fn end(seg: &Segment) -> (f64, f64) {
         seg.at(&K, seg.duration(&K))
+    }
+
+    const A: Kinetic = Kinetic::ANDROID;
+
+    /// Android's fling of 1000 logical pixels a second, worked out from
+    /// `OverScroller`'s constants: 194.4 pixels in 555 ms.
+    #[test]
+    fn an_android_fling_goes_as_far_as_androids_does() {
+        let (distance, time) = spline_fling(1000.0);
+        assert!((distance - 194.4).abs() < 0.5, "{distance}");
+        assert!((time.as_secs_f64() - 0.555).abs() < 0.002, "{time:?}");
+        let (d4, t4) = spline_fling(4000.0);
+        assert!(
+            d4 > 4.0 * distance && t4 > time,
+            "faster goes further and longer"
+        );
+    }
+
+    /// The fixture is Android's own `OverScroller` on the emulator (see its
+    /// header): every sample of every fling, from a slow flick to a hard
+    /// throw, is where Ljós's spline puts it to within a logical pixel and
+    /// goes as fast to within 2 % of the throw (the speed a fling hands
+    /// on at a bound or a snap), and each fling ends where Android's does.
+    #[test]
+    fn an_android_fling_follows_the_trace_android_recorded() {
+        let fixture = include_str!("fixtures/android_fling.txt");
+        let mut density = 0.0;
+        let mut fling: Option<(f64, f64)> = None;
+        let mut before: Option<f64> = None;
+        let mut samples = 0;
+        for line in fixture
+            .lines()
+            .filter(|l| !l.starts_with('#') && !l.trim().is_empty())
+        {
+            let words: Vec<&str> = line.split_whitespace().collect();
+            match words[0] {
+                "density" => density = words[1].parse().unwrap(),
+                "fling" => {
+                    // fling <dp> dp/s = <px> px/s final <px> px
+                    let speed = words[4].parse::<f64>().unwrap() / density;
+                    let last = words[7].parse::<f64>().unwrap() / density;
+                    let (distance, _) = spline_fling(speed);
+                    assert!(
+                        (distance - last).abs() < 1.0,
+                        "{speed} dp/s: Android ends at {last}, Ljós at {distance}"
+                    );
+                    fling = Some((speed, last));
+                    before = None;
+                }
+                ms => {
+                    let (speed, _) = fling.expect("a sample before its fling");
+                    let ms: u64 = ms.parse().unwrap();
+                    let android = words[1].parse::<f64>().unwrap() / density;
+                    let android_speed = words[2].parse::<f64>().unwrap() / density;
+                    let (ours, ours_speed) = spline_at(0.0, speed, Duration::from_millis(ms));
+                    assert!(
+                        (ours - android).abs() < 1.0,
+                        "{speed} dp/s at {ms} ms: Android at {android}, Ljós at {ours}"
+                    );
+                    // Once Android's fling stops moving it still reports a
+                    // little speed left, where Ljós's is rightly 0.
+                    if before != Some(android) {
+                        assert!(
+                            (ours_speed - android_speed).abs() < 0.02 * speed,
+                            "{speed} dp/s at {ms} ms: Android goes {android_speed}, Ljós {ours_speed}"
+                        );
+                    }
+                    before = Some(android);
+                    samples += 1;
+                }
+            }
+        }
+        assert!(samples > 300, "{samples} samples");
+    }
+
+    #[test]
+    fn an_android_fling_starts_at_the_speed_it_was_thrown_and_ends_at_rest() {
+        let seg = A.plan(&moving(0.0, 1000.0), &S).unwrap();
+        let Segment::Spline { cut, .. } = seg else {
+            panic!("{seg:?}")
+        };
+        let (p0, v0) = seg.at(&A, Duration::ZERO);
+        // The spline is sampled, so its start is the start to within its
+        // arithmetic, not to the bit.
+        assert!(p0.abs() < 1e-3, "{p0}");
+        assert!((v0 - 1000.0).abs() < 10.0, "{v0}");
+        let (p, v) = seg.at(&A, cut);
+        assert!((p - 194.4).abs() < 0.5, "{p}");
+        assert_eq!(v, 0.0);
+        // It only ever goes forward, and slows down all the way.
+        let mut last = (p0, v0);
+        for ms in (10..=555).step_by(10) {
+            let now = seg.at(&A, Duration::from_millis(ms));
+            assert!(
+                now.0 >= last.0 && now.1 <= last.1 + 1e-9,
+                "{ms} ms: {now:?}"
+            );
+            last = now;
+        }
+    }
+
+    #[test]
+    fn an_android_fling_stops_at_the_end() {
+        let seg = A.plan(&moving(250.0, -3000.0), &S).unwrap();
+        let (p, v) = end(&seg);
+        assert!(p.abs() < 1e-6, "{p}");
+        assert!(v < 0.0, "still going when it got there");
+        let at_end = AxisState {
+            position: p,
+            velocity: v,
+            ..axis(0.0)
+        };
+        assert_eq!(A.plan(&at_end, &S), None, "it does not go past");
+    }
+
+    #[test]
+    fn an_android_fling_ignores_flickables_deceleration() {
+        let slow = FlickSettings {
+            deceleration: 100.0,
+            ..S
+        };
+        assert_eq!(
+            A.plan(&moving(0.0, 800.0), &S),
+            A.plan(&moving(0.0, 800.0), &slow)
+        );
     }
 
     #[test]
