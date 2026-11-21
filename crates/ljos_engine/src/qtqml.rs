@@ -1044,7 +1044,7 @@ impl Engine {
                     } else {
                         skip
                     };
-                    self.timer_fire(o, due.deadline, skip, due.origin);
+                    self.timer_fire(o, due.deadline, skip, began, due.origin);
                 }
             }
         }
@@ -1311,9 +1311,10 @@ impl Engine {
 
     /// A timer came due at `at` and is fired now: re-arm (repeat) at its
     /// next run after `skip` that did not come due while the engine was
-    /// busy, or stop, then emit. `origin` is its first run's id, which the
-    /// next run keeps.
-    fn timer_fire(&self, obj: ObjectId, at: Time, skip: Time, origin: TimerId) {
+    /// busy, or stop, then emit. `began` is when the `advance_timers` call
+    /// firing it began. `origin` is its first run's id, which the next run
+    /// keeps.
+    fn timer_fire(&self, obj: ObjectId, at: Time, skip: Time, began: Time, origin: TimerId) {
         let Ok((running, repeat, interval)) =
             self.with::<Timer, _>(obj, |t| (t.running, t.repeat, t.interval))
         else {
@@ -1337,8 +1338,16 @@ impl Engine {
             {
                 // Runs that came due while the engine was busy are
                 // dropped; it moves on past each busy time it lands in.
+                // The turn under way, or this call outside one, is busy
+                // so far too, though it is only noted when it ends.
                 let st = self.inner.timers.borrow();
-                while let Some(&(_, end)) = st.busy.iter().find(|(f, e)| *f < next && next <= *e) {
+                let live = (st.turn_from.map_or(began, |t| t.min(began)), st.clock.now());
+                while let Some(&(_, end)) = st
+                    .busy
+                    .iter()
+                    .chain(std::iter::once(&live))
+                    .find(|(f, e)| *f < next && next <= *e)
+                {
                     next = after(end);
                 }
             }
