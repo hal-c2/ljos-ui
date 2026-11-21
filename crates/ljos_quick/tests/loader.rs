@@ -795,3 +795,51 @@ fn an_asynchronous_source_is_relative_to_the_loaders_file_too() {
     assert_eq!(loaded_tag(&e, root, "inner"), "sub leaf");
     assert!(e.take_warnings().is_empty());
 }
+
+const ASYNC_INTERRUPTED: &str = r#"
+import QtQuick
+Item {
+    id: root
+    objectName: "root"
+    property int tries: 0
+    property int errors: 0
+    Component {
+        id: page
+        Item { objectName: "page"; Component.onCompleted: { root.tries += 1; for (;;) { } } }
+    }
+    Loader {
+        id: loader; objectName: "loader"; asynchronous: true; sourceComponent: page
+        onStatusChanged: if (status === Loader.Error) root.errors += 1
+    }
+}
+"#;
+
+/// The frame whose incubation step ran the script that failed is the frame
+/// the Loader says so in; a host showing a spinner from `status` never
+/// shows one for an item that has already failed.
+#[test]
+fn an_asynchronous_loader_says_error_in_the_frame_its_item_was_interrupted() {
+    let e = engine();
+    let root = load(&e, ASYNC_INTERRUPTED);
+    e.set_js_dispatch_budget(
+        std::time::Duration::from_millis(10),
+        std::time::Duration::from_millis(50),
+    )
+    .unwrap();
+    let loader = find(&e, root, "loader");
+    assert_eq!(num(&e, loader, "status"), 2.0);
+    let mut s = scene(&e, root, 200.0, 200.0);
+    for n in 0..200 {
+        frame(&mut s, &e);
+        let (tries, errors) = (num(&e, root, "tries"), num(&e, root, "errors"));
+        assert_eq!(
+            errors, tries,
+            "frame {n}: {tries} tries failed, but the Loader said Error {errors} times"
+        );
+        if tries == 2.0 && !s.needs_frame() {
+            assert_eq!(num(&e, loader, "status"), 3.0);
+            return;
+        }
+    }
+    panic!("the Loader never settled");
+}
