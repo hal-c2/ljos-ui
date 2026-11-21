@@ -305,6 +305,72 @@ Feature: A ShellLoader shows a user's shell, or the application's own when the u
       And the property "error" of "loader" is ""
       And the property "status" of "loader" is 1
 
+  Rule: Where nothing hosts the windows, a shell that is a Window has its overlay
+
+    An engine with no window host (one that runs headless, embedded in
+    another application's view, or under test) keeps a shell that is a
+    `Window` as an item of its loader, and may make the loader before
+    anything shows it. That `Window` has its overlay from the start, as
+    one at the root does: what its items read of `Overlay.overlay` while
+    they are made is the overlay of the loader's tree, never null, so the
+    user's shell is shown and a fallback is not rejected for a
+    `TypeError`.
+
+    Background:
+      Given the file "Shell.qml":
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Window {
+          objectName: "user-window"; width: 640; height: 480; visible: true
+          property bool hasOverlay: Overlay.overlay !== null
+          Popup {
+            objectName: "dialog"
+            parent: Overlay.overlay
+            x: Math.round((parent.width - width) / 2)
+            width: 200; height: 100
+          }
+        }
+        """
+      And the file "Window.qml":
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Window {
+          objectName: "default-window"; visible: true
+          Item { width: Overlay.overlay.width }
+        }
+        """
+      And the file "Main.qml":
+        """qml
+        import Ljos.Blocks
+        ShellLoader { objectName: "loader"; source: "Shell.qml"; fallback: "Window.qml" }
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        Item { objectName: "root" }
+        """
+
+    @api-QtQuick.Controls.Overlay.overlay
+    Scenario: A Window shell in a tree that nothing shows yet has its overlay while it is made
+      When the file "Main.qml" is opened in a window of its own
+      Then the property "status" of "loader" is 1
+      And the property "error" of "loader" is ""
+      And the property "hasOverlay" of "loader/user-window" is true
+      And the log has no warnings
+
+    Scenario: A fallback that is a Window has its overlay while it is made
+      Given the file "Shell.qml":
+        """qml
+        import QtQuick
+        Rectangle { NoSuchThing { } }
+        """
+      When the file "Main.qml" is opened in a window of its own
+      Then the property "status" of "loader" is 2
+      And the object "loader/default-window" exists
+      And the log has no warning matching "TypeError"
+
   Rule: A shell that is a Window is the application's window
 
     Where each `Window` is a platform window, a loader at the root of an

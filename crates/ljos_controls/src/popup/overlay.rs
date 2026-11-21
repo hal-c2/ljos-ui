@@ -613,11 +613,15 @@ fn release(engine: &Engine, overlay: ObjectId, ev: &PointerEvent) {
 }
 
 /// The top item of the window whose overlay `item` sees: the tree a scene
-/// shows it in, or else, while none does yet, the top of its tree when
-/// that is a `Window`. Qt makes a window's items in the window, so its
-/// overlay is there before their bindings first run; here a scene or a
-/// host takes the window only once its tree is made. An item tree with no
-/// `Window` above it has no window until a scene shows it, as in Qt.
+/// shows it in, or else, while none does yet, the top of its tree when a
+/// `Window` is on the way there. Qt makes a window's items in the window,
+/// so its overlay is there before their bindings first run; here a scene
+/// or a host takes the window only once its tree is made. Where nothing
+/// hosts the windows, a `Window` is an item of the tree it was put in (a
+/// `ShellLoader`'s shell, say), and that tree's top is where a scene will
+/// show it: its overlay is the one the window has then, so it is the one
+/// it has now. An item tree with no `Window` above it has no window until
+/// a scene shows it, as in Qt.
 ///
 /// An item in a popup, open or not, is in the window of the popup's
 /// parent. The walk goes there rather than up from the popup's item: that
@@ -627,7 +631,9 @@ fn release(engine: &Engine, overlay: ObjectId, ev: &PointerEvent) {
 /// put in a shown tree) is followed.
 fn window_top(engine: &Engine, item: ObjectId) -> Option<ObjectId> {
     let mut cur = item;
+    let mut in_window = false;
     for _ in 0..1024 {
+        in_window |= is_a::<crate::Window>(engine, cur);
         if let Some(popup) = popup_of(engine, cur) {
             cur = object(engine, popup, Popup::PARENT.index)
                 .or_else(|| super::default_parent(engine, popup))
@@ -644,8 +650,7 @@ fn window_top(engine: &Engine, item: ObjectId) -> Option<ObjectId> {
                 cur = p;
             }
             None => {
-                return ljos_quick::window_of(engine, cur)
-                    .or_else(|| is_a::<crate::Window>(engine, cur).then_some(cur));
+                return ljos_quick::window_of(engine, cur).or(in_window.then_some(cur));
             }
         }
     }
