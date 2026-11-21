@@ -91,6 +91,17 @@ Feature: What the observer lists stays readable in a narrow window
     Then the observer has "role=listitem[name*=\"ErrorBoundary\"]"
     And the observer's "role=list[name=\"Faults\"]" is at least 120 pixels high
 
+  # A window shorter than the supervisors and the room the faults keep:
+  # the page scrolls to the faults rather than run past its bottom.
+  Scenario: A window too short for the supervisors and the faults scrolls to the faults
+    When the application is observed
+    And the observer's window is 390 by 480 pixels
+    And the observer's "role=tab[name=\"Supervision\"]" is clicked
+    And the observer's "role=listitem[name*=\"ErrorBoundary\"]" is shown
+    And the observer's "role=heading[name=\"Supervision\"]" is scrolled 20 notches down
+    Then the observer's "role=list[name=\"Faults\"]" is at least 120 pixels high
+    And the observer shows "No faults" whole
+
   Scenario Outline: A wake opened leaves room for the list of wakes
     When the application is observed
     And the observer's window is <width> by 800 pixels
