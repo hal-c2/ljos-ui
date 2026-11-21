@@ -1,9 +1,10 @@
 //! What the user and the system do to an application on a phone
 //! (`mobile/`): the home screen, turning the phone, Back, the system
-//! ending a hidden application's screen or process, and the system's store
-//! of secrets and places for the application's files.
+//! ending a hidden application's screen or process, the system's store
+//! of secrets and places for the application's files, and the developer
+//! reaching the application's inspector over adb.
 
-use cucumber::{then, when};
+use cucumber::{given, then, when};
 
 use crate::backend::{BackSwipe, BackendError};
 use crate::world::LjosWorld;
@@ -75,6 +76,11 @@ fn responding(w: &mut LjosWorld) -> StepResult {
             Ok(())
         }
     })
+}
+
+#[given("the inspector of the application on the phone is connected over adb")]
+fn inspector_over_adb(w: &mut LjosWorld) -> StepResult {
+    w.each(|b| b.device()?.connect_inspector())
 }
 
 #[when("the system ends the application's process")]

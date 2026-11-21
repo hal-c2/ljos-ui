@@ -17,7 +17,7 @@ use android_activity::{AndroidApp, AndroidAppWaker, InputStatus, MainEvent, Poll
 use ndk::native_window::NativeWindow;
 
 use crate::dead_key::{DeadKey, Typed};
-use crate::pump::{exiting, keeps_pumping};
+use crate::pump::{self, Pumping, Wakes, exiting, keeps_pumping, lock};
 use crate::relay::{Arrival, Relay, RelayHost, Request};
 use crate::{
     AppState, BackPhase, ButtonState, Capabilities, HeldText, Insets, Key, KeyEvent, TextEvent,
@@ -38,14 +38,12 @@ pub fn capabilities() -> Capabilities {
     }
 }
 
-/// What the application asked of the activity, kept until the activity's
-/// thread gets to it. The activity changes; the queue stays.
-#[derive(Default)]
-struct Requests {
-    queue: Vec<Request>,
-    waker: Option<AndroidAppWaker>,
-    /// An activity's `android_main` has arrived and has not yet returned.
-    attached: bool,
+type Requests = pump::Requests<Request, AndroidAppWaker>;
+
+impl Wakes for AndroidAppWaker {
+    fn wake(&self) {
+        AndroidAppWaker::wake(self);
+    }
 }
 
 /// The activity's side: each `android_main` hands its [`AndroidApp`] to
@@ -78,28 +76,16 @@ pub fn host<U: From<Wake> + Send + 'static>() -> (AndroidHost<U>, Attach<U>) {
     let requests = Arc::new(Mutex::new(Requests::default()));
     let asked = Arc::clone(&requests);
     let (host, relay) = RelayHost::new(capabilities(), move |request| {
-        let mut r = lock(&asked);
-        r.queue.push(request);
-        if let Some(waker) = &r.waker {
-            waker.wake();
-        }
+        lock(&asked).ask(request);
     });
     (host.with_screen_name("display"), Attach { relay, requests })
-}
-
-fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    m.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 impl<U: Send + 'static> Attach<U> {
     /// Hands the activity's events to the application until the activity
     /// is destroyed. Call it from `android_main`, and return after it.
     pub fn pump(&self, app: &AndroidApp) {
-        {
-            let mut requests = lock(&self.requests);
-            requests.attached = true;
-            requests.waker = Some(app.create_waker());
-        }
+        let pumping = Pumping::new(&self.requests, app.create_waker());
         let relay = self.relay.clone();
         *lock(&FROM_JAVA) = Some(Box::new(move |event| {
             let _ = relay.send(Arrival::Window(event));
@@ -128,16 +114,12 @@ impl<U: Send + 'static> Attach<U> {
                 }
             });
             pump.input();
-            let asked = std::mem::take(&mut lock(&self.requests).queue);
+            let asked = lock(&self.requests).take();
             for request in asked {
                 pump.request(request);
             }
         }
-        {
-            let mut requests = lock(&self.requests);
-            requests.waker = None;
-            requests.attached = false;
-        }
+        drop(pumping);
         *lock(&FROM_JAVA) = None;
         // The application lives on, without the activity.
         let _ = self.relay.send(Arrival::Detached);
@@ -147,7 +129,7 @@ impl<U: Send + 'static> Attach<U> {
     /// first thing there, so a quit from here on leaves the process's end
     /// to that activity rather than ending it under its start.
     pub fn arriving(&self) {
-        lock(&self.requests).attached = true;
+        lock(&self.requests).arriving();
     }
 
     /// Runs `then` if no activity has arrived (see [`Attach::arriving`]),
@@ -158,7 +140,7 @@ impl<U: Send + 'static> Attach<U> {
     /// window ends the process under it, as the system's own kill would.
     pub fn when_detached<R>(&self, then: impl FnOnce() -> R) -> Option<R> {
         let requests = lock(&self.requests);
-        (!requests.attached).then(then)
+        (!requests.attached()).then(then)
     }
 }
 

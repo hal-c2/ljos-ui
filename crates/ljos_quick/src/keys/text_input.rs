@@ -66,27 +66,28 @@ pub trait TextInputClient {
     fn preedit(&self, _engine: &Engine, _item: ObjectId) -> String {
         String::new()
     }
-    /// Takes back the selection and the `units` UTF-16 units before it, as
-    /// Backspaces would: also in a field that hides its text, where the
-    /// cursor is not shown.
-    fn delete_before_cursor(&self, engine: &Engine, item: ObjectId, units: usize) {
+    /// The anchor and the cursor, also of a field that hides its text,
+    /// whose [`surrounding`](Self::surrounding) shows nothing. Positions
+    /// only, and they never leave the process: an input method that typed
+    /// into a hidden field is told its own selection in what it typed.
+    fn selection(&self, engine: &Engine, item: ObjectId) -> (usize, usize) {
         let s = self.surrounding(engine, item);
-        let start = s.anchor.min(s.cursor).saturating_sub(units);
-        self.replace(engine, item, start..s.anchor.max(s.cursor), "");
+        (s.anchor, s.cursor)
     }
-    /// Puts `text` in place of the selection and the `units` UTF-16 units
-    /// before it as one edit, which a validator takes or refuses whole, also in a
-    /// field that hides its text. Returns whether the item took all of
-    /// it: a validator, a mask or `maximumLength` may take part or none.
-    fn replace_before_cursor(
+    /// Puts `text` in place of `range` as one edit, which a validator
+    /// takes or refuses whole, also in a field that hides its text.
+    /// Returns whether the item took all of it: a validator, a mask or
+    /// `maximumLength` may take part or none.
+    fn replace_whole(
         &self,
         engine: &Engine,
         item: ObjectId,
-        units: usize,
+        range: Range<usize>,
         text: &str,
     ) -> bool {
-        self.delete_before_cursor(engine, item, units);
-        text.is_empty() || self.commit(engine, item, text)
+        let end = range.start + text.encode_utf16().count();
+        self.replace(engine, item, range, text);
+        self.selection(engine, item) == (end, end)
     }
     /// A digest of the item's text and selection, also of a text it hides,
     /// that changes when they do. It never leaves the process: what an
@@ -97,6 +98,15 @@ pub trait TextInputClient {
         let s = self.surrounding(engine, item);
         let mut h = std::hash::DefaultHasher::new();
         (s.text, s.anchor, s.cursor).hash(&mut h);
+        h.finish()
+    }
+    /// A digest of the item's text alone, also of a text it hides: it
+    /// tells a write to the field from a move of its selection. It never
+    /// leaves the process, as [`digest`](Self::digest) does not.
+    fn text_digest(&self, engine: &Engine, item: ObjectId) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::hash::DefaultHasher::new();
+        self.surrounding(engine, item).text.hash(&mut h);
         h.finish()
     }
     /// Ends the composition and types `text` over the selection. Returns

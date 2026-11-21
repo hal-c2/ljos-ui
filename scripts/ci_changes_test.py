@@ -158,6 +158,14 @@ class Plans(unittest.TestCase):
         self.assertFalse(out["android"])
         self.assertTrue(run(mode="full")["android"])
 
+    def test_android_runs_when_the_android_host_or_shell_changed(self):
+        meta = json.loads(json.dumps(META))
+        meta["packages"] += [package("ljos_host"), package("ljos_shell", deps=["ljos_host"])]
+        ws = cc.Workspace.from_metadata(meta)
+        for path in ["crates/ljos_host/src/android.rs", "crates/ljos_shell/src/android.rs"]:
+            out, _ = cc.plan("pr", [path], ws, FEATURES)
+            self.assertTrue(out["android"], path)
+
     def test_the_web_crate_checks_the_web_build(self):
         self.assertTrue(run("crates/ljos_mcp_core/src/lib.rs")["wasm"])
 

@@ -5,7 +5,8 @@
     clippy      "true" when fmt and clippy run; `clippy_args` names the packages
     wasm        "true" when the web build of ljos_mcp_core is checked
     android     "true" when ljos_js is built for Android and its bundled
-                QuickJS bindings are held to bindgen's (scripts/android-bindings.sh)
+                QuickJS bindings are held to bindgen's (scripts/android-bindings.sh),
+                and the Android host and shell are checked for each ABI
     tests       a JSON list of test shards, each {"name", "packages", "doc"}
     lint        "true" when features:lint runs
     features    a JSON list of feature shards, each {"name", "files"}
@@ -152,6 +153,9 @@ WASM = "ljos_mcp_core"
 # The crate the Android job builds: it is what links the vendored QuickJS, so a
 # change it can feel (itself, or a crate under it) re-runs the Android build.
 ANDROID = "ljos_js"
+# The crates only an Android build compiles their Android code of: a change to
+# them is checked for Android too, or it is first built on a device.
+ANDROID_HOST = ("ljos_host", "ljos_shell")
 
 # Shards: at most this many, each with at least about this much work.
 TEST_SHARDS = 3
@@ -503,7 +507,7 @@ def plan(mode: str, paths: list[str], ws: Workspace, features: dict[str, str]) -
         "clippy": bool(clippy_set),
         "clippy_args": "--workspace" if c.full else " ".join(f"-p {p}" for p in sorted(clippy_set)),
         "wasm": c.full or WASM in clippy_set,
-        "android": c.full or ANDROID in clippy_set,
+        "android": c.full or ANDROID in clippy_set or any(p in clippy_set for p in ANDROID_HOST),
         "tests": test_shards,
         "lint": lint,
         "features": feature_shards,

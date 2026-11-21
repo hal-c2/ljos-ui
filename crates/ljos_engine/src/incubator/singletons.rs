@@ -35,9 +35,11 @@ use std::rc::Rc;
 
 use ljos_ir::{Arg, TypeRef};
 use ljos_js::JsValue;
+use ljos_reactive::NodeId;
 
 use super::Instance;
 use super::request::Request;
+use crate::backoff::{Backoff, seconds};
 use crate::engine::Engine;
 use crate::error::EngineError;
 use crate::ids::{ContextId, ObjectId};
@@ -143,6 +145,18 @@ enum State {
     },
     /// It did not load, which was reported once.
     Failed,
+    /// A fault that was not its own stopped it (a full heap, an
+    /// interrupted script, a panic in native work): it is made again at
+    /// the first lookup once the wait its [`Backoff`] says is over (`due`).
+    /// Until then a lookup gets nothing and depends on `woken`, which the
+    /// end of the wait bumps, so what read the name reads it again. Qt has
+    /// none of these faults; a singleton that failed for its own code stays
+    /// failed, as there.
+    Again {
+        backoff: Backoff,
+        due: bool,
+        woken: NodeId,
+    },
     /// A type that is one for each window, read where there is no
     /// window: reported once.
     Outside,
@@ -206,6 +220,23 @@ pub(crate) struct Singletons {
     /// A QML singleton is being made: it is in no window.
     unscoped: Cell<u32>,
     listeners: RefCell<Vec<Listener>>,
+}
+
+/// One more making that is not a window's own, for as long as it is held:
+/// a panic that cuts the making short leaves the count as it was.
+struct Unscoped<'a>(&'a Cell<u32>);
+
+impl<'a> Unscoped<'a> {
+    fn enter(count: &'a Cell<u32>) -> Self {
+        count.set(count.get() + 1);
+        Self(count)
+    }
+}
+
+impl Drop for Unscoped<'_> {
+    fn drop(&mut self) {
+        self.0.set(self.0.get() - 1);
+    }
 }
 
 /// A native singleton type and how its one object is made. Its own
@@ -783,7 +814,15 @@ impl Engine {
                 }
                 State::Making(obj) => return *obj,
                 State::Failed | State::Keys(_) | State::Outside | State::Gone => return None,
-                State::Made { .. } | State::Unmade => None,
+                State::Again {
+                    due: false, woken, ..
+                } => {
+                    let woken = *woken;
+                    drop(entries);
+                    let _ = self.inner.graph.try_get(woken);
+                    return None;
+                }
+                State::Made { .. } | State::Unmade | State::Again { .. } => None,
             };
             if e.window && e.scope.is_none() {
                 let name = type_name(&e.ty).to_owned();
@@ -819,40 +858,69 @@ impl Engine {
             // as everything else made from the old files does.
             self.destroy(*obj);
         }
+        // Made again after a fault not its own: the next one waits longer.
+        let again = match &all.entries.borrow()[handle].state {
+            State::Again { backoff, woken, .. } => {
+                let mut backoff = *backoff;
+                backoff.trying(self.now());
+                Some((backoff, *woken))
+            }
+            _ => None,
+        };
         all.entries.borrow_mut()[handle].state = State::Making(None);
+        let faults = self.resource_faults_seen();
         // Whoever reads the name first does not depend on what making the
         // object reads.
-        let made = self.untrack(|| match &kind {
-            Kind::File(key) => {
-                let template = self.file_template(key)?;
-                let file = template.file.clone();
-                let allocated = |obj| {
-                    all.entries.borrow_mut()[handle].state = State::Making(Some(obj));
-                    // A window's own: what its scripts read is the window's.
-                    if let Some(s) = scope
-                        && let Some(c) = self.context_of(obj)
-                    {
-                        let mut scopes = all.scopes.borrow_mut();
-                        scopes.by_context.insert(c, s);
-                        scopes.members.insert(obj, (c, s));
-                    }
-                };
-                // Not a root of a window, whoever reads it first.
-                all.unscoped.set(all.unscoped.get() + 1);
-                let made = self
-                    .make(
+        let made = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            self.untrack(|| match &kind {
+                Kind::File(key) => {
+                    let template = self.file_template(key)?;
+                    let file = template.file.clone();
+                    let allocated = |obj| {
+                        all.entries.borrow_mut()[handle].state = State::Making(Some(obj));
+                        // A window's own: what its scripts read is the window's.
+                        if let Some(s) = scope
+                            && let Some(c) = self.context_of(obj)
+                        {
+                            let mut scopes = all.scopes.borrow_mut();
+                            scopes.by_context.insert(c, s);
+                            scopes.members.insert(obj, (c, s));
+                        }
+                    };
+                    // Not a root of a window, whoever reads it first.
+                    let _unscoped = Unscoped::enter(&all.unscoped);
+                    self.make(
                         Request::template(Rc::new(template))
                             .allocated(move |_: &Engine, root, _| allocated(root)),
                     )
-                    .map(|(root, _)| root);
-                all.unscoped.set(all.unscoped.get() - 1);
-                made.map(|obj| (obj, Some(file)))
+                    .map(|(root, _)| (root, Some(file)))
+                }
+                Kind::Native(native) => self
+                    .create_with(MetaRef::Static(native.meta), (native.make)(self), None)
+                    .map(|obj| (obj, None)),
+                Kind::Keys(_) => unreachable!("returned above"),
+            })
+        }));
+        // A panic is a resource fault here as it is for a delegate: the
+        // entry waits to be made again, then the panic goes on. Left
+        // `Making`, every later lookup would read nothing, with no warning.
+        let (made, panicked) = match made {
+            Ok(made) => (made, None),
+            Err(payload) => {
+                let message = crate::delegates::panic_message(payload.as_ref());
+                let err = EngineError::Panic(format!("a panic while it was made: {message}"));
+                (Err(err), Some(payload))
             }
-            Kind::Native(native) => self
-                .create_with(MetaRef::Static(native.meta), (native.make)(self), None)
-                .map(|obj| (obj, None)),
-            Kind::Keys(_) => unreachable!("returned above"),
-        });
+        };
+        // Made, but its script did not load or a binding was cut short
+        // while it was made: not whole, and nothing would run it again.
+        let made = match made {
+            Ok((obj, _)) if let Some(e) = self.resource_fault_since(faults) => {
+                self.destroy(obj);
+                Err(e)
+            }
+            made => made,
+        };
         let (state, out) = match made {
             Ok((obj, file)) => (
                 State::Made {
@@ -862,6 +930,30 @@ impl Engine {
                 },
                 Some(obj),
             ),
+            Err(e) if e.is_resource_fault() => {
+                let (backoff, woken) = match again {
+                    Some(a) => a,
+                    None => match self
+                        .inner
+                        .graph
+                        .property(self.inner.graph.root(), Value::Int(0))
+                    {
+                        Ok(n) => (Backoff::default(), n),
+                        Err(_) => {
+                            self.warn(format!(
+                                "the singleton {} is not available: {e}",
+                                type_name(&ty)
+                            ));
+                            all.entries.borrow_mut()[handle].state = State::Failed;
+                            if let Some(payload) = panicked {
+                                std::panic::resume_unwind(payload);
+                            }
+                            return None;
+                        }
+                    },
+                };
+                (self.singleton_again(handle, &ty, &e, backoff, woken), None)
+            }
             Err(e) => {
                 self.warn(format!(
                     "the singleton {} is not available: {e}",
@@ -870,7 +962,26 @@ impl Engine {
                 (State::Failed, None)
             }
         };
+        let waits = match &state {
+            State::Again { woken, .. } => Some(*woken),
+            _ => None,
+        };
         all.entries.borrow_mut()[handle].state = state;
+        match (waits, again) {
+            // The first reader waits on `woken` too, as every later one
+            // does, or nothing would read the name again once it is due.
+            (Some(woken), _) => {
+                let _ = self.inner.graph.try_get(woken);
+            }
+            // Made, or failed for good: nothing waits any more.
+            (None, Some((_, woken))) => {
+                let _ = self.inner.graph.dispose(woken);
+            }
+            (None, None) => {}
+        }
+        if let Some(payload) = panicked {
+            std::panic::resume_unwind(payload);
+        }
         if let (Some(obj), Some(scope), Kind::Native(native)) = (out, scope, &kind) {
             let root = all.scopes.borrow().owners.get(&scope).and_then(|o| o.root);
             if let Some(root) = root {
@@ -883,6 +994,50 @@ impl Engine {
             }
         }
         out
+    }
+
+    /// The state of the entry `handle` after a fault not its own: made
+    /// again once the wait is over, when what read its name reads it again.
+    fn singleton_again(
+        &self,
+        handle: usize,
+        ty: &TypeRef,
+        err: &EngineError,
+        mut backoff: Backoff,
+        woken: NodeId,
+    ) -> State {
+        let now = self.now();
+        let wait = backoff.fault(now);
+        self.warn(format!(
+            "the singleton {} is not available: {err}; making it again in {}",
+            type_name(ty),
+            seconds(wait)
+        ));
+        let full = matches!(err, EngineError::JsOutOfMemory(_));
+        // Never at once: the lookup that failed is in a script, and every
+        // lookup in it would make the object again.
+        self.call_at(now + wait, move |e| {
+            let all = e.extension::<Singletons>();
+            match &mut all.entries.borrow_mut()[handle].state {
+                State::Again { due, .. } => *due = true,
+                _ => return,
+            }
+            // Timers run between scripts, where the heap can be.
+            if full {
+                e.collect_garbage();
+            }
+            let g = &e.inner.graph;
+            let next = match g.get_untracked(woken) {
+                Value::Int(i) => i.wrapping_add(1),
+                _ => 1,
+            };
+            g.set(woken, Value::Int(next));
+        });
+        State::Again {
+            backoff,
+            due: false,
+            woken,
+        }
     }
 
     fn tell_scoped(&self, what: &ScopedSingleton) {
@@ -1045,6 +1200,7 @@ impl Engine {
         let all = self.extension::<Singletons>();
         let mut objects = Vec::new();
         let mut told = Vec::new();
+        let mut gone_waits = Vec::new();
         let mut entries = all.entries.borrow_mut();
         let mut scoped = all.scoped.borrow_mut();
         for (root, owner) in ended {
@@ -1060,9 +1216,17 @@ impl Engine {
                         told.push((*root, obj, e.ty.clone()));
                     }
                 }
+                if let State::Again { woken, .. } = e.state {
+                    gone_waits.push(woken);
+                }
                 e.state = State::Gone;
             }
             scoped.retain(|_, i| !owner.entries.contains(i));
+        }
+        drop((entries, scoped));
+        // Its retry finds the entry gone; nothing reads `woken` again.
+        for woken in gone_waits {
+            let _ = self.inner.graph.dispose(woken);
         }
         (objects, told)
     }
@@ -1176,12 +1340,22 @@ impl Engine {
             }
             _ => {}
         }
+        let waits = match e.state {
+            State::Again { woken, .. } => Some(woken),
+            _ => None,
+        };
         e.given = true;
         e.state = State::Made {
             obj,
             file: None,
             seen: all.sources.get(),
         };
+        drop(entries);
+        // A retry was due: what read the name while it waited reads the
+        // given object now, or it would hold the miss until the next change.
+        if let Some(woken) = waits {
+            let _ = self.inner.graph.dispose(woken);
+        }
         Ok(())
     }
 

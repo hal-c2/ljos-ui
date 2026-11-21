@@ -437,3 +437,95 @@ fn a_rate_no_display_has_still_gets_the_objects_made() {
     assert_eq!(e.children(made(&e, root)).len(), 400);
     assert!(!s.needs_frame());
 }
+
+/// A large component for `incubateObject` to make beside an ErrorBoundary
+/// whose content fails in the polish pass: a Row moves a child whose
+/// handler never ends. The fallback is Text that wraps to a width, and
+/// such Text is measured in polish only.
+fn failing_in_polish(n: usize) -> String {
+    let kids: String = (0..n)
+        .map(|i| format!("            Item {{ objectName: \"k{i}\" }}\n"))
+        .collect();
+    format!(
+        r#"
+import QtQuick
+import Ljos
+Item {{
+    id: root
+    objectName: "root"
+    width: 200; height: 200
+    property var inc: null
+    property bool wide: false
+    Component {{
+        id: comp
+        Item {{
+            objectName: "big"
+{kids}        }}
+    }}
+    ErrorBoundary {{
+        id: boundary
+        objectName: "boundary"
+        width: 200
+        fallback: Column {{
+            Row {{
+                Rectangle {{ id: grown; width: 10; height: 5 }}
+                Rectangle {{ objectName: "next"; width: 5; height: 5 }}
+                Component.onCompleted: grown.width = 50
+            }}
+            Text {{
+                objectName: "sorry"; width: 70; wrapMode: Text.WordWrap
+                font.pixelSize: 14; text: "aaaa bbbb cccc"
+            }}
+        }}
+        Row {{
+            Rectangle {{ width: root.wide ? 50 : 10; height: 10 }}
+            Rectangle {{ width: 10; height: 10; onXChanged: if (root.wide) {{ for (;;) {{ }} }} }}
+        }}
+    }}
+    function start(parent) {{ inc = comp.incubateObject(parent) }}
+}}
+"#
+    )
+}
+
+/// The faults a frame's incubation step delivers go to their boundaries in
+/// that frame, also when none of its jobs finished. What a boundary makes
+/// then is polished with the rest, so the frame never shows it half placed.
+#[test]
+fn a_fallback_made_while_the_jobs_only_yield_is_laid_out_in_that_frame() {
+    let e = busy_engine();
+    let root = load(&e, &failing_in_polish(LARGE));
+    e.set_js_dispatch_budget(Duration::from_millis(10), Duration::from_millis(50))
+        .unwrap();
+    let boundary = find(&e, root, "boundary");
+    let mut s = scene(&e, root, 200.0, 200.0);
+    frame(&mut s, &e);
+    start(&e, root, root);
+    for n in 0..2 {
+        frame(&mut s, &e);
+        let report = s.take_incubation_report().expect("the job is under way");
+        assert_eq!(report.jobs_done, 0, "frame {n}: the job is too short");
+    }
+    // The Row places its children again in the next frame's polish, and
+    // the handler that runs then is interrupted.
+    set(&e, root, "wide", Value::Bool(true));
+    frame(&mut s, &e);
+    let report = s.take_incubation_report().expect("the job is under way");
+    assert_eq!(
+        report.jobs_done, 0,
+        "a job finished, so this frame polishes anyway"
+    );
+    assert!(
+        get(&e, boundary, "failed").to_boolean(),
+        "the fault raised in polish is delivered in that frame's incubation step"
+    );
+    // Both settle only in polish: the Row places its children again after
+    // one of them grew, and the Text wraps to its width.
+    let next = find(&e, root, "next");
+    let sorry = find(&e, root, "sorry");
+    assert_eq!(
+        (num(&e, next, "x"), num(&e, sorry, "lineCount")),
+        (50.0, 2.0),
+        "the fallback is shown before it was laid out"
+    );
+}

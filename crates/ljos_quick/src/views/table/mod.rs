@@ -412,6 +412,10 @@ impl ViewHost for Host {
         layout::refresh(e, self.0);
     }
 
+    fn again(&self, e: &Engine, _: usize) {
+        layout::refresh(e, self.0);
+    }
+
     fn changed(&self, e: &Engine, change: &ModelChange, gone: &[(usize, ObjectId)]) {
         let Some(st) = state_of(e, self.0) else {
             return;

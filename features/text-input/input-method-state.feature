@@ -19,20 +19,27 @@ Feature: An input method that tells the whole of what it holds
       """qml
       import QtQuick
       Item {
-        objectName: "root"
-        width: 300; height: 200
+        objectName: "root"; width: 300; height: 200
         TextInput {
-          objectName: "input"; focus: true
+          objectName: "input"; focus: true; width: 200; text: "ab"
           font.family: "Liberation Sans"; font.pixelSize: 14
-          width: 200
-          text: "ab"
-          property int edits: 0
-          onTextEdited: edits++
+          property int edits: 0; onTextEdited: edits++
         }
         TextInput {
-          objectName: "pin"; y: 50; width: 200
+          objectName: "pin"; y: 50; width: 200; text: "12"
           echoMode: TextInput.Password
-          text: "12"
+        }
+        TextInput {
+          objectName: "secret"; y: 100; width: 200; text: "xy"
+          echoMode: TextInput.PasswordEchoOnEdit
+        }
+        TextInput {
+          objectName: "guarded"; y: 150; width: 200; echoMode: TextInput.Password
+          onCursorPositionChanged: if (cursorPosition === 1) text = ""
+        }
+        TextInput {
+          objectName: "checked"; y: 170; width: 200; echoMode: TextInput.Password
+          validator: RegularExpressionValidator { regularExpression: /[ab]*/ }
         }
       }
       """
@@ -134,3 +141,57 @@ Feature: An input method that tells the whole of what it holds
       And the property "text" of "pin" is set to ""
       And the input method holds "4" with the cursor at 1
       Then the property "text" of "pin" is "4"
+
+    Scenario: The input method moves its cursor inside what it typed
+      When the property "focus" of "pin" is set to true
+      And the input method holds "abc" with the cursor at 3
+      And the input method holds "abc" with the cursor at 1
+      And the input method holds "axbc" with the cursor at 2
+      Then the property "text" of "pin" is "12axbc"
+      And the property "cursorPosition" of "pin" is 4
+
+    Scenario: What the input method deletes after moving its cursor goes from there
+      When the property "focus" of "pin" is set to true
+      And the input method holds "abc" with the cursor at 3
+      And the input method holds "abc" with the cursor at 1
+      And the input method holds "bc" with the cursor at 0
+      Then the property "text" of "pin" is "12bc"
+      And the property "cursorPosition" of "pin" is 2
+
+    Scenario: The input method selects inside what it typed
+      When the property "focus" of "pin" is set to true
+      And the input method holds "abc" with the cursor at 3
+      And the input method holds "abc" selecting from 1 to 3
+      Then the property "selectionStart" of "pin" is 3
+      And the property "selectionEnd" of "pin" is 5
+
+    Scenario: A field that clears on edit, focused again, holds none of what the input method typed before
+      When the property "focus" of "secret" is set to true
+      And the input method holds "abc" with the cursor at 3
+      And the property "focus" of "input" is set to true
+      And the property "focus" of "secret" is set to true
+      And the input method holds "abcd" with the cursor at 4
+      And the input method holds "abc" with the cursor at 3
+      Then the property "text" of "secret" is "abc"
+
+    Scenario: A field its handler clears as the input method moves the cursor holds none of what the method typed
+      When the property "focus" of "guarded" is set to true
+      And the input method holds "abc" with the cursor at 3
+      And the input method holds "abc" with the cursor at 1
+      And the input method holds "abxc" with the cursor at 3
+      Then the property "text" of "guarded" is "abxc"
+
+    Scenario: A hidden field whose validator refuses a change the same length holds none of it
+      When the property "focus" of "checked" is set to true
+      And the input method holds "ab" with the cursor at 2
+      And the input method holds "ac" with the cursor at 2
+      And the input method holds "acb" with the cursor at 3
+      Then the property "text" of "checked" is "ab"
+
+    Scenario: An input method that typed nothing yet leaves the field's selection
+      When the property "focus" of "pin" is set to true
+      And the user presses "Ctrl+A"
+      And the input method holds "" with the cursor at 0
+      Then the property "text" of "pin" is "12"
+      And the property "selectionStart" of "pin" is 0
+      And the property "selectionEnd" of "pin" is 2
