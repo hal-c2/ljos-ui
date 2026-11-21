@@ -20,7 +20,7 @@ use ljos_render::kurbo;
 use super::base::{EditKind, TextEditor, check, publish, state_of};
 use super::echo_mode;
 use super::input_method_hint as hint;
-use super::layout::position_rect;
+use super::layout::{position_rect, preedit_rects};
 use super::ops::{self, How};
 use crate::item::scene_transform;
 use crate::keys::{Surrounding, TextInputClient};
@@ -166,6 +166,10 @@ impl TextInputClient for Client {
         // the same.
         let (a, c) = (position_rect(&st, at_anchor), position_rect(&st, at_cursor));
         cursor + kurbo::Vec2::new(a.x - c.x, a.y - c.y)
+    }
+
+    fn preedit_rects(&self, engine: &Engine, item: ObjectId) -> Vec<kurbo::Rect> {
+        ops::ready(engine, item).map_or_else(Vec::new, |st| preedit_rects(&st))
     }
 
     fn hints(&self, engine: &Engine, item: ObjectId) -> i32 {
@@ -584,6 +588,46 @@ impl ImeText {
     }
 }
 
+/// Where the editor with active focus, its cursor and what it composes
+/// are, in window coordinates: what an input method that places its own
+/// windows by the text (a floating keyboard, handwriting, a candidate
+/// window) is told; Android's `CursorAnchorInfo`.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ImeGeometry {
+    /// The editor's bounds.
+    pub editor: kurbo::Rect,
+    pub cursor: kurbo::Rect,
+    /// Each UTF-16 unit being composed, in order; empty while nothing is.
+    pub composing: Vec<kurbo::Rect>,
+}
+
+fn geometry(engine: &Engine, item: ObjectId, client: &dyn TextInputClient) -> ImeGeometry {
+    let to_window = scene_transform(engine, item);
+    let width = crate::item::num(engine, item, crate::item::Item::WIDTH.index);
+    let height = crate::item::num(engine, item, crate::item::Item::HEIGHT.index);
+    ImeGeometry {
+        editor: to_window.transform_rect_bbox(kurbo::Rect::new(0.0, 0.0, width, height)),
+        cursor: to_window.transform_rect_bbox(client.cursor_rect(engine, item)),
+        composing: client
+            .preedit_rects(engine, item)
+            .into_iter()
+            .map(|r| to_window.transform_rect_bbox(r))
+            .collect(),
+    }
+}
+
+impl QuickScene {
+    /// Where the editor with active focus and what it composes are now,
+    /// as [`ImeState::sync`] tells a platform that asks; `None` without
+    /// an editor that takes text.
+    pub fn ime_geometry(&self, engine: &Engine) -> Option<ImeGeometry> {
+        let (item, client) = self
+            .text_input_target(engine)
+            .filter(|(item, client)| client.enabled(engine, *item))?;
+        Some(engine.untrack(|| geometry(engine, item, &*client)))
+    }
+}
+
 /// What a platform's text input service is told: the software keyboard of
 /// a phone, the input method framework of a desktop.
 pub trait PlatformTextInput {
@@ -605,6 +649,14 @@ pub trait PlatformTextInput {
     /// (`Qt.inputMethod.show()`, `hide()`). A platform without one
     /// ignores it.
     fn set_keyboard_wanted(&mut self, _wanted: bool) {}
+    /// Whether the platform is told where the editor and what it composes
+    /// are ([`set_geometry`](Self::set_geometry)); measuring them is left
+    /// out for one that is not.
+    fn wants_geometry(&self) -> bool {
+        false
+    }
+    /// The editor with focus, its cursor or what it composes moved.
+    fn set_geometry(&mut self, _geometry: &ImeGeometry) {}
 }
 
 /// What the platform was last told, so that it is told only what changed.
@@ -613,6 +665,7 @@ pub struct ImeState {
     target: Option<(ObjectId, i32)>,
     area: Option<kurbo::Rect>,
     surrounding: Option<Surrounding>,
+    geometry: Option<ImeGeometry>,
 }
 
 impl ImeState {
@@ -651,6 +704,7 @@ impl ImeState {
             if self.target.take().is_some() {
                 self.area = None;
                 self.surrounding = None;
+                self.geometry = None;
                 platform.disable();
             }
             return;
@@ -660,6 +714,7 @@ impl ImeState {
             self.target = Some(now);
             self.area = None;
             self.surrounding = None;
+            self.geometry = None;
             platform.enable(now.1);
         }
         let area =
@@ -672,6 +727,13 @@ impl ImeState {
         if self.surrounding.as_ref() != Some(&surrounding) {
             platform.update(&surrounding);
             self.surrounding = Some(surrounding);
+        }
+        if platform.wants_geometry() {
+            let geometry = geometry(engine, item, &*client);
+            if self.geometry.as_ref() != Some(&geometry) {
+                platform.set_geometry(&geometry);
+                self.geometry = Some(geometry);
+            }
         }
     }
 }

@@ -40,6 +40,13 @@ pub trait TextInputClient {
     fn anchor_rect(&self, engine: &Engine, item: ObjectId) -> kurbo::Rect {
         self.cursor_rect(engine, item)
     }
+    /// Each UTF-16 unit of what the input method is composing here, in
+    /// the item's coordinates, for a method that places its windows by
+    /// the characters. None by default: an item that shows no
+    /// composition has none to place by.
+    fn preedit_rects(&self, _engine: &Engine, _item: ObjectId) -> Vec<kurbo::Rect> {
+        Vec::new()
+    }
     /// `inputMethodHints`, as `Qt.InputMethodHint` flags.
     fn hints(&self, engine: &Engine, item: ObjectId) -> i32;
     /// Whether the item takes text now; a read-only editor does not, and

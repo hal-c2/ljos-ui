@@ -1,9 +1,11 @@
 //! What the user does with the pointer, the keyboard and an input method.
 
-use cucumber::{given, when};
+use cucumber::{given, then, when};
 use gherkin::Step;
 
-use crate::backend::{HeldText, OtherButton, PointerStep, TouchFrame, WheelBy};
+use crate::backend::{
+    BackendError, HeldText, InputMethodGeometry, OtherButton, PointerStep, TouchFrame, WheelBy,
+};
 use crate::world::LjosWorld;
 
 use super::{StepResult, docstring};
@@ -294,4 +296,95 @@ fn input_method_holds_composing(
 #[when(regex = r#"^the input method commits "([^"]*)"$"#)]
 fn input_method_commits(w: &mut LjosWorld, text: String) -> StepResult {
     w.each(|b| b.input()?.commit(&text))
+}
+
+/// What the input method is told now, or why it is told nothing.
+fn geometry(
+    w: &mut LjosWorld,
+    check: impl Fn(&InputMethodGeometry) -> Result<(), String>,
+) -> StepResult {
+    w.each(|b| {
+        let told = b.input()?.input_method_geometry()?.ok_or_else(|| {
+            BackendError::Failed("the input method is told of no editor".to_owned())
+        })?;
+        check(&told).map_err(BackendError::Failed)
+    })
+}
+
+fn same_rect(what: &str, told: [f64; 4], want: [f64; 4]) -> Result<(), String> {
+    if told.iter().zip(want).all(|(a, b)| (a - b).abs() < 1e-3) {
+        Ok(())
+    } else {
+        let [x, y, w, h] = told;
+        Err(format!(
+            "the input method is told {what} is at {x}, {y} sized {w} by {h}"
+        ))
+    }
+}
+
+#[then(
+    regex = r#"^the input method is told the (editor|cursor) is at (-?[\d.]+), (-?[\d.]+) sized ([\d.]+) by ([\d.]+)$"#
+)]
+fn input_method_told_rect(
+    w: &mut LjosWorld,
+    what: String,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+) -> StepResult {
+    geometry(w, |g| {
+        let told = if what == "editor" { g.editor } else { g.cursor };
+        same_rect(&format!("the {what}"), told, [x, y, width, height])
+    })
+}
+
+// A row a UTF-16 unit: `x`, `y`, `width` and `height` columns.
+#[then("the input method is told the composed characters are at:")]
+fn input_method_told_composing(w: &mut LjosWorld, step: &Step) -> StepResult {
+    let table = step
+        .table
+        .as_ref()
+        .ok_or_else(|| "the step needs a table of x, y, width and height".to_owned())?;
+    let want = table
+        .rows
+        .iter()
+        .skip(1)
+        .map(|r| {
+            let n = |i: usize| {
+                r[i].trim()
+                    .parse::<f64>()
+                    .map_err(|e| format!("{:?} is no number: {e}", r[i]))
+            };
+            Ok([n(0)?, n(1)?, n(2)?, n(3)?])
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    geometry(w, |g| {
+        if g.composing.len() != want.len() {
+            return Err(format!(
+                "the input method is told of {} composed units, not {}: {:?}",
+                g.composing.len(),
+                want.len(),
+                g.composing
+            ));
+        }
+        for (i, (told, want)) in g.composing.iter().zip(&want).enumerate() {
+            same_rect(&format!("composed unit {i}"), *told, *want)?;
+        }
+        Ok(())
+    })
+}
+
+#[then("the input method is told nothing is composed")]
+fn input_method_told_nothing_composed(w: &mut LjosWorld) -> StepResult {
+    geometry(w, |g| {
+        if g.composing.is_empty() {
+            Ok(())
+        } else {
+            Err(format!(
+                "the input method is told of composed units at {:?}",
+                g.composing
+            ))
+        }
+    })
 }

@@ -589,6 +589,16 @@ pub struct HeldText {
     pub compose: Option<std::ops::Range<usize>>,
 }
 
+/// Where an input method that places its windows by the text is told
+/// the editor with focus, its cursor and each UTF-16 unit it composes
+/// are, in the window's coordinates: `[x, y, width, height]`.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct InputMethodGeometry {
+    pub editor: [f64; 4],
+    pub cursor: [f64; 4],
+    pub composing: Vec<[f64; 4]>,
+}
+
 pub trait Input: Backend {
     /// Hold a chord down until the keyboard has repeated it `repeats` times,
     /// then let go.
@@ -686,6 +696,15 @@ pub trait Input: Backend {
     fn input_method_holds(&mut self, _held: &HeldText) -> Result<()> {
         Err(BackendError::NotImplemented(
             "an input method that tells all it holds",
+        ))
+    }
+
+    /// What an input method that places its windows by the text is told
+    /// now (Android's CursorAnchorInfo); `None` without an editor that
+    /// takes text.
+    fn input_method_geometry(&mut self) -> Result<Option<InputMethodGeometry>> {
+        Err(BackendError::NotImplemented(
+            "an input method told where the text is",
         ))
     }
 }

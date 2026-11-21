@@ -59,7 +59,7 @@ pub use edit::TextEdit;
 pub use highlight::{
     HighlightSpan, Highlighter, TextDocument, highlights, set_highlighter, set_highlights,
 };
-pub use ime::{ImeState, ImeText, PlatformTextInput};
+pub use ime::{ImeGeometry, ImeState, ImeText, PlatformTextInput};
 pub use input::TextInput;
 pub use ops::accept_text;
 pub use ops::last_edit_typed;
