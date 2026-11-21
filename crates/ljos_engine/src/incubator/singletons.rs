@@ -964,7 +964,8 @@ impl Engine {
             type_name(ty),
             seconds(wait)
         ));
-        let full = matches!(err, EngineError::JsOutOfMemory(_));
+        // Singletons that ran out together share the first one's collection.
+        let full = matches!(err, EngineError::JsOutOfMemory(_)).then(|| self.full_heap_mark());
         // Never at once: the lookup that failed is in a script, and every
         // lookup in it would make the object again.
         self.call_at(now + wait, move |e| {
@@ -974,8 +975,8 @@ impl Engine {
                 _ => return,
             }
             // Timers run between scripts, where the heap can be.
-            if full {
-                e.collect_garbage_for_full_heap();
+            if let Some(mark) = full {
+                e.collect_garbage_unless_since(mark);
             }
             let g = &e.inner.graph;
             let next = match g.get_untracked(woken) {

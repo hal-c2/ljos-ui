@@ -28,6 +28,12 @@ Item {
     Loader { objectName: "l0"; sourceComponent: row }
     Loader { objectName: "l1"; sourceComponent: row }
     function warm() { return 1 }
+    // Cycles, which only the collector frees.
+    function litter() {
+        for (var i = 0; i < 4000; i++) {
+            var a = {}; var b = { a: a }; a.b = b; a.pad = new Array(50).fill(i)
+        }
+    }
 }
 "#;
 
@@ -95,6 +101,38 @@ fn a_collection_since_the_heap_ran_out_covers_it() {
     let before = collections(&e);
     e.deliver_faults();
     assert_eq!(collections(&e), before);
+}
+
+#[test]
+fn a_collection_while_resting_covers_what_ran_out_before_it() {
+    let e = engine();
+    compile(&e, &[("Main", MAIN), ("Light", LIGHT)]);
+    let root = e.create_from_url("Main", None, Vec::new()).unwrap();
+    e.invoke_by_name(root, "litter", &[]).unwrap();
+    let b0 = shown(&e, root, &["b0"])[0];
+    e.report_fault(Some(b0), Fault::JsOutOfMemory);
+    // The host rested before the fault was delivered, and collected.
+    assert!(e.collect_if_idle());
+    let before = collections(&e);
+    e.deliver_faults();
+    assert_eq!(collections(&e), before);
+    assert!(!e.collect_garbage_for_full_heap());
+}
+
+#[test]
+fn an_eval_that_ran_out_of_heap_is_collected_for() {
+    let e = engine();
+    compile(&e, &[("Main", MAIN), ("Light", LIGHT)]);
+    let root = e.create_from_url("Main", None, Vec::new()).unwrap();
+    e.invoke_by_name(root, "warm", &[]).unwrap();
+    assert!(e.collect_garbage());
+    let held = e.script_memory().unwrap().bytes;
+    assert!(e.set_script_heap_limit(Some(held + 256)));
+    // What a Task's driver is made by, among others: nothing reports it.
+    let hog = "let h = []; for (;;) h.push(new Array(100).fill(1))";
+    assert!(e.eval_js(hog).is_err());
+    assert!(e.set_script_heap_limit(None));
+    assert!(e.collect_garbage_for_full_heap());
 }
 
 /// Rows whose script fills the heap whenever `hog` is set: every reload

@@ -199,10 +199,18 @@ impl Engine {
         if !js.host.collect_now() {
             return false;
         }
+        self.collected();
+        true
+    }
+
+    /// A collection ran: it covers every time the heap ran out before it,
+    /// for each gate on [`HeapRanOut`]. Every path that collects comes
+    /// through [`Engine::collect_garbage`], so it is called there only.
+    fn collected(&self) {
         let full = self.extension::<HeapRanOut>();
         full.collected_through.set(full.times.get());
         full.collected_after.set(self.faults_reported());
-        true
+        full.collections.set(full.collections.get() + 1);
     }
 
     /// The script heap had no room for what a run allocated: the next
@@ -234,15 +242,32 @@ impl Engine {
             && report.seq > full.collected_after.get()
             && self.collect_garbage()
     }
+
+    /// Where collections are now, for what ran out of script heap and
+    /// tries again later: [`Engine::collect_garbage_unless_since`] with it
+    /// collects unless one ran in between. Taken when the retry is set, so
+    /// retries set together share the first one's collection, and a retry
+    /// that ran out again after it sets a new mark, which collects again.
+    pub(crate) fn full_heap_mark(&self) -> u64 {
+        self.extension::<HeapRanOut>().collections.get()
+    }
+
+    /// [`Engine::collect_garbage`] unless a collection ran since `mark`,
+    /// from [`Engine::full_heap_mark`]. True when it collected.
+    pub(crate) fn collect_garbage_unless_since(&self, mark: u64) -> bool {
+        self.extension::<HeapRanOut>().collections.get() == mark && self.collect_garbage()
+    }
 }
 
 /// How many times the script heap ran out, and how many of those the last
-/// collection came after; and how many faults had been reported by then.
+/// collection came after; how many faults had been reported by then; and
+/// how many collections there have been.
 #[derive(Default)]
 struct HeapRanOut {
     times: Cell<u64>,
     collected_through: Cell<u64>,
     collected_after: Cell<u64>,
+    collections: Cell<u64>,
 }
 
 /// What the script engine holds, as [`Engine::script_memory`] tells it.
@@ -257,15 +282,12 @@ pub struct ScriptMemory {
 }
 
 impl Engine {
-    /// Runs the JS collector if the scripts allocated enough since it last
-    /// ran, for a host about to rest. False inside a script, before any
-    /// ran, and when the heap did not grow.
+    /// [`Engine::collect_garbage`] if the scripts allocated enough since
+    /// the collector last ran, for a host about to rest. False inside a
+    /// script, before any ran, and when the heap did not grow. It covers
+    /// what ran out of heap before it, as any collection does.
     pub fn collect_if_idle(&self) -> bool {
-        if !self.js_started() {
-            return false;
-        }
-        let Ok(js) = self.js() else { return false };
-        js.host.collect_if_idle()
+        self.wants_idle_collect() && self.collect_garbage()
     }
 
     /// Whether [`Engine::collect_if_idle`] would collect now; a host that

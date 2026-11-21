@@ -713,7 +713,9 @@ impl Shared {
         err: &EngineError,
     ) {
         let now = engine.now();
-        let full = matches!(err, EngineError::JsOutOfMemory(_));
+        // Retries set before a collection share it; one that ran out after
+        // it sets a new mark and collects again.
+        let full = matches!(err, EngineError::JsOutOfMemory(_)).then(|| engine.full_heap_mark());
         let wait = {
             let mut st = s.state.borrow_mut();
             let Some(i) = st.position(id) else {
@@ -748,8 +750,8 @@ impl Shared {
             };
             if due {
                 // Timers run between scripts, where the heap can be.
-                if full {
-                    e.collect_garbage_for_full_heap();
+                if let Some(mark) = full {
+                    e.collect_garbage_unless_since(mark);
                 }
                 Shared::create_row(&s, e, id);
             }
@@ -2128,7 +2130,9 @@ impl ViewShared {
         err: &EngineError,
     ) {
         let now = engine.now();
-        let full = matches!(err, EngineError::JsOutOfMemory(_));
+        // Retries set before a collection share it; one that ran out after
+        // it sets a new mark and collects again.
+        let full = matches!(err, EngineError::JsOutOfMemory(_)).then(|| engine.full_heap_mark());
         let wait = {
             let mut st = s.state.borrow_mut();
             let Some(h) = st.live.iter_mut().find(|h| h.id == id) else {
@@ -2160,8 +2164,8 @@ impl ViewShared {
                 h.index
             };
             // Timers run between scripts, where the heap can be.
-            if full {
-                e.collect_garbage_for_full_heap();
+            if let Some(mark) = full {
+                e.collect_garbage_unless_since(mark);
             }
             if let Some(index) = index {
                 s.host.again(e, index);

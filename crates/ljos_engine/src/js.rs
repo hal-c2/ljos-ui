@@ -1560,7 +1560,13 @@ impl Engine {
                 let v = s.from_value(&v)?;
                 Ok(self.js_to_value(s, v, &TypeTag::Var))
             })
-            .map_err(EngineError::js)
+            .map_err(|fault| {
+                // Not reported either: what collects for it must know.
+                if matches!(fault, JsFault::JsOutOfMemory { .. }) {
+                    self.note_heap_ran_out();
+                }
+                EngineError::js(fault)
+            })
     }
 
     /// An engine value as JS sees it. URLs are strings; a colour or another
