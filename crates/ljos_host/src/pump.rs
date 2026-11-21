@@ -81,7 +81,7 @@ pub(crate) fn for_activity<R, W: Wakes>(
     requests: &Mutex<Requests<R, W>>,
 ) -> Option<Vec<R>> {
     let asked = lock(requests).take();
-    Some(asked)
+    (!destroyed).then_some(asked)
 }
 
 pub(crate) fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
