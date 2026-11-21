@@ -13,7 +13,8 @@ Feature: A shipped application its users change while it runs
   new one adds a type. Each save is applied as hot reload applies one, with
   the state of the application kept, and a file that does not compile
   leaves the application as it was and is told to the application, never
-  shown by Ljós. Until the user has a file nothing is parsed or compiled.
+  shown by Ljós. Asked, the application reads the files again, as a save
+  the watch saw. Until the user has a file nothing is parsed or compiled.
   Files load from that directory only: an address on the network, or one
   that leads out of the application and the directory, is refused and told.
 
@@ -239,6 +240,112 @@ Feature: A shipped application its users change while it runs
       And the application was told of no fault
       And 1 save of the user's files has been applied
       And there is no reload error
+
+  Rule: The user's files are read again when the application asks, as a save the watch saw
+
+    Where a save goes unseen (the application keeps no watch, or the watch
+    was lost), the application asks for the files to be read again: from
+    QML (`ShellLoader.reload()`) or from Rust (`UserSession::read_again`).
+    What was saved is applied as a save the watch saw is, with the state of
+    the application kept; one that does not compile is told as one is.
+    Files that are as they were keep what runs, and that is said.
+
+    Scenario: A save no watch saw is applied once a ShellLoader asks for the files to be read again
+      Given the user's file "Card.qml":
+        """qml
+        import QtQuick
+        Rectangle { property string by: "the user"; width: 30; height: 10 }
+        """
+      And the application reads its user's files only when it starts and when asked
+      When the application runs "Main.qml" built ahead, with the user's directory over it
+      And the user types "kept"
+      And the user saves the file "Shell.qml" as:
+        """qml
+        import QtQuick
+        Rectangle {
+          objectName: "user-shell"; width: 50; height: 20
+          Component.onCompleted: console.log("the user's shell is made")
+        }
+        """
+      Then the user's directory is not watched
+      And the object "loader/default-shell" exists
+      When the method "reload" of "loader" is called
+      Then the object "loader/user-shell" exists
+      And the object "default-shell" does not exist
+      And the property "status" of "loader" is 1
+      And the property "error" of "loader" is ""
+      And the property "text" of "field" is "kept"
+      And the log has 1 info matching "the user's shell is made"
+      And 1 save of the user's files has been applied
+      And the user's directory is not watched
+
+    Scenario: A user's first file no watch saw is brought in once the application asks for the files to be read again
+      Given the application reads its user's files only when it starts and when asked
+      When the application runs "Main.qml" built ahead, with the user's directory over it
+      And the user saves the file "Card.qml" as:
+        """qml
+        import QtQuick
+        Rectangle { property string by: "the user"; width: 60; height: 10 }
+        """
+      Then the user's files are not compiled
+      And the property "width" of "card" is 10
+      When the application asks for its user's files to be read again
+      Then the user's files are compiled
+      And the property "by" of "card" is "the user"
+      And the property "width" of "card" is 60
+      And there is no reload error
+
+    Scenario: A save that does not compile, read again when asked, keeps what runs and is told
+      Given the user's file "Card.qml":
+        """qml
+        import QtQuick
+        Rectangle { property string by: "the user"; width: 30; height: 10 }
+        """
+      And the application reads its user's files only when it starts and when asked
+      When the application runs "Main.qml" built ahead, with the user's directory over it
+      And the user types "kept"
+      And the user saves the file "Card.qml" as:
+        """qml
+        import QtQuick
+        Rectangle {
+          property string by: "the user"
+          NoSuchThing { }
+        }
+        """
+      And the method "reload" of "loader" is called
+      Then the reload error is in "Card.qml" at line 4
+      And the application was told of a fault matching "Card\.qml:4"
+      And the property "width" of "card" is 30
+      And the property "text" of "field" is "kept"
+      And the object "loader/default-shell" exists
+
+    Scenario: Files read again that are as they were keep the user's shell and what the user typed, and say so
+      Given the user's file "Shell.qml":
+        """qml
+        import QtQuick
+        Rectangle {
+          objectName: "user-shell"; width: 50; height: 20
+          Component.onCompleted: console.log("the user's shell is made")
+        }
+        """
+      When the application runs "Main.qml" built ahead, with the user's directory over it
+      And the user types "kept"
+      And the method "reload" of "loader" is called
+      Then the user's files read again were as they were
+      And the object "loader/user-shell" exists
+      And the property "status" of "loader" is 1
+      And the property "text" of "field" is "kept"
+      And the log has 1 info matching "the user's shell is made"
+      And 0 saves of the user's files have been applied
+      And there is no reload error
+
+    Scenario: Files read again before the user has any are as they were, and the application's shell stays
+      When the application runs "Main.qml" built ahead, with the user's directory over it
+      And the application asks for its user's files to be read again
+      Then the user's files read again were as they were
+      And the user's files are not compiled
+      And the object "loader/default-shell" exists
+      And the property "status" of "loader" is 2
 
   Rule: A user's shell that is a Window is the application's window
 
