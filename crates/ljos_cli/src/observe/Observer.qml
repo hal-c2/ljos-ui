@@ -3644,6 +3644,8 @@ ApplicationWindow {
                             clip: true
                             spacing: 2
                             model: window.page === 6 ? faultRows : null
+                            Accessible.role: Accessible.List
+                            Accessible.name: "Faults"
                             ScrollBar.vertical: ScrollBar {}
                             delegate: Rectangle {
                                 id: frow
@@ -5453,6 +5455,8 @@ ApplicationWindow {
                                 anchors.margins: 6
                                 clip: true
                                 model: window.page === 10 ? wakeRows : null
+                                Accessible.role: Accessible.List
+                                Accessible.name: "Wakes"
                                 onModelChanged: if (model !== null) Qt.callLater(wakeView.positionViewAtEnd)
                                 ScrollBar.vertical: ScrollBar {}
                                 delegate: Item {
@@ -5957,6 +5961,8 @@ ApplicationWindow {
                                 anchors.margins: 6
                                 clip: true
                                 model: window.page === 11 ? components.list : []
+                                Accessible.role: Accessible.List
+                                Accessible.name: "Components"
                                 ScrollBar.vertical: ScrollBar {}
                                 delegate: Item {
                                     id: compRow

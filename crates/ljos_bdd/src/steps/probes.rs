@@ -175,6 +175,15 @@ fn observer_log_has_no_warning(w: &mut LjosWorld, pattern: String) -> StepResult
         let told = b
             .probes()?
             .observer_call("app_logs", serde_json::json!({ "level": "warning" }))?;
+        // An answer gives the newest lines that fit it: a warning before
+        // them is not in it, and no answer reaches back to it.
+        if told["truncated"] == true {
+            return Err(BackendError::Failed(format!(
+                "the observer warned {} times, more than the {} one answer gives: \
+                 an older warning matching {pattern:?} could not be read",
+                told["total"], told["count"]
+            )));
+        }
         let hits: Vec<&str> = told["entries"]
             .as_array()
             .into_iter()
@@ -328,7 +337,9 @@ fn observer_resized(w: &mut LjosWorld, width: u32, height: u32) -> StepResult {
 
 // An item that runs past its window's edge is cut off there: its words are
 // clipped, not elided. Only across, as a list that scrolls holds rows
-// below its window's bottom on purpose.
+// below its window's bottom on purpose. A locator that finds nothing
+// fails: every one of none lies anywhere, and a check that looks at
+// nothing would pass whatever the window shows.
 #[then(
     regex = r#"^every "((?:[^"\\]|\\.)+)" in the observer lies within the width of its window$"#
 )]
@@ -336,19 +347,90 @@ fn observer_within_width(w: &mut LjosWorld, locator: String) -> StepResult {
     let locator = unquoted(&locator);
     w.each(|b| {
         observer_holds(b.probes()?, |probes| {
-            let status = probes.observer_call("app_status", serde_json::json!({}))?;
-            // The status lists the windows; the one inspected, the
-            // observer's own, is the first.
-            let width = status["windows"][0]["width"].as_f64().ok_or_else(|| {
-                BackendError::Failed(format!("the observer's status gives no width: {status}"))
-            })?;
-            let past: Vec<String> = boxes(probes, &locator)?
+            let width = observer_width(probes)?;
+            let all = boxes(probes, &locator)?;
+            if all.is_empty() {
+                return Ok(Some(format!("it shows nothing matching {locator}")));
+            }
+            let past: Vec<String> = all
                 .into_iter()
                 .filter(|m| m.at[0] < -EDGE || m.at[0] + m.at[2] > width + EDGE)
                 .map(|m| m.to_string())
                 .collect();
             Ok((!past.is_empty())
                 .then(|| format!("in a window {width} wide, these run past its edge: {past:?}")))
+        })
+    })
+}
+
+/// The width of the observer's window. The status lists the windows; the
+/// one inspected, the observer's own, is the first.
+fn observer_width(probes: &mut dyn crate::backend::Probes) -> Result<f64, BackendError> {
+    let status = probes.observer_call("app_status", serde_json::json!({}))?;
+    status["windows"][0]["width"]
+        .as_f64()
+        .ok_or_else(|| BackendError::Failed(format!("the observer's status gives no width: {status}")))
+}
+
+// A text given no room is elided to nothing, and one past its window's
+// edge is cut off there: either is found by its words but shows none of
+// them. The text shown must have room for all its words, inside the
+// window, and not be elided.
+#[then(regex = r#"^the observer shows "([^"]+)" whole$"#)]
+fn observer_shows_whole(w: &mut LjosWorld, text: String) -> StepResult {
+    let locator = format!("text={text}");
+    w.each(|b| {
+        observer_holds(b.probes()?, |probes| {
+            let width = observer_width(probes)?;
+            let all = boxes(probes, &locator)?;
+            if all.is_empty() {
+                return Ok(Some(format!("it shows nothing matching {locator}")));
+            }
+            let mut cut = Vec::new();
+            for m in &all {
+                let [x, _, w, h] = m.at;
+                if w <= 0.0 || h <= 0.0 || x < -EDGE || x + w > width + EDGE {
+                    cut.push(format!("{m}, in a window {width} wide"));
+                } else if elided(probes, &m.reference)? {
+                    cut.push(format!("{m}, elided"));
+                }
+            }
+            Ok((!cut.is_empty()).then(|| format!("these do not show {text:?} whole: {cut:?}")))
+        })
+    })
+}
+
+/// Whether the text `reference` names is elided. An item that is not a
+/// text has no `truncated` and shows what it shows.
+fn elided(probes: &mut dyn crate::backend::Probes, reference: &str) -> Result<bool, BackendError> {
+    let told = probes.observer_call(
+        "app_inspect",
+        serde_json::json!({ "target": reference, "all": true }),
+    )?;
+    Ok(told["properties"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .any(|p| p["name"] == "truncated" && p["value"] == "true"))
+}
+
+// What a list or a panel is given says whether it can be used: a list
+// squeezed to a sliver holds no row anyone can read.
+#[then(regex = r#"^the observer's "((?:[^"\\]|\\.)+)" is at least (\d+) pixels (wide|high)$"#)]
+fn observer_at_least(w: &mut LjosWorld, locator: String, least: f64, side: String) -> StepResult {
+    let locator = unquoted(&locator);
+    w.each(|b| {
+        observer_holds(b.probes()?, |probes| {
+            let all = boxes(probes, &locator)?;
+            if all.is_empty() {
+                return Ok(Some(format!("it shows nothing matching {locator}")));
+            }
+            let small: Vec<String> = all
+                .iter()
+                .filter(|m| if side == "wide" { m.at[2] } else { m.at[3] } < least - EDGE)
+                .map(|m| m.to_string())
+                .collect();
+            Ok((!small.is_empty()).then(|| format!("these are less than {least} pixels {side}: {small:?}")))
         })
     })
 }
@@ -367,6 +449,21 @@ fn observer_audit_finds_none(w: &mut LjosWorld, codes: String) -> StepResult {
                 "app_audit",
                 serde_json::json!({ "matrix": "current", "rules": codes }),
             )?;
+            // A rule that must act on the window (press, focus) is not
+            // checked by an audit that only looks: it found nothing because
+            // it did not look.
+            let unchecked: Vec<&str> = report["notChecked"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|c| c.as_str())
+                .filter(|c| codes.contains(c))
+                .collect();
+            if !unchecked.is_empty() {
+                return Err(BackendError::Failed(format!(
+                    "its own audit did not check {unchecked:?}, which only an audit that acts does"
+                )));
+            }
             let found: Vec<String> = report["findings"]
                 .as_array()
                 .map(|all| {
@@ -436,6 +533,8 @@ const EDGE: f64 = 0.5;
 
 /// An item the observer's window shows, where it shows it.
 struct Shown {
+    /// The reference that names it to the observer's inspector.
+    reference: String,
     role: String,
     name: String,
     /// x, y, width and height in the window's logical pixels, before any
@@ -486,6 +585,15 @@ fn boxes(
         )));
     }
     let matches = found["matches"].as_array().cloned().unwrap_or_default();
+    // An answer that does not fit its budget leaves out its last matches,
+    // under the limit too: what they hold would go unchecked.
+    if found["truncated"] == true || (matches.len() as u64) < total {
+        return Err(BackendError::Failed(format!(
+            "{locator} finds {total} items in the observer, of which one look answers {}: \
+             name fewer",
+            matches.len()
+        )));
+    }
     matches
         .iter()
         .map(|m| {
@@ -495,6 +603,7 @@ fn boxes(
                 .map(|b| std::array::from_fn(|i| b[i].as_f64().unwrap_or(f64::NAN)))
                 .ok_or_else(|| BackendError::Failed(format!("a match has no bounds: {m}")))?;
             Ok(Shown {
+                reference: m["ref"].as_str().unwrap_or("").to_owned(),
                 role: m["role"].as_str().unwrap_or("").to_owned(),
                 name: m["name"].as_str().unwrap_or("").to_owned(),
                 at,
