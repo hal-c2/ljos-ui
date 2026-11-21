@@ -15,9 +15,9 @@
 
 use ljos_engine::Engine;
 use ljos_host::relay::Request;
-use ljos_host::{EditorKind, HeldText, TextKind};
+use ljos_host::{Composing, CursorAnchor, EditorKind, HeldText, TextKind};
 use ljos_quick::text_input::input_method_hint as hint;
-use ljos_quick::{ImeState, ImeText, PlatformTextInput, QuickScene};
+use ljos_quick::{ImeGeometry, ImeState, ImeText, PlatformTextInput, QuickScene};
 use ljos_render::kurbo;
 
 // `Qt.InputMethodHint` values ljos_quick does not name.
@@ -72,6 +72,47 @@ fn differs(told: Option<&HeldText>, now: &HeldText) -> bool {
         || (now.compose.is_none() && (told.anchor, told.cursor) != (now.anchor, now.cursor))
 }
 
+/// The part of `text` from UTF-16 unit `start` to `end`; a unit inside a
+/// character takes the whole character.
+fn units(text: &str, start: usize, end: usize) -> &str {
+    // The byte of the character `unit` is in (`inside`), or after it.
+    let byte = |unit: usize, inside: bool| {
+        let mut at = 0;
+        for (byte, c) in text.char_indices() {
+            let next = at + c.len_utf16();
+            if at >= unit || (inside && next > unit) {
+                return byte;
+            }
+            at = next;
+        }
+        text.len()
+    };
+    let start = byte(start, true);
+    &text[start..byte(end, false).max(start)]
+}
+
+/// Where `geometry`, in the scene's points, puts the editor holding
+/// `text`, in the surface's pixels at `scale` pixels a point.
+fn anchor(geometry: &ImeGeometry, text: &HeldText, scale: f64) -> CursorAnchor {
+    #[allow(clippy::cast_possible_truncation)]
+    let px = |r: &kurbo::Rect| [r.x0, r.y0, r.x1, r.y1].map(|v| (v * scale) as f32);
+    let composing = text
+        .compose
+        .as_ref()
+        .filter(|c| c.start < c.end)
+        .map(|c| Composing {
+            start: c.start,
+            text: units(&text.text, c.start, c.end).to_owned(),
+            units: geometry.composing.iter().map(px).collect(),
+        });
+    CursorAnchor {
+        editor: px(&geometry.editor),
+        cursor: px(&geometry.cursor),
+        selection: [text.anchor, text.cursor],
+        composing,
+    }
+}
+
 /// The phone's side of the input method.
 #[derive(Debug, Default)]
 pub(crate) struct SoftKeyboard {
@@ -86,12 +127,19 @@ pub(crate) struct SoftKeyboard {
     /// The application hid the keyboard since the last sync: an editor
     /// focused meanwhile does not show it.
     hidden: bool,
+    /// Where the editor with focus and its text are, in the scene.
+    geometry: Option<ImeGeometry>,
+    /// The surface's pixels a point; 0 before the first size.
+    scale: f64,
+    /// Where the method was last told the text is.
+    anchored: Option<CursorAnchor>,
 }
 
 impl PlatformTextInput for SoftKeyboard {
     fn enable(&mut self, hints: i32) {
         self.hints = Some(hints);
         self.told = None;
+        self.anchored = None;
         self.shown = false;
         self.asked.push(Request::Editor(editor_kind(hints)));
     }
@@ -99,12 +147,22 @@ impl PlatformTextInput for SoftKeyboard {
     fn disable(&mut self) {
         self.hints = None;
         self.told = None;
+        self.geometry = None;
+        self.anchored = None;
         self.asked.push(Request::Keyboard(false));
     }
 
     fn set_cursor_area(&mut self, _rect: kurbo::Rect) {
         // The keyboard is told nothing of where the cursor is: the view
         // gives up the keyboard's part of the screen instead.
+    }
+
+    fn wants_geometry(&self) -> bool {
+        self.hints.is_some()
+    }
+
+    fn set_geometry(&mut self, geometry: &ImeGeometry) {
+        self.geometry = Some(geometry.clone());
     }
 
     fn interrupt(&mut self) {
@@ -140,6 +198,11 @@ impl SoftKeyboard {
         self.told = Some(now);
     }
 
+    /// The surface now has `scale` pixels a point.
+    pub(crate) fn set_scale(&mut self, scale: f64) {
+        self.scale = scale;
+    }
+
     /// The window has a new surface, and the platform's method a new
     /// editor: the editor with focus is set up, told what it holds and
     /// shown again.
@@ -147,6 +210,7 @@ impl SoftKeyboard {
         if let Some(hints) = self.hints {
             self.asked.push(Request::Editor(editor_kind(hints)));
             self.told = None;
+            self.anchored = None;
             self.shown = false;
         }
     }
@@ -164,9 +228,22 @@ impl SoftKeyboard {
         {
             let shown = self.shown;
             self.shown = true;
+            // Told where the text is with what it is to hold, for an
+            // input method that asked: the platform passes it on only then.
+            let anchored = self
+                .geometry
+                .as_ref()
+                .filter(|_| self.scale > 0.0)
+                .map(|g| anchor(g, &now, self.scale));
             if differs(self.told.as_ref(), &now) {
                 let over = self.told.replace(now.clone());
                 self.asked.push(Request::Held { now, over });
+            }
+            if let Some(anchored) = anchored
+                && self.anchored.as_ref() != Some(&anchored)
+            {
+                self.anchored = Some(anchored.clone());
+                self.asked.push(Request::Anchor(anchored));
             }
             // What it holds is set before the keyboard shows.
             if !shown && !hidden {
@@ -303,6 +380,77 @@ mod tests {
             _ => None,
         });
         assert_eq!(over.as_deref(), Some("abc"));
+    }
+
+    fn anchors(asked: &[Request]) -> Vec<CursorAnchor> {
+        asked
+            .iter()
+            .filter_map(|r| match r {
+                Request::Anchor(a) => Some(a.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_unit_range_takes_whole_characters() {
+        assert_eq!(units("a😀b", 1, 3), "😀");
+        assert_eq!(units("a😀b", 2, 4), "😀b");
+        assert_eq!(units("ab", 1, 9), "b");
+        assert_eq!(units("ab", 2, 1), "");
+    }
+
+    #[test]
+    fn the_method_is_told_where_the_editor_is_in_pixels_when_it_moves() {
+        let (e, mut s, input) = editor("ab", &[("x", Value::from(10))]);
+        let mut keyboard = SoftKeyboard::default();
+        keyboard.set_scale(2.0);
+        let told = anchors(&keyboard.sync(&s, &e));
+        let [at] = &told[..] else {
+            panic!("told {told:?}");
+        };
+        assert_eq!(at.editor[0], 20.0);
+        assert_eq!(at.selection, [2, 2]);
+        assert!(at.cursor[0] > at.editor[0] && at.cursor[1] < at.cursor[3]);
+        assert_eq!(at.composing, None);
+        // Nothing moved: nothing more is told.
+        assert_eq!(anchors(&keyboard.sync(&s, &e)), []);
+        e.write_by_name(input, "x", Value::from(30)).unwrap();
+        s.frame(&e, Time::ZERO);
+        let moved = anchors(&keyboard.sync(&s, &e));
+        assert_eq!(
+            moved.iter().map(|a| a.editor[0]).collect::<Vec<_>>(),
+            [60.0]
+        );
+        assert_eq!(moved[0].cursor[0] - at.cursor[0], 40.0);
+    }
+
+    #[test]
+    fn the_method_is_told_where_each_composed_unit_stands() {
+        let (e, mut s, _) = editor("ab", &[]);
+        let mut keyboard = SoftKeyboard::default();
+        keyboard.set_scale(1.0);
+        keyboard.sync(&s, &e);
+        keyboard.held(&s, &e, text("ab😀n", 5, Some(2..5)));
+        s.frame(&e, Time::ZERO);
+        let told = anchors(&keyboard.sync(&s, &e));
+        let composing = told
+            .last()
+            .and_then(|a| a.composing.clone())
+            .expect("what is composed is told");
+        assert_eq!((composing.start, composing.text.as_str()), (2, "😀n"));
+        let [smile, also, n] = composing.units[..] else {
+            panic!("a box a unit: {composing:?}");
+        };
+        // Both units of a character outside the BMP share its box.
+        assert_eq!(smile, also);
+        assert_eq!(smile[2], n[0]);
+        assert!(n[2] > n[0]);
+        // Once it ends, nothing is composed.
+        keyboard.held(&s, &e, text("ab😀n", 5, None));
+        s.frame(&e, Time::ZERO);
+        let told = anchors(&keyboard.sync(&s, &e));
+        assert_eq!(told.last().map(|a| a.composing.clone()), Some(None));
     }
 
     /// What GameTextInput held, in order, while a Japanese input method

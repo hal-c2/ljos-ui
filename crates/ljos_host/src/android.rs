@@ -416,6 +416,9 @@ impl<U: Send + 'static> Pump<'_, U> {
                 // GameTextInput does not tell the keyboard itself.
                 call_activity(self.app, told);
             }
+            Request::Anchor(anchor) => {
+                call_activity(self.app, ActivityCall::CursorAnchor(anchor));
+            }
         }
     }
 }
@@ -613,6 +616,30 @@ enum ActivityCall {
         compose: [i32; 2],
         replaced: bool,
     },
+    /// `LjosActivity.cursorAnchorChanged`: where the editor, its cursor
+    /// and what it composes are, for an input method that asked.
+    CursorAnchor(crate::CursorAnchor),
+}
+
+/// What `LjosActivity.cursorAnchorChanged` is passed besides the boxes:
+/// the selection, where the composing starts (-1 for nothing) and each
+/// composed unit's box, four floats a unit.
+fn anchor_args(anchor: &crate::CursorAnchor) -> ([i32; 3], &str, Vec<f32>) {
+    let unit = |n: usize| i32::try_from(n).unwrap_or(i32::MAX);
+    let (start, text, units) = anchor.composing.as_ref().map_or((-1, "", &[][..]), |c| {
+        (unit(c.start), c.text.as_str(), &c.units[..])
+    });
+    let ints = [unit(anchor.selection[0]), unit(anchor.selection[1]), start];
+    (ints, text, units.iter().flatten().copied().collect())
+}
+
+fn floats<'local>(
+    env: &mut jni::Env<'local>,
+    v: &[f32],
+) -> jni::errors::Result<jni::objects::JFloatArray<'local>> {
+    let array = env.new_float_array(v.len())?;
+    array.set_region(env, 0, v)?;
+    Ok(array)
 }
 
 /// Calls the activity on this thread, which android-activity attached to
@@ -666,6 +693,27 @@ fn call_activity(app: &AndroidApp, call: ActivityCall) -> bool {
                     ],
                 )?;
             }
+            ActivityCall::CursorAnchor(anchor) => {
+                let (ints, text, units) = anchor_args(&anchor);
+                let editor = floats(env, &anchor.editor)?;
+                let cursor = floats(env, &anchor.cursor)?;
+                let units = floats(env, &units)?;
+                let text = env.new_string(text)?;
+                env.call_method(
+                    &activity,
+                    jni_str!("cursorAnchorChanged"),
+                    jni_sig!("([F[FIIILjava/lang/String;[F)V"),
+                    &[
+                        JValue::from(&editor),
+                        JValue::from(&cursor),
+                        JValue::Int(ints[0]),
+                        JValue::Int(ints[1]),
+                        JValue::Int(ints[2]),
+                        JValue::from(&text),
+                        JValue::from(&units),
+                    ],
+                )?;
+            }
         }
         Ok(())
     });
@@ -678,6 +726,32 @@ fn call_activity(app: &AndroidApp, call: ActivityCall) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_anchor_is_passed_as_the_selection_the_composing_and_its_boxes() {
+        let anchor = crate::CursorAnchor {
+            selection: [1, 4],
+            composing: Some(crate::Composing {
+                start: 2,
+                text: "ni".into(),
+                units: vec![[1.0, 2.0, 3.0, 4.0], [3.0, 2.0, 5.0, 4.0]],
+            }),
+            ..Default::default()
+        };
+        let (ints, text, units) = anchor_args(&anchor);
+        assert_eq!(ints, [1, 4, 2]);
+        assert_eq!(text, "ni");
+        assert_eq!(units, [1.0, 2.0, 3.0, 4.0, 3.0, 2.0, 5.0, 4.0]);
+    }
+
+    #[test]
+    fn an_anchor_composing_nothing_starts_at_minus_one() {
+        let none = crate::CursorAnchor::default();
+        let (ints, text, units) = anchor_args(&none);
+        assert_eq!(ints, [0, 0, -1]);
+        assert_eq!(text, "");
+        assert!(units.is_empty());
+    }
 
     #[test]
     fn a_quit_with_no_activity_attached_is_handled_at_once() {
