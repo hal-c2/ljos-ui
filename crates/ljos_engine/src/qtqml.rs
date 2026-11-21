@@ -653,11 +653,12 @@ pub(crate) struct TimerState {
     calls_due: Option<Time>,
     /// While the queue drains, when it began to.
     draining: Option<Time>,
-    /// When the engine was last at work, oldest first: the turns, and the
-    /// [`Engine::advance_timers`] calls, that took time on the clock, with
-    /// those that overlap or touch merged. The runs of a repeating timer
-    /// due inside one came while the engine was busy, so they are dropped
-    /// rather than caught up on; those due between them are not.
+    /// When the engine was at work since timers last fired, oldest first:
+    /// the turns, and the [`Engine::advance_timers`] calls, that took time
+    /// on the clock, with those that overlap or touch merged. The runs of
+    /// a repeating timer due inside one came while the engine was busy, so
+    /// they are dropped rather than caught up on; those due between them
+    /// are not.
     busy: Vec<(Time, Time)>,
     /// When the turn in progress began.
     turn_from: Option<Time>,
@@ -707,8 +708,11 @@ pub struct RunningTimer {
 /// long stall does not replay thousands of ticks.
 const MAX_CATCH_UP: u32 = 100;
 
-/// How many of the engine's last busy times it keeps: enough to cover the
-/// runs a late timer missed, and a few words however long it runs.
+/// How many busy times the engine keeps between two
+/// [`Engine::advance_timers`] calls, so a host that never calls it does not
+/// grow them. Past it the two oldest merge, the rest between them counted
+/// as busy: a late run there is dropped, as qml6 drops every late run,
+/// never caught up on.
 const BUSY_KEPT: usize = 32;
 
 pub(crate) fn register(engine: &Engine) {
@@ -1044,6 +1048,11 @@ impl Engine {
                 }
             }
         }
+        // Every run due by `now` has fired, so what is armed is due after
+        // it: the busy times that ended by then cannot hold one.
+        if let Ok(mut st) = self.inner.timers.try_borrow_mut() {
+            st.busy.retain(|&(_, end)| end > now);
+        }
         self.run_pending_calls();
         self.process_deferred_deletes();
         self.note_busy(began);
@@ -1068,7 +1077,8 @@ impl Engine {
             }
             _ => {
                 if st.busy.len() == BUSY_KEPT {
-                    st.busy.remove(0);
+                    let (_, end) = st.busy.remove(1);
+                    st.busy[0].1 = end;
                 }
                 st.busy.push((from, end));
             }
