@@ -9947,6 +9947,56 @@ int JS_GetOwnProperty(JSContext *ctx, JSPropertyDescriptor *desc,
     return JS_GetOwnPropertyInternal(ctx, desc, JS_VALUE_GET_OBJ(obj), prop);
 }
 
+/* Ljós: JS_GetOwnProperty for a walk that only measures. A property
+   QuickJS makes when it is first read (JS_PROP_AUTOINIT, a built-in's
+   methods) is left unmade and 2 returned with `desc` untouched: making it
+   would grow the heap being measured, and a failure part way leaves the
+   slot undefined. Declared by ljos_js itself (crates/ljos_js/src/held.rs),
+   so the bundled bindings stay what bindgen makes of quickjs.h. */
+int JS_GetOwnPropertyIfMade(JSContext *ctx, JSPropertyDescriptor *desc,
+                            JSValueConst obj, JSAtom prop)
+{
+    JSProperty *pr;
+    JSShapeProperty *prs;
+
+    if (JS_VALUE_GET_TAG(obj) == JS_TAG_OBJECT) {
+        prs = find_own_property(&pr, JS_VALUE_GET_OBJ(obj), prop);
+        if (prs && (prs->flags & JS_PROP_TMASK) == JS_PROP_AUTOINIT)
+            return 2;
+    }
+    return JS_GetOwnProperty(ctx, desc, obj, prop);
+}
+
+/* Ljós: what a string's storage refers to, for a walk that measures it
+   without flattening it. A rope gives its two halves (returns 2), a slice
+   the string it is cut from (returns 1, in `a`), each duplicated; a string
+   holding its own characters returns 0. Declared by ljos_js itself, as
+   above. */
+int JS_GetStringParts(JSValueConst v, JSValue *a, JSValue *b)
+{
+    JSStringRope *r;
+    JSString *p;
+    JSStringSlice *slice;
+
+    switch (JS_VALUE_GET_TAG(v)) {
+    case JS_TAG_STRING_ROPE:
+        r = JS_VALUE_GET_STRING_ROPE(v);
+        *a = js_dup(r->left);
+        *b = js_dup(r->right);
+        return 2;
+    case JS_TAG_STRING:
+        p = JS_VALUE_GET_STRING(v);
+        if (p->kind == JS_STRING_KIND_SLICE) {
+            slice = (void *)&p[1];
+            *a = js_dup(JS_MKPTR(JS_TAG_STRING, slice->parent));
+            return 1;
+        }
+        return 0;
+    default:
+        return 0;
+    }
+}
+
 void JS_FreePropertyEnum(JSContext *ctx, JSPropertyEnum *tab,
                          uint32_t len)
 {
