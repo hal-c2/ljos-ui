@@ -250,6 +250,9 @@ Feature: A shipped application its users change while it runs
     the application kept; one that does not compile is told as one is.
     Files that are as they were keep what runs, and that is said. An
     application that reads them only when it starts keeps what runs too.
+    Unless a file failed, a ShellLoader that asked and shows its fallback
+    tries its source again, as it does after a new theme its shell works
+    with, which makes nothing again.
 
     Scenario: A save no watch saw is applied once a ShellLoader asks for the files to be read again
       Given the user's file "Card.qml":
@@ -366,6 +369,38 @@ Feature: A shipped application its users change while it runs
       And the property "width" of "card" is 30
       And 0 saves of the user's files have been applied
       And the user's directory is not watched
+
+    Scenario: A user's shell that did not work is shown once a new theme it works with is read again when asked
+      Given the user's file "theme.json":
+        """json
+        { "Colors": { "accent": "#9c4dc4" } }
+        """
+      And the user's file "Shell.qml":
+        """qml
+        import QtQuick
+        import Ljos.Design
+        Rectangle {
+          id: shell
+          objectName: "user-shell"
+          property var size
+          width: Qt.colorEqual(Colors.accent, "#2e7d32") ? 50 : shell.size.width
+          height: 20
+        }
+        """
+      And the application reads its user's files only when it starts and when asked
+      When the application runs "Main.qml" built ahead, with the user's directory over it
+      Then the object "loader/default-shell" exists
+      And the property "status" of "loader" is 2
+      When the user saves the file "theme.json" as:
+        """json
+        { "Colors": { "accent": "#2e7d32" } }
+        """
+      And the method "reload" of "loader" is called
+      Then the object "loader/user-shell" exists
+      And the object "default-shell" does not exist
+      And the property "status" of "loader" is 1
+      And the property "error" of "loader" is ""
+      And the property "width" of "loader/user-shell" is 50
 
   Rule: A user's shell that is a Window is the application's window
 
