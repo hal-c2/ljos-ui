@@ -180,6 +180,14 @@ impl Writes {
         self.pending.back().cloned().unwrap_or(holds)
     }
 
+    /// The method reported what it holds for itself: what was written
+    /// before has reached it, and a later report of the state from before
+    /// those writes is the method's own, not the platform behind.
+    pub fn clear(&mut self) {
+        self.before = None;
+        self.pending.clear();
+    }
+
     /// The platform was told to hold `now` while it reported `holds`.
     pub fn wrote(&mut self, holds: &crate::HeldText, now: crate::HeldText) {
         if self.pending.is_empty() {

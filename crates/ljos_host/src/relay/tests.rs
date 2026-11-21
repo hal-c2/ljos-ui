@@ -664,3 +664,40 @@ fn a_method_that_typed_before_the_write_reached_it_still_drops_the_request() {
     assert!(held_is_stale(Some(&holds("abc", [3, 3], None)), &seen));
     assert!(held_is_stale(Some(&b), &seen));
 }
+
+#[test]
+fn a_field_cleared_retyped_and_cleared_again_is_cleared_on_the_method_both_times() {
+    let mut writes = Writes::default();
+    let hi = holds("hi", [2, 2], None);
+    let empty = holds("", [0, 0], None);
+    // The application clears the field over "hi".
+    let seen = writes.holds(hi.clone());
+    assert!(!held_is_stale(Some(&hi), &seen));
+    writes.wrote(&hi, empty.clone());
+    // The method got the clear, then reported the user typing "hi" again.
+    writes.clear();
+    // The second clear, over the "hi" the method reported, reaches it.
+    let seen = writes.holds(hi.clone());
+    assert_eq!(seen, hi);
+    assert!(!held_is_stale(Some(&hi), &seen));
+}
+
+#[test]
+fn writes_past_the_most_kept_let_the_oldest_go() {
+    let state = |n: usize| holds(&"x".repeat(n), [n, n], None);
+    // One more write than are kept, each made before the platform got to
+    // the first, while it reported the empty field.
+    let full = || {
+        let mut writes = Writes::default();
+        for n in 1..=PENDING_WRITES + 1 {
+            writes.wrote(&state(0), state(n));
+        }
+        writes
+    };
+    // The oldest write is let go and stands for the state before the rest:
+    // the platform reporting it is behind.
+    assert_eq!(full().holds(state(1)), state(PENDING_WRITES + 1));
+    // The empty field is no longer known as one it held, and is taken as
+    // the method's own.
+    assert_eq!(full().holds(state(0)), state(0));
+}

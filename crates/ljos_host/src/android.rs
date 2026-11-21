@@ -358,7 +358,8 @@ impl<U: Send + 'static> Pump<'_, U> {
         };
         let mut out = Vec::new();
         let dead_key = &mut self.dead_key;
-        while events.next(|event| translate(self.app, dead_key, event, &mut out)) {}
+        let writes = &mut self.writes;
+        while events.next(|event| translate(self.app, dead_key, writes, event, &mut out)) {}
         for event in out {
             self.send(Arrival::Window(event));
         }
@@ -439,6 +440,7 @@ fn size_of(window: &NativeWindow) -> [u32; 2] {
 fn translate(
     app: &AndroidApp,
     dead_key: &mut DeadKey,
+    writes: &mut crate::relay::Writes,
     event: &InputEvent<'_>,
     out: &mut Vec<WindowEvent>,
 ) -> InputStatus {
@@ -511,6 +513,10 @@ fn translate(
             InputStatus::Handled
         }
         InputEvent::TextEvent(state) => {
+            // The method reports for itself only once it holds what was
+            // written before (GameTextInput's own writes report nothing),
+            // so none of those is still on its way.
+            writes.clear();
             let compose = state
                 .compose_region
                 .map(|c| c.start.min(c.end)..c.start.max(c.end))
