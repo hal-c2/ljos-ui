@@ -174,6 +174,11 @@ jobs:
       - run: bash scripts/android-bindings.sh check
         env:
           ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
+      # The Android host and shell, with their tests, for both ABIs: their Android code
+      # builds only for Android, so a break there is otherwise first seen on a device.
+      - run: mise run android:check -- -p ljos_host -p ljos_shell --features ljos_shell/android --all-targets
+        env:
+          ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
 
   test:
     needs: changes
