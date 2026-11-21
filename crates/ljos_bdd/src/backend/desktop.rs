@@ -1347,8 +1347,8 @@ impl Probes for DesktopBackend {
 
     fn turn_calls_away(&mut self, kept: Duration) -> Result<Instant> {
         use crate::author::rate;
-        let dir = self.dir.as_ref().expect("files are written first").path();
         let app = self.running()?.app.id();
+        let dir = self.dir.as_ref().expect("files are written first").path();
         let (addr, token) = rate::target(&dir.join(format!("target/ljos/mcp-{app}.json")))
             .map_err(BackendError::Failed)?;
         // What the steps before asked is let pass first, so that the
