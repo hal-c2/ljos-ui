@@ -77,7 +77,9 @@ fn the_memory_limit_read_is_the_one_put_last() {
     assert_eq!(host.memory_limit(), None);
 }
 
-/// `throw null` with room to spare stays an exception.
+/// `throw null` with room to spare stays an exception. With no room at all,
+/// the run fails before the script throws anything, and the `null` QuickJS
+/// throws for it is running out of memory.
 #[test]
 fn a_null_thrown_on_a_full_heap_is_running_out_of_memory() {
     let host = JsHost::new(JsConfig {
@@ -89,7 +91,9 @@ fn a_null_thrown_on_a_full_heap_is_running_out_of_memory() {
     assert!(matches!(err, JsFault::JsException { .. }), "{err:?}");
     host.collect_now();
     let held = host.memory_stats().unwrap().malloc_size;
-    assert!(host.set_memory_limit(Some(held + 1024)));
+    // Not a byte to spare: a kilobyte more holds what `throw null` compiles
+    // to, and the script's own null is then its exception.
+    assert!(host.set_memory_limit(Some(held)));
     let err = eval_num(&host, "throw null").unwrap_err();
     assert!(matches!(err, JsFault::JsOutOfMemory { .. }), "{err:?}");
     // With room again, scripts run.
