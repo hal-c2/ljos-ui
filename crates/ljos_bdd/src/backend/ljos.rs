@@ -275,14 +275,14 @@ enum HostSetting {
 
 fn apply(engine: &Engine, said: HostSetting) {
     match said {
-        // The platform's say, which an assistive technology that listens no
-        // longer stands in for.
         // Not one of the preferences: the platform says it, and nothing an
         // application sets stands over it.
         HostSetting::System(super::SystemSetting::DragDistance(pixels))
         | HostSetting::App(super::SystemSetting::DragDistance(pixels)) => {
             ljos_quick::set_start_drag_distance(engine, pixels)
         }
+        // The platform's say, which an assistive technology that listens no
+        // longer stands in for.
         HostSetting::System(super::SystemSetting::ScreenReader(active)) => {
             ljos_quick::set_screen_reader_from_platform(engine, active)
         }
