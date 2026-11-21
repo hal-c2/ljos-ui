@@ -72,6 +72,7 @@ mod press_and_hold;
 mod rectangle;
 mod rectangular_shadow;
 mod repeater;
+mod reread;
 pub mod roots;
 mod safe_area;
 mod scene;
@@ -114,6 +115,7 @@ pub use animation::{QuaternionAnimation, Vector3dAnimation};
 pub use application_palette::{ApplicationPalette, application_palette, set_application_palette};
 pub use back::{Back, BackStep, deliver_back, wants_back};
 pub use blocks::{Contribution, ShellLoader, Slot, contribution_mode, shell_status};
+pub use reread::{Reread, Rereads};
 pub use context_menu::{ContextMenuHook, ContextMenuReason, register_context_menu};
 pub use drag::{Drag, DragAttached, drag_attached, drag_type};
 pub use drop_area::{

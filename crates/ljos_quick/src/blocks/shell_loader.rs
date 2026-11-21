@@ -33,6 +33,13 @@
 //! again. A shell that was shown and that an edit breaks is not replaced
 //! by the fallback: a reload that does not compile keeps the generation
 //! that runs, and says why in the reload error, not in `error`.
+//!
+//! `reload()` asks for the same where nothing watches the files, or the
+//! watch missed a save: a host that reads them ([`Rereads`]) reads every
+//! one again and applies what changed as it applies a save. Where nothing
+//! changed, or no host reads the files, the loader tries its source again:
+//! a shell that is shown is kept, and one that did not work replaces the
+//! fallback once it does.
 
 use std::time::Duration;
 
@@ -45,6 +52,7 @@ use ljos_runtime::{Fault, Intensity, Restart, TimerId};
 
 use super::contribution::text;
 use crate::item::{Item, is_item, size_follows_implicit, write_computed};
+use crate::reread::Rereads;
 use crate::roots::RootSwaps;
 use crate::tree;
 
@@ -138,6 +146,65 @@ impl ShellLoader {
         with_run(e, me, |r| r.completed = true);
         load(e, me);
         Ok(())
+    }
+
+    /// Reads the files again and tries the source again ([`Rereads`]).
+    #[qml(invokable, name = "reload")]
+    fn reload(cx: &Cx) {
+        let (e, me) = (cx.engine, cx.this);
+        // A host that reads the files applies what changed by making the
+        // roots again, this loader with them; it answers with `retry`
+        // when nothing did.
+        if !Rereads::of(e).ask_for(me) {
+            retry(e, me);
+        }
+    }
+}
+
+/// Tries the source again, as asked. A source's shell that is shown is
+/// kept, with what the user did in it: its files are as they were, or
+/// what changed would have made it again. One that did not work replaces
+/// the fallback once it does, and says why again when it still does not.
+pub(crate) fn retry(e: &Engine, me: ObjectId) {
+    if !e.is_alive(me) || with_run(e, me, |r| r.completed) != Some(true) {
+        return;
+    }
+    let status = e.untrack(|| e.read(me, ShellLoader::STATUS.index).to_number()) as i32;
+    if status == shell_status::READY {
+        return;
+    }
+    let source = url(e, me, ShellLoader::SOURCE.index);
+    if status == shell_status::NULL || source.is_empty() {
+        load(e, me);
+        return;
+    }
+    // The fallback stays shown until the source's shell is made: what
+    // the user sees does not go blank while it is tried.
+    match make(e, me, &source) {
+        Ok(obj) => {
+            // A try still waiting out a resource fault would make the
+            // shell again, and lose what the user does in this one.
+            if let Some(Some(timer)) = with_run(e, me, |r| r.waiting.take()) {
+                e.cancel_call(timer);
+            }
+            drop_item(e, me);
+            set(e, me, ShellLoader::ITEM.index, Value::Object(obj));
+            present(e, me, obj);
+            set(e, me, ShellLoader::STATUS.index, shell_status::READY.into());
+            set(e, me, ShellLoader::ERROR.index, "".into());
+        }
+        Err(Failed { why, resource }) => {
+            warn(e, format!("ShellLoader: {why}"));
+            let fallback_failed = if status == shell_status::FALLBACK {
+                set(e, me, ShellLoader::ERROR.index, why.as_str().into());
+                false
+            } else {
+                show_fallback(e, me, why)
+            };
+            if fallback_failed || resource {
+                again_after(e, me, None);
+            }
+        }
     }
 }
 
