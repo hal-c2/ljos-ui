@@ -30,7 +30,7 @@ use ljos_ir::{
     TranslationKind, TypeRef,
 };
 use ljos_js::{JsValue, Scope};
-use ljos_runtime::{Job, JobCx, JobPoll, Lane, ProcId};
+use ljos_runtime::{Fault, Job, JobCx, JobPoll, Lane, ProcId};
 
 use crate::atom::Atom;
 use crate::engine::{Engine, Held};
@@ -3383,8 +3383,16 @@ impl CreationJob {
                 }
                 self.phase = Phase::Done;
                 // Whoever waits may panic too: the creation is closed all
-                // the same, and the first panic goes on.
-                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.tell(&e)));
+                // the same, and the first panic goes on. Theirs is filed
+                // now, apart from the first's origin, which whoever runs
+                // the job reports with it.
+                e.apart_from_unwound(|| {
+                    let told =
+                        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.tell(&e)));
+                    if let Err(payload) = told {
+                        e.report_fault(None, Fault::from_panic(payload));
+                    }
+                });
                 e.close_creation(errors);
                 std::panic::resume_unwind(payload);
             }
