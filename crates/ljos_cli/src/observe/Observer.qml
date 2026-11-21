@@ -769,7 +769,10 @@ ApplicationWindow {
 
                         RowLayout {
                             Layout.fillWidth: true
-                            Text { text: "Overview"; color: theme.text; font.pixelSize: 19; font.bold: true }
+                            Text {
+                                Accessible.role: Accessible.Heading
+                                text: "Overview"; color: theme.text; font.pixelSize: 19; font.bold: true
+                            }
                             Text {
                                 Layout.fillWidth: true
                                 Layout.minimumWidth: 0
@@ -1207,6 +1210,7 @@ ApplicationWindow {
                         Text {
                             height: window.headHeight
                             verticalAlignment: Text.AlignVCenter
+                            Accessible.role: Accessible.Heading
                             text: "Processes"; color: theme.text; font.pixelSize: 19; font.bold: true
                         }
                         Text {
@@ -1460,7 +1464,10 @@ ApplicationWindow {
                         id: mailboxesHead
                         Layout.fillWidth: true
                         spacing: 12
-                        Text { text: "Mailboxes"; color: theme.text; font.pixelSize: 19; font.bold: true }
+                        Text {
+                            Accessible.role: Accessible.Heading
+                            text: "Mailboxes"; color: theme.text; font.pixelSize: 19; font.bold: true
+                        }
                         Text {
                             width: Math.min(implicitWidth, mailboxesHead.width)
                             // Beside the title's centre in one line; below
@@ -2927,6 +2934,7 @@ ApplicationWindow {
                         Text {
                             height: window.headHeight
                             verticalAlignment: Text.AlignVCenter
+                            Accessible.role: Accessible.Heading
                             text: "Logs"; color: theme.text; font.pixelSize: 19; font.bold: true
                         }
                         Text {
@@ -3176,6 +3184,7 @@ ApplicationWindow {
                         Text {
                             height: window.headHeight
                             verticalAlignment: Text.AlignVCenter
+                            Accessible.role: Accessible.Heading
                             text: "Trace"; color: theme.text; font.pixelSize: 19; font.bold: true
                         }
                         Text {
@@ -3459,7 +3468,10 @@ ApplicationWindow {
                         id: supervisionHead
                         Layout.fillWidth: true
                         spacing: 12
-                        Text { text: "Supervision"; color: theme.text; font.pixelSize: 19; font.bold: true }
+                        Text {
+                            Accessible.role: Accessible.Heading
+                            text: "Supervision"; color: theme.text; font.pixelSize: 19; font.bold: true
+                        }
                         Text {
                             width: Math.min(implicitWidth, supervisionHead.width)
                             // Beside the title's centre in one line; below
@@ -3911,6 +3923,7 @@ ApplicationWindow {
                         Text {
                             height: recordButton.implicitHeight
                             verticalAlignment: Text.AlignVCenter
+                            Accessible.role: Accessible.Heading
                             text: "Frames"; color: theme.text; font.pixelSize: 19; font.bold: true
                         }
                         Text {
@@ -4341,6 +4354,7 @@ ApplicationWindow {
                         Text {
                             height: window.headHeight
                             verticalAlignment: Text.AlignVCenter
+                            Accessible.role: Accessible.Heading
                             text: "Memory"; color: theme.text; font.pixelSize: 19; font.bold: true
                         }
                         Text {
@@ -4754,6 +4768,7 @@ ApplicationWindow {
                         Text {
                             height: window.headHeight
                             verticalAlignment: Text.AlignVCenter
+                            Accessible.role: Accessible.Heading
                             text: "Models"; color: theme.text; font.pixelSize: 19; font.bold: true
                         }
                         Text {
@@ -5272,6 +5287,7 @@ ApplicationWindow {
                         Text {
                             height: window.headHeight
                             verticalAlignment: Text.AlignVCenter
+                            Accessible.role: Accessible.Heading
                             text: "Wakes"; color: theme.text; font.pixelSize: 19; font.bold: true
                         }
                         // Elided where the row is narrower than it; the
@@ -5722,6 +5738,7 @@ ApplicationWindow {
                         Text {
                             height: window.headHeight
                             verticalAlignment: Text.AlignVCenter
+                            Accessible.role: Accessible.Heading
                             text: "Components"; color: theme.text; font.pixelSize: 19; font.bold: true
                         }
                         Text {
@@ -6101,6 +6118,7 @@ ApplicationWindow {
                         Text {
                             height: window.headHeight
                             verticalAlignment: Text.AlignVCenter
+                            Accessible.role: Accessible.Heading
                             text: "Bindings"; color: theme.text; font.pixelSize: 19; font.bold: true
                         }
                         Text {
@@ -6424,6 +6442,7 @@ ApplicationWindow {
                         Text {
                             height: window.headHeight
                             verticalAlignment: Text.AlignVCenter
+                            Accessible.role: Accessible.Heading
                             text: "Growth"; color: theme.text; font.pixelSize: 19; font.bold: true
                         }
                         Text {
@@ -6704,6 +6723,7 @@ ApplicationWindow {
                         Text {
                             height: window.headHeight
                             verticalAlignment: Text.AlignVCenter
+                            Accessible.role: Accessible.Heading
                             text: "Audit"; color: theme.text; font.pixelSize: 19; font.bold: true
                         }
                         Text {
