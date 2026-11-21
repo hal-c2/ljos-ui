@@ -100,6 +100,33 @@ Item {
     assert_eq!(h.num(root, "ticks"), 5.0);
 }
 
+/// A host that wakes late, or a handler that ran long, finds a repeating
+/// timer several intervals behind: it triggers once and keeps its phase,
+/// as qml6 does, rather than replaying every interval it missed in one
+/// turn.
+#[test]
+fn a_late_repeating_timer_triggers_once_and_keeps_its_phase() {
+    let h = engine();
+    let root = h.load(
+        r#"import QtQuick
+Item {
+  property int ticks: 0
+  Timer { interval: 100; running: true; repeat: true; onTriggered: ticks++ }
+}
+"#,
+    );
+    let late = ljos_runtime::Time::from_millis(350);
+    h.clock.set(late);
+    h.engine.advance_timers(late);
+    assert_eq!(h.num(root, "ticks"), 1.0);
+    assert_eq!(
+        h.engine.next_timer_deadline(),
+        Some(ljos_runtime::Time::from_millis(400))
+    );
+    h.pass_ms(50);
+    assert_eq!(h.num(root, "ticks"), 2.0);
+}
+
 #[test]
 fn a_single_shot_timer_stops_after_triggering() {
     let h = engine();
