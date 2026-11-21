@@ -426,7 +426,13 @@ ApplicationWindow {
         var shown = 0
         for (var i = 0; i < flow.children.length; ++i) {
             var item = flow.children[i]
+            // The Flow places no item that is hidden or has no size, such
+            // as the Repeater making the buttons, and leaves no spacing
+            // after it. The gap counts whatever its width, as it is what
+            // this gives a width to.
             if (!item.visible)
+                continue
+            if (item !== gap && (item.width <= 0 || item.height <= 0))
                 continue
             shown += 1
             if (item !== gap)
