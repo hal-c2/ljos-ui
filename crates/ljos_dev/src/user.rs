@@ -1888,4 +1888,225 @@ mod tests {
             dir
         ));
     }
+    /// Long enough for a watcher's thread to read a directory of a file.
+    const PATIENCE: std::time::Duration = std::time::Duration::from_secs(20);
+
+    fn engine() -> Engine {
+        let engine = Engine::new();
+        ljos_quick::register(&engine);
+        // For the theme's roles.
+        ljos_design_qml::register(&engine);
+        engine
+    }
+
+    /// A session over `user`, for an application of no file of its own
+    /// built with its sources, and what its wakes are sent to.
+    fn session(
+        engine: &Engine,
+        user: &Path,
+        watch: bool,
+    ) -> (UserSession, std::sync::mpsc::Receiver<()>) {
+        let sources = PackSources {
+            files: Default::default(),
+            style: None,
+        };
+        let pack = MapSource::new()
+            .to_pack_with_trailer(&sources.encode(true))
+            .expect("packed");
+        let pack = MapSource::from_pack(&pack).expect("unpacked");
+        let (tx, woke) = std::sync::mpsc::channel();
+        let wake: WakeHook = Arc::new(move || {
+            let _ = tx.send(());
+        });
+        let config = UserQml::dir(user).watch(watch);
+        let session = UserSession::start(engine, pack, config, |_| qml_front::QtTypeOracle, wake);
+        (session, woke)
+    }
+
+    struct NoWindow;
+
+    impl Host for NoWindow {
+        fn window(&self) -> Option<ObjectId> {
+            None
+        }
+
+        fn show(&mut self, _: &Engine, _: Option<ObjectId>, _: ObjectId) {}
+    }
+
+    /// Takes what the session brings, frame by frame as it wakes, until
+    /// the read asked for is answered.
+    fn answered(
+        engine: &Engine,
+        session: &mut UserSession,
+        woke: &std::sync::mpsc::Receiver<()>,
+    ) -> Vec<Report> {
+        let clock = ljos_runtime::SystemClock::new();
+        let mut reports = Vec::new();
+        loop {
+            reports.extend(session.pump(engine, &clock, &mut NoWindow));
+            if !session.is_reading() {
+                return reports;
+            }
+            woke.recv_timeout(PATIENCE)
+                .unwrap_or_else(|_| panic!("the read asked for is not answered: {reports:?}"));
+        }
+    }
+
+    const THEME: &str = r##"{ "Colors": { "accent": "#9c4dc4" } }"##;
+    const NEW_THEME: &str = r##"{ "Colors": { "accent": "#2e7d32" } }"##;
+
+    /// The session's files where no watch on the disk can be made, as
+    /// when the system has none left: how often one was tried.
+    struct NoDiskWatch {
+        layers: Rc<dyn Layers>,
+        tried: Rc<Cell<u32>>,
+    }
+
+    impl Layers for NoDiskWatch {
+        fn provide(&self, key: &str) -> Option<Result<Arc<CompiledFile>, String>> {
+            self.layers.provide(key)
+        }
+
+        fn take_refused(&self) -> Vec<CompileFault> {
+            self.layers.take_refused()
+        }
+
+        fn spawn(&self, sink: Sink, flush: bool, follow: bool) -> Result<Watcher, WatchError> {
+            if follow {
+                self.tried.set(self.tried.get() + 1);
+                return Err(WatchError::NoRoot);
+            }
+            self.layers.spawn(sink, flush, false)
+        }
+
+        fn text(
+            &self,
+            key: &str,
+            text: &str,
+            beside: &[(String, String)],
+        ) -> Result<CompiledFile, Vec<QmlTextError>> {
+            self.layers.text(key, text, beside)
+        }
+    }
+
+    #[test]
+    fn files_whose_watch_was_lost_and_cannot_be_made_again_are_read_when_asked() {
+        let root = tempfile::tempdir().expect("a directory");
+        let theme = root.path().join(THEME_FILE);
+        write(&theme, THEME);
+        let engine = engine();
+        let (mut session, woke) = session(&engine, root.path(), true);
+        assert!(
+            session.is_watching(),
+            "the user has a file, and it is watched"
+        );
+        let layers = session
+            .shared
+            .layers
+            .borrow()
+            .clone()
+            .expect("the user's files run");
+        let tried = Rc::new(Cell::new(0));
+        *session.shared.layers.borrow_mut() = Some(Rc::new(NoDiskWatch {
+            layers,
+            tried: tried.clone(),
+        }));
+        // The watch is lost, and no other can be made.
+        session.state = State::Active { watcher: None };
+        session.read_again(&engine);
+        let reports = answered(&engine, &mut session, &woke);
+        assert!(
+            reports.contains(&Report::Unchanged),
+            "read, and as they were: {reports:?}"
+        );
+        assert_eq!(tried.get(), 1, "a watch on the disk was tried");
+        assert!(
+            !session.is_watching(),
+            "a watcher that reads when asked watches nothing"
+        );
+        write(&theme, NEW_THEME);
+        session.read_again(&engine);
+        let reports = answered(&engine, &mut session, &woke);
+        assert!(
+            reports.iter().any(|r| matches!(r, Report::Theme { .. })),
+            "the new theme is applied: {reports:?}"
+        );
+        assert_eq!(tried.get(), 1, "the watcher that reads when asked is kept");
+    }
+
+    #[test]
+    fn an_ask_while_an_earlier_read_s_answer_is_on_its_way_is_answered_by_its_own_read() {
+        let root = tempfile::tempdir().expect("a directory");
+        let theme = root.path().join(THEME_FILE);
+        write(&theme, THEME);
+        let engine = engine();
+        // Read only when asked: nothing but the asks makes the session read.
+        let (mut session, woke) = session(&engine, root.path(), false);
+        let clock = ljos_runtime::SystemClock::new();
+        let _ = session.pump(&engine, &clock, &mut NoWindow);
+        while woke.try_recv().is_ok() {}
+        session.read_again(&engine);
+        // The first read's answer waits, untaken, when the second ask
+        // comes with a change it did not see.
+        woke.recv_timeout(PATIENCE)
+            .expect("the first read is answered");
+        write(&theme, NEW_THEME);
+        session.read_again(&engine);
+        let reports = answered(&engine, &mut session, &woke);
+        assert!(
+            !reports.contains(&Report::Unchanged),
+            "the first read's answer is not the second's: {reports:?}"
+        );
+        assert!(
+            reports.iter().any(|r| matches!(r, Report::Theme { .. })),
+            "the second ask is answered once the new theme is applied: {reports:?}"
+        );
+    }
+
+    /// Files no watcher can be made over.
+    struct Refusing;
+
+    impl Layers for Refusing {
+        fn provide(&self, _: &str) -> Option<Result<Arc<CompiledFile>, String>> {
+            None
+        }
+
+        fn take_refused(&self) -> Vec<CompileFault> {
+            Vec::new()
+        }
+
+        fn spawn(&self, _: Sink, _: bool, _: bool) -> Result<Watcher, WatchError> {
+            Err(WatchError::NoRoot)
+        }
+
+        fn text(
+            &self,
+            _: &str,
+            _: &str,
+            _: &[(String, String)],
+        ) -> Result<CompiledFile, Vec<QmlTextError>> {
+            Err(Vec::new())
+        }
+    }
+
+    #[test]
+    fn an_ask_the_first_file_was_to_answer_is_answered_when_no_watcher_can_be_made() {
+        let root = tempfile::tempdir().expect("a directory");
+        let engine = engine();
+        let (mut session, woke) = session(&engine, root.path(), false);
+        // Asked while the first file was being built: its watcher answers.
+        session.state = State::Making;
+        session.reading = Some(Reread::Unchanged);
+        let built = Built {
+            layers: Box::new(Refusing),
+            faults: Vec::new(),
+            theme: None,
+        };
+        session.activate(&engine, built, true);
+        let reports = answered(&engine, &mut session, &woke);
+        assert!(
+            !reports.contains(&Report::Unchanged),
+            "files no watcher reads are not as they were: {reports:?}"
+        );
+    }
 }
