@@ -170,6 +170,63 @@ Item {
     assert_eq!(due(&h), Some(ljos_runtime::Time::from_millis(400)));
 }
 
+/// Work earlier in the same `advance_timers` call holds a timer up: its
+/// next run, due during that work, is dropped then, not fired late next.
+#[test]
+fn a_repeating_timer_skips_runs_due_during_earlier_work_in_its_call() {
+    let h = engine();
+    // Armed before the timer, so it runs first when both are due at 100.
+    let clock = h.clock.clone();
+    h.engine
+        .call_at(ljos_runtime::Time::from_millis(100), move |_| {
+            clock.advance(std::time::Duration::from_millis(250));
+        });
+    let root = h.load(
+        r#"import QtQuick
+Item {
+  property int ticks: 0
+  Timer { interval: 50; running: true; repeat: true; onTriggered: ticks++ }
+}
+"#,
+    );
+    h.pass_ms(50);
+    assert_eq!(h.num(root, "ticks"), 1.0);
+    h.clock.set(ljos_runtime::Time::from_millis(100));
+    h.engine
+        .advance_timers(ljos_runtime::Time::from_millis(100));
+    assert_eq!(h.clock.now(), ljos_runtime::Time::from_millis(350));
+    // 150 to 350 came while the call's earlier work ran.
+    assert_eq!(h.num(root, "ticks"), 2.0);
+    assert_eq!(due(&h), Some(ljos_runtime::Time::from_millis(400)));
+}
+
+/// The same inside a turn: what the turn did before `advance_timers` is
+/// busy time although the turn is only noted when it ends.
+#[test]
+fn a_repeating_timer_skips_runs_due_during_earlier_work_in_its_turn() {
+    let h = engine();
+    let root = h.load(
+        r#"import QtQuick
+Item {
+  property int ticks: 0
+  Timer { interval: 50; running: true; repeat: true; onTriggered: ticks++ }
+}
+"#,
+    );
+    h.pass_ms(50);
+    assert_eq!(h.num(root, "ticks"), 1.0);
+    h.clock.set(ljos_runtime::Time::from_millis(100));
+    h.engine
+        .turn(None, || {
+            h.clock.advance(std::time::Duration::from_millis(250));
+            h.engine
+                .advance_timers(ljos_runtime::Time::from_millis(100));
+        })
+        .unwrap();
+    assert_eq!(h.num(root, "ticks"), 2.0);
+    assert_eq!(due(&h), Some(ljos_runtime::Time::from_millis(400)));
+}
+
 /// Time that passed while the engine was idle, as a virtual clock that
 /// jumps several intervals in one frame, is caught up on: every run that
 /// came due fires.
