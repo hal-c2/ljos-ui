@@ -44,8 +44,9 @@
 //! The pack also carries the files under the QML's directories that QML
 //! loads: pictures, fonts, models, sounds, films and the data a model
 //! reads ([`Options::with_files`] names other kinds, [`Options::without_files`]
-//! carries none), and every file a module's CMake `RESOURCES` list names,
-//! whatever its kind. The program that runs the pack finds each where the
+//! carries none of them), and every file a module's CMake `RESOURCES` list
+//! names, whatever its kind and whatever kinds the build takes. A file
+//! whose link leads out of its directory is not carried. The program that runs the pack finds each where the
 //! QML names it, relative to the file that names it or at its module's
 //! `qrc:/qt/qml/<uri>/` address, with no code of its own
 //! ([`register_pack_files`](crate::register_pack_files)). The pack says
@@ -295,7 +296,9 @@ impl Options {
         self
     }
 
-    /// The pack carries no files besides the QML.
+    /// The pack carries no files besides the QML and those a module's
+    /// build keeps inside the program (`RESOURCES`), which the QML names by
+    /// their `qrc:` addresses whatever their kind.
     #[must_use]
     pub fn without_files(mut self) -> Self {
         self.files.clear();
@@ -329,16 +332,26 @@ impl Options {
             let path = path.to_path_buf();
             move |source| BuildError::Read { path, source }
         };
-        // By path from its root, where each file is.
-        let mut carried: BTreeMap<String, PathBuf> = BTreeMap::new();
+        // By path from its root, where each file is and which of `dirs` it
+        // was found under.
+        let mut carried: BTreeMap<String, (PathBuf, usize)> = BTreeMap::new();
         let mut addresses = Vec::new();
-        // Each module's `qrc:` address, with its directory's path.
+        // Each module's `qrc:` address, with its directory's path and which
+        // of `dirs` it is in.
         let mut modules = Vec::new();
-        for &dir in dirs {
+        for (at, &dir) in dirs.iter().enumerate() {
+            let root = std::fs::canonicalize(dir).map_err(unread(dir))?;
+            // A file is the project's only where it really is under its
+            // root: a link that leads out of it (`pics/dot.png` to a
+            // private file elsewhere) would ship a file nobody chose.
             let key = |path: &Path| {
                 let relative = path.strip_prefix(dir).ok()?;
+                let plain = relative
+                    .components()
+                    .all(|part| matches!(part, std::path::Component::Normal(_)));
+                let inside = std::fs::canonicalize(path).is_ok_and(|real| real.starts_with(&root));
                 let parts: Option<Vec<&str>> = relative.iter().map(|p| p.to_str()).collect();
-                Some(parts?.join("/"))
+                (plain && inside).then_some(parts?.join("/"))
             };
             let mut files = Vec::new();
             ljos_compiler::files_below_naming(dir, |_| true, &mut files)
@@ -353,35 +366,37 @@ impl Options {
                     .and_then(|n| n.to_str())
                     .is_none_or(|n| n.starts_with('.'));
                 if let (true, false, Some(key)) = (wanted, hidden, key(&path)) {
-                    carried.entry(key).or_insert(path);
+                    carried.entry(key).or_insert((path, at));
                 }
             }
             for (address, path) in ljos_compiler::resources(dir).map_err(unread(dir))? {
                 if let Some(key) = key(&path) {
                     // Kept in the program by its build, whatever its kind.
-                    carried.entry(key.clone()).or_insert(path);
+                    carried.entry(key.clone()).or_insert((path, at));
                     addresses.push((address, key));
                 }
             }
             for (prefix, module) in ljos_compiler::resource_dirs(dir).map_err(unread(dir))? {
                 if let Some(under) = key(&module) {
-                    modules.push((prefix, under));
+                    modules.push((prefix, under, at));
                 }
             }
         }
-        for (prefix, under) in modules {
+        for (prefix, under, at) in modules {
             let under = if under.is_empty() {
                 under
             } else {
                 format!("{under}/")
             };
-            for key in carried.keys() {
-                if let Some(rest) = key.strip_prefix(&under) {
+            // A module's address names the files of its own directory: a
+            // file at the same path under another of `dirs` is not its.
+            for (key, (_, from)) in &carried {
+                if let (Some(rest), true) = (key.strip_prefix(&under), *from == at) {
                     addresses.push((format!("{prefix}/{rest}"), key.clone()));
                 }
             }
         }
-        for (key, path) in carried {
+        for (key, (path, _)) in carried {
             let bytes = std::fs::read(&path).map_err(unread(&path))?;
             source.insert_resource(key, bytes);
         }

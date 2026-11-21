@@ -966,7 +966,6 @@ impl<O: TypeOracle> Project<O> {
         let mut project = Self::new(oracle);
         let mut found = Vec::new();
         let mut resources = Vec::new();
-        let mut resource_dirs = Vec::new();
         let places = std::iter::once((root, ""))
             .chain(mounts.iter().map(|m| (m.dir.as_path(), m.prefix.as_str())));
         for (base, prefix) in places {
@@ -1004,7 +1003,6 @@ impl<O: TypeOracle> Project<O> {
                 }
                 let (described, kept) = described(dir, names);
                 resources.extend(kept.into_iter().filter(|(_, path)| path.is_file()));
-                resource_dirs.extend(described.iter().map(|m| (m.address(""), dir.clone())));
                 found.extend(
                     described
                         .into_iter()
@@ -1013,6 +1011,7 @@ impl<O: TypeOracle> Project<O> {
             }
         }
         let counted = counted(&found, aliases);
+        let resource_dirs = addressed(&found, &counted);
         let modules: Vec<(String, Module)> = found
             .into_iter()
             .map(|(dir, _, module)| (dir, module))
@@ -1266,17 +1265,34 @@ pub fn resources(root: &Path) -> std::io::Result<Vec<(String, PathBuf)>> {
 /// (`qrc:/qt/qml/<uri as a path>`, or the build's `RESOURCE_PREFIX`), with
 /// the directory that describes it: a file there is at that address whether
 /// or not the build lists it.
+///
+/// Where two directories describe one module, the one an import of it sees
+/// is the module's: the other's files are not at its address.
 pub fn resource_dirs(root: &Path) -> std::io::Result<Vec<(String, PathBuf)>> {
-    let mut out = Vec::new();
+    let mut found = Vec::new();
     for (dir, names) in scan(root)? {
-        out.extend(
+        let Some(dir_key) = key_under(root, "", &dir) else {
+            continue;
+        };
+        found.extend(
             described(&dir, &names)
                 .0
-                .iter()
-                .map(|m| (m.address(""), dir.clone())),
+                .into_iter()
+                .map(|m| (dir_key.clone(), dir.clone(), m)),
         );
     }
-    Ok(out)
+    Ok(addressed(&found, &counted(&found, &Aliases::new())))
+}
+
+/// Each module of `found` an import sees by its address, with its
+/// directory.
+fn addressed(found: &[(String, PathBuf, Module)], counted: &[bool]) -> Vec<(String, PathBuf)> {
+    found
+        .iter()
+        .zip(counted)
+        .filter(|(_, seen)| **seen)
+        .map(|((_, dir, m), _)| (m.address(""), dir.clone()))
+        .collect()
 }
 
 /// The modules the `qmldir` and `CMakeLists.txt` of `dir` describe, and
