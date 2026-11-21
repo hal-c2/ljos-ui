@@ -6,7 +6,7 @@ mod support;
 
 use std::sync::Arc;
 
-use ljos_engine::Value;
+use ljos_engine::{Value, fault_kind};
 use support::engine;
 
 const PAGE: &str = r#"import QtQuick
@@ -134,4 +134,53 @@ fn a_list_many_objects_share_is_charged_once() {
     // The root and its three Items, whatever the root's type is named.
     let holding: usize = held.holders.iter().map(|t| t.objects).sum();
     assert_eq!(holding, 5, "{held:?}");
+}
+
+const LEAK: &str = r#"import QtQuick
+Item {
+  property int ticks: 0
+  QtObject { id: leaker; property var store: ({ rows: [] }) }
+  Timer {
+    interval: 10; running: true; repeat: true
+    onTriggered: {
+      for (var i = 0; i < 2000; i++) leaker.store.rows.push({ i: i, s: "row " + i })
+      ticks++
+    }
+  }
+}
+"#;
+
+/// A leak spread over many dispatches, each well under its share of the
+/// room, is not stopped by the share (`JsConfig::dispatch_heap_share`
+/// bounds one dispatch). Measured here: it runs for many dispatches, until
+/// the heap's limit stops it with an out-of-memory fault, never past the
+/// limit, and `script_heap_holders` then names the type that keeps it
+/// first, with most of the heap, so the part that leaks can be found.
+#[test]
+fn a_leak_over_many_dispatches_runs_into_the_limit_and_is_named() {
+    let h = engine();
+    let e = &h.engine;
+    let root = h.load(LEAK);
+    let limit = 16 << 20;
+    assert!(e.set_script_heap_limit(Some(limit)));
+    h.pass_ms(10 * 1000);
+
+    let ticks = h.num(root, "ticks");
+    let faults = e.faults();
+    assert!(
+        faults
+            .iter()
+            .any(|f| fault_kind(&f.fault) == "JsOutOfMemory"),
+        "{faults:?}"
+    );
+    // Many dispatches ran before the limit: the share stopped none of them.
+    assert!(ticks > 10.0 && ticks < 1000.0, "{ticks} ticks");
+    let bytes = e.script_heap_bytes().unwrap();
+    assert!(bytes < limit + (1 << 20), "{bytes} of {limit}");
+
+    let held = e.script_heap_holders(usize::MAX).expect("scripts ran");
+    assert!(!held.truncated, "{held:?}");
+    let first = &held.holders[0];
+    assert_eq!(first.name, "QtObject", "{held:?}");
+    assert!(first.bytes > limit / 2, "{held:?}");
 }
