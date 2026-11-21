@@ -2626,17 +2626,23 @@ impl RawLine {
                     x1 + margin,
                     baseline + f64::from(run.descent) + margin,
                 );
+                let mut glyphs = GlyphRun {
+                    font: run.font,
+                    font_size: run.font_size,
+                    glyphs: run.glyphs,
+                    baseline: base,
+                    bounds,
+                    normalized_coords: run.coords,
+                    embolden: run.embolden,
+                    skew: run.skew,
+                };
+                // An emoji's picture may reach further than the margin: a
+                // run culled by its box would lose it while it shows.
+                if let Some(ink) = ljos_render::color_glyph_ink(&glyphs) {
+                    glyphs.bounds = glyphs.bounds.union(ink);
+                }
                 LineRun {
-                    glyphs: Arc::new(GlyphRun {
-                        font: run.font,
-                        font_size: run.font_size,
-                        glyphs: run.glyphs,
-                        baseline: base,
-                        bounds,
-                        normalized_coords: run.coords,
-                        embolden: run.embolden,
-                        skew: run.skew,
-                    }),
+                    glyphs: Arc::new(glyphs),
                     decorations,
                     overline,
                     tag: run.tag,

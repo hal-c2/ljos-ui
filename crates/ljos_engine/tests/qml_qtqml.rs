@@ -3,6 +3,7 @@
 mod support;
 
 use ljos_engine::Value;
+use ljos_runtime::Clock;
 use support::engine;
 
 #[test]
@@ -98,6 +99,207 @@ Item {
     assert_eq!(h.num(root, "ticks"), 1.0);
     h.pass_ms(450);
     assert_eq!(h.num(root, "ticks"), 5.0);
+}
+
+/// When a repeating timer next fires, as the engine holds it: the host's
+/// wake is rounded, this is not.
+fn due(h: &support::Harness) -> Option<ljos_runtime::Time> {
+    h.engine.running_timers().first().and_then(|t| t.due)
+}
+
+/// A handler that ran long finds a repeating timer several intervals
+/// behind: it triggers once and keeps its phase, as qml6 does, rather
+/// than replaying every interval that came due while the engine was busy.
+#[test]
+fn a_repeating_timer_held_up_by_a_slow_handler_triggers_once_and_keeps_its_phase() {
+    let h = engine();
+    let root = h.load(
+        r#"import QtQuick
+Item {
+  property int ticks: 0
+  Timer { interval: 100; running: true; repeat: true; onTriggered: ticks++ }
+}
+"#,
+    );
+    // Other work at 100 ms holds the engine up for 250 ms, as a slow
+    // handler on the real clock does.
+    let clock = h.clock.clone();
+    h.engine
+        .call_at(ljos_runtime::Time::from_millis(100), move |_| {
+            clock.advance(std::time::Duration::from_millis(250));
+        });
+    h.clock.set(ljos_runtime::Time::from_millis(100));
+    h.engine
+        .advance_timers(ljos_runtime::Time::from_millis(100));
+    assert_eq!(h.num(root, "ticks"), 1.0);
+    // Its runs at 200 and 300 came due while the engine was busy: one,
+    // late, stands for them.
+    let late = h.clock.now();
+    assert_eq!(late, ljos_runtime::Time::from_millis(350));
+    h.engine.advance_timers(late);
+    assert_eq!(h.num(root, "ticks"), 2.0);
+    assert_eq!(due(&h), Some(ljos_runtime::Time::from_millis(400)));
+    // Back on its phase: every 100 ms from 400 on.
+    h.pass_ms(250);
+    assert_eq!(h.num(root, "ticks"), 5.0);
+    assert_eq!(due(&h), Some(ljos_runtime::Time::from_millis(700)));
+}
+
+/// A slow turn between timers, such as an input handler or the rest of a
+/// frame, holds the timer up as a slow handler does: it fires once, late.
+#[test]
+fn a_repeating_timer_held_up_by_a_slow_turn_triggers_once_and_keeps_its_phase() {
+    let h = engine();
+    let root = h.load(
+        r#"import QtQuick
+Item {
+  property int ticks: 0
+  Timer { interval: 100; running: true; repeat: true; onTriggered: ticks++ }
+}
+"#,
+    );
+    h.pass_ms(100);
+    assert_eq!(h.num(root, "ticks"), 1.0);
+    h.engine
+        .turn(None, || {
+            h.clock.advance(std::time::Duration::from_millis(250))
+        })
+        .unwrap();
+    let late = h.clock.now();
+    h.engine.advance_timers(late);
+    assert_eq!(h.num(root, "ticks"), 2.0);
+    assert_eq!(due(&h), Some(ljos_runtime::Time::from_millis(400)));
+}
+
+/// Work earlier in the same `advance_timers` call holds a timer up: its
+/// next run, due during that work, is dropped then, not fired late next.
+#[test]
+fn a_repeating_timer_skips_runs_due_during_earlier_work_in_its_call() {
+    let h = engine();
+    // Armed before the timer, so it runs first when both are due at 100.
+    let clock = h.clock.clone();
+    h.engine
+        .call_at(ljos_runtime::Time::from_millis(100), move |_| {
+            clock.advance(std::time::Duration::from_millis(250));
+        });
+    let root = h.load(
+        r#"import QtQuick
+Item {
+  property int ticks: 0
+  Timer { interval: 50; running: true; repeat: true; onTriggered: ticks++ }
+}
+"#,
+    );
+    h.pass_ms(50);
+    assert_eq!(h.num(root, "ticks"), 1.0);
+    h.clock.set(ljos_runtime::Time::from_millis(100));
+    h.engine
+        .advance_timers(ljos_runtime::Time::from_millis(100));
+    assert_eq!(h.clock.now(), ljos_runtime::Time::from_millis(350));
+    // 150 to 350 came while the call's earlier work ran.
+    assert_eq!(h.num(root, "ticks"), 2.0);
+    assert_eq!(due(&h), Some(ljos_runtime::Time::from_millis(400)));
+}
+
+/// The same inside a turn: what the turn did before `advance_timers` is
+/// busy time although the turn is only noted when it ends.
+#[test]
+fn a_repeating_timer_skips_runs_due_during_earlier_work_in_its_turn() {
+    let h = engine();
+    let root = h.load(
+        r#"import QtQuick
+Item {
+  property int ticks: 0
+  Timer { interval: 50; running: true; repeat: true; onTriggered: ticks++ }
+}
+"#,
+    );
+    h.pass_ms(50);
+    assert_eq!(h.num(root, "ticks"), 1.0);
+    h.clock.set(ljos_runtime::Time::from_millis(100));
+    h.engine
+        .turn(None, || {
+            h.clock.advance(std::time::Duration::from_millis(250));
+            h.engine
+                .advance_timers(ljos_runtime::Time::from_millis(100));
+        })
+        .unwrap();
+    assert_eq!(h.num(root, "ticks"), 2.0);
+    assert_eq!(due(&h), Some(ljos_runtime::Time::from_millis(400)));
+}
+
+/// Time that passed while the engine was idle, as a virtual clock that
+/// jumps several intervals in one frame, is caught up on: every run that
+/// came due fires.
+#[test]
+fn a_repeating_timer_catches_up_on_time_that_passed_at_rest() {
+    let h = engine();
+    let root = h.load(
+        r#"import QtQuick
+Item {
+  property int ticks: 0
+  Timer { interval: 100; running: true; repeat: true; onTriggered: ticks++ }
+}
+"#,
+    );
+    let later = ljos_runtime::Time::from_millis(350);
+    h.clock.set(later);
+    h.engine.advance_timers(later);
+    assert_eq!(h.num(root, "ticks"), 3.0);
+    assert_eq!(due(&h), Some(ljos_runtime::Time::from_millis(400)));
+}
+
+/// Runs that came due at rest are caught up on although a turn ran after
+/// them: only what came due inside the turn is dropped.
+#[test]
+fn a_repeating_timer_catches_up_on_runs_due_at_rest_before_a_slow_turn() {
+    let h = engine();
+    let root = h.load(
+        r#"import QtQuick
+Item {
+  property int ticks: 0
+  Timer { interval: 100; running: true; repeat: true; onTriggered: ticks++ }
+}
+"#,
+    );
+    h.clock.set(ljos_runtime::Time::from_millis(350));
+    h.engine
+        .turn(None, || {
+            h.clock.advance(std::time::Duration::from_millis(100))
+        })
+        .unwrap();
+    let late = h.clock.now();
+    h.engine.advance_timers(late);
+    // 100, 200 and 300 came at rest; 400 came inside the turn.
+    assert_eq!(h.num(root, "ticks"), 3.0);
+    assert_eq!(due(&h), Some(ljos_runtime::Time::from_millis(500)));
+}
+
+/// What some work arms runs up to `by` in one call, and a repeating timer
+/// among it still runs once there: the work was busy until `by`, so its
+/// next run is the first of its phase after that.
+#[test]
+fn a_repeating_timer_armed_by_some_work_triggers_once_up_to_its_by() {
+    let h = engine();
+    let root = h.load(
+        r#"import QtQuick
+Item {
+  property int ticks: 0
+  Timer { id: t; interval: 100; repeat: true; onTriggered: ticks++ }
+  function begin() { t.start() }
+}
+"#,
+    );
+    let first = h.engine.next_timer_id();
+    h.engine.invoke_by_name(root, "begin", &[]).unwrap();
+    let made = first..h.engine.next_timer_id();
+    h.engine.advance_timers_made(
+        ljos_runtime::Time::ZERO,
+        made,
+        ljos_runtime::Time::from_millis(350),
+    );
+    assert_eq!(h.num(root, "ticks"), 1.0);
+    assert_eq!(due(&h), Some(ljos_runtime::Time::from_millis(400)));
 }
 
 #[test]

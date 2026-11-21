@@ -470,6 +470,7 @@ impl Drop for TurnGuard<'_> {
         t.depth.set(t.depth.get() - 1);
         if self.outer {
             self.engine.end_turn();
+            self.engine.timers_turn_ended();
         }
     }
 }
@@ -572,6 +573,9 @@ impl Engine {
         let t = &self.inner.turns;
         let depth = t.depth.get();
         t.depth.set(depth + 1);
+        if depth == 0 {
+            self.timers_turn_began();
+        }
         if depth > 0 {
             return TurnGuard {
                 engine: self,

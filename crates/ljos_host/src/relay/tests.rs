@@ -620,3 +620,118 @@ fn a_held_request_is_dropped_once_the_method_has_changed_its_composition_since()
         &holds("ab", [2, 2], Some([1, 1]))
     ));
 }
+
+#[test]
+fn a_held_request_made_while_the_last_write_is_on_its_way_reaches_the_method() {
+    let mut writes = Writes::default();
+    let a = holds("a", [1, 1], None);
+    let b = holds("ab", [2, 2], None);
+    let c = holds("abc", [3, 3], None);
+    // The application writes "ab" over "a"; the platform holds "a" still.
+    let seen = writes.holds(a.clone());
+    assert!(!held_is_stale(Some(&a), &seen));
+    writes.wrote(&a, b.clone());
+    // It writes "abc" over "ab" before the platform got to "ab": the
+    // platform reporting "a" has not typed, it is behind.
+    let seen = writes.holds(a.clone());
+    assert_eq!(seen, b);
+    assert!(!held_is_stale(Some(&b), &seen));
+    writes.wrote(&a, c.clone());
+    // The platform got to "ab" but not yet "abc".
+    let d = holds("abcd", [4, 4], None);
+    let seen = writes.holds(b.clone());
+    assert_eq!(seen, c);
+    assert!(!held_is_stale(Some(&c), &seen));
+    writes.wrote(&b, d.clone());
+    // Both applied, then the method typed "e": a request made over "abcd"
+    // is stale, as before.
+    let typed = holds("abcde", [5, 5], None);
+    let seen = writes.holds(typed.clone());
+    assert_eq!(seen, typed);
+    assert!(held_is_stale(Some(&d), &seen));
+}
+
+#[test]
+fn a_method_that_typed_before_the_write_reached_it_still_drops_the_request() {
+    let mut writes = Writes::default();
+    let a = holds("a", [1, 1], None);
+    let b = holds("ab", [2, 2], None);
+    writes.wrote(&a, b.clone());
+    // The method typed "x" over "a" before the platform got to "ab".
+    let typed = holds("ax", [2, 2], None);
+    let seen = writes.holds(typed.clone());
+    assert_eq!(seen, typed);
+    assert!(held_is_stale(Some(&holds("abc", [3, 3], None)), &seen));
+    assert!(held_is_stale(Some(&b), &seen));
+}
+
+#[test]
+fn a_field_cleared_retyped_and_cleared_again_is_cleared_on_the_method_both_times() {
+    let mut writes = Writes::default();
+    let hi = holds("hi", [2, 2], None);
+    let empty = holds("", [0, 0], None);
+    // The application clears the field over "hi".
+    let seen = writes.holds(hi.clone());
+    assert!(!held_is_stale(Some(&hi), &seen));
+    writes.wrote(&hi, empty.clone());
+    // The method got the clear, then reported the user typing "hi" again.
+    writes.clear();
+    // The second clear, over the "hi" the method reported, reaches it.
+    let seen = writes.holds(hi.clone());
+    assert_eq!(seen, hi);
+    assert!(!held_is_stale(Some(&hi), &seen));
+}
+
+#[test]
+fn writes_past_the_most_kept_let_the_oldest_go() {
+    let state = |n: usize| holds(&"x".repeat(n), [n, n], None);
+    // One more write than are kept, each made before the platform got to
+    // the first, while it reported the empty field.
+    let full = || {
+        let mut writes = Writes::default();
+        for n in 1..=PENDING_WRITES + 1 {
+            writes.wrote(&state(0), state(n));
+        }
+        writes
+    };
+    // The oldest write is let go and stands for the state before the rest:
+    // the platform reporting it is behind.
+    assert_eq!(full().holds(state(1)), state(PENDING_WRITES + 1));
+    // The empty field is no longer known as one it held, and is taken as
+    // the method's own.
+    assert_eq!(full().holds(state(0)), state(0));
+}
+
+#[test]
+fn a_report_the_same_as_two_writes_lets_go_only_of_the_oldest() {
+    let mut writes = Writes::default();
+    let empty = holds("", [0, 0], None);
+    let a = holds("a", [1, 1], None);
+    let ab = holds("ab", [2, 2], None);
+    let abc = holds("abc", [3, 3], None);
+    writes.wrote(&empty, a.clone());
+    writes.wrote(&empty, ab.clone());
+    writes.wrote(&empty, a.clone());
+    // The platform got to the first "a"; the "ab" and the second "a" are
+    // still on their way.
+    assert_eq!(writes.holds(a.clone()), a);
+    writes.wrote(&a, abc.clone());
+    // It got to "ab": "abc" is still on its way, and is what a request is
+    // compared with.
+    assert_eq!(writes.holds(ab.clone()), abc);
+}
+
+#[test]
+fn a_report_of_the_state_before_the_writes_is_the_platform_behind_until_the_method_reports() {
+    let mut writes = Writes::default();
+    let a = holds("a", [1, 1], None);
+    let ab = holds("ab", [2, 2], None);
+    writes.wrote(&a, ab.clone());
+    // Whether the platform has yet to apply "ab", or applied it and the
+    // user deleted the "b", it reports "a": until the method's own report
+    // arrives, that is the platform behind.
+    assert_eq!(writes.holds(a.clone()), ab);
+    // Once the method has reported, "a" is its own.
+    writes.clear();
+    assert_eq!(writes.holds(a.clone()), a);
+}

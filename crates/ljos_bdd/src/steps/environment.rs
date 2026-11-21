@@ -174,6 +174,10 @@ fn system_setting(setting: &str, value: &str) -> Result<SystemSetting, String> {
             .parse()
             .map(SystemSetting::FontScale)
             .map_err(|_| format!("{value} is not a number")),
+        ("drag distance", _) => value
+            .parse()
+            .map(SystemSetting::DragDistance)
+            .map_err(|_| format!("{value} is not a whole number of pixels")),
         _ => Err(format!("{value} is not a {setting:?} the system has")),
     }
 }

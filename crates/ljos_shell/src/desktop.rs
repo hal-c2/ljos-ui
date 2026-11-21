@@ -851,12 +851,7 @@ impl<M: Send + 'static> Desktop<M> {
             }
         }
         let slot = &mut self.slots[i];
-        let [r, g, b, a] = spec.color;
-        slot.clear = if window_spec::transparent(&spec) {
-            egui::Color32::TRANSPARENT
-        } else {
-            egui::Color32::from_rgba_unmultiplied(r, g, b, a)
-        };
+        slot.clear = window_spec::clear(spec.color);
         slot.applied = Some(spec);
     }
 

@@ -17,7 +17,7 @@ use ljos_render::kurbo;
 use crate::enums::EnumTable;
 use crate::handlers::{clamp, emit, flag, num, put};
 use crate::item::Item;
-use crate::scene::{DRAG_THRESHOLD, local_point};
+use crate::scene::local_point;
 
 /// `Pinch.Axis`: which coordinates of the target follow the fingers.
 pub mod pinch_axis {
@@ -297,7 +297,9 @@ pub(crate) fn moved(engine: &Engine, area: ObjectId, f: Fingers) {
     *st.last.borrow_mut() = Some(f);
     let Some(mut run) = st.run.get() else {
         let start = (f.press[1] - f.press[0]).hypot();
-        if st.refused.get() || (f.distance() - start).abs() < DRAG_THRESHOLD {
+        if st.refused.get()
+            || (f.distance() - start).abs() < crate::system_prefs::start_drag_distance(engine)
+        {
             return;
         }
         let target = index("pinch.target")

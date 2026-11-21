@@ -213,6 +213,9 @@ struct Phone<M, S> {
     keyboard: SoftKeyboard,
     /// Frames tried again since one was last drawn.
     retries: u32,
+    /// The root whose colour, if it is a `Window`'s, asks for a frame
+    /// when it changes: the window is cleared to it.
+    color_heard: Option<ObjectId>,
 }
 
 /// How long after a frame that could not be drawn it is tried again, and
@@ -272,6 +275,7 @@ where
             back_taken: crate::back_told::BackTold::default(),
             keyboard: SoftKeyboard::default(),
             retries: 0,
+            color_heard: None,
         }
     }
 
@@ -310,9 +314,6 @@ where
         ) {
             Ok(mut app) => {
                 app.view_mut().set_resize_mode(ResizeMode::RootToView);
-                let opaque = config.background.to_rgba8()[3] == 255;
-                app.set_backdrop(!opaque);
-                app.view_mut().set_fold_backdrop(opaque);
                 // Content is thrown and stopped as Android's own lists do.
                 ljos_quick::flickable::set_scroll_physics(
                     app.engine(),
@@ -320,6 +321,11 @@ where
                         ljos_quick::flickable::Kinetic::ANDROID,
                     ),
                 );
+                // A drag starts where Android's own views start a scroll.
+                if let Some(slop) = ljos_platform::android::touch_slop() {
+                    log::info!("touch slop {slop} dp");
+                    ljos_quick::set_start_drag_distance(app.engine(), slop.round() as i32);
+                }
                 self.stage = Stage::Running(Box::new(app));
                 self.apply_insets();
             }
@@ -618,10 +624,20 @@ where
         IN_PASS.set(true);
         let output = self.ctx.run_ui(raw, |ui| {
             app.begin_pass();
+            // After the pass's messages, which may have changed the root,
+            // and before anything is painted under the old choice.
+            app.backdrop_for_root();
             app.show(ui);
         });
         IN_PASS.set(false);
         self.asked = app.view_mut().take_asked().map(|after| began + after);
+        let root = app.view().scene().root();
+        if root != self.color_heard {
+            self.color_heard = root;
+            let due = Arc::clone(&self.due);
+            let waker = self.waker.clone();
+            app.on_root_color(move || ask(&due, &waker, Instant::now()));
+        }
         let engine = Rc::clone(app.engine());
         let jobs = self.ctx.tessellate(output.shapes, output.pixels_per_point);
         let painted = gpu.paint(
@@ -629,6 +645,7 @@ where
             &jobs,
             &output.textures_delta,
             output.pixels_per_point,
+            app.clear_color(),
         );
         match painted {
             Painted::Drawn => {
@@ -762,6 +779,9 @@ impl Gpu {
         if std::env::var_os("WGPU_BACKEND").is_none() {
             descriptor.backends = wgpu::Backends::VULKAN | wgpu::Backends::GL;
         }
+        descriptor.flags = crate::gpu_flags::asked_debug_flags(descriptor.flags, |name| {
+            std::env::var_os(name).is_some()
+        });
         let instance = wgpu::Instance::new(descriptor);
         let probe = surface_of(&instance, window)?;
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
@@ -819,6 +839,7 @@ impl Gpu {
         jobs: &[egui::ClippedPrimitive],
         textures: &egui::TexturesDelta,
         pixels_per_point: f32,
+        clear: egui::Color32,
     ) -> Painted {
         for (id, deltas) in &textures.set {
             for delta in deltas {
@@ -868,7 +889,9 @@ impl Gpu {
                     resolve_target: None,
                     depth_slice: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        // In gamma, as egui draws: the surface's format
+                        // is not an sRGB one.
+                        load: wgpu::LoadOp::Clear(clear_of(clear)),
                         store: wgpu::StoreOp::Store,
                     },
                 })],
@@ -885,6 +908,11 @@ impl Gpu {
         }
         Painted::Drawn
     }
+}
+
+fn clear_of(color: egui::Color32) -> wgpu::Color {
+    let [r, g, b, a] = color.to_normalized_gamma_f32().map(f64::from);
+    wgpu::Color { r, g, b, a }
 }
 
 fn surface_of(
