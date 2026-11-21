@@ -145,6 +145,39 @@ fn observer_clicked(w: &mut LjosWorld, locator: String) -> StepResult {
     })
 }
 
+// A part of a page that does not fit is scrolled to, as a person turns
+// the wheel over it: whatever scrolls under the pointer takes it.
+#[when(
+    regex = r#"^the observer's "((?:[^"\\]|\\.)+)" is scrolled (\d+) notches (right|left|up|down)$"#
+)]
+fn observer_scrolled(w: &mut LjosWorld, locator: String, notches: f64, way: String) -> StepResult {
+    let locator = unquoted(&locator);
+    let (dx, dy) = match way.as_str() {
+        "right" => (notches, 0.0),
+        "left" => (-notches, 0.0),
+        "up" => (0.0, notches),
+        _ => (0.0, -notches),
+    };
+    w.each(|b| {
+        let probes = b.probes()?;
+        let looked = observer_until(probes, &locator, true)?;
+        if looked.count == 0 {
+            return Err(observer_missed(
+                probes,
+                &locator,
+                &looked,
+                "nothing to scroll",
+            ));
+        }
+        probes
+            .observer_call(
+                "app_scroll",
+                serde_json::json!({ "target": locator, "dx": dx, "dy": dy }),
+            )
+            .map(|_| ())
+    })
+}
+
 #[then(regex = r#"^the observer shows "([^"]+)"$"#)]
 fn observer_shows(w: &mut LjosWorld, text: String) -> StepResult {
     observer_matches(w, &format!("text={text}"), true)
@@ -366,31 +399,49 @@ fn observer_within_width(w: &mut LjosWorld, locator: String) -> StepResult {
 /// The width of the observer's window. The status lists the windows; the
 /// one inspected, the observer's own, is the first.
 fn observer_width(probes: &mut dyn crate::backend::Probes) -> Result<f64, BackendError> {
-    let status = probes.observer_call("app_status", serde_json::json!({}))?;
-    status["windows"][0]["width"]
-        .as_f64()
-        .ok_or_else(|| BackendError::Failed(format!("the observer's status gives no width: {status}")))
+    Ok(observer_size(probes)?[0])
 }
 
-// A text given no room is elided to nothing, and one past its window's
-// edge is cut off there: either is found by its words but shows none of
-// them. The text shown must have room for all its words, inside the
-// window, and not be elided.
+/// The width and height of the observer's window, as [`observer_width`]
+/// reads it.
+fn observer_size(probes: &mut dyn crate::backend::Probes) -> Result<[f64; 2], BackendError> {
+    let status = probes.observer_call("app_status", serde_json::json!({}))?;
+    let side = |name: &str| {
+        status["windows"][0][name].as_f64().ok_or_else(|| {
+            BackendError::Failed(format!("the observer's status gives no {name}: {status}"))
+        })
+    };
+    Ok([side("width")?, side("height")?])
+}
+
+// A text given no room is elided to nothing, one past its window's edge
+// is cut off there, and one a clipping panel holds is cut off at the
+// panel's edge: each is found by its words but shows not all of them. The
+// text shown must have room for all its words, inside the window, drawn
+// at each of its corners, and not be elided.
 #[then(regex = r#"^the observer shows "([^"]+)" whole$"#)]
 fn observer_shows_whole(w: &mut LjosWorld, text: String) -> StepResult {
     let locator = format!("text={text}");
     w.each(|b| {
         observer_holds(b.probes()?, |probes| {
-            let width = observer_width(probes)?;
+            let [width, height] = observer_size(probes)?;
             let all = boxes(probes, &locator)?;
             if all.is_empty() {
                 return Ok(Some(format!("it shows nothing matching {locator}")));
             }
             let mut cut = Vec::new();
             for m in &all {
-                let [x, _, w, h] = m.at;
-                if w <= 0.0 || h <= 0.0 || x < -EDGE || x + w > width + EDGE {
-                    cut.push(format!("{m}, in a window {width} wide"));
+                let [x, y, w, h] = m.at;
+                if w <= 0.0
+                    || h <= 0.0
+                    || x < -EDGE
+                    || x + w > width + EDGE
+                    || y < -EDGE
+                    || y + h > height + EDGE
+                {
+                    cut.push(format!("{m}, in a window {width}x{height}"));
+                } else if let Some(corner) = clipped_corner(probes, m)? {
+                    cut.push(format!("{m}, not drawn at {corner}"));
                 } else if elided(probes, &m.reference)? {
                     cut.push(format!("{m}, elided"));
                 }
@@ -400,6 +451,35 @@ fn observer_shows_whole(w: &mut LjosWorld, text: String) -> StepResult {
     })
 }
 
+/// A corner of `m`, a pixel inside it, where the last frame did not draw
+/// it: an ancestor that clips cut it off there. What is drawn over it does
+/// not count, since the answer lists every item drawn at the point.
+fn clipped_corner(
+    probes: &mut dyn crate::backend::Probes,
+    m: &Shown,
+) -> Result<Option<String>, BackendError> {
+    let [x, y, w, h] = m.at;
+    // A pixel in, or the middle of a side thinner than two.
+    let (dx, dy) = (w.min(2.0) / 2.0, h.min(2.0) / 2.0);
+    let (left, right, top, bottom) = (x + dx, x + w - dx, y + dy, y + h - dy);
+    for (cx, cy) in [(left, top), (right, top), (left, bottom), (right, bottom)] {
+        let at = format!("at={cx},{cy}");
+        let found = probes.observer_call(
+            "app_find",
+            serde_json::json!({ "locator": at, "limit": 200 }),
+        )?;
+        let drawn = found["matches"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|d| d["ref"] == m.reference.as_str());
+        if !drawn {
+            return Ok(Some(format!("{cx},{cy}")));
+        }
+    }
+    Ok(None)
+}
+
 /// Whether the text `reference` names is elided. An item that is not a
 /// text has no `truncated` and shows what it shows.
 fn elided(probes: &mut dyn crate::backend::Probes, reference: &str) -> Result<bool, BackendError> {
@@ -407,11 +487,22 @@ fn elided(probes: &mut dyn crate::backend::Probes, reference: &str) -> Result<bo
         "app_inspect",
         serde_json::json!({ "target": reference, "all": true }),
     )?;
-    Ok(told["properties"]
-        .as_array()
+    let rows = told["properties"].as_array();
+    let row = rows
         .into_iter()
         .flatten()
-        .any(|p| p["name"] == "truncated" && p["value"] == "true"))
+        .find(|p| p["name"] == "truncated");
+    // An answer cut to its budget may have left the row out: whether the
+    // text is elided is then not known, and a check that took it for not
+    // would pass on what it did not see.
+    match row {
+        Some(p) => Ok(p["value"] == "true"),
+        None if told["truncated"] == true => Err(BackendError::Failed(format!(
+            "the inspection of {reference} is incomplete: its answer was cut to its budget \
+             before it said whether the text is elided"
+        ))),
+        None => Ok(false),
+    }
 }
 
 // What a list or a panel is given says whether it can be used: a list
@@ -430,7 +521,8 @@ fn observer_at_least(w: &mut LjosWorld, locator: String, least: f64, side: Strin
                 .filter(|m| if side == "wide" { m.at[2] } else { m.at[3] } < least - EDGE)
                 .map(|m| m.to_string())
                 .collect();
-            Ok((!small.is_empty()).then(|| format!("these are less than {least} pixels {side}: {small:?}")))
+            Ok((!small.is_empty())
+                .then(|| format!("these are less than {least} pixels {side}: {small:?}")))
         })
     })
 }

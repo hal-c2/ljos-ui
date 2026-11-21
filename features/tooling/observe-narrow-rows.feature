@@ -23,6 +23,14 @@ Feature: What the observer lists stays readable in a narrow window
           property int ticks: 0
           Timer { interval: 50; running: true; repeat: true; onTriggered: ticker.ticks += 1 }
         }
+        ListView {
+          width: 100; height: 40
+          model: ListModel {
+            objectName: "animals"
+            ListElement { ant1: 1; bee2: 2; cat3: 3; dog4: 4; zebra5: 5 }
+          }
+          delegate: Item { width: 100; height: 20 }
+        }
         Repeater {
           model: 8
           ErrorBoundary { Item {} }
@@ -97,3 +105,61 @@ Feature: What the observer lists stays readable in a narrow window
       | 1200  |
       | 700   |
       | 390   |
+
+  # Below the width where the value of a change has room beside the
+  # columns before it, the value goes on a line of its own: one line with
+  # the value squeezed to a sliver is never chosen.
+  Scenario Outline: A traced change keeps room for its value
+    When the application is observed
+    And the observer's window is <width> by 800 pixels
+    And the observer's "role=tab[name=\"Objects\"]" is clicked
+    And the observer's "role=listitem[name*=\"ticker\"]" is clicked
+    And the observer's "role=button[name=\"Trace\"]" is clicked
+    And the observer's "role=tab[name=\"Trace\"]" is clicked
+    Then the observer has "role=list[name=\"Trace\"] >> name~=^[0-9]+$"
+    And the observer's "role=list[name=\"Trace\"] >> name~=^[0-9]+$" is at least 80 pixels wide
+
+    Examples:
+      | width |
+      | 640   |
+      | 700   |
+      | 390   |
+
+  # Where a row of frames is one line, the bar gets what is left after the
+  # cells around it, so what each frame ran is never cut off at the card.
+  Scenario Outline: A recorded frame's row is inside its card
+    When the application is observed
+    And the observer's window is <width> by 800 pixels
+    And the observer's "role=tab[name=\"Frames\"]" is clicked
+    And the observer's "role=button[name=\"Record\"]" is clicked
+    Then the observer has "name~=^frame [0-9]+ of "
+    And the observer's own audit finds no "layout-overlap", "text-clipped" or "layout-offscreen"
+
+    Examples:
+      | width |
+      | 720   |
+      | 740   |
+      | 760   |
+
+  # Five roles at least 90 pixels each are wider than a phone: the roles
+  # and their rows scroll sideways together, so the last is reached.
+  Scenario: A model's last role is reached in a narrow window
+    When the application is observed
+    And the observer's window is 390 by 800 pixels
+    And the observer's "role=tab[name=\"Models\"]" is clicked
+    And the observer's "role=listitem[name*=\"animals\"]" is clicked
+    And the observer's "name=\"ant1\"" is scrolled 20 notches right
+    Then the observer shows "zebra5" whole
+
+  # Stacked in a short window, the list, the wake opened and why the UI
+  # thread is awake need more height than there is: the page scrolls to
+  # the last of them rather than squeeze it away.
+  Scenario: A wake opened in a short narrow window scrolls to why it is awake
+    When the application is observed
+    And the observer's window is 390 by 520 pixels
+    And the observer's "role=tab[name=\"Wakes\"]" is clicked
+    And the observer's "role=button[name=\"Record\"]" is clicked
+    And the observer's "role=list[name=\"Wakes\"] >> role=listitem[name*=\"timer\"] >> nth=0" is clicked
+    And the observer's "role=button[name=\"Close\"]" is scrolled 20 notches down
+    Then the observer's "role=list[name=\"Wakes\"]" is at least 120 pixels high
+    And the observer shows "Why awake" whole

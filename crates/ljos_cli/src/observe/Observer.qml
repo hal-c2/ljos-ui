@@ -3347,6 +3347,8 @@ ApplicationWindow {
                             anchors.fill: parent
                             anchors.margins: 6
                             clip: true
+                            Accessible.role: Accessible.List
+                            Accessible.name: "Trace"
                             model: window.page === 5 ? traceLines : null
                             onModelChanged: if (model !== null) Qt.callLater(traceView.positionViewAtEnd)
                             ScrollBar.vertical: ScrollBar {}
@@ -3363,7 +3365,12 @@ ApplicationWindow {
                                 // Too narrow for one line, what changed and
                                 // its value go on a line below, under the
                                 // object, so that neither runs past the edge.
-                                readonly property bool narrow: width < 560
+                                // One line holds the columns before the value
+                                // (time, object, kind, name, their gaps and
+                                // the insets) and a value still worth reading.
+                                readonly property real fixedColumns: 6 + 80 + 10 + 180 + 10 + 70 + 10 + 150 + 10 + 6
+                                readonly property real valueAtLeast: 160
+                                readonly property bool narrow: width < fixedColumns + valueAtLeast
                                 height: narrow ? 44 : 24
                                 Rectangle {
                                     anchors.fill: parent
@@ -4134,9 +4141,15 @@ ApplicationWindow {
                                 // Below this width a row takes two lines:
                                 // the frame, what woke it and its time,
                                 // then when it ran, its bar and what it ran.
-                                readonly property bool narrow: width < 680
-                                readonly property real barWidth: narrow ? Math.max(40, width - 12 - 270)
-                                                                        : Math.max(40, width - 630)
+                                // On one line the bar gets what is left after
+                                // the cells before it (to 446), its gap, the
+                                // 180 of what it ran and the right inset, and
+                                // the row is one line only while that is a
+                                // bar worth reading.
+                                readonly property real wideBar: width - 446 - 10 - 180 - 6
+                                readonly property real barAtLeast: 80
+                                readonly property bool narrow: wideBar < barAtLeast
+                                readonly property real barWidth: narrow ? Math.max(40, width - 12 - 270) : wideBar
                                 width: ListView.view.width
                                 height: narrow ? 46 : 24
                                 Accessible.role: Accessible.ListItem
@@ -4801,7 +4814,11 @@ ApplicationWindow {
                     property string editing: ""
                     readonly property var columns: !table ? []
                         : table.roles.length > 0 ? table.roles : ["modelData"]
-                    readonly property real columnWidth: Math.max(90, (rowsView.width - 70) / Math.max(1, columns.length))
+                    // Shared out over the panel, each role at least 90
+                    // wide: where they do not fit, the header and the rows
+                    // scroll sideways together.
+                    readonly property real columnWidth: Math.max(90, (tableScroll.width - 70) / Math.max(1, columns.length))
+                    readonly property real tableWidth: 70 + columns.length * columnWidth
 
                     function load() {
                         window.ask("app_objects", { models: true }, "models")
@@ -5067,115 +5084,127 @@ ApplicationWindow {
                                 border.color: theme.rule
                                 clip: true
 
-                                // The roles, over their columns.
-                                Row {
-                                    id: header
-                                    x: 12; y: 8
-                                    spacing: 0
-                                    Text {
-                                        width: 60
-                                        text: "row"
-                                        color: theme.subtle
-                                        font.pixelSize: 11
-                                        font.bold: true
-                                    }
-                                    Repeater {
-                                        model: window.page === 9 ? models.columns : []
-                                        delegate: Text {
-                                            required property string modelData
-                                            width: models.columnWidth
-                                            elide: Text.ElideRight
-                                            text: modelData
+                                Flickable {
+                                    id: tableScroll
+                                    anchors.fill: parent
+                                    anchors.margins: 6
+                                    clip: true
+                                    contentWidth: Math.max(width, models.tableWidth)
+                                    contentHeight: height
+                                    flickableDirection: Flickable.HorizontalFlick
+                                    interactive: contentWidth > width
+                                    boundsBehavior: Flickable.StopAtBounds
+                                    ScrollBar.horizontal: ScrollBar {}
+                                    // The roles, over their columns.
+                                    Row {
+                                        id: header
+                                        x: 6; y: 2
+                                        spacing: 0
+                                        Text {
+                                            width: 60
+                                            text: "row"
                                             color: theme.subtle
                                             font.pixelSize: 11
                                             font.bold: true
                                         }
-                                    }
-                                }
-
-                                ListView {
-                                    id: rowsView
-                                    anchors.fill: parent
-                                    anchors.margins: 6
-                                    anchors.topMargin: 28
-                                    clip: true
-                                    model: window.page === 9 && models.table ? models.table.rows : []
-                                    ScrollBar.vertical: ScrollBar {}
-                                    delegate: Item {
-                                        id: tableRow
-                                        required property var modelData
-                                        required property int index
-                                        width: ListView.view.width
-                                        height: 24
-                                        Rectangle {
-                                            anchors.fill: parent
-                                            color: tableRow.index % 2 ? theme.cardAlt : "transparent"
-                                        }
-                                        Row {
-                                            x: 6
-                                            height: parent.height
-                                            Text {
-                                                width: 60
-                                                anchors.verticalCenter: parent.verticalCenter
-                                                text: tableRow.modelData.index
+                                        Repeater {
+                                            model: window.page === 9 ? models.columns : []
+                                            delegate: Text {
+                                                required property string modelData
+                                                width: models.columnWidth
+                                                elide: Text.ElideRight
+                                                text: modelData
                                                 color: theme.subtle
-                                                font.family: theme.mono
-                                                font.pixelSize: 12
+                                                font.pixelSize: 11
+                                                font.bold: true
                                             }
-                                            Repeater {
-                                                model: models.columns
-                                                delegate: Item {
-                                                    id: cell
-                                                    required property string modelData
-                                                    readonly property var value: tableRow.modelData.values[modelData]
-                                                    readonly property string key: tableRow.modelData.index + "/" + modelData
-                                                    width: models.columnWidth
-                                                    height: tableRow.height
-                                                    Text {
-                                                        anchors.fill: parent
-                                                        anchors.rightMargin: 8
-                                                        verticalAlignment: Text.AlignVCenter
-                                                        elide: Text.ElideRight
-                                                        visible: models.editing !== cell.key
-                                                        text: window.shown(cell.value)
-                                                        color: theme.text
-                                                        font.pixelSize: 12
-                                                    }
-                                                    MouseArea {
-                                                        anchors.fill: parent
-                                                        enabled: !!models.table && models.table.writable
-                                                        Accessible.role: Accessible.Cell
-                                                        Accessible.name: cell.modelData + " " + tableRow.modelData.index
-                                                        onClicked: models.editing = cell.key
-                                                    }
-                                                    Loader {
-                                                        anchors.fill: parent
-                                                        anchors.rightMargin: 8
-                                                        active: models.editing === cell.key
-                                                        // Focus is given once the click that made
-                                                        // the field is over.
-                                                        onLoaded: Qt.callLater(function() {
-                                                            if (!item)
-                                                                return
-                                                            item.forceActiveFocus()
-                                                            item.selectAll()
-                                                        })
-                                                        sourceComponent: TextField {
-                                                            topPadding: 2
-                                                            bottomPadding: 2
-                                                            leftPadding: 4
-                                                            clip: true
-                                                            color: theme.text
-                                                            Accessible.name: cell.modelData + " " + tableRow.modelData.index
-                                                            background: Rectangle {
-                                                                radius: 4
-                                                                color: theme.bg
-                                                                border.color: theme.accent
-                                                            }
+                                        }
+                                    }
+
+                                    ListView {
+                                        id: rowsView
+                                        y: 22
+                                        width: tableScroll.contentWidth
+                                        height: tableScroll.height - 22
+                                        clip: true
+                                        model: window.page === 9 && models.table ? models.table.rows : []
+                                        ScrollBar.vertical: ScrollBar {}
+                                        delegate: Item {
+                                            id: tableRow
+                                            required property var modelData
+                                            required property int index
+                                            width: ListView.view.width
+                                            height: 24
+                                            Rectangle {
+                                                anchors.fill: parent
+                                                color: tableRow.index % 2 ? theme.cardAlt : "transparent"
+                                            }
+                                            Row {
+                                                x: 6
+                                                height: parent.height
+                                                Text {
+                                                    width: 60
+                                                    anchors.verticalCenter: parent.verticalCenter
+                                                    text: tableRow.modelData.index
+                                                    color: theme.subtle
+                                                    font.family: theme.mono
+                                                    font.pixelSize: 12
+                                                }
+                                                Repeater {
+                                                    model: models.columns
+                                                    delegate: Item {
+                                                        id: cell
+                                                        required property string modelData
+                                                        readonly property var value: tableRow.modelData.values[modelData]
+                                                        readonly property string key: tableRow.modelData.index + "/" + modelData
+                                                        width: models.columnWidth
+                                                        height: tableRow.height
+                                                        Text {
+                                                            anchors.fill: parent
+                                                            anchors.rightMargin: 8
+                                                            verticalAlignment: Text.AlignVCenter
+                                                            elide: Text.ElideRight
+                                                            visible: models.editing !== cell.key
                                                             text: window.shown(cell.value)
-                                                            onAccepted: models.write(tableRow.modelData.index, cell.modelData,
-                                                                                     cell.value, text)
-                                                            Keys.onEscapePressed: models.editing = ""
+                                                            color: theme.text
+                                                            font.pixelSize: 12
+                                                        }
+                                                        MouseArea {
+                                                            anchors.fill: parent
+                                                            enabled: !!models.table && models.table.writable
+                                                            Accessible.role: Accessible.Cell
+                                                            Accessible.name: cell.modelData + " " + tableRow.modelData.index
+                                                            onClicked: models.editing = cell.key
+                                                        }
+                                                        Loader {
+                                                            anchors.fill: parent
+                                                            anchors.rightMargin: 8
+                                                            active: models.editing === cell.key
+                                                            // Focus is given once the click that made
+                                                            // the field is over.
+                                                            onLoaded: Qt.callLater(function() {
+                                                                if (!item)
+                                                                    return
+                                                                item.forceActiveFocus()
+                                                                item.selectAll()
+                                                            })
+                                                            sourceComponent: TextField {
+                                                                topPadding: 2
+                                                                bottomPadding: 2
+                                                                leftPadding: 4
+                                                                clip: true
+                                                                color: theme.text
+                                                                Accessible.name: cell.modelData + " " + tableRow.modelData.index
+                                                                background: Rectangle {
+                                                                    radius: 4
+                                                                    color: theme.bg
+                                                                    border.color: theme.accent
+                                                                }
+                                                                text: window.shown(cell.value)
+                                                                onAccepted: models.write(tableRow.modelData.index, cell.modelData,
+                                                                                         cell.value, text)
+                                                                Keys.onEscapePressed: models.editing = ""
+                                                            }
                                                         }
                                                     }
                                                 }
@@ -5497,288 +5526,303 @@ ApplicationWindow {
                     // Beside the list where the panels shown leave it room
                     // for a row, under it where they do not: a wake opened
                     // adds its panel, which must not squeeze the list away.
-                    GridLayout {
-                        id: wakesBody
-                        readonly property real dueWidth: Math.max(200, Math.min(320, wakes.width * 0.3))
-                        readonly property bool narrow: width < 350 + 10 + dueWidth + (wakes.one !== null ? 440 + 10 : 0)
+                    // Stacked, the panels may need more height than the
+                    // window has: the body then scrolls, as the overview
+                    // does, rather than squeeze them below what they show.
+                    Flickable {
+                        id: wakesScroll
                         Layout.fillWidth: true
                         Layout.fillHeight: true
-                        columns: narrow ? 1 : 3
-                        columnSpacing: 10
-                        rowSpacing: 10
+                        clip: true
+                        contentWidth: width
+                        contentHeight: Math.max(height, wakesBody.implicitHeight)
+                        interactive: contentHeight > height
+                        boundsBehavior: Flickable.StopAtBounds
+                        ScrollBar.vertical: ScrollBar {}
 
-                        Rectangle {
-                            Layout.fillWidth: true
-                            Layout.fillHeight: true
-                            Layout.minimumHeight: wakesBody.narrow ? 120 : 0
-                            radius: 9
-                            color: theme.card
-                            border.color: theme.rule
-                            clip: true
-                            ListView {
-                                id: wakeView
-                                anchors.fill: parent
-                                anchors.margins: 6
+                        GridLayout {
+                            id: wakesBody
+                            readonly property real dueWidth: Math.max(200, Math.min(320, wakes.width * 0.3))
+                            readonly property bool narrow: width < 350 + 10 + dueWidth + (wakes.one !== null ? 440 + 10 : 0)
+                            width: wakesScroll.width
+                            height: wakesScroll.contentHeight
+                            columns: narrow ? 1 : 3
+                            columnSpacing: 10
+                            rowSpacing: 10
+
+                            Rectangle {
+                                Layout.fillWidth: true
+                                Layout.fillHeight: true
+                                Layout.minimumHeight: wakesBody.narrow ? 120 : 0
+                                radius: 9
+                                color: theme.card
+                                border.color: theme.rule
                                 clip: true
-                                model: window.page === 10 ? wakeRows : null
-                                Accessible.role: Accessible.List
-                                Accessible.name: "Wakes"
-                                onModelChanged: if (model !== null) Qt.callLater(wakeView.positionViewAtEnd)
-                                ScrollBar.vertical: ScrollBar {}
-                                delegate: Item {
-                                    id: wakeRow
-                                    required property int index
-                                    required property int seq
-                                    required property string at
-                                    required property string causes
-                                    required property color tone
-                                    required property string ledTo
-                                    required property string detail
-                                    required property bool detailed
-                                    width: ListView.view.width
-                                    // Its detail goes on a line of its own where the row is
-                                    // too narrow to have it beside the rest.
-                                    readonly property bool narrow: width < 560
-                                    height: narrow ? 40 : 24
-                                    Accessible.role: Accessible.ListItem
-                                    Accessible.name: "wake " + seq + ", woke by " + (causes === "" ? "nothing known" : causes)
-                                                     + ", led to " + ledTo
-                                    Rectangle {
-                                        anchors.fill: parent
-                                        color: wakeRow.index % 2 ? theme.cardAlt : "transparent"
-                                    }
-                                    Row {
-                                        x: 6
-                                        height: 24
-                                        spacing: 10
-                                        Text {
-                                            width: 50
-                                            anchors.verticalCenter: parent.verticalCenter
-                                            horizontalAlignment: Text.AlignRight
-                                            text: wakeRow.seq
-                                            color: theme.subtle
-                                            font.family: theme.mono
-                                            font.pixelSize: 12
+                                ListView {
+                                    id: wakeView
+                                    anchors.fill: parent
+                                    anchors.margins: 6
+                                    clip: true
+                                    model: window.page === 10 ? wakeRows : null
+                                    Accessible.role: Accessible.List
+                                    Accessible.name: "Wakes"
+                                    onModelChanged: if (model !== null) Qt.callLater(wakeView.positionViewAtEnd)
+                                    ScrollBar.vertical: ScrollBar {}
+                                    delegate: Item {
+                                        id: wakeRow
+                                        required property int index
+                                        required property int seq
+                                        required property string at
+                                        required property string causes
+                                        required property color tone
+                                        required property string ledTo
+                                        required property string detail
+                                        required property bool detailed
+                                        width: ListView.view.width
+                                        // Its detail goes on a line of its own where the row is
+                                        // too narrow to have it beside the rest.
+                                        readonly property bool narrow: width < 560
+                                        height: narrow ? 40 : 24
+                                        Accessible.role: Accessible.ListItem
+                                        Accessible.name: "wake " + seq + ", woke by " + (causes === "" ? "nothing known" : causes)
+                                                         + ", led to " + ledTo
+                                        Rectangle {
+                                            anchors.fill: parent
+                                            color: wakeRow.index % 2 ? theme.cardAlt : "transparent"
+                                        }
+                                        Row {
+                                            x: 6
+                                            height: 24
+                                            spacing: 10
+                                            Text {
+                                                width: 50
+                                                anchors.verticalCenter: parent.verticalCenter
+                                                horizontalAlignment: Text.AlignRight
+                                                text: wakeRow.seq
+                                                color: theme.subtle
+                                                font.family: theme.mono
+                                                font.pixelSize: 12
+                                            }
+                                            Text {
+                                                width: 80
+                                                anchors.verticalCenter: parent.verticalCenter
+                                                horizontalAlignment: Text.AlignRight
+                                                text: wakeRow.at
+                                                color: theme.subtle
+                                                font.family: theme.mono
+                                                font.pixelSize: 12
+                                            }
+                                            Text {
+                                                width: wakeRow.narrow ? Math.max(40, wakeRow.width - 6 - 50 - 80 - 90 - 30 - 6) : 170
+                                                anchors.verticalCenter: parent.verticalCenter
+                                                text: wakeRow.causes === "" ? "—" : wakeRow.causes
+                                                color: wakeRow.tone
+                                                elide: Text.ElideRight
+                                                font.pixelSize: 12
+                                            }
+                                            Text {
+                                                width: 90
+                                                anchors.verticalCenter: parent.verticalCenter
+                                                text: wakeRow.ledTo
+                                                color: wakeRow.ledTo === "nothing" ? theme.subtle : theme.text
+                                                font.pixelSize: 12
+                                            }
+                                            Text {
+                                                visible: !wakeRow.narrow
+                                                width: Math.max(0, wakeRow.width - 446)
+                                                anchors.verticalCenter: parent.verticalCenter
+                                                text: wakeRow.detail
+                                                color: theme.subtle
+                                                elide: Text.ElideRight
+                                                font.pixelSize: 11
+                                            }
                                         }
                                         Text {
-                                            width: 80
-                                            anchors.verticalCenter: parent.verticalCenter
-                                            horizontalAlignment: Text.AlignRight
-                                            text: wakeRow.at
-                                            color: theme.subtle
-                                            font.family: theme.mono
-                                            font.pixelSize: 12
-                                        }
-                                        Text {
-                                            width: wakeRow.narrow ? Math.max(40, wakeRow.width - 6 - 50 - 80 - 90 - 30 - 6) : 170
-                                            anchors.verticalCenter: parent.verticalCenter
-                                            text: wakeRow.causes === "" ? "—" : wakeRow.causes
-                                            color: wakeRow.tone
-                                            elide: Text.ElideRight
-                                            font.pixelSize: 12
-                                        }
-                                        Text {
-                                            width: 90
-                                            anchors.verticalCenter: parent.verticalCenter
-                                            text: wakeRow.ledTo
-                                            color: wakeRow.ledTo === "nothing" ? theme.subtle : theme.text
-                                            font.pixelSize: 12
-                                        }
-                                        Text {
-                                            visible: !wakeRow.narrow
-                                            width: Math.max(0, wakeRow.width - 446)
-                                            anchors.verticalCenter: parent.verticalCenter
+                                            visible: wakeRow.narrow
+                                            x: 6 + 50 + 10 + 80 + 10
+                                            y: 22
+                                            width: wakeRow.width - x - 6
                                             text: wakeRow.detail
                                             color: theme.subtle
                                             elide: Text.ElideRight
                                             font.pixelSize: 11
                                         }
-                                    }
-                                    Text {
-                                        visible: wakeRow.narrow
-                                        x: 6 + 50 + 10 + 80 + 10
-                                        y: 22
-                                        width: wakeRow.width - x - 6
-                                        text: wakeRow.detail
-                                        color: theme.subtle
-                                        elide: Text.ElideRight
-                                        font.pixelSize: 11
-                                    }
-                                    MouseArea {
-                                        anchors.fill: parent
-                                        enabled: wakeRow.detailed
-                                        cursorShape: Qt.PointingHandCursor
-                                        onClicked: wakes.openOne(wakeRow.seq)
-                                    }
-                                }
-                            }
-                            Text {
-                                anchors.centerIn: parent
-                                width: parent.width - 24
-                                horizontalAlignment: Text.AlignHCenter
-                                wrapMode: Text.Wrap
-                                visible: wakeRows.count === 0
-                                text: wakes.recording ? "No wake since keeping began: the application is at rest"
-                                                      : "Press Record to keep each wake and its causes"
-                                color: theme.subtle
-                            }
-                        }
-
-                        // What the wake picked did, in order.
-                        Rectangle {
-                            Layout.preferredWidth: wakesBody.narrow ? -1 : 440
-                            Layout.fillWidth: wakesBody.narrow
-                            Layout.preferredHeight: wakesBody.narrow ? 220 : -1
-                            Layout.fillHeight: !wakesBody.narrow
-                            visible: wakes.one !== null
-                            radius: 9
-                            color: theme.card
-                            border.color: theme.accent
-                            clip: true
-                            Text {
-                                id: oneTitle
-                                x: 10; y: 6
-                                width: parent.width - 80
-                                elide: Text.ElideRight
-                                text: wakes.one ? wakes.one.title : ""
-                                color: theme.text
-                                font.pixelSize: 12
-                                font.bold: true
-                            }
-                            Button {
-                                anchors.right: parent.right
-                                anchors.rightMargin: 4
-                                y: 2
-                                text: "Close"
-                                flat: true
-                                onClicked: wakes.one = null
-                            }
-                            Text {
-                                x: 10; y: 26
-                                // Clear of the Close button.
-                                width: parent.width - 80
-                                wrapMode: Text.Wrap
-                                text: wakes.one ? wakes.one.took : ""
-                                color: theme.subtle
-                                font.pixelSize: 11
-                            }
-                            ListView {
-                                anchors.fill: parent
-                                anchors.margins: 6
-                                anchors.topMargin: 60
-                                clip: true
-                                model: window.page === 10 && wakes.one ? wakes.one.rows : []
-                                ScrollBar.vertical: ScrollBar {}
-                                delegate: Row {
-                                    id: oneRow
-                                    required property var modelData
-                                    width: ListView.view.width
-                                    height: 18
-                                    spacing: 6
-                                    Accessible.role: Accessible.ListItem
-                                    Accessible.name: modelData.kind + " " + modelData.what
-                                    Text {
-                                        width: 70 + oneRow.modelData.depth * 12
-                                        leftPadding: oneRow.modelData.depth * 12
-                                        text: oneRow.modelData.kind
-                                        color: oneRow.modelData.kind === "handler" ? theme.accent
-                                             : oneRow.modelData.kind === "binding" ? theme.violet
-                                             : oneRow.modelData.kind === "changed" ? theme.good : theme.subtle
-                                        font.pixelSize: 11
-                                    }
-                                    Text {
-                                        width: oneRow.width - 150 - oneRow.modelData.depth * 12
-                                        text: oneRow.modelData.what + (oneRow.modelData.at !== "" ? "  " + oneRow.modelData.at : "")
-                                        elide: Text.ElideRight
-                                        color: theme.text
-                                        font.pixelSize: 11
-                                    }
-                                    Text {
-                                        width: 60
-                                        horizontalAlignment: Text.AlignRight
-                                        text: oneRow.modelData.took
-                                        color: theme.subtle
-                                        font.family: theme.mono
-                                        font.pixelSize: 11
-                                    }
-                                }
-                            }
-                        }
-
-                        // What wakes it next.
-                        Rectangle {
-                            Layout.preferredWidth: wakesBody.narrow ? -1 : wakesBody.dueWidth
-                            Layout.fillWidth: wakesBody.narrow
-                            Layout.preferredHeight: wakesBody.narrow ? 140 : -1
-                            Layout.fillHeight: !wakesBody.narrow
-                            radius: 9
-                            color: theme.card
-                            border.color: theme.rule
-                            clip: true
-                            Text {
-                                x: 10; y: 8
-                                width: parent.width - 20
-                                elide: Text.ElideRight
-                                text: "Why awake · " + wakes.scheduled + " scheduled"
-                                      + (wakes.listening > 0 ? ", " + wakes.listening + " listening" : "")
-                                color: wakes.scheduled > 0 ? theme.warn : theme.subtle
-                                font.pixelSize: 11
-                                font.bold: true
-                            }
-                            ListView {
-                                anchors.fill: parent
-                                anchors.margins: 6
-                                anchors.topMargin: 28
-                                clip: true
-                                model: window.page === 10 ? wakes.due : []
-                                ScrollBar.vertical: ScrollBar {}
-                                // A row with an object opens it on the Objects page.
-                                delegate: Column {
-                                    id: dueRow
-                                    required property var modelData
-                                    width: ListView.view.width
-                                    bottomPadding: 6
-                                    Accessible.role: Accessible.ListItem
-                                    Accessible.name: dueRow.modelData.source + " " + dueRow.modelData.owner
-                                    Text {
-                                        width: parent.width
-                                        elide: Text.ElideRight
-                                        text: dueRow.modelData.source + " · " + dueRow.modelData.owner
-                                        color: !dueRow.modelData.scheduled ? theme.subtle
-                                               : dueRow.modelData.source === "timer" ? theme.warn
-                                               : dueRow.modelData.source === "animation" ? theme.violet
-                                               : theme.accent
-                                        font.pixelSize: 12
-                                        font.underline: dueHover.containsMouse
                                         MouseArea {
-                                            id: dueHover
                                             anchors.fill: parent
-                                            enabled: dueRow.modelData.handle !== ""
-                                            hoverEnabled: enabled
-                                            onClicked: {
-                                                window.page = 3
-                                                objects.load(true)
-                                                objects.pick(dueRow.modelData.handle, dueRow.modelData.owner)
-                                            }
+                                            enabled: wakeRow.detailed
+                                            cursorShape: Qt.PointingHandCursor
+                                            onClicked: wakes.openOne(wakeRow.seq)
                                         }
                                     }
-                                    Text {
-                                        width: parent.width
-                                        elide: Text.ElideRight
-                                        text: (dueRow.modelData.scheduled ? "" : "listens · ") + dueRow.modelData.detail
-                                        color: theme.subtle
-                                        font.pixelSize: 11
+                                }
+                                Text {
+                                    anchors.centerIn: parent
+                                    width: parent.width - 24
+                                    horizontalAlignment: Text.AlignHCenter
+                                    wrapMode: Text.Wrap
+                                    visible: wakeRows.count === 0
+                                    text: wakes.recording ? "No wake since keeping began: the application is at rest"
+                                                          : "Press Record to keep each wake and its causes"
+                                    color: theme.subtle
+                                }
+                            }
+
+                            // What the wake picked did, in order.
+                            Rectangle {
+                                Layout.preferredWidth: wakesBody.narrow ? -1 : 440
+                                Layout.fillWidth: wakesBody.narrow
+                                Layout.preferredHeight: wakesBody.narrow ? 220 : -1
+                                Layout.fillHeight: !wakesBody.narrow
+                                visible: wakes.one !== null
+                                radius: 9
+                                color: theme.card
+                                border.color: theme.accent
+                                clip: true
+                                Text {
+                                    id: oneTitle
+                                    x: 10; y: 6
+                                    width: parent.width - 80
+                                    elide: Text.ElideRight
+                                    text: wakes.one ? wakes.one.title : ""
+                                    color: theme.text
+                                    font.pixelSize: 12
+                                    font.bold: true
+                                }
+                                Button {
+                                    anchors.right: parent.right
+                                    anchors.rightMargin: 4
+                                    y: 2
+                                    text: "Close"
+                                    flat: true
+                                    onClicked: wakes.one = null
+                                }
+                                Text {
+                                    x: 10; y: 26
+                                    // Clear of the Close button.
+                                    width: parent.width - 80
+                                    wrapMode: Text.Wrap
+                                    text: wakes.one ? wakes.one.took : ""
+                                    color: theme.subtle
+                                    font.pixelSize: 11
+                                }
+                                ListView {
+                                    anchors.fill: parent
+                                    anchors.margins: 6
+                                    anchors.topMargin: 60
+                                    clip: true
+                                    model: window.page === 10 && wakes.one ? wakes.one.rows : []
+                                    ScrollBar.vertical: ScrollBar {}
+                                    delegate: Row {
+                                        id: oneRow
+                                        required property var modelData
+                                        width: ListView.view.width
+                                        height: 18
+                                        spacing: 6
+                                        Accessible.role: Accessible.ListItem
+                                        Accessible.name: modelData.kind + " " + modelData.what
+                                        Text {
+                                            width: 70 + oneRow.modelData.depth * 12
+                                            leftPadding: oneRow.modelData.depth * 12
+                                            text: oneRow.modelData.kind
+                                            color: oneRow.modelData.kind === "handler" ? theme.accent
+                                                 : oneRow.modelData.kind === "binding" ? theme.violet
+                                                 : oneRow.modelData.kind === "changed" ? theme.good : theme.subtle
+                                            font.pixelSize: 11
+                                        }
+                                        Text {
+                                            width: oneRow.width - 150 - oneRow.modelData.depth * 12
+                                            text: oneRow.modelData.what + (oneRow.modelData.at !== "" ? "  " + oneRow.modelData.at : "")
+                                            elide: Text.ElideRight
+                                            color: theme.text
+                                            font.pixelSize: 11
+                                        }
+                                        Text {
+                                            width: 60
+                                            horizontalAlignment: Text.AlignRight
+                                            text: oneRow.modelData.took
+                                            color: theme.subtle
+                                            font.family: theme.mono
+                                            font.pixelSize: 11
+                                        }
                                     }
                                 }
                             }
-                            Text {
-                                anchors.centerIn: parent
-                                width: parent.width - 20
-                                horizontalAlignment: Text.AlignHCenter
-                                wrapMode: Text.Wrap
-                                visible: wakes.due.length === 0
-                                text: "Nothing will wake the UI thread"
-                                color: theme.subtle
+
+                            // What wakes it next.
+                            Rectangle {
+                                Layout.preferredWidth: wakesBody.narrow ? -1 : wakesBody.dueWidth
+                                Layout.fillWidth: wakesBody.narrow
+                                Layout.preferredHeight: wakesBody.narrow ? 140 : -1
+                                Layout.fillHeight: !wakesBody.narrow
+                                radius: 9
+                                color: theme.card
+                                border.color: theme.rule
+                                clip: true
+                                Text {
+                                    x: 10; y: 8
+                                    width: parent.width - 20
+                                    elide: Text.ElideRight
+                                    text: "Why awake · " + wakes.scheduled + " scheduled"
+                                          + (wakes.listening > 0 ? ", " + wakes.listening + " listening" : "")
+                                    color: wakes.scheduled > 0 ? theme.warn : theme.subtle
+                                    font.pixelSize: 11
+                                    font.bold: true
+                                }
+                                ListView {
+                                    anchors.fill: parent
+                                    anchors.margins: 6
+                                    anchors.topMargin: 28
+                                    clip: true
+                                    model: window.page === 10 ? wakes.due : []
+                                    ScrollBar.vertical: ScrollBar {}
+                                    // A row with an object opens it on the Objects page.
+                                    delegate: Column {
+                                        id: dueRow
+                                        required property var modelData
+                                        width: ListView.view.width
+                                        bottomPadding: 6
+                                        Accessible.role: Accessible.ListItem
+                                        Accessible.name: dueRow.modelData.source + " " + dueRow.modelData.owner
+                                        Text {
+                                            width: parent.width
+                                            elide: Text.ElideRight
+                                            text: dueRow.modelData.source + " · " + dueRow.modelData.owner
+                                            color: !dueRow.modelData.scheduled ? theme.subtle
+                                                   : dueRow.modelData.source === "timer" ? theme.warn
+                                                   : dueRow.modelData.source === "animation" ? theme.violet
+                                                   : theme.accent
+                                            font.pixelSize: 12
+                                            font.underline: dueHover.containsMouse
+                                            MouseArea {
+                                                id: dueHover
+                                                anchors.fill: parent
+                                                enabled: dueRow.modelData.handle !== ""
+                                                hoverEnabled: enabled
+                                                onClicked: {
+                                                    window.page = 3
+                                                    objects.load(true)
+                                                    objects.pick(dueRow.modelData.handle, dueRow.modelData.owner)
+                                                }
+                                            }
+                                        }
+                                        Text {
+                                            width: parent.width
+                                            elide: Text.ElideRight
+                                            text: (dueRow.modelData.scheduled ? "" : "listens · ") + dueRow.modelData.detail
+                                            color: theme.subtle
+                                            font.pixelSize: 11
+                                        }
+                                    }
+                                }
+                                Text {
+                                    anchors.centerIn: parent
+                                    width: parent.width - 20
+                                    horizontalAlignment: Text.AlignHCenter
+                                    wrapMode: Text.Wrap
+                                    visible: wakes.due.length === 0
+                                    text: "Nothing will wake the UI thread"
+                                    color: theme.subtle
+                                }
                             }
                         }
                     }
