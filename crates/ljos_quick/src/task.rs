@@ -440,9 +440,16 @@ impl Tasks {
         let made = e
             .create_native_incomplete(TaskHelper {}, None)
             .and_then(|helper| {
-                let install = e.eval_js(DRIVER)?;
-                e.try_call_js(&install, &[Value::Object(helper)])
-                    .map_err(|err| EngineError::Invoke(err.to_string()))
+                let installed = e.eval_js(DRIVER).and_then(|install| {
+                    e.try_call_js(&install, &[Value::Object(helper)])
+                        .map_err(|err| EngineError::Invoke(err.to_string()))
+                });
+                // A helper no driver holds would only be left over; the
+                // next start makes another.
+                if installed.is_err() {
+                    e.destroy_now(helper);
+                }
+                installed
             });
         let made = match made {
             Ok(v) => v,
@@ -512,11 +519,11 @@ impl Tasks {
 
     /// Drops the start `me` waits for, if one is waiting.
     fn stop_waiting(&self, e: &Engine, me: ObjectId) {
-        let timer = self
-            .again
-            .borrow_mut()
-            .get_mut(&me)
-            .and_then(|w| w.timer.take());
+        let timer = self.again.borrow_mut().get_mut(&me).and_then(|w| {
+            // The args of a start nobody waits for are not kept alive.
+            w.args = Value::Undefined;
+            w.timer.take()
+        });
         if let Some(timer) = timer {
             e.cancel_call(timer);
         }

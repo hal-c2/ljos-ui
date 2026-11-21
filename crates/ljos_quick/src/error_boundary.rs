@@ -367,11 +367,16 @@ impl Boundary for Behaviour {
             return true;
         }
         if let Some(Err(fault)) = show_fallback(e, me) {
-            // Nothing stands in while it waits; the content is still made
-            // again.
-            warn(e, format!("ErrorBoundary: {fault}"));
+            // A fallback that cannot be made is not a resource fault: it
+            // goes to the supervisor, counted, as when `start` meets it.
+            // Filed, not handled here, so it is taken after this one.
+            e.report_boundary_fault(me, fault);
+            return true;
         }
-        again_after(e, me, &report.fault, Some(report));
+        // The fallback's handlers may have given new content too.
+        if failed(e, me) {
+            again_after(e, me, &report.fault, Some(report));
+        }
         true
     }
 }
@@ -387,6 +392,12 @@ fn show_fallback(e: &Engine, me: ObjectId) -> Option<Result<(), Fault>> {
     let made = e.component_create_owned(fallback, me, place);
     with_run(e, me, |r| r.making_fallback = false);
     Some(match made {
+        // The fallback's own handlers gave new content while it was
+        // made: that content is shown, and the fallback is not.
+        Ok(obj) if e.is_alive(me) && !failed(e, me) => {
+            discard(e, obj);
+            Ok(())
+        }
         Ok(obj) if e.is_alive(me) => {
             with_run(e, me, |r| r.fallback_item = Some(obj));
             set(e, me, ErrorBoundary::ITEM.index, Value::Object(obj));

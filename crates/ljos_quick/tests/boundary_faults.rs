@@ -475,11 +475,84 @@ fn content_a_handler_gives_as_the_old_stops_for_want_of_heap_is_shown_not_the_fa
     assert!(e.collect_garbage());
     let held = e.script_memory().unwrap().bytes;
     assert!(e.set_script_heap_limit(Some(held + 64 * 1024)));
+    let restarts = num(&e, boundary, "restarts");
     set(&e, root, "on", Value::Bool(true));
     settle(&e, &clock, boundary);
+    // While the heap is still short: the handler's content is what shows,
+    // not the fallback waiting to make it again.
+    assert_eq!(shown(&e, boundary), "other");
+    assert_eq!(num(&e, boundary, "restarts"), restarts);
     assert!(e.set_script_heap_limit(None));
     settle(&e, &clock, boundary);
     assert_eq!(shown(&e, boundary), "other");
+    assert_eq!(num(&e, boundary, "restarts"), restarts);
     assert!(!get(&e, boundary, "failed").to_boolean());
+    assert_eq!(e.next_timer_deadline(), None, "nothing waits to be made");
+}
+
+/// [`MAIN`] with another fallback.
+fn with_fallback(fallback: &str) -> String {
+    MAIN.replace(
+        r#"fallback: Text { objectName: "sorry"; text: boundary.fault.kind }"#,
+        fallback,
+    )
+}
+
+/// Runs `source`'s content out of heap and gives back the engine, its
+/// clock, the root and the boundary.
+fn out_of_heap(source: &str) -> (Engine, Arc<VirtualClock>, ObjectId, ObjectId) {
+    let e = engine();
+    let clock = Arc::new(VirtualClock::new());
+    e.set_clock(Rc::new(clock.clone()));
+    compile(&e, &[("Main", source)]);
+    let root = e.create_from_url("Main", None, Vec::new()).unwrap();
+    let boundary = find(&e, root, "boundary");
+    e.invoke_by_name(root, "litter", &[Value::from(0.0)])
+        .unwrap();
+    assert!(e.collect_garbage());
+    let held = e.script_memory().unwrap().bytes;
+    assert!(e.set_script_heap_limit(Some(held + 64 * 1024)));
+    set(&e, root, "on", Value::Bool(true));
+    settle(&e, &clock, boundary);
+    (e, clock, root, boundary)
+}
+
+/// A fallback that cannot be made is no resource fault: it goes to the
+/// supervisor and is counted, so a boundary with nothing to show gives up
+/// rather than waiting without end.
+#[test]
+fn a_fallback_that_cannot_be_made_while_the_heap_is_short_is_counted() {
+    let source = with_fallback("fallback: Item { objectName: \"sorry\"; required property int n }");
+    let (e, clock, _, boundary) = out_of_heap(&source);
+    for _ in 0..10 {
+        if e.application_fault().is_some() {
+            break;
+        }
+        if let Some(due) = e.next_timer_deadline() {
+            clock.set(due);
+        }
+        settle(&e, &clock, boundary);
+    }
+    assert!(
+        e.application_fault().is_some(),
+        "escalated past maxRestarts"
+    );
+    let warned = e.take_warnings();
+    assert!(warned.iter().any(|w| w.contains("fallback:")), "{warned:?}");
+}
+
+/// Content the fallback's own handler gives while the fallback is made
+/// is what shows: the fallback is not put over it.
+#[test]
+fn content_the_fallback_gives_as_it_is_made_is_shown_not_the_fallback() {
+    let source = with_fallback(
+        r#"fallback: Text { objectName: "sorry"; Component.onCompleted: boundary.content = root.other }"#,
+    );
+    let (e, clock, _, boundary) = out_of_heap(&source);
+    assert_eq!(shown(&e, boundary), "other");
+    assert!(!get(&e, boundary, "failed").to_boolean());
+    assert!(e.set_script_heap_limit(None));
+    settle(&e, &clock, boundary);
+    assert_eq!(shown(&e, boundary), "other");
     assert_eq!(e.next_timer_deadline(), None, "nothing waits to be made");
 }
