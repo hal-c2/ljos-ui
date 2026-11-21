@@ -8,7 +8,7 @@ use ljos_runtime::Time;
 
 use super::{Options, Report, audit};
 
-fn engine() -> Engine {
+pub(super) fn engine() -> Engine {
     let e = Engine::new();
     ljos_quick::register(&e);
     ljos_controls::register(&e);
@@ -29,7 +29,7 @@ fn load(e: &Engine, source: &str) -> ObjectId {
         .unwrap_or_else(|err| panic!("Main.qml: {err}"))
 }
 
-fn mount(e: &Engine, source: &str) -> QuickScene {
+pub(super) fn mount(e: &Engine, source: &str) -> QuickScene {
     let root = load(e, source);
     let mut s = QuickScene::new(kurbo::Size::new(640.0, 480.0));
     s.set_root(e, root).unwrap();
@@ -1256,9 +1256,11 @@ fn an_audit_not_let_act_runs_no_handler_and_says_what_it_did_not_check() {
             .all(|c| !report.codes().contains(c)),
         "\n{report}"
     );
+    // The checks that act, and those that let the application run.
     let mut acting: Vec<&str> = crate::rules::ACTS
         .iter()
         .flat_map(|c| c.codes.iter().copied())
+        .chain(crate::health::RUNNING.iter().copied())
         .collect();
     acting.sort_unstable();
     assert_eq!(report.not_checked, acting);
@@ -1283,9 +1285,12 @@ fn an_audit_not_let_act_runs_no_handler_and_says_what_it_did_not_check() {
         ["motion-duration"]
     );
 
+    // With no clock to let it run on, the application is not let run.
     let report = audit(&e, &mut s, Time::ZERO, &Options::desktop());
     assert!(ran() > 0.0, "the acting checks toggled the box");
-    assert!(report.not_checked.is_empty());
+    let mut running = crate::health::RUNNING.to_vec();
+    running.sort_unstable();
+    assert_eq!(report.not_checked, running);
 }
 
 /// The findings of an audit of only `part` of `source` (a property of
@@ -2015,4 +2020,168 @@ fn where_a_toggle_s_parts_are_costs_the_same_per_row() {
         large * 2 <= small * 5,
         "32 rows take {small} steps, 64 take {large}: more than linear"
     );
+}
+
+/// An audit of `source` on a clock it may let run, of only `codes`: the
+/// report, and the engine (watched before the load when `watch` says).
+fn audit_running(source: &str, codes: &[&str], watch: bool) -> (Report, Engine) {
+    use ljos_runtime::{Clock, VirtualClock};
+    use std::{rc::Rc, sync::Arc};
+    let e = engine();
+    let clock = Arc::new(VirtualClock::new());
+    e.set_clock(Rc::new(Arc::clone(&clock)));
+    if watch {
+        crate::watch(&e);
+    }
+    let mut s = mount(&e, source);
+    let options = Options {
+        clock: (*clock).clone().into(),
+        ..Options::desktop().only(codes).unwrap()
+    };
+    let report = audit(&e, &mut s, clock.now(), &options);
+    (report, e)
+}
+
+/// A live host does not watch: the audit records its own run alone, and
+/// leaves the recording as it found it.
+#[test]
+fn an_audit_turns_recording_off_again_unless_the_host_watched() {
+    let source = page("");
+    let (_, e) = audit_running(&source, &["health-turn-over-budget"], false);
+    assert!(e.recorded_turns().is_none());
+    let (_, e) = audit_running(&source, &["health-turn-over-budget"], true);
+    assert!(e.recorded_turns().is_some_and(|r| r.turns > 0));
+}
+
+const TICKER: &str = "import QtQuick
+Item {
+    width: 200; height: 100
+    Rectangle { id: dot; width: 10; height: 10 }
+    Timer { interval: 16; repeat: true; running: true; onTriggered: HANDLER }
+}
+";
+
+/// A timer that fires every frame and changes nothing shown keeps the
+/// scene at rest; one that moves something does not.
+#[test]
+fn only_frames_that_show_something_new_count_against_settling() {
+    let codes = ["health-never-settles"];
+    let (report, _) = audit_running(&TICKER.replace("HANDLER", "{}"), &codes, false);
+    assert!(report.is_clean(), "\n{report}");
+    assert!(report.not_checked.is_empty(), "{:?}", report.not_checked);
+    let moves = TICKER.replace("HANDLER", "dot.x = (dot.x + 1) % 190");
+    let (report, _) = audit_running(&moves, &codes, false);
+    assert_eq!(report.codes(), codes, "\n{report}");
+}
+
+/// An animation that ends inside the last window is not idle work for
+/// the frames it ran.
+#[test]
+fn an_animation_that_ends_in_the_last_window_is_not_idle() {
+    // The windows run from 0 to 4 s; this ends at 3.9 s.
+    let source = "import QtQuick
+Item {
+    width: 200; height: 100
+    Rectangle {
+        width: 10; height: 10
+        NumberAnimation on x { from: 0; to: 190; duration: 3900; running: true }
+    }
+}
+";
+    let (report, _) = audit_running(source, &["health-never-settles"], false);
+    assert!(report.is_clean(), "\n{report}");
+}
+
+/// A scene whose first script runs after the first window cannot have its
+/// heap's growth judged over every window, and says so.
+#[test]
+fn a_scene_whose_first_script_runs_late_says_growth_was_not_judged() {
+    let source = "import QtQuick
+Item {
+    id: root
+    width: 200; height: 100
+    property int n: 0
+    Timer { interval: 1500; running: true; onTriggered: root.n = root.n + 1 }
+}
+";
+    let (report, e) = audit_running(source, &["health-heap-growth"], false);
+    assert!(e.script_memory().is_some(), "no script ran");
+    assert!(report.is_clean(), "\n{report}");
+    assert_eq!(report.not_checked, ["health-heap-growth"], "\n{report}");
+    assert!(
+        report.by_rule("").contains("first script ran after"),
+        "{}",
+        report.by_rule("")
+    );
+}
+
+/// A scene that never ran a script has no heap to grow: the run was not
+/// cut short, so nothing is listed as unjudged.
+#[test]
+fn a_scene_with_no_script_heap_is_not_called_cut_short() {
+    let source = "import QtQuick
+Item { width: 200; height: 100 }
+";
+    let (report, e) = audit_running(source, &["health-heap-growth"], false);
+    assert!(e.script_memory().is_none(), "the scene ran a script");
+    assert!(report.is_clean(), "\n{report}");
+    assert!(
+        report.not_checked.is_empty(),
+        "{:?}",
+        report.why_not_checked
+    );
+}
+
+/// Without a clock it may move, the audit says so, not that it was not
+/// asked to act.
+#[test]
+fn an_audit_with_no_clock_says_why_it_did_not_let_the_application_run() {
+    let e = engine();
+    let mut s = mount(&e, &page(""));
+    let report = audit(&e, &mut s, Time::ZERO, &Options::desktop());
+    let text = report.by_rule("");
+    assert!(text.contains("given none it may move"), "{text}");
+    assert!(!text.contains("not asked to"), "{text}");
+}
+
+/// What the application put in a message reaches a terminal escaped.
+#[test]
+fn a_fault_s_text_reaches_the_terminal_escaped() {
+    let source = "import QtQuick
+Item {
+    width: 200; height: 100
+    Component.onCompleted: { throw new Error(\"\\u001b[2Jgone\") }
+}
+";
+    let (report, _) = audit_running(source, &["health-fault"], true);
+    assert_eq!(report.codes(), ["health-fault"], "\n{report}");
+    let text = report.by_rule("");
+    assert!(!text.contains('\u{1b}'), "{text:?}");
+    assert!(text.contains("\\u{1b}[2Jgone"), "{text}");
+    // The JSON keeps what was thrown.
+    assert!(report.findings[0].message.contains('\u{1b}'));
+}
+
+/// Of the Loaders one place makes, those inside the audited item are
+/// reported, whichever comes first.
+#[test]
+fn a_failed_loader_inside_the_audited_item_is_found_when_one_outside_comes_first() {
+    let source = "import QtQuick
+Item {
+    width: 400; height: 100
+    property Item part: rows.itemAt(1)
+    Row {
+        Repeater {
+            id: rows
+            model: 2
+            delegate: Item {
+                width: 100; height: 100
+                Loader { anchors.fill: parent; source: \"RowThatIsNotThere.qml\" }
+            }
+        }
+    }
+}
+";
+    let report = audit_within(source, "part");
+    assert_eq!(report.of("health-loader-failed").count(), 1, "\n{report}");
 }

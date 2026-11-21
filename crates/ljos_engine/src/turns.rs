@@ -45,8 +45,12 @@ use crate::engine::Engine;
 use crate::ids::ObjectId;
 use crate::journal::JournalRun;
 
+mod record;
 #[cfg(kernel_timer)]
 mod timer;
+
+use record::Recorder;
+pub use record::{KEPT_TURNS, RecordedHandler, RecordedTurn, TurnRecord};
 
 /// The budget of a debug build's shell ([`Engine::watch_turns_by_default`]).
 pub const DEFAULT_TURN_BUDGET: Duration = Duration::from_millis(100);
@@ -428,12 +432,17 @@ impl TurnMarker {
 pub struct PhaseGuard<'a> {
     marker: Option<&'a TurnMarker>,
     prev: u8,
+    /// The engine recording the handler this guard is for.
+    recorded: Option<&'a Engine>,
 }
 
 impl Drop for PhaseGuard<'_> {
     fn drop(&mut self) {
         if let Some(m) = self.marker {
             m.0.phase.store(self.prev, Ordering::Relaxed);
+        }
+        if let Some(e) = self.recorded {
+            e.end_recorded_handler();
         }
     }
 }
@@ -480,6 +489,8 @@ pub(crate) struct TurnState {
     last_warned: Cell<Option<Instant>>,
     /// Warnings not given since the last one.
     unwarned: Cell<u32>,
+    /// What turns did, while [`Engine::record_turns`] has it recorded.
+    record: RefCell<Option<Recorder>>,
 }
 
 impl Drop for TurnState {
@@ -570,7 +581,8 @@ impl Engine {
         }
         let marker = t.marker.get();
         let journaled = self.is_journaled();
-        if t.budget.get().is_none() && marker.is_none() && !journaled {
+        let recording = self.begin_recorded_turn();
+        if t.budget.get().is_none() && marker.is_none() && !journaled && !recording {
             return TurnGuard {
                 engine: self,
                 outer: true,
@@ -613,6 +625,9 @@ impl Engine {
             return;
         };
         let took = started.elapsed();
+        // This turn's state is taken before it is named, which can start
+        // another turn that sets its own.
+        let mut c = t.cause.take();
         let reported = match t.marker.get() {
             Some(m) => {
                 m.end();
@@ -620,6 +635,9 @@ impl Engine {
             }
             None => false,
         };
+        if self.recording_turn() {
+            self.end_recorded_turn(took, &c);
+        }
         let over = t.budget.get().is_some_and(|b| took > b);
         if !(over || reported) {
             return;
@@ -634,7 +652,6 @@ impl Engine {
             return;
         }
         t.last_warned.set(Some(now));
-        let mut c = t.cause.take();
         if let Some(o) = c.origin {
             let (ty, place) = self.type_and_place(o);
             // The whole label now, which a turn could not afford to make.
@@ -663,8 +680,14 @@ impl Engine {
 
     /// The QML handler `name` of the object whose code runs starts. The
     /// first one in a turn, and its object, name the turn.
-    pub(crate) fn turn_handler(&self, name: &Atom, obj: ObjectId) -> PhaseGuard<'_> {
+    pub(crate) fn turn_handler(
+        &self,
+        name: &Atom,
+        obj: ObjectId,
+        at: impl FnOnce() -> Option<String>,
+    ) -> PhaseGuard<'_> {
         let t = &self.inner.turns;
+        let recorded = self.begin_recorded_handler(name, obj, at);
         if t.started.get().is_some() {
             let mut c = t.cause.borrow_mut();
             if c.handler.is_none() {
@@ -678,7 +701,9 @@ impl Engine {
                 }
             }
         }
-        self.enter_phase(Phase::Handler)
+        let mut guard = self.enter_phase(Phase::Handler);
+        guard.recorded = recorded.then_some(self);
+        guard
     }
 
     /// The UI thread is in `phase` until the guard is dropped. Nothing
@@ -689,7 +714,11 @@ impl Engine {
             Some(m) => m.0.phase.swap(phase as u8, Ordering::Relaxed),
             None => 0,
         };
-        PhaseGuard { marker, prev }
+        PhaseGuard {
+            marker,
+            prev,
+            recorded: None,
+        }
     }
 
     /// `obj`'s type and where it is declared, as the engine keeps them.

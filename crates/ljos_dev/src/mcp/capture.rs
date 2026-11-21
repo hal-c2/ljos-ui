@@ -7,7 +7,9 @@
 //! something asks for it, so the inspector switches it on for one request
 //! and gives it back afterwards ([`Lease`]).
 
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
 
 use ljos_a11y::{NodeKey, accesskit::Toggled, role_word};
 use ljos_engine::{Engine, ObjectId, Value};
@@ -521,6 +523,141 @@ pub(crate) fn secrets(engine: &Engine, scene: &QuickScene, redact_all: bool) -> 
         .map_or_else(HashSet::new, |root| secrets_below(engine, root, redact_all))
 }
 
+/// What the fields below the scene's root come to hold that must not be
+/// shown, as each value is written: for a request that lets the
+/// application run (an acting audit), whose handlers can put a secret in a
+/// field, clear it and repeat it in a fault before anything looks again.
+/// Each editor there when the watch starts is watched, and each one put in
+/// the scene while it runs (a dialog a Loader opens), so one whose text is
+/// hidden only later is heard too. A value is a secret if its field hides
+/// its text when it is written.
+#[derive(Default)]
+pub(crate) struct SecretWatch {
+    live: Rc<RefCell<Option<Watching>>>,
+    /// Items put in the scene and not yet watched: one placed while a
+    /// pass already holds `live` (watching an editor made another one go
+    /// in) waits here for that pass, which drains it before letting go.
+    pending: Rc<RefCell<Vec<ObjectId>>>,
+    /// The engine whose new items are heard of: the engine keeps its
+    /// listeners, so there is one for each engine, idle between watches.
+    hooked: Option<Engine>,
+}
+
+struct Watching {
+    heard: Rc<RefCell<HashSet<String>>>,
+    nodes: Vec<ljos_engine::NodeId>,
+    watched: HashSet<ObjectId>,
+    redact_all: bool,
+}
+
+impl Watching {
+    fn watch_below(&mut self, engine: &Engine, root: ObjectId) {
+        for obj in objects_below(engine, root) {
+            if !is_editor(engine, obj) || !self.watched.insert(obj) {
+                continue;
+            }
+            let redact_all = self.redact_all;
+            for prop in TYPED {
+                let Ok(index) = engine.property_index(obj, prop) else {
+                    continue;
+                };
+                // What it holds as it comes in.
+                if let Value::String(s) = engine.untrack(|| engine.read_by_name(obj, prop))
+                    && !s.is_empty()
+                    && (redact_all || hides_its_text(engine, obj))
+                {
+                    self.heard.borrow_mut().insert(s.to_string());
+                }
+                let heard = Rc::clone(&self.heard);
+                let watched = engine.watch(obj, index, move |engine, v| {
+                    if let Value::String(s) = v
+                        && !s.is_empty()
+                        && (redact_all || hides_its_text(engine, obj))
+                    {
+                        heard.borrow_mut().insert(s.to_string());
+                    }
+                });
+                self.nodes.extend(watched.ok());
+            }
+        }
+    }
+}
+
+impl SecretWatch {
+    pub(crate) fn start(&mut self, engine: &Engine, scene: &QuickScene, redact_all: bool) {
+        if !self
+            .hooked
+            .as_ref()
+            .is_some_and(|e| Engine::ptr_eq(e, engine))
+        {
+            let (live, pending) = (Rc::clone(&self.live), Rc::clone(&self.pending));
+            engine.on_visual_parent_changed(move |engine, obj, parent| {
+                if parent.is_some() {
+                    placed(&live, &pending, engine, obj);
+                }
+            });
+            self.hooked = Some(engine.clone());
+        }
+        // A watch still live is stopped first, so none of its effects are
+        // left running; what it heard is kept.
+        let heard = self.live.borrow_mut().take().map_or_else(Rc::default, |w| {
+            for n in w.nodes {
+                engine.stop_effect(n);
+            }
+            w.heard
+        });
+        *self.live.borrow_mut() = Some(Watching {
+            heard,
+            nodes: Vec::new(),
+            watched: HashSet::new(),
+            redact_all,
+        });
+        // Watched the way an item put in later is, so one placed while the
+        // scene is first walked is not missed.
+        if let Some(root) = scene.root() {
+            placed(&self.live, &self.pending, engine, root);
+        }
+    }
+
+    /// Stops watching, and gives what was heard.
+    pub(crate) fn stop(&mut self, engine: &Engine) -> HashSet<String> {
+        self.pending.borrow_mut().clear();
+        let Some(w) = self.live.borrow_mut().take() else {
+            return HashSet::new();
+        };
+        for n in w.nodes {
+            engine.stop_effect(n);
+        }
+        w.heard.take()
+    }
+}
+
+/// Watches what is below `obj`, put in the scene, and whatever is put in
+/// while it does. The pass that holds `live` watches each item queued in
+/// `pending`, its own and those placed under it, before it lets go.
+fn placed(
+    live: &RefCell<Option<Watching>>,
+    pending: &RefCell<Vec<ObjectId>>,
+    engine: &Engine,
+    obj: ObjectId,
+) {
+    pending.borrow_mut().push(obj);
+    // Held: by the pass this placing happened in, which drains the queue.
+    let Ok(mut live) = live.try_borrow_mut() else {
+        return;
+    };
+    let Some(w) = live.as_mut() else {
+        // No watch: nothing placed now is asked about.
+        pending.borrow_mut().clear();
+        return;
+    };
+    loop {
+        let next = pending.borrow_mut().pop();
+        let Some(obj) = next else { break };
+        w.watch_below(engine, obj);
+    }
+}
+
 /// [`secrets`] of the objects below `root`: for what has the engine but not
 /// the scene (a trace written down as the application runs).
 pub(crate) fn secrets_below(engine: &Engine, root: ObjectId, redact_all: bool) -> HashSet<String> {
@@ -540,4 +677,83 @@ pub(crate) fn secrets_below(engine: &Engine, root: ObjectId, redact_all: bool) -
         }
         out
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ljos_quick::{Item, TextInput};
+
+    fn made<T: ljos_engine::QmlType + Default>(engine: &Engine) -> ObjectId {
+        let obj = engine.create_native(T::default(), None).unwrap();
+        engine.complete(obj).unwrap();
+        obj
+    }
+
+    /// An editor placed while a pass already holds the watch (as one an
+    /// editor's watching made would be) is watched once that pass goes on,
+    /// not skipped.
+    #[test]
+    fn an_editor_placed_inside_a_pass_is_watched_by_it() {
+        let engine = Engine::new();
+        ljos_quick::register(&engine);
+        let root = made::<Item>(&engine);
+        let mut scene = QuickScene::new(ljos_render::kurbo::Size::new(100.0, 100.0));
+        scene.set_root(&engine, root).unwrap();
+        let mut watch = SecretWatch::default();
+        watch.start(&engine, &scene, true);
+
+        let inner = made::<TextInput>(&engine);
+        let outer = made::<TextInput>(&engine);
+        {
+            // The outer pass holds the watch while `inner` goes in.
+            let _pass = watch.live.borrow_mut();
+            engine.set_visual_parent(inner, Some(root)).unwrap();
+            assert_eq!(*watch.pending.borrow(), [inner], "kept for the pass");
+        }
+        placed(&watch.live, &watch.pending, &engine, outer);
+        engine.set_visual_parent(outer, Some(root)).unwrap();
+        assert!(watch.pending.borrow().is_empty());
+
+        engine
+            .write_by_name(inner, "text", Value::from("nested-pin"))
+            .unwrap();
+        engine
+            .write_by_name(inner, "text", Value::from(""))
+            .unwrap();
+        engine
+            .write_by_name(outer, "text", Value::from("outer-pin"))
+            .unwrap();
+        let heard = watch.stop(&engine);
+        assert!(heard.contains("nested-pin"), "{heard:?}");
+        assert!(heard.contains("outer-pin"), "{heard:?}");
+        assert!(watch.pending.borrow().is_empty());
+    }
+
+    /// A second start stops the first watch's effects and keeps what it
+    /// heard: nothing written once the watch is stopped is heard.
+    #[test]
+    fn a_second_start_leaves_no_effect_of_the_first() {
+        let engine = Engine::new();
+        ljos_quick::register(&engine);
+        let root = made::<Item>(&engine);
+        let field = made::<TextInput>(&engine);
+        engine.set_visual_parent(field, Some(root)).unwrap();
+        let mut scene = QuickScene::new(ljos_render::kurbo::Size::new(100.0, 100.0));
+        scene.set_root(&engine, root).unwrap();
+        let mut watch = SecretWatch::default();
+        watch.start(&engine, &scene, true);
+        let first = Rc::clone(&watch.live.borrow().as_ref().unwrap().heard);
+        engine
+            .write_by_name(field, "text", Value::from("first-pin"))
+            .unwrap();
+        watch.start(&engine, &scene, true);
+        let heard = watch.stop(&engine);
+        assert!(heard.contains("first-pin"), "kept: {heard:?}");
+
+        engine
+            .write_by_name(field, "text", Value::from("after-pin"))
+            .unwrap();
+        assert!(first.borrow().is_empty(), "{:?}", first.borrow());
+    }
 }

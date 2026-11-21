@@ -477,6 +477,15 @@ pub fn run_headless<M: Send + 'static>(
     ljos_shell::run_headless(config, setup)
 }
 
+/// What an Android application's `android_main` is handed
+/// ([`run_android`]).
+#[cfg(all(feature = "android", target_os = "android"))]
+pub mod android {
+    pub use ljos_shell::android::AndroidApp;
+}
+#[cfg(all(feature = "android", target_os = "android"))]
+pub use app::run_android;
+
 /// A side stream (ARCHITECTURE.md §3.3): for a thread that feeds the UI
 /// many small items, made by [`Setup::batch`] and handled by
 /// [`Setup::on_batch`] a run at a time. Its [`BatchSender`] never blocks:

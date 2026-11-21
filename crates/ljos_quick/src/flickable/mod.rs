@@ -34,8 +34,8 @@ use crate::tree;
 pub use a11y::{scroll_by_action, scroll_extent};
 pub use drag::{keep_pointer_grab, keeps_pointer_grab};
 pub use physics::{
-    AxisState, FlickSettings, Kinetic, Motion, ScrollPhysics, Segment, VelocityTracker,
-    WHEEL_NOTCH_PIXELS, scroll_physics, set_scroll_physics,
+    AxisState, FlickSettings, Fling, Kinetic, Motion, ScrollPhysics, Segment, VelocityTracker,
+    WHEEL_NOTCH_PIXELS, scroll_physics, set_scroll_physics, spline_fling,
 };
 pub use wheel::{WheelItem, register_wheel_item};
 

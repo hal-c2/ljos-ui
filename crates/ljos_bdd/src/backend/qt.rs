@@ -894,6 +894,13 @@ impl Input for QtBackend {
         })
     }
 
+    fn input_method_holds(&mut self, _: &super::HeldText) -> Result<()> {
+        Err(BackendError::Unsupported {
+            backend: "qt",
+            what: "an input method: the input platform has none",
+        })
+    }
+
     fn commit(&mut self, _: &str) -> Result<()> {
         Err(BackendError::Unsupported {
             backend: "qt",

@@ -2172,7 +2172,15 @@ impl QuickScene {
             // A fault of the boundary the job was making something in.
             engine.report_fault(engine.proc_owner(*owner), fault.clone());
         }
-        let made = report.jobs_done > 0;
+        // The faults of the scripts the jobs ran, and those above, go to
+        // their boundaries in this frame: a Loader whose item failed says
+        // so now, not after the next frame's timers, and what it makes in
+        // its place is laid out with the rest.
+        let delivered = engine.deliver_faults();
+        // A boundary that took a fault made its fallback, or the content
+        // again, although no job may have finished: that is polished here
+        // too, or this frame would show it half placed.
+        let made = report.jobs_done > 0 || delivered > 0;
         // Moved, not copied: keeping it costs a host that never asks nothing.
         self.incubation = Some(report);
         if made {

@@ -28,6 +28,8 @@
 //! [`native::SystemOpener`]; a
 //! host with a network turns on `http` and installs `HttpFetcher`.
 
+#[cfg(target_os = "android")]
+pub mod android;
 mod badge;
 mod clipboard;
 mod dialogs;

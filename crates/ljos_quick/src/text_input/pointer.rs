@@ -56,6 +56,11 @@ pub(super) fn press(engine: &Engine, obj: ObjectId, ev: &PointerEvent, at: kurbo
     };
     if flag(engine, obj, TextEditor::ACTIVE_FOCUS_ON_PRESS.index) {
         focus::force_active_focus(engine, obj, FocusReason::Mouse);
+        // An on-screen keyboard the user put away while the editor kept
+        // the focus comes back at a press in it.
+        if !ops::read_only(engine, obj) {
+            crate::input_method::want_keyboard(engine);
+        }
     }
     let selects = flag(engine, obj, TextEditor::SELECT_BY_MOUSE.index);
     let by_words = engine

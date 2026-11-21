@@ -322,6 +322,7 @@ pub fn implemented() -> Vec<&'static str> {
         .iter()
         .flat_map(|c| c.codes.iter().copied())
         .chain(acts)
+        .chain(crate::health::CODES.iter().copied())
     {
         if !out.contains(&code) {
             out.push(code);

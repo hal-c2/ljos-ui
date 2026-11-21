@@ -50,6 +50,28 @@ fn user_dir_made_again(w: &mut LjosWorld) -> StepResult {
     w.each(|b| b.application()?.user_qml_dir_made_again())
 }
 
+#[when("the user's directory is read")]
+fn user_dir_read(w: &mut LjosWorld) -> StepResult {
+    w.each(|b| b.application()?.user_qml_dir_read())
+}
+
+#[when(regex = r"^(\d+) seconds? pass(?:es)? with the application answering every wake$")]
+fn left_alone(w: &mut LjosWorld, seconds: u64) -> StepResult {
+    w.each(|b| {
+        b.application()?
+            .user_qml_left_alone(std::time::Duration::from_secs(seconds))
+    })
+}
+
+#[then(regex = r"^the application was woken at most (\d+) times? while it was left alone$")]
+fn woken_at_most(w: &mut LjosWorld, most: u64) -> StepResult {
+    seen(w, |s| {
+        (s.woken <= most)
+            .then_some(())
+            .ok_or_else(|| format!("the application was woken {} times", s.woken))
+    })
+}
+
 #[when(regex = r#"^the user removes the file "([^"]+)"$"#)]
 fn user_removes(w: &mut LjosWorld, name: String) -> StepResult {
     w.each(|b| b.application()?.user_qml_file(&name, None))

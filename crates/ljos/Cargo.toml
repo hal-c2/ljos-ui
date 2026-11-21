@@ -98,6 +98,9 @@ default = ["shell", "media", "media-audio", "collation", "woff"]
 # generate the face `ljos-web faces` builds. Nothing on any other target.
 web = ["dep:ljos_web"]
 shell = ["dep:ljos_shell"]
+# An Android application (`run_android`): the shell's Android host on
+# GameActivity. Nothing on any other target.
+android = ["shell", "ljos_shell/android"]
 # `localeCompare` and `ljos::locale::Collator` order text by the locale's
 # alphabet (ICU's collation data, about 1.2 MB of a stripped release
 # binary). Without it they order every locale's text as the `C` locale

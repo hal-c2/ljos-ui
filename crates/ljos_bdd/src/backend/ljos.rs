@@ -180,6 +180,8 @@ pub struct LjosBackend {
     platform: FakePlatform,
     /// What the drags other applications make allow and propose.
     outside_actions: ljos_platform::DragActions,
+    /// Whether the application took the last step of the system's Back.
+    back_taken: Option<bool>,
     /// The wall clock the scenario pinned, in milliseconds since the UNIX
     /// epoch; given before anything was loaded.
     wall_clock: Option<f64>,
@@ -1610,6 +1612,16 @@ impl Input for LjosBackend {
         })
     }
 
+    fn input_method_holds(&mut self, held: &super::HeldText) -> Result<()> {
+        let now = ljos_quick::ImeText {
+            text: held.text.clone(),
+            anchor: held.anchor,
+            cursor: held.cursor,
+            compose: held.compose.clone(),
+        };
+        self.input(|b| b.live()?.drive(|d| d.ime_text(&now).map(|_| ())))
+    }
+
     fn commit(&mut self, text: &str) -> Result<()> {
         self.input(|b| b.live()?.drive(|d| d.commit(text).map(|_| ())))
     }
@@ -1793,6 +1805,14 @@ impl Application for LjosBackend {
 
     fn user_qml_dir_made_again(&mut self) -> Result<()> {
         self.live()?.user_qml_dir_made_again()
+    }
+
+    fn user_qml_dir_read(&mut self) -> Result<()> {
+        self.live()?.user_qml_dir_read()
+    }
+
+    fn user_qml_left_alone(&mut self, wall: std::time::Duration) -> Result<()> {
+        self.live()?.user_qml_left_alone(wall)
     }
 
     fn user_qml_modules(&mut self, dir: &str) -> Result<()> {

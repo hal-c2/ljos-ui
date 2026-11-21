@@ -89,6 +89,8 @@ pub struct UserSeen {
     /// A compiler was made for QML a script holds as text, or for a file
     /// the application was not built with.
     pub texts: bool,
+    /// How often the application was woken while it was last left alone.
+    pub woken: u64,
 }
 
 /// Why a changed file was not applied.
@@ -327,6 +329,10 @@ pub trait Backend: fmt::Debug {
     fn as_tooling(&mut self) -> Option<&mut dyn Tooling> {
         None
     }
+
+    fn as_device(&mut self) -> Option<&mut dyn Device> {
+        None
+    }
 }
 
 /// A capability the backend lacks: not yet written, or, for Ljós's own
@@ -434,9 +440,152 @@ impl dyn Backend + '_ {
         self.as_tooling()
             .ok_or_else(|| lacks(backend, "Ljós's own tooling", true))
     }
+
+    /// What the backend can do as [`Device`].
+    ///
+    /// # Errors
+    /// It cannot.
+    pub fn device(&mut self) -> Result<&mut dyn Device> {
+        let backend = self.name();
+        self.as_device()
+            .ok_or_else(|| lacks(backend, "a phone the application runs on", false))
+    }
+}
+
+/// One step of the system's Back: a swipe (predictive back) as it goes,
+/// or a lone `Invoked` for a key or a button.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BackSwipe {
+    Started,
+    Progressed,
+    Cancelled,
+    Invoked,
+}
+
+/// What the user and the system do to an application on a phone, which
+/// owns its screen, takes it away and gives it back, and ends a hidden
+/// application's screen to save memory (ARCHITECTURE.md §10.2).
+pub trait Device: Backend {
+    /// The user goes to the home screen; the application stays running.
+    fn leave_for_home(&mut self) -> Result<()> {
+        Err(BackendError::NotImplemented("going to the home screen"))
+    }
+
+    /// The user opens the application again, from its icon or the
+    /// recent applications.
+    fn open_again(&mut self) -> Result<()> {
+        Err(BackendError::NotImplemented(
+            "opening the application again",
+        ))
+    }
+
+    /// The user turns the phone a quarter turn, to `landscape` or back to
+    /// `portrait`.
+    fn turn(&mut self, _landscape: bool) -> Result<()> {
+        Err(BackendError::NotImplemented("turning the phone"))
+    }
+
+    /// The user presses or swipes Back.
+    fn back(&mut self) -> Result<()> {
+        Err(BackendError::NotImplemented("Back"))
+    }
+
+    /// The system ends the screen of the hidden application, keeping the
+    /// application (Android's activity, destroyed; its process kept).
+    fn end_screen(&mut self) -> Result<()> {
+        Err(BackendError::NotImplemented(
+            "the system ending the application's screen",
+        ))
+    }
+
+    /// The application's process is running.
+    fn running(&mut self) -> Result<bool> {
+        Err(BackendError::NotImplemented(
+            "whether the application's process runs",
+        ))
+    }
+
+    /// The application is the one the user sees.
+    fn in_front(&mut self) -> Result<bool> {
+        Err(BackendError::NotImplemented(
+            "which application is in front",
+        ))
+    }
+
+    /// The system thinks the application stopped answering.
+    fn not_responding(&mut self) -> Result<bool> {
+        Err(BackendError::NotImplemented(
+            "an application not responding",
+        ))
+    }
+
+    /// The developer connects to the inspector of the application on the
+    /// phone from the computer (`ljos android connect`: a port forwarded
+    /// over adb, the token read with `run-as`); the inspector steps then
+    /// ask that inspector.
+    fn connect_inspector(&mut self) -> Result<()> {
+        Err(BackendError::NotImplemented(
+            "connecting to the inspector of the application on the phone",
+        ))
+    }
+
+    /// The system ends the application's process, as it ends a hidden
+    /// one to save memory; the user opening it again starts a new one.
+    fn end_process(&mut self) -> Result<()> {
+        Err(BackendError::NotImplemented(
+            "the system ending the application's process",
+        ))
+    }
+
+    /// The application keeps `secret` as `key` of `service` in the
+    /// system's store of secrets.
+    fn keep_secret(&mut self, service: &str, key: &str, secret: &str) -> Result<()> {
+        let _ = (service, key, secret);
+        Err(BackendError::NotImplemented("keeping a secret"))
+    }
+
+    /// The application removes the secret kept as `key` of `service`.
+    fn remove_secret(&mut self, service: &str, key: &str) -> Result<()> {
+        let _ = (service, key);
+        Err(BackendError::NotImplemented("removing a secret"))
+    }
+
+    /// The secret the application reads as `key` of `service`, if any.
+    fn read_secret(&mut self, service: &str, key: &str) -> Result<Option<String>> {
+        let _ = (service, key);
+        Err(BackendError::NotImplemented("reading a secret"))
+    }
+
+    /// Whether `path` is a directory that is the application's own: the
+    /// system keeps it for the application alone and removes it with it.
+    fn own_directory(&mut self, path: &str) -> Result<bool> {
+        let _ = path;
+        Err(BackendError::NotImplemented(
+            "a directory of the application's own",
+        ))
+    }
+
+    /// Whether any file of the application's own holds `text` as it is.
+    fn files_hold(&mut self, text: &str) -> Result<bool> {
+        let _ = text;
+        Err(BackendError::NotImplemented(
+            "searching the application's files",
+        ))
+    }
 }
 
 /// Input besides a click by name, a key and the pointer's steps.
+/// What an input method that tells the whole of what it holds holds;
+/// positions count UTF-16 units.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct HeldText {
+    pub text: String,
+    pub anchor: usize,
+    pub cursor: usize,
+    /// The part still being composed.
+    pub compose: Option<std::ops::Range<usize>>,
+}
+
 pub trait Input: Backend {
     /// Hold a chord down until the keyboard has repeated it `repeats` times,
     /// then let go.
@@ -526,6 +675,15 @@ pub trait Input: Backend {
     /// An input method ends the composition and types `text`.
     fn commit(&mut self, _text: &str) -> Result<()> {
         Err(BackendError::NotImplemented("an input method"))
+    }
+
+    /// An input method tells the whole of what it holds: `text`, its
+    /// selection and the part of it still being composed, in UTF-16
+    /// units (Android's GameTextInput).
+    fn input_method_holds(&mut self, _held: &HeldText) -> Result<()> {
+        Err(BackendError::NotImplemented(
+            "an input method that tells all it holds",
+        ))
     }
 }
 
@@ -847,6 +1005,18 @@ pub trait Platform: Backend {
         Err(BackendError::NotImplemented("the system's dialogs"))
     }
 
+    /// One step of the system's Back, `progress` (0 to 1) being how far a
+    /// swipe has come.
+    fn system_back(&mut self, _step: BackSwipe, _progress: f64) -> Result<()> {
+        Err(BackendError::NotImplemented("the system's Back"))
+    }
+
+    /// Whether the application took the last step of the system's Back;
+    /// when it did not, Back was the system's to do.
+    fn back_taken(&mut self) -> Result<bool> {
+        Err(BackendError::NotImplemented("the system's Back"))
+    }
+
     /// A step of a drag from another application, as the window system
     /// reports it.
     fn drag_from_outside(&mut self, _step: &OutsideDrag) -> Result<()> {
@@ -1066,6 +1236,22 @@ pub trait Application: Backend {
     /// The user's directory is removed and made again at the same path,
     /// both before the application hears of either.
     fn user_qml_dir_made_again(&mut self) -> Result<()> {
+        Err(BackendError::NotImplemented("a user's directory"))
+    }
+
+    /// The user's directory is listed, as a file manager or a shell lists
+    /// it: nothing in it changes. What the application's start woke it for
+    /// is answered first, until it is quiet, so that a count after this
+    /// starts from the read.
+    fn user_qml_dir_read(&mut self) -> Result<()> {
+        Err(BackendError::NotImplemented("a user's directory"))
+    }
+
+    /// For `wall` of real time nobody touches the application, which
+    /// answers every wake as a host does: it takes what the wake brought.
+    /// The wakes are counted from the last step's on; the start's were
+    /// taken by [`user_qml_dir_read`](Self::user_qml_dir_read).
+    fn user_qml_left_alone(&mut self, _wall: std::time::Duration) -> Result<()> {
         Err(BackendError::NotImplemented("a user's directory"))
     }
 

@@ -62,6 +62,19 @@ Feature: A shipped application its users change while it runs
       And there is no reload error
       And the application was told of no fault
 
+    # Reading the directory changes nothing in it: a watch that took its
+    # own listing for a change would wake the application for ever. Exactly
+    # 0 is stable: the read step first takes what the start woke it for, and
+    # after that only the user's directory wakes this session; no timer or
+    # animation does.
+    Scenario: A user's directory with no file, read and left alone, leaves the application idle
+      When the application runs "Main.qml" built ahead, with the user's directory over it
+      And the user's directory is read
+      And 1 second passes with the application answering every wake
+      Then the application was woken at most 0 times while it was left alone
+      And the user's files are not compiled
+      And the user's directory is watched
+
     Scenario: A shell the user has not written is named where the user would write it
       When the application runs "Main.qml" built ahead, with the user's directory over it
       Then the object "loader/default-shell" exists
