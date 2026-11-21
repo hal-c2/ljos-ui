@@ -170,14 +170,15 @@ fn observer_clicked_turned_away(w: &mut LjosWorld, locator: String) -> StepResul
                 "nothing to click",
             ));
         }
-        let full = probes.turn_calls_away(KEPT)?;
+        let filling = probes.turn_calls_away(KEPT)?;
         probes.observer_call_now("app_click", serde_json::json!({ "target": locator }))?;
-        let took = full.elapsed();
+        let took = filling.elapsed();
         let answered = probes.calls_answered_again();
         if took > Duration::from_secs(1) {
             return Err(BackendError::Failed(format!(
-                "the observer was clicked {} ms after the application's second was full: \
-                 too late for its call and the one asked again to be turned away",
+                "the observer was clicked {} ms after the first call that filled the \
+                 application's second: too late for its call and the one asked again to be \
+                 turned away",
                 took.as_millis()
             )));
         }
