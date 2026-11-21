@@ -6,7 +6,7 @@
 //! and so does this: [`after`] is the whole rule, a row for each way a
 //! script asks a `Component` for an object.
 
-use super::Creation;
+use super::{Allocation, Creation};
 use crate::atom::Atom;
 use crate::engine::Engine;
 use crate::error::EngineError;
@@ -105,10 +105,17 @@ impl Engine {
     }
 
     /// Destroys what an allocation that cannot go on has made: all of it
-    /// is owned by the first object, which nothing refers to yet.
-    pub(super) fn discard_allocation(&self, cr: &Creation) {
+    /// is owned by the first object, which nothing refers to yet. So are
+    /// the contexts its objects were given; those of the components not
+    /// yet all made were not given to any, and go here.
+    pub(super) fn discard_allocation(&self, cr: &Creation, a: &Allocation) {
         if let Some(&first) = cr.all.first() {
             self.discard_creation(first);
+        }
+        for f in a.stack.iter().rev() {
+            if f.closing.is_none() && f.given.is_empty() {
+                self.destroy_context(f.ctx);
+            }
         }
     }
 
