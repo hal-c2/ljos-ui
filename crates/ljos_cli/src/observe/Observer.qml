@@ -5094,7 +5094,9 @@ ApplicationWindow {
                                     flickableDirection: Flickable.HorizontalFlick
                                     interactive: contentWidth > width
                                     boundsBehavior: Flickable.StopAtBounds
-                                    ScrollBar.horizontal: ScrollBar {}
+                                    ScrollBar.horizontal: ScrollBar {
+                                        id: tableBar
+                                    }
                                     // The roles, over their columns.
                                     Row {
                                         id: header
@@ -5133,8 +5135,9 @@ ApplicationWindow {
                                         ScrollBar.vertical: ScrollBar {
                                             parent: tableScroll
                                             x: tableScroll.width - width
-                                            y: rowsView.y
-                                            height: rowsView.height
+                                            y: rowsView.y - tableScroll.contentY
+                                            // Short of the sideways bar, so the two do not cross in the corner.
+                                            height: rowsView.height - (tableBar.visible ? tableBar.height : 0)
                                             Accessible.name: "Rows"
                                         }
                                         delegate: Item {
