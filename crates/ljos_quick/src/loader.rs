@@ -460,11 +460,9 @@ impl Boundary for LoaderBoundary {
             Fault::JsOutOfMemory => {
                 // Rows run out together: the first Loader told collects,
                 // and the rest, whose faults came before it, load into
-                // what it freed.
-                let collected = e.extension::<CollectedThrough>();
-                if report.seq > collected.0.get() && e.collect_garbage() {
-                    collected.0.set(e.faults_reported());
-                }
+                // what it freed. None when a collection came after the
+                // fault already.
+                e.collect_for_full_heap(report.seq);
                 load_again(e, me, report.at, Again::Counted, Cut::OutOfMemory);
             }
             _ => {}
@@ -496,11 +494,6 @@ enum Again {
     /// off by itself. `made_in` is the generation of the item.
     Elsewhere { made_in: u64 },
 }
-
-/// [`Engine::faults_reported`] when a Loader last collected the garbage
-/// for a full heap: a fault reported by then needs no other collection.
-#[derive(Default)]
-struct CollectedThrough(std::cell::Cell<u64>);
 
 /// What stopped a script a Loader loads again for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

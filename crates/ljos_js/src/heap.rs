@@ -40,6 +40,7 @@ unsafe extern "C" {
     // Ljós's patch to the vendored quickjs.c (quickjs.h).
     fn JS_MarkMallocPeak(rt: *mut rquickjs::qjs::JSRuntime) -> usize;
     fn JS_ResumeMallocPeak(rt: *mut rquickjs::qjs::JSRuntime, outer: usize) -> usize;
+    fn JS_GCObjectDigest(rt: *mut rquickjs::qjs::JSRuntime) -> u64;
 }
 
 /// The most the runtime held in a run, in the units QuickJS checks its
@@ -76,6 +77,40 @@ impl MallocPeak {
     pub(crate) fn get(&self) -> usize {
         // SAFETY: a live runtime (`of`); 0 is never above a mark.
         unsafe { JS_ResumeMallocPeak(self.0, 0) }
+    }
+}
+
+/// A digest of the runtime's collectable objects and their reference
+/// counts. Equal digests mean, to a 64-bit hash, the same objects at the
+/// same addresses with the same counts, and nothing more: what references
+/// what is not in it. A run that drops the last reference to a cycle
+/// frees nothing, so neither the heap nor its peak tells, but a count
+/// usually changes. Not always: `a.next.next = a.next; a.next = a;
+/// globalThis.a = null` leaves both objects unreachable with the counts
+/// they had. So a changed digest says something may be garbage, and an
+/// equal one is only a good guess that nothing became garbage: it may put
+/// a collection off, never refuse one that is owed. Walks the object list
+/// once, not what the objects hold, so it is far cheaper than a
+/// collection, but it is not free.
+pub(crate) struct ObjectDigest(*mut rquickjs::qjs::JSRuntime);
+
+impl ObjectDigest {
+    /// # Safety
+    ///
+    /// `rt` is a live runtime, and outlives what this is handed to.
+    pub(crate) unsafe fn of(rt: *mut rquickjs::qjs::JSRuntime) -> Self {
+        Self(rt)
+    }
+
+    pub(crate) fn get(&self) -> u64 {
+        // SAFETY: a live runtime (`of`); the walk reads the list only.
+        unsafe { JS_GCObjectDigest(self.0) }
+    }
+}
+
+impl std::fmt::Debug for ObjectDigest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ObjectDigest")
     }
 }
 

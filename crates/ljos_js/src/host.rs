@@ -27,7 +27,7 @@ use crate::{
     Bytecode, HostError, HostObjects, HostTypeId, JsConfig, JsFault, JsRef, JsValue, MethodDef,
     MethodFace, PlainValue, PropDef, SignalDef, Slice, SourceMapper, SourceText, TypeDef,
     ValueKind,
-    heap::{Counted, HeapCount, MallocPeak},
+    heap::{Counted, HeapCount, MallocPeak, ObjectDigest},
     objects::{HostWrapper, new_wrapper, register_wrapper_class, wrapper_id},
     value::{Pending, WeakRef},
 };
@@ -239,6 +239,13 @@ pub(crate) struct HostState {
     mapper: RefCell<Option<Rc<SourceMapper>>>,
     text: RefCell<Option<Rc<SourceText>>>,
     entered: Cell<bool>,
+    /// Something may have let go of a script value since the collector
+    /// last ran, or since [`JsHost::may_hold_garbage`] last found nothing
+    /// had: a run that did not run out (one that did owes a collection
+    /// instead, [`JsHost::wants_idle_collect`]), or the host dropping a
+    /// value it held. What it let go of may be cycles only the collector
+    /// frees, with the heap no bigger for it.
+    let_go: Cell<bool>,
     /// A run nested in this dispatch was interrupted: the dispatch is over,
     /// and the script that called back is stopped as it gets control back.
     stopped: Cell<bool>,
@@ -385,6 +392,9 @@ impl HostState {
                 }
                 Some(held)
             }));
+        }
+        if !freed.is_empty() {
+            self.let_go.set(true);
         }
         keys.clear();
         freed.clear();
@@ -1672,8 +1682,16 @@ pub struct JsHost {
     /// [`JsHost::collect_if_idle`].
     collections: Cell<u64>,
     heap: HeapCount,
+    pressure: RefCell<Pressure>,
     /// The most the heap held in the run, for a thrown `null`.
     peak: MallocPeak,
+    /// The objects and their counts, and what they were after the last
+    /// collection ([`JsHost::may_hold_garbage`]).
+    objects: ObjectDigest,
+    collected: Cell<u64>,
+    /// [`JsHost::collections`] when a run last ran out of heap, `None`
+    /// before one did ([`JsHost::collected_since_ran_out`]).
+    ran_out_at: Cell<Option<u64>>,
     /// Loaded bytecode is read in place (QuickJS `ROM_DATA`): module code
     /// points into these buffers, so they must outlive the runtime. Declared
     /// last, so they are freed last.
@@ -1723,6 +1741,62 @@ impl Drop for EnterGuard<'_> {
 /// should keep to; a debug build that warned at it would warn about
 /// nothing a user gets.
 const UNOPTIMISED: u32 = if cfg!(debug_assertions) { 8 } else { 1 };
+
+/// A run that grows the heap by this much is named among what grew it
+/// (`JsHost::heap_pressure`); naming one costs a look at the stack.
+const HEAVY_RUN: usize = 512 * 1024;
+
+/// The runs a host names when its heap is full.
+const GROWERS: usize = 8;
+
+#[derive(Debug, Default)]
+struct Pressure {
+    /// Warned past three quarters, and not below five eighths since.
+    warned: bool,
+    /// What grew the heap most since it was last collected, by name.
+    growers: Vec<(String, usize)>,
+}
+
+impl Pressure {
+    fn grew(&mut self, name: &str, by: usize) {
+        if let Some(g) = self.growers.iter_mut().find(|g| g.0 == name) {
+            g.1 = g.1.saturating_add(by);
+        } else if self.growers.len() < GROWERS {
+            self.growers.push((name.to_owned(), by));
+        } else if let Some(least) = self.growers.iter_mut().min_by_key(|g| g.1)
+            && least.1 < by
+        {
+            *least = (name.to_owned(), by);
+        }
+    }
+
+    /// The three that grew the heap most, as `Main.qml:7 (12.0 MiB), ...`.
+    fn most(&self) -> String {
+        let mut g: Vec<_> = self.growers.iter().collect();
+        g.sort_by_key(|a| std::cmp::Reverse(a.1));
+        g.iter()
+            .take(3)
+            .map(|(n, b)| format!("{n} ({:.1} MiB)", *b as f64 / (1024.0 * 1024.0)))
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+}
+
+/// [`JsHost::heap_pressure`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HeapPressure {
+    /// What the heap holds from the system allocator now.
+    pub bytes: usize,
+    pub limit: Option<usize>,
+    /// What it held right after the collector last ran.
+    pub after_last_collection: usize,
+    /// Past three quarters of the limit after collecting, warned of.
+    pub warned: bool,
+    /// The runs that grew the heap by more than half a MiB at a time since
+    /// it was last collected, most first, with how much in all: a QML file
+    /// and line where one is known, else the run's label.
+    pub growers: Vec<(String, usize)>,
+}
 
 impl JsHost {
     pub fn new(cfg: JsConfig) -> Result<Self, JsFault> {
@@ -1795,6 +1869,7 @@ impl JsHost {
             mapper: RefCell::default(),
             text: RefCell::default(),
             entered: Cell::new(false),
+            let_go: Cell::new(false),
             stopped: Cell::new(false),
             handles: RefCell::default(),
             by_object: RefCell::default(),
@@ -1832,8 +1907,13 @@ impl JsHost {
             last_collect: Cell::new(0),
             collections: Cell::new(0),
             heap,
+            pressure: RefCell::default(),
             // SAFETY: the runtime lives as long as the host.
             peak: unsafe { MallocPeak::of(rquickjs::qjs::JS_GetRuntime(raw.as_ptr())) },
+            // SAFETY: as `peak`.
+            objects: unsafe { ObjectDigest::of(rquickjs::qjs::JS_GetRuntime(raw.as_ptr())) },
+            collected: Cell::new(0),
+            ran_out_at: Cell::new(None),
             bytecode: RefCell::default(),
         })
     }
@@ -1902,6 +1982,7 @@ impl JsHost {
         // After the drain: what it frees was not the run's.
         self.state.drain_handles();
         self.peak.mark();
+        let heap_before = self.heap_bytes();
         self.interrupt.fired.set(false);
         self.interrupt.stopped_in.take();
         self.state.stopped.set(false);
@@ -1937,11 +2018,18 @@ impl JsHost {
         let soft = slice.soft * UNOPTIMISED;
         let over = elapsed.saturating_sub(native) > soft;
         let stopped = matches!(outcome, Ok(Err(JsFault::JsInterrupted { .. })));
-        let what = if over || stopped {
+        let ran_out = matches!(outcome, Ok(Err(JsFault::JsOutOfMemory { .. })));
+        let grew = self.heap_bytes().saturating_sub(heap_before);
+        let heavy = grew >= HEAVY_RUN;
+        let what = if over || stopped || ran_out || heavy {
             what()
         } else {
             String::new()
         };
+        if heavy || ran_out {
+            let name = if what.is_empty() { label } else { &what };
+            self.pressure.borrow_mut().grew(name, grew);
+        }
         let outcome = match outcome {
             Ok(Err(JsFault::JsInterrupted { label, after, .. })) => {
                 let mut said = if what.is_empty() {
@@ -1960,6 +2048,20 @@ impl JsHost {
                     after,
                     what: said,
                 }))
+            }
+            Ok(Err(JsFault::JsOutOfMemory { label, .. })) => {
+                let mut said = if what.is_empty() {
+                    String::new()
+                } else {
+                    format!(" at {what}")
+                };
+                let most = self.pressure.borrow().most();
+                if !most.is_empty() {
+                    said.push_str(&format!(
+                        "; grew it most since it was last collected: {most}"
+                    ));
+                }
+                Ok(Err(JsFault::JsOutOfMemory { label, what: said }))
             }
             other => other,
         };
@@ -1981,7 +2083,15 @@ impl JsHost {
                 );
             }
         }
+        // A run that ran out is not counted as letting go: rows that run
+        // out together would each see the other's failed run and collect
+        // again. It owes a collection instead, whatever it let go of
+        // ([`JsHost::wants_idle_collect`]).
+        if !ran_out {
+            self.state.let_go.set(true);
+        }
         self.flush_released();
+        self.mind_heap(ran_out);
         self.tell_queued_jobs();
         match outcome {
             Ok(r) => r,
@@ -2051,7 +2161,25 @@ impl JsHost {
         Err(fault)
     }
 
+    fn note_ran_out(&self, fault: &JsFault) {
+        if matches!(fault, JsFault::JsOutOfMemory { .. }) {
+            self.ran_out_at.set(Some(self.collections.get()));
+        }
+    }
+
     fn classify<'js>(
+        &self,
+        scope: &Scope<'js>,
+        err: rquickjs::Error,
+        label: &str,
+        elapsed: Duration,
+    ) -> JsFault {
+        let fault = self.classify_only(scope, err, label, elapsed);
+        self.note_ran_out(&fault);
+        fault
+    }
+
+    fn classify_only<'js>(
         &self,
         scope: &Scope<'js>,
         err: rquickjs::Error,
@@ -2344,6 +2472,7 @@ impl JsHost {
     pub fn unregister_type(&self, id: HostTypeId) {
         if let Some(slot) = self.state.types.borrow_mut().get_mut(id.0 as usize) {
             *slot = None;
+            self.state.let_go.set(true);
         }
         if let Some(slot) = self.state.listings.borrow_mut().get_mut(id.0 as usize) {
             *slot = None;
@@ -2357,7 +2486,11 @@ impl JsHost {
     /// script let go of it.
     pub fn drop_wrapper(&self, obj: u64) -> bool {
         self.state.owned.borrow_mut().remove(&obj);
-        self.state.wrappers.borrow_mut().remove(&obj).is_some()
+        let dropped = self.state.wrappers.borrow_mut().remove(&obj).is_some();
+        if dropped {
+            self.state.let_go.set(true);
+        }
+        dropped
     }
 
     /// Gives `obj` to the scripts: from now on its wrapper lives only as
@@ -2488,6 +2621,7 @@ impl JsHost {
                             },
                         )
                     });
+                    self.note_ran_out(&fault);
                     pumped.faults.push(fault);
                 }
             }
@@ -2565,24 +2699,70 @@ impl JsHost {
         if !self.wants_idle_collect() {
             return false;
         }
-        self.rt.run_gc();
-        self.last_collect.set(self.heap_bytes());
-        self.collections.set(self.collections.get() + 1);
-        self.flush_released();
+        self.collect();
         true
     }
 
     /// Whether [`JsHost::collect_if_idle`] would collect now: outside a
     /// run, the heap grew by the configured growth since the collector
-    /// last ran. Walks nothing, so a host may ask it each time it is
-    /// about to rest, and wake later to collect only when it is true.
+    /// last ran, or a run ran out of heap since. Walks nothing, so a host
+    /// may ask it each time it is about to rest, and wake later to collect
+    /// only when it is true. Runs that run out together are collected for
+    /// once, when the host rests, whatever they let go of.
     pub fn wants_idle_collect(&self) -> bool {
         !self.state.entered.get()
-            && self.heap_bytes()
+            && (self.heap_bytes()
                 >= self
                     .last_collect
                     .get()
                     .saturating_add(self.cfg.idle_collect_min_growth)
+                || self.ran_out_at.get() == Some(self.collections.get()))
+    }
+
+    /// Whether a run ran out of heap and a collection came after the last
+    /// one that did. False before any ran out. A fault that the heap ran
+    /// out needs no other collection when this is true, and nothing was let
+    /// go of since ([`JsHost::may_hold_garbage`]).
+    pub fn collected_since_ran_out(&self) -> bool {
+        self.ran_out_at
+            .get()
+            .is_some_and(|at| self.collections.get() > at)
+    }
+
+    /// Whether collecting is likely to free anything: the heap grew by the
+    /// configured growth since the collector last ran, or a script value
+    /// was let go of since and some object's count changed. A run that
+    /// drops the last reference to a cycle frees nothing, so neither the
+    /// heap nor its peak tells; a count usually does. So when a run (one
+    /// that ran out too) or the host may have let go of something, this
+    /// compares a digest of every object and its count with the one the
+    /// last collection left. A binding that only reads leaves every count
+    /// as it found it. A false answer is a guess, not a proof: a script
+    /// that rewires references can leave every count as it was and a cycle
+    /// unreachable (`heap.rs`'s `ObjectDigest`). So it only decides
+    /// collections whose skipping costs nothing but time: the one right
+    /// after a run that ran out, ahead of the one owed for it
+    /// ([`JsHost::wants_idle_collect`], `ljos_engine`'s
+    /// `Engine::collect_for_full_heap`). Walks the object list when
+    /// something may have let go since it last did, not what the objects
+    /// hold.
+    pub fn may_hold_garbage(&self) -> bool {
+        if self.heap_bytes()
+            >= self
+                .last_collect
+                .get()
+                .saturating_add(self.cfg.idle_collect_min_growth)
+        {
+            return true;
+        }
+        if !self.state.let_go.get() {
+            return false;
+        }
+        if self.objects.get() != self.collected.get() {
+            return true;
+        }
+        self.state.let_go.set(false);
+        false
     }
 
     /// What the runtime holds from the system allocator: blocks QuickJS
@@ -2624,11 +2804,87 @@ impl JsHost {
         if self.state.entered.get() {
             return false;
         }
+        self.collect();
+        true
+    }
+
+    /// Every collection, whoever asked for it, warns once while the heap
+    /// stays past three quarters of its limit after collecting, naming the
+    /// runs that grew it most, and again once it went below five eighths
+    /// and came back: only a collection tells live from garbage.
+    fn collect(&self) {
+        // What grew the heap is cleared with it.
+        let most = self.pressure.borrow().most();
+        self.state.let_go.set(false);
         self.rt.run_gc();
+        self.collected.set(self.objects.get());
         self.last_collect.set(self.heap_bytes());
         self.collections.set(self.collections.get() + 1);
         self.flush_released();
-        true
+        let mut p = self.pressure.borrow_mut();
+        p.growers.clear();
+        let Some(limit) = self.memory_limit.get().filter(|l| *l > 0) else {
+            return;
+        };
+        let size = self.heap_bytes();
+        if size >= limit / 4 * 3 {
+            if !p.warned {
+                p.warned = true;
+                tracing::warn!(
+                    heap = size,
+                    limit,
+                    grew_most = most,
+                    "the JS heap is past three quarters of its limit after collecting"
+                );
+            }
+        } else if size < limit / 8 * 5 {
+            p.warned = false;
+        }
+    }
+
+    /// After a run: collects when the heap is past three quarters of its
+    /// limit and grew a quarter of the room left since it was last
+    /// collected, or at once when the run found no room and collecting
+    /// looks like it frees something ([`JsHost::may_hold_garbage`]), so the
+    /// next run has what garbage held: runs that run out of a heap full of
+    /// what lives do not each collect it again. Skipping it only puts the
+    /// collection off: one is owed until it runs
+    /// ([`JsHost::wants_idle_collect`]). QuickJS collects only when an
+    /// object is made past its threshold, and a run of strings and arrays
+    /// goes past the limit without one. The collection warns
+    /// ([`JsHost::collect`]); a run that does not collect only notes that
+    /// the heap went below five eighths, so the next time it is past three
+    /// quarters is warned of again.
+    fn mind_heap(&self, ran_out: bool) {
+        let Some(limit) = self.memory_limit.get().filter(|l| *l > 0) else {
+            return;
+        };
+        let high = limit / 4 * 3;
+        let last = self.last_collect.get();
+        let step = (limit.saturating_sub(last) / 4).max(self.cfg.idle_collect_min_growth);
+        let size = self.heap_bytes();
+        let due = (ran_out && self.may_hold_garbage())
+            || (size >= high && size >= last.saturating_add(step));
+        if due {
+            self.collect();
+        } else if size < limit / 8 * 5 {
+            self.pressure.borrow_mut().warned = false;
+        }
+    }
+
+    /// How full the heap is and what grew it, for a host's inspector.
+    /// Walks nothing, so it may be asked at any time.
+    pub fn heap_pressure(&self) -> HeapPressure {
+        let p = self.pressure.borrow();
+        let mut growers = p.growers.clone();
+        growers.sort_by_key(|a| std::cmp::Reverse(a.1));
+        HeapPressure {
+            bytes: self.heap_bytes(),
+            limit: self.memory_limit.get().filter(|l| *l > 0),
+            after_last_collection: self.last_collect.get(),
+            warned: p.warned,
+            growers,
+        }
     }
 
     /// How many full collections ran, for a tool that watches memory.
@@ -3266,6 +3522,7 @@ pub(crate) fn classify_error<'js>(
         }
         rquickjs::Error::Allocation => JsFault::JsOutOfMemory {
             label: label.to_owned(),
+            what: String::new(),
         },
         rquickjs::Error::Exception => thrown_fault(ctx, scope, label, sources),
         // rquickjs words a call into QuickJS that gave nothing back, and
@@ -3285,6 +3542,7 @@ pub(crate) fn classify_error<'js>(
             if heap_nearly_full(ctx, sources.peak.map_or(0, MallocPeak::get)) {
                 JsFault::JsOutOfMemory {
                     label: label.to_owned(),
+                    what: String::new(),
                 }
             } else {
                 JsFault::Internal(rquickjs::Error::Unknown.to_string())
@@ -3386,6 +3644,7 @@ fn describe_exception(
         {
             return JsFault::JsOutOfMemory {
                 label: label.to_owned(),
+                what: String::new(),
             };
         }
         None => (
@@ -3399,6 +3658,7 @@ fn describe_exception(
     if message == "out of memory" {
         return JsFault::JsOutOfMemory {
             label: label.to_owned(),
+            what: String::new(),
         };
     }
     if let Some(m) = mapper {
