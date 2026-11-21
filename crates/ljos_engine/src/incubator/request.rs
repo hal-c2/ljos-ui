@@ -388,12 +388,15 @@ impl Engine {
                 }
             }));
             // What a panic left half made goes, as a job's does when it
-            // is dropped mid-making.
+            // is dropped mid-making. A destruction that panics too must not
+            // keep the creation open; the first panic is the one that goes on.
             if made.is_err()
                 && let Some(root) = allocated_root.get()
                 && self.is_alive(root)
             {
-                self.destroy_now(root);
+                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    self.destroy_now(root);
+                }));
             }
             // A panic ends the creation too: left open, it would hold the
             // warnings of every creation after it, and what waits for no
@@ -427,5 +430,76 @@ mod tests {
                 .remade_as_script()
         );
         assert!(!Request::url("Page").remade_as_script());
+    }
+
+    use std::cell::Cell;
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+    use std::rc::Rc;
+
+    fn engine() -> Engine {
+        let project = {
+            let mut p = ljos_compiler::Project::new(qml_front::QtTypeOracle);
+            p.add(
+                "Main",
+                "import QtQml\nQtObject { property QtObject kid: QtObject {} }\n",
+            );
+            p
+        };
+        let c = ljos_compiler::compile_file(&project, "Main").expect("compiles");
+        assert!(!c.has_errors(), "{:?}", c.diagnostics);
+        let mut source = crate::MapSource::new();
+        source.insert("Main", c.file);
+        let e = Engine::new();
+        e.set_component_source(source);
+        e
+    }
+
+    /// Whether no creation is open: what waits for none runs at once.
+    fn no_creation_open(e: &Engine) -> bool {
+        let ran = Rc::new(Cell::new(false));
+        let set = ran.clone();
+        e.after_creation(move |_| set.set(true));
+        ran.get()
+    }
+
+    /// A step that panics once the tree is allocated, as the hook a
+    /// delegate or a singleton is made with may.
+    fn breaks_once_allocated(e: &Engine) -> std::thread::Result<()> {
+        catch_unwind(AssertUnwindSafe(|| {
+            let _ = e.make(Request::url("Main").allocated(
+                |_: &Engine, _: ObjectId, _: crate::ContextId| panic!("broke once allocated"),
+            ));
+        }))
+    }
+
+    #[test]
+    fn a_making_that_panics_after_its_tree_is_allocated_leaves_none_of_it() {
+        let e = engine();
+        let before = e.object_count();
+        assert!(breaks_once_allocated(&e).is_err(), "the panic goes on");
+        assert_eq!(e.object_count(), before, "the half-made tree is gone");
+        assert!(!e.has_half_made());
+        assert!(no_creation_open(&e));
+        assert!(
+            e.make(Request::url("Main")).is_ok(),
+            "made whole the next time"
+        );
+    }
+
+    #[test]
+    fn a_making_whose_cleanup_panics_too_still_ends_its_creation() {
+        let e = engine();
+        let breaks = Rc::new(Cell::new(true));
+        let on = breaks.clone();
+        e.on_destroyed(move |_, _| assert!(!on.get(), "broke as it was destroyed"));
+        let panic = breaks_once_allocated(&e).expect_err("the panic goes on");
+        breaks.set(false);
+        assert_eq!(
+            panic.downcast_ref::<&str>(),
+            Some(&"broke once allocated"),
+            "the making's panic, not the cleanup's"
+        );
+        assert!(no_creation_open(&e));
+        assert!(e.make(Request::url("Main")).is_ok());
     }
 }
