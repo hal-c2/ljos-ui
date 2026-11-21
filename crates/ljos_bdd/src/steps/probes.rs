@@ -309,7 +309,9 @@ fn observer_within_width(w: &mut LjosWorld, locator: String) -> StepResult {
     w.each(|b| {
         observer_holds(b.probes()?, |probes| {
             let status = probes.observer_call("app_status", serde_json::json!({}))?;
-            let width = status["window"]["width"].as_f64().ok_or_else(|| {
+            // The status lists the windows; the one inspected, the
+            // observer's own, is the first.
+            let width = status["windows"][0]["width"].as_f64().ok_or_else(|| {
                 BackendError::Failed(format!("the observer's status gives no width: {status}"))
             })?;
             let past: Vec<String> = boxes(probes, &locator)?
@@ -319,6 +321,39 @@ fn observer_within_width(w: &mut LjosWorld, locator: String) -> StepResult {
                 .collect();
             Ok((!past.is_empty())
                 .then(|| format!("in a window {width} wide, these run past its edge: {past:?}")))
+        })
+    })
+}
+
+// Words cut off or drawn over each other, and controls past the window's
+// edge, are what the audit's rules measure: the words each text paints,
+// those with no accessible name too, which the outline does not list. A
+// code the audit does not have is refused by it, so a check cannot pass by
+// naming nothing.
+#[then(regex = r#"^the observer's own audit finds no ((?:"[a-z0-9-]+"(?:, | or )?)+)$"#)]
+fn observer_audit_finds_none(w: &mut LjosWorld, codes: String) -> StepResult {
+    let codes: Vec<&str> = codes.split('"').skip(1).step_by(2).collect();
+    w.each(|b| {
+        observer_holds(b.probes()?, |probes| {
+            let report = probes.observer_call(
+                "app_audit",
+                serde_json::json!({ "matrix": "current", "rules": codes }),
+            )?;
+            let found: Vec<String> = report["findings"]
+                .as_array()
+                .map(|all| {
+                    all.iter()
+                        .map(|f| {
+                            format!(
+                                "{}: {}",
+                                f["code"].as_str().unwrap_or("?"),
+                                f["message"].as_str().unwrap_or("")
+                            )
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            Ok((!found.is_empty()).then(|| format!("its own audit finds {found:?}")))
         })
     })
 }

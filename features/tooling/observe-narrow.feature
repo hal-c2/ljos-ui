@@ -9,7 +9,9 @@ Feature: The observer fits a narrow window
   listed beside the page shown. In a narrow one the list folds into tabs
   above the page, so the page has the whole width. What a page shows
   then wraps, elides or takes fewer columns. It is never cut off at the
-  window's edge, and no two words are drawn over each other.
+  window's edge, and no two words are drawn over each other: the
+  observer's own audit, which measures the words each text paints, finds
+  none of that.
 
   Background:
     Given the QML:
@@ -23,13 +25,14 @@ Feature: The observer fits a narrow window
   Scenario: A wide observer lists its pages beside the page
     When the application is observed
     And the observer's window is 1200 by 800 pixels
-    Then the observer's "role=tab[name=\"Frames\"]" lies left of its "text=one point each time the application changed"
+    Then the observer's "role=tab[name=\"Frames\"]" lies left of its "role=heading[name=\"Overview\"]"
 
   Scenario Outline: A narrow observer shows its pages as tabs above the page
     When the application is observed
     And the observer's window is <width> by 800 pixels
-    Then the observer's "role=tab[name=\"Frames\"]" lies above its "text=one point each time the application changed"
+    Then the observer's "role=tab[name=\"Frames\"]" lies above its "role=heading[name=\"Overview\"]"
     And every "role=tab" in the observer lies within the width of its window
+    And no two "role=tab" in the observer overlap
 
     Examples:
       | width |
@@ -39,9 +42,8 @@ Feature: The observer fits a narrow window
   Scenario Outline: The Overview fits a narrow window
     When the application is observed
     And the observer's window is <width> by 900 pixels
-    Then the observer shows "Frames"
-    And every "text=" in the observer lies within the width of its window
-    And no two "text=" in the observer overlap
+    Then the observer has "role=heading[name=\"Overview\"]"
+    And the observer's own audit finds no "layout-overlap", "text-clipped" or "layout-offscreen"
 
     Examples:
       | width |
@@ -54,8 +56,7 @@ Feature: The observer fits a narrow window
     And the observer's "role=tab[name=\"Frames\"]" is clicked
     Then the observer has "role=button[name=\"Record\"]"
     And every "role=button" in the observer lies within the width of its window
-    And every "text=" in the observer lies within the width of its window
-    And no two "text=" in the observer overlap
+    And the observer's own audit finds no "layout-overlap", "text-clipped" or "layout-offscreen"
 
     Examples:
       | width |
@@ -66,9 +67,8 @@ Feature: The observer fits a narrow window
     When the application is observed
     And the observer's window is <width> by 800 pixels
     And the observer's "role=tab[name=\"<page>\"]" is clicked
-    Then every "text=" in the observer lies within the width of its window
-    And every "role=button" in the observer lies within the width of its window
-    And no two "text=" in the observer overlap
+    Then every "role=button" in the observer lies within the width of its window
+    And the observer's own audit finds no "layout-overlap", "text-clipped" or "layout-offscreen"
 
     Examples:
       | page        | width |
