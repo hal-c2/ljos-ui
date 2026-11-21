@@ -542,7 +542,14 @@ enum Shown {
 struct Dialogs {
     shown: RefCell<HashMap<ObjectId, Shown>>,
     tickets: RefCell<HashMap<u64, ObjectId>>,
-    next_ticket: std::cell::Cell<u64>,
+}
+
+/// A ticket for a dialog the system shows, unique in the process: a
+/// system's dialogs may be one for every engine (a phone's picker is), and
+/// one engine's ticket must not name another's dialog.
+fn next_ticket() -> u64 {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
 impl Dialogs {
@@ -616,8 +623,7 @@ fn show(engine: &Engine, obj: ObjectId) {
     let platform = Platform::of(engine);
     let service = platform.dialogs();
     if req.kind.is_some() && service.can_show(&req) {
-        let ticket = dialogs.next_ticket.get();
-        dialogs.next_ticket.set(ticket + 1);
+        let ticket = next_ticket();
         dialogs
             .shown
             .borrow_mut()
