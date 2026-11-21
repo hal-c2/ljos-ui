@@ -241,3 +241,104 @@ fn a_window_takes_one_object_of_a_type() {
     engine.process_deferred_deletes();
     assert!(engine.is_alive(first));
 }
+
+/// One for each window, whose first making goes wrong.
+#[derive(Debug, Default, QmlObject)]
+#[qml(module = "Late", name = "Bridge", uncreatable)]
+#[qml_singleton(scope = "window")]
+pub struct LateBridge {
+    #[qml(notify)]
+    pub title: Atom,
+}
+
+fn timed() -> (Engine, std::sync::Arc<ljos_runtime::VirtualClock>) {
+    let engine = ljos::engine();
+    let clock = std::sync::Arc::new(ljos_runtime::VirtualClock::new());
+    engine.set_clock(std::rc::Rc::new(std::sync::Arc::clone(&clock)));
+    (engine, clock)
+}
+
+fn title(engine: &Engine, obj: ObjectId) -> String {
+    engine
+        .to_js_string(&engine.read_by_name(obj, "title"))
+        .to_string()
+}
+
+#[test]
+fn what_read_a_window_s_object_while_it_waited_to_be_made_again_reads_the_one_the_host_gives() {
+    let (engine, _clock) = timed();
+    engine.register_singleton_with::<LateBridge>("Late", Version::new(1, 0), |e| {
+        // As a script it ran would: the heap filled while it was made.
+        e.report_fault(None, ljos_runtime::Fault::JsOutOfMemory);
+        LateBridge::default()
+    });
+    let window = engine.window_scope();
+    let source = compile(
+        &engine,
+        "import QtQuick\nimport Late\nItem { property string title: Bridge ? Bridge.title : \"none\" }\n",
+    )
+    .unwrap();
+    let root = engine
+        .in_window_scope(window, || ljos::create_root(&engine, source, "Main"))
+        .unwrap();
+    assert_ne!(title(&engine, root), "given");
+    let warned = engine.take_warnings();
+    assert!(
+        warned
+            .iter()
+            .any(|w| w.contains("the singleton Bridge is not available")
+                && w.contains("making it again")),
+        "{warned:?}"
+    );
+    // The host's object comes before the retry is due: the binding that
+    // missed reads it now, not at its next change.
+    let given = engine
+        .create_native(
+            LateBridge {
+                title: Atom::from("given"),
+            },
+            None,
+        )
+        .unwrap();
+    engine
+        .set_singleton_in::<LateBridge>(window, given)
+        .unwrap();
+    assert_eq!(title(&engine, root), "given");
+}
+
+#[test]
+fn a_window_s_object_whose_constructor_panicked_is_made_again_after_a_wait() {
+    use ljos_runtime::Clock as _;
+    use std::cell::Cell;
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+    use std::rc::Rc;
+
+    let (engine, clock) = timed();
+    let tries = Rc::new(Cell::new(0));
+    let counted = Rc::clone(&tries);
+    engine.register_singleton_with::<LateBridge>("Late", Version::new(1, 0), move |_| {
+        counted.set(counted.get() + 1);
+        if counted.get() == 1 {
+            panic!("no bridge yet");
+        }
+        LateBridge {
+            title: Atom::from("made"),
+        }
+    });
+    let window = engine.window_scope();
+    let made = catch_unwind(AssertUnwindSafe(|| {
+        engine.singleton_in_scope::<LateBridge>(window)
+    }));
+    assert!(made.is_err(), "the panic goes on");
+    // Not left half made: it waits, and is not made again at once.
+    assert!(engine.singleton_in_scope::<LateBridge>(window).is_err());
+    assert_eq!(tries.get(), 1);
+    let due = engine
+        .next_timer_deadline()
+        .expect("it is made again later");
+    clock.set(due);
+    engine.advance_timers(clock.now());
+    let made = engine.singleton_in_scope::<LateBridge>(window).unwrap();
+    assert_eq!(tries.get(), 2);
+    assert_eq!(title(&engine, made), "made");
+}

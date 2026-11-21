@@ -3368,7 +3368,19 @@ fn describe_exception(
                 }
                 _ => message,
             };
-            let message = match o.get::<_, Option<String>>("name").ok().flatten() {
+            let name = o.get::<_, Option<String>>("name").ok().flatten();
+            // QuickJS throws "out of memory" as an InternalError, with no
+            // words when even those found no room: on a full heap, that is
+            // the heap running out.
+            if name.as_deref() == Some("InternalError")
+                && message.is_empty()
+                && heap_nearly_full(thrown.ctx(), peak.map_or(0, MallocPeak::get))
+            {
+                return JsFault::JsOutOfMemory {
+                    label: label.to_owned(),
+                };
+            }
+            let message = match name {
                 // Heap exhaustion is told apart by its bare message below.
                 Some(name) if !name.is_empty() && name != "InternalError" => {
                     format!("{name}: {message}")
@@ -3427,12 +3439,14 @@ fn describe_exception(
 /// Whether the heap is within a sixteenth of its limit: too full for
 /// QuickJS to have made an error object, at `peak`, the most the run held
 /// before unwinding it let go. False with no limit. Walks the heap, which
-/// only a thrown `null` or an unknown error asks for.
+/// only a thrown `null`, an unworded `InternalError` or an unknown error
+/// asks for.
 ///
 /// The peak is the run's, not the throw's: a script that fills the heap
 /// within a sixteenth of its limit, lets it go and then throws `null`
-/// itself in the same run reads as out of memory. Telling them apart
-/// would take the size at the throw, which QuickJS does not keep.
+/// (or an unworded `InternalError`) itself in the same run reads as out
+/// of memory. Telling them apart would take the size at the throw,
+/// which QuickJS does not keep.
 fn heap_nearly_full(ctx: &Ctx<'_>, peak: usize) -> bool {
     // SAFETY: the context is live while `ctx` is, and so its runtime.
     let usage = unsafe {

@@ -25,7 +25,11 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use ljos_runtime::{Lane, ProcId};
+use std::time::Duration;
+
+use ljos_runtime::{Lane, ProcId, Time, TimerId};
+
+use crate::backoff::{Backoff, seconds};
 
 use crate::atom::Atom;
 use crate::engine::Engine;
@@ -99,6 +103,112 @@ struct Row {
     data: Option<Given>,
     object: Option<ObjectId>,
     pending: Option<CreationHandle>,
+    /// When its delegate is made again after a fault that was not the
+    /// delegate's own.
+    again: Again,
+}
+
+/// A delegate a fault that was not its own stopped (a full heap, an
+/// interrupted script, a panic in native work: [`EngineError::is_resource_fault`])
+/// is made again with a [`Backoff`], never given up on. Qt has none of
+/// these faults. A delegate that failed for its own code is not made again
+/// until its row or the delegate changes, as in Qt.
+///
+/// Boxed and made at the first fault: a view keeps one for each delegate,
+/// and few ever fault.
+#[derive(Default)]
+struct Again(Option<Box<Waiting>>);
+
+#[derive(Default)]
+struct Waiting {
+    backoff: Backoff,
+    /// The wait before it is made again, called off when the row goes.
+    timer: Option<TimerId>,
+}
+
+impl Again {
+    /// A fault at `now`: how long to wait before making it again.
+    fn fault(&mut self, now: Time) -> Duration {
+        self.0.get_or_insert_default().backoff.fault(now)
+    }
+
+    /// It is made again at `now`.
+    fn trying(&mut self, now: Time) {
+        if let Some(w) = self.0.as_mut() {
+            w.backoff.trying(now);
+        }
+    }
+
+    /// Its wait is over.
+    fn clear_timer(&mut self) {
+        if let Some(w) = self.0.as_mut() {
+            w.timer = None;
+        }
+    }
+
+    /// Waits on `timer`, and gives the timer it waited on before.
+    fn replace_timer(&mut self, timer: TimerId) -> Option<TimerId> {
+        self.0.get_or_insert_default().timer.replace(timer)
+    }
+
+    fn cancel(&mut self, engine: &Engine) {
+        if let Some(t) = self.0.as_mut().and_then(|w| w.timer.take()) {
+            engine.cancel_call(t);
+        }
+    }
+}
+
+/// `made`, unless a full heap or a panic met while it was made (`fault`,
+/// from [`Engine::resource_fault_since`]) left it less than whole: then it
+/// is destroyed and the fault is the result, so the delegate is made again
+/// as for one that failed for it. A binding interrupted for its time is
+/// not such a fault: the delegate is shown, and the binding runs again.
+/// `discarded` hears of the object first, while it is still there: a view
+/// was told of it when it was allocated.
+fn whole(
+    engine: &Engine,
+    made: Result<ObjectId, EngineError>,
+    fault: Option<EngineError>,
+    discarded: impl FnOnce(ObjectId),
+) -> Result<ObjectId, EngineError> {
+    match (made, fault) {
+        (Ok(obj), Some(f)) => {
+            discarded(obj);
+            engine.destroy(obj);
+            Err(f)
+        }
+        (made, _) => made,
+    }
+}
+
+/// What a panic said, as the incubator reports it.
+pub(crate) fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
+    match (
+        payload.downcast_ref::<&'static str>(),
+        payload.downcast_ref::<String>(),
+    ) {
+        (Some(s), _) => (*s).to_owned(),
+        (_, Some(s)) => s.clone(),
+        _ => "panic with a non-string payload".to_owned(),
+    }
+}
+
+/// Says that the delegate of a row is made again after `wait`.
+fn again_in(engine: &Engine, component: ObjectId, err: &EngineError, wait: Duration) {
+    let place = engine.declared_at(component).unwrap_or_default();
+    let what = match err {
+        EngineError::JsOutOfMemory(_) => "the script heap was full",
+        EngineError::JsInterrupted(_) => "a script was interrupted",
+        _ => "native work panicked",
+    };
+    let when = if wait.is_zero() {
+        "now".to_owned()
+    } else {
+        format!("in {}", seconds(wait))
+    };
+    engine.warn(format!(
+        "{place}QML Component: {what} while a delegate was made, making it again {when}"
+    ));
 }
 
 #[derive(Default)]
@@ -191,6 +301,7 @@ impl State {
                 data: None,
                 object: None,
                 pending: None,
+                again: Again::default(),
             }),
         );
         ids
@@ -441,10 +552,11 @@ impl Shared {
 
     /// Ends a row that is out of the list; one the model removed may play
     /// its way out first ([`DelegateHost::exits`]).
-    fn end(&self, engine: &Engine, index: usize, row: Row, may_exit: bool) {
+    fn end(&self, engine: &Engine, index: usize, mut row: Row, may_exit: bool) {
         if let Some(h) = &row.pending {
             h.cancel();
         }
+        row.again.cancel(engine);
         let Some(obj) = row.object else {
             return;
         };
@@ -504,6 +616,7 @@ impl Shared {
             for_setup.setup_row(e, id, root, ctx, ljos);
         };
         if !asynchronous {
+            let faults = engine.resource_faults_seen();
             let r = engine
                 .make(
                     Request::component(component)
@@ -511,7 +624,8 @@ impl Shared {
                         .delegate(setup),
                 )
                 .map(|(root, _)| root);
-            s.finish_row(engine, id, component, r);
+            let r = whole(engine, r, engine.resource_fault_since(faults), |_| {});
+            Shared::finish_row(s, engine, id, component, r);
             return;
         }
         let (job, handle) = engine.make_later(
@@ -521,6 +635,7 @@ impl Shared {
             Lane::Visible,
             ProcId::new(0, 0),
         );
+        let faulted = handle.clone();
         {
             let mut st = s.state.borrow_mut();
             if let Some(i) = st.position(id) {
@@ -534,7 +649,8 @@ impl Shared {
             if let Some(s) = weak.upgrade()
                 && e.is_alive(s.owner)
             {
-                s.finish_row(e, id, component, r.clone());
+                let r = whole(e, r.clone(), faulted.resource_fault(), |_| {});
+                Shared::finish_row(&s, e, id, component, r);
             }
         }));
     }
@@ -561,14 +677,14 @@ impl Shared {
     }
 
     fn finish_row(
-        &self,
+        s: &Rc<Shared>,
         engine: &Engine,
         id: u64,
         component: ObjectId,
         made: Result<ObjectId, EngineError>,
     ) {
         let index = {
-            let mut st = self.state.borrow_mut();
+            let mut st = s.state.borrow_mut();
             let i = st.position(id);
             if let Some(i) = i {
                 st.rows[i].pending = None;
@@ -585,8 +701,8 @@ impl Shared {
         };
         match (made, index) {
             (Ok(obj), Some(i)) => {
-                self.placed_changed(engine);
-                self.host.added(engine, i, obj);
+                s.placed_changed(engine);
+                s.host.added(engine, i, obj);
             }
             // The row went while its delegate was being made.
             (Ok(obj), None) => {
@@ -596,7 +712,72 @@ impl Shared {
             (Err(e), Some(_)) => {
                 cannot_create(engine, component);
                 e.said().into_iter().for_each(|l| engine.warn(l));
+                if e.is_resource_fault() {
+                    Shared::make_again(s, engine, id, component, &e);
+                }
             }
+        }
+    }
+
+    /// Makes the delegate of the row `id` again after the wait its
+    /// [`Backoff`] says, unless the row goes or gets one first.
+    fn make_again(
+        s: &Rc<Shared>,
+        engine: &Engine,
+        id: u64,
+        component: ObjectId,
+        err: &EngineError,
+    ) {
+        let now = engine.now();
+        let full = matches!(err, EngineError::JsOutOfMemory(_));
+        let wait = {
+            let mut st = s.state.borrow_mut();
+            let Some(i) = st.position(id) else {
+                return;
+            };
+            st.rows[i].again.fault(now)
+        };
+        again_in(engine, component, err, wait);
+        let weak = Rc::downgrade(s);
+        // Never at once: the fault may have come in the middle of a script
+        // or of a change of the model, where making it again would run out
+        // again, or go round.
+        let timer = engine.call_at(now + wait, move |e| {
+            let Some(s) = weak.upgrade() else {
+                return;
+            };
+            if !e.is_alive(s.owner) {
+                return;
+            }
+            let due = {
+                let mut st = s.state.borrow_mut();
+                let Some(i) = st.position(id) else {
+                    return;
+                };
+                let row = &mut st.rows[i];
+                row.again.clear_timer();
+                if row.object.is_some() || row.pending.is_some() {
+                    return;
+                }
+                row.again.trying(e.now());
+                true
+            };
+            if due {
+                // Timers run between scripts, where the heap can be.
+                if full {
+                    e.collect_garbage();
+                }
+                Shared::create_row(&s, e, id);
+            }
+        });
+        let mut st = s.state.borrow_mut();
+        match st.position(id) {
+            Some(i) => {
+                if let Some(old) = st.rows[i].again.replace_timer(timer) {
+                    engine.cancel_call(old);
+                }
+            }
+            None => engine.cancel_call(timer),
         }
     }
 
@@ -700,6 +881,7 @@ impl Shared {
                             data: None,
                             object: None,
                             pending: None,
+                            again: Again::default(),
                         },
                     );
                     (old, id)
@@ -1272,6 +1454,13 @@ pub trait ViewHost {
         let _ = (engine, index, object);
     }
 
+    /// The delegate of row `index`, which a fault that was not its own
+    /// stopped, may be made again: the view asks for it again if it still
+    /// shows the row. Until now [`ViewDelegates::request`] gave nothing.
+    fn again(&self, engine: &Engine, index: usize) {
+        let _ = (engine, index);
+    }
+
     /// The model changed, and the delegates' rows and indexes are
     /// already in step. `gone` are the delegates whose rows left, with
     /// the index each had: they read index -1 and stay alive until the
@@ -1306,9 +1495,14 @@ struct Held {
     /// while it is being made may ask which row it is.
     root: Option<ObjectId>,
     pending: Option<(CreationHandle, SharedCreation)>,
-    /// The component could not make it: asking again would only say the
-    /// same again.
-    failed: bool,
+    /// It failed for a fault not its own and the wait [`Held::again`]
+    /// says is over: the next ask makes it again. Otherwise an entry with
+    /// no object and no job failed, and asking again would only say the
+    /// same again, or it is being made at once, and an ask from inside
+    /// that make gets nothing rather than a second delegate.
+    again_due: bool,
+    /// When it is made again after a fault that was not its own.
+    again: Again,
     /// The row's own object, not something made for it: never destroyed
     /// and never shown for another row.
     own: bool,
@@ -1538,6 +1732,8 @@ impl ViewDelegates {
             Object(ObjectId),
             Pending(u64, SharedCreation),
             Failed,
+            /// Failed for a fault not its own, and may be made again.
+            Again(u64),
             Nothing,
         }
         let (have, model, component) = {
@@ -1550,22 +1746,41 @@ impl ViewDelegates {
                 Some(h) => match (&h.object, &h.pending) {
                     (Some(o), _) => Have::Object(*o),
                     (None, Some((_, job))) => Have::Pending(h.id, job.clone()),
+                    (None, None) if h.again_due => Have::Again(h.id),
+                    // Failed, or being made at once further up.
                     (None, None) => Have::Failed,
                 },
                 None => Have::Nothing,
             };
             (have, model, st.component)
         };
+        // Made again with what it waited for, so the next fault waits
+        // longer.
+        let mut again = Again::default();
         match have {
             Have::Object(o) => return Some((o, Made::Existing)),
             Have::Failed => return None,
+            Have::Again(id) => {
+                let mut st = s.state.borrow_mut();
+                if let Some(i) = st.live.iter().position(|h| h.id == id) {
+                    again = st.live.swap_remove(i).again;
+                    again.trying(engine.now());
+                }
+            }
             Have::Pending(id, job) => {
                 if urgency == Urgency::Later {
                     return None;
                 }
-                let was = s.forcing.replace(true);
+                // Put back however the job ends: a panic in it must not
+                // leave every later delegate's end untold.
+                struct Forcing<'a>(&'a Cell<bool>, bool);
+                impl Drop for Forcing<'_> {
+                    fn drop(&mut self) {
+                        self.0.set(self.1);
+                    }
+                }
+                let _forcing = Forcing(&s.forcing, s.forcing.replace(true));
                 job.force();
-                s.forcing.set(was);
                 let st = s.state.borrow();
                 let made = st.live.iter().find(|h| h.id == id).and_then(|h| h.object);
                 return made.map(|o| (o, Made::Created));
@@ -1611,7 +1826,8 @@ impl ViewDelegates {
                 object: None,
                 root: None,
                 pending: None,
-                failed: false,
+                again_due: false,
+                again,
                 own: false,
             });
             id
@@ -1623,15 +1839,36 @@ impl ViewDelegates {
         };
         match urgency {
             Urgency::Now => {
-                let r = engine
-                    .make(
+                let faults = engine.resource_faults_seen();
+                let made = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    engine.make(
                         Request::component(component)
                             .parent(Some(s.owner))
                             .delegate(setup),
                     )
-                    .map(|(root, _)| root);
-                s.finish(engine, id, component, r, false)
-                    .map(|o| (o, Made::Created))
+                }));
+                let r = match made {
+                    Ok(r) => r.map(|(root, _)| root),
+                    Err(payload) => {
+                        // As a job that panics: what was made goes, and the
+                        // row is made again later instead of never.
+                        let root = s.held_root(id).filter(|r| engine.is_alive(*r));
+                        if let Some(root) = root {
+                            s.discarded(engine, root);
+                            engine.destroy(root);
+                        }
+                        let message = panic_message(payload.as_ref());
+                        let err = EngineError::Panic(format!(
+                            "a panic while an object was being made: {message}"
+                        ));
+                        ViewShared::finish(s, engine, id, component, Err(err), false);
+                        std::panic::resume_unwind(payload);
+                    }
+                };
+                let r = whole(engine, r, engine.resource_fault_since(faults), |o| {
+                    s.discarded(engine, o);
+                });
+                ViewShared::finish(s, engine, id, component, r, false).map(|o| (o, Made::Created))
             }
             Urgency::Later => {
                 let (job, handle) = engine.make_later(
@@ -1642,6 +1879,7 @@ impl ViewDelegates {
                     ProcId::new(0, 0),
                 );
                 let weak = Rc::downgrade(s);
+                let faulted = handle.clone();
                 let (job, shared) = job
                     .on_done(move |e, r| {
                         // A job whose owner went ends with an error
@@ -1650,7 +1888,10 @@ impl ViewDelegates {
                             && e.is_alive(s.owner)
                         {
                             let tell = !s.forcing.get();
-                            s.finish(e, id, component, r.clone(), tell);
+                            let r = whole(e, r.clone(), faulted.resource_fault(), |o| {
+                                s.discarded(e, o);
+                            });
+                            ViewShared::finish(&s, e, id, component, r, tell);
                         }
                     })
                     .shared();
@@ -1783,7 +2024,8 @@ impl ViewShared {
                 object: Some(object),
                 root: Some(object),
                 pending: None,
-                failed: false,
+                again_due: false,
+                again: Again::default(),
                 own: true,
             });
         }
@@ -1791,7 +2033,8 @@ impl ViewShared {
         Some((object, Made::Created))
     }
 
-    fn destroy(&self, engine: &Engine, held: Held) {
+    fn destroy(&self, engine: &Engine, mut held: Held) {
+        held.again.cancel(engine);
         if held.own {
             if let Some(obj) = held.object {
                 self.host.destroying(engine, obj);
@@ -1817,6 +2060,22 @@ impl ViewShared {
                 m.delegate_gone(engine, obj);
             }
             engine.destroy(obj);
+        }
+    }
+
+    /// The root that setup gave the entry `id`, made or half made.
+    fn held_root(&self, id: u64) -> Option<ObjectId> {
+        let st = self.state.borrow();
+        st.live.iter().find(|h| h.id == id).and_then(|h| h.root)
+    }
+
+    /// Tells the view and the model that `obj`, allocated for a row, goes
+    /// before it was whole.
+    fn discarded(&self, engine: &Engine, obj: ObjectId) {
+        self.host.destroying(engine, obj);
+        let model = self.state.borrow().model.clone();
+        if let Some(m) = model {
+            m.delegate_gone(engine, obj);
         }
     }
 
@@ -1866,7 +2125,7 @@ impl ViewShared {
     }
 
     fn finish(
-        &self,
+        s: &Rc<ViewShared>,
         engine: &Engine,
         id: u64,
         component: ObjectId,
@@ -1874,17 +2133,14 @@ impl ViewShared {
         tell: bool,
     ) -> Option<ObjectId> {
         let (index, model) = {
-            let mut st = self.state.borrow_mut();
+            let mut st = s.state.borrow_mut();
             let held = st.live.iter_mut().find(|h| h.id == id);
             let index = held.map(|h| {
                 h.pending = None;
                 match &made {
                     Ok(obj) => h.object = Some(*obj),
-                    Err(_) => {
-                        // The row object went with the failed delegate.
-                        h.data = None;
-                        h.failed = true;
-                    }
+                    // The row object went with the failed delegate.
+                    Err(_) => h.data = None,
                 }
                 h.index
             });
@@ -1899,13 +2155,13 @@ impl ViewShared {
                     m.delegate_made(engine, index, obj);
                 }
                 if tell && let Some(index) = index {
-                    self.host.ready(engine, index, obj);
+                    s.host.ready(engine, index, obj);
                 }
                 Some(obj)
             }
             // The row went while its delegate was being made.
             (Ok(obj), None) => {
-                self.host.destroying(engine, obj);
+                s.host.destroying(engine, obj);
                 engine.destroy(obj);
                 None
             }
@@ -1913,8 +2169,73 @@ impl ViewShared {
             (Err(e), Some(_)) => {
                 cannot_create(engine, component);
                 e.said().into_iter().for_each(|l| engine.warn(l));
+                if e.is_resource_fault() {
+                    ViewShared::make_again(s, engine, id, component, &e);
+                }
                 None
             }
+        }
+    }
+
+    /// Lets the delegate of the entry `id` be made again after the wait
+    /// its [`Backoff`] says, and has the view ask for it then. Until then
+    /// [`ViewDelegates::request`] gives nothing for its row, as for one
+    /// that failed for good.
+    fn make_again(
+        s: &Rc<ViewShared>,
+        engine: &Engine,
+        id: u64,
+        component: ObjectId,
+        err: &EngineError,
+    ) {
+        let now = engine.now();
+        let full = matches!(err, EngineError::JsOutOfMemory(_));
+        let wait = {
+            let mut st = s.state.borrow_mut();
+            let Some(h) = st.live.iter_mut().find(|h| h.id == id) else {
+                return;
+            };
+            h.again.fault(now)
+        };
+        again_in(engine, component, err, wait);
+        let weak = Rc::downgrade(s);
+        // Never at once: the view is laying out, and asking again there
+        // would run out again in the same pass.
+        let timer = engine.call_at(now + wait, move |e| {
+            let Some(s) = weak.upgrade() else {
+                return;
+            };
+            if !e.is_alive(s.owner) {
+                return;
+            }
+            let index = {
+                let mut st = s.state.borrow_mut();
+                let Some(h) = st.live.iter_mut().find(|h| h.id == id) else {
+                    return;
+                };
+                h.again.clear_timer();
+                if h.object.is_some() || h.pending.is_some() {
+                    return;
+                }
+                h.again_due = true;
+                h.index
+            };
+            // Timers run between scripts, where the heap can be.
+            if full {
+                e.collect_garbage();
+            }
+            if let Some(index) = index {
+                s.host.again(e, index);
+            }
+        });
+        let mut st = s.state.borrow_mut();
+        match st.live.iter_mut().find(|h| h.id == id) {
+            Some(h) => {
+                if let Some(old) = h.again.replace_timer(timer) {
+                    engine.cancel_call(old);
+                }
+            }
+            None => engine.cancel_call(timer),
         }
     }
 
