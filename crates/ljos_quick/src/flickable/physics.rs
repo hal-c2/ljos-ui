@@ -794,6 +794,50 @@ mod tests {
         );
     }
 
+    /// The fixture is Android's own `OverScroller` on the emulator (see its
+    /// header): every sample of every fling, from a slow flick to a hard
+    /// throw, is where Ljós's spline puts it to within a logical pixel,
+    /// and each fling ends where Android's does.
+    #[test]
+    fn an_android_fling_follows_the_trace_android_recorded() {
+        let fixture = include_str!("fixtures/android_fling.txt");
+        let mut density = 0.0;
+        let mut fling: Option<(f64, f64)> = None;
+        let mut samples = 0;
+        for line in fixture
+            .lines()
+            .filter(|l| !l.starts_with('#') && !l.trim().is_empty())
+        {
+            let words: Vec<&str> = line.split_whitespace().collect();
+            match words[0] {
+                "density" => density = words[1].parse().unwrap(),
+                "fling" => {
+                    // fling <dp> dp/s = <px> px/s final <px> px
+                    let speed = words[4].parse::<f64>().unwrap() / density;
+                    let last = words[7].parse::<f64>().unwrap() / density;
+                    let (distance, _) = spline_fling(speed);
+                    assert!(
+                        (distance - last).abs() < 1.0,
+                        "{speed} dp/s: Android ends at {last}, Ljós at {distance}"
+                    );
+                    fling = Some((speed, last));
+                }
+                ms => {
+                    let (speed, _) = fling.expect("a sample before its fling");
+                    let ms: u64 = ms.parse().unwrap();
+                    let android = words[1].parse::<f64>().unwrap() / density;
+                    let (ours, _) = spline_at(0.0, speed, Duration::from_millis(ms));
+                    assert!(
+                        (ours - android).abs() < 1.0,
+                        "{speed} dp/s at {ms} ms: Android at {android}, Ljós at {ours}"
+                    );
+                    samples += 1;
+                }
+            }
+        }
+        assert!(samples > 300, "{samples} samples");
+    }
+
     #[test]
     fn an_android_fling_starts_at_the_speed_it_was_thrown_and_ends_at_rest() {
         let seg = A.plan(&moving(0.0, 1000.0), &S).unwrap();
