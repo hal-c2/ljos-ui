@@ -745,6 +745,29 @@ impl Engine {
         .map(|(root, _)| root)
     }
 
+    /// [`Engine::component_create_owned`], but an object that met a full
+    /// heap or a panic while it was made (in a handler, say, whose error
+    /// does not fail the making) goes to `discard`, and that fault is the
+    /// error: it is not whole, and nothing would make the rest of it. A
+    /// binding interrupted for its time is not such a fault: it runs again.
+    pub fn component_create_whole(
+        &self,
+        component: ObjectId,
+        owner: ObjectId,
+        placed: impl FnOnce(&Engine, ObjectId),
+        discard: impl FnOnce(&Engine, ObjectId),
+    ) -> Result<ObjectId, crate::EngineError> {
+        let faults = self.resource_faults_seen();
+        let made = self.component_create_owned(component, owner, placed)?;
+        match self.resource_fault_since(faults) {
+            Some(fault) => {
+                discard(self, made);
+                Err(fault)
+            }
+            None => Ok(made),
+        }
+    }
+
     // ------------------------------------------------------------- snapshots
 
     /// What the natives under `root` hold that their [`Migrate`]

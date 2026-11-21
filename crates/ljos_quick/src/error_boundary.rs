@@ -399,7 +399,7 @@ fn show_fallback(e: &Engine, me: ObjectId) -> Option<Result<(), Fault>> {
         .as_object()
         .filter(|f| e.is_alive(*f))?;
     with_run(e, me, |r| r.making_fallback = true);
-    let made = e.component_create_owned(fallback, me, place);
+    let made = e.component_create_whole(fallback, me, place, discard);
     with_run(e, me, |r| r.making_fallback = false);
     Some(match made {
         // The fallback's own handlers gave new content while it was

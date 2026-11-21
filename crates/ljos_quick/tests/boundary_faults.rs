@@ -557,7 +557,7 @@ const HUNGRY_FALLBACK: &str = r#"fallback: Item {
 fn a_fallback_with_no_room_after_a_bug_in_the_content_leaves_it_down() {
     let source = with_fallback(HUNGRY_FALLBACK).replace(
         "    property Component other: Component {",
-        "    property Component broken: Component {\n        Item { objectName: \"broken\"; required property int n }\n    }\n    property Component other: Component {",
+        "    property Component buggy: Component {\n        Item { objectName: \"buggy\"; required property int n }\n    }\n    property Component other: Component {",
     );
     let e = engine();
     let clock = Arc::new(VirtualClock::new());
@@ -573,7 +573,7 @@ fn a_fallback_with_no_room_after_a_bug_in_the_content_leaves_it_down() {
     assert!(e.set_script_heap_limit(Some(held + 64 * 1024)));
     let _ = e.take_warnings();
 
-    set(&e, boundary, "content", get(&e, root, "broken"));
+    set(&e, boundary, "content", get(&e, root, "buggy"));
     settle(&e, &clock, boundary);
     assert!(get(&e, boundary, "failed").to_boolean());
     assert_eq!(shown(&e, boundary), "");
