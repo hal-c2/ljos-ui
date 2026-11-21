@@ -115,6 +115,24 @@ impl<M> ShellApp<M> {
         self.user.as_ref().is_some_and(|u| u.session.is_active())
     }
 
+    /// Reads the user's files again and applies what changed, as a save
+    /// the watch saw is applied (`UserSession::read_again`): for a save it
+    /// did not see, or none is kept (`UserQml::watch`). What came of it is
+    /// reported at a later frame ([`Setup::on_user_report`]), with
+    /// `Report::Unchanged` when the files are as they were. False without
+    /// a user's directory. QML asks the same with a `ShellLoader`'s
+    /// `reload()`, and code that holds only the engine with
+    /// `ljos_quick::Rereads::of(engine).ask()`.
+    pub fn read_user_files_again(&mut self) -> bool {
+        let Self { view, user, .. } = self;
+        let Some(User { session, .. }) = user else {
+            return false;
+        };
+        let engine = Rc::clone(view.engine());
+        session.read_again(&engine);
+        true
+    }
+
     pub(crate) fn pump_user(&mut self) {
         let Self { view, user, .. } = self;
         let Some(User { session, on_report }) = user else {

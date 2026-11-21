@@ -454,6 +454,7 @@ pub fn describe(report: &Report) -> String {
             format!("reload failed: {fault} (and {more} more)")
         }
         Report::Cleared => "the files are what runs again".to_owned(),
+        Report::Unchanged => "the files read again were as they were".to_owned(),
         Report::Theme { generation, apply } => format!(
             "the theme was set again in {:.1} ms (generation {generation}); nothing was made again",
             ms(*apply)
