@@ -153,9 +153,11 @@ Item {
 /// A leak spread over many dispatches, each well under its share of the
 /// room, is not stopped by the share (`JsConfig::dispatch_heap_share`
 /// bounds one dispatch). Measured here: it runs for many dispatches, until
-/// the heap's limit stops it with an out-of-memory fault, never past the
-/// limit, and `script_heap_holders` then names the type that keeps it
-/// first, with most of the heap, so the part that leaks can be found.
+/// it runs out of room near the heap's limit with an out-of-memory fault
+/// (the last refusal can come from the share, which shrinks with the room
+/// left, rather than from the limit itself), never past the limit, and
+/// `script_heap_holders` then names the type that keeps it first, with
+/// most of the heap, so the part that leaks can be found.
 #[test]
 fn a_leak_over_many_dispatches_runs_into_the_limit_and_is_named() {
     let h = engine();
