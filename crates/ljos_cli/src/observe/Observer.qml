@@ -192,14 +192,21 @@ ApplicationWindow {
             window.waiting = next
             // A refresh the inspector turned away for being asked too
             // often keeps what is shown; the next change asks again. An
-            // edit turned away is told.
+            // edit turned away is told. The values of an object just
+            // picked were put away, so they are asked again in a while.
             var edit = route !== undefined && route.indexOf("edited:") === 0
             var picture = route !== undefined && route.indexOf("picture:") === 0
+            var values = route !== undefined && route.indexOf("inspect:") === 0
             if (!ok && route !== "watch" && !edit
                     && String(result).indexOf("rate_limited") >= 0) {
-                status.text = "The application is asked too often; showing the last answer"
+                if ((values || picture) && objects.shownOf !== route.substring(8))
+                    status.text = "The application is asked too often; its values are asked again in a moment"
+                else
+                    status.text = "The application is asked too often; showing the last answer"
                 if (route && route.indexOf("objects") === 0)
                     objects.turnedAway(parseInt(route.substring(route.indexOf(":") + 1)))
+                else if (values || picture)
+                    objects.valuesTurnedAway(route.substring(8), picture)
                 return
             }
             // A picture that cannot be taken is said where the picture
@@ -2098,6 +2105,9 @@ ApplicationWindow {
                         // asked again, with other bindings or more
                         // properties, keeps its values until then.
                         if (handle !== picked) {
+                            askAgain.stop()
+                            valuesOwed = false
+                            pictureOwed = false
                             shownOf = ""
                             propRows = 0
                             props = []
@@ -2123,6 +2133,40 @@ ApplicationWindow {
                         shotAsked = withPicture === true && pickedItem
                         if (shotAsked)
                             window.ask("app_screenshot", { target: picked, max_size: 640 }, "picture:" + picked)
+                    }
+
+                    // What of the one picked the inspector turned away
+                    // for being asked too often. An application at rest
+                    // tells of no change that would ask it again, so it is
+                    // asked again in a while, as a part of the tree is.
+                    property bool valuesOwed: false
+                    property bool pictureOwed: false
+
+                    function valuesTurnedAway(of, isPicture) {
+                        if (of !== picked)
+                            return
+                        if (isPicture)
+                            pictureOwed = true
+                        else
+                            valuesOwed = true
+                        if (!askAgain.running)
+                            askAgain.start()
+                    }
+
+                    Timer {
+                        id: askAgain
+                        interval: 1100
+                        onTriggered: {
+                            var shot = objects.pictureOwed
+                            var values = objects.valuesOwed
+                            objects.valuesOwed = false
+                            objects.pictureOwed = false
+                            if (values)
+                                objects.inspect(shot)
+                            else if (shot)
+                                window.ask("app_screenshot", { target: objects.picked, max_size: 640 },
+                                           "picture:" + objects.picked)
+                        }
                     }
 
                     function showProperties(ok, s, r, of) {
