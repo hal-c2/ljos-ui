@@ -101,6 +101,10 @@ pub struct DialogRequest {
 pub enum DialogReply {
     /// The files or the folder chosen, as absolute paths.
     Files(Vec<PathBuf>),
+    /// The documents or the folder chosen, as URLs, from a system whose
+    /// dialogs hand out documents of a provider rather than paths
+    /// (Android's `content://`).
+    Documents(Vec<String>),
     /// The button pressed, as a `MessageDialog.StandardButton`.
     Button(i32),
     /// Closed without a choice.
