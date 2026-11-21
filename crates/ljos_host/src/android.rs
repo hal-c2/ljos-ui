@@ -617,8 +617,9 @@ enum ActivityCall {
         replaced: bool,
     },
     /// `LjosActivity.cursorAnchorChanged`: where the editor, its cursor
-    /// and what it composes are, for an input method that asked.
-    CursorAnchor(crate::CursorAnchor),
+    /// and what it composes are, for an input method that asked;
+    /// `cursorAnchorCleared` for `None`.
+    CursorAnchor(Option<crate::CursorAnchor>),
 }
 
 /// What `LjosActivity.cursorAnchorChanged` is passed besides the boxes:
@@ -693,7 +694,15 @@ fn call_activity(app: &AndroidApp, call: ActivityCall) -> bool {
                     ],
                 )?;
             }
-            ActivityCall::CursorAnchor(anchor) => {
+            ActivityCall::CursorAnchor(None) => {
+                env.call_method(
+                    &activity,
+                    jni_str!("cursorAnchorCleared"),
+                    jni_sig!(() -> void),
+                    &[],
+                )?;
+            }
+            ActivityCall::CursorAnchor(Some(anchor)) => {
                 let (ints, text, units) = anchor_args(&anchor);
                 let editor = floats(env, &anchor.editor)?;
                 let cursor = floats(env, &anchor.cursor)?;

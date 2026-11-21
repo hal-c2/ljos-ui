@@ -607,9 +607,9 @@ pub(crate) fn relayout(
 }
 
 /// Each UTF-16 unit of what an input method is composing, in the item's
-/// coordinates as the cursor rectangle has them: from where the cursor
-/// would stand before its character to where it would after, as tall as
-/// its line. A character outside the Basic Multilingual Plane gives both
+/// coordinates as the cursor rectangle has them: its character's own box
+/// on its line (right to left or not, before a wrap or not), as tall as
+/// the line. A character outside the Basic Multilingual Plane gives both
 /// its units its box. Nothing while nothing is composed or shown.
 pub(crate) fn preedit_rects(st: &SharedState) -> Vec<kurbo::Rect> {
     let s = st.borrow();
@@ -623,14 +623,19 @@ pub(crate) fn preedit_rects(st: &SharedState) -> Vec<kurbo::Rect> {
     let mut out = Vec::with_capacity(s.shown.preedit_units);
     let mut at = bytes.start;
     for c in composed.chars() {
-        let (a, b) = (layout.caret(at), layout.caret(at + c.len_utf8()));
-        let x = |line: usize, x: f64| s.geo.line_x.get(line).copied().unwrap_or(0.0) + x;
-        let x0 = x(a.line, a.x);
-        // A character the line breaks after ends at the edge it starts
-        // from rather than on the next line.
-        let x1 = if b.line == a.line { x(b.line, b.x) } else { x0 };
-        let top = s.geo.top + a.top;
-        let r = kurbo::Rect::new(x0.min(x1), top, x0.max(x1), top + a.height);
+        let end = at + c.len_utf8();
+        let line_x = |line: usize| s.geo.line_x.get(line).copied().unwrap_or(0.0);
+        // The character's cluster, where the layout shows it. A character
+        // that shares a cluster with others (a ligature) or is a line
+        // break has none of its own: where the cursor stands before it.
+        let r = match layout.range_rects(at..end).first() {
+            Some(&(line, r)) => r + kurbo::Vec2::new(line_x(line), s.geo.top),
+            None => {
+                let a = layout.caret(at);
+                let (x, top) = (line_x(a.line) + a.x, s.geo.top + a.top);
+                kurbo::Rect::new(x, top, x, top + a.height)
+            }
+        };
         out.extend(std::iter::repeat_n(r, c.len_utf16()));
         at += c.len_utf8();
     }

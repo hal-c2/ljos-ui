@@ -242,6 +242,16 @@ public class LjosActivity extends GameActivity {
         });
     }
 
+    /**
+     * No editor has focus now, or another took it, from the application's
+     * thread: nothing is told of the last one's text.
+     */
+    public void cursorAnchorCleared() {
+        runOnUiThread(() -> {
+            anchor = null;
+        });
+    }
+
     /** Tells the input method where the text is, on the UI thread. */
     private void tellAnchor(Anchor a) {
         View view = mSurfaceView;
@@ -255,6 +265,11 @@ public class LjosActivity extends GameActivity {
         Matrix toScreen = new Matrix();
         toScreen.setTranslate(at[0], at[1]);
         RectF editor = new RectF(a.editor[0], a.editor[1], a.editor[2], a.editor[3]);
+        // Seen only where the surface shows it as well.
+        RectF seen = new RectF(editor);
+        if (!seen.intersect(0, 0, view.getWidth(), view.getHeight())) {
+            seen.setEmpty();
+        }
         CursorAnchorInfo.Builder info = new CursorAnchorInfo.Builder()
                 .setMatrix(toScreen)
                 .setSelectionRange(a.selStart, a.selEnd);
@@ -264,14 +279,14 @@ public class LjosActivity extends GameActivity {
                 info.addCharacterBounds(
                         a.composeStart + i / 4,
                         a.chars[i], a.chars[i + 1], a.chars[i + 2], a.chars[i + 3],
-                        shown(editor, a.chars[i], a.chars[i + 1], a.chars[i + 2], a.chars[i + 3]));
+                        shown(seen, a.chars[i], a.chars[i + 1], a.chars[i + 2], a.chars[i + 3]));
             }
         }
         // The text's baseline is not known here: the cursor's bottom is the
         // nearest to it.
         float[] c = a.cursor;
         info.setInsertionMarkerLocation(
-                c[0], c[1], c[3], c[3], shown(editor, c[0], c[1], c[2], c[3]));
+                c[0], c[1], c[3], c[3], shown(seen, c[0], c[1], c[2], c[3]));
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             info.setEditorBoundsInfo(new EditorBoundsInfo.Builder()
                     .setEditorBounds(editor)
@@ -281,10 +296,15 @@ public class LjosActivity extends GameActivity {
         imm.updateCursorAnchorInfo(view, info.build());
     }
 
-    /** Whether a box is seen in the editor, as CursorAnchorInfo flags it. */
-    private static int shown(RectF editor, float l, float t, float r, float b) {
-        boolean in = l >= editor.left && r <= editor.right && t >= editor.top && b <= editor.bottom;
-        boolean out = r < editor.left || l > editor.right || b < editor.top || t > editor.bottom;
+    /**
+     * Whether a box is seen in what of the editor the surface shows, as
+     * CursorAnchorInfo flags it; nothing is seen in an empty one.
+     */
+    private static int shown(RectF seen, float l, float t, float r, float b) {
+        boolean in = !seen.isEmpty()
+                && l >= seen.left && r <= seen.right && t >= seen.top && b <= seen.bottom;
+        boolean out = seen.isEmpty()
+                || r < seen.left || l > seen.right || b < seen.top || t > seen.bottom;
         int flags = 0;
         if (!out) {
             flags |= CursorAnchorInfo.FLAG_HAS_VISIBLE_REGION;
