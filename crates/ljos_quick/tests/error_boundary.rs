@@ -84,6 +84,47 @@ Item {
     );
 }
 
+/// Content whose own handler, as it is made, gives the boundary other
+/// content and then the same content again: only the item the content
+/// watch made last lives and shows, not that one beside the first.
+#[test]
+fn content_changed_away_and_back_as_it_is_made_leaves_one_item() {
+    let e = engine();
+    let root = load(
+        &e,
+        r#"
+import QtQuick
+import Ljos
+Item {
+    id: root
+    property bool swapped: false
+    property Component a: Component {
+        Item {
+            objectName: "a"
+            Component.onCompleted: if (!root.swapped) {
+                root.swapped = true
+                boundary.content = root.b
+                boundary.content = root.a
+            }
+        }
+    }
+    property Component b: Component { Item { objectName: "b" } }
+    ErrorBoundary { id: boundary; objectName: "boundary"; content: root.a }
+}
+"#,
+    );
+    let boundary = find(&e, root, "boundary");
+    e.process_deferred_deletes();
+    assert_eq!(e.take_warnings(), Vec::<String>::new());
+    assert_eq!(count(&e, root, "a"), 1, "one item of the content lives");
+    assert!(!exists(&e, root, "b"));
+    let item = get(&e, boundary, "item")
+        .as_object()
+        .expect("an item is shown");
+    assert_eq!(text(&e, item, "objectName"), "a");
+    assert!(!get(&e, boundary, "failed").to_boolean());
+}
+
 /// A panic in a native handler of `obj`, as a host's turn catches it.
 fn panic_in(e: &Engine, obj: ObjectId, message: &'static str) {
     let r: Option<()> = e.turn(Some(obj), || panic!("{message}"));
@@ -91,17 +132,23 @@ fn panic_in(e: &Engine, obj: ObjectId, message: &'static str) {
 }
 
 fn exists(e: &Engine, root: ObjectId, name: &str) -> bool {
+    count(e, root, name) > 0
+}
+
+/// How many live objects under `root`, itself included, are named `name`.
+fn count(e: &Engine, root: ObjectId, name: &str) -> usize {
     let mut stack = vec![root];
+    let mut n = 0;
     while let Some(o) = stack.pop() {
         if !e.is_alive(o) {
             continue;
         }
         if text(e, o, "objectName") == name {
-            return true;
+            n += 1;
         }
         stack.extend(e.children(o));
     }
-    false
+    n
 }
 
 #[test]
