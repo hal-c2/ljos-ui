@@ -130,6 +130,8 @@ Save the three files in one directory and run `ljos run .`. The status line show
 
 The loader makes the source's shell at once. It discards it and shows the fallback when the file does not compile, or when something in it faults while it is made: an exception in a binding or handler, or a panic in a native type. A fault in the user's shell later on does the same, because the loader is the boundary around its source's shell. When the fallback fails too, nothing is shown, `status` is `Error`, and `error` gives both reasons, one per line. Setting a new `source` or `fallback` tries again, and `error` clears once the source's shell is shown.
 
+Its `reload()` reads the user's files again and applies what changed, exactly as a save the watch saw is applied: the shell is made once, with the app's state kept, and a file that does not compile leaves what runs as it was, with the same fault. It is for a Reload button, an app that keeps no watch, or a save its watch missed. When the files are as they were, the shell that runs is kept and the app is told so (`Report::Unchanged`); a loader that shows its fallback then tries its source again. Where nothing reads the user's files, `reload()` only tries the source again.
+
 `ShellLoader` is not a `Loader`. A `Loader` holds one URL and only logs why it could not load; a `ShellLoader` holds two and says why in a property the app can show.
 
 ## Slots and contributions
@@ -291,11 +293,11 @@ fn main() {
 - Each save is applied between two frames with the app's state kept, as [hot reload](./hot-reload.md) applies one.
 - A file that does not compile leaves what runs as it was. Ljós draws nothing over the window: the fault goes to `on_fault`, for the app to tell its user in its own way.
 - Files load from that directory and the app's pack only. A network address, an absolute path, a `../` that leads out, and a link out of the directory are refused, and the refusal goes to `on_fault`.
-- `UserQml::watch(false)` reads the directory once, at start-up.
+- `UserQml::watch(false)` keeps no watch: the directory is read at start-up and whenever the app asks, from QML with a `ShellLoader`'s `reload()` and from Rust with `ShellApp::read_user_files_again`. Each ask is applied as a save is, and its outcome is reported like one; `Report::Unchanged` says the files were as they were. With `reads_when_asked(false)` as well, the directory is read once, at start-up.
 - A script can make QML of text (`Qt.createQmlObject`) against the app's types, with the user's files over them. The compiler for it is made at the first text, not before.
 - `UserQml::loads_from(dir)` names a directory the app loads QML from while it runs, such as plugins it fetched: `Qt.createComponent` and a `Loader` compile a file there when a script asks for it. A file there sees its own directory and the modules it imports, so a plugin that uses the app's types imports the app's module. Every other directory stays refused.
 - A text or a plugin file that does not compile is the script's error, and it goes to `on_fault` too.
-- What it costs an app whose user has no file: the compiler makes the program about 8 MB larger, and it starts in the same time. It takes about 14 MB more memory, most of it what a reload needs to keep the app's state across a save; with `watch(false)` that is not kept, and it takes about 5 MB more.
+- What it costs an app whose user has no file: the compiler makes the program about 8 MB larger, and it starts in the same time. It takes about 14 MB more memory, most of it what a reload needs to keep the app's state across a save. With `watch(false)` that is still kept, so that a read the app asks for keeps its state too; with `reads_when_asked(false)` as well, it is not, and the app takes about 5 MB more.
 
 `user-qml` links no inspector and no reload overlay; those are the `dev` feature's, which builds on it, and compiling the whole app from source at start-up (`App::qml_dirs`) is `dev-qml`'s. `examples/user-shell` is a small app that does this.
 

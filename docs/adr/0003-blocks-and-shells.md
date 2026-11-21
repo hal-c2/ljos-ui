@@ -210,6 +210,11 @@ moves give the same document with a blank line or a binding order shifted
     A shell already shown that an edit breaks keeps the running generation
     and reports through the reload error (section 12.1), not through
     `error`. There is no application-wide `Runtime.lastError`.
+  - `ShellLoader.reload()` asks the host that reads the user's files to
+    read them all again, and is applied as a save its watch saw would be
+    (the same reload error and fallback, state kept). When nothing
+    changed, the running shell is kept and the host says so; it is not
+    made again. Where no host reads the files, it tries the source again.
   - `PluginSup` is not built for QML plugins. A Contribution goes from
     every Slot whatever destroys it, so a plugin's boundary that discards
     its content already takes the plugin's contributions away and gives
