@@ -44,6 +44,11 @@ Feature: An input method that tells the whole of what it holds
           echoMode: TextInput.Password
           onCursorPositionChanged: if (cursorPosition === 1) text = ""
         }
+        TextInput {
+          objectName: "checked"; y: 170; width: 200
+          echoMode: TextInput.Password
+          validator: RegularExpressionValidator { regularExpression: /[ab]*/ }
+        }
       }
       """
 
@@ -183,6 +188,13 @@ Feature: An input method that tells the whole of what it holds
       And the input method holds "abc" with the cursor at 1
       And the input method holds "abxc" with the cursor at 3
       Then the property "text" of "guarded" is "abxc"
+
+    Scenario: A hidden field whose validator refuses a change the same length holds none of it
+      When the property "focus" of "checked" is set to true
+      And the input method holds "ab" with the cursor at 2
+      And the input method holds "ac" with the cursor at 2
+      And the input method holds "acb" with the cursor at 3
+      Then the property "text" of "checked" is "ab"
 
     Scenario: An input method that typed nothing yet leaves the field's selection
       When the property "focus" of "pin" is set to true
