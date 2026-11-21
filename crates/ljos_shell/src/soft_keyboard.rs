@@ -92,8 +92,15 @@ fn units(text: &str, start: usize, end: usize) -> &str {
 }
 
 /// Where `geometry`, in the scene's points, puts the editor holding
-/// `text`, in the surface's pixels at `scale` pixels a point.
-fn anchor(geometry: &ImeGeometry, text: &HeldText, scale: f64) -> CursorAnchor {
+/// `text`, in the surface's pixels at `scale` pixels a point. The method
+/// that holds `told` and composes is told its own cursor inside the
+/// composition, which the editor does not keep (see [`differs`]).
+fn anchor(
+    geometry: &ImeGeometry,
+    text: &HeldText,
+    told: Option<&HeldText>,
+    scale: f64,
+) -> CursorAnchor {
     #[allow(clippy::cast_possible_truncation)]
     let px = |r: &kurbo::Rect| [r.x0, r.y0, r.x1, r.y1].map(|v| (v * scale) as f32);
     let composing = text
@@ -108,7 +115,9 @@ fn anchor(geometry: &ImeGeometry, text: &HeldText, scale: f64) -> CursorAnchor {
     CursorAnchor {
         editor: px(&geometry.editor),
         cursor: px(&geometry.cursor),
-        selection: [text.anchor, text.cursor],
+        selection: told
+            .filter(|t| t.compose.is_some() && !differs(Some(t), text))
+            .map_or([text.anchor, text.cursor], |t| [t.anchor, t.cursor]),
         composing,
     }
 }
@@ -139,7 +148,7 @@ impl PlatformTextInput for SoftKeyboard {
     fn enable(&mut self, hints: i32) {
         self.hints = Some(hints);
         self.told = None;
-        self.anchored = None;
+        self.unanchor();
         self.shown = false;
         self.asked.push(Request::Editor(editor_kind(hints)));
     }
@@ -148,7 +157,7 @@ impl PlatformTextInput for SoftKeyboard {
         self.hints = None;
         self.told = None;
         self.geometry = None;
-        self.anchored = None;
+        self.unanchor();
         self.asked.push(Request::Keyboard(false));
     }
 
@@ -185,6 +194,13 @@ impl PlatformTextInput for SoftKeyboard {
 }
 
 impl SoftKeyboard {
+    /// The method is no longer told where the last editor's text was.
+    fn unanchor(&mut self) {
+        if self.anchored.take().is_some() {
+            self.asked.push(Request::Anchor(None));
+        }
+    }
+
     /// The input method holds `now`: the editor with focus takes what
     /// changed.
     pub(crate) fn held(&mut self, scene: &QuickScene, engine: &Engine, now: HeldText) {
@@ -234,7 +250,7 @@ impl SoftKeyboard {
                 .geometry
                 .as_ref()
                 .filter(|_| self.scale > 0.0)
-                .map(|g| anchor(g, &now, self.scale));
+                .map(|g| anchor(g, &now, self.told.as_ref(), self.scale));
             if differs(self.told.as_ref(), &now) {
                 let over = self.told.replace(now.clone());
                 self.asked.push(Request::Held { now, over });
@@ -243,7 +259,7 @@ impl SoftKeyboard {
                 && self.anchored.as_ref() != Some(&anchored)
             {
                 self.anchored = Some(anchored.clone());
-                self.asked.push(Request::Anchor(anchored));
+                self.asked.push(Request::Anchor(Some(anchored)));
             }
             // What it holds is set before the keyboard shows.
             if !shown && !hidden {
@@ -386,10 +402,38 @@ mod tests {
         asked
             .iter()
             .filter_map(|r| match r {
-                Request::Anchor(a) => Some(a.clone()),
+                Request::Anchor(Some(a)) => Some(a.clone()),
                 _ => None,
             })
             .collect()
+    }
+
+    #[test]
+    fn the_method_composing_is_told_its_own_cursor() {
+        let (e, mut s, _) = editor("ab", &[]);
+        let mut keyboard = SoftKeyboard::default();
+        keyboard.set_scale(1.0);
+        keyboard.sync(&s, &e);
+        // Its cursor between the composed n and i.
+        keyboard.held(&s, &e, text("abni", 3, Some(2..4)));
+        s.frame(&e, Time::ZERO);
+        let told = anchors(&keyboard.sync(&s, &e));
+        assert_eq!(told.last().map(|a| a.selection), Some([3, 3]));
+    }
+
+    #[test]
+    fn an_editor_losing_focus_leaves_nothing_anchored() {
+        let (e, s, _) = editor("ab", &[]);
+        let mut keyboard = SoftKeyboard::default();
+        keyboard.set_scale(1.0);
+        assert_eq!(anchors(&keyboard.sync(&s, &e)).len(), 1);
+        keyboard.disable();
+        let asked = keyboard.sync(&s, &e);
+        assert!(asked.iter().any(|r| matches!(r, Request::Anchor(None))), "{asked:?}");
+        // Nothing was anchored: nothing to clear.
+        keyboard.disable();
+        let asked = keyboard.sync(&s, &e);
+        assert!(!asked.iter().any(|r| matches!(r, Request::Anchor(_))), "{asked:?}");
     }
 
     #[test]

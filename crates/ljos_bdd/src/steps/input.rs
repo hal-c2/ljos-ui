@@ -388,3 +388,71 @@ fn input_method_told_nothing_composed(w: &mut LjosWorld) -> StepResult {
         }
     })
 }
+
+#[then(regex = r#"^the input method is told of (\d+) composed units?$"#)]
+fn input_method_told_units(w: &mut LjosWorld, count: usize) -> StepResult {
+    geometry(w, |g| {
+        if g.composing.len() == count {
+            Ok(())
+        } else {
+            Err(format!(
+                "the input method is told of {} composed units: {:?}",
+                g.composing.len(),
+                g.composing
+            ))
+        }
+    })
+}
+
+// The two units of one character outside the Basic Multilingual Plane.
+#[then(regex = r#"^the input method is told composed units (\d+) and (\d+) share a box$"#)]
+fn input_method_told_shared(w: &mut LjosWorld, a: usize, b: usize) -> StepResult {
+    geometry(w, |g| match (g.composing.get(a), g.composing.get(b)) {
+        (Some(x), Some(y)) => same_rect(&format!("composed unit {a}"), *x, *y)
+            .map_err(|e| format!("{e}, not where unit {b} is: {y:?}")),
+        _ => Err(format!(
+            "the input method is told of {} composed units: {:?}",
+            g.composing.len(),
+            g.composing
+        )),
+    })
+}
+
+// A box of no width is one an input method cannot place a window by:
+// only a line break may have one.
+#[then("the input method is told each composed unit has a width")]
+fn input_method_told_widths(w: &mut LjosWorld) -> StepResult {
+    geometry(w, |g| match g.composing.iter().position(|r| r[2] <= 1e-3) {
+        None if !g.composing.is_empty() => Ok(()),
+        None => Err("the input method is told nothing is composed".to_owned()),
+        Some(i) => Err(format!(
+            "the input method is told composed unit {i} has no width: {:?}",
+            g.composing
+        )),
+    })
+}
+
+// Characters of both directions side by side: each box is its own
+// character's, not the stretch between two cursor positions.
+#[then("the input method is told no two composed characters overlap")]
+fn input_method_told_apart(w: &mut LjosWorld) -> StepResult {
+    geometry(w, |g| {
+        let rects = &g.composing;
+        if rects.is_empty() {
+            return Err("the input method is told nothing is composed".to_owned());
+        }
+        for (i, a) in rects.iter().enumerate() {
+            for (j, b) in rects.iter().enumerate().skip(i + 1) {
+                let same = a.iter().zip(b).all(|(p, q)| (p - q).abs() < 1e-3);
+                let across = a[0] < b[0] + b[2] - 1e-3 && b[0] < a[0] + a[2] - 1e-3;
+                let down = a[1] < b[1] + b[3] - 1e-3 && b[1] < a[1] + a[3] - 1e-3;
+                if !same && across && down {
+                    return Err(format!(
+                        "the input method is told composed units {i} and {j} overlap: {a:?} and {b:?}"
+                    ));
+                }
+            }
+        }
+        Ok(())
+    })
+}

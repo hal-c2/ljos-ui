@@ -842,6 +842,8 @@ mod tests {
         assert!(activity.contains(
             "publicvoidcursorAnchorChanged(float[]editor,float[]cursor,intselStart,intselEnd,intcomposeStart,Stringcomposing,float[]chars)"
         ));
+        // `cursorAnchorCleared`, `()V`.
+        assert!(activity.contains("publicvoidcursorAnchorCleared()"));
         assert!(activity.contains("TextInputOf.surface(this,"));
         // GameTextInput's own connection refuses an input method that asks.
         assert!(java("TextInputOf.java").contains("public boolean requestCursorUpdates(int mode)"));

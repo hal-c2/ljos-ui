@@ -64,3 +64,21 @@ Feature: An input method is told where the text is
       And the input method holds "abni" with the cursor at 4
       Then the input method is told nothing is composed
       And the input method is told the cursor is at 56.453125, 40 sized 1 by 16
+
+    Scenario: A character outside the Basic Multilingual Plane is two units in one box
+      When the input method holds "ab𝄞n" composing 2 to 5 with the cursor at 5
+      Then the input method is told of 3 composed units
+      And the input method is told composed units 0 and 1 share a box
+
+    Scenario: A character the line wraps after keeps its own width
+      When the property "width" of "input" is set to 30
+      And the property "wrapMode" of "input" is set to 3
+      And the input method holds "abcdefgh" composing 0 to 8 with the cursor at 8
+      Then the input method is told of 8 composed units
+      And the input method is told each composed unit has a width
+
+    Scenario: Characters of both directions are each in their own box
+      When the input method holds "aאבb" composing 0 to 4 with the cursor at 4
+      Then the input method is told of 4 composed units
+      And the input method is told each composed unit has a width
+      And the input method is told no two composed characters overlap
