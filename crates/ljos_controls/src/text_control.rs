@@ -206,11 +206,12 @@ fn held_long(engine: &Engine, obj: ObjectId) {
 
 /// The pointer has not yet gone farther sideways from the press than the
 /// drag threshold since the press landed; past it, it never is again.
-fn still(st: &FieldState, at: kurbo::Point) -> bool {
+fn still(engine: &Engine, st: &FieldState, at: kurbo::Point) -> bool {
+    let threshold = ljos_quick::start_drag_distance(engine);
     let near = st
         .still
         .get()
-        .is_some_and(|from| (at.x - from.x).abs() <= ljos_quick::DRAG_THRESHOLD);
+        .is_some_and(|from| (at.x - from.x).abs() <= threshold);
     if !near {
         st.still.set(None);
     }
@@ -222,7 +223,7 @@ fn moved(engine: &Engine, obj: ObjectId, ev: &PointerEvent, at: kurbo::Point) {
         return;
     };
     hand_over(engine, obj, &st);
-    if still(&st, at) {
+    if still(engine, &st, at) {
         return;
     }
     (text_input::pointer_hooks().moved)(engine, obj, ev, at);
@@ -233,7 +234,7 @@ fn release(engine: &Engine, obj: ObjectId, ev: &PointerEvent, at: kurbo::Point) 
         return;
     };
     let hooks = text_input::pointer_hooks();
-    if hand_over(engine, obj, &st).is_some() && !still(&st, at) {
+    if hand_over(engine, obj, &st).is_some() && !still(engine, &st, at) {
         // Released somewhere else with no move in between: it selected
         // on its way all the same.
         (hooks.moved)(engine, obj, ev, at);
