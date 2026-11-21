@@ -122,6 +122,58 @@ fn a_null_thrown_on_a_full_heap_is_running_out_of_memory_after_its_locals_go() {
     assert!(matches!(err, JsFault::JsException { .. }), "{err:?}");
 }
 
+/// A script may throw `null` itself on a heap within a sixteenth of its
+/// limit, held or just let go: QuickJS made no `null` of its own, so it is
+/// the script's exception, not the heap running out.
+#[test]
+fn a_null_a_script_throws_on_a_nearly_full_heap_is_its_own() {
+    let host = JsHost::new(JsConfig {
+        memory_limit: Some(16 * 1024 * 1024),
+        ..JsConfig::default()
+    })
+    .unwrap();
+    host.collect_now();
+    let held = host.memory_stats().unwrap().malloc_size;
+    let limit = held + 4 * 1024 * 1024;
+    assert!(host.set_memory_limit(Some(limit)));
+    // Room for the buffer, and less than a sixteenth of the limit left.
+    let bytes = 4 * 1024 * 1024 - 128 * 1024;
+    eval_num(&host, &format!("var kept = new ArrayBuffer({bytes}); 0")).unwrap();
+    let now = host.memory_stats().unwrap().malloc_size;
+    assert!(now + limit / 16 >= limit, "nearly full: {now} of {limit}");
+    let err = eval_num(&host, "throw null").unwrap_err();
+    assert!(matches!(err, JsFault::JsException { .. }), "held: {err:?}");
+    // Filled, let go and thrown in one run.
+    let err = eval_num(
+        &host,
+        &format!("kept = null; let b = new ArrayBuffer({bytes}); b = null; throw null"),
+    )
+    .unwrap_err();
+    assert!(matches!(err, JsFault::JsException { .. }), "let go: {err:?}");
+    assert_eq!(eval_num(&host, "40 + 2").unwrap(), 42.0);
+}
+
+/// The `null` QuickJS throws for want of heap is out of memory however it
+/// reaches the host: caught and thrown again by the script, too.
+#[test]
+fn a_null_thrown_for_want_of_heap_and_thrown_again_is_running_out_of_memory() {
+    let host = JsHost::new(JsConfig {
+        memory_limit: Some(16 * 1024 * 1024),
+        ..JsConfig::default()
+    })
+    .unwrap();
+    host.collect_now();
+    let held = host.memory_stats().unwrap().malloc_size;
+    assert!(host.set_memory_limit(Some(held + 4 * 1024 * 1024)));
+    let err = eval_num(
+        &host,
+        "function fill() { let h = null; for (;;) h = { n: h } }\n\
+         try { fill() } catch (e) { if (e !== null) throw new Error('not null: ' + e); throw e }",
+    )
+    .unwrap_err();
+    assert!(matches!(err, JsFault::JsOutOfMemory { .. }), "{err:?}");
+}
+
 /// QuickJS carves small objects out of arenas and lets an arena go only
 /// once all of it is free. Objects that stay among the freed ones keep
 /// their arenas held, so what the system gave back says little about
