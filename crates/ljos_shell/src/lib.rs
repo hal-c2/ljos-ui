@@ -752,6 +752,27 @@ impl<M: Send + 'static> ShellApp<M> {
         window_spec::clear(color)
     }
 
+    /// Chooses what is drawn behind the root of a host whose `Window`s are
+    /// items of the scene, as the desktop does: a translucent background
+    /// is painted behind a plain root, and otherwise the view leaves its
+    /// backdrop to the clear ([`ShellApp::clear_color`]); a root `Window`
+    /// is cleared to its own colour, with nothing painted over it.
+    /// Whether that changed what is drawn, which the next frame shows.
+    #[cfg_attr(not(all(feature = "android", target_os = "android")), allow(dead_code))]
+    pub(crate) fn backdrop_for_root(&mut self) -> bool {
+        let window = self
+            .view
+            .scene()
+            .root()
+            .and_then(|root| window_color(self.engine(), root))
+            .is_some();
+        let backdrop = !window && self.background.a() < 255;
+        let changed = backdrop != self.backdrop;
+        self.set_backdrop(backdrop);
+        self.view.set_fold_backdrop(!backdrop);
+        changed
+    }
+
     /// Calls `changed` whenever the colour of the root, a `Window`,
     /// changes, until the root is gone: a host that clears to it
     /// ([`ShellApp::clear_color`]) draws a frame, which nothing in the
@@ -1023,6 +1044,38 @@ mod tests {
             .unwrap();
         assert_eq!(told.get(), 1, "a change of colour asks for a frame");
         assert_eq!(app.clear_color(), egui::Color32::from_rgb(200, 30, 40));
+    }
+
+    /// A translucent background is painted behind a plain root, never
+    /// over a root `Window`, which is cleared to its own colour.
+    #[cfg(feature = "dev")]
+    #[test]
+    fn a_translucent_background_is_painted_behind_a_plain_root_only() {
+        use std::sync::Arc;
+
+        use ljos_runtime::SystemClock;
+
+        let dir = tempfile::tempdir().unwrap();
+        let entry = dir.path().canonicalize().unwrap().join("Main.qml");
+        for (qml, backdrop) in [
+            ("Window {\n  visible: true\n  color: \"#10141c\"\n}", false),
+            ("Item {}", true),
+        ] {
+            std::fs::write(&entry, format!("import QtQuick\n{qml}\n")).unwrap();
+            let config = super::ShellConfig::default()
+                .with_background(ljos_engine::Color::from_rgba8(1, 2, 3, 128));
+            let mut app = super::ShellApp::new(
+                &egui::Context::default(),
+                &config,
+                Arc::new(SystemClock::new()),
+                |setup: &mut super::Setup<'_, ()>| setup.watch(&entry),
+            )
+            .unwrap();
+            app.set_backdrop(!backdrop);
+            assert!(app.backdrop_for_root(), "{qml}: the choice changed");
+            assert_eq!(app.backdrop, backdrop, "{qml}");
+            assert!(!app.backdrop_for_root(), "{qml}: and stays");
+        }
     }
 
     /// A plain root has no colour of its own: the window is cleared to

@@ -314,9 +314,7 @@ where
         ) {
             Ok(mut app) => {
                 app.view_mut().set_resize_mode(ResizeMode::RootToView);
-                let opaque = config.background.to_rgba8()[3] == 255;
-                app.set_backdrop(!opaque);
-                app.view_mut().set_fold_backdrop(opaque);
+                app.backdrop_for_root();
                 // Content is thrown and stopped as Android's own lists do.
                 ljos_quick::flickable::set_scroll_physics(
                     app.engine(),
@@ -632,6 +630,9 @@ where
             let due = Arc::clone(&self.due);
             let waker = self.waker.clone();
             app.on_root_color(move || ask(&due, &waker, Instant::now()));
+            if app.backdrop_for_root() {
+                ask(&self.due, &self.waker, Instant::now());
+            }
         }
         let engine = Rc::clone(app.engine());
         let jobs = self.ctx.tessellate(output.shapes, output.pixels_per_point);
