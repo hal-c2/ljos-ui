@@ -6,8 +6,8 @@ use egui_wgpu::wgpu::InstanceFlags;
 /// asked for. Either flag turns on Vulkan's debug-utils extension, and
 /// naming objects through it segfaults in SwiftShader (the emulator's
 /// Vulkan) while the device is made, so a debug build never drew a
-/// frame there. `WGPU_VALIDATION` or `WGPU_DEBUG` (any value) keep
-/// the flag they name.
+/// frame there. When `WGPU_VALIDATION` or `WGPU_DEBUG` is set, the flag
+/// it names stays as wgpu's own reading of the variable chose it.
 pub(crate) fn asked_debug_flags(
     mut flags: InstanceFlags,
     set: impl Fn(&str) -> bool,
