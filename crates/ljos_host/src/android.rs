@@ -214,6 +214,16 @@ pub extern "system" fn Java_dev_ljos_LjosActivity_nativeBackCancelled(_env: JEnv
     back(BackPhase::Cancelled, 0.0);
 }
 
+/// The system's clipboard holds something else, from the activity's
+/// clipboard listener.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_ljos_LjosActivity_nativeClipboardChanged(
+    _env: JEnv,
+    _class: JClass,
+) {
+    from_java(WindowEvent::ClipboardChanged);
+}
+
 /// What of the window the system keeps, in physical pixels, from the
 /// activity's insets listener.
 #[unsafe(no_mangle)]

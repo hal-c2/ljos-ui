@@ -993,6 +993,18 @@ pub trait Platform: Backend {
         Err(BackendError::NotImplemented("the clipboard"))
     }
 
+    /// The application copies a picture of `width` by `height` pixels
+    /// through its platform's clipboard, as a "Copy image" command does.
+    fn copy_picture(&mut self, _width: u32, _height: u32) -> Result<()> {
+        Err(BackendError::NotImplemented("pictures on the clipboard"))
+    }
+
+    /// The width and height of the picture on the clipboard, read back
+    /// as a paste in this application reads it; `None` when it holds none.
+    fn clipboard_picture(&mut self) -> Result<Option<(u32, u32)>> {
+        Err(BackendError::NotImplemented("pictures on the clipboard"))
+    }
+
     /// The kind (`"open file"`) and title of each dialog the system shows.
     fn system_dialogs(&mut self) -> Result<Vec<(String, String)>> {
         Err(BackendError::NotImplemented("the system's dialogs"))

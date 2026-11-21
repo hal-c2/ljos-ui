@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- What the clipboard's provider lends: the picture last copied
+     (LjosServices.setClipboardImage), and nothing else of the cache. -->
+<paths>
+    <cache-path name="clipboard" path="ljos-clipboard/" />
+</paths>

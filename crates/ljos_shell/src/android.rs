@@ -742,6 +742,14 @@ where
                     host.request_redraw(WINDOW);
                 }
                 WindowEvent::Theme { .. } => host.request_redraw(WINDOW),
+                // What follows canPaste hears of another application's copy.
+                WindowEvent::ClipboardChanged => {
+                    if let Stage::Running(app) = &self.stage {
+                        let engine = app.engine();
+                        ljos_quick::Clipboard::of(engine).refresh(engine);
+                    }
+                    host.request_redraw(WINDOW);
+                }
                 WindowEvent::Text(text) => {
                     self.text(text);
                     host.request_redraw(WINDOW);

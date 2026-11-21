@@ -290,6 +290,7 @@ setter tries to write `depth` and logs the error it gets.
 | `When the user answers "button" in the system dialog` | the user presses the button with that text in the message the system shows (`@ljos-only`) |
 | `When the user dismisses the system dialog` | the user closes the dialog the system shows without choosing (`@ljos-only`) |
 | `When "text" is copied in another application` | another application puts the text on the clipboard while this one runs; it is not told, and finds out when it asks |
+| `When the application copies a picture 3 by 2 pixels` | the application puts a picture of that size on its platform's clipboard, as a "Copy image" command does (`@ljos-only`: QML has no call that copies a picture) |
 | `When the user grants the "name" permission` / `denies` | the user answers the system's question for a permission: `"camera"`, `"microphone"`, `"location"`, `"calendar"`, `"contacts"`, `"bluetooth"` (`@ljos-only`) |
 | `When the accelerometer reads 1, 2, 9.8` | the device's sensor measures those values, in the order its reading names them (`x, y, z`; a compass's `azimuth, calibrationLevel`), timestamped with the scenario's clock; every started sensor of that kind is given it at the next frame (`@ljos-only`) |
 
@@ -323,6 +324,7 @@ setter tries to write `depth` and logs the error it gets.
 | `Then the "role" named "name" has the value "text"` | what the node holds besides its name: the text of an editor; `""` when it has none |
 | `Then the "role" named "name" has "text" selected` | the part of its value that is selected; `""` when none is |
 | `Then the clipboard holds "text"` | the text a paste would insert |
+| `Then the clipboard holds a picture 3 by 2 pixels` | the size of the picture a paste in the application would read back (`@ljos-only`) |
 | `Then the window system is asked for a blurred backdrop behind "w"` | what the host asks the window system to draw behind a `Window` (`backdrop`); also `no backdrop` (`@ljos-only`) |
 | `Then the text file "X" has the line "text"` | a file the application wrote beside the QML files (or `Given` there) has that whole line, once what it writes in the background is on disk (`@ljos-only`: the oracle's files cannot be read back) |
 | `Then the text file "X" does not exist` | the application has not written that file (`@ljos-only`) |

@@ -135,10 +135,23 @@ impl Clipboard {
     /// An editor copies: the text goes to the service, and to the host as
     /// well when the service is not the system's.
     pub fn copy(&self, engine: &Engine, text: &str) {
+        self.copy_formatted(engine, text, None);
+    }
+
+    /// An editor copies formatted text: `html`, with `text` for a paste
+    /// into plain text, in one write. A phone shows the user each write,
+    /// and tells every listener of each.
+    pub fn copy_formatted(&self, engine: &Engine, text: &str, html: Option<&str>) {
         let svc = service(engine);
         // A copy that did not reach the system still fills the text
         // items' own clipboard, as Qt's copy() ignores the system's answer.
-        let _ = svc.set_text(ClipboardMode::Clipboard, text);
+        let _ = match html {
+            // A service that took no HTML still gets the characters.
+            Some(html) => svc
+                .set_html(html, text)
+                .or_else(|_| svc.set_text(ClipboardMode::Clipboard, text)),
+            None => svc.set_text(ClipboardMode::Clipboard, text),
+        };
         if !self.store(engine, text) {
             self.refresh(engine);
         }

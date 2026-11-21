@@ -147,6 +147,9 @@ pub enum WindowEvent {
     Pointer(PointerEvent),
     Key(KeyEvent),
     Modifiers(Modifiers),
+    /// The system's clipboard holds something else, from a platform that
+    /// tells (Android, while the window has the keyboard's focus).
+    ClipboardChanged,
     /// The window is gone.
     Destroyed,
     /// Something only the platform's own event tells.

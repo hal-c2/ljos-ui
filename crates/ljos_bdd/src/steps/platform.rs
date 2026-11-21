@@ -389,6 +389,24 @@ fn clipboard_holds(w: &mut LjosWorld, text: String) -> StepResult {
     })
 }
 
+#[when(regex = r"^the application copies a picture (\d+) by (\d+) pixels$")]
+fn application_copies_picture(w: &mut LjosWorld, width: u32, height: u32) -> StepResult {
+    w.each(|b| b.platform()?.copy_picture(width, height))
+}
+
+#[then(regex = r"^the clipboard holds a picture (\d+) by (\d+) pixels$")]
+fn clipboard_holds_picture(w: &mut LjosWorld, width: u32, height: u32) -> StepResult {
+    w.each(|b| match b.platform()?.clipboard_picture()? {
+        Some(held) if held == (width, height) => Ok(()),
+        Some((w, h)) => Err(BackendError::Failed(format!(
+            "the clipboard holds a picture {w} by {h} pixels, expected {width} by {height}"
+        ))),
+        None => Err(BackendError::Failed(format!(
+            "the clipboard holds no picture, expected one {width} by {height} pixels"
+        ))),
+    })
+}
+
 #[then(regex = r#"^the system shows an? "([^"]+)" dialog titled "([^"]*)"$"#)]
 fn system_shows(w: &mut LjosWorld, kind: String, title: String) -> StepResult {
     w.each(|b| {

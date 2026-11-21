@@ -475,14 +475,9 @@ pub(crate) fn copy(engine: &Engine, obj: ObjectId) -> bool {
         return false;
     }
     let html = super::rich::copied_html(&mut st.borrow_mut());
-    Clipboard::of(engine).copy(engine, &text);
     // The HTML goes beside the characters, to the service only: a host
     // that hands copies on is handed the characters.
-    if let Some(html) = html {
-        let _ = ljos_platform::Platform::of(engine)
-            .clipboard()
-            .set_html(&html, &text);
-    }
+    Clipboard::of(engine).copy_formatted(engine, &text, html.as_deref());
     true
 }
 

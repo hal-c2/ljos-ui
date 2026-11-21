@@ -4,7 +4,10 @@ import android.content.ActivityNotFoundException;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
+import android.content.ContentResolver;
 import android.content.Intent;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Handler;
@@ -12,9 +15,12 @@ import android.os.Looper;
 import android.security.keystore.KeyGenParameterSpec;
 import android.security.keystore.KeyProperties;
 import android.view.ViewConfiguration;
+import androidx.core.content.FileProvider;
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.security.GeneralSecurityException;
@@ -78,15 +84,26 @@ public final class LjosServices {
     // The clipboard. Android lets only the application with focus read it,
     // and its listeners and its manager belong to the main thread.
 
-    /** The clipboard's text, or null when it holds none. */
+    /** The clipboard's text; empty when it holds none, null when it cannot be read. */
     public static String clipboardText(Context context) throws Exception {
-        ClipData.Item item = onMain(() -> {
-            ClipboardManager clipboard = context.getSystemService(ClipboardManager.class);
-            ClipData clip = clipboard == null ? null : clipboard.getPrimaryClip();
-            return clip == null || clip.getItemCount() == 0 ? null : clip.getItemAt(0);
-        });
+        ClipData.Item item = clipboardItem(context);
         if (item == null) {
             return null;
+        }
+        Uri uri = item.getUri();
+        if (uri != null && item.getText() == null && item.getHtmlText() == null
+                && ContentResolver.SCHEME_CONTENT.equals(uri.getScheme())) {
+            // Content that gives no text (a copied picture) is no text:
+            // coerceToText would give the URI itself, and a paste would
+            // insert it. Any other URI (a copied link) is its own text.
+            // Empty, not null: null is "the clipboard could not be read",
+            // and a paste would get what was copied here before.
+            ContentResolver resolver = context.getContentResolver();
+            String type = resolver.getType(uri);
+            boolean text = type != null && type.startsWith("text/");
+            if (!text && resolver.getStreamTypes(uri, "text/*") == null) {
+                return "";
+            }
         }
         // On the caller's thread, not the main one: an item that is a
         // content URI is read from its provider, which may take its time,
@@ -97,14 +114,181 @@ public final class LjosServices {
 
     /** Puts {@code text} on the clipboard. */
     public static void setClipboardText(Context context, String text) throws Exception {
+        setClip(context, ClipData.newPlainText(null, text));
+    }
+
+    /** The first item of the clipboard, read on the main thread. */
+    private static ClipData.Item clipboardItem(Context context) throws Exception {
+        return onMain(() -> {
+            ClipboardManager clipboard = context.getSystemService(ClipboardManager.class);
+            ClipData clip = clipboard == null ? null : clipboard.getPrimaryClip();
+            return clip == null || clip.getItemCount() == 0 ? null : clip.getItemAt(0);
+        });
+    }
+
+    private static void setClip(Context context, ClipData clip) throws Exception {
         onMain(() -> {
             ClipboardManager clipboard = context.getSystemService(ClipboardManager.class);
             if (clipboard == null) {
                 throw new IllegalStateException("no clipboard service");
             }
-            clipboard.setPrimaryClip(ClipData.newPlainText(null, text));
+            clipboard.setPrimaryClip(clip);
             return null;
         });
+    }
+
+    /** The clipboard's HTML, or null when what it holds has none. */
+    public static String clipboardHtml(Context context) throws Exception {
+        ClipData.Item item = clipboardItem(context);
+        return item == null ? null : item.getHtmlText();
+    }
+
+    /** Puts {@code html} on the clipboard, with {@code text} for a plain paste. */
+    public static void setClipboardHtml(Context context, String html, String text) throws Exception {
+        setClip(context, ClipData.newHtmlText(null, text, html));
+    }
+
+    /**
+     * The picture on the clipboard as its width, its height, then its pixels
+     * as unpremultiplied ARGB, row by row; null when it holds none. Read on
+     * the caller's thread: the picture comes from another application's
+     * provider, which may take its time.
+     */
+    public static int[] clipboardImage(Context context) throws Exception {
+        ClipData.Item item = clipboardItem(context);
+        Uri uri = item == null ? null : item.getUri();
+        if (uri == null) {
+            return null;
+        }
+        ContentResolver resolver = context.getContentResolver();
+        String type = resolver.getType(uri);
+        if (type == null || !type.startsWith("image/")) {
+            return null;
+        }
+        // Read once, into the application's own bytes: a provider asked
+        // twice may answer with another picture the second time, larger
+        // than the size the first answer was shrunk for.
+        Bytes encoded;
+        try (InputStream in = resolver.openInputStream(uri)) {
+            encoded = in == null ? null : readAtMost(in, MOST_PASTED_BYTES);
+        }
+        if (encoded == null) {
+            return null;
+        }
+        // Its size first: a camera's picture at full size would be three
+        // copies of hundreds of megabytes on its way to the application.
+        BitmapFactory.Options bounds = new BitmapFactory.Options();
+        bounds.inJustDecodeBounds = true;
+        BitmapFactory.decodeByteArray(encoded.held(), 0, encoded.size(), bounds);
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
+            return null;
+        }
+        BitmapFactory.Options decode = new BitmapFactory.Options();
+        decode.inSampleSize = sampleSize(bounds.outWidth, bounds.outHeight);
+        Bitmap bitmap = BitmapFactory.decodeByteArray(encoded.held(), 0, encoded.size(), decode);
+        if (bitmap == null) {
+            return null;
+        }
+        int width = bitmap.getWidth();
+        int height = bitmap.getHeight();
+        int[] out = new int[2 + width * height];
+        out[0] = width;
+        out[1] = height;
+        // getPixels gives unpremultiplied colours whatever the bitmap keeps.
+        bitmap.getPixels(out, 2, width, 0, 0, width, height);
+        bitmap.recycle();
+        return out;
+    }
+
+    /** The most pixels a pasted picture keeps: 32 MB as ARGB ints. */
+    static final long MOST_PASTED_PIXELS = 8L << 20;
+
+    /** The most bytes of a pasted picture read, as its file holds it. */
+    static final int MOST_PASTED_BYTES = 64 << 20;
+
+    /**
+     * Bytes read, decoded where they were read to: a copy of the
+     * {@link #MOST_PASTED_BYTES} a picture may take would need the heap twice.
+     */
+    static final class Bytes extends ByteArrayOutputStream {
+        /** The bytes read so far, then capacity not yet filled. */
+        byte[] held() {
+            return buf;
+        }
+    }
+
+    /** All of {@code in}, or null when it holds more than {@code most} bytes. */
+    static Bytes readAtMost(InputStream in, int most) throws IOException {
+        Bytes out = new Bytes();
+        byte[] chunk = new byte[64 << 10];
+        int n;
+        while ((n = in.read(chunk)) != -1) {
+            if (out.size() > most - n) {
+                return null;
+            }
+            out.write(chunk, 0, n);
+        }
+        return out;
+    }
+
+    /**
+     * The power of two a picture of {@code width} by {@code height} is
+     * shrunk by (what BitmapFactory takes) so that it keeps no more than
+     * {@link #MOST_PASTED_PIXELS}.
+     */
+    static int sampleSize(int width, int height) {
+        int sample = 1;
+        while (((long) width / sample) * ((long) height / sample) > MOST_PASTED_PIXELS) {
+            sample *= 2;
+        }
+        return sample;
+    }
+
+    /** The authority of the template's provider of copied pictures. */
+    private static String clipboardAuthority(Context context) {
+        return context.getPackageName() + ".ljos.clipboard";
+    }
+
+    /**
+     * Puts a picture on the clipboard: Android's clipboard holds a picture
+     * as a content URI, here of a PNG in the application's cache, which the
+     * template's FileProvider lends to whoever pastes it. Only the latest
+     * copy is kept.
+     */
+    public static void setClipboardImage(Context context, int[] argb, int width, int height)
+            throws Exception {
+        Bitmap bitmap = Bitmap.createBitmap(argb, width, height, Bitmap.Config.ARGB_8888);
+        File dir = new File(context.getCacheDir(), "ljos-clipboard");
+        if (!dir.isDirectory() && !dir.mkdirs() && !dir.isDirectory()) {
+            throw new IOException("cannot make " + dir);
+        }
+        // A new name for each copy: an application that pasted the last
+        // one may still be reading it, and a URI of the same name would
+        // have it read the new picture as the old.
+        File file = File.createTempFile("copied", ".png", dir);
+        try (FileOutputStream out = new FileOutputStream(file)) {
+            if (!bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)) {
+                throw new IOException("the picture was not written");
+            }
+        } finally {
+            bitmap.recycle();
+        }
+        Uri uri = FileProvider.getUriForFile(context, clipboardAuthority(context), file);
+        try {
+            setClip(context, ClipData.newUri(context.getContentResolver(), "image", uri));
+        } catch (Exception e) {
+            // The clipboard still lends the last copy; only this one goes.
+            file.delete();
+            throw e;
+        }
+        File[] old = dir.listFiles();
+        if (old != null) {
+            for (File f : old) {
+                if (!f.equals(file)) {
+                    f.delete();
+                }
+            }
+        }
     }
 
     /** Empties the clipboard. */
