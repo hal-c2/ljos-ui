@@ -693,10 +693,6 @@ pub struct RunningTimer {
     pub fired: u64,
 }
 
-/// Most timer fires one [`Engine::advance_timers`] call catches up on, so a
-/// long stall does not replay thousands of ticks.
-const MAX_CATCH_UP: u32 = 100;
-
 pub(crate) fn register(engine: &Engine) {
     engine.register_module(crate::module!("QtQml" 2.0 => [
         QtObject, Component, Connections, Timer, crate::instantiator::Instantiator, LocaleEnums
@@ -936,8 +932,10 @@ impl Engine {
     }
 
     /// Fires every timer due at `now`, in deadline order, then runs the
-    /// promise jobs and the `Qt.callLater` queue. A repeating timer due several times fires
-    /// several times, as if the host had woken for each.
+    /// promise jobs and the `Qt.callLater` queue. A repeating timer that
+    /// fell several intervals behind fires once and keeps its phase: the
+    /// intervals it missed are dropped, as qml6 drops them. A host that
+    /// wants every run wakes at each deadline.
     pub fn advance_timers(&self, now: Time) {
         self.advance_timers_with(now, None);
     }
@@ -965,7 +963,6 @@ impl Engine {
     }
 
     fn advance_timers_with(&self, now: Time, made: Option<(Range<TimerId>, Time)>) {
-        let mut fired: FxHashMap<ObjectId, u32> = FxHashMap::default();
         loop {
             let next = {
                 let mut st = self.inner.timers.borrow_mut();
@@ -1001,14 +998,14 @@ impl Engine {
                         // shot or a stopped timer is no longer due.
                         st.due_at.remove(&o);
                     }
-                    let n = fired.entry(o).or_default();
-                    *n += 1;
-                    let at = if *n >= MAX_CATCH_UP {
-                        now
-                    } else {
-                        due.deadline
+                    // How far this call fires the timer: its next run is
+                    // after that, so it runs at most once here however
+                    // long its handler takes.
+                    let upto = match &made {
+                        Some((ids, by)) if ids.contains(&due.origin) => now.max(*by),
+                        _ => now,
                     };
-                    self.timer_fire(o, at, due.origin);
+                    self.timer_fire(o, due.deadline, upto, due.origin);
                 }
             }
         }
@@ -1220,9 +1217,10 @@ impl Engine {
         self.wake_host();
     }
 
-    /// A timer came due at `at`: re-arm (repeat) or stop, then emit.
-    /// `origin` is its first run's id, which the next run keeps.
-    fn timer_fire(&self, obj: ObjectId, at: Time, origin: TimerId) {
+    /// A timer came due at `at` and is fired now, with the clock at
+    /// `upto`: re-arm (repeat) or stop, then emit. `origin` is its first
+    /// run's id, which the next run keeps.
+    fn timer_fire(&self, obj: ObjectId, at: Time, upto: Time, origin: TimerId) {
         let Ok((running, repeat, interval)) =
             self.with::<Timer, _>(obj, |t| (t.running, t.repeat, t.interval))
         else {
@@ -1235,7 +1233,13 @@ impl Engine {
             *self.inner.timers.borrow_mut().fired.entry(obj).or_default() += 1;
         }
         if repeat {
-            self.timer_schedule(obj, at, interval.max(1), Some(origin));
+            // A run late by whole intervals skips them: the next is the
+            // first of its phase after `upto`.
+            let step = u64::try_from(interval.max(1)).unwrap_or(1) * 1000;
+            // Both are microseconds on the same clock, so this fits.
+            let late = u64::try_from(upto.saturating_since(at).as_micros()).unwrap_or(u64::MAX);
+            let from = at + Duration::from_micros(late - late % step);
+            self.timer_schedule(obj, from, interval.max(1), Some(origin));
         } else {
             // The timer stopping itself is not an assignment: a binding on
             // `running` stays.
