@@ -3,6 +3,7 @@
 mod support;
 
 use ljos_engine::Value;
+use ljos_runtime::Clock;
 use support::engine;
 
 #[test]
