@@ -971,6 +971,9 @@ pub struct UserSession {
     /// its way: it may have read them before the ask, so they are read
     /// once more when it is answered.
     again: bool,
+    /// What each ask was answered, for the tests.
+    #[cfg(test)]
+    answers: Vec<Reread>,
 }
 
 impl Drop for UserSession {
@@ -1075,6 +1078,8 @@ impl UserSession {
             follows: false,
             flushing: false,
             again: false,
+            #[cfg(test)]
+            answers: Vec::new(),
         };
         if reads {
             // Before any object is made: what was made earlier is unknown
@@ -1546,6 +1551,8 @@ impl UserSession {
                     );
                     out.push(Report::Unchanged);
                 }
+                #[cfg(test)]
+                self.answers.push(did);
                 self.rereads.answered(engine, did);
             }
             DevMsg::Pictures(_) => {
@@ -2120,6 +2127,36 @@ mod tests {
         assert!(
             reports.iter().any(|r| matches!(r, Report::Theme { .. })),
             "the second ask is answered once the new theme is applied: {reports:?}"
+        );
+    }
+
+    #[test]
+    fn an_ask_after_a_read_that_failed_is_answered_by_what_its_own_read_did() {
+        let root = tempfile::tempdir().expect("a directory");
+        let theme = root.path().join(THEME_FILE);
+        write(&theme, THEME);
+        let engine = engine();
+        let (mut session, woke) = session(&engine, root.path(), false);
+        let clock = ljos_runtime::SystemClock::new();
+        let _ = session.pump(&engine, &clock, &mut NoWindow);
+        while woke.try_recv().is_ok() {}
+        // The first read finds the theme broken; it is mended, and asked
+        // for again, before that read is answered.
+        write(&theme, "{ \"Colors\": ");
+        session.read_again(&engine);
+        woke.recv_timeout(PATIENCE)
+            .expect("the first read is answered");
+        write(&theme, NEW_THEME);
+        session.read_again(&engine);
+        let reports = answered(&engine, &mut session, &woke);
+        assert!(
+            reports.iter().any(|r| matches!(r, Report::Theme { .. })),
+            "the mended theme is applied: {reports:?}"
+        );
+        assert_eq!(
+            session.answers,
+            [Reread::Applied],
+            "the second read applied the mended theme, and that is the answer"
         );
     }
 
