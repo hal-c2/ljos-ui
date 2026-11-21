@@ -174,8 +174,18 @@ impl Engine {
         Some(self.js().ok()?.host.heap_bytes())
     }
 
+    /// How full the script heap is against its limit and which runs grew
+    /// it most since it was last collected. Walks nothing. `None` before
+    /// any script ran.
+    pub fn script_heap_pressure(&self) -> Option<ljos_js::HeapPressure> {
+        if !self.js_started() {
+            return None;
+        }
+        Some(self.js().ok()?.host.heap_pressure())
+    }
+
     /// Puts a new limit on the script heap, `None` for none, in place of
-    /// the 96 MiB the engine starts with (`ljos_js::JsConfig`); what is
+    /// what the engine starts with (`ljos_js::default_memory_limit`); what is
     /// held already stays. Starts the script engine. False inside a
     /// script, and when the script engine could not start.
     pub fn set_script_heap_limit(&self, limit: Option<usize>) -> bool {

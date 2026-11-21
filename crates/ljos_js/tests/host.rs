@@ -97,6 +97,501 @@ fn a_null_thrown_on_a_full_heap_is_running_out_of_memory() {
     assert_eq!(eval_num(&host, "40 + 2").unwrap(), 42.0);
 }
 
+fn small(limit_mib: usize) -> JsHost {
+    JsHost::new(JsConfig {
+        memory_limit: Some(limit_mib * 1024 * 1024),
+        ..JsConfig::default()
+    })
+    .unwrap()
+}
+
+const MIB: usize = 1024 * 1024;
+
+/// Keeps about `mib` MiB alive in `globalThis.kept`, a run at a time.
+fn keep(host: &JsHost, mib: usize) {
+    keep_bytes(host, mib * MIB, 64);
+}
+
+/// Keeps `bytes` alive in `globalThis.kept`, `arrays` 1000-element arrays
+/// (about 16 KiB each) a run.
+fn keep_bytes(host: &JsHost, bytes: usize, arrays: usize) {
+    host.enter("keep", host.config().slice, |s| {
+        s.eval::<(), _>("globalThis.kept = []")
+    })
+    .unwrap();
+    let run = format!("for (let i = 0; i < {arrays}; i++) kept.push(new Array(1000).fill(i))");
+    while host.heap_bytes() < bytes {
+        host.enter("keep", host.config().slice, |s| {
+            s.eval::<(), _>(run.as_str())
+        })
+        .unwrap();
+    }
+}
+
+/// QuickJS collects when the heap is half again what lived after the last
+/// collection. Past two thirds of the limit that is past the limit, and
+/// garbage alone used to fill the heap until an allocation failed with
+/// most of it free (the 96 MiB the HAL-C2 sidebar ran out of). The
+/// collector now also runs halfway to the limit.
+#[test]
+fn garbage_past_two_thirds_of_the_limit_is_collected_before_the_heap_runs_out() {
+    let host = small(32);
+    keep(&host, 22);
+    host.collect_now();
+    assert!(host.heap_bytes() > 21 * MIB, "{}", host.heap_bytes());
+    let slice = Slice {
+        soft: Duration::from_secs(5),
+        hard: Duration::from_secs(20),
+    };
+    // About 50 MiB of arrays made and dropped in one run, each holding
+    // itself: refcounts free what holds nothing, and only the collector
+    // frees a cycle, as closures and QML's back-references make.
+    let out = host.enter("churn", slice, |s| {
+        s.eval::<f64, _>(
+            "(() => { let n = 0; for (let i = 0; i < 3000; i++) { const a = new Array(1000).fill(i); a.self = a; n += a.length; } return n; })()",
+        )
+    });
+    assert_eq!(out.unwrap(), 3_000_000.0);
+}
+
+/// The collector runs at least a 64th of the limit apart: a heap that
+/// lives within that of the limit runs out, rather than collecting every
+/// few KiB until the slice stops the run.
+#[test]
+fn garbage_churned_on_a_nearly_full_heap_runs_out_rather_than_collecting_each_step() {
+    let host = small(32);
+    keep_bytes(&host, 32 * MIB - MIB / 4, 4);
+    host.collect_now();
+    assert!(
+        host.heap_bytes() > 32 * MIB - MIB / 2,
+        "{}",
+        host.heap_bytes()
+    );
+    let slice = Slice {
+        soft: Duration::from_secs(1),
+        hard: Duration::from_secs(2),
+    };
+    let err = host
+        .enter("churn", slice, |s| {
+            s.eval::<(), _>("for (;;) { const a = { b: [1, 2, 3] }; a.self = a }")
+        })
+        .unwrap_err();
+    assert!(matches!(err, JsFault::JsOutOfMemory { .. }), "{err:?}");
+}
+
+/// A heap that lives at 94% of the limit still has room for garbage: the
+/// collector runs halfway to the limit, a MiB on, not only past the limit
+/// as QuickJS would, nor every few KiB.
+#[test]
+fn garbage_churned_on_a_heap_at_94_percent_is_collected_as_it_goes() {
+    let host = small(32);
+    keep(&host, 30);
+    host.collect_now();
+    let live = host.heap_bytes();
+    assert!(live > 29 * MIB && live < 31 * MIB, "{live}");
+    let slice = Slice {
+        soft: Duration::from_secs(5),
+        hard: Duration::from_secs(20),
+    };
+    // About 16 MiB of self-holding arrays, eight times the room left.
+    let out = host.enter("churn", slice, |s| {
+        s.eval::<f64, _>(
+            "(() => { let n = 0; for (let i = 0; i < 1000; i++) { const a = new Array(1000).fill(i); a.self = a; n += a.length; } return n; })()",
+        )
+    });
+    assert_eq!(out.unwrap(), 1_000_000.0);
+}
+
+/// A run that found no room leaves its garbage collected, so the next run
+/// does not meet the same full heap, whoever it belongs to.
+#[test]
+fn a_run_that_runs_out_of_heap_leaves_its_garbage_collected() {
+    let host = small(8);
+    let err = host
+        .enter("hog", host.config().slice, |s| {
+            s.eval::<(), _>(
+                "(function(){ const a = []; a.self = a; for (;;) a.push(new Array(1000).fill(1)); })()",
+            )
+        })
+        .unwrap_err();
+    assert!(matches!(err, JsFault::JsOutOfMemory { .. }), "{err:?}");
+    assert!(host.heap_bytes() < 4 * MIB, "{}", host.heap_bytes());
+}
+
+/// What lived when the heap was last collected and was let go of since as
+/// cycles is garbage the heap is no bigger for. A run that finds no room
+/// for a string (which never asks QuickJS to collect) still leaves it
+/// collected, so the next run has room.
+#[test]
+fn a_run_that_runs_out_after_cycles_were_let_go_leaves_them_collected() {
+    let host = small(16);
+    keep(&host, 9);
+    host.enter("tie", host.config().slice, |s| {
+        s.eval::<(), _>("kept.self = kept")
+    })
+    .unwrap();
+    assert!(host.collect_now());
+    let held = host.heap_bytes();
+    host.enter("drop", host.config().slice, |s| {
+        s.eval::<(), _>("globalThis.kept = null")
+    })
+    .unwrap();
+    assert!(host.heap_bytes() >= held, "the cycles are still there");
+    let fill = "globalThis.s = 'x'.repeat(8 * 1024 * 1024)";
+    let err = host
+        .enter("fill", host.config().slice, |s| s.eval::<(), _>(fill))
+        .unwrap_err();
+    assert!(matches!(err, JsFault::JsOutOfMemory { .. }), "{err:?}");
+    host.enter("fill", host.config().slice, |s| s.eval::<(), _>(fill))
+        .unwrap();
+}
+
+/// A run that only drops the last reference to cycles frees nothing and
+/// ends at its peak, but what it let go of is garbage: a run that then
+/// finds no room still leaves it collected, so the next run has room.
+#[test]
+fn a_run_out_after_a_run_that_only_dropped_cycles_collects_them() {
+    let host = small(16);
+    keep(&host, 9);
+    host.enter("tie", host.config().slice, |s| {
+        s.eval::<(), _>("kept.self = kept; globalThis.drop = () => { globalThis.kept = null }")
+    })
+    .unwrap();
+    assert!(host.collect_now());
+    let held = host.heap_bytes();
+    let collections = host.collections();
+    // A call, not an eval: compiling one frees what the compiler used.
+    host.enter("drop", host.config().slice, |s| {
+        s.globals()
+            .get::<_, ljos_js::rquickjs::Function>("drop")?
+            .call::<_, ()>(())
+    })
+    .unwrap();
+    assert_eq!(host.heap_bytes(), held, "it freed nothing");
+    assert!(host.may_hold_garbage());
+    let fill = "globalThis.s = 'x'.repeat(8 * 1024 * 1024)";
+    let err = host
+        .enter("fill", host.config().slice, |s| s.eval::<(), _>(fill))
+        .unwrap_err();
+    assert!(matches!(err, JsFault::JsOutOfMemory { .. }), "{err:?}");
+    assert_eq!(host.collections(), collections + 1);
+    assert!(host.heap_bytes() < held / 2, "{}", host.heap_bytes());
+    host.enter("fill", host.config().slice, |s| s.eval::<(), _>(fill))
+        .unwrap();
+}
+
+/// The same of a promise job: one that only drops the last reference to
+/// cycles frees nothing, but a run that then finds no room still leaves
+/// them collected.
+#[test]
+fn a_run_out_after_a_job_that_only_dropped_cycles_collects_them() {
+    let host = small(16);
+    keep(&host, 9);
+    host.enter("tie", host.config().slice, |s| {
+        s.eval::<(), _>("kept.self = kept; queueMicrotask(() => { globalThis.kept = null })")
+    })
+    .unwrap();
+    // The collection reviews what the run let go of: nothing is owed
+    // until the job runs.
+    assert!(host.collect_now());
+    assert!(!host.may_hold_garbage());
+    let held = host.heap_bytes();
+    let collections = host.collections();
+    let pumped = host.pump_jobs(Instant::now() + Duration::from_secs(5));
+    assert_eq!(pumped.ran, 1);
+    assert!(pumped.faults.is_empty(), "{:?}", pumped.faults);
+    assert!(host.may_hold_garbage(), "what the job let go of");
+    let fill = "globalThis.s = 'x'.repeat(8 * 1024 * 1024)";
+    let err = host
+        .enter("fill", host.config().slice, |s| s.eval::<(), _>(fill))
+        .unwrap_err();
+    assert!(matches!(err, JsFault::JsOutOfMemory { .. }), "{err:?}");
+    assert_eq!(host.collections(), collections + 1);
+    assert!(host.heap_bytes() < held / 2, "{}", host.heap_bytes());
+    host.enter("fill", host.config().slice, |s| s.eval::<(), _>(fill))
+        .unwrap();
+}
+
+/// A run can make a cycle unreachable and leave every object's count as
+/// it was, by rewiring references. The digest the host compares cannot
+/// tell, but the run ran out, so a collection is owed for it all the same:
+/// the host wants one before it rests, and that one frees the cycle.
+#[test]
+fn a_run_out_after_rewiring_that_kept_every_count_is_still_collected_for() {
+    let host = small(16);
+    host.enter("tie", host.config().slice, |s| {
+        s.eval::<(), _>(
+            "globalThis.a = { next: { next: null, big: 'y'.repeat(9 * 1024 * 1024) } };\n\
+             globalThis.rewire = () => {\n\
+                 a.next.next = a.next; a.next = a; globalThis.a = null;\n\
+                 globalThis.s = 'x'.repeat(8 * 1024 * 1024);\n\
+             }",
+        )
+    })
+    .unwrap();
+    assert!(host.collect_now());
+    let held = host.heap_bytes();
+    // A call, not an eval: compiling one leaves what the compiler used.
+    let err = host
+        .enter("rewire", host.config().slice, |s| {
+            s.globals()
+                .get::<_, ljos_js::rquickjs::Function>("rewire")?
+                .call::<_, ()>(())
+        })
+        .unwrap_err();
+    assert!(matches!(err, JsFault::JsOutOfMemory { .. }), "{err:?}");
+    assert!(host.heap_bytes() >= held, "the cycles are still there");
+    assert!(
+        !host.may_hold_garbage(),
+        "every count is as it was: the digest cannot tell"
+    );
+    assert!(!host.collected_since_ran_out());
+    assert!(host.wants_idle_collect(), "a collection is owed");
+    assert!(host.collect_if_idle());
+    assert!(host.collected_since_ran_out());
+    assert!(!host.wants_idle_collect(), "and paid");
+    assert!(host.heap_bytes() < held / 2, "{}", host.heap_bytes());
+    host.enter("fill", host.config().slice, |s| {
+        s.eval::<(), _>("globalThis.s = 'x'.repeat(8 * 1024 * 1024)")
+    })
+    .unwrap();
+}
+
+/// A run that lets go of the root of a cycle and then fails a big
+/// allocation may have let go of something: the host owes a collection
+/// for it, paid when it rests, so the next run has the room.
+#[test]
+fn a_run_that_drops_a_cycle_and_then_runs_out_leaves_it_collected() {
+    let host = small(16);
+    keep(&host, 9);
+    host.enter("tie", host.config().slice, |s| {
+        s.eval::<(), _>(
+            "kept.self = kept;\n\
+             globalThis.dropAndFill = () => {\n\
+                 globalThis.kept = null;\n\
+                 globalThis.s = 'x'.repeat(8 * 1024 * 1024);\n\
+             }",
+        )
+    })
+    .unwrap();
+    assert!(host.collect_now());
+    let held = host.heap_bytes();
+    let collections = host.collections();
+    let err = host
+        .enter("dropAndFill", host.config().slice, |s| {
+            s.globals()
+                .get::<_, ljos_js::rquickjs::Function>("dropAndFill")?
+                .call::<_, ()>(())
+        })
+        .unwrap_err();
+    assert!(matches!(err, JsFault::JsOutOfMemory { .. }), "{err:?}");
+    assert!(host.wants_idle_collect(), "a collection is owed");
+    assert!(host.collect_if_idle());
+    assert_eq!(host.collections(), collections + 1, "collected after it");
+    assert!(!host.wants_idle_collect(), "and paid");
+    assert!(host.heap_bytes() < held / 2, "{}", host.heap_bytes());
+    host.enter("fill", host.config().slice, |s| {
+        s.eval::<(), _>("globalThis.s = 'x'.repeat(8 * 1024 * 1024)")
+    })
+    .unwrap();
+}
+
+/// The fault of a run that found no room names what grew the heap.
+#[test]
+fn running_out_of_heap_names_what_grew_it() {
+    let host = small(8);
+    let err = host
+        .enter_naming(
+            "binding",
+            || "Sidebar.qml:12".to_owned(),
+            host.config().slice,
+            |s| {
+                s.eval::<(), _>(
+                    "(function(){ globalThis.a = []; for (;;) a.push(new Array(1000).fill(1)); })()",
+                )
+            },
+        )
+        .unwrap_err();
+    let said = err.to_string();
+    assert!(said.contains(" at Sidebar.qml:12"), "{said}");
+    assert!(
+        said.contains("grew it most since it was last collected: Sidebar.qml:12 ("),
+        "{said}"
+    );
+}
+
+/// Past three quarters of the limit after collecting, the host says so
+/// once and names what grew the heap; below five eighths it may say so
+/// again.
+#[test]
+fn a_heap_past_three_quarters_is_warned_of_once_and_named() {
+    let host = small(32);
+    assert!(!host.heap_pressure().warned);
+    keep(&host, 25);
+    let p = host.heap_pressure();
+    assert!(p.warned, "{p:?}");
+    assert_eq!(p.limit, Some(32 * MIB));
+    host.enter("drop", host.config().slice, |s| {
+        s.eval::<(), _>("globalThis.kept = null")
+    })
+    .unwrap();
+    host.collect_now();
+    assert!(host.heap_pressure().growers.is_empty());
+    host.enter("after", host.config().slice, |s| s.eval::<(), _>("1"))
+        .unwrap();
+    assert!(!host.heap_pressure().warned);
+}
+
+/// An explicit collection that leaves the heap past three quarters warns
+/// as the one after a run does: every collection follows one rule.
+#[test]
+fn an_explicit_collection_past_three_quarters_is_warned_of() {
+    let host = small(64);
+    keep(&host, 25);
+    assert!(!host.heap_pressure().warned, "{:?}", host.heap_pressure());
+    assert!(host.set_memory_limit(Some(32 * MIB)));
+    assert!(host.collect_now());
+    let p = host.heap_pressure();
+    assert!(p.warned, "{p:?}");
+    assert!(p.growers.is_empty(), "{p:?}");
+}
+
+/// Promise jobs grow the heap as runs do: what a pump grew is named, and
+/// past three quarters it collects and warns, with no run after it.
+#[test]
+fn promise_jobs_are_held_to_the_heap_as_runs_are() {
+    let host = small(32);
+    keep(&host, 20);
+    host.collect_now();
+    assert!(!host.heap_pressure().warned, "{:?}", host.heap_pressure());
+    let collections = host.collections();
+    let grow = |arrays: usize| {
+        host.enter("setup", host.config().slice, |s| {
+            s.eval::<(), _>(
+                format!(
+                    "queueMicrotask(() => {{ for (let i = 0; i < {arrays}; i++) kept.push(new Array(1000).fill(i)) }})"
+                )
+                .as_str(),
+            )
+        })
+        .unwrap();
+        let pumped = host.pump_jobs(Instant::now() + Duration::from_secs(5));
+        assert_eq!(pumped.ran, 1);
+        assert!(pumped.faults.is_empty(), "{:?}", pumped.faults);
+    };
+
+    // About 1 MiB, short of three quarters: named, not collected.
+    grow(64);
+    let p = host.heap_pressure();
+    assert!(
+        p.growers
+            .iter()
+            .any(|(name, by)| name == "promise job" && *by > 0),
+        "{p:?}"
+    );
+    assert_eq!(host.collections(), collections);
+
+    // About 8 MiB more, past three quarters: collected and warned of.
+    grow(512);
+    let p = host.heap_pressure();
+    assert!(host.collections() > collections, "{p:?}");
+    assert!(p.warned, "{p:?}");
+}
+
+/// A heap past three quarters that a collection would bring back under
+/// it is not warned of: the warning follows a collection.
+#[test]
+fn garbage_past_three_quarters_with_no_collection_is_not_warned_of() {
+    let host = small(32);
+    keep(&host, 22);
+    host.collect_now();
+    let collections = host.collections();
+    let high = 24 * MIB;
+    // Cycles only the collector frees, a little at a time, until the
+    // heap ends a run past three quarters, short of the growth that
+    // collects.
+    for _ in 0..200 {
+        if host.heap_bytes() >= high {
+            break;
+        }
+        host.enter("litter", host.config().slice, |s| {
+            s.eval::<(), _>(
+                "for (let i = 0; i < 16; i++) { const a = new Array(1000).fill(i); a.self = a }",
+            )
+        })
+        .unwrap();
+    }
+    assert!(host.heap_bytes() >= high, "{}", host.heap_bytes());
+    assert_eq!(host.collections(), collections, "nothing collected");
+    assert!(!host.heap_pressure().warned, "{:?}", host.heap_pressure());
+    host.collect_now();
+    assert!(
+        host.heap_bytes() < high,
+        "it was garbage: {}",
+        host.heap_bytes()
+    );
+}
+
+/// A run that let go of nothing, as a binding that only reads, leaves
+/// nothing to collect: a run that then finds a heap full of what lives
+/// does not collect it all again.
+#[test]
+fn a_run_out_of_a_live_heap_after_an_ordinary_run_does_not_collect() {
+    let host = small(32);
+    keep(&host, 28);
+    host.enter("read", host.config().slice, |s| {
+        s.eval::<(), _>("globalThis.read = () => kept.length")
+    })
+    .unwrap();
+    host.collect_now();
+    let collections = host.collections();
+    // A call, not an eval: compiling one frees what the compiler used.
+    host.enter("read", host.config().slice, |s| {
+        s.globals()
+            .get::<_, ljos_js::rquickjs::Function>("read")?
+            .call::<_, f64>(())
+    })
+    .unwrap();
+    assert!(!host.may_hold_garbage());
+    // One allocation bigger than the room left: it fails without growing
+    // the heap.
+    let err = host
+        .enter("fill", host.config().slice, |s| {
+            s.eval::<usize, _>("'x'.repeat(16 * 1024 * 1024).length")
+        })
+        .unwrap_err();
+    assert!(matches!(err, JsFault::JsOutOfMemory { .. }), "{err:?}");
+    assert_eq!(host.collections(), collections, "nothing collected");
+}
+
+/// What grew the heap is told per run, the most first, and the table
+/// stays small.
+#[test]
+fn heap_growers_are_kept_by_name_and_bounded() {
+    let host = small(64);
+    for i in 0..12 {
+        let name = format!("Row{i}.qml:1");
+        host.enter_naming(&name, || name.clone(), host.config().slice, |s| {
+            s.eval::<(), _>(format!(
+                "globalThis.k{i} = []; for (let j = 0; j < {}; j++) k{i}.push(new Array(1000).fill(j))",
+                40 + i * 10
+            ))
+        })
+        .unwrap();
+    }
+    let p = host.heap_pressure();
+    assert!(p.growers.len() <= 8, "{p:?}");
+    assert_eq!(p.growers[0].0, "Row11.qml:1", "{p:?}");
+    assert!(p.growers.windows(2).all(|w| w[0].1 >= w[1].1), "{p:?}");
+}
+
+/// The default limit follows the machine, within bounds.
+#[test]
+fn the_default_heap_limit_is_between_96_and_512_mib() {
+    let l = ljos_js::default_memory_limit();
+    assert!((96 * MIB..=512 * MIB).contains(&l), "{l}");
+}
+
 /// A heap at its limit with no room left for its own message:
 /// QuickJS throws an `InternalError` with no words, which is the heap
 /// running out (#670).
@@ -1443,6 +1938,7 @@ fn a_promise_job_that_never_ends_is_interrupted_at_the_deadline() {
 fn faults_convert_for_the_supervisor() {
     let f = ljos_js::JsFault::JsOutOfMemory {
         label: "binding".into(),
+        what: String::new(),
     };
     assert_eq!(
         ljos_runtime::Fault::from(f),

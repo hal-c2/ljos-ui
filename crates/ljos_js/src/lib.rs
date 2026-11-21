@@ -40,11 +40,11 @@ mod value;
 
 pub use ahead::compile_ahead;
 pub use bytecode::{Bytecode, BytecodeOptions};
-pub use config::{FALLBACK_MAX_STACK, JsConfig, Slice};
+pub use config::{FALLBACK_MAX_STACK, JsConfig, Slice, default_memory_limit};
 pub use fault::{JsFault, SourceMapper, SourceText};
 pub use host::{
-    DirectCall, DirectParam, FnId, HostFn, JsClock, JsHost, MemoryStats, ModuleHandle, Pumped,
-    Scope, Timing,
+    DirectCall, DirectParam, FnId, HeapPressure, HostFn, JsClock, JsHost, MemoryStats,
+    ModuleHandle, Pumped, Scope, Timing,
 };
 pub use objects::{
     HostError, HostObjects, HostTypeId, MethodDef, MethodFace, PlainValue, PropDef, SignalDef,

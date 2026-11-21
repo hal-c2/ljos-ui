@@ -1168,6 +1168,9 @@ impl<M: Send + 'static> Desktop<M> {
             let view = view_of_mut(&mut self.slots[i].view, &mut self.app);
             view.trim(level);
         }
+        // The script heap's garbage waits for the next object made past
+        // QuickJS's threshold, which an idle app may not make for long.
+        self.app.engine().collect_garbage();
         crate::give_back_freed_heap();
     }
 

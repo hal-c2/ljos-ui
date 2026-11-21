@@ -195,6 +195,33 @@ Item {
     assert!(!h.engine.collect_if_idle());
 }
 
+/// A collection the host ran as it rested did not review what the
+/// Engine holds for scripts, so it covers no fault: the one owed a fault
+/// still runs.
+#[test]
+fn a_collection_while_resting_leaves_a_fault_owed_its_collection() {
+    let h = engine();
+    let root = h.load(
+        r#"import QtQuick
+Item {
+    function litter() {
+        for (var i = 0; i < 4000; i++) {
+            var a = {}; var b = { a: a }; a.b = b; a.pad = new Array(50).fill(i)
+        }
+    }
+}
+"#,
+    );
+    h.engine
+        .report_fault(None, ljos_runtime::Fault::Startup("full".into()));
+    let seq = h.engine.faults_reported();
+    h.engine.invoke_by_name(root, "litter", &[]).unwrap();
+    assert!(h.engine.collect_if_idle());
+    assert!(h.engine.collect_for_full_heap(seq));
+    // That one covers it.
+    assert!(!h.engine.collect_for_full_heap(seq));
+}
+
 const HANDED: &str = r#"import QtQuick
 Item {
     id: root

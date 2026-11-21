@@ -36,6 +36,10 @@ struct ScriptOwned {
     held: RefCell<HashMap<ObjectId, JsRef>>,
     /// `held` is looked through when it has grown to this.
     review_at: Cell<usize>,
+    /// [`Engine::faults_reported`] when the script heap was last collected
+    /// through the Engine: a fault reported by then needs no other
+    /// collection ([`Engine::collect_for_full_heap`]).
+    collected_through: Cell<u64>,
 }
 
 impl Engine {
@@ -107,10 +111,11 @@ impl Engine {
 
     /// Lets go of the held objects no property holds any more. Their
     /// wrappers go at the next collection, unless a script holds them.
-    fn review_held(&self, owned: &ScriptOwned) {
+    /// Whether it let go of any.
+    fn review_held(&self, owned: &ScriptOwned) -> bool {
         let ids: HashSet<ObjectId> = owned.held.borrow().keys().copied().collect();
         if ids.is_empty() {
-            return;
+            return false;
         }
         let still = self.held_in_properties(&ids);
         // Dropped outside the borrow: a reference let go may be the last.
@@ -123,7 +128,9 @@ impl Engine {
                 .collect();
             gone.iter().filter_map(|o| held.remove(o)).collect()
         };
+        let any = !dropped.is_empty();
         drop(dropped);
+        any
     }
 
     /// The collector freed the wrappers of `released`: destroys those
@@ -190,13 +197,55 @@ impl Engine {
             return false;
         }
         let Ok(js) = self.js() else { return false };
-        self.review_held(&self.extension::<ScriptOwned>());
+        let owned = self.extension::<ScriptOwned>();
+        // A fault the review or the flush files (a wrapper rebuilt on a
+        // full heap) came during this collection, not before it: it stays
+        // owed one.
+        let covered = self.faults_reported();
+        self.review_held(&owned);
         // What Rust let go of since the last script ran is still held
         // until this.
         js.host.flush_released();
         if !js.host.collect_now() {
             return false;
         }
+        owned.collected_through.set(covered);
+        true
+    }
+
+    /// For the fault numbered `seq` ([`crate::FaultReport::seq`]), that
+    /// the script heap ran out: collects, as [`Engine::collect_garbage`]
+    /// does, unless a collection already came after it. Faults that come
+    /// together share one collection: one the Engine ran after they were
+    /// reported, or one the JS host ran after the last run that ran out,
+    /// when nothing was let go of since (held objects no property holds
+    /// any more, values Rust dropped, runs that changed a count). It does
+    /// not ask whether the heap looks like it holds garbage: what a run
+    /// let go of before it ran out need not show
+    /// ([`ljos_js::JsHost::may_hold_garbage`]). Whether it collected.
+    pub fn collect_for_full_heap(&self, seq: u64) -> bool {
+        if !self.js_started() {
+            return false;
+        }
+        let owned = self.extension::<ScriptOwned>();
+        if seq <= owned.collected_through.get() {
+            return false;
+        }
+        let Ok(js) = self.js() else { return false };
+        if js.host.in_run() {
+            return false;
+        }
+        let covered = self.faults_reported();
+        let let_go = self.review_held(&owned);
+        js.host.flush_released();
+        if js.host.collected_since_ran_out() && !let_go && !js.host.may_hold_garbage() {
+            owned.collected_through.set(covered);
+            return false;
+        }
+        if !js.host.collect_now() {
+            return false;
+        }
+        owned.collected_through.set(covered);
         true
     }
 }
@@ -215,7 +264,11 @@ pub struct ScriptMemory {
 impl Engine {
     /// Runs the JS collector if the scripts allocated enough since it last
     /// ran, for a host about to rest. False inside a script, before any
-    /// ran, and when the heap did not grow.
+    /// ran, and when the heap did not grow. It does not review the held
+    /// objects, so it covers no fault that the heap ran out: one not yet
+    /// delivered may wait on a held object its review lets go of
+    /// ([`Engine::collect_for_full_heap`] still skips collecting again when
+    /// nothing was let go of since).
     pub fn collect_if_idle(&self) -> bool {
         if !self.js_started() {
             return false;
