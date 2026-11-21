@@ -19,34 +19,26 @@ Feature: An input method that tells the whole of what it holds
       """qml
       import QtQuick
       Item {
-        objectName: "root"
-        width: 300; height: 200
+        objectName: "root"; width: 300; height: 200
         TextInput {
-          objectName: "input"; focus: true
+          objectName: "input"; focus: true; width: 200; text: "ab"
           font.family: "Liberation Sans"; font.pixelSize: 14
-          width: 200
-          text: "ab"
-          property int edits: 0
-          onTextEdited: edits++
+          property int edits: 0; onTextEdited: edits++
         }
         TextInput {
-          objectName: "pin"; y: 50; width: 200
+          objectName: "pin"; y: 50; width: 200; text: "12"
           echoMode: TextInput.Password
-          text: "12"
         }
         TextInput {
-          objectName: "secret"; y: 100; width: 200
+          objectName: "secret"; y: 100; width: 200; text: "xy"
           echoMode: TextInput.PasswordEchoOnEdit
-          text: "xy"
         }
         TextInput {
-          objectName: "guarded"; y: 150; width: 200
-          echoMode: TextInput.Password
+          objectName: "guarded"; y: 150; width: 200; echoMode: TextInput.Password
           onCursorPositionChanged: if (cursorPosition === 1) text = ""
         }
         TextInput {
-          objectName: "checked"; y: 170; width: 200
-          echoMode: TextInput.Password
+          objectName: "checked"; y: 170; width: 200; echoMode: TextInput.Password
           validator: RegularExpressionValidator { regularExpression: /[ab]*/ }
         }
       }
