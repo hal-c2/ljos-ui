@@ -18,8 +18,10 @@ use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 
 use ljos_js::JsRef;
+use ljos_runtime::Fault;
 
 use crate::engine::Engine;
+use crate::fault::FaultReport;
 use crate::ids::ObjectId;
 use crate::js::{obj_to_u64, u64_to_obj};
 use crate::object::ObjectFlags;
@@ -36,10 +38,6 @@ struct ScriptOwned {
     held: RefCell<HashMap<ObjectId, JsRef>>,
     /// `held` is looked through when it has grown to this.
     review_at: Cell<usize>,
-    /// [`Engine::faults_reported`] when the script heap was last collected
-    /// through the Engine: a fault reported by then needs no other
-    /// collection ([`Engine::collect_for_full_heap`]).
-    collected_through: Cell<u64>,
 }
 
 impl Engine {
@@ -209,8 +207,20 @@ impl Engine {
         if !js.host.collect_now() {
             return false;
         }
-        owned.collected_through.set(covered);
+        self.collected(covered);
         true
+    }
+
+    /// A collection ran: it covers every time the heap ran out before it,
+    /// for each gate on [`HeapRanOut`], and the faults reported by
+    /// `covered`, taken before its review. Every path that collects comes
+    /// through [`Engine::collect_garbage`] or
+    /// [`Engine::collect_for_full_heap`], so it is called there only.
+    fn collected(&self, covered: u64) {
+        let full = self.extension::<HeapRanOut>();
+        full.collected_through.set(full.times.get());
+        full.collected_after.set(covered);
+        full.collections.set(full.collections.get() + 1);
     }
 
     /// For the fault numbered `seq` ([`crate::FaultReport::seq`]), that
@@ -227,27 +237,81 @@ impl Engine {
         if !self.js_started() {
             return false;
         }
-        let owned = self.extension::<ScriptOwned>();
-        if seq <= owned.collected_through.get() {
+        let full = self.extension::<HeapRanOut>();
+        if seq <= full.collected_after.get() {
             return false;
         }
         let Ok(js) = self.js() else { return false };
         if js.host.in_run() {
             return false;
         }
+        let owned = self.extension::<ScriptOwned>();
         let covered = self.faults_reported();
         let let_go = self.review_held(&owned);
         js.host.flush_released();
         if js.host.collected_since_ran_out() && !let_go && !js.host.may_hold_garbage() {
-            owned.collected_through.set(covered);
+            full.collected_after.set(covered);
             return false;
         }
         if !js.host.collect_now() {
             return false;
         }
-        owned.collected_through.set(covered);
+        self.collected(covered);
         true
     }
+
+    /// The script heap had no room for what a run allocated: the next
+    /// [`Engine::collect_garbage_for_full_heap`] collects.
+    pub(crate) fn note_heap_ran_out(&self) {
+        let full = self.extension::<HeapRanOut>();
+        full.times.set(full.times.get() + 1);
+    }
+
+    /// [`Engine::collect_garbage`] for what ran out of script heap, unless
+    /// a collection since the heap last ran out already ran. Items that
+    /// run out together, a column of boundaries on one full heap, recover
+    /// through one collection rather than a full pause each. True when it
+    /// collected.
+    pub fn collect_garbage_for_full_heap(&self) -> bool {
+        let full = self.extension::<HeapRanOut>();
+        full.times.get() > full.collected_through.get() && self.collect_garbage()
+    }
+
+    /// [`Engine::collect_garbage_for_full_heap`] for one fault: collects
+    /// unless a collection already came after `report`, even if the heap
+    /// ran out again since. What ran out since is reported too, and its
+    /// own report collects; gating on the count instead would have a
+    /// column of items that reload at once, each running out again,
+    /// collect once per item. False for a fault that is not a full heap.
+    pub fn collect_garbage_for_fault(&self, report: &FaultReport) -> bool {
+        matches!(report.fault, Fault::JsOutOfMemory) && self.collect_for_full_heap(report.seq)
+    }
+
+    /// Where collections are now, for what ran out of script heap and
+    /// tries again later: [`Engine::collect_garbage_unless_since`] with it
+    /// collects unless one ran in between. Taken when the retry is set, so
+    /// retries set together share the first one's collection, and a retry
+    /// that ran out again after it sets a new mark, which collects again.
+    pub(crate) fn full_heap_mark(&self) -> u64 {
+        self.extension::<HeapRanOut>().collections.get()
+    }
+
+    /// [`Engine::collect_garbage`] unless a collection ran since `mark`,
+    /// from [`Engine::full_heap_mark`]. True when it collected.
+    pub(crate) fn collect_garbage_unless_since(&self, mark: u64) -> bool {
+        self.extension::<HeapRanOut>().collections.get() == mark && self.collect_garbage()
+    }
+}
+
+/// How many times the script heap ran out, and how many of those the last
+/// collection came after; how many faults had been reported before its
+/// review; and how many collections there have been.
+#[derive(Default)]
+struct HeapRanOut {
+    times: Cell<u64>,
+    collected_through: Cell<u64>,
+    collected_after: Cell<u64>,
+    collections: Cell<u64>,
 }
 
 /// What the script engine holds, as [`Engine::script_memory`] tells it.
@@ -262,19 +326,12 @@ pub struct ScriptMemory {
 }
 
 impl Engine {
-    /// Runs the JS collector if the scripts allocated enough since it last
-    /// ran, for a host about to rest. False inside a script, before any
-    /// ran, and when the heap did not grow. It does not review the held
-    /// objects, so it covers no fault that the heap ran out: one not yet
-    /// delivered may wait on a held object its review lets go of
-    /// ([`Engine::collect_for_full_heap`] still skips collecting again when
-    /// nothing was let go of since).
+    /// [`Engine::collect_garbage`] if the scripts allocated enough since
+    /// the collector last ran, for a host about to rest. False inside a
+    /// script, before any ran, and when the heap did not grow. It covers
+    /// what ran out of heap before it, as any collection does.
     pub fn collect_if_idle(&self) -> bool {
-        if !self.js_started() {
-            return false;
-        }
-        let Ok(js) = self.js() else { return false };
-        js.host.collect_if_idle()
+        self.wants_idle_collect() && self.collect_garbage()
     }
 
     /// Whether [`Engine::collect_if_idle`] would collect now; a host that

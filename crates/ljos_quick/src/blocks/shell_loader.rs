@@ -171,7 +171,7 @@ impl Boundary for Behaviour {
         let why = describe(report);
         warn(e, format!("ShellLoader: {why}"));
         if show_fallback(e, me, why) || is_resource(&report.fault) {
-            again_after(e, me);
+            again_after(e, me, Some(report));
         }
     }
 
@@ -240,7 +240,7 @@ fn load(e: &Engine, me: ObjectId) {
     let source = url(e, me, ShellLoader::SOURCE.index);
     if source.is_empty() {
         if show_fallback(e, me, String::new()) {
-            again_after(e, me);
+            again_after(e, me, None);
         }
         return;
     }
@@ -254,7 +254,7 @@ fn load(e: &Engine, me: ObjectId) {
         Err(Failed { why, resource }) => {
             warn(e, format!("ShellLoader: {why}"));
             if show_fallback(e, me, why) || resource {
-                again_after(e, me);
+                again_after(e, me, None);
             }
         }
     }
@@ -268,14 +268,19 @@ fn is_resource(fault: &Fault) -> bool {
 }
 
 /// After a resource fault: tries the source again once the [`Backoff`]
-/// wait is over, the fallback shown meanwhile.
-fn again_after(e: &Engine, me: ObjectId) {
+/// wait is over, the fallback shown meanwhile. `report` is the fault told
+/// to the shell, when one was; a shell that failed while it was made was
+/// told of none.
+fn again_after(e: &Engine, me: ObjectId, report: Option<&FaultReport>) {
     let now = e.now();
     let Some(wait) = with_run(e, me, |r| r.backoff.fault(now)) else {
         return;
     };
     // A full heap may have room once the garbage is collected.
-    e.collect_garbage();
+    match report {
+        Some(report) => e.collect_garbage_for_fault(report),
+        None => e.collect_garbage_for_full_heap(),
+    };
     warn(
         e,
         format!("ShellLoader: trying the source again in {}", seconds(wait)),
@@ -428,7 +433,7 @@ fn judge_again(e: &Engine, me: ObjectId, obj: ObjectId, told: &[FaultReport]) {
         set(e, me, ShellLoader::ERROR.index, both.as_str().into());
         set(e, me, ShellLoader::STATUS.index, shell_status::ERROR.into());
         if is_resource(&report.fault) {
-            again_after(e, me);
+            again_after(e, me, Some(report));
         }
         return;
     }
@@ -436,7 +441,7 @@ fn judge_again(e: &Engine, me: ObjectId, obj: ObjectId, told: &[FaultReport]) {
     warn(e, format!("ShellLoader: {why}"));
     let resource = is_resource(&report.fault);
     if show_fallback(e, me, why) || resource {
-        again_after(e, me);
+        again_after(e, me, Some(report));
     }
 }
 

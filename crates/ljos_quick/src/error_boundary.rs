@@ -230,16 +230,18 @@ fn stop_waiting(e: &Engine, me: ObjectId) {
 }
 
 /// After a resource fault: makes the content again once the [`Backoff`]
-/// wait is over.
-fn again_after(e: &Engine, me: ObjectId, fault: &Fault) {
+/// wait is over. A fault met while making the content has no report.
+fn again_after(e: &Engine, me: ObjectId, fault: &Fault, report: Option<&FaultReport>) {
     let now = e.now();
     let Some(wait) = with_run(e, me, |r| r.backoff.fault(now)) else {
         return;
     };
-    if matches!(fault, Fault::JsOutOfMemory) {
-        // The heap may have room once the garbage is collected.
-        e.collect_garbage();
-    }
+    // The heap may have room once the garbage is collected; a report
+    // says whether a collection since already made that room.
+    match report {
+        Some(report) => e.collect_garbage_for_fault(report),
+        None => matches!(fault, Fault::JsOutOfMemory) && e.collect_garbage_for_full_heap(),
+    };
     let place = e.declared_at(me).unwrap_or_default();
     warn(
         e,
@@ -326,7 +328,7 @@ impl Boundary for Behaviour {
                     // fault, outside the supervisor's count.
                     Err(fault @ (Fault::JsOutOfMemory | Fault::JsInterrupted { .. })) => {
                         set(e, me, ErrorBoundary::FAILED.index, true.into());
-                        again_after(e, me, &fault);
+                        again_after(e, me, &fault, None);
                         Ok(())
                     }
                     made => made,
@@ -385,7 +387,7 @@ impl Boundary for Behaviour {
         }
         // The fallback's handlers may have given new content too.
         if failed(e, me) {
-            again_after(e, me, &report.fault);
+            again_after(e, me, &report.fault, Some(report));
         }
         true
     }

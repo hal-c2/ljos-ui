@@ -195,11 +195,11 @@ Item {
     assert!(!h.engine.collect_if_idle());
 }
 
-/// A collection the host ran as it rested did not review what the
-/// Engine holds for scripts, so it covers no fault: the one owed a fault
-/// still runs.
+/// A collection the host runs as it rests reviews what the Engine holds
+/// for scripts, as any collection does, so it covers the faults reported
+/// before it: the one owed a fault does not run again.
 #[test]
-fn a_collection_while_resting_leaves_a_fault_owed_its_collection() {
+fn a_collection_while_resting_covers_a_fault_reported_before_it() {
     let h = engine();
     let root = h.load(
         r#"import QtQuick
@@ -217,9 +217,13 @@ Item {
     let seq = h.engine.faults_reported();
     h.engine.invoke_by_name(root, "litter", &[]).unwrap();
     assert!(h.engine.collect_if_idle());
-    assert!(h.engine.collect_for_full_heap(seq));
-    // That one covers it.
     assert!(!h.engine.collect_for_full_heap(seq));
+    // A fault reported after it is owed its own.
+    h.engine
+        .report_fault(None, ljos_runtime::Fault::Startup("full".into()));
+    let later = h.engine.faults_reported();
+    h.engine.invoke_by_name(root, "litter", &[]).unwrap();
+    assert!(h.engine.collect_for_full_heap(later));
 }
 
 const HANDED: &str = r#"import QtQuick
