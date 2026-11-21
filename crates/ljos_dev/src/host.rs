@@ -374,6 +374,9 @@ pub enum Report {
     },
     /// The files are what runs again; the error is gone.
     Cleared,
+    /// The files were read again, as asked, and are as they were: what
+    /// runs is kept.
+    Unchanged,
     /// Pictures were saved, and this many images show them again.
     Pictures {
         shown: usize,

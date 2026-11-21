@@ -21,6 +21,11 @@
 //! script first asks. A text that does not compile is the script's error
 //! and is told, as a user's file is.
 //!
+//! Asked ([`UserSession::read_again`], `ljos_quick::Rereads`, a
+//! `ShellLoader`'s `reload()`), the session reads every file again and
+//! applies what changed as it applies a save its watch saw: a save no
+//! watch saw (none is kept, or the one kept was lost) is applied then.
+//!
 //! Nothing here draws: a host shows what [`UserSession::pump`] tells it,
 //! as a [`DevSession`](crate::DevSession)'s host does.
 
@@ -48,6 +53,7 @@ use ljos_engine::{
 };
 use ljos_ir::{CompiledFile, ReloadPatch};
 use ljos_js::Bytecode;
+use ljos_quick::{Reread, Rereads};
 use ljos_runtime::{Clock, CoalesceKey, DrainBudget, UiHandle, UiInbox, WakeHook};
 use notify::{RecursiveMode, Watcher as _};
 use qml_front::TypeOracle;
@@ -67,6 +73,7 @@ pub struct UserQml {
     dir: PathBuf,
     on_fault: Option<FaultHandler>,
     watch: bool,
+    when_asked: bool,
     modules: Option<String>,
     theme: bool,
     loads_from: Vec<PathBuf>,
@@ -78,6 +85,7 @@ impl std::fmt::Debug for UserQml {
             .field("dir", &self.dir)
             .field("on_fault", &self.on_fault.is_some())
             .field("watch", &self.watch)
+            .field("when_asked", &self.when_asked)
             .field("modules", &self.modules)
             .field("theme", &self.theme)
             .field("loads_from", &self.loads_from)
@@ -95,6 +103,7 @@ impl UserQml {
             dir: path.into(),
             on_fault: None,
             watch: true,
+            when_asked: true,
             modules: None,
             theme: true,
             loads_from: Vec::new(),
@@ -129,11 +138,24 @@ impl UserQml {
     }
 
     /// Whether a save is applied while the application runs (the
-    /// default). Without, the files are read once, when it starts, and no
-    /// watch is kept.
+    /// default). Without, no watch is kept: the files are read when the
+    /// application starts and when it asks ([`UserSession::read_again`]).
     #[must_use]
     pub fn watch(mut self, watch: bool) -> Self {
         self.watch = watch;
+        self
+    }
+
+    /// Whether the files are read again when the application asks
+    /// ([`UserSession::read_again`], a `ShellLoader`'s `reload()`), as a
+    /// save is applied (the default). Without, and without a
+    /// [`watch`](Self::watch), they are read once, when it starts, and
+    /// what a reload needs to keep the state across a save is not kept:
+    /// an ask is answered as [`Report::Unchanged`], and a `ShellLoader`
+    /// only tries its source again.
+    #[must_use]
+    pub fn reads_when_asked(mut self, when_asked: bool) -> Self {
+        self.when_asked = when_asked;
         self
     }
 
@@ -196,8 +218,9 @@ trait Layers {
     fn provide(&self, key: &str) -> Option<Result<Arc<CompiledFile>, String>>;
     fn take_refused(&self) -> Vec<CompileFault>;
     /// Starts the watcher over the files, and asks it to read them now
-    /// when `flush`.
-    fn spawn(&self, sink: Sink, flush: bool) -> Result<Watcher, WatchError>;
+    /// when `flush`. It keeps a watch on the disk when `follow`, and
+    /// otherwise reads only when asked.
+    fn spawn(&self, sink: Sink, flush: bool, follow: bool) -> Result<Watcher, WatchError>;
     /// Compiles `text` as the file `key` would be, against the files as
     /// they stand with the files `beside` it.
     fn text(
@@ -223,8 +246,12 @@ where
         lock(self).take_refused()
     }
 
-    fn spawn(&self, sink: Sink, flush: bool) -> Result<Watcher, WatchError> {
-        let watcher = Watcher::spawn_shared(self.clone(), crate::debounce::QUIET, sink)?;
+    fn spawn(&self, sink: Sink, flush: bool, follow: bool) -> Result<Watcher, WatchError> {
+        let watcher = if follow {
+            Watcher::spawn_shared(self.clone(), crate::debounce::QUIET, sink)?
+        } else {
+            Watcher::on_request_shared(self.clone(), sink)?
+        };
         if flush {
             // A watcher just started is there to answer.
             let _ = watcher.flush();
@@ -928,6 +955,20 @@ pub struct UserSession {
     /// Whether the directory's `theme.json` is a theme of Ljós.
     theme: bool,
     pictures: Arc<Mutex<Vec<PathBuf>>>,
+    /// What reading the files again, as asked, did so far: Some until it
+    /// is answered.
+    reading: Option<Reread>,
+    rereads: Rc<Rereads>,
+    /// Whether the files are read while the application runs: watched,
+    /// or when it asks.
+    reads: bool,
+}
+
+impl Drop for UserSession {
+    fn drop(&mut self) {
+        // A loader that asks from here on tries its source again itself.
+        self.rereads.stop_serving();
+    }
 }
 
 impl std::fmt::Debug for UserSession {
@@ -968,6 +1009,7 @@ impl UserSession {
             dir,
             on_fault,
             watch,
+            when_asked,
             modules,
             theme,
             loads_from,
@@ -996,6 +1038,11 @@ impl UserSession {
             texts: Cell::new(false),
             wake: wake.clone(),
         });
+        let reads = watch || when_asked;
+        let rereads = Rereads::of(engine);
+        if reads {
+            rereads.serve(wake.clone());
+        }
         let (inbox, handle) = UiInbox::channel_with_wake(INBOX, wake);
         inbox.observe_as("user_qml", Some(UserMsg::kind));
         let mut session = Self {
@@ -1013,8 +1060,11 @@ impl UserSession {
             theme_fault: None,
             theme,
             pictures: Arc::default(),
+            reading: None,
+            rereads,
+            reads,
         };
-        if watch {
+        if reads {
             // Before any object is made: what was made earlier is unknown
             // to a reload.
             prepare(engine);
@@ -1111,40 +1161,121 @@ impl UserSession {
             }
         }
         self.tell(engine, &faults);
-        let watcher = if self.watch {
-            let handle = self.handle.clone();
-            let pictures = self.pictures.clone();
-            let sink: Sink = Box::new(move |msg| {
-                let key = match &msg {
-                    DevMsg::Idle => IDLE_KEY,
-                    DevMsg::Theme { .. } | DevMsg::ThemeFailed(_) => THEME_KEY,
-                    DevMsg::Pictures(paths) => {
-                        lock(&pictures).extend(paths.iter().cloned());
-                        PICTURES_KEY
-                    }
-                    // A user's directory holds no file a program follows
-                    // as data.
-                    DevMsg::DataFiles(_) => return true,
-                    _ => DEV_KEY,
-                };
-                !handle
-                    .send_coalesced(key, UserMsg::Dev(msg))
-                    .is_err_and(|e| e.is_disconnected())
-            });
-            match layers.spawn(sink, first_edit) {
-                Ok(watcher) => Some(watcher),
-                Err(e) => {
-                    self.tell(
-                        engine,
-                        &[self.fault(format!("saves are not followed: {e}"))],
-                    );
-                    None
-                }
-            }
+        // The first edit is read now whether or not saves are followed:
+        // it is what brought the files in, as asked or as watched.
+        let watcher = if self.watch || first_edit {
+            self.spawn(engine, &*layers, first_edit)
         } else {
             None
         };
         self.state = State::Active { watcher };
+    }
+
+    /// The watcher over the user's files, which reads them now when
+    /// `flush`: it keeps a watch on the disk unless saves are not
+    /// followed. Why there is none is told.
+    fn spawn(&mut self, engine: &Engine, layers: &dyn Layers, flush: bool) -> Option<Watcher> {
+        let handle = self.handle.clone();
+        let pictures = self.pictures.clone();
+        let sink: Sink = Box::new(move |msg| {
+            let key = match &msg {
+                DevMsg::Idle => IDLE_KEY,
+                DevMsg::Theme { .. } | DevMsg::ThemeFailed(_) => THEME_KEY,
+                DevMsg::Pictures(paths) => {
+                    lock(&pictures).extend(paths.iter().cloned());
+                    PICTURES_KEY
+                }
+                // A user's directory holds no file a program follows
+                // as data.
+                DevMsg::DataFiles(_) => return true,
+                _ => DEV_KEY,
+            };
+            !handle
+                .send_coalesced(key, UserMsg::Dev(msg))
+                .is_err_and(|e| e.is_disconnected())
+        });
+        match layers.spawn(sink, flush, self.watch) {
+            Ok(watcher) => Some(watcher),
+            Err(e) => {
+                let why = if self.watch {
+                    format!("saves are not followed: {e}")
+                } else {
+                    format!("the files cannot be read again: {e}")
+                };
+                self.tell(engine, &[self.fault(why)]);
+                None
+            }
+        }
+    }
+
+    /// Reads every file of the user's again and applies what changed, as a
+    /// save the watch saw is applied: the same reload, the same error when
+    /// it does not compile, the state kept. For a save no watch saw: none
+    /// is kept ([`UserQml::watch`]), or the one kept was lost. A later
+    /// [`pump`](Self::pump) applies it and says what it did, with
+    /// [`Report::Unchanged`] when the files are as they were; a
+    /// `ShellLoader` that asked tries its source again then.
+    pub fn read_again(&mut self, engine: &Engine) {
+        self.reading.get_or_insert(Reread::Unchanged);
+        if !self.reads {
+            // Nothing a reload needs was kept: the files are as they
+            // were read when the application started.
+            self.answer_read(Reread::Unchanged);
+            return;
+        }
+        match &self.state {
+            State::Active {
+                watcher: Some(watcher),
+            } if watcher.flush() => {}
+            State::Active { .. } => {
+                // None was kept, or its thread ended: one is started that
+                // reads now.
+                let layers = self.shared.layers.borrow().clone();
+                let watcher = layers.and_then(|layers| self.spawn(engine, &*layers, true));
+                if watcher.is_none() {
+                    self.answer_read(Reread::Failed);
+                }
+                self.state = State::Active { watcher };
+            }
+            State::Dormant { .. } => {
+                self.woke(engine);
+                match self.state {
+                    // The first file's build answers.
+                    State::Making => {}
+                    State::Off => self.answer_read(Reread::Failed),
+                    _ => self.answer_read(Reread::Unchanged),
+                }
+            }
+            // The first file's build answers.
+            State::Making => {}
+            // Why the files are not read was told once, at the start.
+            State::Off => self.answer_read(Reread::Unchanged),
+        }
+    }
+
+    /// Whether the files are being read again, as asked: a later
+    /// [`pump`](Self::pump) says what came of it.
+    pub fn is_reading(&self) -> bool {
+        self.reading.is_some()
+    }
+
+    /// What reading the files again did, as far as it got: a fault
+    /// outweighs a change, and either outweighs none.
+    fn read(&mut self, did: Reread) {
+        if let Some(so_far) = &mut self.reading
+            && (*so_far == Reread::Unchanged || did == Reread::Failed)
+        {
+            *so_far = did;
+        }
+    }
+
+    /// Answers reading the files again at the next pump, with nothing
+    /// built: as a watcher answers a flush.
+    fn answer_read(&mut self, did: Reread) {
+        self.read(did);
+        let _ = self
+            .handle
+            .send_coalesced(IDLE_KEY, UserMsg::Dev(DevMsg::Idle));
     }
 
     fn fault(&self, message: String) -> CompileFault {
@@ -1242,8 +1373,9 @@ impl UserSession {
     pub fn is_watching(&self) -> bool {
         match &self.state {
             State::Dormant { watch, .. } => watch.is_some(),
-            State::Making => true,
-            State::Active { watcher } => watcher.is_some(),
+            State::Making => self.watch,
+            // A watcher that reads only when asked keeps no watch.
+            State::Active { watcher } => self.watch && watcher.is_some(),
             State::Off => false,
         }
     }
@@ -1265,6 +1397,9 @@ impl UserSession {
     pub fn pump(&mut self, engine: &Engine, clock: &dyn Clock, host: &mut dyn Host) -> Vec<Report> {
         if std::mem::take(&mut self.settling) {
             engine.finish_reload();
+        }
+        if self.rereads.take_asked() {
+            self.read_again(engine);
         }
         let mut messages = Vec::new();
         self.inbox
@@ -1338,7 +1473,22 @@ impl UserSession {
 
     fn dev(&mut self, engine: &Engine, host: &mut dyn Host, msg: DevMsg, out: &mut Vec<Report>) {
         match msg {
-            DevMsg::Idle | DevMsg::DataFiles(_) => {}
+            DevMsg::DataFiles(_) => {}
+            DevMsg::Idle => {
+                // The answer to a flush: everything it brought came first.
+                let Some(did) = self.reading.take() else {
+                    return;
+                };
+                if did == Reread::Unchanged {
+                    engine.log(
+                        LogLevel::Info,
+                        "ljos.user",
+                        "the user's files read again were as they were".to_owned(),
+                    );
+                    out.push(Report::Unchanged);
+                }
+                self.rereads.answered(engine, did);
+            }
             DevMsg::Pictures(_) => {
                 let mut paths = std::mem::take(&mut *lock(&self.pictures));
                 paths.sort();
@@ -1353,6 +1503,7 @@ impl UserSession {
                 match set_theme(engine, theme.as_deref(), generation) {
                     Ok(()) => {
                         self.answer(generation, true);
+                        self.read(Reread::Applied);
                         let was = self.theme_fault.take();
                         if was.is_some() && engine.last_reload_error() == was {
                             engine.set_last_reload_error(None);
@@ -1364,6 +1515,7 @@ impl UserSession {
                     }
                     Err(faults) => {
                         self.answer(generation, false);
+                        self.read(Reread::Failed);
                         self.theme_fault = faults.first().map(fault_of);
                         self.tell(engine, &faults);
                         out.push(failed(&faults));
@@ -1371,11 +1523,13 @@ impl UserSession {
                 }
             }
             DevMsg::ThemeFailed(faults) => {
+                self.read(Reread::Failed);
                 self.theme_fault = faults.first().map(fault_of);
                 self.tell(engine, &faults);
                 out.push(failed(&faults));
             }
             DevMsg::Failed(faults) => {
+                self.read(Reread::Failed);
                 self.tell(engine, &faults);
                 out.push(failed(&faults));
             }
@@ -1400,6 +1554,7 @@ impl UserSession {
                 match self.reload(engine, host, &patch) {
                     Ok((kept, fresh, remounted)) => {
                         self.reloads += 1;
+                        self.read(Reread::Applied);
                         out.push(Report::Reloaded(crate::ReloadStats {
                             generation: patch.generation,
                             build,
@@ -1418,6 +1573,7 @@ impl UserSession {
                         // Compiled while the edit was being applied, which
                         // it was not: read again when next asked for.
                         self.shared.plugins.borrow_mut().clear();
+                        self.read(Reread::Failed);
                         self.tell_one(engine, &fault);
                         out.push(Report::Failed { fault, more: 0 });
                     }
