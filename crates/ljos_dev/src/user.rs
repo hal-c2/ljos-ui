@@ -957,7 +957,10 @@ pub struct UserSession {
     pictures: Arc<Mutex<Vec<PathBuf>>>,
     /// What reading the files again, as asked, did so far: Some until it
     /// is answered.
-    reading: Option<Reread>,
+    reading: Option<Reading>,
+    /// What the reads before the one that answers found, of an ask that
+    /// came while one was on its way.
+    read_before: Reading,
     rereads: Rc<Rereads>,
     /// Whether the files are read while the application runs: watched,
     /// or when it asks.
@@ -977,6 +980,59 @@ pub struct UserSession {
     /// Whether no thread can be started, for the tests.
     #[cfg(test)]
     no_threads: bool,
+}
+
+/// What a read of the user's files tells of.
+#[derive(Clone, Copy)]
+enum Read {
+    Theme,
+    /// The QML files, built together.
+    Files,
+    /// Reading at all: whether anything could read the files.
+    Reading,
+}
+
+/// What reading the files again did so far, of each thing a read tells
+/// of: a fault outweighs a change, and either outweighs none.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct Reading {
+    theme: Option<Reread>,
+    files: Option<Reread>,
+    reading: Option<Reread>,
+}
+
+impl Reading {
+    fn read(&mut self, what: Read, did: Reread) {
+        let so_far = match what {
+            Read::Theme => &mut self.theme,
+            Read::Files => &mut self.files,
+            Read::Reading => &mut self.reading,
+        };
+        if so_far.is_none_or(|s| s == Reread::Unchanged || did == Reread::Failed) {
+            *so_far = Some(did);
+        }
+    }
+
+    /// What this read told of, over what `before` found of what this one
+    /// told nothing of: a read tells only of what changed since the last.
+    fn over(self, before: Reading) -> Reading {
+        Reading {
+            theme: self.theme.or(before.theme),
+            files: self.files.or(before.files),
+            reading: self.reading.or(before.reading),
+        }
+    }
+
+    fn did(self) -> Reread {
+        let all = [self.theme, self.files, self.reading];
+        if all.contains(&Some(Reread::Failed)) {
+            Reread::Failed
+        } else if all.contains(&Some(Reread::Applied)) {
+            Reread::Applied
+        } else {
+            Reread::Unchanged
+        }
+    }
 }
 
 impl Drop for UserSession {
@@ -1076,6 +1132,7 @@ impl UserSession {
             theme,
             pictures: Arc::default(),
             reading: None,
+            read_before: Reading::default(),
             rereads,
             reads,
             follows: false,
@@ -1266,7 +1323,7 @@ impl UserSession {
     /// failed. Where no watch on the disk can be made, one that reads
     /// only when asked reads them.
     pub fn read_again(&mut self, engine: &Engine) {
-        self.reading.get_or_insert(Reread::Unchanged);
+        self.reading.get_or_insert_with(Reading::default);
         if !self.reads {
             // Nothing a reload needs was kept: the files are as they
             // were read when the application started.
@@ -1321,20 +1378,17 @@ impl UserSession {
         self.reading.is_some()
     }
 
-    /// What reading the files again did, as far as it got: a fault
-    /// outweighs a change, and either outweighs none.
-    fn read(&mut self, did: Reread) {
-        if let Some(so_far) = &mut self.reading
-            && (*so_far == Reread::Unchanged || did == Reread::Failed)
-        {
-            *so_far = did;
+    /// What reading `what` again did, as far as it got.
+    fn read(&mut self, what: Read, did: Reread) {
+        if let Some(reading) = &mut self.reading {
+            reading.read(what, did);
         }
     }
 
     /// Answers reading the files again at the next pump, with nothing
     /// built: as a watcher answers a flush.
     fn answer_read(&mut self, did: Reread) {
-        self.read(did);
+        self.read(Read::Reading, did);
         let _ = self
             .handle
             .send_coalesced(IDLE_KEY, UserMsg::Dev(DevMsg::Idle));
@@ -1534,6 +1588,11 @@ impl UserSession {
         #[cfg(not(test))]
         let spawned = spawn_compiler(compile);
         if let Err(e) = spawned {
+            // Nothing would build the files, or answer an ask that waits
+            // for that build: the session stops, as for any fault that
+            // keeps it from reading them.
+            self.state = State::Off;
+            self.read(Read::Reading, Reread::Failed);
             let fault = self.fault(format!("cannot start the compiler's thread: {e}"));
             self.tell(engine, &[fault]);
         }
@@ -1552,19 +1611,20 @@ impl UserSession {
                 self.flushing = false;
                 if std::mem::take(&mut self.again) {
                     // Asked again after this flush was sent: the flush
-                    // that answers is the next one. It reads every file as
-                    // it is now, so a file this one found failing is that
-                    // one's to tell; a change this one applied runs, and
+                    // that answers is the next one. It tells only of what
+                    // changed since this one, so what this one found of
+                    // the rest (a theme still broken, a change that runs)
                     // stays in the answer.
-                    if self.reading == Some(Reread::Failed) {
-                        self.reading = Some(Reread::Unchanged);
+                    if let Some(reading) = self.reading.replace(Reading::default()) {
+                        self.read_before = reading.over(self.read_before);
                     }
                     self.read_again(engine);
                     return;
                 }
-                let Some(did) = self.reading.take() else {
+                let Some(reading) = self.reading.take() else {
                     return;
                 };
+                let did = reading.over(std::mem::take(&mut self.read_before)).did();
                 if did == Reread::Unchanged {
                     engine.log(
                         LogLevel::Info,
@@ -1591,7 +1651,7 @@ impl UserSession {
                 match set_theme(engine, theme.as_deref(), generation) {
                     Ok(()) => {
                         self.answer(generation, true);
-                        self.read(Reread::Applied);
+                        self.read(Read::Theme, Reread::Applied);
                         let was = self.theme_fault.take();
                         if was.is_some() && engine.last_reload_error() == was {
                             engine.set_last_reload_error(None);
@@ -1603,7 +1663,7 @@ impl UserSession {
                     }
                     Err(faults) => {
                         self.answer(generation, false);
-                        self.read(Reread::Failed);
+                        self.read(Read::Theme, Reread::Failed);
                         self.theme_fault = faults.first().map(fault_of);
                         self.tell(engine, &faults);
                         out.push(failed(&faults));
@@ -1611,17 +1671,20 @@ impl UserSession {
                 }
             }
             DevMsg::ThemeFailed(faults) => {
-                self.read(Reread::Failed);
+                self.read(Read::Theme, Reread::Failed);
                 self.theme_fault = faults.first().map(fault_of);
                 self.tell(engine, &faults);
                 out.push(failed(&faults));
             }
             DevMsg::Failed(faults) => {
-                self.read(Reread::Failed);
+                self.read(Read::Files, Reread::Failed);
                 self.tell(engine, &faults);
                 out.push(failed(&faults));
             }
             DevMsg::Cleared => {
+                // The files are what runs again: a fault an earlier read
+                // found in them is gone.
+                self.read(Read::Files, Reread::Unchanged);
                 engine.set_last_reload_error(self.theme_fault.clone());
                 out.push(Report::Cleared);
             }
@@ -1642,7 +1705,7 @@ impl UserSession {
                 match self.reload(engine, host, &patch) {
                     Ok((kept, fresh, remounted)) => {
                         self.reloads += 1;
-                        self.read(Reread::Applied);
+                        self.read(Read::Files, Reread::Applied);
                         out.push(Report::Reloaded(crate::ReloadStats {
                             generation: patch.generation,
                             build,
@@ -1661,7 +1724,7 @@ impl UserSession {
                         // Compiled while the edit was being applied, which
                         // it was not: read again when next asked for.
                         self.shared.plugins.borrow_mut().clear();
-                        self.read(Reread::Failed);
+                        self.read(Read::Files, Reread::Failed);
                         self.tell_one(engine, &fault);
                         out.push(Report::Failed { fault, more: 0 });
                     }
@@ -2329,7 +2392,7 @@ mod tests {
         let (mut session, woke) = session(&engine, root.path(), false);
         // Asked while the first file was being built: its watcher answers.
         session.state = State::Making;
-        session.reading = Some(Reread::Unchanged);
+        session.reading = Some(Reading::default());
         let built = Built {
             layers: Box::new(Refusing),
             faults: Vec::new(),
