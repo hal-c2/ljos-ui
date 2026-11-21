@@ -984,10 +984,13 @@ fn a_forced_incubation_whose_making_panics_reports_the_fault() {
         e.invoke_by_name(root, "start", &[]).unwrap(),
         Value::from(2.0)
     );
-    // No scheduler runs it: the script makes it all at once.
-    let status = e.invoke_by_name(root, "force", &[]).unwrap();
+    // No scheduler runs it: the script makes it all at once. The making's
+    // panic goes on out of `forceCompletion()`, as out of any native call,
+    // so the script's call is cut short and the incubator is asked after.
+    let _ = e.invoke_by_name(root, "force", &[]);
     DUDS_PANIC.set(false);
-    assert_eq!(status, Value::from(3.0), "Component.Error");
+    let inc = h.get(root, "inc").as_object().expect("kept");
+    assert_eq!(h.num(inc, "status"), 3.0, "Component.Error");
     let faults = e.faults();
     assert!(
         faults
