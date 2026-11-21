@@ -18,10 +18,12 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
+use ljos_engine::backoff::{Backoff, seconds};
 use ljos_engine::{
-    Cx, Engine, EngineError, ImplInfo, LogLevel, MethodDecl, ObjectFlags, ObjectId, PropIndex,
-    QmlImplInfo, QmlObject, QmlType, SignalDecl, SignalIndex, TypeTag, Value, qml_impl,
+    Cx, Engine, EngineError, ImplInfo, JsError, LogLevel, MethodDecl, ObjectFlags, ObjectId,
+    PropIndex, QmlImplInfo, QmlObject, QmlType, SignalDecl, SignalIndex, TypeTag, Value, qml_impl,
 };
+use ljos_runtime::TimerId;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::controller::Controller;
@@ -144,7 +146,9 @@ fn start_thunk(cx: &Cx<'_>, given: &[Value]) -> Result<Value, EngineError> {
 /// what it gives later is dropped.
 fn abort_thunk(cx: &Cx<'_>, _: &[Value]) -> Result<Value, EngineError> {
     let (e, me) = (cx.engine, cx.this);
-    let Some(reason) = Tasks::of(e).abort(e, me) else {
+    let tasks = Tasks::of(e);
+    tasks.stop_waiting(e, me);
+    let Some(reason) = tasks.abort(e, me) else {
         return Ok(Value::Undefined);
     };
     fail(e, me, reason)?;
@@ -176,7 +180,15 @@ fn args_changed(cx: &Cx<'_>, _: PropIndex) {
     let Ok(args) = e.get(me, Task::ARGS) else {
         return;
     };
-    let last = tasks.entries.borrow().get(&me).map(|t| t.args.clone());
+    // A start waiting to be tried again is the one to compare with: its
+    // args never reached the entry, and a change away from them drops it.
+    let waiting = tasks
+        .again
+        .borrow()
+        .get(&me)
+        .filter(|w| w.timer.is_some())
+        .map(|w| w.args.clone());
+    let last = waiting.or_else(|| tasks.entries.borrow().get(&me).map(|t| t.args.clone()));
     if let Some(last) = last
         && tasks.same(e, &last, &args)
     {
@@ -185,9 +197,11 @@ fn args_changed(cx: &Cx<'_>, _: PropIndex) {
     warn(e, begin(e, me, args));
 }
 
-/// Starts a run with `args`, aborting the one in progress.
+/// Starts a run with `args`, aborting the one in progress, and the one
+/// waiting to start again with it.
 fn begin(e: &Engine, me: ObjectId, args: Value) -> Result<(), EngineError> {
     let tasks = Tasks::of(e);
+    tasks.stop_waiting(e, me);
     tasks.abort(e, me);
     let number = tasks.number();
     tasks.watch(e, me)?;
@@ -195,7 +209,8 @@ fn begin(e: &Engine, me: ObjectId, args: Value) -> Result<(), EngineError> {
     put(e, me, PENDING, &value, None)?;
     let run = e.untrack(|| e.get(me, Task::RUN))?;
     let Some(driver) = tasks.driver(e) else {
-        return Ok(());
+        let why = JsError::Failed("its driver could not be made".into());
+        return not_started(e, me, number, args, why);
     };
     // Recorded before the driver is called: `settle` finds the run by it.
     tasks.entries.borrow_mut().entry(me).or_default().run = Some(Run {
@@ -203,9 +218,10 @@ fn begin(e: &Engine, me: ObjectId, args: Value) -> Result<(), EngineError> {
         abort: Value::Undefined,
     });
     tasks.numbers.borrow_mut().insert(number, me);
-    let started = e
-        .try_call_js(&driver.start, &[Value::Int(number), run, args])
-        .map_err(|err| EngineError::Invoke(err.to_string()))?;
+    let started = match e.try_call_js(&driver.start, &[Value::Int(number), run, args.clone()]) {
+        Ok(started) => started,
+        Err(why) => return not_started(e, me, number, args, why),
+    };
     let abort = e.js_member(&started, "abort").unwrap_or_default();
     let args = e.js_member(&started, "args").unwrap_or_default();
     // Only for the run still in progress: one that replaced it keeps its
@@ -217,6 +233,40 @@ fn begin(e: &Engine, me: ObjectId, args: Value) -> Result<(), EngineError> {
         entry.args = args;
     }
     Ok(())
+}
+
+/// Run `number` could not start: the Task has failed, with why, rather
+/// than staying pending on a run nobody will settle. A start the heap,
+/// an interrupt or the JS host stopped ([`JsError::Failed`]) is not the
+/// code's doing: it starts again with the same `args` once a wait is
+/// over, as [`Backoff`] says, each time until it does. A start that threw
+/// waits for a new `args` or `start()`, as a run that threw does.
+fn not_started(
+    e: &Engine,
+    me: ObjectId,
+    number: i32,
+    args: Value,
+    why: JsError,
+) -> Result<(), EngineError> {
+    let tasks = Tasks::of(e);
+    tasks.numbers.borrow_mut().remove(&number);
+    if let Some(entry) = tasks.entries.borrow_mut().get_mut(&me)
+        && entry.run.as_ref().is_some_and(|r| r.number == number)
+    {
+        entry.run = None;
+    }
+    let mut message = format!("Task: the run could not start: {why}");
+    let error = match &why {
+        JsError::Thrown { value, .. } => value.clone(),
+        _ => Value::from(why.to_string().as_str()),
+    };
+    if let JsError::Failed(_) = why {
+        e.collect_garbage();
+        let wait = tasks.start_again_after(e, me, args);
+        message.push_str(&format!("; starting again in {}", seconds(wait)));
+    }
+    warn(e, Err(EngineError::Invoke(message)));
+    fail(e, me, error)
 }
 
 /// What run `number` gave: the Task it is the run of is done or has
@@ -339,6 +389,19 @@ struct Tasks {
     numbers: RefCell<FxHashMap<i32, ObjectId>>,
     /// The Tasks whose destruction aborts their run: connected once.
     watched: RefCell<FxHashSet<ObjectId>>,
+    /// The Tasks whose run could not start for want of resources, and
+    /// when each starts again.
+    again: RefCell<FxHashMap<ObjectId, Again>>,
+}
+
+/// A Task's starts that failed for want of resources: how long the next
+/// waits, and the timer of the one waiting.
+#[derive(Default)]
+struct Again {
+    backoff: Backoff,
+    timer: Option<TimerId>,
+    /// What the waiting start is to be called with.
+    args: Value,
 }
 
 #[derive(Default)]
@@ -377,9 +440,16 @@ impl Tasks {
         let made = e
             .create_native_incomplete(TaskHelper {}, None)
             .and_then(|helper| {
-                let install = e.eval_js(DRIVER)?;
-                e.try_call_js(&install, &[Value::Object(helper)])
-                    .map_err(|err| EngineError::Invoke(err.to_string()))
+                let installed = e.eval_js(DRIVER).and_then(|install| {
+                    e.try_call_js(&install, &[Value::Object(helper)])
+                        .map_err(|err| EngineError::Invoke(err.to_string()))
+                });
+                // A helper no driver holds would only be left over; the
+                // next start makes another.
+                if installed.is_err() {
+                    e.destroy_now(helper);
+                }
+                installed
             });
         let made = match made {
             Ok(v) => v,
@@ -411,10 +481,52 @@ impl Tasks {
         e.connect(me, SignalIndex::DESTROYED, move |e, _| {
             let tasks = Tasks::of(e);
             tasks.watched.borrow_mut().remove(&me);
+            tasks.stop_waiting(e, me);
+            tasks.again.borrow_mut().remove(&me);
             tasks.abort(e, me);
             tasks.entries.borrow_mut().remove(&me);
         })?;
         Ok(())
+    }
+
+    /// Starts `me` again with `args` once [`Backoff`] says, and gives the
+    /// wait. A start or `abort()` before then drops it.
+    fn start_again_after(&self, e: &Engine, me: ObjectId, args: Value) -> std::time::Duration {
+        let now = e.now();
+        let mut again = self.again.borrow_mut();
+        let waiting = again.entry(me).or_default();
+        let wait = waiting.backoff.fault(now);
+        waiting.args = args.clone();
+        if let Some(old) = waiting.timer.take() {
+            e.cancel_call(old);
+        }
+        waiting.timer = Some(e.call_at(now + wait, move |e| {
+            let tasks = Tasks::of(e);
+            {
+                let mut again = tasks.again.borrow_mut();
+                let Some(waiting) = again.get_mut(&me) else {
+                    return;
+                };
+                waiting.timer = None;
+                waiting.backoff.trying(e.now());
+            }
+            if e.is_alive(me) {
+                warn(e, begin(e, me, args));
+            }
+        }));
+        wait
+    }
+
+    /// Drops the start `me` waits for, if one is waiting.
+    fn stop_waiting(&self, e: &Engine, me: ObjectId) {
+        let timer = self.again.borrow_mut().get_mut(&me).and_then(|w| {
+            // The args of a start nobody waits for are not kept alive.
+            w.args = Value::Undefined;
+            w.timer.take()
+        });
+        if let Some(timer) = timer {
+            e.cancel_call(timer);
+        }
     }
 
     /// Aborts `me`'s run in progress, if it has one, and gives its
@@ -474,18 +586,23 @@ const DRIVER: &str = r#"(function (helper) {
     // run that starts the Task again, or changes its args, as it starts
     // aborts this one rather than a run with nothing to abort it by. A
     // run aborted before its microtask (args changed twice in one turn,
-    // or its item gone) is never called.
+    // or its item gone) is never called, nor is one whose start failed
+    // after this was queued: that start is tried again on its own.
+    let started = false;
     Promise.resolve().then(() => {
+      if (!started) throw abortError();
       controller.signal.throwIfAborted();
       return run(...given, controller.signal);
     }).then(
       (value) => helper.settle(number, true, value),
       (error) => helper.settle(number, false, error),
     );
-    return {
+    const handle = {
       args: given,
       abort: () => { controller.abort(); return controller.signal.reason; },
     };
+    started = true;
+    return handle;
   };
   const same = (a, b) => {
     a = elements(a);

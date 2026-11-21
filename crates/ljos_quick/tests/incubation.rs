@@ -440,8 +440,9 @@ fn a_rate_no_display_has_still_gets_the_objects_made() {
 
 /// A large component for `incubateObject` to make beside an ErrorBoundary
 /// whose content fails in the polish pass: a Row moves a child whose
-/// handler never ends. The fallback is Text that wraps to a width, and
-/// such Text is measured in polish only.
+/// handler throws, which a boundary with `catchExceptions` counts (one
+/// cut short for its time it keeps instead). The fallback is Text that
+/// wraps to a width, and such Text is measured in polish only.
 fn failing_in_polish(n: usize) -> String {
     let kids: String = (0..n)
         .map(|i| format!("            Item {{ objectName: \"k{i}\" }}\n"))
@@ -466,6 +467,7 @@ Item {{
         id: boundary
         objectName: "boundary"
         width: 200
+        catchExceptions: true
         fallback: Column {{
             Row {{
                 Rectangle {{ id: grown; width: 10; height: 5 }}
@@ -479,7 +481,7 @@ Item {{
         }}
         Row {{
             Rectangle {{ width: root.wide ? 50 : 10; height: 10 }}
-            Rectangle {{ width: 10; height: 10; onXChanged: if (root.wide) {{ for (;;) {{ }} }} }}
+            Rectangle {{ width: 10; height: 10; onXChanged: if (root.wide) throw new Error("moved") }}
         }}
     }}
     function start(parent) {{ inc = comp.incubateObject(parent) }}
@@ -507,7 +509,7 @@ fn a_fallback_made_while_the_jobs_only_yield_is_laid_out_in_that_frame() {
         assert_eq!(report.jobs_done, 0, "frame {n}: the job is too short");
     }
     // The Row places its children again in the next frame's polish, and
-    // the handler that runs then is interrupted.
+    // the handler that runs then throws.
     set(&e, root, "wide", Value::Bool(true));
     frame(&mut s, &e);
     let report = s.take_incubation_report().expect("the job is under way");

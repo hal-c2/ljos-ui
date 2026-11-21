@@ -156,6 +156,11 @@ pub enum TakenBy {
     /// boundary gave up, the one around it that took the fault. `name` is
     /// what it was called then ([`Engine::label_of`]).
     Boundary { object: ObjectId, name: String },
+    /// The boundary that took it and left its content shown
+    /// ([`crate::Boundary::keeps`]): a script of the content stopped for
+    /// its time, whose binding the engine runs again. `name` as for
+    /// [`TakenBy::Boundary`].
+    Kept { object: ObjectId, name: String },
     /// No boundary took it ([`Engine::application_fault`]).
     Application,
     /// It happened in a subtree already discarded for an earlier fault.

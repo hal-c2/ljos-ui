@@ -27,6 +27,16 @@
 //! the engine's supervisor tree ([`ljos_engine::Boundary`]); this file
 //! only says how the content is stopped and started.
 //!
+//! A resource fault (the script heap ran out, the content could not be
+//! made in its time) is not the content's doing and is not counted: the
+//! fallback is shown, and the content is made again by itself after a
+//! wait, as a Loader does ([`Backoff`]: a second, twice as long each time
+//! it faults again soon after, up to a minute), for as long as it takes.
+//! `retry()` or a new `content` makes it at once. A script of the content
+//! stopped for its time leaves it shown: the engine runs the binding it
+//! cut short again. `fault` still says what happened, while `failed`
+//! stays false.
+//!
 //! The content is always made from the component, never repaired. State a
 //! native type declares worth keeping (`ljos_engine::Migrate`) is taken
 //! from the old item and given to the new one.
@@ -34,11 +44,12 @@
 use std::rc::Rc;
 use std::time::Duration;
 
+use ljos_engine::backoff::{Backoff, seconds};
 use ljos_engine::{
     Atom, Boundary, BoundaryConfig, Cx, Engine, EngineError, FaultReport, LogLevel, ObjectId,
     PropIndex, QmlObject, QmlType, SubtreeSnapshot, Url, Value, WriteKind, qml_impl,
 };
-use ljos_runtime::{Fault, Intensity, Restart};
+use ljos_runtime::{Fault, Intensity, Restart, TimerId};
 
 use crate::item::{Item, is_item, size_follows_implicit, write_computed};
 use crate::tree;
@@ -101,8 +112,10 @@ impl Default for ErrorBoundary {
     }
 }
 
-/// The `fault` group of [`ErrorBoundary`]: the last fault of its content.
-/// Empty while there was none and after `retry()`.
+/// The `fault` group of [`ErrorBoundary`]: the last fault of its content,
+/// also one it kept the content shown through (a script stopped for its
+/// time). Empty while there was none, after `retry()` and for new
+/// `content`.
 #[derive(Debug, Default, QmlObject)]
 #[qml(name = "ErrorBoundaryFault", uncreatable)]
 pub struct BoundaryFault {
@@ -131,6 +144,10 @@ struct Run {
     making_fallback: bool,
     /// What the stopped content's natives wanted kept.
     kept: Option<SubtreeSnapshot>,
+    /// When the content is made again after a resource fault.
+    backoff: Backoff,
+    /// The making [`Run::backoff`] waits for.
+    waiting: Option<TimerId>,
 }
 
 /// The flattened indices of the `fault.*` leaves.
@@ -164,11 +181,13 @@ impl ErrorBoundary {
     fn completed(cx: &Cx) -> Result<(), EngineError> {
         let (e, me) = (cx.engine, cx.this);
         e.watch(me, ErrorBoundary::CONTENT.index, move |e, _| {
-            // A failed boundary takes the new content at `retry()`.
-            if !failed(e, me) {
-                drop_item(e, me);
-                start_content(e, me);
-            }
+            // New content is tried at once, whatever stopped the old.
+            stop_waiting(e, me);
+            publish(e, me, None);
+            drop_item(e, me);
+            // What the old content held is not the new content's.
+            with_run(e, me, |r| r.kept = None);
+            start_content(e, me);
         })?;
         e.effect_in(me, move |e| {
             for horizontal in [true, false] {
@@ -190,10 +209,56 @@ impl ErrorBoundary {
         if !failed(e, me) {
             return;
         }
-        drop_item(e, me);
-        publish(e, me, None);
-        bump_restarts(e, me);
-        start_content(e, me);
+        stop_waiting(e, me);
+        make_again(e, me);
+    }
+}
+
+/// Makes the content again in place of the fallback.
+fn make_again(e: &Engine, me: ObjectId) {
+    drop_item(e, me);
+    publish(e, me, None);
+    bump_restarts(e, me);
+    start_content(e, me);
+}
+
+/// Drops the making a resource fault waits for.
+fn stop_waiting(e: &Engine, me: ObjectId) {
+    if let Some(Some(timer)) = with_run(e, me, |r| r.waiting.take()) {
+        e.cancel_call(timer);
+    }
+}
+
+/// After a resource fault: makes the content again once the [`Backoff`]
+/// wait is over.
+fn again_after(e: &Engine, me: ObjectId, fault: &Fault) {
+    let now = e.now();
+    let Some(wait) = with_run(e, me, |r| r.backoff.fault(now)) else {
+        return;
+    };
+    if matches!(fault, Fault::JsOutOfMemory) {
+        // The heap may have room once the garbage is collected.
+        e.collect_garbage();
+    }
+    let place = e.declared_at(me).unwrap_or_default();
+    warn(
+        e,
+        format!(
+            "{place}ErrorBoundary: {fault}, making the content again in {}",
+            seconds(wait)
+        ),
+    );
+    let timer = e.call_at(now + wait, move |e| {
+        let alive = with_run(e, me, |r| {
+            r.waiting = None;
+            r.backoff.trying(e.now());
+        });
+        if alive.is_some() && failed(e, me) {
+            make_again(e, me);
+        }
+    });
+    if let Some(Some(old)) = with_run(e, me, |r| r.waiting.replace(timer)) {
+        e.cancel_call(old);
     }
 }
 
@@ -244,33 +309,121 @@ impl Boundary for Behaviour {
     }
 
     fn start(&self, e: &Engine, me: ObjectId) -> Result<(), Fault> {
-        let fallback = e
-            .read(me, ErrorBoundary::FALLBACK.index)
-            .as_object()
-            .filter(|f| e.is_alive(*f));
-        let Some(fallback) = fallback else {
-            bump_restarts(e, me);
-            return make_content(e, me).map_err(Fault::Startup);
-        };
-        with_run(e, me, |r| r.making_fallback = true);
-        let made = e.component_create_owned(fallback, me, place);
-        with_run(e, me, |r| r.making_fallback = false);
-        match made {
-            Ok(obj) if e.is_alive(me) => {
-                with_run(e, me, |r| r.fallback_item = Some(obj));
-                set(e, me, ErrorBoundary::ITEM.index, Value::Object(obj));
-                Ok(())
+        match show_fallback(e, me) {
+            // `start` follows a counted fault, the content's own bug: the
+            // content waits for `retry()` whether the fallback shows or
+            // not. One with no room to be made leaves nothing shown (it
+            // warned), and is neither counted nor a reason to make the
+            // content again.
+            Some(Err(Fault::JsOutOfMemory | Fault::JsInterrupted { .. })) => Ok(()),
+            Some(shown) => shown,
+            None => {
+                bump_restarts(e, me);
+                match make_content(e, me) {
+                    // The heap had no room for it, or its making ran over
+                    // its time: not the content's bug, so it waits and is
+                    // made again, as after the content's own resource
+                    // fault, outside the supervisor's count.
+                    Err(fault @ (Fault::JsOutOfMemory | Fault::JsInterrupted { .. })) => {
+                        set(e, me, ErrorBoundary::FAILED.index, true.into());
+                        again_after(e, me, &fault);
+                        Ok(())
+                    }
+                    made => made,
+                }
             }
-            Ok(_) => Ok(()),
-            // With nothing to show in the content's place the boundary
-            // cannot contain the fault.
-            Err(err) => Err(Fault::Startup(format!("fallback: {err}"))),
         }
     }
 
     fn failed(&self, e: &Engine, me: ObjectId) -> bool {
         failed(e, me)
     }
+
+    fn keeps(&self, e: &Engine, me: ObjectId, report: &FaultReport) -> bool {
+        // A script of the content stopped for its time leaves the content
+        // whole: the binding cut short runs again by itself
+        // (`run_again_after`), and content made again would run over
+        // again, without end. Content that could not be made at all (the
+        // boundary's own fault) is made again after a wait.
+        let keeps =
+            matches!(report.fault, Fault::JsInterrupted { .. }) && report.origin != Some(me);
+        if keeps {
+            // Kept, not hidden: a handler of `fault` or the content can
+            // still see what was cut short.
+            publish(e, me, Some(report));
+        }
+        keeps
+    }
+
+    fn resource_fault(&self, e: &Engine, me: ObjectId, report: &FaultReport) -> bool {
+        // A panic in a native type is that type's bug, as for a Loader:
+        // it is counted like any other.
+        if !matches!(
+            report.fault,
+            Fault::JsOutOfMemory | Fault::JsInterrupted { .. }
+        ) {
+            return false;
+        }
+        self.stop(e, me, report);
+        // A handler of `failed` may have given new content while the old
+        // stopped: that is shown, and nothing waits to be made again.
+        if !failed(e, me) {
+            return true;
+        }
+        match show_fallback(e, me) {
+            // A fallback with no room to be made waits with the content:
+            // it is tried again when the content is.
+            Some(Err(Fault::JsOutOfMemory | Fault::JsInterrupted { .. })) => {}
+            // A fallback that cannot be made for its own reasons goes to
+            // the supervisor, counted, as when `start` meets it. Filed,
+            // not handled here, so it is taken after this one.
+            Some(Err(fault)) => {
+                e.report_boundary_fault(me, fault);
+                return true;
+            }
+            _ => {}
+        }
+        // The fallback's handlers may have given new content too.
+        if failed(e, me) {
+            again_after(e, me, &report.fault);
+        }
+        true
+    }
+}
+
+/// Shows an item of `fallback` in the content's place: `None` when there
+/// is no fallback.
+fn show_fallback(e: &Engine, me: ObjectId) -> Option<Result<(), Fault>> {
+    let fallback = e
+        .read(me, ErrorBoundary::FALLBACK.index)
+        .as_object()
+        .filter(|f| e.is_alive(*f))?;
+    with_run(e, me, |r| r.making_fallback = true);
+    let made = e.component_create_whole(fallback, me, place, discard);
+    with_run(e, me, |r| r.making_fallback = false);
+    Some(match made {
+        // The fallback's own handlers gave new content while it was
+        // made: that content is shown, and the fallback is not.
+        Ok(obj) if e.is_alive(me) && !failed(e, me) => {
+            discard(e, obj);
+            Ok(())
+        }
+        Ok(obj) if e.is_alive(me) => {
+            with_run(e, me, |r| r.fallback_item = Some(obj));
+            set(e, me, ErrorBoundary::ITEM.index, Value::Object(obj));
+            Ok(())
+        }
+        Ok(_) => Ok(()),
+        // No room, or no time, to make it: a resource fault, as for the
+        // content, and not the fallback's bug.
+        Err(err @ (EngineError::JsOutOfMemory(_) | EngineError::JsInterrupted(_))) => {
+            warn(e, format!("ErrorBoundary: fallback: {err}, not shown"));
+            Err(creation_fault(e, err))
+        }
+        // With nothing to show in the content's place the boundary
+        // cannot contain the fault.
+        Err(err) => Err(Fault::Startup(format!("fallback: {err}"))),
+    })
 }
 
 fn with_run<R>(e: &Engine, me: ObjectId, f: impl FnOnce(&mut Run) -> R) -> Option<R> {
@@ -335,12 +488,14 @@ fn publish(e: &Engine, me: ObjectId, report: Option<&FaultReport>) {
 fn start_content(e: &Engine, me: ObjectId) {
     match make_content(e, me) {
         Ok(()) => set(e, me, ErrorBoundary::FAILED.index, false.into()),
-        Err(message) => e.report_boundary_fault(me, Fault::Startup(message)),
+        Err(fault) => e.report_boundary_fault(me, fault),
     }
 }
 
-/// Makes an item of `content` and shows it.
-fn make_content(e: &Engine, me: ObjectId) -> Result<(), String> {
+/// Makes an item of `content` and shows it. Content the heap had no room
+/// for, or whose making was interrupted, is that resource fault, not a
+/// failed start.
+fn make_content(e: &Engine, me: ObjectId) -> Result<(), Fault> {
     if !e.is_alive(me) || with_run(e, me, |r| r.completed) != Some(true) {
         return Ok(());
     }
@@ -355,8 +510,17 @@ fn make_content(e: &Engine, me: ObjectId) -> Result<(), String> {
     };
     let made = e
         .component_create_owned(content, me, place)
-        .map_err(|err| err.to_string())?;
+        .map_err(|err| creation_fault(e, err))?;
     if !e.is_alive(me) {
+        return Ok(());
+    }
+    // A handler of what was made gave the boundary other content: the
+    // content watch has made and shown that already, and this is no one's.
+    let current = e
+        .untrack(|| e.read(me, ErrorBoundary::CONTENT.index))
+        .as_object();
+    if current != Some(content) {
+        discard(e, made);
         return Ok(());
     }
     if let Some(kept) = with_run(e, me, |r| r.kept.take()).flatten() {
@@ -365,6 +529,19 @@ fn make_content(e: &Engine, me: ObjectId) -> Result<(), String> {
     set(e, me, ErrorBoundary::ITEM.index, Value::Object(made));
     set(e, me, ErrorBoundary::FAILED.index, false.into());
     Ok(())
+}
+
+/// The fault of content that could not be made for `err`.
+fn creation_fault(e: &Engine, err: EngineError) -> Fault {
+    match err {
+        EngineError::JsOutOfMemory(_) => Fault::JsOutOfMemory,
+        // The engine's error words the interrupt; the fault names the
+        // slice the script ran over, the one every dispatch has.
+        EngineError::JsInterrupted(_) => Fault::JsInterrupted {
+            slice: e.js_dispatch_slice().unwrap_or_default(),
+        },
+        other => Fault::Startup(other.to_string()),
+    }
 }
 
 /// Puts a new item in the boundary before its bindings run, so `parent`
@@ -427,4 +604,24 @@ fn resize(e: &Engine, me: ObjectId, horizontal: bool) -> Result<(), EngineError>
     }
     let v = e.read(shown, implicit);
     write_computed(e, me, implicit, v)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn content_interrupted_while_it_was_made_names_the_engines_slice() {
+        let e = Engine::new();
+        e.set_js_dispatch_budget(Duration::from_millis(5), Duration::from_millis(40))
+            .unwrap();
+        let fault = creation_fault(
+            &e,
+            EngineError::JsInterrupted("a resource fault while it was made".into()),
+        );
+        assert_eq!(
+            fault.to_string(),
+            "JS interrupted after exceeding its 40ms slice"
+        );
+    }
 }
