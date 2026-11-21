@@ -1,6 +1,6 @@
 //! What Android's document picker (the Storage Access Framework) is asked
 //! for a dialog, and what its answer means: the part of
-//! [`AndroidDialogs`](crate::android::AndroidDialogs) that needs no phone,
+//! `AndroidDialogs` (built on Android only) that needs no phone,
 //! so it is built and tested everywhere.
 //!
 //! A file or folder dialog becomes one of the system's intents:
