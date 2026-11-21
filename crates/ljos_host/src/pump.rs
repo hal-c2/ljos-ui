@@ -69,6 +69,21 @@ impl<R, W: Wakes> Requests<R, W> {
     }
 }
 
+/// What the rest of a turn of the pump hands the activity once its events
+/// are in: its input is read, then what the application asked of it is
+/// done, oldest first. `None` once one of those events destroyed it: what
+/// GameActivity holds (its input buffers, its editor and the text that
+/// holds) went with it, and it is touched no more. What was asked of it is
+/// dropped: a new activity comes with a new surface, and the application
+/// tells it all anew.
+pub(crate) fn for_activity<R, W: Wakes>(
+    destroyed: bool,
+    requests: &Mutex<Requests<R, W>>,
+) -> Option<Vec<R>> {
+    let asked = lock(requests).take();
+    (!destroyed).then_some(asked)
+}
+
 pub(crate) fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(PoisonError::into_inner)
 }
@@ -103,7 +118,7 @@ mod tests {
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicU32, Ordering};
 
-    use super::{Pumping, Requests, Wakes, exiting, keeps_pumping, lock};
+    use super::{Pumping, Requests, Wakes, exiting, for_activity, keeps_pumping, lock};
 
     #[derive(Default)]
     struct Count(std::sync::Arc<AtomicU32>);
@@ -176,6 +191,27 @@ mod tests {
     fn a_pump_that_asked_for_finish_waits_for_destroy_after_the_application_ends() {
         assert!(keeps_pumping(false, true, true));
         assert!(!keeps_pumping(true, true, true));
+    }
+
+    #[test]
+    fn an_activity_is_handed_what_was_asked_oldest_first() {
+        let requests = Mutex::new(Requests::<u8, Count>::default());
+        lock(&requests).ask(1);
+        lock(&requests).ask(2);
+        assert_eq!(for_activity(false, &requests), Some(vec![1, 2]));
+        assert_eq!(for_activity(false, &requests), Some(vec![]));
+    }
+
+    #[test]
+    fn a_destroyed_activity_is_not_touched_and_what_was_asked_of_it_is_dropped() {
+        let requests = Mutex::new(Requests::<u8, Count>::default());
+        lock(&requests).ask(1);
+        assert_eq!(for_activity(true, &requests), None);
+        // Not kept for the next activity, which is told anew.
+        assert!(lock(&requests).take().is_empty());
+        // What is asked once it is gone is kept for the next one.
+        lock(&requests).ask(2);
+        assert_eq!(lock(&requests).take(), [2]);
     }
 
     #[test]

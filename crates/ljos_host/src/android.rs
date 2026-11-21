@@ -113,8 +113,10 @@ impl<U: Send + 'static> Attach<U> {
                     pump.main(main);
                 }
             });
+            let Some(asked) = pump::for_activity(pump.destroyed, &self.requests) else {
+                continue;
+            };
             pump.input();
-            let asked = lock(&self.requests).take();
             for request in asked {
                 pump.request(request);
             }
