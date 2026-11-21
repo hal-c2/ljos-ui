@@ -650,3 +650,66 @@ fn content_the_fallback_gives_as_it_is_made_is_shown_not_the_fallback() {
     assert_eq!(shown(&e, boundary), "other");
     assert_eq!(e.next_timer_deadline(), None, "nothing waits to be made");
 }
+
+/// Content whose making gives the boundary other content and then runs
+/// out of heap: the other content is made and shown by then.
+const SWAPS_THEN_RUNS_OUT: &str = r#"
+import QtQuick
+import Ljos
+Item {
+    id: root
+    ErrorBoundary {
+        id: boundary
+        objectName: "boundary"
+        fallback: Text { objectName: "sorry" }
+        Item { objectName: "content" }
+    }
+    property Component other: Component { Item { objectName: "other" } }
+    property Component hungry: Component {
+        Item {
+            objectName: "hungry"
+            property var lots: []
+            Component.onCompleted: {
+                boundary.content = root.other;
+                for (let i = 0; i < 20000; i++) lots.push({ i: i, s: "row " + i });
+            }
+        }
+    }
+    function litter(n) {
+        for (let i = 0; i < n; i++) { const a = { b: [i, i + 1, "x" + i] }; a.self = a }
+    }
+}
+"#;
+
+/// A making that ran out of heap after a handler of it gave the boundary
+/// other content was overtaken: its fault is not the shown content's, so
+/// the other content stays shown and nothing waits to make it again.
+#[test]
+fn a_making_that_runs_out_of_heap_after_its_content_was_swapped_leaves_the_new_content_shown() {
+    let e = engine();
+    let clock = Arc::new(VirtualClock::new());
+    e.set_clock(Rc::new(clock.clone()));
+    compile(&e, &[("Main", SWAPS_THEN_RUNS_OUT)]);
+    let root = e.create_from_url("Main", None, Vec::new()).unwrap();
+    let boundary = find(&e, root, "boundary");
+    assert_eq!(shown(&e, boundary), "content");
+    e.invoke_by_name(root, "litter", &[Value::from(0.0)])
+        .unwrap();
+    assert!(e.collect_garbage());
+    let held = e.script_memory().unwrap().bytes;
+    assert!(e.set_script_heap_limit(Some(held + 64 * 1024)));
+    let restarts = num(&e, boundary, "restarts");
+
+    set(&e, boundary, "content", get(&e, root, "hungry"));
+    settle(&e, &clock, boundary);
+    assert_eq!(shown(&e, boundary), "other");
+    assert!(!get(&e, boundary, "failed").to_boolean());
+    assert_eq!(
+        get(&e, boundary, "fault.kind").to_js_string().to_string(),
+        ""
+    );
+    assert_eq!(num(&e, boundary, "restarts"), restarts);
+    assert_eq!(e.next_timer_deadline(), None, "nothing waits to be made");
+    assert!(e.application_fault().is_none());
+    assert!(e.set_script_heap_limit(None));
+}

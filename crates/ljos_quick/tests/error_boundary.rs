@@ -123,13 +123,21 @@ Item {
     let boundary = find(&e, root, "boundary");
     e.process_deferred_deletes();
     assert_eq!(e.take_warnings(), Vec::<String>::new());
-    assert_eq!(num(&e, root, "made"), 2.0, "the first content is made twice");
+    assert_eq!(
+        num(&e, root, "made"),
+        2.0,
+        "the first content is made twice"
+    );
     let item = get(&e, boundary, "item")
         .as_object()
         .expect("an item is shown");
     assert_eq!(text(&e, item, "objectName"), "first");
     assert!(!get(&e, boundary, "failed").to_boolean());
-    assert_eq!(count(&e, root, "first"), 1, "one item of the first content is left");
+    assert_eq!(
+        count(&e, root, "first"),
+        1,
+        "one item of the first content is left"
+    );
     assert!(!exists(&e, root, "other"), "the other content is discarded");
 }
 
