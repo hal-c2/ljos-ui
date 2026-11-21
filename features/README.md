@@ -514,8 +514,8 @@ their sources; the user's directory is a directory on the real disk. The steps c
 | `When the user saves the file "X" as:` + doc string / `When the user removes the file "X"` | while the application runs; the step waits for what the save brings |
 | `When the user saves the file "X" as a link to a file outside the user's directory` | while the application runs, the file becomes a link that leads out of the directory; the step waits for what the save brings |
 | `When the user's directory is removed and made again` | the directory is removed and made again at its path before the application hears of either; the step waits for the wake |
-| `When the user's directory is read` | the directory is listed, as a file manager or a shell lists it; nothing in it changes |
-| `When N second(s) pass(es) with the application answering every wake` | for N seconds of real time nobody touches the application, which takes what each wake brings as a host does; the wakes are counted, those left from earlier steps too |
+| `When the user's directory is read` | what the application's start woke it for is answered first, until no wake comes for 250 ms (2 s at most); then the directory is listed, as a file manager or a shell lists it; nothing in it changes |
+| `When N second(s) pass(es) with the application answering every wake` | for N seconds of real time nobody touches the application, which takes what each wake brings as a host does; the wakes are counted from the step before on; the start's were taken by the read step |
 | `Then the application was woken at most N time(s) while it was left alone` | the wakes counted by the step above |
 | `Then the user's files are compiled` / `are not compiled` | whether the compiler ran: it does once the user has a file |
 | `Then a compiler was made for text` / `Then no compiler was made for text` | whether a script asked for a text or a plugin file yet, which makes the texts' compiler |
