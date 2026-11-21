@@ -178,6 +178,15 @@ impl RgbaImage {
                 .iter()
                 .flat_map(|c| [c[0], c[1], c[2], 255])
                 .collect(),
+            // A colour bitmap font may store a glyph in grey (CBDT allows
+            // any PNG colour type).
+            png::ColorType::GrayscaleAlpha => buf
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .flat_map(|&[g, a]| [g, g, g, a])
+                .collect(),
+            png::ColorType::Grayscale => buf.iter().flat_map(|&g| [g, g, g, 255]).collect(),
             other => return Err(RenderError::PngFormat(other)),
         };
         Ok(Self {

@@ -21,6 +21,16 @@ use skrifa::{FontRef, MetadataProvider};
 /// Liberation Sans Regular (SIL OFL 1.1), the font `ljos_text` bundles.
 const FONT: &[u8] = include_bytes!("../../ljos_text/fonts/LiberationSans-Regular.ttf");
 
+/// Ljos Color Test (features/text/fonts, made by make-color-test.py there): a
+/// colour bitmap font, as Noto Color Emoji is. Glyph 1 is a PNG of 20 by 20
+/// at 20 pixels per em, red above and blue below, 16 pixels above the
+/// baseline, with no outline.
+const COLOR_FONT: &[u8] = include_bytes!("../../../features/text/fonts/LjosColorTest-Regular.ttf");
+/// A colour layer font (`COLR`), as Windows' and newer Android's emoji fonts
+/// are: glyph 1 is a version 0 glyph, 2 a version 1 glyph (see
+/// make-colr-test.py beside it).
+const COLR_FONT: &[u8] = include_bytes!("../../../features/text/fonts/LjosColrTest-Regular.ttf");
+
 const WHITE_BG: RasterConfig = RasterConfig {
     background: Rgba::WHITE,
     text: TextMode::Skip,
@@ -58,6 +68,42 @@ fn run(text: &str, size: f32, baseline: f32) -> GlyphRun {
         f64::from(baseline + size),
     );
     GlyphRun::new(font(), size, glyphs, baseline, bounds)
+}
+
+fn color_font() -> FontData {
+    static DATA: OnceLock<FontData> = OnceLock::new();
+    DATA.get_or_init(|| FontData::new(Blob::new(Arc::new(COLOR_FONT)), 0))
+        .clone()
+}
+
+/// The colour glyph, once, with its origin on `baseline`.
+fn color_run(size: f32, baseline: f32) -> GlyphRun {
+    let glyphs = vec![PositionedGlyph {
+        id: 1,
+        x: 0.0,
+        y: baseline,
+    }];
+    let bounds = Rect::new(
+        -f64::from(size),
+        f64::from(baseline - size * 1.5),
+        f64::from(size * 2.0),
+        f64::from(baseline + size),
+    );
+    GlyphRun::new(color_font(), size, glyphs, baseline, bounds)
+}
+
+fn colr_font() -> FontData {
+    static DATA: OnceLock<FontData> = OnceLock::new();
+    DATA.get_or_init(|| FontData::new(Blob::new(Arc::new(COLR_FONT)), 0))
+        .clone()
+}
+
+/// Glyph `id` of the colour layer font, once, with its origin on `baseline`.
+fn colr_run(id: u32, size: f32, baseline: f32) -> GlyphRun {
+    let mut run = color_run(size, baseline);
+    run.font = colr_font();
+    run.glyphs[0].id = id;
+    run
 }
 
 struct Scene {
@@ -353,6 +399,183 @@ fn r_draws_rotated_text() {
     let (x0, y0, x1, y1) = ink_box(&img, 128).unwrap();
     // An upright stem became a lying one.
     assert!(x1 - x0 > 20 && y1 - y0 < 8, "{:?}", (x0, y0, x1, y1));
+}
+
+/// A colour glyph is its picture, whatever the text's colour: a white
+/// text's emoji is not white.
+fn color_scene(size: f32, colour: Rgba, opacity: f32) -> Scene {
+    let mut s = Scene::new(60.0, 60.0);
+    let n = s.node(None, 0.0, 0.0, 60.0, 60.0);
+    s.tree.set_opacity(n, opacity);
+    s.paint(n, |b| {
+        b.glyphs(
+            Arc::new(color_run(size, 0.0)),
+            Vec2::new(10.0, 30.0),
+            colour,
+            Decorations::default(),
+        );
+    });
+    s
+}
+
+#[test]
+fn r_draws_colour_glyphs_as_their_pictures() {
+    for colour in [Rgba::BLACK, Rgba::WHITE, Rgba::TRANSPARENT] {
+        let img = color_scene(20.0, colour, 1.0).render(1.0);
+        // The picture: 20 by 20 from the origin's x, its top 16 above the
+        // baseline at row 30.
+        assert_eq!(img.pixel(19, 16), [255, 0, 0, 255], "{colour:?}");
+        assert_eq!(img.pixel(19, 31), [0, 0, 255, 255], "{colour:?}");
+        assert_eq!(img.pixel(19, 13), [255, 255, 255, 255], "{colour:?}");
+        assert_eq!(img.pixel(19, 34), [255, 255, 255, 255], "{colour:?}");
+        assert_eq!(img.pixel(9, 20), [255, 255, 255, 255], "{colour:?}");
+        assert_eq!(img.pixel(30, 20), [255, 255, 255, 255], "{colour:?}");
+    }
+    // Scaled with the text, and with the device pixel ratio.
+    let img = color_scene(40.0, Rgba::BLACK, 1.0).render(1.0);
+    assert_eq!(img.pixel(29, 0), [255, 0, 0, 255]);
+    assert_eq!(img.pixel(29, 37), [0, 0, 255, 255]);
+    assert_eq!(img.pixel(29, 40), [255, 255, 255, 255]);
+    let img = color_scene(20.0, Rgba::BLACK, 1.0).render(2.0);
+    assert_eq!(img.pixel(38, 30), [255, 0, 0, 255]);
+    assert_eq!(img.pixel(38, 66), [0, 0, 255, 255]);
+    assert_eq!(img.pixel(38, 69), [255, 255, 255, 255]);
+}
+
+#[test]
+fn runs_say_whether_they_hold_colour_glyphs() {
+    assert!(ljos_render::run_has_color_glyphs(&color_run(20.0, 0.0)));
+    assert!(!ljos_render::run_has_color_glyphs(&run("Hx", 20.0, 0.0)));
+}
+
+#[test]
+fn colour_glyph_ink_is_its_picture() {
+    let boxes = glyph_ink_bounds(&color_run(20.0, 30.0));
+    let b = boxes[0].expect("a colour glyph has ink");
+    assert_eq!((b.x0, b.y0, b.x1, b.y1), (0.0, 14.0, 20.0, 34.0));
+}
+
+/// A colour layer glyph at 20 pixels, its origin at (10, 30), in `colour`.
+fn colr_scene(id: u32, colour: Rgba, opacity: f32) -> Scene {
+    let mut s = Scene::new(60.0, 60.0);
+    let n = s.node(None, 0.0, 0.0, 60.0, 60.0);
+    s.tree.set_opacity(n, opacity);
+    s.paint(n, |b| {
+        b.glyphs(
+            Arc::new(colr_run(id, 20.0, 0.0)),
+            Vec2::new(10.0, 30.0),
+            colour,
+            Decorations::default(),
+        );
+    });
+    s
+}
+
+const RED: [u8; 4] = [255, 0, 0, 255];
+const BLUE: [u8; 4] = [0, 0, 255, 255];
+const PAPER: [u8; 4] = [255, 255, 255, 255];
+
+#[test]
+fn r_draws_colour_layers_in_their_palettes_colours() {
+    for id in [1, 2] {
+        let img = colr_scene(id, Rgba::BLACK, 1.0).render(1.0);
+        // Red from 16 to 6 pixels above the baseline at row 30, the em wide;
+        // nothing of the glyph's plain box outline around it.
+        assert_eq!(img.pixel(15, 18), RED, "glyph {id}");
+        assert_eq!(img.pixel(29, 14), RED, "glyph {id}");
+        assert_eq!(img.pixel(15, 13), PAPER, "glyph {id}");
+        assert_eq!(img.pixel(9, 20), PAPER, "glyph {id}");
+        assert_eq!(img.pixel(30, 20), PAPER, "glyph {id}");
+        assert_eq!(img.pixel(15, 34), PAPER, "glyph {id}");
+    }
+    // Version 0: the lower layer is blue.
+    let img = colr_scene(1, Rgba::BLACK, 1.0).render(1.0);
+    assert_eq!(img.pixel(14, 31), BLUE);
+    // Version 1: a gradient, blue at the left edge to green at the right.
+    let img = colr_scene(2, Rgba::BLACK, 1.0).render(1.0);
+    let [r, g, b, _] = img.pixel(10, 31);
+    assert!(r < 8 && g < 16 && b > 239, "{:?}", [r, g, b]);
+    let [r, g, b, _] = img.pixel(29, 31);
+    assert!(r < 8 && g > 239 && b < 16, "{:?}", [r, g, b]);
+}
+
+#[test]
+fn r_fills_text_coloured_layers_in_the_texts_colour() {
+    let lime = Rgba::rgb(0, 255, 0);
+    for id in [1, 2] {
+        // The square 8 to 12 pixels across and 1 to 5 above the baseline.
+        for (colour, want) in [
+            (Rgba::BLACK, [0, 0, 0, 255]),
+            (lime, [0, 255, 0, 255]),
+            (Rgba::WHITE, PAPER),
+        ] {
+            let img = colr_scene(id, colour, 1.0).render(1.0);
+            assert_eq!(img.pixel(20, 27), want, "glyph {id} in {colour:?}");
+            assert_eq!(img.pixel(15, 18), RED, "glyph {id} in {colour:?}");
+        }
+        // A transparent text shows the layers that are not its colour.
+        let img = colr_scene(id, Rgba::TRANSPARENT, 1.0).render(1.0);
+        assert_eq!(img.pixel(15, 18), RED, "glyph {id}");
+        assert_ne!(img.pixel(20, 27), PAPER, "glyph {id}");
+        assert_eq!(img.pixel(20, 27)[0], 0, "glyph {id}");
+    }
+}
+
+/// One renderer keeps its pictures from frame to frame, so a text whose
+/// colour changes must not be drawn from the picture made for the old colour.
+#[test]
+fn r_redraws_text_coloured_layers_when_the_texts_colour_changes() {
+    let lime = Rgba::rgb(0, 255, 0);
+    for id in [1, 2] {
+        let mut r = VelloCpuReference::new(WHITE_BG);
+        for (colour, want) in [
+            (Rgba::BLACK, [0, 0, 0, 255]),
+            (lime, [0, 255, 0, 255]),
+            (Rgba::TRANSPARENT, BLUE),
+            (Rgba::BLACK, [0, 0, 0, 255]),
+        ] {
+            let mut s = colr_scene(id, colour, 1.0);
+            s.frame += 1;
+            let snap = s.tree.compose(s.vp, s.frame);
+            let img = r.render(&FrameView::new(&snap, 1.0)).unwrap();
+            let got = img.pixel(20, 27);
+            if colour == Rgba::TRANSPARENT {
+                // The blue layer, or the gradient, under the square shows.
+                assert_eq!(got[0], 0, "glyph {id} in {colour:?}");
+                assert_ne!(got, PAPER, "glyph {id} in {colour:?}");
+            } else {
+                assert_eq!(got, want, "glyph {id} in {colour:?}");
+            }
+            assert_eq!(img.pixel(15, 18), RED, "glyph {id} in {colour:?}");
+        }
+    }
+}
+
+#[test]
+fn r_fades_colour_layers_with_the_items_opacity() {
+    let img = colr_scene(1, Rgba::WHITE, 0.5).render(1.0);
+    let [r, g, b, _] = img.pixel(15, 18);
+    assert_eq!(r, 255);
+    assert!((126..=129).contains(&g) && g == b, "{:?}", [r, g, b]);
+}
+
+#[test]
+fn runs_say_whether_they_hold_colour_layer_glyphs() {
+    assert!(ljos_render::run_has_color_glyphs(&colr_run(1, 20.0, 0.0)));
+    assert!(ljos_render::run_has_color_glyphs(&colr_run(2, 20.0, 0.0)));
+}
+
+#[test]
+fn colour_layer_glyph_ink_is_its_layers() {
+    for id in [1, 2] {
+        let boxes = glyph_ink_bounds(&colr_run(id, 20.0, 30.0));
+        let b = boxes[0].expect("a colour layer glyph has ink");
+        assert_eq!(
+            (b.x0, b.y0, b.x1, b.y1),
+            (0.0, 14.0, 20.0, 34.0),
+            "glyph {id}"
+        );
+    }
 }
 
 #[cfg(feature = "b0")]
@@ -888,6 +1111,123 @@ mod b0 {
             assert!((126..=129).contains(&v.color.r()), "{:?}", v.color);
             assert_eq!((v.color.g(), v.color.b()), (0, 0));
         }
+    }
+
+    /// A colour glyph is a picture: one textured quad over the picture's
+    /// box, in white so the text's colour does not tint it, faded by the
+    /// node's opacity alone.
+    #[test]
+    fn b0_draws_colour_glyphs_as_pictures() {
+        for scale in [1.0, 2.0] {
+            let mut s = color_scene(20.0, Rgba::BLACK, 0.5);
+            let ctx = Context::default();
+            let mut be = EpaintBackend::new();
+            let (shapes, stats) = frame(&mut s, &mut be, &ctx, scale);
+            assert_eq!(stats.warnings, 0);
+            let quads: Vec<_> = shapes
+                .iter()
+                .filter_map(|c| match &c.shape {
+                    Shape::Mesh(m) => Some(m),
+                    _ => None,
+                })
+                .flat_map(|m| m.vertices.as_chunks::<4>().0.iter())
+                .collect();
+            assert_eq!(quads.len(), 1, "scale {scale}: one picture, no outline");
+            let (tl, br) = (quads[0][0], quads[0][2]);
+            assert_eq!(
+                (tl.pos.x, tl.pos.y, br.pos.x, br.pos.y),
+                (10.0, 14.0, 30.0, 34.0)
+            );
+            for v in quads[0] {
+                assert!((126..=129).contains(&v.color.a()), "{:?}", v.color);
+                assert_eq!(v.color.r(), v.color.a(), "{:?}", v.color);
+                assert_eq!(v.color.g(), v.color.a(), "{:?}", v.color);
+                assert_eq!(v.color.b(), v.color.a(), "{:?}", v.color);
+            }
+        }
+    }
+
+    /// A colour layer glyph is a picture too, its plain box outline not
+    /// filled over it, whatever the text's colour.
+    #[test]
+    fn b0_draws_colour_layer_glyphs_as_pictures() {
+        for id in [1, 2] {
+            for colour in [Rgba::BLACK, Rgba::TRANSPARENT] {
+                let mut s = colr_scene(id, colour, 1.0);
+                let ctx = Context::default();
+                let mut be = EpaintBackend::new();
+                let (shapes, stats) = frame(&mut s, &mut be, &ctx, 1.0);
+                assert_eq!(stats.warnings, 0);
+                let quads: Vec<_> = shapes
+                    .iter()
+                    .filter_map(|c| match &c.shape {
+                        Shape::Mesh(m) => Some(m),
+                        _ => None,
+                    })
+                    .flat_map(|m| m.vertices.as_chunks::<4>().0.iter())
+                    .collect();
+                assert_eq!(quads.len(), 1, "glyph {id} in {colour:?}: one picture");
+                let (tl, br) = (quads[0][0], quads[0][2]);
+                assert_eq!(
+                    (tl.pos.x, tl.pos.y, br.pos.x, br.pos.y),
+                    (10.0, 14.0, 30.0, 34.0)
+                );
+            }
+        }
+    }
+
+    /// A text that stays put keeps its emoji while another text runs
+    /// through hundreds of sizes: its list is cached, so it asks for its
+    /// picture only once, and the cache letting go of pictures a frame
+    /// didn't ask for must not take that one from it.
+    #[test]
+    fn b0_keeps_a_cached_lists_pictures_while_others_come_and_go() {
+        let mut s = Scene::new(200.0, 60.0);
+        let still = s.node(None, 0.0, 0.0, 60.0, 60.0);
+        let moving = s.node(None, 60.0, 0.0, 140.0, 60.0);
+        s.paint(still, |b| {
+            b.glyphs(
+                Arc::new(colr_run(1, 20.0, 0.0)),
+                Vec2::new(10.0, 30.0),
+                Rgba::BLACK,
+                Decorations::default(),
+            );
+        });
+        let ctx = Context::default();
+        let mut be = EpaintBackend::new();
+        for step in 0..300 {
+            let size = 2.0 + step as f32 * 0.25;
+            s.paint(moving, |b| {
+                b.glyphs(
+                    Arc::new(colr_run(2, size, 0.0)),
+                    Vec2::new(0.0, 50.0),
+                    Rgba::BLACK,
+                    Decorations::default(),
+                );
+            });
+            frame(&mut s, &mut be, &ctx, 1.0);
+        }
+        let (shapes, _) = frame(&mut s, &mut be, &ctx, 1.0);
+        let gpu = gpu(&ctx);
+        let gpu = gpu.0.lock().unwrap();
+        let drawn = shapes.iter().any(|c| {
+            let Shape::Mesh(m) = &c.shape else {
+                return false;
+            };
+            let Some((width, alpha)) = gpu.held.get(&m.texture_id) else {
+                return false;
+            };
+            m.vertices.as_chunks::<4>().0.iter().any(|q| {
+                let (tl, br) = (q[0], q[2]);
+                let at = (tl.pos.x, tl.pos.y, br.pos.x, br.pos.y);
+                let height = alpha.len() / width;
+                let (u, v) = ((tl.uv.x + br.uv.x) / 2.0, (tl.uv.y + br.uv.y) / 2.0);
+                let texel =
+                    alpha[(v * height as f32) as usize * width + (u * *width as f32) as usize];
+                at == (10.0, 14.0, 30.0, 34.0) && texel > 0
+            })
+        });
+        assert!(drawn, "the still text's picture is still drawn");
     }
 
     /// Two lines on a GPU that takes textures no wider than 256: each fits

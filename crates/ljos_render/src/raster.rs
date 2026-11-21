@@ -32,7 +32,9 @@ use crate::backend::{
 use crate::compose::{ClipId, FrameSnapshot, bbox_of};
 use crate::damage::PixelRect;
 use crate::display_list::{Decorations, DrawOp, GlyphRun, Paint, PathStyle, fill_area};
-use crate::glyph::{OutlineCache, baseline_snap, snap_bar};
+use crate::glyph::{
+    ColorGlyph, ColorGlyphCache, OutlineCache, baseline_snap, is_upright, snap_bar,
+};
 use crate::image::{ImageBlit, ImageHandle, WeakImage, image_blit, nine_patch_blits};
 use crate::rgba::Rgba;
 
@@ -70,6 +72,8 @@ pub struct VelloCpuReference {
     ctx: Option<RenderContext>,
     resources: Resources,
     outlines: OutlineCache,
+    /// Colour glyphs (emoji) as pictures, by size.
+    colors: ColorGlyphCache,
     /// vello_cpu's own copy of every image drawn (the whole image, or a part
     /// that must be sampled on its own, in each tint it is drawn with),
     /// until the image itself is dropped.
@@ -165,6 +169,7 @@ impl VelloCpuReference {
             ctx: None,
             resources: Resources::new(),
             outlines: OutlineCache::default(),
+            colors: ColorGlyphCache::default(),
             pixmaps: HashMap::new(),
             settings: RenderSettings {
                 level: Level::baseline(),
@@ -291,6 +296,7 @@ impl VelloCpuReference {
     }
 
     fn draw(&mut self, ctx: &mut RenderContext, view: &FrameView<'_>, origin: Vec2, cull: bool) {
+        self.colors.begin_frame();
         let snap = view.snapshot;
         let base = Affine::translate(-origin)
             * Affine::scale(f64::from(view.scale_factor))
@@ -377,8 +383,10 @@ impl VelloCpuReference {
         }
     }
 
-    /// Fill a run's outlines. Runs wholly outside the canvas are skipped, so
-    /// text scrolled out of view costs nothing.
+    /// Fill a run's outlines, and draw its colour glyphs' pictures. Runs
+    /// wholly outside the canvas are skipped, so text scrolled out of view
+    /// costs nothing.
+    #[allow(clippy::too_many_arguments)]
     fn draw_glyphs(
         &mut self,
         ctx: &mut RenderContext,
@@ -386,14 +394,15 @@ impl VelloCpuReference {
         origin: Vec2,
         decorations: &Decorations,
         color: Rgba,
+        opacity: f32,
         to_device: Affine,
+        warned: &mut HashSet<&'static str>,
     ) {
-        if color.is_transparent() {
-            return;
-        }
+        // A colour glyph's layers in the text's colour take it unfaded: the
+        // picture is faded as a whole, like the others.
+        let foreground = color;
+        let color = color.with_opacity(opacity);
         let canvas = Rect::new(0.0, 0.0, f64::from(ctx.width()), f64::from(ctx.height()));
-        ctx.set_paint(alpha_color(color));
-        ctx.set_fill_rule(Fill::NonZero);
         let snapped = Affine::translate((
             0.0,
             baseline_snap(to_device, f64::from(run.baseline) + origin.y),
@@ -401,14 +410,26 @@ impl VelloCpuReference {
         let ink = snapped.transform_rect_bbox(run.bounds + origin);
         if ink.overlaps(canvas) {
             let size = f64::from(run.font_size);
+            // A colour glyph is drawn at the size it has on the device, so
+            // its picture is resampled once, not on every draw.
+            let scale = snapped.determinant().abs().sqrt();
             for g in &run.glyphs {
+                let at = origin + Vec2::new(f64::from(g.x), f64::from(g.y));
+                if let Some(picture) = self.colors.get(run, g.id, size * scale, foreground) {
+                    self.draw_color_glyph(ctx, &picture, snapped, at, scale, opacity, warned);
+                    continue;
+                }
+                if color.is_transparent() {
+                    continue;
+                }
                 let Some(outline) = self.outlines.get(run, g.id) else {
                     continue;
                 };
                 if outline.path.is_empty() {
                     continue;
                 }
-                let at = origin + Vec2::new(f64::from(g.x), f64::from(g.y));
+                ctx.set_paint(alpha_color(color));
+                ctx.set_fill_rule(Fill::NonZero);
                 ctx.set_transform(snapped * Affine::translate(at) * outline.to_size(run, size));
                 ctx.fill_path(&outline.path);
                 if let Some(width) = outline.embolden_width(run) {
@@ -417,19 +438,66 @@ impl VelloCpuReference {
                 }
             }
         }
-        for bar in decorations.bars() {
-            match snap_bar(to_device, bar + origin) {
-                Some(device) => {
-                    ctx.set_transform(Affine::IDENTITY);
-                    ctx.fill_rect(&device);
-                }
-                None => {
-                    ctx.set_transform(to_device);
-                    ctx.fill_rect(&(bar + origin));
+        if !color.is_transparent() {
+            ctx.set_paint(alpha_color(color));
+            ctx.set_fill_rule(Fill::NonZero);
+            for bar in decorations.bars() {
+                match snap_bar(to_device, bar + origin) {
+                    Some(device) => {
+                        ctx.set_transform(Affine::IDENTITY);
+                        ctx.fill_rect(&device);
+                    }
+                    None => {
+                        ctx.set_transform(to_device);
+                        ctx.fill_rect(&(bar + origin));
+                    }
                 }
             }
         }
         ctx.set_transform(to_device);
+    }
+
+    /// Draws a colour glyph's picture with its origin at `at`. Upright, it
+    /// lands on whole device pixels, texel on pixel, as Qt draws them.
+    #[allow(clippy::too_many_arguments)]
+    fn draw_color_glyph(
+        &mut self,
+        ctx: &mut RenderContext,
+        picture: &ColorGlyph,
+        snapped: Affine,
+        at: Vec2,
+        scale: f64,
+        opacity: f32,
+        warned: &mut HashSet<&'static str>,
+    ) {
+        let src = picture.image.rect();
+        // Placed on whole pixels only when the picture was made at the
+        // size it shows: a scale that differs across and down stretches it.
+        let [sx, _, _, sy, _, _] = snapped.as_coeffs();
+        let (place, dst) = if is_upright(snapped) && (sx - sy).abs() <= 1e-6 * sx.max(sy) {
+            let o = snapped * vello_cpu::kurbo::Point::new(at.x, at.y);
+            let (x, y) = (
+                (o.x + picture.rect.x0).round(),
+                (o.y + picture.rect.y0).round(),
+            );
+            (
+                Affine::IDENTITY,
+                Rect::new(x, y, x + picture.rect.width(), y + picture.rect.height()),
+            )
+        } else {
+            (
+                snapped * Affine::translate(at) * Affine::scale(1.0 / scale),
+                picture.rect,
+            )
+        };
+        ctx.set_transform(place);
+        let blit = image_blit(src, dst, None, [false, false]);
+        let look = Look {
+            smooth: true,
+            opacity,
+            tint: None,
+        };
+        self.draw_blit(ctx, &picture.image, &blit, look, warned);
     }
 
     /// vello_cpu's copy of `image`, or of the part `crop` (x, y, width,
@@ -704,8 +772,10 @@ impl VelloCpuReference {
                     run,
                     *origin,
                     decorations,
-                    color.with_opacity(opacity),
+                    color,
+                    opacity,
                     to_device,
+                    warned,
                 );
             }
             DrawOp::Image {
@@ -809,6 +879,7 @@ impl RenderBackend for VelloCpuReference {
         self.views3d.clear();
         self.resources = Resources::new();
         self.outlines.clear();
+        self.colors.clear();
         self.pixmaps.clear();
         self.area = None;
     }
