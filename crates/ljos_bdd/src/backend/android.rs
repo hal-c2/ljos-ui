@@ -214,6 +214,12 @@ impl Reached for OnPhone {
 }
 
 #[derive(Debug, Default)]
+/// A scenario's own directory in `parent`. `ljos android connect` puts
+/// the inspector's token in it, and refuses one that others can enter.
+fn scenario_dir(parent: &Path) -> std::io::Result<tempfile::TempDir> {
+    tempfile::Builder::new().prefix("android-").tempdir_in(parent)
+}
+
 pub struct AndroidBackend {
     phone: Option<Phone>,
     running: Option<Running<OnPhone>>,
@@ -256,11 +262,7 @@ impl AndroidBackend {
         if self.dir.is_none() {
             let features = crate::runner::target_dir().join("features");
             std::fs::create_dir_all(&features)?;
-            self.dir = Some(
-                tempfile::Builder::new()
-                    .prefix("android-")
-                    .tempdir_in(features)?,
-            );
+            self.dir = Some(scenario_dir(&features)?);
         }
         Ok(self.dir.as_ref().expect("just made").path().to_owned())
     }
@@ -632,7 +634,17 @@ impl Device for AndroidBackend {
 
 #[cfg(test)]
 mod tests {
-    use super::quoted;
+    use super::{quoted, scenario_dir};
+
+    #[cfg(unix)]
+    #[test]
+    fn a_scenario_s_directory_is_the_user_s_alone() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let parent = tempfile::tempdir().unwrap();
+        let dir = scenario_dir(parent.path()).unwrap();
+        let mode = std::fs::metadata(dir.path()).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o700, "mode {mode:o}");
+    }
 
     #[test]
     fn a_quoted_word_keeps_its_quotes() {
