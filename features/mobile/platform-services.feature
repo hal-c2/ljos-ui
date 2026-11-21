@@ -67,7 +67,9 @@ Feature: An application on a phone uses the system's services
     Then the clipboard holds a picture 3 by 2 pixels
 
   Scenario: A copied picture is not pasted into text
-    When the application copies a picture 3 by 2 pixels
+    When the method "selectAll" of "input" is called
+    And the method "copy" of "input" is called
+    And the application copies a picture 3 by 2 pixels
     Then the property "canPaste" of "input" is false
     When the method "selectAll" of "input" is called
     And the method "paste" of "input" is called

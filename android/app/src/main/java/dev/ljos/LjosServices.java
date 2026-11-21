@@ -83,7 +83,7 @@ public final class LjosServices {
     // The clipboard. Android lets only the application with focus read it,
     // and its listeners and its manager belong to the main thread.
 
-    /** The clipboard's text, or null when it holds none. */
+    /** The clipboard's text; empty when it holds none, null when it cannot be read. */
     public static String clipboardText(Context context) throws Exception {
         ClipData.Item item = clipboardItem(context);
         if (item == null) {
@@ -93,10 +93,11 @@ public final class LjosServices {
         if (uri != null && item.getText() == null && item.getHtmlText() == null) {
             // A URI of anything but text (a copied picture) is no text:
             // coerceToText would give the URI itself, and a paste would
-            // insert it.
+            // insert it. Empty, not null: null is "the clipboard could not
+            // be read", and a paste would get what was copied here before.
             String type = context.getContentResolver().getType(uri);
             if (type == null || !type.startsWith("text/")) {
-                return null;
+                return "";
             }
         }
         // On the caller's thread, not the main one: an item that is a
