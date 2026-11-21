@@ -1396,14 +1396,25 @@ fn an_exception_pending_behind_an_unknown_error_keeps_its_value() {
 /// a bug in the engine, not the heap running out.
 #[test]
 fn an_unknown_error_with_nothing_pending_and_room_to_spare_is_internal() {
-    let host = plain();
-    let err = host
-        .enter("unknown", host.config().slice, |s| {
-            assert!(!s.ctx().has_exception());
-            Err::<(), _>(ljos_js::rquickjs::Error::Unknown)
-        })
-        .unwrap_err();
-    assert!(matches!(err, JsFault::Internal(_)), "{err:?}");
+    // The default limit (96 MiB), with room to spare, and no limit at all.
+    let unlimited = JsHost::new(JsConfig {
+        memory_limit: None,
+        ..JsConfig::default()
+    })
+    .unwrap();
+    for host in [plain(), unlimited] {
+        let err = host
+            .enter("unknown", host.config().slice, |s| {
+                assert!(!s.ctx().has_exception());
+                Err::<(), _>(ljos_js::rquickjs::Error::Unknown)
+            })
+            .unwrap_err();
+        assert!(
+            matches!(err, JsFault::Internal(_)),
+            "{:?}: {err:?}",
+            host.config().memory_limit
+        );
+    }
 }
 
 /// With nothing pending the heap is judged by the most the run held, as
