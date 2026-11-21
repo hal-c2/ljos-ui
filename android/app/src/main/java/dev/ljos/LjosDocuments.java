@@ -17,7 +17,9 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 /**
  * The system's document picker (the Storage Access Framework), for the
@@ -39,6 +41,15 @@ public final class LjosDocuments {
 
     /** The picker each request code on screen is. */
     private static final SparseIntArray showing = new SparseIntArray();
+
+    /** The request codes whose selection is being copied; under {@code showing}. */
+    private static final Set<Integer> copying = new HashSet<>();
+
+    /**
+     * The request codes closed while shown or copied, whose answer the native
+     * side no longer waits for; under {@code showing}.
+     */
+    private static final Set<Integer> closed = new HashSet<>();
 
     /**
      * Shows a picker from the activity on screen; its answer comes to the
@@ -76,6 +87,9 @@ public final class LjosDocuments {
                 return false;
         }
         synchronized (showing) {
+            // The code comes round again after 65535 pickers: a mark of its
+            // last use is not this one's.
+            closed.remove(code);
             showing.put(code, picker);
         }
         Intent asked = intent;
@@ -94,6 +108,13 @@ public final class LjosDocuments {
 
     /** Takes away the picker shown with {@code code}, if it is still up. */
     public static void close(int code) {
+        synchronized (showing) {
+            // A picker that has just answered, or a selection still being
+            // copied, would answer no one: its copies are not left behind.
+            if (showing.indexOfKey(code) >= 0 || copying.contains(code)) {
+                closed.add(code);
+            }
+        }
         LjosActivity activity = LjosActivity.current();
         if (activity != null) {
             activity.runOnUiThread(() -> activity.finishActivity(code));
@@ -107,6 +128,13 @@ public final class LjosDocuments {
     static void answered(LjosActivity activity, int code, int result, Intent data) {
         int picker = forget(code);
         if (picker < 0) {
+            return;
+        }
+        if (unwanted(code)) {
+            synchronized (showing) {
+                closed.remove(code);
+            }
+            nativeAnswered(code, null);
             return;
         }
         List<Uri> uris = new ArrayList<>();
@@ -134,7 +162,23 @@ public final class LjosDocuments {
             return;
         }
         Context context = activity.getApplicationContext();
-        new Thread(() -> nativeAnswered(code, copy(context, code, uris)), "ljos-documents").start();
+        synchronized (showing) {
+            copying.add(code);
+        }
+        new Thread(() -> {
+            String chosen = copy(context, code, uris);
+            boolean wanted;
+            synchronized (showing) {
+                copying.remove(code);
+                wanted = !closed.remove(code);
+            }
+            if (wanted) {
+                nativeAnswered(code, chosen);
+            } else {
+                // Closed after the copy's last look.
+                remove(new File(context.getCacheDir(), "documents/" + code));
+            }
+        }, "ljos-documents").start();
     }
 
     /**
@@ -149,6 +193,13 @@ public final class LjosDocuments {
             int picker = showing.get(code, -1);
             showing.delete(code);
             return picker;
+        }
+    }
+
+    /** Whether the dialog shown with {@code code} was closed since. */
+    private static boolean unwanted(int code) {
+        synchronized (showing) {
+            return closed.contains(code);
         }
     }
 
@@ -214,8 +265,9 @@ public final class LjosDocuments {
     /**
      * Copies each document into the cache's {@code documents/<code>/<n>/},
      * under its own name; the copies' paths, a line each, or null when one
-     * could not be read. A selection that fails leaves no copy behind: the
-     * application is told of none, so nothing else would remove them.
+     * could not be read or the dialog was closed meanwhile. A selection that
+     * fails, or is no longer wanted, leaves no copy behind: the application
+     * is told of none, so nothing else would remove them.
      */
     private static String copy(Context context, int code, List<Uri> uris) {
         File dir = new File(context.getCacheDir(), "documents/" + code);
@@ -225,6 +277,10 @@ public final class LjosDocuments {
             Uri uri = uris.get(i);
             File into = new File(dir, Integer.toString(i));
             File file = new File(into, name(context, uri));
+            if (unwanted(code)) {
+                remove(dir);
+                return null;
+            }
             if (!into.mkdirs() && !into.isDirectory()) {
                 Log.w("ljos", "no directory for the copy of " + uri);
                 remove(dir);
@@ -238,6 +294,9 @@ public final class LjosDocuments {
                 byte[] buffer = new byte[64 * 1024];
                 for (int n; (n = in.read(buffer)) > 0; ) {
                     to.write(buffer, 0, n);
+                    if (unwanted(code)) {
+                        throw new IOException("the dialog was closed");
+                    }
                 }
             } catch (IOException | SecurityException e) {
                 Log.w("ljos", "the document " + uri + " was not read", e);
