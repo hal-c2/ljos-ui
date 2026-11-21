@@ -774,6 +774,9 @@ impl Gpu {
         if std::env::var_os("WGPU_BACKEND").is_none() {
             descriptor.backends = wgpu::Backends::VULKAN | wgpu::Backends::GL;
         }
+        descriptor.flags = crate::gpu_flags::asked_debug_flags(descriptor.flags, |name| {
+            std::env::var_os(name).is_some()
+        });
         let instance = wgpu::Instance::new(descriptor);
         let probe = surface_of(&instance, window)?;
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
