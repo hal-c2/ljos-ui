@@ -7233,6 +7233,81 @@ module QtQuick.Controls.impl
 		signal colorChanged
 		signal cacheChanged
 
+module QtQuick.Controls.macOS
+	AbstractButton QtQuick.Templates.AbstractButton
+	Action QtQuick.Templates.Action
+	ActionGroup QtQuick.Templates.ActionGroup
+	ApplicationWindow QtQuick/Controls/Basic/ApplicationWindow.qml
+	BusyIndicator QtQuick/Controls/Basic/BusyIndicator.qml
+	Button QtQuick/Controls/macOS/Button.qml
+	ButtonGroup QtQuick.Templates.ButtonGroup
+	Calendar QtQuick.Controls.Calendar
+	CalendarModel QtQuick.Controls.CalendarModel
+	CheckBox QtQuick/Controls/Basic/CheckBox.qml
+	CheckDelegate QtQuick/Controls/Basic/CheckDelegate.qml
+	ComboBox QtQuick/Controls/Basic/ComboBox.qml
+	Container QtQuick.Templates.Container
+	ContextMenu QtQuick.Controls.ContextMenu
+	Control QtQuick/Controls/Basic/Control.qml
+	DayOfWeekRow QtQuick/Controls/Basic/DayOfWeekRow.qml
+	DelayButton QtQuick/Controls/Basic/DelayButton.qml
+	Dial QtQuick/Controls/Basic/Dial.qml
+	Dialog QtQuick/Controls/Basic/Dialog.qml
+	DialogButtonBox QtQuick/Controls/Basic/DialogButtonBox.qml
+	DoubleSpinBox QtQuick/Controls/Basic/DoubleSpinBox.qml
+	Drawer QtQuick/Controls/Basic/Drawer.qml
+	Frame QtQuick/Controls/Basic/Frame.qml
+	GroupBox QtQuick/Controls/Basic/GroupBox.qml
+	HorizontalHeaderView QtQuick/Controls/Basic/HorizontalHeaderView.qml
+	HorizontalHeaderViewDelegate QtQuick/Controls/Basic/HorizontalHeaderViewDelegate.qml
+	ItemDelegate QtQuick/Controls/Basic/ItemDelegate.qml
+	Label QtQuick/Controls/Basic/Label.qml
+	Menu QtQuick/Controls/Basic/Menu.qml
+	MenuBar QtQuick/Controls/Basic/MenuBar.qml
+	MenuBarItem QtQuick/Controls/Basic/MenuBarItem.qml
+	MenuItem QtQuick/Controls/Basic/MenuItem.qml
+	MenuSeparator QtQuick/Controls/Basic/MenuSeparator.qml
+	MonthGrid QtQuick/Controls/Basic/MonthGrid.qml
+	Overlay QtQuick.Templates.Overlay
+	Page QtQuick/Controls/Basic/Page.qml
+	PageIndicator QtQuick/Controls/Basic/PageIndicator.qml
+	Pane QtQuick/Controls/Basic/Pane.qml
+	Popup QtQuick/Controls/Basic/Popup.qml
+	ProgressBar QtQuick/Controls/Basic/ProgressBar.qml
+	RadioButton QtQuick/Controls/Basic/RadioButton.qml
+	RadioDelegate QtQuick/Controls/Basic/RadioDelegate.qml
+	RangeSlider QtQuick/Controls/Basic/RangeSlider.qml
+	RoundButton QtQuick/Controls/Basic/RoundButton.qml
+	ScrollBar QtQuick/Controls/Basic/ScrollBar.qml
+	ScrollIndicator QtQuick/Controls/Basic/ScrollIndicator.qml
+	ScrollView QtQuick/Controls/Basic/ScrollView.qml
+	SelectionRectangle QtQuick/Controls/Basic/SelectionRectangle.qml
+	Slider QtQuick/Controls/Basic/Slider.qml
+	SpinBox QtQuick/Controls/Basic/SpinBox.qml
+	SplitHandle QtQuick.Templates.SplitHandle
+	SplitView QtQuick/Controls/Basic/SplitView.qml
+	StackView QtQuick/Controls/Basic/StackView.qml
+	SwipeDelegate QtQuick/Controls/Basic/SwipeDelegate.qml
+	SwipeView QtQuick/Controls/Basic/SwipeView.qml
+	Switch QtQuick/Controls/Basic/Switch.qml
+	SwitchDelegate QtQuick/Controls/Basic/SwitchDelegate.qml
+	TabBar QtQuick/Controls/Basic/TabBar.qml
+	TabButton QtQuick/Controls/Basic/TabButton.qml
+	TableViewDelegate QtQuick/Controls/Basic/TableViewDelegate.qml
+	TextArea QtQuick/Controls/Basic/TextArea.qml
+	TextField QtQuick/Controls/Basic/TextField.qml
+	ToolBar QtQuick/Controls/Basic/ToolBar.qml
+	ToolButton QtQuick/Controls/Basic/ToolButton.qml
+	ToolSeparator QtQuick/Controls/Basic/ToolSeparator.qml
+	ToolTip QtQuick/Controls/Basic/ToolTip.qml
+	TreeViewDelegate QtQuick/Controls/Basic/TreeViewDelegate.qml
+	Tumbler QtQuick/Controls/Basic/Tumbler.qml
+	VerticalHeaderView QtQuick/Controls/Basic/VerticalHeaderView.qml
+	VerticalHeaderViewDelegate QtQuick/Controls/Basic/VerticalHeaderViewDelegate.qml
+	WeekNumberColumn QtQuick/Controls/Basic/WeekNumberColumn.qml
+	type QtQuick/Controls/macOS/Button.qml Button
+		prototype QtQuick.Templates.Button named
+
 module QtQuick.Dialogs
 	ColorDialog QtQuick.Dialogs.ColorDialog
 	FileDialog QtQuick.Dialogs.FileDialog

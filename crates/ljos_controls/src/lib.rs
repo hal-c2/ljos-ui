@@ -127,18 +127,21 @@ pub use window::{
     set_application_arguments, set_quit_on_last_window_closed,
 };
 
-use style::{BASIC, FUSION, MATERIAL, StyleLibrary, UNIVERSAL};
+use style::{BASIC, FUSION, MACOS, MATERIAL, StyleLibrary, UNIVERSAL};
 pub use style::{MaterialDefaults, set_material_defaults};
 
 /// The modules the style's types are registered in. Qt picks the style
 /// behind `QtQuick.Controls` when the application starts; here that URI
 /// uses Basic, and explicit style imports use their own libraries.
-const CONTROLS: [&str; 5] = [
+const CONTROLS: [&str; 6] = [
     "QtQuick.Controls",
     "QtQuick.Controls.Basic",
     "QtQuick.Controls.Material",
     "QtQuick.Controls.Fusion",
     "QtQuick.Controls.Universal",
+    // Qt ships the macOS style only on macOS; Ljós has it everywhere,
+    // with Basic's look for the controls it does not draw yet.
+    "QtQuick.Controls.macOS",
 ];
 
 /// Set once the modules are in an engine.
@@ -261,6 +264,7 @@ pub fn register(engine: &Engine) {
             "QtQuick.Controls.Material" => MATERIAL,
             "QtQuick.Controls.Fusion" => FUSION,
             "QtQuick.Controls.Universal" => UNIVERSAL,
+            "QtQuick.Controls.macOS" => MACOS,
             _ => BASIC,
         };
         // Types that have no look of their own are the templates.
