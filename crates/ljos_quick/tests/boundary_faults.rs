@@ -541,6 +541,43 @@ fn a_fallback_that_cannot_be_made_while_the_heap_is_short_is_counted() {
     assert!(warned.iter().any(|w| w.contains("fallback:")), "{warned:?}");
 }
 
+/// A fallback that itself has no room to be made is a resource fault, as
+/// the content's is: the boundary waits and tries again, and never gives
+/// up, however many times that happens.
+#[test]
+fn a_fallback_that_also_runs_out_of_heap_waits_with_the_content_and_never_gives_up() {
+    let source = with_fallback(
+        "fallback: Item {\n            objectName: \"sorry\"\n            property var lots: []\n            Component.onCompleted: {\n                for (let i = 0; i < 20000; i++) lots.push({ i: i, s: \"row \" + i });\n            }\n        }",
+    );
+    let (e, clock, _, boundary) = out_of_heap(&source);
+    assert!(get(&e, boundary, "failed").to_boolean());
+    assert_ne!(shown(&e, boundary), "sorry");
+    for _ in 0..10 {
+        let due = e
+            .next_timer_deadline()
+            .expect("the content is made again after a wait");
+        clock.set(due);
+        settle(&e, &clock, boundary);
+        assert!(e.application_fault().is_none(), "not escalated");
+    }
+    let warned = e.take_warnings();
+    assert!(
+        warned
+            .iter()
+            .any(|w| w.contains("ErrorBoundary: fallback:") && w.contains("not shown")),
+        "{warned:?}"
+    );
+
+    // Room again: the content comes back with nobody calling retry().
+    assert!(e.set_script_heap_limit(None));
+    let due = e.next_timer_deadline().expect("still trying");
+    clock.set(due);
+    settle(&e, &clock, boundary);
+    assert!(!get(&e, boundary, "failed").to_boolean());
+    assert_eq!(shown(&e, boundary), "content");
+    assert!(e.application_fault().is_none());
+}
+
 /// Content the fallback's own handler gives while the fallback is made
 /// is what shows: the fallback is not put over it.
 #[test]

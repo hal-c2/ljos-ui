@@ -312,6 +312,12 @@ impl Boundary for Behaviour {
 
     fn start(&self, e: &Engine, me: ObjectId) -> Result<(), Fault> {
         match show_fallback(e, me) {
+            // No room for the fallback either: the content is made again
+            // after a wait, outside the supervisor's count.
+            Some(Err(fault @ (Fault::JsOutOfMemory | Fault::JsInterrupted { .. }))) => {
+                again_after(e, me, &fault);
+                Ok(())
+            }
             Some(shown) => shown,
             None => {
                 bump_restarts(e, me);
@@ -366,12 +372,18 @@ impl Boundary for Behaviour {
         if !failed(e, me) {
             return true;
         }
-        if let Some(Err(fault)) = show_fallback(e, me) {
-            // A fallback that cannot be made is not a resource fault: it
-            // goes to the supervisor, counted, as when `start` meets it.
-            // Filed, not handled here, so it is taken after this one.
-            e.report_boundary_fault(me, fault);
-            return true;
+        match show_fallback(e, me) {
+            // A fallback with no room to be made waits with the content:
+            // it is tried again when the content is.
+            Some(Err(Fault::JsOutOfMemory | Fault::JsInterrupted { .. })) => {}
+            // A fallback that cannot be made for its own reasons goes to
+            // the supervisor, counted, as when `start` meets it. Filed,
+            // not handled here, so it is taken after this one.
+            Some(Err(fault)) => {
+                e.report_boundary_fault(me, fault);
+                return true;
+            }
+            _ => {}
         }
         // The fallback's handlers may have given new content too.
         if failed(e, me) {
@@ -404,6 +416,12 @@ fn show_fallback(e: &Engine, me: ObjectId) -> Option<Result<(), Fault>> {
             Ok(())
         }
         Ok(_) => Ok(()),
+        // No room, or no time, to make it: a resource fault, as for the
+        // content, and not the fallback's bug.
+        Err(err @ (EngineError::JsOutOfMemory(_) | EngineError::JsInterrupted(_))) => {
+            warn(e, format!("ErrorBoundary: fallback: {err}, not shown"));
+            Err(creation_fault(e, err))
+        }
         // With nothing to show in the content's place the boundary
         // cannot contain the fault.
         Err(err) => Err(Fault::Startup(format!("fallback: {err}"))),
