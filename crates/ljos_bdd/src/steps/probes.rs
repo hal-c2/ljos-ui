@@ -165,6 +165,34 @@ fn observer_does_not_have(w: &mut LjosWorld, locator: String) -> StepResult {
     observer_matches(w, &unquoted(&locator), false)
 }
 
+// What the observer itself warned of is read from its own inspector, as an
+// agent reads it, not from its stderr: the warnings are the same, and the
+// inspector gives them one by one with their level.
+#[then(regex = r#"^the observer's log has no warning matching "([^"]+)"$"#)]
+fn observer_log_has_no_warning(w: &mut LjosWorld, pattern: String) -> StepResult {
+    let re = regex::Regex::new(&pattern).map_err(|e| format!("bad pattern {pattern:?}: {e}"))?;
+    w.each(|b| {
+        let told = b
+            .probes()?
+            .observer_call("app_logs", serde_json::json!({ "level": "warning" }))?;
+        let hits: Vec<&str> = told["entries"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|e| e["message"].as_str())
+            .filter(|m| re.is_match(m))
+            .collect();
+        if hits.is_empty() {
+            return Ok(());
+        }
+        Err(BackendError::Failed(format!(
+            "the observer warned {} time(s) matching {pattern:?}:\n  {}",
+            hits.len(),
+            hits.join("\n  ")
+        )))
+    })
+}
+
 fn observer_matches(w: &mut LjosWorld, locator: &str, present: bool) -> StepResult {
     w.each(|b| {
         let probes = b.probes()?;

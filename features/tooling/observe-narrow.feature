@@ -39,6 +39,21 @@ Feature: The observer fits a narrow window
       | 680   |
       | 390   |
 
+  # The pages not shown keep sizes of their own, and a page whose size
+  # follows what it holds must not grow by what it holds taking that size:
+  # the observer settles, and only then rests.
+  Scenario Outline: The observer settles as it opens
+    When the application is observed
+    And the observer's window is <width> by 800 pixels
+    Then the observer has "role=heading[name=\"Overview\"]"
+    And the observer's log has no warning matching "(?i)polish loop"
+
+    Examples:
+      | width |
+      | 1200  |
+      | 680   |
+      | 390   |
+
   Scenario Outline: The Overview fits a narrow window
     When the application is observed
     And the observer's window is <width> by 900 pixels
