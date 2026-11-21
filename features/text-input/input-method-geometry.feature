@@ -82,3 +82,10 @@ Feature: An input method is told where the text is
       Then the input method is told of 4 composed units
       And the input method is told each composed unit has a width
       And the input method is told no two composed characters overlap
+
+    Scenario: What is composed in a hidden field stands where its mask does
+      When the property "echoMode" of "input" is set to 2
+      And the input method holds "ni" composing 0 to 2 with the cursor at 2
+      Then the input method is told of 2 composed units
+      And the input method is told each composed unit has a width
+      And the input method is told no two composed characters overlap
