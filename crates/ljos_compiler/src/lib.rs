@@ -245,6 +245,9 @@ pub enum Code {
     QtTr,
     /// The checker: a translated text joined to another value with `+`.
     I18nConcat,
+    /// A QML file of the project the compile did not read: not UTF-8,
+    /// unreadable, or a link ([`Project::left_out`]).
+    LeftOut,
 }
 
 impl Code {
@@ -297,6 +300,7 @@ impl Code {
             Code::I18nOther => "i18n-other",
             Code::QtTr => "qt-tr",
             Code::I18nConcat => "i18n-concat",
+            Code::LeftOut => "left-out",
         }
     }
 }
@@ -374,7 +378,14 @@ impl fmt::Display for Diagnostic {
 pub fn failure_reason(diagnostics: &[Diagnostic]) -> String {
     match diagnostics.iter().find(|d| d.severity == Severity::Error) {
         Some(d) => format!("{}:{}: {}", d.span.line, d.span.column, d.message),
-        None => "the file does not compile".to_owned(),
+        // A file the compile left out is at no place in it.
+        None => diagnostics
+            .iter()
+            .find(|d| d.code == Code::LeftOut)
+            .map_or_else(
+                || "the file does not compile".to_owned(),
+                |d| d.message.clone(),
+            ),
     }
 }
 
@@ -552,12 +563,27 @@ pub fn compile_roots_compat<O: TypeOracle>(
 ) -> Result<Vec<FileResult>, Error> {
     let mut project = Project::load_roots(roots, oracle)?;
     project.set_compat(lower);
-    Ok(project
+    let mut results: Vec<FileResult> = project
         .files()
         .map(|key| FileResult {
             key: key.to_string(),
             path: project.path(key).map(Path::to_owned),
             result: compile_file(&project, key),
         })
-        .collect())
+        .collect();
+    // A file left out of one root that another has is that one's.
+    for (key, path, why) in project.left_out() {
+        if project.path(key).is_none() {
+            results.push(FileResult {
+                key: key.to_owned(),
+                path: Some(path.to_owned()),
+                result: Err(vec![Diagnostic::warning(
+                    Code::LeftOut,
+                    why,
+                    SourceSpan::default(),
+                )]),
+            });
+        }
+    }
+    Ok(results)
 }

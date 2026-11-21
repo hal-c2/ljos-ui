@@ -88,6 +88,9 @@ pub struct Project<O> {
     displaced: BTreeMap<String, String>,
     /// Where each file read from disk is ([`Self::load_roots`]).
     paths: BTreeMap<String, PathBuf>,
+    /// The QML files under the roots that were not read, by key, with
+    /// where each is and why ([`Self::left_out`]).
+    left_out: BTreeMap<String, (PathBuf, String)>,
     /// The JavaScript files, by their path from the root (`content/calc.js`).
     scripts: BTreeMap<String, String>,
     /// The declarations (`calc.d.ts`) beside JavaScript files, by their
@@ -155,6 +158,7 @@ impl<O: TypeOracle> Project<O> {
             chosen: BTreeMap::new(),
             displaced: BTreeMap::new(),
             paths: BTreeMap::new(),
+            left_out: BTreeMap::new(),
             scripts: BTreeMap::new(),
             declarations: BTreeMap::new(),
             oracle,
@@ -850,7 +854,8 @@ impl<O: TypeOracle> Project<O> {
         prefix: &str,
         found: &mut Vec<(String, PathBuf, Module)>,
     ) -> Result<(), Error> {
-        let dirs = scan(root).map_err(|source| Error::Io {
+        let mut links = Vec::new();
+        let dirs = scan_noting_links(root, &mut links).map_err(|source| Error::Io {
             path: root.to_owned(),
             source,
         })?;
@@ -864,11 +869,33 @@ impl<O: TypeOracle> Project<O> {
             .cloned()
             .collect();
         let earlier_scripts: HashSet<String> = self.scripts.keys().cloned().collect();
+        let mut left_out = Vec::new();
+        for path in links.into_iter().filter(|path| has_extension(path, "qml")) {
+            if let Some(key) = key(&path) {
+                left_out.push((
+                    key,
+                    path,
+                    "a link, which the compile does not follow".to_owned(),
+                ));
+            }
+        }
         for (dir, names) in &dirs {
             for name in names.iter().filter(|name| name.ends_with(".qml")) {
                 let path = dir.join(name);
-                let (Some(key), Ok(text)) = (key(&path), std::fs::read_to_string(&path)) else {
+                let Some(key) = key(&path) else {
                     continue;
+                };
+                let text = match std::fs::read_to_string(&path) {
+                    Ok(text) => text,
+                    Err(e) => {
+                        let why = if e.kind() == std::io::ErrorKind::InvalidData {
+                            "not UTF-8".to_owned()
+                        } else {
+                            format!("cannot be read: {e}")
+                        };
+                        left_out.push((key, path, why));
+                        continue;
+                    }
                 };
                 if !earlier.contains(&key) {
                     self.add(&key, text);
@@ -892,6 +919,11 @@ impl<O: TypeOracle> Project<O> {
                 if !self.declarations.contains_key(&key) {
                     self.add_declarations(&key, text);
                 }
+            }
+        }
+        for (key, path, why) in left_out {
+            if !earlier.contains(&key) {
+                self.left_out.entry(key).or_insert((path, why));
             }
         }
         for (dir, names) in &dirs {
@@ -1179,6 +1211,16 @@ impl<O: TypeOracle> Project<O> {
     /// The files, by key, in order.
     pub fn files(&self) -> impl Iterator<Item = &str> {
         self.sources.keys().map(String::as_str)
+    }
+
+    /// The QML files under the roots [`load_roots`](Self::load_roots)
+    /// did not read, in key order, each with where it is and why: one that
+    /// is not UTF-8 or cannot be read, and a link, which the walk does not
+    /// follow so that it stays in the project.
+    pub fn left_out(&self) -> impl Iterator<Item = (&str, &Path, &str)> {
+        self.left_out
+            .iter()
+            .map(|(key, (path, why))| (key.as_str(), path.as_path(), why.as_str()))
     }
 
     /// The path the file `key` was read from: none for a file
@@ -1621,6 +1663,18 @@ pub fn files_below_naming(
 /// Every directory under the root worth reading, with its file names, in
 /// order.
 fn scan(root: &Path) -> std::io::Result<Vec<(PathBuf, Vec<String>)>> {
+    scan_noting_links(root, &mut Vec::new())
+}
+
+fn has_extension(path: &Path, extension: &str) -> bool {
+    path.extension().is_some_and(|x| x == extension)
+}
+
+/// [`scan`], putting each link it does not follow in `links`.
+fn scan_noting_links(
+    root: &Path,
+    links: &mut Vec<PathBuf>,
+) -> std::io::Result<Vec<(PathBuf, Vec<String>)>> {
     // The root itself has to be there; what is below is read as it can be.
     std::fs::read_dir(root)?;
     let mut out = Vec::new();
@@ -1640,6 +1694,7 @@ fn scan(root: &Path) -> std::io::Result<Vec<(PathBuf, Vec<String>)>> {
             match entry.file_type() {
                 Ok(kind) if kind.is_dir() && !skipped_dir(&name) => stack.push(entry.path()),
                 Ok(kind) if kind.is_file() => names.push(name),
+                Ok(kind) if kind.is_symlink() => links.push(entry.path()),
                 _ => {}
             }
         }
