@@ -152,9 +152,11 @@ fn observer_clicked(w: &mut LjosWorld, locator: String) -> StepResult {
 )]
 fn observer_scrolled(w: &mut LjosWorld, locator: String, notches: f64, way: String) -> StepResult {
     let locator = unquoted(&locator);
+    // A wheel turned away from the reader shows what is further on, which
+    // is a negative turn on both axes (app_scroll's `dy`, and its `dx`).
     let (dx, dy) = match way.as_str() {
-        "right" => (notches, 0.0),
-        "left" => (-notches, 0.0),
+        "right" => (-notches, 0.0),
+        "left" => (notches, 0.0),
         "up" => (0.0, notches),
         _ => (0.0, -notches),
     };
@@ -473,6 +475,15 @@ fn clipped_corner(
             .into_iter()
             .flatten()
             .any(|d| d["ref"] == m.reference.as_str());
+        // An answer cut to its budget may have left it out though it is
+        // drawn there: whether it is clipped is then not known.
+        if !drawn && found["truncated"] == true {
+            return Err(BackendError::Failed(format!(
+                "what lies at {cx},{cy} is incomplete: its answer was cut to its budget \
+                 before it said whether {} is drawn there",
+                m.reference
+            )));
+        }
         if !drawn {
             return Ok(Some(format!("{cx},{cy}")));
         }

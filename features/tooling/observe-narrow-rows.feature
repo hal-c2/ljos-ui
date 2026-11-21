@@ -151,6 +151,15 @@ Feature: What the observer lists stays readable in a narrow window
     And the observer's "name=\"ant1\"" is scrolled 20 notches right
     Then the observer shows "zebra5" whole
 
+  # The rows' own scroll bar stays by the part of the table in view, not
+  # at the far edge of columns scrolled out of it.
+  Scenario: A model's rows scroll bar is in view in a narrow window
+    When the application is observed
+    And the observer's window is 390 by 800 pixels
+    And the observer's "role=tab[name=\"Models\"]" is clicked
+    And the observer's "role=listitem[name*=\"animals\"]" is clicked
+    Then every "role=scrollbar[name=\"Rows\"]" in the observer lies within the width of its window
+
   # Stacked in a short window, the list, the wake opened and why the UI
   # thread is awake need more height than there is: the page scrolls to
   # the last of them rather than squeeze it away.
