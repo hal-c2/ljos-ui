@@ -690,6 +690,14 @@ fn colr_rect(font: &FontRef<'_>, survey: &ColrSurvey, size_px: f64) -> Option<Re
     (rect.width() >= 1.0 && rect.height() >= 1.0).then_some(rect)
 }
 
+/// From glyph pixels in `rect` to the pixels of its `pw` by `ph` picture.
+/// Each axis is scaled by its own rounded side, so a capped glyph much
+/// taller than wide still fits its picture.
+fn picture_transform(rect: Rect, pw: f64, ph: f64) -> Affine {
+    Affine::scale_non_uniform(pw / rect.width(), ph / rect.height())
+        * Affine::translate((-rect.x0, -rect.y0))
+}
+
 /// Draws a `COLR` glyph (the colour outline tables Windows' and newer
 /// Android's emoji fonts use) at `size_px` into a picture, its layers in the
 /// text's colour filled with `foreground`.
@@ -699,7 +707,6 @@ fn load_colr(run: &GlyphRun, glyph: u32, size_px: f64, foreground: Rgba) -> Opti
     let survey = colr_survey(&font, glyph, &coords)?;
     let rect = colr_rect(&font, &survey, size_px)?;
     let (pw, ph) = picture_size(rect);
-    let shrink = pw / rect.width();
     let (w, h) = (pw as u16, ph as u16);
     let mut ctx = RenderContext::new_with(
         w,
@@ -714,7 +721,7 @@ fn load_colr(run: &GlyphRun, glyph: u32, size_px: f64, foreground: Rgba) -> Opti
     ctx.set_paint(vello_cpu::color::AlphaColor::<vello_cpu::color::Srgb>::new(
         [r, g, b, a],
     ));
-    ctx.set_transform(Affine::scale(shrink) * Affine::translate((-rect.x0, -rect.y0)));
+    ctx.set_transform(picture_transform(rect, pw, ph));
     ctx.glyph_run(&mut resources, &run.font)
         .font_size(size_px as f32)
         .normalized_coords(&run.normalized_coords)
@@ -967,6 +974,21 @@ mod tests {
 
     const COLR_FONT: &[u8] =
         include_bytes!("../../../features/text/fonts/LjosColrTest-Regular.ttf");
+
+    #[test]
+    fn a_capped_picture_holds_a_glyph_much_taller_than_wide() {
+        let rect = Rect::new(-1.0, -2000.0, 2.0, 48.0);
+        let (pw, ph) = picture_size(rect);
+        assert_eq!((pw, ph), (2.0, 1024.0));
+        let t = picture_transform(rect, pw, ph);
+        let corner = |x, y| {
+            let p = t * vello_cpu::kurbo::Point::new(x, y);
+            (p.x, p.y)
+        };
+        assert_eq!(corner(rect.x0, rect.y0), (0.0, 0.0));
+        let (x, y) = corner(rect.x1, rect.y1);
+        assert!((x - pw).abs() < 1e-9 && (y - ph).abs() < 1e-9, "{x}, {y}");
+    }
 
     #[test]
     fn huge_pictures_whose_size_animates_stay_within_the_byte_budget() {
