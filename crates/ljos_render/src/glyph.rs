@@ -9,16 +9,20 @@ use rustc_hash::FxHashMap as HashMap;
 use std::sync::Arc;
 
 use skrifa::bitmap::{BitmapData, BitmapFormat, BitmapStrikes, Origin};
+use skrifa::color::{Brush, ColorPainter, ColorStop, CompositeMode, Transform};
 use skrifa::instance::{LocationRef, NormalizedCoord, Size};
 use skrifa::outline::{DrawSettings, OutlinePen};
 use skrifa::raw::TableProvider;
+use skrifa::raw::types::BoundingBox;
 use skrifa::{FontRef, GlyphId, MetadataProvider};
 use vello_cpu::kurbo::{Affine, BezPath, Rect, Shape, Vec2};
-use vello_cpu::peniko::FontData;
+use vello_cpu::peniko::{FontData, ImageAlphaType};
+use vello_cpu::{Glyph, Level, Pixmap, RenderContext, RenderSettings, Resources};
 
 use crate::backend::RgbaImage;
 use crate::display_list::GlyphRun;
 use crate::image::ImageHandle;
+use crate::rgba::Rgba;
 
 /// A synthetic bold grows every outline by this fraction of the em in total.
 const EMBOLDEN_EM: f64 = 1.0 / 24.0;
@@ -161,6 +165,11 @@ impl Outline {
 /// device pixels: the picture is resampled to whole pixels anyway.
 const COLOR_SIZE_STEPS: f64 = 4.0;
 
+/// Past this many pictures, those a frame did not draw are let go before
+/// the next, so a text whose size or colour animates does not keep a picture
+/// for every step.
+const KEEP_COLOR_PICTURES: usize = 256;
+
 /// A colour glyph (an emoji) as a picture, at one size in device pixels.
 #[derive(Debug)]
 pub(crate) struct ColorGlyph {
@@ -173,56 +182,162 @@ pub(crate) struct ColorGlyph {
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
-struct ColorKey {
+struct GlyphKey {
     font: u64,
     index: u32,
     glyph: u32,
+    coords: Vec<i16>,
+}
+
+/// How a font draws one glyph.
+#[derive(Clone, Copy, Debug)]
+enum ColorKind {
+    /// With its outline, in the text's colour (or not at all).
+    Plain,
+    /// As a picture of the font's: `CBDT` or `sbix`.
+    Bitmap,
+    /// As layers of outlines in the font's palette (`COLR`), some perhaps
+    /// in the text's colour (`foreground`).
+    Colr { foreground: bool },
+}
+
+#[derive(Clone, PartialEq, Eq, Hash)]
+struct ColorKey {
+    glyph: GlyphKey,
     size: u32,
+    /// The text's colour, premultiplied, for a glyph that has layers in
+    /// it; 0 for every other glyph, whose picture is the same in any.
+    foreground: u32,
 }
 
-/// Colour glyph pictures by font, glyph and size. A glyph that has none is
-/// remembered as `None` too, so text without emoji asks once per glyph.
-#[derive(Debug, Default)]
+struct Picture {
+    glyph: Option<Arc<ColorGlyph>>,
+    /// The frame that last drew it.
+    used: u64,
+}
+
+/// Colour glyph pictures by font, glyph, size and, for a glyph with layers
+/// in the text's colour, that colour. A glyph that has none is remembered as
+/// [`ColorKind::Plain`], so text without emoji asks once per glyph.
+#[derive(Default)]
 pub(crate) struct ColorGlyphCache {
-    map: HashMap<ColorKey, Option<Arc<ColorGlyph>>>,
+    kinds: HashMap<GlyphKey, ColorKind>,
+    pictures: HashMap<ColorKey, Picture>,
+    frame: u64,
 }
 
-impl std::fmt::Debug for ColorKey {
+impl std::fmt::Debug for GlyphKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{:x}#{}:{}@{}",
-            self.font, self.index, self.glyph, self.size
-        )
+        write!(f, "{:x}#{}:{}", self.font, self.index, self.glyph)
+    }
+}
+
+impl std::fmt::Debug for ColorGlyphCache {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ColorGlyphCache")
+            .field("kinds", &self.kinds.len())
+            .field("pictures", &self.pictures.len())
+            .finish()
     }
 }
 
 impl ColorGlyphCache {
-    /// The picture of `glyph` of `run` at `size_px` device pixels, or `None`
-    /// when the font draws that glyph with an outline (or not at all).
+    /// The picture of `glyph` of `run` at `size_px` device pixels, its
+    /// layers in the text's colour drawn in `foreground`, or `None` when the
+    /// font draws that glyph with an outline (or not at all).
     pub(crate) fn get(
         &mut self,
         run: &GlyphRun,
         glyph: u32,
         size_px: f64,
+        foreground: Rgba,
     ) -> Option<Arc<ColorGlyph>> {
-        let steps = (size_px * COLOR_SIZE_STEPS).round().max(1.0);
-        let key = ColorKey {
+        let glyph_key = GlyphKey {
             font: run.font.data.id(),
             index: run.font.index,
             glyph,
-            size: steps as u32,
+            coords: run.normalized_coords.clone(),
         };
-        self.map
-            .entry(key)
-            .or_insert_with(|| load_color(run, glyph, steps / COLOR_SIZE_STEPS).map(Arc::new))
-            .clone()
+        let kind = *self
+            .kinds
+            .entry(glyph_key.clone())
+            .or_insert_with(|| color_kind(run, glyph));
+        let (foreground, packed) = match kind {
+            ColorKind::Plain => return None,
+            ColorKind::Bitmap | ColorKind::Colr { foreground: false } => (Rgba::BLACK, 0),
+            ColorKind::Colr { foreground: true } => {
+                (foreground, u32::from_le_bytes(foreground.to_premul_u8()))
+            }
+        };
+        let steps = (size_px * COLOR_SIZE_STEPS).round().max(1.0);
+        let key = ColorKey {
+            glyph: glyph_key,
+            size: steps as u32,
+            foreground: packed,
+        };
+        let frame = self.frame;
+        let picture = self.pictures.entry(key).or_insert_with(|| {
+            let size = steps / COLOR_SIZE_STEPS;
+            let glyph = match kind {
+                ColorKind::Bitmap => load_bitmap(run, glyph, size),
+                _ => load_colr(run, glyph, size, foreground),
+            };
+            Picture {
+                glyph: glyph.map(Arc::new),
+                used: frame,
+            }
+        });
+        picture.used = frame;
+        picture.glyph.clone()
+    }
+
+    /// Starts a frame: with many pictures kept, the ones the last frame did
+    /// not draw are let go.
+    pub(crate) fn begin_frame(&mut self) {
+        if self.pictures.len() > KEEP_COLOR_PICTURES {
+            let frame = self.frame;
+            self.pictures.retain(|_, p| p.used == frame);
+        }
+        self.frame += 1;
     }
 
     /// Drop everything.
     pub(crate) fn clear(&mut self) {
-        self.map.clear();
+        self.kinds.clear();
+        self.pictures.clear();
     }
+}
+
+/// How the font of `run` draws `glyph`.
+fn color_kind(run: &GlyphRun, glyph: u32) -> ColorKind {
+    let Ok(font) = FontRef::from_index(run.font.data.as_ref(), run.font.index) else {
+        return ColorKind::Plain;
+    };
+    if has_color_bitmaps(&font) {
+        // A bitmap font with a strike for the glyph at any size draws it
+        // so at every size.
+        if color_bitmap(&font, glyph, f64::from(run.font_size.max(1.0))).is_some() {
+            return ColorKind::Bitmap;
+        }
+    }
+    match colr_survey(&font, glyph, &coords(run)) {
+        Some(survey) => ColorKind::Colr {
+            foreground: survey.foreground,
+        },
+        None => ColorKind::Plain,
+    }
+}
+
+fn coords(run: &GlyphRun) -> Vec<NormalizedCoord> {
+    run.normalized_coords
+        .iter()
+        .map(|c| NormalizedCoord::from_bits(*c))
+        .collect()
+}
+
+fn has_color_bitmaps(font: &FontRef<'_>) -> bool {
+    BitmapStrikes::with_format(font, BitmapFormat::Cbdt).is_some()
+        || BitmapStrikes::with_format(font, BitmapFormat::Sbix).is_some()
 }
 
 /// The largest side, in device pixels, a colour glyph is drawn at: past it
@@ -267,7 +382,7 @@ fn color_bitmap<'a>(
 }
 
 /// Reads a colour bitmap glyph and resamples it to `size_px`.
-fn load_color(run: &GlyphRun, glyph: u32, size_px: f64) -> Option<ColorGlyph> {
+fn load_bitmap(run: &GlyphRun, glyph: u32, size_px: f64) -> Option<ColorGlyph> {
     let font = FontRef::from_index(run.font.data.as_ref(), run.font.index).ok()?;
     let (bitmap, at) = color_bitmap(&font, glyph, size_px)?;
     let (dw, dh) = (at.width().round().max(1.0), at.height().round().max(1.0));
@@ -301,6 +416,239 @@ fn load_color(run: &GlyphRun, glyph: u32, size_px: f64) -> Option<ColorGlyph> {
         image,
         rect: Rect::new(at.x0, at.y0, at.x0 + dw, at.y0 + dh),
     })
+}
+
+/// The palette index that stands for the text's own colour.
+const FOREGROUND_INDEX: u16 = 0xFFFF;
+
+/// What a `COLR` glyph covers and whether it uses the text's colour, read by
+/// walking its paint without drawing it.
+struct ColrSurvey {
+    /// Font units, y up.
+    bounds: Rect,
+    foreground: bool,
+}
+
+/// Walks a `COLR` glyph: the box its layers can cover is the union of every
+/// clip it fills inside (layer outlines and clip boxes, each cut by the
+/// clips around it), so nothing outside the font's own shapes counts.
+struct Surveyor<'a> {
+    outlines: skrifa::outline::OutlineGlyphCollection<'a>,
+    location: LocationRef<'a>,
+    transforms: Vec<Affine>,
+    clips: Vec<Rect>,
+    bounds: Option<Rect>,
+    foreground: bool,
+}
+
+impl Surveyor<'_> {
+    fn transform(&self) -> Affine {
+        self.transforms.last().copied().unwrap_or_default()
+    }
+
+    fn push_clip(&mut self, rect: Rect) {
+        let rect = self.transform().transform_rect_bbox(rect);
+        let active = self
+            .clips
+            .last()
+            .map_or(rect, |parent| parent.intersect(rect));
+        self.clips.push(active);
+    }
+
+    fn brush(&mut self, brush: &Brush<'_>) {
+        let stops: &[ColorStop] = match brush {
+            Brush::Solid { palette_index, .. } => {
+                self.foreground |= *palette_index == FOREGROUND_INDEX;
+                &[]
+            }
+            Brush::LinearGradient { color_stops, .. }
+            | Brush::RadialGradient { color_stops, .. }
+            | Brush::SweepGradient { color_stops, .. } => color_stops,
+        };
+        self.foreground |= stops.iter().any(|s| s.palette_index == FOREGROUND_INDEX);
+    }
+}
+
+impl ColorPainter for Surveyor<'_> {
+    fn push_transform(&mut self, t: Transform) {
+        let t = Affine::new([t.xx, t.yx, t.xy, t.yy, t.dx, t.dy].map(f64::from));
+        self.transforms.push(self.transform() * t);
+    }
+
+    fn pop_transform(&mut self) {
+        self.transforms.pop();
+    }
+
+    fn push_clip_glyph(&mut self, glyph_id: GlyphId) {
+        let mut pen = BoundsPen::default();
+        let drawn = self.outlines.get(glyph_id).is_some_and(|outline| {
+            outline
+                .draw(
+                    DrawSettings::unhinted(Size::unscaled(), self.location),
+                    &mut pen,
+                )
+                .is_ok()
+        });
+        // A glyph without an outline clips everything away.
+        let rect = pen.bounds.filter(|_| drawn).unwrap_or(Rect::ZERO);
+        self.push_clip(rect);
+    }
+
+    fn push_clip_box(&mut self, b: BoundingBox<f32>) {
+        self.push_clip(Rect::new(
+            f64::from(b.x_min),
+            f64::from(b.y_min),
+            f64::from(b.x_max),
+            f64::from(b.y_max),
+        ));
+    }
+
+    fn pop_clip(&mut self) {
+        self.clips.pop();
+    }
+
+    fn fill(&mut self, brush: Brush<'_>) {
+        self.brush(&brush);
+        // A fill outside every clip would cover the plane; a font that does
+        // that has no box to draw it in, so it counts for nothing.
+        if let Some(clip) = self.clips.last().copied().filter(|c| c.area() > 0.0) {
+            self.bounds = Some(self.bounds.map_or(clip, |b| b.union(clip)));
+        }
+    }
+
+    fn push_layer(&mut self, _: CompositeMode) {}
+}
+
+#[derive(Default)]
+struct BoundsPen {
+    bounds: Option<Rect>,
+}
+
+impl BoundsPen {
+    fn point(&mut self, x: f32, y: f32) {
+        let (x, y) = (f64::from(x), f64::from(y));
+        let at = Rect::new(x, y, x, y);
+        self.bounds = Some(self.bounds.map_or(at, |b| b.union(at)));
+    }
+}
+
+impl OutlinePen for BoundsPen {
+    fn move_to(&mut self, x: f32, y: f32) {
+        self.point(x, y);
+    }
+    fn line_to(&mut self, x: f32, y: f32) {
+        self.point(x, y);
+    }
+    // Control points bound a curve, so counting them gives a box that holds
+    // it.
+    fn quad_to(&mut self, cx: f32, cy: f32, x: f32, y: f32) {
+        self.point(cx, cy);
+        self.point(x, y);
+    }
+    fn curve_to(&mut self, c0x: f32, c0y: f32, c1x: f32, c1y: f32, x: f32, y: f32) {
+        self.point(c0x, c0y);
+        self.point(c1x, c1y);
+        self.point(x, y);
+    }
+    fn close(&mut self) {}
+}
+
+/// Surveys `glyph` of `font` as a `COLR` glyph (version 1 before 0, as
+/// fonts that have both mean). `None` when the font has no colour layers
+/// for it, or they cover nothing.
+fn colr_survey(font: &FontRef<'_>, glyph: u32, coords: &[NormalizedCoord]) -> Option<ColrSurvey> {
+    let color = font.color_glyphs().get(GlyphId::new(glyph))?;
+    let location = LocationRef::new(coords);
+    let mut surveyor = Surveyor {
+        outlines: font.outline_glyphs(),
+        location,
+        transforms: vec![Affine::IDENTITY],
+        clips: Vec::new(),
+        bounds: None,
+        foreground: false,
+    };
+    color.paint(location, &mut surveyor).ok()?;
+    // A version 1 glyph may state its box (`ClipList`); it is the font's
+    // promise of where it draws, tighter than the layers' outlines.
+    let stated = color.bounding_box(location, Size::unscaled()).map(|b| {
+        Rect::new(
+            f64::from(b.x_min),
+            f64::from(b.y_min),
+            f64::from(b.x_max),
+            f64::from(b.y_max),
+        )
+    });
+    let bounds = stated.or(surveyor.bounds).filter(|b| b.area() > 0.0)?;
+    Some(ColrSurvey {
+        bounds,
+        foreground: surveyor.foreground,
+    })
+}
+
+/// Where a `COLR` glyph is drawn at `size_px`, in whole device pixels from
+/// the glyph origin, y down.
+fn colr_rect(font: &FontRef<'_>, survey: &ColrSurvey, size_px: f64) -> Option<Rect> {
+    let units_per_em = f64::from(font.head().ok()?.units_per_em());
+    if units_per_em <= 0.0 {
+        return None;
+    }
+    let s = size_px / units_per_em;
+    let b = survey.bounds;
+    let rect = Rect::new(
+        (b.x0 * s).floor(),
+        (-b.y1 * s).floor(),
+        (b.x1 * s).ceil(),
+        (-b.y0 * s).ceil(),
+    );
+    let fits = rect.width() >= 1.0
+        && rect.height() >= 1.0
+        && rect.width() <= MAX_COLOR_SIDE
+        && rect.height() <= MAX_COLOR_SIDE;
+    fits.then_some(rect)
+}
+
+/// Draws a `COLR` glyph (the colour outline tables Windows' and newer
+/// Android's emoji fonts use) at `size_px` into a picture, its layers in the
+/// text's colour filled with `foreground`.
+fn load_colr(run: &GlyphRun, glyph: u32, size_px: f64, foreground: Rgba) -> Option<ColorGlyph> {
+    let font = FontRef::from_index(run.font.data.as_ref(), run.font.index).ok()?;
+    let coords = coords(run);
+    let survey = colr_survey(&font, glyph, &coords)?;
+    let rect = colr_rect(&font, &survey, size_px)?;
+    let (w, h) = (rect.width() as u16, rect.height() as u16);
+    let mut ctx = RenderContext::new_with(
+        w,
+        h,
+        RenderSettings {
+            level: Level::baseline(),
+            num_threads: 0,
+        },
+    );
+    let mut resources = Resources::new();
+    let [r, g, b, a] = foreground.to_straight();
+    ctx.set_paint(vello_cpu::color::AlphaColor::<vello_cpu::color::Srgb>::new(
+        [r, g, b, a],
+    ));
+    ctx.set_transform(Affine::translate((-rect.x0, -rect.y0)));
+    ctx.glyph_run(&mut resources, &run.font)
+        .font_size(size_px as f32)
+        .normalized_coords(&run.normalized_coords)
+        .fill_glyphs(std::iter::once(Glyph {
+            id: glyph,
+            x: 0.0,
+            y: 0.0,
+        }))
+        .ok()?;
+    ctx.flush();
+    let mut pixmap = Pixmap::new(w, h);
+    ctx.render(&mut pixmap, &mut resources);
+    let image = ImageHandle::from_premultiplied(
+        u32::from(w),
+        u32::from(h),
+        pixmap.take_rgba8(ImageAlphaType::AlphaPremultiplied),
+    )
+    .ok()?;
+    Some(ColorGlyph { image, rect })
 }
 
 /// True when `t` only scales (by positive factors) and translates, so text
@@ -411,17 +759,13 @@ pub fn font_tables(font: &FontData) -> Option<FontTables> {
     })
 }
 
-/// Whether any glyph of `run` is a colour picture (an emoji of a bitmap
-/// font), which is drawn in its own colours: a run in a transparent colour
+/// Whether any glyph of `run` is drawn in its own colours (an emoji, of a
+/// bitmap font or one of colour layers): a run in a transparent colour
 /// still shows those.
 pub fn run_has_color_glyphs(run: &GlyphRun) -> bool {
-    let Ok(font) = FontRef::from_index(run.font.data.as_ref(), run.font.index) else {
-        return false;
-    };
-    let size = f64::from(run.font_size);
     run.glyphs
         .iter()
-        .any(|g| color_bitmap(&font, g.id, size).is_some())
+        .any(|g| !matches!(color_kind(run, g.id), ColorKind::Plain))
 }
 
 /// The ink box of every glyph of `run`, in the run's own coordinates (the
@@ -450,11 +794,18 @@ pub fn glyph_ink_bounds(run: &GlyphRun) -> Vec<Option<Rect>> {
         .collect()
 }
 
-/// The box a colour bitmap glyph is drawn in at `size` pixels, at the
-/// origin, without reading its picture.
+/// The box a colour glyph is drawn in at `size` pixels, at the origin,
+/// without drawing its picture.
 fn color_ink_bounds(run: &GlyphRun, glyph: u32, size: f64) -> Option<Rect> {
     let font = FontRef::from_index(run.font.data.as_ref(), run.font.index).ok()?;
-    color_bitmap(&font, glyph, size).map(|(_, at)| at)
+    match color_kind(run, glyph) {
+        ColorKind::Plain => None,
+        ColorKind::Bitmap => color_bitmap(&font, glyph, size).map(|(_, at)| at),
+        ColorKind::Colr { .. } => {
+            let survey = colr_survey(&font, glyph, &coords(run))?;
+            colr_rect(&font, &survey, size)
+        }
+    }
 }
 
 /// The advance width the font gives each of `glyphs`, in font units, and the

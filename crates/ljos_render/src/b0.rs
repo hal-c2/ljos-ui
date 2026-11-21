@@ -22,8 +22,8 @@
 //!   is skipped;
 //! * an image larger than the GPU's texture limit is drawn from a smaller
 //!   copy;
-//! * gradient text uses its first stop colour, and colour outline glyphs
-//!   (COLR) are filled in the text's colour;
+//! * gradient text uses its first stop colour, also for the layers of a
+//!   colour glyph (`COLR`) that take the text's colour;
 //! * the unshaped `Text` op ignores rotation and shear;
 //! * a [`DrawOp::Shape`] that should be drawn from pixels (see below) and
 //!   cannot be is drawn as triangles, a radial or conical gradient then in
@@ -1831,10 +1831,12 @@ impl EpaintBackend {
                     // it is a picture, drawn whatever colour the text is.
                     let size = f64::from(run.font_size) * f64::from(self.ppp);
                     let inv_ppp = 1.0 / f64::from(self.ppp);
-                    for g in &run.glyphs {
-                        let Some(picture) = self.colors.get(run, g.id, size) else {
+                    let mut pictured = Vec::new();
+                    for (i, g) in run.glyphs.iter().enumerate() {
+                        let Some(picture) = self.colors.get(run, g.id, size, color) else {
                             continue;
                         };
+                        pictured.push(i);
                         let at = *origin + Vec2::new(f64::from(g.x), f64::from(g.y));
                         let r = picture.rect;
                         let dst = Rect::new(
@@ -1849,8 +1851,24 @@ impl EpaintBackend {
                     if color.is_transparent() {
                         continue;
                     }
+                    // A colour outline glyph (COLR) also has a plain
+                    // outline, for renderers without colour; it must not be
+                    // filled over its picture.
+                    let run = if pictured.is_empty() {
+                        Arc::clone(run)
+                    } else {
+                        let mut plain = GlyphRun::clone(run);
+                        let mut at = pictured.iter().peekable();
+                        let mut i = 0;
+                        plain.glyphs.retain(|_| {
+                            let keep = at.next_if_eq(&&i).is_none();
+                            i += 1;
+                            keep
+                        });
+                        Arc::new(plain)
+                    };
                     segs.push(LocalSeg::Glyphs(GlyphsCmd {
-                        run: Arc::clone(run),
+                        run,
                         origin: *origin,
                         color,
                         decorations: *decorations,
@@ -2186,6 +2204,7 @@ impl RenderBackend for EpaintBackend {
         self.frame = snap.frame;
         self.encoded = snap.frame;
         self.shapes.begin_frame();
+        self.colors.begin_frame();
         let mut stats = EncodeStats::default();
         let mut warned_clips = FxHashSet::default();
         let shift = Affine::translate((

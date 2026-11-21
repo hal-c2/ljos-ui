@@ -296,6 +296,7 @@ impl VelloCpuReference {
     }
 
     fn draw(&mut self, ctx: &mut RenderContext, view: &FrameView<'_>, origin: Vec2, cull: bool) {
+        self.colors.begin_frame();
         let snap = view.snapshot;
         let base = Affine::translate(-origin)
             * Affine::scale(f64::from(view.scale_factor))
@@ -397,6 +398,10 @@ impl VelloCpuReference {
         to_device: Affine,
         warned: &mut HashSet<&'static str>,
     ) {
+        // A colour glyph's layers in the text's colour take it unfaded: the
+        // picture is faded as a whole, like the others.
+        let foreground = color;
+        let color = color.with_opacity(opacity);
         let canvas = Rect::new(0.0, 0.0, f64::from(ctx.width()), f64::from(ctx.height()));
         let snapped = Affine::translate((
             0.0,
@@ -410,7 +415,7 @@ impl VelloCpuReference {
             let scale = snapped.determinant().abs().sqrt();
             for g in &run.glyphs {
                 let at = origin + Vec2::new(f64::from(g.x), f64::from(g.y));
-                if let Some(picture) = self.colors.get(run, g.id, size * scale) {
+                if let Some(picture) = self.colors.get(run, g.id, size * scale, foreground) {
                     self.draw_color_glyph(ctx, &picture, snapped, at, scale, opacity, warned);
                     continue;
                 }
@@ -764,7 +769,7 @@ impl VelloCpuReference {
                     run,
                     *origin,
                     decorations,
-                    color.with_opacity(opacity),
+                    color,
                     opacity,
                     to_device,
                     warned,

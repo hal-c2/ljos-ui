@@ -10,9 +10,9 @@
 //! frame does not draw: those it does are copied into an atlas as small as
 //! they fit, not filled again. It doubles only when the frame's own glyphs
 //! need the room, so text drawn at sizes that are gone (a scale animation
-//! fills a glyph at each one) never makes it grow. Colour bitmap glyphs
-//! (emoji) have no outline and are not here: they are drawn as pictures, from
-//! the image atlas. Colour outline glyphs (COLR) are filled in one colour.
+//! fills a glyph at each one) never makes it grow. Colour glyphs (emoji, of
+//! bitmap or `COLR` fonts) are not here: they are drawn as pictures, from the
+//! image atlas.
 
 use egui::{Color32, ColorImage, Context, TextureHandle, TextureId, TextureOptions};
 use rustc_hash::FxHashMap;
