@@ -414,6 +414,13 @@ ApplicationWindow {
     // trailing the words. It reads the widths the items take, an item that
     // sets its own as much as one left at its implicit width, and never
     // their places, so it does not depend on itself.
+    //
+    // A Flow with such a gap asks for no width of its own (its
+    // Layout.preferredWidth is 0) and takes the width its page gives it.
+    // Left at its implicit width it would ask for what it was given, less
+    // the pixel kept to spare, and a page that follows what it holds, as a
+    // page of a StackLayout not shown does, would shrink by that pixel at
+    // every pass and never settle.
     function spare(flow, gap) {
         var used = 0
         var shown = 0
@@ -1213,6 +1220,8 @@ ApplicationWindow {
                     Flow {
                         id: processesHead
                         Layout.fillWidth: true
+                        // Asks for no width of its own: see window.spare.
+                        Layout.preferredWidth: 0
                         spacing: 10
                         Text {
                             height: window.headHeight
@@ -2937,6 +2946,8 @@ ApplicationWindow {
                     Flow {
                         id: logsHead
                         Layout.fillWidth: true
+                        // Asks for no width of its own: see window.spare.
+                        Layout.preferredWidth: 0
                         spacing: 10
                         Text {
                             height: window.headHeight
@@ -3187,6 +3198,8 @@ ApplicationWindow {
                     Flow {
                         id: traceHead
                         Layout.fillWidth: true
+                        // Asks for no width of its own: see window.spare.
+                        Layout.preferredWidth: 0
                         spacing: 10
                         Text {
                             height: window.headHeight
@@ -3926,6 +3939,8 @@ ApplicationWindow {
                     Flow {
                         id: framesHead
                         Layout.fillWidth: true
+                        // Asks for no width of its own: see window.spare.
+                        Layout.preferredWidth: 0
                         spacing: 10
                         Text {
                             height: recordButton.implicitHeight
@@ -4369,6 +4384,8 @@ ApplicationWindow {
                         Flow {
                             id: memoryHead
                             Layout.fillWidth: true
+                            // Asks for no width of its own: see window.spare.
+                            Layout.preferredWidth: 0
                             spacing: 10
                             Text {
                                 height: window.headHeight
@@ -4787,6 +4804,8 @@ ApplicationWindow {
                     Flow {
                         id: modelsHead
                         Layout.fillWidth: true
+                        // Asks for no width of its own: see window.spare.
+                        Layout.preferredWidth: 0
                         spacing: 10
                         Text {
                             height: window.headHeight
@@ -4926,6 +4945,8 @@ ApplicationWindow {
                             Flow {
                                 id: rowsHead
                                 Layout.fillWidth: true
+                                // Asks for no width of its own: see window.spare.
+                                Layout.preferredWidth: 0
                                 spacing: 8
                                 Text {
                                     width: Math.min(implicitWidth, rowsHead.width)
@@ -5306,6 +5327,8 @@ ApplicationWindow {
                     Flow {
                         id: wakesHead
                         Layout.fillWidth: true
+                        // Asks for no width of its own: see window.spare.
+                        Layout.preferredWidth: 0
                         spacing: 10
                         Text {
                             height: window.headHeight
@@ -5785,6 +5808,8 @@ ApplicationWindow {
                     Flow {
                         id: componentsHead
                         Layout.fillWidth: true
+                        // Asks for no width of its own: see window.spare.
+                        Layout.preferredWidth: 0
                         spacing: 10
                         Text {
                             height: window.headHeight
@@ -6165,6 +6190,8 @@ ApplicationWindow {
                     Flow {
                         id: bindingsHead
                         Layout.fillWidth: true
+                        // Asks for no width of its own: see window.spare.
+                        Layout.preferredWidth: 0
                         spacing: 10
                         Text {
                             height: window.headHeight
@@ -6489,6 +6516,8 @@ ApplicationWindow {
                     Flow {
                         id: growthHead
                         Layout.fillWidth: true
+                        // Asks for no width of its own: see window.spare.
+                        Layout.preferredWidth: 0
                         spacing: 10
                         Text {
                             height: window.headHeight
