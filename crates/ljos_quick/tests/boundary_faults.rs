@@ -475,11 +475,17 @@ fn content_a_handler_gives_as_the_old_stops_for_want_of_heap_is_shown_not_the_fa
     assert!(e.collect_garbage());
     let held = e.script_memory().unwrap().bytes;
     assert!(e.set_script_heap_limit(Some(held + 64 * 1024)));
+    let restarts = num(&e, boundary, "restarts");
     set(&e, root, "on", Value::Bool(true));
     settle(&e, &clock, boundary);
+    // While the heap is still short: the handler's content is what shows,
+    // not the fallback waiting to make it again.
+    assert_eq!(shown(&e, boundary), "other");
+    assert_eq!(num(&e, boundary, "restarts"), restarts);
     assert!(e.set_script_heap_limit(None));
     settle(&e, &clock, boundary);
     assert_eq!(shown(&e, boundary), "other");
+    assert_eq!(num(&e, boundary, "restarts"), restarts);
     assert!(!get(&e, boundary, "failed").to_boolean());
     assert_eq!(e.next_timer_deadline(), None, "nothing waits to be made");
 }
