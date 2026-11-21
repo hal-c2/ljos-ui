@@ -640,13 +640,17 @@ where
         }
         let engine = Rc::clone(app.engine());
         let jobs = self.ctx.tessellate(output.shapes, output.pixels_per_point);
+        let mut textures = output.textures_delta;
         let painted = gpu.paint(
             surface,
             &jobs,
-            &output.textures_delta,
+            &textures,
             output.pixels_per_point,
             app.clear_color(),
         );
+        // `paint` has handed every delta to the renderer on each of its
+        // ways out; a debug build of epaint panics on dropping any left.
+        textures.clear();
         match painted {
             Painted::Drawn => {
                 self.retries = 0;
