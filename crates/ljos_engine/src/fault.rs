@@ -735,6 +735,21 @@ fn is_generated_name(name: &str) -> bool {
 mod tests {
     use super::*;
 
+    /// A panic caught while another's origin waits to be reported names
+    /// its own origin, and leaves the waiting one to whoever reports it.
+    #[test]
+    fn a_fault_reported_apart_from_an_unwound_panic_leaves_it_its_origin() {
+        let e = Engine::new();
+        let obj = e.create_native(crate::QtObject::default(), None).unwrap();
+        e.inner.faults.unwound.set(Some(obj));
+        e.apart_from_unwound(|| e.report_fault(None, Fault::Panic("told".into())));
+        e.report_fault(None, Fault::Panic("made".into()));
+        let filed = e.faults();
+        assert_eq!(filed.len(), 2, "{filed:?}");
+        assert_eq!(filed[0].origin, None, "{filed:?}");
+        assert_eq!(filed[1].origin, Some(obj), "{filed:?}");
+    }
+
     #[test]
     fn stack_lines_are_parsed() {
         let f = RawFrame::parse("    at inner (Main.qml.js:11:15)").unwrap();
