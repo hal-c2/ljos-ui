@@ -82,6 +82,10 @@ const TEMPLATE: [(&str, &str); 11] = [
         include_str!("../../../android/app/src/main/java/dev/ljos/LjosServices.java"),
     ),
     (
+        "app/src/main/java/dev/ljos/LjosDocuments.java",
+        include_str!("../../../android/app/src/main/java/dev/ljos/LjosDocuments.java"),
+    ),
+    (
         "app/src/debug/AndroidManifest.xml",
         include_str!("../../../android/app/src/debug/AndroidManifest.xml"),
     ),
@@ -853,6 +857,32 @@ mod tests {
             java.iter()
                 .any(|(p, _)| p.ends_with("com/google/androidgamesdk/TextInputOf.java"))
         );
+    }
+
+    #[test]
+    fn the_document_picker_answers_the_native_side() {
+        let java = TEMPLATE
+            .iter()
+            .find(|(p, _)| p.ends_with("LjosDocuments.java"))
+            .map(|(_, t)| *t)
+            .unwrap();
+        // ljos_platform's AndroidDialogs calls these by name and signature,
+        // and Java_dev_ljos_LjosDocuments_nativeAnswered hears the answer.
+        assert!(java.contains("public final class LjosDocuments"));
+        for method in [
+            "public static boolean show(Context context, int picker, String extensions, String name, int code)",
+            "public static void close(int code)",
+            "private static native void nativeAnswered(int code, String chosen);",
+        ] {
+            assert!(java.contains(method), "{method}");
+        }
+        let activity = TEMPLATE
+            .iter()
+            .find(|(p, _)| p.ends_with("LjosActivity.java"))
+            .map(|(_, t)| *t)
+            .unwrap();
+        assert!(activity.contains("LjosDocuments.answered(this, code, result, data);"));
+        assert!(activity.contains("static LjosActivity current()"));
     }
 
     #[test]
