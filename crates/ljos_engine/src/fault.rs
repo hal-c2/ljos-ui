@@ -216,6 +216,16 @@ impl Drop for OriginGuard<'_> {
 }
 
 impl Engine {
+    /// Runs `f` with the origin the panic being caught unwound out of set
+    /// aside: a fault `f` reports names its own origin, and the caught one
+    /// keeps its origin for whoever reports it after.
+    pub(crate) fn apart_from_unwound<R>(&self, f: impl FnOnce() -> R) -> R {
+        let first = self.inner.faults.unwound.take();
+        let r = f();
+        self.inner.faults.unwound.set(first);
+        r
+    }
+
     /// `obj`'s code runs until the guard is dropped. `None` leaves the
     /// origin as it is.
     pub(crate) fn origin(&self, obj: Option<ObjectId>) -> OriginGuard<'_> {

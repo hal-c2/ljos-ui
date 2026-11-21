@@ -3326,12 +3326,14 @@ impl CreationJob {
                     // out by then, and the creation must still close
                     // below, or what waits for no creation to run waits
                     // for good.
-                    let told = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        self.finish(Some(&e), Err(why))
-                    }));
-                    if let Err(payload) = told {
-                        e.report_fault(None, Fault::from_panic(payload));
-                    }
+                    e.apart_from_unwound(|| {
+                        let told = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            self.finish(Some(&e), Err(why))
+                        }));
+                        if let Err(payload) = told {
+                            e.report_fault(None, Fault::from_panic(payload));
+                        }
+                    });
                 }
                 JobPoll::Failed(fault)
             }
