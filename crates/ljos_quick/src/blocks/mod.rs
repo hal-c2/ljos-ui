@@ -26,8 +26,8 @@ use std::rc::Rc;
 use ljos_engine::Engine;
 
 pub use contribution::{Contribution, contribution_mode};
-pub use shell_loader::{ShellLoader, shell_status};
 pub(crate) use shell_loader::retry as retry_shell;
+pub use shell_loader::{ShellLoader, shell_status};
 pub use slot::Slot;
 
 /// Registers module `Ljos.Blocks` and what makes a `ShellLoader` a
