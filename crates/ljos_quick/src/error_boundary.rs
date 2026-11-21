@@ -514,6 +514,15 @@ fn make_content(e: &Engine, me: ObjectId) -> Result<(), Fault> {
     if !e.is_alive(me) {
         return Ok(());
     }
+    // A handler of what was made gave the boundary other content: the
+    // content watch has made and shown that already, and this is no one's.
+    let current = e
+        .untrack(|| e.read(me, ErrorBoundary::CONTENT.index))
+        .as_object();
+    if current != Some(content) {
+        discard(e, made);
+        return Ok(());
+    }
     if let Some(kept) = with_run(e, me, |r| r.kept.take()).flatten() {
         e.restore_subtree(made, kept);
     }

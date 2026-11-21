@@ -48,6 +48,42 @@ fn a_boundary_makes_its_content() {
     assert_eq!(num(&e, boundary, "height"), 50.0);
 }
 
+/// Content whose own handler gives the boundary other content as it is made:
+/// the other content is shown, and what was being made is discarded, not put
+/// in its place once the making returns.
+#[test]
+fn content_that_gives_other_content_as_it_is_made_leaves_the_other_shown() {
+    let e = engine();
+    let root = load(
+        &e,
+        r#"
+import QtQuick
+import Ljos
+Item {
+    id: root
+    property Component other: Component { Item { objectName: "other" } }
+    ErrorBoundary {
+        id: boundary
+        objectName: "boundary"
+        Item { objectName: "first"; Component.onCompleted: boundary.content = root.other }
+    }
+}
+"#,
+    );
+    let boundary = find(&e, root, "boundary");
+    e.process_deferred_deletes();
+    assert_eq!(e.take_warnings(), Vec::<String>::new());
+    let item = get(&e, boundary, "item")
+        .as_object()
+        .expect("an item is shown");
+    assert_eq!(text(&e, item, "objectName"), "other");
+    assert!(!get(&e, boundary, "failed").to_boolean());
+    assert!(
+        !exists(&e, root, "first"),
+        "what was being made is discarded"
+    );
+}
+
 /// A panic in a native handler of `obj`, as a host's turn catches it.
 fn panic_in(e: &Engine, obj: ObjectId, message: &'static str) {
     let r: Option<()> = e.turn(Some(obj), || panic!("{message}"));
