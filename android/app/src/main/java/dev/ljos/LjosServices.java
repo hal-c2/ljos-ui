@@ -89,6 +89,16 @@ public final class LjosServices {
         if (item == null) {
             return null;
         }
+        Uri uri = item.getUri();
+        if (uri != null && item.getText() == null && item.getHtmlText() == null) {
+            // A URI of anything but text (a copied picture) is no text:
+            // coerceToText would give the URI itself, and a paste would
+            // insert it.
+            String type = context.getContentResolver().getType(uri);
+            if (type == null || !type.startsWith("text/")) {
+                return null;
+            }
+        }
         // On the caller's thread, not the main one: an item that is a
         // content URI is read from its provider, which may take its time,
         // and the main thread waiting on it would not answer the user.
@@ -149,9 +159,24 @@ public final class LjosServices {
         if (type == null || !type.startsWith("image/")) {
             return null;
         }
+        // Its size first: a camera's picture at full size would be three
+        // copies of hundreds of megabytes on its way to the application.
+        BitmapFactory.Options bounds = new BitmapFactory.Options();
+        bounds.inJustDecodeBounds = true;
+        try (InputStream in = resolver.openInputStream(uri)) {
+            if (in == null) {
+                return null;
+            }
+            BitmapFactory.decodeStream(in, null, bounds);
+        }
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
+            return null;
+        }
+        BitmapFactory.Options decode = new BitmapFactory.Options();
+        decode.inSampleSize = sampleSize(bounds.outWidth, bounds.outHeight);
         Bitmap bitmap;
         try (InputStream in = resolver.openInputStream(uri)) {
-            bitmap = in == null ? null : BitmapFactory.decodeStream(in);
+            bitmap = in == null ? null : BitmapFactory.decodeStream(in, null, decode);
         }
         if (bitmap == null) {
             return null;
@@ -165,6 +190,22 @@ public final class LjosServices {
         bitmap.getPixels(out, 2, width, 0, 0, width, height);
         bitmap.recycle();
         return out;
+    }
+
+    /** The most pixels a pasted picture keeps: 32 MB as ARGB ints. */
+    static final long MOST_PASTED_PIXELS = 8L << 20;
+
+    /**
+     * The power of two a picture of {@code width} by {@code height} is
+     * shrunk by (what BitmapFactory takes) so that it keeps no more than
+     * {@link #MOST_PASTED_PIXELS}.
+     */
+    static int sampleSize(int width, int height) {
+        int sample = 1;
+        while (((long) width / sample) * ((long) height / sample) > MOST_PASTED_PIXELS) {
+            sample *= 2;
+        }
+        return sample;
     }
 
     /** The authority of the template's provider of copied pictures. */
@@ -196,6 +237,14 @@ public final class LjosServices {
         } finally {
             bitmap.recycle();
         }
+        Uri uri = FileProvider.getUriForFile(context, clipboardAuthority(context), file);
+        try {
+            setClip(context, ClipData.newUri(context.getContentResolver(), "image", uri));
+        } catch (Exception e) {
+            // The clipboard still lends the last copy; only this one goes.
+            file.delete();
+            throw e;
+        }
         File[] old = dir.listFiles();
         if (old != null) {
             for (File f : old) {
@@ -204,8 +253,6 @@ public final class LjosServices {
                 }
             }
         }
-        Uri uri = FileProvider.getUriForFile(context, clipboardAuthority(context), file);
-        setClip(context, ClipData.newUri(context.getContentResolver(), "image", uri));
     }
 
     /** Empties the clipboard. */

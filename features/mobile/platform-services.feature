@@ -3,6 +3,8 @@
 #   https://developer.android.com/reference/android/content/ClipboardManager
 #   https://developer.android.com/reference/android/content/ClipData#newHtmlText(java.lang.CharSequence,%20java.lang.CharSequence,%20java.lang.String)
 #   https://developer.android.com/develop/ui/views/touch-and-input/copy-paste#Content
+#   https://developer.android.com/reference/androidx/core/content/FileProvider
+#   https://developer.android.com/reference/android/graphics/BitmapFactory.Options#inSampleSize
 #   https://developer.android.com/reference/android/content/Intent#ACTION_VIEW
 #   https://developer.android.com/training/data-storage/app-specific
 #   https://doc.qt.io/qt-6/qml-qtqml-qt.html#openUrlExternally-method
@@ -36,6 +38,9 @@ Feature: An application on a phone uses the system's services
         TextEdit { id: target; objectName: "target"; textFormat: TextEdit.RichText }
         property string pasted: target.getText(0, target.length)
         property bool pastedBold: target.text.indexOf("font-weight:700") >= 0
+        // A binding hears of a change only when the clipboard is said to
+        // have changed: reading canPaste itself would ask anew.
+        property bool pastable: input.canPaste
       }
       """
 
@@ -56,6 +61,23 @@ Feature: An application on a phone uses the system's services
     And the method "paste" of "target" is called
     Then the property "pasted" of "w" is "bold"
     And the property "pastedBold" of "w" is true
+
+  Scenario: A picture the application copies is on the system's clipboard
+    When the application copies a picture 3 by 2 pixels
+    Then the clipboard holds a picture 3 by 2 pixels
+
+  Scenario: A copied picture is not pasted into text
+    When the application copies a picture 3 by 2 pixels
+    Then the property "canPaste" of "input" is false
+    When the method "selectAll" of "input" is called
+    And the method "paste" of "input" is called
+    Then the property "text" of "input" is "copied on a phone"
+
+  Scenario: The application hears of a copy in another application
+    When the application copies a picture 3 by 2 pixels
+    Then the property "pastable" of "w" is false
+    When "from elsewhere" is copied in another application
+    Then the property "pastable" of "w" is true
 
   Scenario: A link opens in the browser
     When the method "open" of "w" is called with "https://example.com/"
