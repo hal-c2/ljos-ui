@@ -67,33 +67,45 @@ impl TextInputClient for Client {
         });
     }
 
-    fn delete_before_cursor(&self, engine: &Engine, item: ObjectId, units: usize) {
-        let Some(st) = ops::ready(engine, item) else {
-            return;
-        };
-        let range = before_and_selected(&st.borrow().model, units);
-        self.replace(engine, item, range, "");
+    fn selection(&self, engine: &Engine, item: ObjectId) -> (usize, usize) {
+        ops::ready(engine, item).map_or((0, 0), |st| {
+            let s = st.borrow();
+            (s.model.anchor(), s.model.cursor())
+        })
     }
 
-    fn replace_before_cursor(
+    fn replace_whole(
         &self,
         engine: &Engine,
         item: ObjectId,
-        units: usize,
+        range: Range<usize>,
         text: &str,
     ) -> bool {
+        if ops::read_only(engine, item) {
+            return false;
+        }
         let Some(st) = ops::ready(engine, item) else {
             return false;
         };
-        let (range, len) = {
+        // A field that starts over on its first edit has done so before
+        // the edit is measured: what was in it is not what was refused.
+        ops::begin_editing(engine, item);
+        let (range, len, before, same) = {
             let s = st.borrow();
-            (before_and_selected(&s.model, units), s.model.len())
+            let len = s.model.len();
+            let range = range.start.min(len)..range.end.min(len);
+            let same = s.model.slice(range.start, range.end) == text;
+            (range, len, s.model.text().to_owned(), same)
         };
         let (start, removed) = (range.start, range.len());
         self.replace(engine, item, range, text);
         let s = st.borrow();
         let end = start + units_of(text);
-        s.model.len() == len - removed + units_of(text) && s.model.cursor() == end
+        // A refused edit is rolled back, which a change of the same length
+        // ending at the cursor would pass for taken by its length alone.
+        s.model.len() == len - removed + units_of(text)
+            && s.model.cursor() == end
+            && (same || s.model.text() != before)
     }
 
     fn digest(&self, engine: &Engine, item: ObjectId) -> u64 {
@@ -101,7 +113,25 @@ impl TextInputClient for Client {
         let mut h = std::hash::DefaultHasher::new();
         if let Some(st) = ops::ready(engine, item) {
             let s = st.borrow();
-            (s.model.text(), s.model.anchor(), s.model.cursor()).hash(&mut h);
+            // A field that clears on edit starts over once it is focused
+            // again: what the method typed is no longer in it.
+            (
+                s.model.text(),
+                s.model.anchor(),
+                s.model.cursor(),
+                s.editing,
+            )
+                .hash(&mut h);
+        }
+        h.finish()
+    }
+
+    fn text_digest(&self, engine: &Engine, item: ObjectId) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::hash::DefaultHasher::new();
+        if let Some(st) = ops::ready(engine, item) {
+            let s = st.borrow();
+            (s.model.text(), s.editing).hash(&mut h);
         }
         h.finish()
     }
@@ -250,17 +280,25 @@ impl QuickScene {
         let around = client.surrounding(engine, item);
         let preedit = client.preedit(engine, item);
         if hides(engine, item, &*client) {
-            // What the method typed, which it holds still, and what it
-            // composes after it.
-            let mut text = typed_hidden(engine, item, &*client);
-            let typed = units_of(&text);
-            text.push_str(&preedit);
-            let end = units_of(&text);
+            // What the method typed, which it holds still, its selection
+            // in it, and what it composes at its cursor.
+            let (mut text, anchor, cursor) = typed_hidden(engine, item, &*client)
+                .map_or((String::new(), 0, 0), |h| (h.text, h.anchor, h.cursor));
+            if preedit.is_empty() {
+                return Some(ImeText {
+                    text,
+                    anchor,
+                    cursor,
+                    compose: None,
+                });
+            }
+            text.insert_str(byte_at(&text, cursor), &preedit);
+            let end = cursor + units_of(&preedit);
             return Some(ImeText {
                 text,
                 anchor: end,
                 cursor: end,
-                compose: (end > typed).then_some(typed..end),
+                compose: Some(cursor..end),
             });
         }
         if preedit.is_empty() {
@@ -293,9 +331,10 @@ impl QuickScene {
     ///
     /// A field that hides its text shows the method nothing
     /// ([`TextInputClient::surrounding`]), so the method only knows what
-    /// it typed there: that is taken to be just before the cursor, and
-    /// what changed of it is typed or taken back there. It is kept for as
-    /// long as the field is as the method left it ([`QuickScene::
+    /// it typed there: its first typing goes at the field's selection,
+    /// what changed of it later is typed or taken back where it is in the
+    /// field, and the method's selection in it is the field's. It is kept
+    /// for as long as the field is as the method left it ([`QuickScene::
     /// ime_text`] tells it), so the method is not told to forget it after
     /// every key, which it would do only after it typed the next.
     pub fn ime_set_text(&self, engine: &Engine, now: &ImeText) -> bool {
@@ -316,10 +355,10 @@ impl QuickScene {
                 .as_ref()
                 .is_some_and(|(at, _)| *at < units_of(&text))
         {
-            // A hidden field keeps what the method typed just before the
-            // cursor, and a composition only at its end: one with text
-            // after it is taken as typed, in the method's order, rather
-            // than moved to the end (and told back so).
+            // A hidden field keeps a composition only at the end of what
+            // the method typed: one with text after it is taken as typed,
+            // in the method's order, rather than moved to the end (and
+            // told back so).
             (text, compose) = (now.text.clone(), None);
         }
         let (range, typed) = changed(&around.text, &text);
@@ -330,23 +369,70 @@ impl QuickScene {
             client.set_preedit(engine, item, "", None);
         }
         if hidden {
-            let before = typed_hidden(engine, item, &*client);
+            // Where what the method holds is in the field: what it typed,
+            // or before it typed anything, the selection its typing
+            // replaces.
+            let held = typed_hidden(engine, item, &*client);
+            let was_held = held.is_some();
+            let (before, span) = match held {
+                Some(h) => {
+                    let end = h.start + units_of(&h.text);
+                    (h.text, h.start..end)
+                }
+                None => {
+                    let (anchor, cursor) = client.selection(engine, item);
+                    (String::new(), anchor.min(cursor)..anchor.max(cursor))
+                }
+            };
             let (range, typed) = changed(&before, &text);
-            let back = units_of(&before) - range.start;
-            // What followed the change in what it held was taken back
-            // with it.
-            let again = typed + &before[byte_at(&before, range.end)..];
+            let at = span.start + range.start..span.end - (units_of(&before) - range.end);
+            // Measured in what the method holds, not in the field: the
+            // field's selection goes only when something is typed over it.
+            let edited = !range.is_empty() || !typed.is_empty();
             // One edit, so a validator that refuses it leaves the field
-            // as it was, not with only the taking back done.
-            let took = (back == 0 && again.is_empty())
-                || client.replace_before_cursor(engine, item, back, &again);
-            let after = client.digest(engine, item);
+            // as it was.
+            let took = !edited || client.replace_whole(engine, item, at, &typed);
+            let start = if edited {
+                // Measured after the edit: a field that starts over on
+                // its first edit moved what the method typed to its start.
+                client
+                    .selection(engine, item)
+                    .1
+                    .saturating_sub(units_of(&typed) + range.start)
+            } else {
+                span.start
+            };
+            let len = units_of(&text);
+            // A composition is only at the end of what the method typed.
+            let (anchor, cursor) = compose
+                .as_ref()
+                .map_or((now.anchor.min(len), now.cursor.min(len)), |(at, _)| {
+                    (*at, *at)
+                });
             // A field that refused or cut what was typed is not as the
-            // method holds it: the method is told to start anew.
-            *hidden_held(engine).0.borrow_mut() = took.then(|| HiddenHeld {
+            // method holds it: the method is told to start anew. A method
+            // that typed nothing yet has no selection in the field, which
+            // keeps its own (all of it, selected on focus).
+            let mut keep = took && (edited || was_held);
+            if keep {
+                let want = (start + anchor, start + cursor);
+                if client.selection(engine, item) != want {
+                    let written = client.text_digest(engine, item);
+                    client.set_selection(engine, item, want.0, want.1);
+                    // A handler of the move may write the field: what the
+                    // method typed is then not where it is held, and the
+                    // digest taken below is of the field so written.
+                    keep = client.text_digest(engine, item) == written
+                        && client.selection(engine, item) == want;
+                }
+            }
+            *hidden_held(engine).0.borrow_mut() = keep.then(|| HiddenHeld {
                 item,
                 text: text.clone(),
-                digest: after,
+                start,
+                anchor,
+                cursor,
+                digest: client.digest(engine, item),
             });
         } else if edits {
             let at_cursor =
@@ -389,9 +475,15 @@ fn hides(engine: &Engine, item: ObjectId, client: &dyn TextInputClient) -> bool 
 
 /// What an input method that tells the whole of what it holds typed into
 /// a field that hides its text.
+#[derive(Clone)]
 struct HiddenHeld {
     item: ObjectId,
     text: String,
+    /// Where `text` starts in the field.
+    start: usize,
+    /// The method's selection, in `text`.
+    anchor: usize,
+    cursor: usize,
     /// The field as the method left it ([`TextInputClient::digest`]).
     digest: u64,
 }
@@ -405,14 +497,18 @@ fn hidden_held(engine: &Engine) -> std::rc::Rc<Hidden> {
 
 /// What the method typed into the hidden field `item`, while the field is
 /// as it left it; else nothing.
-fn typed_hidden(engine: &Engine, item: ObjectId, client: &dyn TextInputClient) -> String {
+fn typed_hidden(
+    engine: &Engine,
+    item: ObjectId,
+    client: &dyn TextInputClient,
+) -> Option<HiddenHeld> {
     let held = hidden_held(engine);
     let mut held = held.0.borrow_mut();
     match held.as_ref() {
-        Some(h) if h.item == item && h.digest == client.digest(engine, item) => h.text.clone(),
+        Some(h) if h.item == item && h.digest == client.digest(engine, item) => Some(h.clone()),
         _ => {
             *held = None;
-            String::new()
+            None
         }
     }
 }
@@ -442,14 +538,6 @@ fn byte_at(text: &str, unit: usize) -> usize {
         units += c.len_utf16();
     }
     text.len()
-}
-
-/// The `units` UTF-16 units before the selection, and the selection: what
-/// a Backspace there would take first, then the units before it. The
-/// method's report is of a text without the selection, so it goes too.
-fn before_and_selected(model: &ljos_text::TextModel, units: usize) -> Range<usize> {
-    let (anchor, cursor) = (model.anchor(), model.cursor());
-    anchor.min(cursor).saturating_sub(units)..anchor.max(cursor)
 }
 
 fn units_of(text: &str) -> usize {

@@ -396,6 +396,89 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_hidden_field_leaves_the_method_the_cursor_it_moved() {
+        let (e, mut s, input) = editor("12", &[("echoMode", Value::from(2))]);
+        let mut keyboard = SoftKeyboard::default();
+        keyboard.sync(&s, &e);
+        keyboard.held(&s, &e, text("abc", 3, None));
+        s.frame(&e, Time::ZERO);
+        keyboard.sync(&s, &e);
+        // A swipe on the space bar.
+        keyboard.held(&s, &e, text("abc", 1, None));
+        s.frame(&e, Time::ZERO);
+        assert_eq!(helds(&keyboard.sync(&s, &e)), Vec::<String>::new());
+        keyboard.held(&s, &e, text("axbc", 2, None));
+        s.frame(&e, Time::ZERO);
+        assert_eq!(helds(&keyboard.sync(&s, &e)), Vec::<String>::new());
+        assert_eq!(
+            e.read_by_name(input, "text").to_js_string().to_string(),
+            "12axbc"
+        );
+        assert_eq!(e.read_by_name(input, "cursorPosition").to_number(), 4.0);
+    }
+
+    #[test]
+    fn a_field_that_clears_on_edit_takes_the_method_typing() {
+        // `TextInput.PasswordEchoOnEdit`: the first edit starts over.
+        let (e, mut s, input) = editor("secret", &[("echoMode", Value::from(3))]);
+        let mut keyboard = SoftKeyboard::default();
+        keyboard.sync(&s, &e);
+        keyboard.held(&s, &e, text("a", 1, None));
+        s.frame(&e, Time::ZERO);
+        // The method keeps what it typed: it is not told to start anew.
+        assert_eq!(helds(&keyboard.sync(&s, &e)), Vec::<String>::new());
+        keyboard.held(&s, &e, text("ab", 2, None));
+        s.frame(&e, Time::ZERO);
+        assert_eq!(
+            e.read_by_name(input, "text").to_js_string().to_string(),
+            "ab"
+        );
+    }
+
+    #[test]
+    fn a_field_that_clears_on_edit_refocused_has_the_method_start_over() {
+        // `TextInput.PasswordEchoOnEdit`: focused again, the field starts
+        // over on its next edit, so what the method typed before is not
+        // in it.
+        let e = Engine::new();
+        ljos_quick::register(&e);
+        let root = e.create_native(Item::default(), None).unwrap();
+        e.complete(root).unwrap();
+        let [input, other] = [3, 0].map(|echo| {
+            let input = e.create_native(TextInput::default(), Some(root)).unwrap();
+            ljos_quick::add_data(&e, root, input).unwrap();
+            e.complete(input).unwrap();
+            e.write_by_name(input, "echoMode", Value::from(echo))
+                .unwrap();
+            input
+        });
+        let mut s = QuickScene::new(kurbo::Size::new(300.0, 200.0));
+        s.set_root(&e, root).unwrap();
+        s.frame(&e, Time::ZERO);
+        e.invoke_by_name(input, "forceActiveFocus", &[]).unwrap();
+        s.frame(&e, Time::ZERO);
+        let mut keyboard = SoftKeyboard::default();
+        keyboard.sync(&s, &e);
+        keyboard.held(&s, &e, text("abc", 3, None));
+        s.frame(&e, Time::ZERO);
+        keyboard.sync(&s, &e);
+        e.invoke_by_name(other, "forceActiveFocus", &[]).unwrap();
+        s.frame(&e, Time::ZERO);
+        keyboard.sync(&s, &e);
+        e.invoke_by_name(input, "forceActiveFocus", &[]).unwrap();
+        s.frame(&e, Time::ZERO);
+        assert_eq!(helds(&keyboard.sync(&s, &e)), [""]);
+        keyboard.held(&s, &e, text("d", 1, None));
+        s.frame(&e, Time::ZERO);
+        let field = || e.read_by_name(input, "text").to_js_string().to_string();
+        assert_eq!(field(), "d");
+        // Backspace takes back what the method typed since.
+        keyboard.held(&s, &e, text("", 0, None));
+        s.frame(&e, Time::ZERO);
+        assert_eq!(field(), "");
+    }
+
     fn position(asked: &[Request], want: fn(&Request) -> bool) -> Option<usize> {
         asked.iter().position(want)
     }
