@@ -412,7 +412,7 @@ Feature: A ShellLoader shows a user's shell, or the application's own when the u
         import QtQuick
         Rectangle {
           objectName: "user-shell"; width: 50; height: 20
-          Component.onCompleted: console.log("the user's shell is made")
+          Component.onCompleted: console.info("the user's shell is made")
         }
         """
       And the QML:
@@ -440,7 +440,7 @@ Feature: A ShellLoader shows a user's shell, or the application's own when the u
         import QtQuick
         Rectangle {
           objectName: "default-shell"; width: 40; height: 30
-          Component.onCompleted: console.log("the application's shell is made")
+          Component.onCompleted: console.info("the application's shell is made")
         }
         """
       And the QML:
