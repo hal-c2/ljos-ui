@@ -72,6 +72,36 @@ pub struct Insets {
     pub ime: [f64; 4],
 }
 
+impl Insets {
+    /// What the application keeps clear while it lays out at the height
+    /// [`Insets::keyboard`] leaves it: the system's bars and the cutout,
+    /// whichever reaches further at each edge. With the keyboard up the
+    /// bottom is the keyboard's, which the window gives up already.
+    #[must_use]
+    pub fn safe_area(&self) -> [f64; 4] {
+        let mut v = [0.0; 4];
+        for (i, out) in v.iter_mut().enumerate() {
+            *out = clear(self.system_bars[i]).max(clear(self.cutout[i]));
+        }
+        if self.keyboard() > 0.0 {
+            v[3] = 0.0;
+        }
+        v
+    }
+
+    /// How much of the window's bottom the on-screen keyboard covers, which
+    /// the application gives up as a window that resizes for it does
+    /// (Android's `adjustResize`); 0 while it is down.
+    #[must_use]
+    pub fn keyboard(&self) -> f64 {
+        clear(self.ime[3])
+    }
+}
+
+fn clear(n: f64) -> f64 {
+    if n.is_finite() { n.max(0.0) } else { 0.0 }
+}
+
 /// Where the system's back gesture is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BackPhase {
@@ -136,6 +166,53 @@ pub enum TextEvent {
     },
     /// Text to insert; it ends the composition.
     Commit(String),
+    /// The whole of what an input method holds now, from a platform that
+    /// tells that rather than what changed (Android's GameTextInput).
+    Held(HeldText),
+    /// The editor's action key of the on-screen keyboard (Done, Go, Next):
+    /// the editor is finished with.
+    Action,
+}
+
+/// What an input method holds: its text, its selection and the part of
+/// the text it is still composing. Positions count UTF-16 code units.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct HeldText {
+    pub text: String,
+    /// Where the selection starts; equal to `cursor` without one.
+    pub anchor: usize,
+    pub cursor: usize,
+    pub compose: Option<std::ops::Range<usize>>,
+}
+
+/// What kind of text an editor takes, for the on-screen keyboard to suit.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TextKind {
+    #[default]
+    Text,
+    /// Digits only.
+    Digits,
+    /// A number with a sign and a decimal point.
+    Number,
+    Phone,
+    Email,
+    Url,
+}
+
+/// What the on-screen keyboard is told about the editor that has focus.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct EditorKind {
+    pub kind: TextKind,
+    /// The text is hidden as it is typed (a password).
+    pub hidden: bool,
+    /// What is typed is not to be learnt (sensitive data).
+    pub private: bool,
+    /// Many lines: Enter types a new line rather than finishing.
+    pub multi_line: bool,
+    /// No suggestions or corrections.
+    pub no_suggestions: bool,
+    /// No capital at the start of a sentence.
+    pub no_capitals: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -227,4 +304,42 @@ pub struct Modifiers {
     pub alt: bool,
     /// The Windows key, or Command.
     pub meta: bool,
+}
+
+#[cfg(test)]
+mod insets_tests {
+    use super::Insets;
+
+    #[test]
+    fn the_safe_area_is_the_bars_or_the_cutout_whichever_reaches_further() {
+        let i = Insets {
+            system_bars: [0.0, 63.0, 0.0, 42.0],
+            cutout: [0.0, 80.0, 30.0, 0.0],
+            ime: [0.0; 4],
+        };
+        assert_eq!(i.safe_area(), [0.0, 80.0, 30.0, 42.0]);
+        assert!(i.keyboard() == 0.0);
+    }
+
+    #[test]
+    fn with_the_keyboard_up_the_bottom_is_the_keyboards() {
+        let i = Insets {
+            system_bars: [0.0, 63.0, 0.0, 42.0],
+            cutout: [0.0; 4],
+            ime: [0.0, 0.0, 0.0, 700.0],
+        };
+        assert_eq!(i.safe_area(), [0.0, 63.0, 0.0, 0.0]);
+        assert!((i.keyboard() - 700.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn nonsense_is_nothing_to_keep_clear() {
+        let i = Insets {
+            system_bars: [-5.0, f64::NAN, f64::INFINITY, 0.0],
+            cutout: [0.0; 4],
+            ime: [0.0, 0.0, 0.0, -1.0],
+        };
+        assert_eq!(i.safe_area(), [0.0; 4]);
+        assert!(i.keyboard() == 0.0);
+    }
 }

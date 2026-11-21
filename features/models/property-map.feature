@@ -153,3 +153,34 @@ Feature: PropertyMap
       And the method "listKeys" of "root" is called
       Then the property "shown" of "root" is "Zed"
       And the property "names" of "root" is "name"
+
+  Rule: A map given to the root context is seen from every context below it
+
+    # Measured on Qt 6.12.0 with the map given to the root context as a
+    # context property; crates/ljos_quick/tests/root_context.rs pins the
+    # same tree, with the map declared as an id of the root context and
+    # given as a context property (#680).
+    @backlog
+    Scenario: Delegates, loaded items and made objects read the map's keys and follow them
+      Given a property map "owner" holding "gap"=3
+      And the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root
+          width: 400; height: 400
+          Repeater { model: 1; Item { objectName: "repeater"; property real g: owner.gap } }
+          ListView {
+            width: 100; height: 100; model: 1
+            delegate: Item { objectName: "listView"; width: 10; height: 10; property real g: owner.gap }
+          }
+          Loader { sourceComponent: Item { objectName: "loader"; property real g: owner.gap } }
+          Component { id: made; Item { objectName: "made"; property real g: owner.gap } }
+          Component.onCompleted: made.createObject(root)
+        }
+        """
+      When the property map "owner" is given "gap"=5
+      Then the property "g" of "repeater" is 5
+      And the property "g" of "listView" is 5
+      And the property "g" of "loader" is 5
+      And the property "g" of "made" is 5

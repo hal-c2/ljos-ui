@@ -98,6 +98,9 @@ impl Audit {
         let key = entry.strip_suffix(".qml").unwrap_or(entry).to_owned();
 
         let engine = Engine::new();
+        // From the start: a turn of the application's startup is judged
+        // as any other.
+        ljos_audit::watch(&engine);
         // The bundled font: the same layout, and so the same report, on
         // every machine.
         ljos::render::set_fonts(ljos::render::Fonts::Bundled);
@@ -163,7 +166,11 @@ impl Audit {
                 before = Some(std::sync::Arc::new(ljos_audit::Placement::of(e, s)));
             })
             .map_err(|e| anyhow::anyhow!("{e}"))?;
-        let options = Options { before, ..options };
+        let options = Options {
+            before,
+            clock: picture.clock().into(),
+            ..options
+        };
         let report = ljos_audit::audit(&engine, &mut scene, picture.now(), &options);
         // The engine writes what `Settings` holds as it goes, before the
         // home it writes in goes.

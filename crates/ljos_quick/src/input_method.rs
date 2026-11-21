@@ -107,6 +107,13 @@ fn state(engine: &Engine) -> Rc<State> {
     engine.extension::<State>()
 }
 
+/// An editor was pressed: the on-screen keyboard is asked for, as
+/// `Qt.inputMethod.show()` does.
+pub(crate) fn want_keyboard(engine: &Engine) {
+    state(engine).keyboard.set(Some(true));
+    engine.request_wake();
+}
+
 /// What the application asked of the platform since the last time.
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct Requests {

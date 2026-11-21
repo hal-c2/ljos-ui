@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application
+        android:label="@LABEL@"
+        android:hasCode="true"
+        android:enableOnBackInvokedCallback="true"
+        android:theme="@style/Theme.AppCompat.NoActionBar">
+        <!-- Every configuration change goes to the running application,
+             which resizes; none makes the activity again. -->
+        <activity
+            android:name="dev.ljos.LjosActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:windowSoftInputMode="adjustResize"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|navigation|density|uiMode|fontScale|locale|layoutDirection|colorMode|touchscreen|grammaticalGender">
+            <meta-data android:name="android.app.lib_name" android:value="@LIB_NAME@" />
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

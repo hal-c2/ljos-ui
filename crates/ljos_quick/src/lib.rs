@@ -15,6 +15,7 @@ mod application_palette;
 mod blocks;
 mod by_type;
 pub use app_font::application_font_changed;
+mod back;
 mod canvas;
 mod context_menu;
 pub mod controller;
@@ -93,6 +94,8 @@ pub use accessible::{Accessible, AccessibleAttached};
 pub use accessible::{AccessibleAction, AccessibleItem, register_accessible_item};
 pub use accessible::{AccessibleDefaults, register_accessible_defaults};
 pub use anchors::CATEGORY as ANCHORS_CATEGORY;
+#[doc(hidden)]
+pub use anchors::anchor_computes;
 pub use animation::SpringAnimation;
 pub use animation::{AnchorAnimation, ParentAnimation};
 pub use animation::{
@@ -109,6 +112,7 @@ pub use animation::{
 };
 pub use animation::{QuaternionAnimation, Vector3dAnimation};
 pub use application_palette::{ApplicationPalette, application_palette, set_application_palette};
+pub use back::{Back, BackStep, deliver_back, wants_back};
 pub use blocks::{Contribution, ShellLoader, Slot, contribution_mode, shell_status};
 pub use context_menu::{ContextMenuHook, ContextMenuReason, register_context_menu};
 pub use drag::{Drag, DragAttached, drag_attached, drag_type};
@@ -207,8 +211,8 @@ pub use text::{
 };
 pub use text::{RichHandle, SelectionScope};
 pub use text_input::{
-    AccessibleTextAction, Clipboard, DoubleValidator, ImeState, IntValidator, PlatformTextInput,
-    RegularExpressionValidator, TextEdit, TextEditor, TextInput,
+    AccessibleTextAction, Clipboard, DoubleValidator, ImeState, ImeText, IntValidator,
+    PlatformTextInput, RegularExpressionValidator, TextEdit, TextEditor, TextInput,
 };
 pub use tree::{
     add_data, child_items, list_put_before, resources, set_parent_item, set_parent_item_before,
@@ -324,6 +328,7 @@ pub fn register(engine: &Engine) {
     text::register(engine);
     // Module `Ljos`, and Loader and ErrorBoundary as UI boundaries.
     error_boundary::register(engine);
+    back::register(engine);
     #[cfg(feature = "pdf")]
     pdf::register(engine);
     loader::register(engine);

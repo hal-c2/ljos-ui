@@ -38,12 +38,15 @@ pub use ljos_dev::{UserQml, UserSession};
 #[cfg(feature = "mcp")]
 pub use tools::{InspectorAccess, InspectorAddress, InspectorOptions};
 
+#[cfg(all(feature = "android", target_os = "android"))]
+pub mod android;
 #[cfg(target_os = "macos")]
 mod appkit_drag;
 #[cfg(target_os = "macos")]
 mod appkit_drag_out;
 #[cfg(target_os = "macos")]
 mod appkit_menu;
+mod back_told;
 mod badge;
 mod color_space;
 mod cpu;
@@ -73,6 +76,7 @@ mod roots;
 mod scene3d;
 mod screen_reader;
 mod settings;
+mod soft_keyboard;
 #[cfg(gl_painter)]
 mod software;
 mod streams;
@@ -80,6 +84,9 @@ mod surface;
 mod system_fonts;
 #[cfg(all(test, target_os = "linux"))]
 mod test_bus;
+// The Android shell's; built everywhere so that its tests run on any host.
+#[cfg_attr(not(all(feature = "android", target_os = "android")), allow(dead_code))]
+mod wake;
 mod wayland_drag;
 #[cfg(target_os = "windows")]
 mod win32_drag;

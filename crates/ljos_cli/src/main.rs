@@ -8,6 +8,7 @@ use clap::{Parser, Subcommand};
 use ljos_mcp_author::{AuthorServer, Project, QmlFrontEnd};
 use ljos_mcp_core::CapSet;
 
+mod android;
 mod attach;
 mod audit;
 #[cfg(target_os = "linux")]
@@ -124,6 +125,12 @@ enum Command {
     /// JSON-RPC message, posted to the inspector's port or Unix socket.
     /// The application is one started with `ljos run --mcp`.
     Attach(attach::Attach),
+    /// An application on Android: `bundle` builds its package, `run`
+    /// installs and starts it on a phone or emulator.
+    Android {
+        #[command(subcommand)]
+        command: android::AndroidCommand,
+    },
     /// The module Ljos.Design: `export` writes it as QML files.
     Design {
         #[command(subcommand)]
@@ -199,6 +206,7 @@ fn run() -> anyhow::Result<()> {
         }
         Command::I18n { command } => i18n::run(command),
         Command::Design { command } => design::run(command),
+        Command::Android { command } => android::run(command),
         Command::Check(check) => check.run(),
         Command::Types(types) => types.run(),
         Command::Lsp => match lsp::run()? {

@@ -346,6 +346,9 @@ pub struct Inspector {
     /// accessible node: what the last `app_snapshot` that said asked for.
     pointer_lines: bool,
     logs: Rc<RefCell<LogRing>>,
+    /// What the fields hold while an acting `app_audit` lets the
+    /// application run.
+    secret_watch: capture::SecretWatch,
     /// What `app_trace` wrote down.
     traces: Rc<RefCell<trace::TraceLog>>,
     stats: FrameStats,
@@ -464,6 +467,7 @@ impl Inspector {
             kept: VecDeque::new(),
             pointer_lines: false,
             logs: Rc::new(RefCell::new(LogRing::default())),
+            secret_watch: capture::SecretWatch::default(),
             traces,
             stats: FrameStats::new(),
             work: None,
@@ -1235,7 +1239,17 @@ impl Inspector {
             return;
         }
         if let Kind::Audit(args) = &kind {
-            let answer = args.options().and_then(|options| {
+            // A finding can repeat what the application threw, which may
+            // hold what a field holds now.
+            if capture.is_none() {
+                let now = capture::secrets(engine, scene, self.cfg.redact_all);
+                self.logs.borrow_mut().learn(&now);
+            }
+            self.secret_watch.start(engine, scene, self.cfg.redact_all);
+            let answer = args.options().and_then(|mut options| {
+                // An application on a clock a test moves may be let run on
+                // it; one on the wall clock may not.
+                options.clock = ljos_audit::AppClock(self.vclock.clone());
                 let root = match (&args.root, capture.as_ref()) {
                     (Some(what), Some(seen)) => Some(
                         Look {
@@ -1266,6 +1280,30 @@ impl Inspector {
                     self.pointer_lines,
                 )));
             }
+            // Masked as what the application logged or threw is, with what
+            // the fields held at any moment an acting audit let it run
+            // (fields made meanwhile included) and what they hold now.
+            let heard = self.secret_watch.stop(engine);
+            let now = capture::secrets(engine, scene, self.cfg.redact_all);
+            let mut logs = self.logs.borrow_mut();
+            logs.learn(&heard);
+            logs.learn(&now);
+            drop(logs);
+            let book = self.logs.borrow();
+            let book = book.book();
+            let answer = match answer {
+                Ok(mut r) => {
+                    book.mask_json(&mut r.structured);
+                    if let Some(text) = r.text.as_mut() {
+                        book.mask_text(text);
+                    }
+                    Ok(r)
+                }
+                Err(mut e) => {
+                    book.mask_error(&mut e);
+                    Err(e)
+                }
+            };
             let _ = reply.send(answer);
             return;
         }

@@ -206,8 +206,9 @@ pub use trace::{TraceSink, Traced};
 pub use tree::{ItemTree, TreeChange, TreeListener, TreeListeners, tree_model};
 pub use tree_model::{TableModelColumn, TreeModel};
 pub use turns::{
-    BUDGET_VARIABLE, DEFAULT_TURN_BUDGET, DEFAULT_WATCHDOG_THRESHOLD, Phase, PhaseGuard, TurnCause,
-    TurnGuard, TurnInProgress, TurnMarker, WATCHDOG_VARIABLE, watchdog_threshold,
+    BUDGET_VARIABLE, DEFAULT_TURN_BUDGET, DEFAULT_WATCHDOG_THRESHOLD, KEPT_TURNS, Phase,
+    PhaseGuard, RecordedHandler, RecordedTurn, TurnCause, TurnGuard, TurnInProgress, TurnMarker,
+    TurnRecord, WATCHDOG_VARIABLE, watchdog_threshold,
 };
 pub use types::{ConvertError, Copied, QmlValue, TypeTag, Url};
 pub use value::{Color, EnumValue, Font, JsHandle, Point, Rect, Size, Unwritten, Value};

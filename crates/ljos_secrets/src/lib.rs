@@ -8,6 +8,9 @@
 //!   KeePassXC), in its default collection ([`SecretService`]);
 //! - macOS: the user's keychain (`Keychain`);
 //! - Windows: the Credential Manager (`CredentialManager`);
+//! - Android: the Android Keystore (`AndroidKeystore`), through the
+//!   application's Java side, so only in an application built from Ljós's
+//!   Android template;
 //! - anywhere else, [`NoSecureStorage`]: every call is
 //!   [`SecretError::Unsupported`].
 //!
@@ -15,7 +18,7 @@
 //! keyring that is locked, and that the user does not unlock when asked, is
 //! [`SecretError::Locked`]; one with no keyring running is
 //! [`SecretError::Unavailable`]. Nothing here writes a secret anywhere but
-//! the system's store.
+//! the system's store (on Android, files only a key in the Keystore opens).
 //!
 //! Every call can wait: for the bus, or for the user to unlock the keyring
 //! in a dialog of the system's. Call the store from a thread of your own,
@@ -29,6 +32,8 @@
 //! [`MemorySecrets`] keeps secrets in the process, for tests and for hosts
 //! that want none kept; it can be told to act locked or absent.
 
+#[cfg(target_os = "android")]
+mod android;
 #[cfg(target_os = "windows")]
 mod credential_manager;
 #[cfg(any(target_os = "windows", test))]
@@ -42,6 +47,8 @@ mod secret_service;
 
 use std::fmt;
 
+#[cfg(target_os = "android")]
+pub use android::AndroidKeystore;
 #[cfg(target_os = "windows")]
 pub use credential_manager::CredentialManager;
 #[cfg(target_os = "macos")]
@@ -123,7 +130,19 @@ impl SecretStore {
         let backend = Keychain::new().with_names(names);
         #[cfg(target_os = "windows")]
         let backend = CredentialManager::new().with_names(names);
-        #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+        #[cfg(target_os = "android")]
+        let backend = {
+            // An application's secrets are its own on Android: no other
+            // client names them.
+            let _ = names;
+            AndroidKeystore::new()
+        };
+        #[cfg(not(any(
+            target_os = "linux",
+            target_os = "macos",
+            target_os = "windows",
+            target_os = "android"
+        )))]
         let backend = {
             let _ = names;
             NoSecureStorage

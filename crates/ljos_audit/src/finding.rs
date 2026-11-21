@@ -114,10 +114,14 @@ pub struct Report {
     /// this time; a host that frames it with a clock of its own moves that
     /// clock here first, so that time does not run backwards for it.
     pub until: ljos_runtime::Time,
-    /// The codes asked for that were not checked because the audit was
-    /// not let act ([`crate::Options::act`]), sorted: no finding of one
-    /// says nothing about it.
+    /// The codes asked for that were not checked, sorted: no finding of
+    /// one says nothing about it. Most are left out because the audit was
+    /// not let act ([`crate::Options::act`]); [`Report::why_not_checked`]
+    /// says why each was.
     pub not_checked: Vec<&'static str>,
+    /// Each code of [`Report::not_checked`] with why it was not checked,
+    /// in a sentence.
+    pub why_not_checked: Vec<(&'static str, &'static str)>,
 }
 
 impl Report {
@@ -166,8 +170,28 @@ impl Report {
             "leftOut": self.left_out,
             "unseen": self.unseen,
             "notChecked": self.not_checked,
+            "whyNotChecked": self.why_not_checked.iter().map(|(c, w)| (c.to_string(), json!(w))).collect::<serde_json::Map<_, _>>(),
         })
     }
+}
+
+/// `text` with its control characters escaped (`\\u{1b}`), for a terminal:
+/// a message can carry what the application gave it (an exception's
+/// text), which is not to move the cursor or recolour the report.
+fn printable(text: &str) -> std::borrow::Cow<'_, str> {
+    if !text.chars().any(char::is_control) {
+        return text.into();
+    }
+    text.chars()
+        .map(|c| {
+            if c.is_control() {
+                c.escape_default().to_string()
+            } else {
+                c.to_string()
+            }
+        })
+        .collect::<String>()
+        .into()
 }
 
 /// A severity as a report writes it.
@@ -211,7 +235,7 @@ impl Report {
                     .as_deref()
                     .map(|p| p.strip_prefix(strip).unwrap_or(p).trim_start_matches('/'))
                     .unwrap_or("(no source)");
-                let _ = writeln!(out, "  {place}: {}", f.message);
+                let _ = writeln!(out, "  {place}: {}", printable(&f.message));
                 let mut more = Vec::new();
                 if let Some(m) = &f.measured {
                     more.push(m.clone());
@@ -236,13 +260,21 @@ impl Report {
                 self.unseen.join(", ")
             );
         }
-        if !self.not_checked.is_empty() {
-            let _ = writeln!(
-                out,
-                "Not checked: {}; these checks press keys, toggle controls and run the \
-                 application's handlers, which this audit was not asked to do.",
-                self.not_checked.join(", ")
-            );
+        // One line a reason, in the order the reasons first come.
+        let mut reasons: Vec<&str> = Vec::new();
+        for (_, why) in &self.why_not_checked {
+            if !reasons.contains(why) {
+                reasons.push(why);
+            }
+        }
+        for why in reasons {
+            let codes: Vec<&str> = self
+                .why_not_checked
+                .iter()
+                .filter(|(_, w)| *w == why)
+                .map(|(c, _)| *c)
+                .collect();
+            let _ = writeln!(out, "Not checked: {}; {why}.", codes.join(", "));
         }
         if self.left_out > 0 {
             let _ = writeln!(out, "({} more not shown)", self.left_out);

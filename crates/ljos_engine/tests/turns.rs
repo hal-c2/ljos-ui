@@ -222,3 +222,73 @@ fn a_watchdog_report_within_the_budget_does_not_claim_it_was_exceeded() {
         "{w}"
     );
 }
+
+thread_local! {
+    static NAMED: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+/// An `objectName` that runs a turn of its own when it is read, as a lazy
+/// binding with a side effect could.
+fn naming_starts_a_turn(
+    e: &ljos_engine::Engine,
+    _: ljos_engine::ObjectId,
+    _: ljos_engine::PropIndex,
+) -> Value {
+    NAMED.with(|n| n.set(n.get() + 1));
+    let naming = TurnCause::Message {
+        mailbox: "naming",
+        kind: None,
+    };
+    e.turn_for(naming, None, || ());
+    Value::String("named".into())
+}
+
+#[test]
+fn a_turn_started_while_a_recorded_turn_is_named_leaves_its_warning_alone() {
+    let h = engine();
+    let root = h.load(SRC);
+    h.engine
+        .make_on_read_by(
+            root,
+            ljos_engine::QtObject::OBJECT_NAME.index,
+            naming_starts_a_turn,
+        )
+        .expect("root is alive");
+    h.engine.record_turns(true);
+    h.engine.set_turn_budget(Some(Duration::from_secs(60)));
+    let marker = h.engine.watch_turns(Duration::from_millis(20));
+    let (tx, rx) = mpsc::channel::<String>();
+    marker.set_reporter(move |text| {
+        let _ = tx.send(text.to_owned());
+    });
+    NAMED.with(|n| n.set(0));
+    h.engine.turn_for(LOAD, Some(root), || {
+        rx.recv_timeout(PATIENCE)
+            .expect("the watchdog reported the turn while it ran");
+    });
+    // The record names the turn, which reads objectName, which runs a
+    // turn of its own after this one's depth is back at 0.
+    assert!(NAMED.with(std::cell::Cell::get) >= 1, "the turn was named");
+    let record = h.engine.recorded_turns().expect("recording");
+    assert_eq!(record.turns, 2, "{record:?}");
+    assert!(
+        record.slowest.first().is_some_and(|t| t
+            .started_by
+            .starts_with("message `Load` of mailbox `application`")),
+        "{record:?}"
+    );
+    // The warning is the watched turn's: its cause and its watchdog
+    // report, not the naming turn's.
+    let warnings = h.warnings();
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    let w = &warnings[0];
+    assert!(
+        w.contains(": message `Load` of mailbox `application` of "),
+        "{w}"
+    );
+    assert!(!w.contains("naming"), "{w}");
+    assert!(
+        w.ends_with("; the watchdog reported it while it ran"),
+        "{w}"
+    );
+}

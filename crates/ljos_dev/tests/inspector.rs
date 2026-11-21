@@ -788,6 +788,11 @@ fn what_the_app_logged_or_threw_is_told_without_a_secret_it_held_then() {
     assert!(told.contains("the pin is <redacted>"), "{told}");
     assert!(told.contains("thrown pin <redacted>"), "{told}");
     assert!(told.contains("an ordinary line"), "{told}");
+    // An audit's finding repeats what was thrown, and is masked too.
+    let audit = app.call("app_audit", json!({ "rules": ["health-fault"] }));
+    let audited = format!("{}\n{}", audit.structured, audit.text);
+    assert!(!audited.contains("s3cret-pin"), "{audited}");
+    assert!(audited.contains("<redacted>"), "{audited}");
 
     // The field lets the secret go: what was told before stays masked.
     app.set("pin", "text", QmlValue::from("new-pin"));
@@ -3127,7 +3132,146 @@ Rectangle {
     );
     let reply = app.call("app_audit", json!({ "act": true }));
     assert!(ran(&app) > 0.0, "the acting checks focused the button");
-    assert_eq!(reply.structured["notChecked"], json!([]));
+    // Every acting check ran. What only letting the application run on a
+    // clock the audit moves can check is left: this one is on the wall
+    // clock, and the answer says so.
+    assert_eq!(
+        reply.structured["notChecked"],
+        json!(["health-heap-growth", "health-never-settles"]),
+        "{}",
+        reply.structured
+    );
+    assert!(
+        reply.text.contains("given none it may move"),
+        "{}",
+        reply.text
+    );
+    // The audit recorded only its own run, and stopped.
+    assert!(app.engine.recorded_turns().is_none());
+}
+
+/// An application on a clock a test moves is let run on it: the checks
+/// that need that are judged, and the clock goes on from where they left
+/// it.
+#[test]
+fn app_audit_on_a_virtual_clock_lets_the_application_run_and_moves_it_on() {
+    use ljos_runtime::{Clock, VirtualClock};
+    let mut app = app_granted(
+        "import QtQuick\nRectangle { width: 400; height: 400 }\n",
+        InspectorConfig::default(),
+        CapSet::of([Cap::Inspect, Cap::Input]),
+    );
+    let clock = VirtualClock::new();
+    app.engine.set_clock(std::rc::Rc::new(clock.clone()));
+    let before = clock.now();
+    let App {
+        client,
+        inspector,
+        scene,
+        engine,
+        ..
+    } = &mut app;
+    let inspector = inspector.as_mut().unwrap();
+    inspector.set_virtual_clock(clock.clone());
+    let reply = client
+        .call("app_audit", json!({ "act": true }), &mut || {
+            inspector.pump(engine, scene, &clock)
+        })
+        .unwrap();
+    assert!(!reply.is_error, "{}", reply.text);
+    assert_eq!(
+        reply.structured["notChecked"],
+        json!([]),
+        "{}",
+        reply.structured
+    );
+    let ran = clock.now().as_micros() - before.as_micros();
+    let windows = u64::from(ljos_design::limits::health::HEAP_WINDOWS)
+        * u64::from(ljos_design::limits::health::HEAP_WINDOW_MS)
+        * 1000;
+    assert!(ran >= windows, "the clock moved {ran} µs");
+}
+
+/// A secret the application first holds while an acting audit lets it run
+/// is masked in what the audit tells, as one it held before is, also when
+/// the field has let it go by the time the audit is done, or was made and
+/// gone while it ran.
+#[test]
+fn app_audit_masks_a_secret_the_application_took_while_it_ran() {
+    use ljos_runtime::VirtualClock;
+    let mut app = app_granted(
+        r##"import QtQuick
+Item {
+    width: 200; height: 100
+    TextInput {
+        id: pin
+        width: 100; height: 20
+        echoMode: TextInput.Password
+    }
+    Timer {
+        interval: 1500; running: true
+        onTriggered: { pin.text = "late-pin"; throw new Error("thrown " + pin.text) }
+    }
+    Loader {
+        id: dialog
+        active: false
+        sourceComponent: Component {
+            TextInput { width: 100; height: 20; echoMode: TextInput.Password }
+        }
+    }
+    Timer { interval: 1200; running: true; onTriggered: dialog.active = true }
+    Timer {
+        interval: 2200; running: true
+        onTriggered: {
+            const field = dialog.item;
+            field.text = "new-pin";
+            const held = field.text;
+            field.text = "";
+            dialog.active = false;
+            throw new Error("dropped " + held)
+        }
+    }
+    Timer {
+        interval: 2500; running: true
+        onTriggered: {
+            pin.text = "gone-pin";
+            const held = pin.text;
+            pin.text = "";
+            throw new Error("cleared " + held)
+        }
+    }
+}
+"##,
+        InspectorConfig::default(),
+        CapSet::of([Cap::Inspect, Cap::Input]),
+    );
+    let clock = VirtualClock::new();
+    app.engine.set_clock(std::rc::Rc::new(clock.clone()));
+    let App {
+        client,
+        inspector,
+        scene,
+        engine,
+        ..
+    } = &mut app;
+    let inspector = inspector.as_mut().unwrap();
+    inspector.set_virtual_clock(clock.clone());
+    let reply = client
+        .call("app_audit", json!({ "act": true }), &mut || {
+            inspector.pump(engine, scene, &clock)
+        })
+        .unwrap();
+    let told = format!("{}\n{}", reply.structured, reply.text);
+    assert!(told.contains("health-fault"), "the fault was found: {told}");
+    assert!(!told.contains("late-pin"), "{told}");
+    assert!(told.contains("thrown <redacted>"), "{told}");
+    // Held, let go and thrown in one handler: never in the field when the
+    // audit is done.
+    assert!(!told.contains("gone-pin"), "{told}");
+    assert!(told.contains("cleared <redacted>"), "{told}");
+    // In a field a Loader opened while the audit ran, and closed again.
+    assert!(!told.contains("new-pin"), "{told}");
+    assert!(told.contains("dropped <redacted>"), "{told}");
 }
 
 #[test]

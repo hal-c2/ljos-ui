@@ -16,9 +16,22 @@
 # more for the style's own. The command says when that is so.
 
 module Ljos
+	Back Ljos.Back
 	ErrorBoundary Ljos.ErrorBoundary
 	SelectionScope Ljos.SelectionScope
 	SystemMenu Ljos.SystemMenu
+	type Ljos.Back Back
+		prototype QtQml.QtObject named
+		prop enabled QtQml.bool named
+		prop active QtQml.bool named readonly
+		prop progress QtQml.real named readonly
+		signal enabledChanged
+		signal activeChanged
+		signal progressChanged
+		signal started
+		signal progressed
+		signal cancelled
+		signal invoked
 	type Ljos.ErrorBoundary ErrorBoundary
 		prototype QtQuick.Item named
 		default content

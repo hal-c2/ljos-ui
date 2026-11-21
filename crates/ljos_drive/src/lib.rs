@@ -323,6 +323,15 @@ impl<'a> Driver<'a> {
         Ok(taken)
     }
 
+    /// An input method that tells the whole of what it holds now
+    /// ([`QuickScene::ime_set_text`]). Whether an item took it. Then a
+    /// settle.
+    pub fn ime_text(&mut self, now: &ljos_quick::ImeText) -> Result<bool, DriveError> {
+        let taken = self.scene.ime_set_text(self.engine, now);
+        self.settle()?;
+        Ok(taken)
+    }
+
     /// The input method commits `text` to the item with the active focus.
     /// Whether the item took it. Then a settle.
     pub fn commit(&mut self, text: &str) -> Result<bool, DriveError> {

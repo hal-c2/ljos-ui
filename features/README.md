@@ -268,6 +268,9 @@ setter tries to write `depth` and logs the error it gets.
 | `When the user scrolls N pixels down at X, Y` | a touchpad, or another device that scrolls by the pixel, scrolls that far, in the same four directions (`@ljos-only`) |
 | `When the input method composes "text"` | an input method shows the text at the cursor as what is being composed; `""` ends the composition with nothing typed (`@ljos-only`: the oracle has no input method) |
 | `When the input method commits "text"` | an input method ends the composition and types the text (`@ljos-only`) |
+| `When the input method holds "text" with the cursor at N` | an input method that tells the whole of what it holds (Android's GameTextInput) holds the text, the cursor at N UTF-16 units; the editor takes what changed (`@ljos-only`) |
+| `When the input method holds "text" selecting from A to B` | the same, with A to B selected |
+| `When the input method holds "text" composing A to B with the cursor at N` | the same, with A to B (UTF-16 units) still being composed |
 | `When the file "X.qml" is changed to:` + doc string | a file of the running application (a `.qml`, `.js`, `.mjs` or `.ts`) is saved with that text, or made if there was none; it is applied once the files have been quiet for 120 milliseconds; on `@desktop` the application runs under `ljos run --watch`, and the step waits until it has reloaded and presented its picture (`@ljos-only`: hot reload is a Ljós extension) |
 | `When the file "X.qml" is removed` | the file is deleted while the application runs (`@ljos-only`) |
 | `When a native handler of "o" panics with "message"` | a method of a native type panics while it runs for that object, as a bug in the type would (`@ljos-only`: faults and their boundaries are Ljós's own) |
@@ -548,6 +551,36 @@ Items are text; an item `key=value` is coalesced by its key, any other by all of
 | `Then the stream "name" was handled in N turn(s)` (also `… of N items`) | the turns its handler ran, and the items they took in all |
 | `Then the stream "name" handed over "a, b"` | every item its handler was given, in order |
 | `Then the stream "name" holds N items` | queued, not handled yet |
+
+### A phone (`mobile/`; `@android`, `@ios`)
+
+What the user and the system do to an application on a phone, which owns its screen
+(ARCHITECTURE.md 10.2). Only a phone's runner does them; anywhere else they are not implemented.
+
+| Step | Meaning |
+|---|---|
+| `When the user goes to the home screen` / `When the user opens the application again` | the application leaves the screen and comes back, from its icon or the recent applications |
+| `When the user turns the phone to landscape` / `… to portrait` | a quarter turn, or back |
+| `When the user presses Back` | the system's Back, as a button or a swipe |
+| `When the system ends the application's screen` | as a system short of memory ends a hidden application's screen and keeps the application (Android's activity destroyed, its process kept) |
+| `Then the application is in front` / `Then the application is in the background` | which one the user sees |
+| `Then the application is no longer running` | its process has ended, so the next start is a new process with a new application |
+| `Then the system has not found the application unresponsive` | no "not responding" since the scenario started |
+| `When the system ends the application's process` | as a system short of memory ends a hidden application's process; `When the user opens the application again` then starts a new one |
+| `When the application keeps the secret "s" as "k" of "svc"` / `When the application removes the secret "k" of "svc"` | the application keeps a secret in the system's store of secrets (`ljos_secrets`), or removes it |
+| `Then the application reads the secret "s" as "k" of "svc"` / `Then the application reads no secret as "k" of "svc"` | what the application reads back from that store |
+| `Then the property "p" of "o" is a directory of the application's own` | the property is the path of a directory the system keeps for the application alone (on Android, below its data directory) |
+| `Then no file of the application holds "s"` | no file in the application's own directories holds the text as it is: a secret is kept encrypted |
+
+The system's Back, as the application's `Back` handlers get it. These are Ljós's own (no Qt
+type takes Back), so Ljós runs them anywhere; they take no phone.
+
+| Step | Meaning |
+|---|---|
+| `When the user presses the system's Back` | a Back with no swipe before it: a key or a button |
+| `When the user starts the back swipe` / `When the user's back swipe has come <f> of the way` | a swipe from the edge, as the system previews it (`<f>` from 0 to 1) |
+| `When the user cancels the back swipe` / `When the user completes the back swipe` | the swipe let go short, or let go to go back |
+| `Then the application took Back` / `Then the application left Back to the system` | whether a handler took the last step, or none was there for it |
 
 ### Planned (backlog scenarios may use them; not built yet)
 

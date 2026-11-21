@@ -89,6 +89,9 @@ struct InterruptState {
     polled: Cell<Option<(Instant, Instant)>>,
     /// The time off the processor excused since `polled`.
     excused: Cell<Duration>,
+    /// How many times QuickJS has polled the handler: once per 10k jumps
+    /// and calls, a count of script work that no clock moves.
+    polls: Cell<u64>,
 }
 
 /// What the time is, for the limits on a run of JavaScript; a test sets
@@ -1671,13 +1674,14 @@ pub struct JsHost {
     rt: Runtime,
     interrupt: Rc<InterruptState>,
     cfg: JsConfig,
+    /// The heap's limit now: the config's, until
+    /// [`JsHost::set_memory_limit`] puts another.
+    memory_limit: Cell<Option<usize>>,
     last_collect: Cell<usize>,
     /// Full collections run, by [`JsHost::collect_now`] and
     /// [`JsHost::collect_if_idle`].
     collections: Cell<u64>,
     heap: HeapCount,
-    /// The limit QuickJS was given last, `None` for none.
-    limit: Cell<Option<usize>>,
     pressure: RefCell<Pressure>,
     /// The most the heap held in the run, for a thrown `null`.
     peak: MallocPeak,
@@ -1809,6 +1813,7 @@ impl JsHost {
             // QuickJS calls this about every 10k opcodes (roughly 266 us), so
             // one clock read per call costs well under 0.5 %.
             rt.set_interrupt_handler(Some(Box::new(move || {
+                st.polls.set(st.polls.get().wrapping_add(1));
                 let overdue = st.overdue();
                 if overdue {
                     st.fired.set(true);
@@ -1897,7 +1902,7 @@ impl JsHost {
             ctx,
             rt,
             interrupt,
-            limit: Cell::new(cfg.memory_limit),
+            memory_limit: Cell::new(cfg.memory_limit),
             cfg,
             last_collect: Cell::new(0),
             collections: Cell::new(0),
@@ -2768,6 +2773,19 @@ impl JsHost {
         self.heap.bytes()
     }
 
+    /// The script work done so far: one per 10k jumps and calls the
+    /// interpreter ran. The same scripts do the same work on every run,
+    /// whatever the machine or its load, so a difference of two readings
+    /// measures what ran between them without a clock.
+    pub fn work(&self) -> u64 {
+        self.interrupt.polls.get()
+    }
+
+    /// The most the runtime may hold, if it is capped.
+    pub fn memory_limit(&self) -> Option<usize> {
+        self.memory_limit.get()
+    }
+
     /// Puts a new limit on the heap, `None` for none, as
     /// [`JsConfig::memory_limit`] puts the first. What the heap holds
     /// already stays. Not available inside a run.
@@ -2777,7 +2795,7 @@ impl JsHost {
         }
         // QuickJS takes 0 for no limit.
         self.rt.set_memory_limit(limit.unwrap_or(0));
-        self.limit.set(limit);
+        self.memory_limit.set(limit);
         true
     }
 
@@ -2813,7 +2831,7 @@ impl JsHost {
     /// after collecting, naming the runs that grew it most, and again once
     /// it went below five eighths and came back.
     fn mind_heap(&self, ran_out: bool) {
-        let Some(limit) = self.limit.get().filter(|l| *l > 0) else {
+        let Some(limit) = self.memory_limit.get().filter(|l| *l > 0) else {
             return;
         };
         let high = limit / 4 * 3;
@@ -2856,7 +2874,7 @@ impl JsHost {
         growers.sort_by_key(|a| std::cmp::Reverse(a.1));
         HeapPressure {
             bytes: self.heap_bytes(),
-            limit: self.limit.get().filter(|l| *l > 0),
+            limit: self.memory_limit.get().filter(|l| *l > 0),
             after_last_collection: self.last_collect.get(),
             warned: p.warned,
             growers,

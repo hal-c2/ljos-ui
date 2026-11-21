@@ -1,0 +1,20 @@
+[package]
+name = "ljos_jni"
+description = "Ljós's way to an Android application's Java side: the process's VM, the application's Context, and the classes the application ships, called from any thread"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+
+[target.'cfg(target_os = "android")'.dependencies]
+jni.workspace = true
+ndk-context.workspace = true
+log.workspace = true
+
+[lints]
+workspace = true

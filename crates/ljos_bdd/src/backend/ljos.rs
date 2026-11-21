@@ -180,6 +180,8 @@ pub struct LjosBackend {
     platform: FakePlatform,
     /// What the drags other applications make allow and propose.
     outside_actions: ljos_platform::DragActions,
+    /// Whether the application took the last step of the system's Back.
+    back_taken: Option<bool>,
     /// The wall clock the scenario pinned, in milliseconds since the UNIX
     /// epoch; given before anything was loaded.
     wall_clock: Option<f64>,
@@ -1608,6 +1610,16 @@ impl Input for LjosBackend {
             // the scenario says what it expects of that.
             live.drive(|d| d.preedit(text, None).map(|_| ()))
         })
+    }
+
+    fn input_method_holds(&mut self, held: &super::HeldText) -> Result<()> {
+        let now = ljos_quick::ImeText {
+            text: held.text.clone(),
+            anchor: held.anchor,
+            cursor: held.cursor,
+            compose: held.compose.clone(),
+        };
+        self.input(|b| b.live()?.drive(|d| d.ime_text(&now).map(|_| ())))
     }
 
     fn commit(&mut self, text: &str) -> Result<()> {

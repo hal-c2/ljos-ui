@@ -54,6 +54,9 @@ pub enum Area {
     Focus,
     Motion,
     Content,
+    /// How the application runs: turns that freeze the window, faults,
+    /// what failed to load, memory.
+    Health,
     /// The rules about the checks themselves (an allow comment).
     Meta,
 }
@@ -69,6 +72,7 @@ impl Area {
             Area::Focus => "interaction.md",
             Area::Motion => "motion.md",
             Area::Content => "content.md",
+            Area::Health => "health.md",
             Area::Meta => "README.md",
         }
     }
@@ -836,6 +840,65 @@ pub const RULES: &[Rule] = &[
         "An `ljos-allow` comment keeps a finding and does not say why.",
         "Write the reason after the code: `// ljos-allow(code): why this is right here`.",
     ),
+    // Health: how the application runs while it is audited, read off what
+    // the engine recorded (`ljos_engine::TurnRecord`, its faults, its
+    // script heap) rather than off what it shows.
+    r(
+        "health-turn-over-budget",
+        Health,
+        Error,
+        Runtime,
+        "One turn of the UI thread ran so much script that the window froze while it ran.",
+        "Do the work once rather than in every delegate, on what changed rather than on all of it, or in pieces (`Qt.callLater`, a `WorkerScript`, the host).",
+    ),
+    r(
+        "health-turn-slow",
+        Health,
+        Hint,
+        Runtime,
+        "A turn of the UI thread took longer than its budget on this machine's clock.",
+        "Profile with `app_frames`; what no script counts (layout, many items made at once) is often the cost.",
+    ),
+    r(
+        "health-fault",
+        Health,
+        Error,
+        Runtime,
+        "The application faulted while it ran: a script threw, ran out of memory, was interrupted, or the engine failed.",
+        "Fix the fault at the place it names; a handler that can meet missing data checks for it.",
+    ),
+    r(
+        "health-loader-failed",
+        Health,
+        Error,
+        Runtime,
+        "A `Loader` failed to make its item, or is active with nothing made.",
+        "Fix the component the Loader names (the fault it gave is in the log), or turn the Loader off when it has nothing to load.",
+    ),
+    r(
+        "health-heap-headroom",
+        Health,
+        Error,
+        Runtime,
+        "The script heap holds so much after a collection that little is left before its cap.",
+        "Keep large values out of script (in a model, in the host), and drop what is no longer shown.",
+    ),
+    r(
+        "health-heap-growth",
+        Health,
+        Error,
+        Runtime,
+        "The script heap grows after every collection while the application runs: it leaks.",
+        "Find what is kept on each update (a list appended to, a closure per publish, a connection per delegate) and let it go.",
+    ),
+    r(
+        "health-never-settles",
+        Health,
+        Warning,
+        Runtime,
+        "With nothing animating and nothing to do, the scene asks for frame after frame.",
+        "Find the binding or handler that changes something every frame, and stop it when it has nothing to show.",
+    ),
     r(
         "lint-allow-unused",
         Meta,
@@ -870,6 +933,7 @@ mod tests {
                 Focus => "focus-",
                 Motion => "motion-",
                 Content => "content-",
+                Health => "health-",
                 Meta => "lint-",
             };
             assert!(

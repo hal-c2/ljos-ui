@@ -62,6 +62,21 @@ fn a_debug_build_does_not_interrupt_what_an_optimised_build_finishes() {
 
 /// QuickJS throws `null` when the heap has no room left for the error it
 /// meant to throw. Such a `null` is the heap running out; a script's own
+/// The limit read back is the one in force, also once it was changed.
+#[test]
+fn the_memory_limit_read_is_the_one_put_last() {
+    let host = JsHost::new(JsConfig {
+        memory_limit: Some(16 * 1024 * 1024),
+        ..JsConfig::default()
+    })
+    .unwrap();
+    assert_eq!(host.memory_limit(), Some(16 * 1024 * 1024));
+    assert!(host.set_memory_limit(Some(32 * 1024 * 1024)));
+    assert_eq!(host.memory_limit(), Some(32 * 1024 * 1024));
+    assert!(host.set_memory_limit(None));
+    assert_eq!(host.memory_limit(), None);
+}
+
 /// `throw null` with room to spare stays an exception.
 #[test]
 fn a_null_thrown_on_a_full_heap_is_running_out_of_memory() {

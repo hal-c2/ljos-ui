@@ -47,6 +47,27 @@ impl Platform for LjosBackend {
         live.settle()
     }
 
+    fn system_back(&mut self, step: crate::backend::BackSwipe, progress: f64) -> Result<()> {
+        use crate::backend::BackSwipe;
+        use ljos_quick::BackStep;
+        let step = match step {
+            BackSwipe::Started => BackStep::Started,
+            BackSwipe::Progressed => BackStep::Progressed,
+            BackSwipe::Cancelled => BackStep::Cancelled,
+            BackSwipe::Invoked => BackStep::Invoked,
+        };
+        let live = self.live()?;
+        let taken = ljos_quick::deliver_back(&live.engine, step, progress);
+        live.settle()?;
+        self.back_taken = Some(taken);
+        Ok(())
+    }
+
+    fn back_taken(&mut self) -> Result<bool> {
+        self.back_taken
+            .ok_or_else(|| BackendError::Failed("the system's Back was not pressed".into()))
+    }
+
     fn system_dialogs_stay(&mut self) -> Result<()> {
         self.platform.dialogs_stay();
         Ok(())
