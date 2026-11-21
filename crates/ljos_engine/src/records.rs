@@ -10,8 +10,10 @@
 //! hands it on (`features/language/list-properties-held.feature`).
 //!
 //! The table is keyed by the value's allocation and holds it weakly, so it
-//! keeps nothing alive but the script object; it is swept when it has
-//! doubled since the last sweep. A value only one holder has (a temporary
+//! keeps nothing alive but the script object; it is swept whenever it has
+//! gained a few entries since the last sweep, so a replaced record's
+//! script object is let go within that many newer records however large
+//! the live table is. A value only one holder has (a temporary
 //! being converted) is not kept: no later read can find it.
 //!
 //! What a script writes into the object is seen by the next script read of
@@ -31,6 +33,15 @@ use crate::atom::Atom;
 use crate::value::Value;
 
 type Held = Weak<Vec<(Atom, Value)>>;
+
+/// How many records the table may gain between sweeps. A sweep is the
+/// only place the script object of a record nobody holds is let go, so
+/// this bounds how many replaced generations pile up in the script heap
+/// under steady republishing. A bound on the table's size instead (it
+/// doubled between sweeps) let a large live table hold that many dead
+/// ones: a shell republishing a state tree on every frame of news grew
+/// its heap to the cap before the first sweep could free a generation.
+const SWEEP_GROWTH: usize = 64;
 
 pub(crate) struct Records {
     /// No script object for a record that is copied on each read.
@@ -94,7 +105,7 @@ impl Records {
         table.insert(at, (held, r));
         if table.len() >= self.sweep_at.get() {
             table.retain(|_, (held, _)| held.strong_count() > 0);
-            self.sweep_at.set((table.len() * 2).max(64));
+            self.sweep_at.set(table.len() + SWEEP_GROWTH);
         }
     }
 }
