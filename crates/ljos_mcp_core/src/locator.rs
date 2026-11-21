@@ -479,7 +479,7 @@ impl Locator {
                 // The items at a point are counted from the topmost only: the
                 // stack under it runs down to the window, so its last is the
                 // window's background.
-                Step::Nth(n) if i == 1 && *n < 0 => {
+                Step::Nth(n) if starts_at && i == 1 && *n < 0 => {
                     return Err(p.err(
                         "after `at=` `nth=` counts from the topmost, from 0: `nth=-1` would be \
                          the window itself",
