@@ -46,7 +46,7 @@ const MCP_EXTRA: &str = "dev.ljos.MCP";
 const TOKEN_DIR: &str = "files/target/ljos";
 
 /// The Gradle template, by the path it is written to in the project.
-const TEMPLATE: [(&str, &str); 11] = [
+const TEMPLATE: [(&str, &str); 12] = [
     (
         "settings.gradle.kts",
         include_str!("../../../android/settings.gradle.kts"),
