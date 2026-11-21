@@ -3815,6 +3815,8 @@ ApplicationWindow {
                             Text {
                                 anchors.centerIn: parent
                                 visible: faultRows.count === 0
+                                Accessible.role: Accessible.StaticText
+                                Accessible.name: text
                                 text: "No faults"
                                 color: theme.subtle
                             }
@@ -5111,13 +5113,16 @@ ApplicationWindow {
                                     ScrollBar.horizontal: ScrollBar {
                                         id: tableBar
                                     }
-                                    // The roles, over their columns.
+                                    // The roles, over their columns, each read out by itself:
+                                    // the cells name their role and row, not what heads them.
                                     Row {
                                         id: header
                                         x: 6; y: 2
                                         spacing: 0
                                         Text {
                                             width: 60
+                                            Accessible.role: Accessible.StaticText
+                                            Accessible.name: text
                                             text: "row"
                                             color: theme.subtle
                                             font.pixelSize: 11
@@ -5129,6 +5134,8 @@ ApplicationWindow {
                                                 required property string modelData
                                                 width: models.columnWidth
                                                 elide: Text.ElideRight
+                                                Accessible.role: Accessible.StaticText
+                                                Accessible.name: text
                                                 text: modelData
                                                 color: theme.subtle
                                                 font.pixelSize: 11

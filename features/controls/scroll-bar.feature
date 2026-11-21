@@ -508,3 +508,58 @@ Feature: ScrollBar
       When the property "contentHeight" of "f" is set to 100
       Then the property "size" of "v" is 1
       And the property "position" of "v" is 0
+
+  # The Observer's table puts the rows' bar on the Flickable that scrolls
+  # the columns, short of the columns' bar: the bar is given its parent and
+  # its geometry, and still follows the rows.
+  Rule: A bar given another parent is where its author puts it
+
+    Background:
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Item {
+          id: root
+          objectName: "root"
+          width: 300; height: 250
+          property real room: 20
+          Flickable {
+            id: f
+            objectName: "f"
+            width: 150; height: 100
+            contentHeight: 400
+            boundsBehavior: Flickable.StopAtBounds
+            ScrollBar.vertical: ScrollBar {
+              objectName: "v"
+              parent: f.parent
+              x: f.width
+              height: f.height - root.room
+            }
+          }
+        }
+        """
+
+    @api-QtQuick.Controls.ScrollBar.vertical
+    Scenario Outline: The bar keeps the parent and the geometry its author gave
+      Then the property "<property>" of "v" is <value>
+
+      Examples:
+        | property          | value  |
+        | parent.objectName | "root" |
+        | x                 | 150    |
+        | y                 | 0      |
+        | height            | 80     |
+        | size              | 0.25   |
+
+    Scenario: The length its author bound follows what it is bound to
+      When the property "room" of "root" is set to 40
+      Then the property "height" of "v" is 60
+
+    Scenario: The length its author bound follows the Flickable it is bound to
+      When the property "height" of "f" is set to 200
+      Then the property "height" of "v" is 180
+
+    Scenario: The bar still follows the content
+      When the property "contentY" of "f" is set to 100
+      Then the property "position" of "v" is 0.25

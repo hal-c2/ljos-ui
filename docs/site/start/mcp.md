@@ -152,7 +152,7 @@ ljos attach .
 Every tool that takes a `target` accepts:
 
 - **Snapshot refs** (`e3` or `ref=e3`): Short identifiers from the latest `app_snapshot`. If the object was destroyed, the tool returns `stale_ref`.
-- **Playwright-style locators**: Durable across hot reloads, such as `role=button[name="Delete"]`, `text=Save`, `#objectName` (which also matches a QML `id` when no object has that `objectName`, such as `#app` on the root window), chained with `>>`, `nth=` and `name~=regex`.
+- **Playwright-style locators**: Durable across hot reloads, such as `role=button[name="Delete"]`, `text=Save`, `#objectName` (which also matches a QML `id` when no object has that `objectName`, such as `#app` on the root window), chained with `>>`, `nth=` (`nth=-1` is the last, except after `at=`, which counts from the topmost) and `name~=regex`.
 - **Object handles** (`@12.3`): Generation-tagged handles returned by `app_objects`, `app_inspect` and `app_processes` that name any object, including non-visual `Timer`s, models and animations.
 
 ### Secret redaction

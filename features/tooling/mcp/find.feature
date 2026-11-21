@@ -58,6 +58,7 @@ Feature: Finding items with the inspector
       | role=toolbar >> role=button              | 1     |
       | role=toolbar >> text=all                 | 0     |
       | role=button[name="Delete"] >> nth=1      | 1     |
+      | role=button[name="Delete"] >> nth=-1     | 1     |
       | role=checkbox                            | 0     |
 
   Scenario: What is found is listed with a reference and where it is
@@ -70,6 +71,10 @@ Feature: Finding items with the inspector
 
   Scenario: The second of two items with one name is the one further down
     When the agent searches for "role=button[name=\"Delete\"] >> nth=1"
+    Then the answer's "/matches/0/states" is ["disabled"]
+
+  Scenario: Counted below 0, nth is taken from the last
+    When the agent searches for "role=button[name=\"Delete\"] >> nth=-1"
     Then the answer's "/matches/0/states" is ["disabled"]
 
   Scenario: A reference from a search can be used like one from a snapshot

@@ -52,12 +52,15 @@ Feature: The observer audits what an application shows when asked
     Then the observer has "role=button[name=\"Open guide\"]"
     And the observer shows "docs/design/color.md#color-text-contrast"
 
+  # Fourteen: the twelve design checks that act, and the two health checks
+  # that let the application run on its own clock (health-heap-growth and
+  # health-never-settles), which runs its timers.
   Scenario: The checks that act are off until the user turns them on
     When the application is observed
     And the observer's "text=Audit" is clicked
     Then the observer has "role=checkbox[name=\"Acting checks\"]"
     When the observer's "role=button[name=\"Run audit\"]" is clicked
-    Then the observer shows "12 acting checks skipped"
+    Then the observer shows "14 acting checks skipped"
 
   Scenario: The page offers the areas the rules have and passes its own audit
     When the application is observed

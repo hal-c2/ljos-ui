@@ -459,8 +459,18 @@ fn observer_shows_whole(w: &mut LjosWorld, text: String) -> StepResult {
                     cut.push(format!("{m}, in a window {width}x{height}"));
                 } else if let Some(corner) = clipped_corner(probes, m)? {
                     cut.push(format!("{m}, not drawn at {corner}"));
-                } else if elided(probes, &m.reference)? {
-                    cut.push(format!("{m}, elided"));
+                } else {
+                    match elided(probes, &m.reference) {
+                        Ok(true) => cut.push(format!("{m}, elided")),
+                        Ok(false) => {}
+                        // Made anew since it was found, as a list does with
+                        // the rows it holds: what it shows now is looked at
+                        // again rather than taken for a fault.
+                        Err(BackendError::Refused { code, message, .. }) if code == "stale_ref" => {
+                            cut.push(format!("{m}, gone before it was looked at: {message}"));
+                        }
+                        Err(e) => return Err(e),
+                    }
                 }
             }
             Ok((!cut.is_empty()).then(|| format!("these do not show {text:?} whole: {cut:?}")))

@@ -102,12 +102,15 @@ Feature: What the observer lists stays readable in a narrow window
     Then the observer's "role=list[name=\"Faults\"]" is at least 120 pixels high
     And the observer shows "No faults" whole
 
+  # The ticker wakes the application every 50 ms. The list of wakes
+  # follows the newest, and only the newest keep what they did, so the
+  # newest timer wake is the one opened.
   Scenario Outline: A wake opened leaves room for the list of wakes
     When the application is observed
     And the observer's window is <width> by 800 pixels
     And the observer's "role=tab[name=\"Wakes\"]" is clicked
     And the observer's "role=button[name=\"Record\"]" is clicked
-    And the observer's "role=list[name=\"Wakes\"] >> role=listitem[name*=\"timer\"] >> nth=0" is clicked
+    And the observer's "role=list[name=\"Wakes\"] >> role=listitem[name*=\"timer\"] >> nth=-1" is clicked
     Then the observer has "role=button[name=\"Close\"]"
     And the observer's "role=list[name=\"Wakes\"]" is at least 300 pixels wide
 
@@ -127,8 +130,8 @@ Feature: What the observer lists stays readable in a narrow window
     And the observer's "role=listitem[name*=\"ticker\"]" is clicked
     And the observer's "role=button[name=\"Trace\"]" is clicked
     And the observer's "role=tab[name=\"Trace\"]" is clicked
-    Then the observer has "role=list[name=\"Trace\"] >> name~=^[0-9]+$"
-    And the observer's "role=list[name=\"Trace\"] >> name~=^[0-9]+$" is at least 80 pixels wide
+    Then the observer has "role=list[name=\"Trace\"] >> name~=\"^[0-9]+$\""
+    And the observer's "role=list[name=\"Trace\"] >> name~=\"^[0-9]+$\"" is at least 80 pixels wide
 
     Examples:
       | width |
@@ -143,7 +146,7 @@ Feature: What the observer lists stays readable in a narrow window
     And the observer's window is <width> by 800 pixels
     And the observer's "role=tab[name=\"Frames\"]" is clicked
     And the observer's "role=button[name=\"Record\"]" is clicked
-    Then the observer has "name~=^frame [0-9]+ of "
+    Then the observer has "name~=\"^frame [0-9]+ of \""
     And the observer's own audit finds no "layout-overlap", "text-clipped" or "layout-offscreen"
 
     Examples:
@@ -198,7 +201,7 @@ Feature: What the observer lists stays readable in a narrow window
     And the observer's window is 390 by 520 pixels
     And the observer's "role=tab[name=\"Wakes\"]" is clicked
     And the observer's "role=button[name=\"Record\"]" is clicked
-    And the observer's "role=list[name=\"Wakes\"] >> role=listitem[name*=\"timer\"] >> nth=0" is clicked
+    And the observer's "role=list[name=\"Wakes\"] >> role=listitem[name*=\"timer\"] >> nth=-1" is clicked
     And the observer's "role=button[name=\"Close\"]" is scrolled 20 notches down
     Then the observer's "role=list[name=\"Wakes\"]" is at least 120 pixels high
     And the observer shows "Why awake" whole

@@ -28,6 +28,15 @@ pub enum BackendError {
     },
     #[error("{0}")]
     Failed(String),
+    /// An inspector's tool refused, with the code it refused with
+    /// (`stale_ref`, `not_found`, …), so that a step can tell a window that
+    /// moved on since it looked from one that is wrong.
+    #[error("{tool}: {message}")]
+    Refused {
+        tool: String,
+        code: String,
+        message: String,
+    },
     #[error("io: {0}")]
     Io(#[from] std::io::Error),
 }
