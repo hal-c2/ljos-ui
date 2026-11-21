@@ -16,8 +16,8 @@ Feature: A Timer whose handler outlasts its interval
   A repeating Timer that comes due late triggers once, not once for every
   interval it missed, and then keeps to its own phase. A handler that takes
   longer than the interval slows the timer down to one run a turn; it never
-  makes a turn of the application longer, so input, frames and other timers
-  are still answered.
+  makes a turn of the application longer, so input and other timers are
+  still answered.
 
   Scenario: A slow repeating handler does not hold up a single shot that quits
     Given the QML:

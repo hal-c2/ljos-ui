@@ -125,6 +125,43 @@ Item {
     );
     h.pass_ms(50);
     assert_eq!(h.num(root, "ticks"), 2.0);
+    // Back on its phase: every 100 ms from 400 on.
+    h.pass_ms(200);
+    assert_eq!(h.num(root, "ticks"), 4.0);
+    assert_eq!(
+        h.engine.next_timer_deadline(),
+        Some(ljos_runtime::Time::from_millis(700))
+    );
+}
+
+/// What some work arms runs up to `by` in one call, and a repeating timer
+/// among it still runs once there: its next run is the first of its phase
+/// after `by`.
+#[test]
+fn a_repeating_timer_armed_by_some_work_triggers_once_up_to_its_by() {
+    let h = engine();
+    let root = h.load(
+        r#"import QtQuick
+Item {
+  property int ticks: 0
+  Timer { id: t; interval: 100; repeat: true; onTriggered: ticks++ }
+  function begin() { t.start() }
+}
+"#,
+    );
+    let first = h.engine.next_timer_id();
+    h.engine.invoke_by_name(root, "begin", &[]).unwrap();
+    let made = first..h.engine.next_timer_id();
+    h.engine.advance_timers_made(
+        ljos_runtime::Time::ZERO,
+        made,
+        ljos_runtime::Time::from_millis(350),
+    );
+    assert_eq!(h.num(root, "ticks"), 1.0);
+    assert_eq!(
+        h.engine.next_timer_deadline(),
+        Some(ljos_runtime::Time::from_millis(400))
+    );
 }
 
 #[test]
