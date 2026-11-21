@@ -25,6 +25,15 @@ use super::{DRIVER, Live, Result, compile, disk::Windows, failed, key_of};
 /// wait at once.
 const PATIENCE: Duration = Duration::from_secs(30);
 
+/// How long the session must stay unwoken before what the application's
+/// start woke it for counts as answered. A watch's backend may deliver
+/// the events of its own making late (FSEvents does), but within this.
+const QUIET: Duration = Duration::from_millis(250);
+
+/// The most the start's wakes are answered for. A session that never goes
+/// quiet is not an error here: the check after counts its wakes.
+const SETTLE_CAP: Duration = Duration::from_secs(2);
+
 pub(super) struct User {
     // Dropped first: the watcher's thread ends before the directory goes.
     session: Option<UserSession>,
@@ -341,7 +350,11 @@ impl Live {
     }
 
     /// Lists the user's directory, as a file manager or a shell does.
+    /// First answers what the application's start woke it for, until it
+    /// is quiet for [`QUIET`] or [`SETTLE_CAP`] has passed, so that a
+    /// count left alone after this starts from the read.
     pub(super) fn user_qml_dir_read(&mut self) -> Result<()> {
+        self.answer_until_quiet()?;
         let dir = self.user()?.dir.path().to_owned();
         for entry in std::fs::read_dir(&dir).map_err(failed)? {
             entry.map_err(failed)?;
@@ -349,10 +362,34 @@ impl Live {
         Ok(())
     }
 
+    /// Answers each wake as it comes, as a host does, until none comes for
+    /// [`QUIET`] or [`SETTLE_CAP`] has passed. Waits on the wake itself;
+    /// nothing in the application is polled.
+    fn answer_until_quiet(&mut self) -> Result<()> {
+        let until = std::time::Instant::now() + SETTLE_CAP;
+        loop {
+            let left = until.saturating_duration_since(std::time::Instant::now());
+            if left.is_zero() {
+                return Ok(());
+            }
+            match self.user()?.woke.recv_timeout(QUIET.min(left)) {
+                Ok(()) => {
+                    self.pump_user()?;
+                    self.settle()?;
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => return Ok(()),
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    return Err(failed("the application's wake is gone"));
+                }
+            }
+        }
+    }
+
     /// Answers every wake for `wall` of real time, as a host that sleeps
-    /// until it is woken: each takes what the session was told. Wakes
-    /// left from earlier steps are counted too, as a host would answer
-    /// them now.
+    /// until it is woken: each takes what the session was told. The wakes
+    /// are counted from the last step on: those the application's start
+    /// brought were taken when the directory was read
+    /// ([`user_qml_dir_read`](Self::user_qml_dir_read)).
     pub(super) fn user_qml_left_alone(&mut self, wall: Duration) -> Result<()> {
         let until = std::time::Instant::now() + wall;
         let mut woken = 0;

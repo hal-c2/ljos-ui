@@ -63,7 +63,10 @@ Feature: A shipped application its users change while it runs
       And the application was told of no fault
 
     # Reading the directory changes nothing in it: a watch that took its
-    # own listing for a change would wake the application for ever.
+    # own listing for a change would wake the application for ever. Exactly
+    # 0 is stable: the read step first takes what the start woke it for, and
+    # after that only the user's directory wakes this session; no timer or
+    # animation does.
     Scenario: A user's directory with no file, read and left alone, leaves the application idle
       When the application runs "Main.qml" built ahead, with the user's directory over it
       And the user's directory is read

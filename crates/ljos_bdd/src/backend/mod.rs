@@ -1240,14 +1240,17 @@ pub trait Application: Backend {
     }
 
     /// The user's directory is listed, as a file manager or a shell lists
-    /// it: nothing in it changes.
+    /// it: nothing in it changes. What the application's start woke it for
+    /// is answered first, until it is quiet, so that a count after this
+    /// starts from the read.
     fn user_qml_dir_read(&mut self) -> Result<()> {
         Err(BackendError::NotImplemented("a user's directory"))
     }
 
     /// For `wall` of real time nobody touches the application, which
     /// answers every wake as a host does: it takes what the wake brought.
-    /// The wakes are counted, from the last step's on.
+    /// The wakes are counted from the last step's on; the start's were
+    /// taken by [`user_qml_dir_read`](Self::user_qml_dir_read).
     fn user_qml_left_alone(&mut self, _wall: std::time::Duration) -> Result<()> {
         Err(BackendError::NotImplemented("a user's directory"))
     }
