@@ -932,7 +932,23 @@ impl Engine {
                 (State::Failed, None)
             }
         };
+        let waits = match &state {
+            State::Again { woken, .. } => Some(*woken),
+            _ => None,
+        };
         all.entries.borrow_mut()[handle].state = state;
+        match (waits, again) {
+            // The first reader waits on `woken` too, as every later one
+            // does, or nothing would read the name again once it is due.
+            (Some(woken), _) => {
+                let _ = self.inner.graph.try_get(woken);
+            }
+            // Made, or failed for good: nothing waits any more.
+            (None, Some((_, woken))) => {
+                let _ = self.inner.graph.dispose(woken);
+            }
+            (None, None) => {}
+        }
         if let (Some(obj), Some(scope), Kind::Native(native)) = (out, scope, &kind) {
             let root = all.scopes.borrow().owners.get(&scope).and_then(|o| o.root);
             if let Some(root) = root {
@@ -1151,6 +1167,7 @@ impl Engine {
         let all = self.extension::<Singletons>();
         let mut objects = Vec::new();
         let mut told = Vec::new();
+        let mut gone_waits = Vec::new();
         let mut entries = all.entries.borrow_mut();
         let mut scoped = all.scoped.borrow_mut();
         for (root, owner) in ended {
@@ -1166,9 +1183,17 @@ impl Engine {
                         told.push((*root, obj, e.ty.clone()));
                     }
                 }
+                if let State::Again { woken, .. } = e.state {
+                    gone_waits.push(woken);
+                }
                 e.state = State::Gone;
             }
             scoped.retain(|_, i| !owner.entries.contains(i));
+        }
+        drop((entries, scoped));
+        // Its retry finds the entry gone; nothing reads `woken` again.
+        for woken in gone_waits {
+            let _ = self.inner.graph.dispose(woken);
         }
         (objects, told)
     }
