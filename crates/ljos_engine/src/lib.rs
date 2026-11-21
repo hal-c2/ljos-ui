@@ -163,7 +163,9 @@ pub use journal::{Journal, JournalEntry, JournalKind, MAX_JOURNAL_RUNS};
 pub use list::QmlList;
 pub use listmodel::{CarriedCell, CarriedRows, ListElement, ListModel};
 pub use ljos_js::{JsClock, Timing as JsTiming};
-pub use loader::{ComponentSource, MapSource, OnDisk, encoded_url, file_url, url_path};
+pub use loader::{
+    ComponentSource, MapSource, OnDisk, ResourceBytes, encoded_url, file_url, url_path,
+};
 pub use log::{LogEntry, LogLevel, LogListenerId, log_to_stderr};
 pub use lookups::Lookups;
 #[cfg(feature = "lookup-counts")]

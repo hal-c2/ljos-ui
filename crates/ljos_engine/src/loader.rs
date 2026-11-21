@@ -358,7 +358,7 @@ fn has_scheme(url: &str) -> bool {
 /// ([`insert_url`](Self::insert_url)), as a compile from a directory
 /// records where each file is; else `{base}/{key}.qml` with a
 /// [`base`](Self::with_base_url); else `file:///{key}.qml`.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct MapSource {
     files: BTreeMap<String, Arc<CompiledFile>>,
     bytecode: HashMap<String, Bytecode>,
@@ -366,7 +366,13 @@ pub struct MapSource {
     base: Option<String>,
     urls: HashMap<String, String>,
     keys_by_url: HashMap<String, String>,
-    trailer: Option<Trailer>,
+    trailer: Option<ResourceBytes>,
+    /// The files beside the QML that a pack carries (fonts, pictures), by
+    /// their paths from the root the keys are from.
+    resources: BTreeMap<String, ResourceBytes>,
+    /// Other addresses the program names a carried file by
+    /// (`qrc:/qt/qml/Shapes/icons/dot.png`), with its path.
+    resource_addresses: BTreeMap<String, String>,
     /// Read from a pack ([`from_pack`](Self::from_pack)): the files of a
     /// shipped program, named by their keys and on no disk.
     packed: bool,
@@ -386,13 +392,54 @@ fn trailer_of(rest: &[u8]) -> Result<Option<&[u8]>, EngineError> {
     Ok(Some(body))
 }
 
-/// What a pack holds after its files: bytes the engine does not read,
-/// for whoever wrote them (the sources of an application its users may
-/// change). Embedded, they are not copied.
+/// What [`MapSource::files_of_pack`] reads: the source, the files the
+/// pack carries (still in it), and what follows them.
+type PackParts<'a> = (MapSource, Vec<(String, &'a [u8])>, &'a [u8]);
+
+/// Bytes a [`MapSource`] holds besides its compiled files: a file the
+/// pack carries ([`MapSource::resources`]) or its trailer. Those of a pack
+/// the program embeds are where the program has them, uncopied.
 #[derive(Clone)]
-enum Trailer {
+pub enum ResourceBytes {
+    /// In the program itself ([`MapSource::from_static_pack`]).
     Embedded(&'static [u8]),
-    Read(Arc<[u8]>),
+    /// Read or given while the program runs.
+    Shared(Arc<[u8]>),
+}
+
+impl std::ops::Deref for ResourceBytes {
+    type Target = [u8];
+
+    fn deref(&self) -> &[u8] {
+        match self {
+            ResourceBytes::Embedded(bytes) => bytes,
+            ResourceBytes::Shared(bytes) => bytes,
+        }
+    }
+}
+
+impl From<&'static [u8]> for ResourceBytes {
+    fn from(bytes: &'static [u8]) -> Self {
+        ResourceBytes::Embedded(bytes)
+    }
+}
+
+impl From<Arc<[u8]>> for ResourceBytes {
+    fn from(bytes: Arc<[u8]>) -> Self {
+        ResourceBytes::Shared(bytes)
+    }
+}
+
+impl From<Vec<u8>> for ResourceBytes {
+    fn from(bytes: Vec<u8>) -> Self {
+        ResourceBytes::Shared(bytes.into())
+    }
+}
+
+impl std::fmt::Debug for ResourceBytes {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} bytes", self.len())
+    }
 }
 
 impl MapSource {
@@ -404,9 +451,49 @@ impl MapSource {
     /// ([`to_pack_with_trailer`](Self::to_pack_with_trailer)); None when
     /// there were none.
     pub fn trailer(&self) -> Option<&[u8]> {
-        match self.trailer.as_ref()? {
-            Trailer::Embedded(bytes) => Some(bytes),
-            Trailer::Read(bytes) => Some(bytes),
+        self.trailer.as_deref()
+    }
+
+    /// Carries `bytes` as the file at `path` (`fonts/Symbols.woff2`, from
+    /// the root the keys are from), which a QML file names relative to
+    /// itself: the program finds it at [`resource_url`](Self::resource_url).
+    pub fn insert_resource(&mut self, path: impl Into<String>, bytes: impl Into<ResourceBytes>) {
+        self.resources.insert(path.into(), bytes.into());
+    }
+
+    /// The files carried besides the QML, in path order.
+    pub fn resources(&self) -> impl Iterator<Item = (&str, &ResourceBytes)> {
+        self.resources
+            .iter()
+            .map(|(path, bytes)| (path.as_str(), bytes))
+    }
+
+    /// The carried file at `path`, if the source carries it.
+    pub fn resource(&self, path: &str) -> Option<&ResourceBytes> {
+        self.resources.get(path)
+    }
+
+    /// Says the carried file at `path` is also named `address`: the
+    /// `qrc:` address of a file of a module, or of one its build lists.
+    pub fn insert_resource_address(&mut self, address: impl Into<String>, path: impl Into<String>) {
+        self.resource_addresses.insert(address.into(), path.into());
+    }
+
+    /// Each other address of a carried file, with its path, in address
+    /// order.
+    pub fn resource_addresses(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.resource_addresses
+            .iter()
+            .map(|(address, path)| (address.as_str(), path.as_str()))
+    }
+
+    /// Where the QML finds the carried file at `path`: beside the files
+    /// as [`url`](ComponentSource::url) places them, `{base}/{path}` with
+    /// a [`base`](Self::with_base_url), else `file:///{path}`.
+    pub fn resource_url(&self, path: &str) -> String {
+        match &self.base {
+            Some(b) => format!("{}/{path}", b.trim_end_matches('/')),
+            None => format!("file:///{path}"),
         }
     }
 
@@ -461,9 +548,12 @@ impl MapSource {
     /// The compiled files as one pack, for a build step to write and a
     /// shipped program to embed and read back with
     /// [`from_pack`](Self::from_pack): a count, then per file its key
-    /// and its IR,
-    /// each preceded by its length as a little-endian `u32`, in key
-    /// order. Failures and bytecode are not packed.
+    /// and its IR; then the files that did not compile, each key with
+    /// why; then the files carried besides the QML, each path with its
+    /// bytes; then their other addresses, each with its path. Every
+    /// count, and every string or bytes, is preceded by its length as a
+    /// little-endian `u32`, and each list is in key order. Bytecode and
+    /// URLs are not packed: a shipped program finds its files by key.
     pub fn to_pack(&self) -> Result<Vec<u8>, EngineError> {
         self.to_pack_with_trailer(&[])
     }
@@ -490,6 +580,26 @@ impl MapSource {
             out.extend_from_slice(&len(bytes.len())?);
             out.extend_from_slice(&bytes);
         }
+        let field = |out: &mut Vec<u8>, bytes: &[u8]| -> Result<(), EngineError> {
+            out.extend_from_slice(&len(bytes.len())?);
+            out.extend_from_slice(bytes);
+            Ok(())
+        };
+        out.extend_from_slice(&len(self.failures.len())?);
+        for (key, why) in &self.failures {
+            field(&mut out, key.as_bytes())?;
+            field(&mut out, why.as_bytes())?;
+        }
+        out.extend_from_slice(&len(self.resources.len())?);
+        for (path, bytes) in &self.resources {
+            field(&mut out, path.as_bytes())?;
+            field(&mut out, bytes)?;
+        }
+        out.extend_from_slice(&len(self.resource_addresses.len())?);
+        for (address, path) in &self.resource_addresses {
+            field(&mut out, address.as_bytes())?;
+            field(&mut out, path.as_bytes())?;
+        }
         // Its length after it, so a pack cut short in its trailer is
         // told from one with a shorter trailer.
         if !trailer.is_empty() {
@@ -504,21 +614,29 @@ impl MapSource {
     /// this engine reads, is an error: a shipped program embeds the
     /// pack its own build wrote, so either means a broken build.
     pub fn from_pack(pack: &[u8]) -> Result<Self, EngineError> {
-        let (mut source, rest) = Self::files_of_pack(pack)?;
-        source.trailer = trailer_of(rest)?.map(|t| Trailer::Read(t.into()));
+        let (mut source, carried, rest) = Self::files_of_pack(pack)?;
+        for (path, bytes) in carried {
+            source.insert_resource(path, ResourceBytes::Shared(bytes.into()));
+        }
+        source.trailer = trailer_of(rest)?.map(|t| ResourceBytes::Shared(t.into()));
         Ok(source)
     }
 
-    /// [`from_pack`](Self::from_pack) of a pack the program embeds: its
-    /// [`trailer`](Self::trailer) stays where it is, uncopied.
+    /// [`from_pack`](Self::from_pack) of a pack the program embeds: the
+    /// files it carries and its [`trailer`](Self::trailer) stay where
+    /// they are, uncopied.
     pub fn from_static_pack(pack: &'static [u8]) -> Result<Self, EngineError> {
-        let (mut source, rest) = Self::files_of_pack(pack)?;
-        source.trailer = trailer_of(rest)?.map(Trailer::Embedded);
+        let (mut source, carried, rest) = Self::files_of_pack(pack)?;
+        for (path, bytes) in carried {
+            source.insert_resource(path, ResourceBytes::Embedded(bytes));
+        }
+        source.trailer = trailer_of(rest)?.map(ResourceBytes::Embedded);
         Ok(source)
     }
 
-    /// The files of `pack`, and what follows them.
-    fn files_of_pack(pack: &[u8]) -> Result<(Self, &[u8]), EngineError> {
+    /// The files of `pack`, the files it carries besides them (left in
+    /// the pack, for the caller to copy or not), and what follows them.
+    fn files_of_pack(pack: &[u8]) -> Result<PackParts<'_>, EngineError> {
         fn take<'a>(rest: &mut &'a [u8], n: usize) -> Result<&'a [u8], EngineError> {
             if rest.len() < n {
                 return Err(EngineError::Load("the pack is cut short".to_owned()));
@@ -531,19 +649,40 @@ impl MapSource {
             let b = take(rest, 4)?;
             Ok(u32::from_le_bytes([b[0], b[1], b[2], b[3]]) as usize)
         }
+        fn field<'a>(rest: &mut &'a [u8]) -> Result<&'a [u8], EngineError> {
+            let n = len(rest)?;
+            take(rest, n)
+        }
+        fn text(rest: &mut &[u8], what: &str) -> Result<String, EngineError> {
+            std::str::from_utf8(field(rest)?)
+                .map(str::to_owned)
+                .map_err(|_| EngineError::Load(format!("a pack {what} is not UTF-8")))
+        }
         let mut rest = pack;
         let mut source = Self::new();
         for _ in 0..len(&mut rest)? {
-            let n = len(&mut rest)?;
-            let key = std::str::from_utf8(take(&mut rest, n)?)
-                .map_err(|_| EngineError::Load("a pack key is not UTF-8".to_owned()))?;
-            let n = len(&mut rest)?;
-            let file = CompiledFile::from_bytes(take(&mut rest, n)?)
+            let key = text(&mut rest, "key")?;
+            let file = CompiledFile::from_bytes(field(&mut rest)?)
                 .map_err(|e| EngineError::Load(format!("{key}: {e}")))?;
             source.insert(key, file);
         }
+        for _ in 0..len(&mut rest)? {
+            let key = text(&mut rest, "key")?;
+            let why = text(&mut rest, "failure")?;
+            source.insert_failure(key, why);
+        }
+        let mut carried = Vec::new();
+        for _ in 0..len(&mut rest)? {
+            let path = text(&mut rest, "file path")?;
+            carried.push((path, field(&mut rest)?));
+        }
+        for _ in 0..len(&mut rest)? {
+            let address = text(&mut rest, "address")?;
+            let path = text(&mut rest, "file path")?;
+            source.insert_resource_address(address, path);
+        }
         source.packed = true;
-        Ok((source, rest))
+        Ok((source, carried, rest))
     }
 }
 
@@ -1543,6 +1682,53 @@ mod tests {
                 MapSource::from_pack(&pack[..pack.len() - cut]).is_err(),
                 "cut by {cut}"
             );
+        }
+    }
+
+    #[test]
+    fn a_pack_keeps_its_failures_and_the_files_it_carries() {
+        let mut given = MapSource::new();
+        given.insert("Main", standing_in("QtQuick", None));
+        given.insert_failure("Broken", "3:1: Expected `}`");
+        given.insert_resource("fonts/Symbols.woff2", b"wOF2".to_vec());
+        given.insert_resource("pics/dot.png", b"\x89PNG".to_vec());
+        given.insert_resource_address("qrc:/qt/qml/App/pics/dot.png", "pics/dot.png");
+        let pack = given.to_pack_with_trailer(b"sources").unwrap();
+        static PACK: std::sync::OnceLock<Vec<u8>> = std::sync::OnceLock::new();
+        let embedded: &'static [u8] = PACK.get_or_init(|| pack.clone());
+        for read in [
+            MapSource::from_pack(&pack).unwrap(),
+            MapSource::from_static_pack(embedded).unwrap(),
+        ] {
+            assert_eq!(read.keys().collect::<Vec<_>>(), ["Main"]);
+            assert_eq!(
+                read.failures().collect::<Vec<_>>(),
+                [("Broken", "3:1: Expected `}`")]
+            );
+            let carried: Vec<(&str, &[u8])> = read.resources().map(|(p, b)| (p, &**b)).collect();
+            assert_eq!(
+                carried,
+                [
+                    ("fonts/Symbols.woff2", &b"wOF2"[..]),
+                    ("pics/dot.png", &b"\x89PNG"[..])
+                ]
+            );
+            assert_eq!(
+                read.resource_addresses().collect::<Vec<_>>(),
+                [("qrc:/qt/qml/App/pics/dot.png", "pics/dot.png")]
+            );
+            assert_eq!(read.trailer(), Some(&b"sources"[..]));
+        }
+        // An embedded pack's files are read where the program has them.
+        let read = MapSource::from_static_pack(embedded).unwrap();
+        let (_, bytes) = read.resources().next().unwrap();
+        assert!(
+            matches!(bytes, ResourceBytes::Embedded(b) if embedded.as_ptr_range().contains(&b.as_ptr()))
+        );
+        // Cut anywhere, it is refused, not read as a smaller pack.
+        let plain = given.to_pack().unwrap();
+        for cut in 1..plain.len() {
+            assert!(MapSource::from_pack(&plain[..cut]).is_err(), "cut to {cut}");
         }
     }
 
