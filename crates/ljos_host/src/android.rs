@@ -16,6 +16,7 @@ use android_activity::input::{
 use android_activity::{AndroidApp, AndroidAppWaker, InputStatus, MainEvent, PollEvent};
 use ndk::native_window::NativeWindow;
 
+use crate::dead_key::{DeadKey, Typed};
 use crate::pump::{exiting, keeps_pumping};
 use crate::relay::{Arrival, Relay, RelayHost, Request};
 use crate::{
@@ -116,6 +117,7 @@ impl<U: Send + 'static> Attach<U> {
             destroyed: false,
             closed: false,
             finishing: false,
+            dead_key: DeadKey::default(),
         };
         while keeps_pumping(pump.destroyed, pump.closed, pump.finishing) {
             // Sleeps until the activity has something or a request wakes it.
@@ -263,6 +265,8 @@ struct Pump<'a, U: Send + 'static> {
     closed: bool,
     /// The activity was asked to finish.
     finishing: bool,
+    /// The accent a dead key on a hardware keyboard left waiting.
+    dead_key: DeadKey,
 }
 
 impl<U: Send + 'static> Pump<'_, U> {
@@ -349,7 +353,8 @@ impl<U: Send + 'static> Pump<'_, U> {
             return;
         };
         let mut out = Vec::new();
-        while events.next(|event| translate(self.app, event, &mut out)) {}
+        let dead_key = &mut self.dead_key;
+        while events.next(|event| translate(self.app, dead_key, event, &mut out)) {}
         for event in out {
             self.send(Arrival::Window(event));
         }
@@ -423,7 +428,12 @@ fn size_of(window: &NativeWindow) -> [u32; 2] {
     [w, h]
 }
 
-fn translate(app: &AndroidApp, event: &InputEvent<'_>, out: &mut Vec<WindowEvent>) -> InputStatus {
+fn translate(
+    app: &AndroidApp,
+    dead_key: &mut DeadKey,
+    event: &InputEvent<'_>,
+    out: &mut Vec<WindowEvent>,
+) -> InputStatus {
     match event {
         InputEvent::MotionEvent(motion) => {
             touches(motion, out);
@@ -444,22 +454,40 @@ fn translate(app: &AndroidApp, event: &InputEvent<'_>, out: &mut Vec<WindowEvent
                 return InputStatus::Unhandled;
             }
             let Some(named) = named_key(key.key_code()) else {
-                let typed = app
-                    .device_key_character_map(key.device_id())
-                    .ok()
-                    .and_then(|map| map.get(key.key_code(), key.meta_state()).ok());
-                let Some(KeyMapChar::Unicode(c)) = typed else {
-                    return InputStatus::Unhandled;
+                let map = app.device_key_character_map(key.device_id()).ok();
+                let typed = match map
+                    .as_ref()
+                    .and_then(|map| map.get(key.key_code(), key.meta_state()).ok())
+                {
+                    Some(KeyMapChar::Unicode(c)) => Typed::Char(c),
+                    Some(KeyMapChar::CombiningAccent(a)) => Typed::Accent(a),
+                    _ => return InputStatus::Unhandled,
+                };
+                // A dead key's accent goes onto the key after it, so what a
+                // press types is only known once that key is down; a
+                // release types nothing.
+                let text = match state {
+                    ButtonState::Pressed => dead_key.press(typed, |accent, c| {
+                        map.as_ref()?.get_dead_char(accent, c).ok().flatten()
+                    }),
+                    ButtonState::Released => None,
+                };
+                // The key is the one pressed; what it typed is its text.
+                let shown = match typed {
+                    Typed::Char(c) | Typed::Accent(c) => c.to_string(),
                 };
                 out.push(WindowEvent::Key(KeyEvent {
-                    key: Key::Character(c.to_string()),
+                    key: Key::Character(shown),
                     code: None,
                     state,
                     repeat: key.repeat_count() > 0,
-                    text: Some(c.to_string()),
+                    text,
                 }));
                 return InputStatus::Handled;
             };
+            if state == ButtonState::Pressed {
+                dead_key.other();
+            }
             out.push(WindowEvent::Key(KeyEvent {
                 key: Key::Named(named.to_owned()),
                 code: None,

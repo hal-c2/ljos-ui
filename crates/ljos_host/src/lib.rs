@@ -24,6 +24,9 @@ mod android_editor;
 mod event;
 // Only the Android host uses it; it builds everywhere so its tests run.
 #[cfg_attr(not(all(feature = "android", target_os = "android")), allow(dead_code))]
+mod dead_key;
+// Only the Android host uses it; it builds everywhere so its tests run.
+#[cfg_attr(not(all(feature = "android", target_os = "android")), allow(dead_code))]
 mod pump;
 pub mod relay;
 mod schedule;
