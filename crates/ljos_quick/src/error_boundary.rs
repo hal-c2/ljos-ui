@@ -185,6 +185,8 @@ impl ErrorBoundary {
             stop_waiting(e, me);
             publish(e, me, None);
             drop_item(e, me);
+            // What the old content held is not the new content's.
+            with_run(e, me, |r| r.kept = None);
             start_content(e, me);
         })?;
         e.effect_in(me, move |e| {
@@ -229,12 +231,12 @@ fn stop_waiting(e: &Engine, me: ObjectId) {
 
 /// After a resource fault: makes the content again once the [`Backoff`]
 /// wait is over.
-fn again_after(e: &Engine, me: ObjectId, report: &FaultReport) {
+fn again_after(e: &Engine, me: ObjectId, fault: &Fault) {
     let now = e.now();
     let Some(wait) = with_run(e, me, |r| r.backoff.fault(now)) else {
         return;
     };
-    if matches!(report.fault, Fault::JsOutOfMemory) {
+    if matches!(fault, Fault::JsOutOfMemory) {
         // The heap may have room once the garbage is collected.
         e.collect_garbage();
     }
@@ -242,8 +244,7 @@ fn again_after(e: &Engine, me: ObjectId, report: &FaultReport) {
     warn(
         e,
         format!(
-            "{place}ErrorBoundary: {}, making the content again in {}",
-            report.fault,
+            "{place}ErrorBoundary: {fault}, making the content again in {}",
             seconds(wait)
         ),
     );
@@ -312,7 +313,18 @@ impl Boundary for Behaviour {
             Some(shown) => shown,
             None => {
                 bump_restarts(e, me);
-                make_content(e, me)
+                match make_content(e, me) {
+                    // The heap had no room for it, or its making ran over
+                    // its time: not the content's bug, so it waits and is
+                    // made again, as after the content's own resource
+                    // fault, outside the supervisor's count.
+                    Err(fault @ (Fault::JsOutOfMemory | Fault::JsInterrupted { .. })) => {
+                        set(e, me, ErrorBoundary::FAILED.index, true.into());
+                        again_after(e, me, &fault);
+                        Ok(())
+                    }
+                    made => made,
+                }
             }
         }
     }
@@ -347,12 +359,17 @@ impl Boundary for Behaviour {
             return false;
         }
         self.stop(e, me, report);
+        // A handler of `failed` may have given new content while the old
+        // stopped: that is shown, and nothing waits to be made again.
+        if !failed(e, me) {
+            return true;
+        }
         if let Some(Err(fault)) = show_fallback(e, me) {
             // Nothing stands in while it waits; the content is still made
             // again.
             warn(e, format!("ErrorBoundary: {fault}"));
         }
-        again_after(e, me, report);
+        again_after(e, me, &report.fault);
         true
     }
 }
