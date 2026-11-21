@@ -338,9 +338,19 @@ impl Engine {
         }
         // Entering and leaving the script context may reach the store (a
         // fault report, the jobs it runs after), so its borrow ends first.
+        // The walk allocates (each object's property names), so a heap at
+        // its limit, as it is after running out of memory, would refuse it
+        // and cut the walk short where it is asked for most. The walk only
+        // reads, and frees what it takes, so the limit is lifted for it.
+        let limit = self.script_memory_limit();
+        let lifted = limit.is_some() && self.set_script_heap_limit(None);
         let held = self.run_js("heap holders", |s| {
             Ok(s.held_by(groups.iter().map(|g| g.2.iter()), budget))
-        })?;
+        });
+        if lifted {
+            self.set_script_heap_limit(limit);
+        }
+        let held = held?;
         let mut holders: Vec<ScriptHolder> = groups
             .into_iter()
             .zip(held.bytes)
