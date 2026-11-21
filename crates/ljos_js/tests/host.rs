@@ -424,6 +424,48 @@ fn an_explicit_collection_past_three_quarters_is_warned_of() {
     assert!(p.growers.is_empty(), "{p:?}");
 }
 
+/// Promise jobs grow the heap as runs do: what a pump grew is named, and
+/// past three quarters it collects and warns, with no run after it.
+#[test]
+fn promise_jobs_are_held_to_the_heap_as_runs_are() {
+    let host = small(32);
+    keep(&host, 20);
+    host.collect_now();
+    assert!(!host.heap_pressure().warned, "{:?}", host.heap_pressure());
+    let collections = host.collections();
+    let grow = |arrays: usize| {
+        host.enter("setup", host.config().slice, |s| {
+            s.eval::<(), _>(
+                format!(
+                    "queueMicrotask(() => {{ for (let i = 0; i < {arrays}; i++) kept.push(new Array(1000).fill(i)) }})"
+                )
+                .as_str(),
+            )
+        })
+        .unwrap();
+        let pumped = host.pump_jobs(Instant::now() + Duration::from_secs(5));
+        assert_eq!(pumped.ran, 1);
+        assert!(pumped.faults.is_empty(), "{:?}", pumped.faults);
+    };
+
+    // About 1 MiB, short of three quarters: named, not collected.
+    grow(64);
+    let p = host.heap_pressure();
+    assert!(
+        p.growers
+            .iter()
+            .any(|(name, by)| name == "promise job" && *by > 0),
+        "{p:?}"
+    );
+    assert_eq!(host.collections(), collections);
+
+    // About 8 MiB more, past three quarters: collected and warned of.
+    grow(512);
+    let p = host.heap_pressure();
+    assert!(host.collections() > collections, "{p:?}");
+    assert!(p.warned, "{p:?}");
+}
+
 /// A heap past three quarters that a collection would bring back under
 /// it is not warned of: the warning follows a collection.
 #[test]

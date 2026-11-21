@@ -2589,6 +2589,8 @@ impl JsHost {
         self.interrupt.settle();
         let mut pumped = Pumped::default();
         self.peak.mark();
+        let heap_before = self.heap_bytes();
+        let mut ran_out = false;
         let mut most = 0;
         while self.interrupt.now(Timing::Poll) < until {
             // Each job judges a thrown `null` by its own peak, as a nested
@@ -2622,11 +2624,18 @@ impl JsHost {
                         )
                     });
                     self.note_ran_out(&fault);
+                    ran_out |= matches!(fault, JsFault::JsOutOfMemory { .. });
                     pumped.faults.push(fault);
                 }
             }
         }
         self.peak.resume(most);
+        // The heap is minded after jobs as after a run: what they grew is
+        // named, and the pressure policy applies with no run after them.
+        let grew = self.heap_bytes().saturating_sub(heap_before);
+        if grew >= HEAVY_RUN || ran_out {
+            self.pressure.borrow_mut().grew("promise job", grew);
+        }
         self.interrupt.arm(now, None);
         self.state.stopped.set(false);
         drop(guard);
@@ -2637,6 +2646,7 @@ impl JsHost {
             });
         }
         self.flush_released();
+        self.mind_heap(ran_out);
         self.tell_queued_jobs();
         pumped
     }
