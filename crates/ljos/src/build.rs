@@ -41,6 +41,17 @@
 //!     .run()?;
 //! ```
 //!
+//! The pack also carries the files under the QML's directories that QML
+//! loads: pictures, fonts, models, sounds, films and the data a model
+//! reads ([`Options::with_files`] names other kinds, [`Options::without_files`]
+//! carries none), and every file a module's CMake `RESOURCES` list names,
+//! whatever its kind. The program that runs the pack finds each where the
+//! QML names it, relative to the file that names it or at its module's
+//! `qrc:/qt/qml/<uri>/` address, with no code of its own
+//! ([`register_pack_files`](crate::register_pack_files)). The pack says
+//! which of the QML files it was given did not compile and why, those the
+//! compile left out (a link, a file that is not UTF-8) among them.
+//!
 //! The `_to_rust` forms also compile the files' bindings and handlers to
 //! Rust (ARCHITECTURE.md §5.4), beside the pack (`qml.pack` and
 //! `qml.rs`); the program embeds both, and what the generator refused
@@ -91,6 +102,14 @@ pub enum BuildError {
         path: PathBuf,
         #[source]
         source: NativeTypeError,
+    },
+    /// A file the pack carries, or a directory it is in, could not be
+    /// read.
+    #[error("{}: {source}", path.display())]
+    Read {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
     },
     /// The compiled files do not fit in a pack.
     #[error(transparent)]
@@ -183,6 +202,28 @@ pub fn compile_dirs_with_types_to_rust(
     Options::default().compile_dirs_with_types_to_rust(dirs, types, out)
 }
 
+/// The kinds of files a pack carries unless its build says otherwise
+/// ([`Options::with_files`]), by extension: those a QML type loads. A
+/// picture (`Image`, `BorderImage`, `AnimatedImage`, a texture), a font
+/// (`FontLoader`), a model or its buffers (`RuntimeLoader`, a `Model`'s
+/// mesh), a sound or a film, a document (`PdfDocument`) and the data a
+/// model reads (`XmlListModel`, `JsonListModel`, a Lottie animation).
+// One line a kind, so that each comment heads its own.
+#[rustfmt::skip]
+pub const FILE_KINDS: &[&str] = &[
+    // Pictures.
+    "png", "jpg", "jpeg", "gif", "bmp", "svg", "svgz", "webp", "ico", "tga", "tif", "tiff", "pbm",
+    "pgm", "ppm", "ktx", "ktx2", "hdr", "exr", "astc", "pkm", "dds",
+    // Fonts.
+    "ttf", "otf", "ttc", "otc", "woff", "woff2",
+    // Models and their buffers.
+    "glb", "gltf", "bin", "obj", "mesh",
+    // Sound and film.
+    "wav", "mp3", "ogg", "oga", "opus", "flac", "m4a", "aac", "mp4", "m4v", "webm", "mkv", "mov",
+    // Documents and data.
+    "pdf", "json", "xml",
+];
+
 /// How a pack is written: whether it carries the sources its files were
 /// compiled from, for a program whose users change it while it runs (the
 /// feature `user-qml`, ARCHITECTURE.md §12.1). Its methods are the
@@ -199,6 +240,9 @@ pub fn compile_dirs_with_types_to_rust(
 #[derive(Debug, Clone)]
 pub struct Options {
     sources: bool,
+    /// The extensions of the files under the QML's directories the pack
+    /// carries, lower case and without the dot.
+    files: Vec<String>,
 }
 
 impl Default for Options {
@@ -212,6 +256,7 @@ impl Default for Options {
     fn default() -> Self {
         Self {
             sources: cfg!(feature = "user-qml"),
+            files: FILE_KINDS.iter().map(|&kind| kind.to_owned()).collect(),
         }
     }
 }
@@ -237,6 +282,113 @@ impl Options {
     pub fn without_sources(mut self) -> Self {
         self.sources = false;
         self
+    }
+
+    /// The pack carries the files under the QML's directories with these
+    /// extensions (`png`, any case), in place of [`FILE_KINDS`].
+    #[must_use]
+    pub fn with_files<'a>(mut self, kinds: impl IntoIterator<Item = &'a str>) -> Self {
+        self.files = kinds
+            .into_iter()
+            .map(|kind| kind.trim_start_matches('.').to_ascii_lowercase())
+            .collect();
+        self
+    }
+
+    /// The pack carries no files besides the QML.
+    #[must_use]
+    pub fn without_files(mut self) -> Self {
+        self.files.clear();
+        self
+    }
+
+    /// `source`, compiled from `dirs`, as a pack: what the module's
+    /// functions write, for a build that compiled it some other way.
+    /// The pack carries the files under `dirs` of the kinds this build
+    /// takes ([`with_files`](Self::with_files)), each by its path from its
+    /// directory's root as the QML is keyed (the first directory's file of
+    /// a path wins), and those a module's build keeps inside the program
+    /// (`RESOURCES`) of whatever kind; a file of a module is also at its
+    /// `qrc:` address. Prints nothing for Cargo.
+    pub fn pack(&self, source: &MapSource, dirs: &[&Path]) -> Result<Vec<u8>, BuildError> {
+        let trailer = if self.sources {
+            sources_of(dirs).encode(true)
+        } else {
+            Vec::new()
+        };
+        let mut source = source.clone();
+        self.carry(&mut source, dirs)?;
+        source
+            .to_pack_with_trailer(&trailer)
+            .map_err(BuildError::Pack)
+    }
+
+    /// Puts the files under `dirs` this build carries into `source`.
+    fn carry(&self, source: &mut MapSource, dirs: &[&Path]) -> Result<(), BuildError> {
+        let unread = |path: &Path| {
+            let path = path.to_path_buf();
+            move |source| BuildError::Read { path, source }
+        };
+        // By path from its root, where each file is.
+        let mut carried: BTreeMap<String, PathBuf> = BTreeMap::new();
+        let mut addresses = Vec::new();
+        // Each module's `qrc:` address, with its directory's path.
+        let mut modules = Vec::new();
+        for &dir in dirs {
+            let key = |path: &Path| {
+                let relative = path.strip_prefix(dir).ok()?;
+                let parts: Option<Vec<&str>> = relative.iter().map(|p| p.to_str()).collect();
+                Some(parts?.join("/"))
+            };
+            let mut files = Vec::new();
+            ljos_compiler::files_below_naming(dir, |_| true, &mut files)
+                .map_err(|(path, source)| BuildError::Read { path, source })?;
+            for path in files {
+                let wanted = path
+                    .extension()
+                    .and_then(|x| x.to_str())
+                    .is_some_and(|x| self.files.iter().any(|kind| x.eq_ignore_ascii_case(kind)));
+                let hidden = path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .is_none_or(|n| n.starts_with('.'));
+                if let (true, false, Some(key)) = (wanted, hidden, key(&path)) {
+                    carried.entry(key).or_insert(path);
+                }
+            }
+            for (address, path) in ljos_compiler::resources(dir).map_err(unread(dir))? {
+                if let Some(key) = key(&path) {
+                    // Kept in the program by its build, whatever its kind.
+                    carried.entry(key.clone()).or_insert(path);
+                    addresses.push((address, key));
+                }
+            }
+            for (prefix, module) in ljos_compiler::resource_dirs(dir).map_err(unread(dir))? {
+                if let Some(under) = key(&module) {
+                    modules.push((prefix, under));
+                }
+            }
+        }
+        for (prefix, under) in modules {
+            let under = if under.is_empty() {
+                under
+            } else {
+                format!("{under}/")
+            };
+            for key in carried.keys() {
+                if let Some(rest) = key.strip_prefix(&under) {
+                    addresses.push((format!("{prefix}/{rest}"), key.clone()));
+                }
+            }
+        }
+        for (key, path) in carried {
+            let bytes = std::fs::read(&path).map_err(unread(&path))?;
+            source.insert_resource(key, bytes);
+        }
+        for (address, key) in addresses {
+            source.insert_resource_address(address, key);
+        }
+        Ok(())
     }
 
     /// See [`compile_dirs`].
@@ -291,12 +443,7 @@ impl Options {
         dirs: &[&Path],
         out: &Path,
     ) -> Result<MapSource, BuildError> {
-        let trailer = if self.sources {
-            sources_of(dirs).encode(true)
-        } else {
-            Vec::new()
-        };
-        write_pack(source, &trailer, out)
+        write_pack(&self.pack(source, dirs)?, out)
     }
 }
 
@@ -399,15 +546,12 @@ fn typed_source(dirs: &[&Path], types: &Path) -> Result<(MapSource, EngineOracle
 /// Writes the pack and hands back the files as the program will read
 /// them from it: compiled code is matched to a file by the content of
 /// what the program loads.
-fn write_pack(source: &MapSource, trailer: &[u8], out: &Path) -> Result<MapSource, BuildError> {
-    let pack = source
-        .to_pack_with_trailer(trailer)
-        .map_err(BuildError::Pack)?;
-    std::fs::write(out, &pack).map_err(|source| BuildError::Write {
+fn write_pack(pack: &[u8], out: &Path) -> Result<MapSource, BuildError> {
+    std::fs::write(out, pack).map_err(|source| BuildError::Write {
         path: out.to_path_buf(),
         source,
     })?;
-    MapSource::from_pack(&pack).map_err(BuildError::Pack)
+    MapSource::from_pack(pack).map_err(BuildError::Pack)
 }
 
 /// What the generator made of one file.
