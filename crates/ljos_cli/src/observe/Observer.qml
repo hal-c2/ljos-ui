@@ -936,10 +936,14 @@ ApplicationWindow {
                                         onWidthChanged: refresh(true)
                                         onHeightChanged: refresh(true)
                                         Component.onCompleted: refresh(true)
+                                        // Told once per sample, and both lines
+                                        // read from the one series then: told
+                                        // by each line's own property, the
+                                        // first would be read beside the other's
+                                        // values of the sample before.
                                         Connections {
-                                            target: chart
-                                            function onValuesChanged() { plot.refresh(false) }
-                                            function onSecondsChanged() { plot.refresh(false) }
+                                            target: overview
+                                            function onSeriesChanged() { plot.refresh(false) }
                                         }
 
                                         function refresh(whole) {
@@ -950,15 +954,17 @@ ApplicationWindow {
                                                 second = []
                                                 return
                                             }
-                                            var t = scaleOf(chart.values, chart.seconds)
+                                            var vs = overview.series[chart.modelData.key]
+                                            var ss = chart.modelData.second ? overview.series[chart.modelData.second] : []
+                                            var t = scaleOf(vs, ss)
                                             if (t !== top) {
                                                 top = t
                                                 whole = true
                                             }
-                                            var l = follow(whole ? [] : line, chart.values)
+                                            var l = follow(whole ? [] : line, vs)
                                             if (l !== line)
                                                 line = l
-                                            var s = follow(whole ? [] : second, chart.seconds)
+                                            var s = follow(whole ? [] : second, ss)
                                             if (s !== second)
                                                 second = s
                                         }
