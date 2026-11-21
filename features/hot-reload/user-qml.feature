@@ -268,7 +268,7 @@ Feature: A shipped application its users change while it runs
         import QtQuick
         Rectangle {
           objectName: "user-shell"; width: 50; height: 20
-          Component.onCompleted: console.log("the user's shell is made")
+          Component.onCompleted: console.info("the user's shell is made")
         }
         """
       Then the user's directory is not watched
@@ -329,7 +329,7 @@ Feature: A shipped application its users change while it runs
         import QtQuick
         Rectangle {
           objectName: "user-shell"; width: 50; height: 20
-          Component.onCompleted: console.log("the user's shell is made")
+          Component.onCompleted: console.info("the user's shell is made")
         }
         """
       When the application runs "Main.qml" built ahead, with the user's directory over it
