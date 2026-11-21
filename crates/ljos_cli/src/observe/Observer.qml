@@ -5130,6 +5130,8 @@ ApplicationWindow {
                                         height: tableScroll.height - 22
                                         clip: true
                                         model: window.page === 9 && models.table ? models.table.rows : []
+                                        Accessible.role: Accessible.List
+                                        Accessible.name: "Rows"
                                         // Held to the part of the table in view: at the list's own edge it
                                         // would be off to the side until the last column is scrolled to.
                                         ScrollBar.vertical: ScrollBar {

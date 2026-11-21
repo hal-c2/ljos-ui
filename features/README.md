@@ -559,6 +559,7 @@ leaves items out fails rather than check part of them.
 | `Then every "locator" in the observer lies within the width of its window` | across only: a list holds rows below its window's bottom on purpose; a locator that finds nothing fails |
 | `Then no two "locator" in the observer overlap` | no item it finds is drawn over another |
 | `Then the observer's "a" lies above its "b"` / `left of its "b"` | where one lies from the other |
+| `Then the observer's "a" ends level with its "b"` | the bottoms of the first each finds are level |
 | `Then the observer's log has no warning matching "regex"` | what the observer itself warned of, read from its inspector |
 | `Then the observer's own audit finds no "code", "code" or "code"` | its audit of its current window, with only those rules; a rule the audit did not check fails the step |
 | `Then the observer passes its own audit` | its audit of its current window finds no error |

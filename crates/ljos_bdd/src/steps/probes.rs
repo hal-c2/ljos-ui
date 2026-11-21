@@ -645,6 +645,25 @@ fn observer_lies(w: &mut LjosWorld, first: String, side: String, second: String)
     })
 }
 
+// A scroll bar is as long as what it scrolls: one that ends short of it
+// leaves a gap where something else was meant to be.
+#[then(regex = r#"^the observer's "((?:[^"\\]|\\.)+)" ends level with its "((?:[^"\\]|\\.)+)"$"#)]
+fn observer_ends_level(w: &mut LjosWorld, first: String, second: String) -> StepResult {
+    let (first, second) = (unquoted(&first), unquoted(&second));
+    w.each(|b| {
+        observer_holds(b.probes()?, |probes| {
+            let (Some(a), Some(b)) = (
+                boxes(probes, &first)?.into_iter().next(),
+                boxes(probes, &second)?.into_iter().next(),
+            ) else {
+                return Ok(Some(format!("it shows no {first} or no {second}")));
+            };
+            let level = (a.at[1] + a.at[3] - (b.at[1] + b.at[3])).abs() <= EDGE;
+            Ok((!level).then(|| format!("{a} does not end level with {b}")))
+        })
+    })
+}
+
 /// How far a box may stand past another and still be beside it: layouts
 /// place items on fractions of a pixel.
 const EDGE: f64 = 0.5;

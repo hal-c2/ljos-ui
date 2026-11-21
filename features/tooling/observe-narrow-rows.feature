@@ -181,6 +181,15 @@ Feature: What the observer lists stays readable in a narrow window
     Then the observer has "role=scrollbar[name=\"Rows\"]"
     And no two "role=scrollbar" in the observer overlap
 
+  # Where the table fits its width there is no sideways bar to stop above:
+  # the rows' bar runs the length of the rows.
+  Scenario: A model's rows scroll bar is as long as its rows in a wide window
+    When the application is observed
+    And the observer's window is 1200 by 800 pixels
+    And the observer's "role=tab[name=\"Models\"]" is clicked
+    And the observer's "role=listitem[name*=\"animals\"]" is clicked
+    Then the observer's "role=scrollbar[name=\"Rows\"]" ends level with its "role=list[name=\"Rows\"]"
+
   # Stacked in a short window, the list, the wake opened and why the UI
   # thread is awake need more height than there is: the page scrolls to
   # the last of them rather than squeeze it away.
