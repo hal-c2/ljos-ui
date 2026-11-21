@@ -954,7 +954,6 @@ mod tests {
         token_file: &str,
         stale: Option<&str>,
     ) -> (PathBuf, Vec<PathBuf>) {
-        use std::os::unix::fs::PermissionsExt;
         let mut written = Vec::new();
         let mut write = |name: &str, text: &str| {
             let path = dir.join(name);
@@ -1002,8 +1001,19 @@ esac
             forwards = dir.join("forwards").display(),
             taken = dir.join("taken").display(),
         );
-        let adb = write("adb", &script);
-        std::fs::set_permissions(&adb, std::fs::Permissions::from_mode(0o755)).unwrap();
+        // The script this process writes is only read. What runs is a copy
+        // a child process made and closed, a file no descriptor of this
+        // process ever pointed at, so no fork can keep it busy. Renaming
+        // would not do: the name changes, the open file is the same.
+        let source = write("adb.sh", &script);
+        let adb = dir.join("adb");
+        let installed = std::process::Command::new("install")
+            .args(["-m", "755"])
+            .arg(&source)
+            .arg(&adb)
+            .status()
+            .unwrap();
+        assert!(installed.success(), "install the fake adb: {installed}");
         (adb, written)
     }
 
