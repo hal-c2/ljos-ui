@@ -867,6 +867,49 @@ struct Dormant {
     gone: Arc<AtomicBool>,
 }
 
+/// Whether what the dormant watch saw removed or moved away what it
+/// watches, or broke the watch.
+fn left(event: &notify::Result<notify::Event>, watched: &Path) -> bool {
+    match event {
+        Ok(event) => {
+            matches!(
+                event.kind,
+                notify::EventKind::Remove(_)
+                    | notify::EventKind::Modify(notify::event::ModifyKind::Name(_))
+            ) && event.paths.iter().any(|p| p == watched)
+        }
+        Err(_) => true,
+    }
+}
+
+/// Whether what the dormant watch saw is worth waking the session for, to
+/// look for the user's first file in the directory `below`.
+fn wakes(event: &notify::Result<notify::Event>, below: &Path) -> bool {
+    let Ok(event) = event else {
+        return true;
+    };
+    // The kernel dropped events: what they were is not known.
+    if event.need_rescan() {
+        return true;
+    }
+    match event.kind {
+        notify::EventKind::Access(notify::event::AccessKind::Close(
+            notify::event::AccessMode::Write,
+        )) => {}
+        // Reading is no change, and the session itself lists the
+        // directory each time it wakes: a wake for a read would wake it
+        // again for ever.
+        notify::EventKind::Access(_) => return false,
+        _ => {}
+    }
+    // Above the directory, only what makes it (or a directory on the way
+    // to it) counts.
+    event
+        .paths
+        .iter()
+        .any(|p| p.starts_with(below) || below.starts_with(p))
+}
+
 /// An application's users' files over its own, as it runs.
 pub struct UserSession {
     dir: UserDir,
@@ -1140,30 +1183,11 @@ impl UserSession {
         let lost = Arc::clone(&gone);
         let watched = target.clone();
         let made = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
-            let left = match &event {
-                Ok(event) => {
-                    matches!(
-                        event.kind,
-                        notify::EventKind::Remove(_)
-                            | notify::EventKind::Modify(notify::event::ModifyKind::Name(_))
-                    ) && event.paths.contains(&watched)
-                }
-                Err(_) => true,
-            };
-            if left {
+            if left(&event, &watched) {
                 // Before the wake, so that the wake finds it.
                 lost.store(true, Ordering::Release);
             }
-            // Above the directory, only what makes it (or a directory on
-            // the way to it) counts.
-            let counts = match &event {
-                Ok(event) => event
-                    .paths
-                    .iter()
-                    .any(|p| p.starts_with(&below) || below.starts_with(p)),
-                Err(_) => true,
-            };
-            if counts {
+            if wakes(&event, &below) {
                 let _ = handle.send_coalesced(WOKE_KEY, UserMsg::Woke);
             }
         })
@@ -1638,5 +1662,74 @@ mod tests {
                 "{name} is told: {told:?}"
             );
         }
+    }
+
+    #[test]
+    fn the_dormant_watch_wakes_for_a_change_and_never_for_a_read() {
+        use notify::event::{
+            AccessKind, AccessMode, CreateKind, EventKind, Flag, ModifyKind, RemoveKind, RenameMode,
+        };
+        let dir = Path::new("/home/someone/.config/app/qml");
+        let at = |kind: EventKind, path: &Path| Ok(notify::Event::new(kind).add_path(path.into()));
+        let file = dir.join("Shell.qml");
+        for kind in [
+            EventKind::Access(AccessKind::Open(AccessMode::Any)),
+            EventKind::Access(AccessKind::Read),
+            EventKind::Access(AccessKind::Close(AccessMode::Read)),
+            EventKind::Access(AccessKind::Any),
+        ] {
+            assert!(!wakes(&at(kind, dir), dir), "{kind:?} of the directory");
+            assert!(!wakes(&at(kind, &file), dir), "{kind:?} of a file in it");
+        }
+        for kind in [
+            EventKind::Create(CreateKind::File),
+            EventKind::Modify(ModifyKind::Name(RenameMode::To)),
+            EventKind::Modify(ModifyKind::Any),
+            EventKind::Access(AccessKind::Close(AccessMode::Write)),
+            EventKind::Remove(RemoveKind::Folder),
+        ] {
+            assert!(wakes(&at(kind, &file), dir), "{kind:?} of a file in it");
+        }
+        // Above the directory, only the way down to it counts.
+        let up = Path::new("/home/someone/.config");
+        assert!(wakes(
+            &at(EventKind::Create(CreateKind::Folder), &up.join("app")),
+            dir
+        ));
+        assert!(!wakes(
+            &at(EventKind::Create(CreateKind::File), &up.join("other.conf")),
+            dir
+        ));
+        // Events the kernel dropped, or a broken watch, may have been anything.
+        let dropped = notify::Event::new(EventKind::Other).set_flag(Flag::Rescan);
+        assert!(wakes(&Ok(dropped), dir));
+        assert!(wakes(&Err(notify::Error::generic("broken")), dir));
+    }
+
+    #[test]
+    fn the_dormant_watch_is_lost_only_when_what_it_watches_goes() {
+        use notify::event::{
+            AccessKind, AccessMode, CreateKind, EventKind, ModifyKind, RemoveKind, RenameMode,
+        };
+        let dir = Path::new("/home/someone/.config/app/qml");
+        let at = |kind: EventKind, path: &Path| Ok(notify::Event::new(kind).add_path(path.into()));
+        assert!(left(&at(EventKind::Remove(RemoveKind::Folder), dir), dir));
+        assert!(left(
+            &at(EventKind::Modify(ModifyKind::Name(RenameMode::From)), dir),
+            dir
+        ));
+        assert!(left(&Err(notify::Error::generic("broken")), dir));
+        assert!(!left(
+            &at(EventKind::Remove(RemoveKind::File), &dir.join("Shell.qml")),
+            dir
+        ));
+        assert!(!left(
+            &at(EventKind::Access(AccessKind::Close(AccessMode::Read)), dir),
+            dir
+        ));
+        assert!(!left(
+            &at(EventKind::Create(CreateKind::File), &dir.join("Shell.qml")),
+            dir
+        ));
     }
 }
