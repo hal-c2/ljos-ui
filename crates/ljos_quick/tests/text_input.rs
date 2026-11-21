@@ -444,6 +444,101 @@ fn what_is_copied_waits_for_the_host_and_what_the_host_gives_is_pasted() {
     assert_eq!(string(&e, edit, "text"), "from elsewhere one\ntwo");
 }
 
+/// The system's clipboard, as a phone has it: each write is one the user
+/// may be shown, and what it holds is what it says, even no text at all.
+#[derive(Default)]
+struct SystemBoard {
+    writes: std::cell::RefCell<Vec<String>>,
+    text: std::cell::RefCell<Option<String>>,
+}
+
+impl ljos_platform::ClipboardService for SystemBoard {
+    fn is_system(&self) -> bool {
+        true
+    }
+    fn text(&self, _: ljos_platform::ClipboardMode) -> Option<String> {
+        self.text.borrow().clone()
+    }
+    fn set_text(
+        &self,
+        _: ljos_platform::ClipboardMode,
+        text: &str,
+    ) -> Result<(), ljos_platform::ClipboardError> {
+        self.writes.borrow_mut().push(format!("text {text}"));
+        *self.text.borrow_mut() = Some(text.to_owned());
+        Ok(())
+    }
+    fn html(&self) -> Option<String> {
+        None
+    }
+    fn set_html(&self, _: &str, alt: &str) -> Result<(), ljos_platform::ClipboardError> {
+        self.writes.borrow_mut().push(format!("html {alt}"));
+        *self.text.borrow_mut() = Some(alt.to_owned());
+        Ok(())
+    }
+    fn image(&self) -> Option<ljos_platform::ClipboardImage> {
+        None
+    }
+    fn set_image(
+        &self,
+        _: ljos_platform::ClipboardImage,
+    ) -> Result<(), ljos_platform::ClipboardError> {
+        Ok(())
+    }
+    fn clear(&self, _: ljos_platform::ClipboardMode) -> Result<(), ljos_platform::ClipboardError> {
+        Ok(())
+    }
+}
+
+#[test]
+fn formatted_text_is_one_copy_on_the_system_s_clipboard() {
+    let e = engine();
+    let board = Rc::new(SystemBoard::default());
+    ljos_platform::Platform::of(&e).set_clipboard(board.clone());
+    let (root, mut s) = ready(
+        &e,
+        r#"
+import QtQuick
+Item {
+    width: 300; height: 200
+    TextEdit {
+        objectName: "rich"; width: 200; height: 80
+        textFormat: TextEdit.RichText; text: "a<b>bold</b>c"
+    }
+}
+"#,
+    );
+    let rich = find(&e, root, "rich");
+    focus(&e, &mut s, rich);
+    e.invoke_by_name(rich, "select", &[Value::Int(1), Value::Int(5)])
+        .unwrap();
+    e.invoke_by_name(rich, "copy", &[]).unwrap();
+    // A phone shows each copy, and tells every listener of each.
+    assert_eq!(*board.writes.borrow(), ["html bold"]);
+}
+
+#[test]
+fn a_system_clipboard_without_text_leaves_nothing_to_paste() {
+    let e = engine();
+    let board = Rc::new(SystemBoard::default());
+    ljos_platform::Platform::of(&e).set_clipboard(board.clone());
+    let (root, mut s) = ready(&e, EDITORS);
+    let input = find(&e, root, "input");
+    focus(&e, &mut s, input);
+    e.invoke_by_name(input, "select", &[Value::Int(6), Value::Int(11)])
+        .unwrap();
+    e.invoke_by_name(input, "copy", &[]).unwrap();
+    assert_eq!(get(&e, input, "canPaste"), Value::Bool(true));
+
+    // A picture was copied since: the clipboard holds no text, and what
+    // was copied here before is not what a paste gets.
+    *board.text.borrow_mut() = Some(String::new());
+    Clipboard::of(&e).refresh(&e);
+    assert_eq!(get(&e, input, "canPaste"), Value::Bool(false));
+    e.invoke_by_name(input, "paste", &[]).unwrap();
+    assert_eq!(string(&e, input, "text"), "hello brave world");
+}
+
 #[test]
 fn an_assistive_technology_selects_and_types_in_an_editor() {
     let e = engine();
