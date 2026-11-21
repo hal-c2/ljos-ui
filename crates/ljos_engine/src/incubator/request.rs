@@ -345,6 +345,9 @@ impl Engine {
         } = req;
         let made = self.not_script_time(|| {
             let errors = self.open_creation();
+            // The root once it is allocated: a panic in a making step
+            // leaves it alive, and nothing would reach it again.
+            let allocated_root = std::cell::Cell::new(None);
             let made = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 let (template, ctx) = self.template_of(&source, scope)?;
                 let mut cr = Creation::default();
@@ -356,6 +359,7 @@ impl Engine {
                             self.destroy_context(ctx);
                         }
                     })?;
+                allocated_root.set(Some(root));
                 if let Some(ctx) = ctx {
                     self.add_context(root, ctx);
                 }
@@ -383,6 +387,14 @@ impl Engine {
                     }
                 }
             }));
+            // What a panic left half made goes, as a job's does when it
+            // is dropped mid-making.
+            if made.is_err()
+                && let Some(root) = allocated_root.get()
+                && self.is_alive(root)
+            {
+                self.destroy_now(root);
+            }
             // A panic ends the creation too: left open, it would hold the
             // warnings of every creation after it, and what waits for no
             // creation to be running would never run.
