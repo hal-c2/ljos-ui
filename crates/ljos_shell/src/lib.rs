@@ -757,7 +757,9 @@ impl<M: Send + 'static> ShellApp<M> {
     /// is painted behind a plain root, and otherwise the view leaves its
     /// backdrop to the clear ([`ShellApp::clear_color`]); a root `Window`
     /// is cleared to its own colour, with nothing painted over it.
-    /// Whether that changed what is drawn, which the next frame shows.
+    /// Chosen in every pass before the scene is shown, so a root that
+    /// changes kind is drawn under the right choice at once. Whether the
+    /// choice changed.
     #[cfg_attr(not(all(feature = "android", target_os = "android")), allow(dead_code))]
     pub(crate) fn backdrop_for_root(&mut self) -> bool {
         let window = self

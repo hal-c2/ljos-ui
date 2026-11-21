@@ -314,7 +314,6 @@ where
         ) {
             Ok(mut app) => {
                 app.view_mut().set_resize_mode(ResizeMode::RootToView);
-                app.backdrop_for_root();
                 // Content is thrown and stopped as Android's own lists do.
                 ljos_quick::flickable::set_scroll_physics(
                     app.engine(),
@@ -620,6 +619,9 @@ where
         IN_PASS.set(true);
         let output = self.ctx.run_ui(raw, |ui| {
             app.begin_pass();
+            // After the pass's messages, which may have changed the root,
+            // and before anything is painted under the old choice.
+            app.backdrop_for_root();
             app.show(ui);
         });
         IN_PASS.set(false);
@@ -630,9 +632,6 @@ where
             let due = Arc::clone(&self.due);
             let waker = self.waker.clone();
             app.on_root_color(move || ask(&due, &waker, Instant::now()));
-            if app.backdrop_for_root() {
-                ask(&self.due, &self.waker, Instant::now());
-            }
         }
         let engine = Rc::clone(app.engine());
         let jobs = self.ctx.tessellate(output.shapes, output.pixels_per_point);
