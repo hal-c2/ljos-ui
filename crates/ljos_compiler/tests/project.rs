@@ -89,6 +89,35 @@ fn a_file_with_errors_is_kept_and_says_what_was_wrong() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn a_file_the_compile_cannot_read_is_said_with_why() {
+    let dir = tempfile::tempdir().expect("a temporary directory");
+    let (root, outside) = (dir.path().join("app"), dir.path().join("elsewhere"));
+    std::fs::create_dir_all(&root).expect("app");
+    std::fs::create_dir_all(&outside).expect("elsewhere");
+    std::fs::write(root.join("Main.qml"), "import QtQuick\nItem {}\n").expect("Main");
+    std::fs::write(root.join("Garbled.qml"), b"Item { \xff\xfe }").expect("Garbled");
+    std::fs::write(outside.join("Lost.qml"), "import QtQuick\nItem {}\n").expect("Lost");
+    std::os::unix::fs::symlink(outside.join("Lost.qml"), root.join("Lost.qml")).expect("link");
+
+    let results = compile_project_with(&root, Runtime::new()).expect("readable");
+    let said = |key: &str| {
+        let file = results.iter().find(|r| r.key == key).expect(key);
+        let diagnostics = file.result.as_ref().expect_err("left out");
+        assert!(
+            diagnostics
+                .iter()
+                .all(|d| d.code == ljos_compiler::Code::LeftOut && d.severity == Severity::Warning),
+            "{diagnostics:?}"
+        );
+        ljos_compiler::failure_reason(diagnostics)
+    };
+    assert!(results.iter().any(|r| r.key == "Main" && r.result.is_ok()));
+    assert!(said("Garbled").contains("not UTF-8"), "{}", said("Garbled"));
+    assert!(said("Lost").contains("a link"), "{}", said("Lost"));
+}
+
 #[test]
 fn several_roots_are_keyed_each_from_its_own_and_the_earlier_wins() {
     let dir = tempfile::tempdir().expect("a temporary directory");
