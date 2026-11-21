@@ -370,6 +370,21 @@ fn observer_resized(w: &mut LjosWorld, width: u32, height: u32) -> StepResult {
     })
 }
 
+// What is acted on next may be laid out by an answer still on its way: a
+// page is scrolled once what makes it long is there.
+#[when(regex = r#"^the observer's "((?:[^"\\]|\\.)+)" is shown$"#)]
+fn observer_shown(w: &mut LjosWorld, locator: String) -> StepResult {
+    let locator = unquoted(&locator);
+    w.each(|b| {
+        let probes = b.probes()?;
+        let looked = observer_until(probes, &locator, true)?;
+        if looked.count == 0 {
+            return Err(observer_missed(probes, &locator, &looked, "nothing"));
+        }
+        Ok(())
+    })
+}
+
 // An item that runs past its window's edge is cut off there: its words are
 // clipped, not elided. Only across, as a list that scrolls holds rows
 // below its window's bottom on purpose. A locator that finds nothing

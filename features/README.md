@@ -551,6 +551,7 @@ leaves items out fails rather than check part of them.
 | `When the observer's window is W by H pixels` | its window is given that size, as a window manager or a page holding it would |
 | `When the observer's "locator" is clicked` | once the observer shows it |
 | `When the observer's "locator" is scrolled N notches right` / `left` / `up` / `down` | the wheel turned over it, once the observer shows it; whatever scrolls under the pointer takes it |
+| `When the observer's "locator" is shown` | waits for what an answer still on its way lays out, failing if it never comes |
 | `Then the observer shows "text"` / `does not show "text"` | an item whose words contain the text, whatever the case |
 | `Then the observer shows "text" whole` | every item with those words has room for all of them inside its window, is drawn at each of its corners (no panel around it clips it), and none is elided; an inspection cut short of saying whether it is elided fails |
 | `Then the observer has "locator"` / `does not have "locator"` | an item the locator finds |
