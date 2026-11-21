@@ -419,27 +419,48 @@ fn packed_ended_within(w: &mut LjosWorld, seconds: u64) -> StepResult {
 
 // A pack as a build script writes it (features/tooling/pack-files.feature).
 
-#[when(
-    regex = r#"^the project is packed( with the files that do not compile| carrying only "([^"]+)" files| carrying no other files)?$"#
-)]
-fn project_packed(w: &mut LjosWorld, how: String, kinds: String) -> StepResult {
-    let packing = match how.as_str() {
-        "" => Packing::default(),
-        " with the files that do not compile" => Packing {
+#[when("the project is packed")]
+fn project_packed(w: &mut LjosWorld) -> StepResult {
+    pack_as(w, &Packing::default())
+}
+
+#[when("the project is packed with the files that do not compile")]
+fn project_packed_keeping_failures(w: &mut LjosWorld) -> StepResult {
+    pack_as(
+        w,
+        &Packing {
             keep_failing: true,
             ..Packing::default()
         },
-        " carrying no other files" => Packing {
+    )
+}
+
+#[when(regex = r#"^the project is packed carrying only "([^"]+)" files$"#)]
+fn project_packed_with_kinds(w: &mut LjosWorld, kinds: String) -> StepResult {
+    let kinds = kinds.split(',').map(|k| k.trim().to_owned()).collect();
+    pack_as(
+        w,
+        &Packing {
+            kinds: Some(kinds),
+            ..Packing::default()
+        },
+    )
+}
+
+#[when("the project is packed carrying no other files")]
+fn project_packed_bare(w: &mut LjosWorld) -> StepResult {
+    pack_as(
+        w,
+        &Packing {
             kinds: Some(Vec::new()),
             ..Packing::default()
         },
-        _ => Packing {
-            kinds: Some(kinds.split(',').map(|k| k.trim().to_owned()).collect()),
-            ..Packing::default()
-        },
-    };
+    )
+}
+
+fn pack_as(w: &mut LjosWorld, packing: &Packing) -> StepResult {
     let (author, files) = w.author_acts();
-    author.pack(files, &packing)
+    author.pack(files, packing)
 }
 
 /// The cells of a table's column `column` below its heading.
@@ -466,6 +487,24 @@ fn pack_carries(w: &mut LjosWorld, step: &Step) -> StepResult {
         Ok(())
     } else {
         Err(format!("the pack carries {carried:?}, not {want:?}"))
+    }
+}
+
+// Every address the pack names a file by, with the file; no other.
+#[then("the pack names its files at the addresses:")]
+fn pack_addresses(w: &mut LjosWorld, step: &Step) -> StepResult {
+    let (addresses, keys) = (column(step, 0)?, column(step, 1)?);
+    let want: Vec<(&str, &str)> = addresses
+        .iter()
+        .map(String::as_str)
+        .zip(keys.iter().map(String::as_str))
+        .collect();
+    let source = w.author().0.packed_source()?;
+    let named: Vec<(&str, &str)> = source.resource_addresses().collect();
+    if named == want {
+        Ok(())
+    } else {
+        Err(format!("the pack names {named:?}, not {want:?}"))
     }
 }
 

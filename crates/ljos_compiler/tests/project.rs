@@ -301,3 +301,25 @@ fn a_file_whose_module_has_an_error_is_refused_with_the_modules_place() {
     let why = main.usable().expect_err("its module has an error");
     assert!(why.starts_with("bad.ts:1:30: "), "{why}");
 }
+
+/// A stand-in of a module kept beside the real one (`old/` here) is not
+/// what an import finds, so its files are not at the module's address.
+#[test]
+fn a_modules_address_is_the_directory_an_import_sees() {
+    let dir = tempfile::tempdir().expect("a temporary directory");
+    let root = dir.path();
+    write_tree(
+        root,
+        &[
+            ("Shapes/qmldir", "module Shapes\nRing 1.0 Ring.qml\n"),
+            ("Shapes/Ring.qml", "import QtQuick\nItem {}\n"),
+            ("old/qmldir", "module Shapes\nRing 1.0 Ring.qml\n"),
+            ("old/Ring.qml", "import QtQuick\nItem {}\n"),
+        ],
+    );
+    let home = vec![("qrc:/qt/qml/Shapes".to_owned(), root.join("Shapes"))];
+
+    assert_eq!(ljos_compiler::resource_dirs(root).expect("readable"), home);
+    let project = ljos_compiler::Project::open(root, Runtime::new()).expect("readable");
+    assert_eq!(project.resource_dirs(), home.as_slice());
+}

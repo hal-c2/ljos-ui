@@ -500,10 +500,11 @@ files above) are a project, compiled into a pack the way a program's build scrip
 | `When the packed application runs` | the pack built and run by a program of its own, until it quits; it carries the files its build carries by default |
 | `When the project is packed` | the pack built, not run; a QML file that does not compile fails the build |
 | `When the project is packed with the files that do not compile` | the same, with a file that does not compile kept in the pack with why |
-| `When the project is packed carrying only "png, ttf" files` / `carrying no other files` | the same, carrying the files of those kinds alone, or none besides the QML |
+| `When the project is packed carrying only "png, ttf" files` / `carrying no other files` | the same, carrying the files of those kinds alone, or none besides the QML; the files a module's build keeps (`RESOURCES`) are carried either way |
 | `Then the packed application's errors mention "text"` / `do not mention "text"` | what the program wrote as errors (its log) |
 | `Then the pack carries the files:` + table `file` | every file the pack carries besides its QML, by its path under the project |
 | `Then the pack carries no files besides its QML` | |
+| `Then the pack names its files at the addresses:` + table `address`, `file` | every `qrc:` address the pack names a file by, in order, with the file's path under the project |
 | `Then the pack says these files did not compile:` + table `file`, `why` | each QML file the pack says did not compile, by its name without `.qml`, and part of why |
 
 ### A user's directory (`hot-reload/user-qml.feature`; all `@ljos-only`)

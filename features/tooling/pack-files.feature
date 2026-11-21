@@ -19,7 +19,8 @@ Feature: A pack carries the files its QML loads
   the data a model reads), and the program that runs the pack finds each
   where the QML names it: relative to the file that names it, or at its
   module's `qrc:` address. Which kinds of files go in is the build's
-  choice. The pack also says which of the QML files it was given did not
+  choice, besides those a module's build keeps (`RESOURCES`); a file whose
+  link leads out of the project stays out. The pack also says which of the QML files it was given did not
   compile, those the compile could not read among them, and why.
 
   Rule: The files beside the QML load in the packed application
@@ -105,6 +106,70 @@ Feature: A pack carries the files its QML loads
     Scenario: A build can carry no files besides the QML
       When the project is packed carrying no other files
       Then the pack carries no files besides its QML
+
+    Scenario: A file a module's build keeps is carried whatever kinds the build takes
+      Given the text file "Shapes/data/table.csv":
+        """
+        side,count
+        """
+      And the file "Shapes/CMakeLists.txt":
+        """
+        qt_add_qml_module(shapes URI Shapes RESOURCES data/table.csv)
+        """
+      When the project is packed carrying no other files
+      Then the pack carries the files:
+        | file                  |
+        | Shapes/data/table.csv |
+      And the pack names its files at the addresses:
+        | address                           | file                  |
+        | qrc:/qt/qml/Shapes/data/table.csv | Shapes/data/table.csv |
+
+    Scenario: A file of the project that links to one outside it is not carried
+      Given the file "private.json" outside the project:
+        """
+        {"secret": true}
+        """
+      And the project's "data.json" is a link to "private.json" outside the project
+      When the project is packed
+      Then the pack carries the files:
+        | file                          |
+        | LjosSymbolsTest-Regular.woff2 |
+        | pics/dot.png                  |
+
+  Rule: A module's address names the files of its own directory
+
+    Scenario: A module's file is at its address, and a file at its path elsewhere is not
+      Given a 4 by 4 image file "Shapes/icons/dot.png" filled with "#00ff00"
+      And the file "Shapes/qmldir":
+        """
+        module Shapes
+        Ring 1.0 Ring.qml
+        """
+      And the file "Shapes/Ring.qml":
+        """qml
+        import QtQuick
+        Item {}
+        """
+      And a 4 by 4 image file "old/icons/dot.png" filled with "#0000ff"
+      And the file "old/qmldir":
+        """
+        module Shapes
+        Ring 1.0 Ring.qml
+        """
+      And the file "old/Ring.qml":
+        """qml
+        import QtQuick
+        Item {}
+        """
+      And the file "Main.qml":
+        """qml
+        import QtQuick
+        Item {}
+        """
+      When the project is packed
+      Then the pack names its files at the addresses:
+        | address                          | file                 |
+        | qrc:/qt/qml/Shapes/icons/dot.png | Shapes/icons/dot.png |
 
   Rule: The pack says which QML files did not compile
 
