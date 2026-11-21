@@ -1,6 +1,8 @@
 # Sources:
 #   https://developer.android.com/privacy-and-security/keystore
 #   https://developer.android.com/reference/android/content/ClipboardManager
+#   https://developer.android.com/reference/android/content/ClipData#newHtmlText(java.lang.CharSequence,%20java.lang.CharSequence,%20java.lang.String)
+#   https://developer.android.com/develop/ui/views/touch-and-input/copy-paste#Content
 #   https://developer.android.com/reference/android/content/Intent#ACTION_VIEW
 #   https://developer.android.com/training/data-storage/app-specific
 #   https://doc.qt.io/qt-6/qml-qtqml-qt.html#openUrlExternally-method
@@ -30,6 +32,10 @@ Feature: An application on a phone uses the system's services
         property bool opened: false
         function open(url) { opened = Qt.openUrlExternally(url) }
         TextInput { id: input; objectName: "input"; text: "copied on a phone"; focus: true }
+        TextEdit { id: rich; objectName: "rich"; textFormat: TextEdit.RichText; text: "a<b>bold</b>c" }
+        TextEdit { id: target; objectName: "target"; textFormat: TextEdit.RichText }
+        property string pasted: target.getText(0, target.length)
+        property bool pastedBold: target.text.indexOf("font-weight:700") >= 0
       }
       """
 
@@ -43,6 +49,13 @@ Feature: An application on a phone uses the system's services
     And the method "selectAll" of "input" is called
     And the method "paste" of "input" is called
     Then the property "text" of "input" is "from elsewhere"
+
+  Scenario: Formatted text goes through the system's clipboard with its formats
+    When the method "select" of "rich" is called with 1, 5
+    And the method "copy" of "rich" is called
+    And the method "paste" of "target" is called
+    Then the property "pasted" of "w" is "bold"
+    And the property "pastedBold" of "w" is true
 
   Scenario: A link opens in the browser
     When the method "open" of "w" is called with "https://example.com/"

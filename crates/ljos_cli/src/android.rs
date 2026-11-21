@@ -46,7 +46,7 @@ const MCP_EXTRA: &str = "dev.ljos.MCP";
 const TOKEN_DIR: &str = "files/target/ljos";
 
 /// The Gradle template, by the path it is written to in the project.
-const TEMPLATE: [(&str, &str); 10] = [
+const TEMPLATE: [(&str, &str); 11] = [
     (
         "settings.gradle.kts",
         include_str!("../../../android/settings.gradle.kts"),
@@ -84,6 +84,10 @@ const TEMPLATE: [(&str, &str); 10] = [
     (
         "app/src/debug/AndroidManifest.xml",
         include_str!("../../../android/app/src/debug/AndroidManifest.xml"),
+    ),
+    (
+        "app/src/main/res/xml/ljos_clipboard_paths.xml",
+        include_str!("../../../android/app/src/main/res/xml/ljos_clipboard_paths.xml"),
     ),
     ("README.md", include_str!("../../../android/README.md")),
 ];
@@ -872,6 +876,10 @@ mod tests {
             "public static void secretWrite(Context context, String service, String key, byte[] secret)",
             "public static byte[] secretRead(Context context, String service, String key)",
             "public static boolean secretRemove(Context context, String service, String key)",
+            "public static String clipboardHtml(Context context)",
+            "public static void setClipboardHtml(Context context, String html, String text)",
+            "public static int[] clipboardImage(Context context)",
+            "public static void setClipboardImage(Context context, int[] argb, int width, int height)",
         ] {
             assert!(java.contains(method), "{method}");
         }
@@ -1337,6 +1345,30 @@ esac
         for caps in ["--mcp=fs", "--mcp=run", "--mcp=inspect,fs"] {
             assert!(parse(caps).is_err(), "{caps} is refused");
         }
+    }
+
+    #[test]
+    fn a_copied_picture_is_lent_by_the_templates_provider() {
+        let file = |name: &str| {
+            TEMPLATE
+                .iter()
+                .find(|(p, _)| p.ends_with(name))
+                .map(|(_, t)| fill().apply(t))
+                .unwrap_or_else(|| panic!("the template has no {name}"))
+        };
+        let manifest = file("main/AndroidManifest.xml");
+        let services = file("LjosServices.java");
+        let paths = file("res/xml/ljos_clipboard_paths.xml");
+        // The authority LjosServices asks FileProvider for is the one the
+        // manifest declares, which Gradle fills with the application's id.
+        assert!(services.contains(r#"context.getPackageName() + ".ljos.clipboard""#));
+        assert!(manifest.contains(r#"android:authorities="${applicationId}.ljos.clipboard""#));
+        assert!(manifest.contains(r#"android:resource="@xml/ljos_clipboard_paths""#));
+        assert!(manifest.contains(r#"android:exported="false""#));
+        // It lends the directory the pictures are written to, and only it.
+        assert!(services.contains(r#"new File(context.getCacheDir(), "ljos-clipboard")"#));
+        assert!(paths.contains(r#"<cache-path name="clipboard" path="ljos-clipboard/" />"#));
+        assert_eq!(paths.matches("-path ").count(), 1);
     }
 
     #[test]

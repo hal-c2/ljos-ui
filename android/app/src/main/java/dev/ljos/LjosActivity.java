@@ -1,5 +1,6 @@
 package dev.ljos;
 
+import android.content.ClipboardManager;
 import android.content.pm.ApplicationInfo;
 import android.os.Build;
 import android.os.Bundle;
@@ -48,7 +49,17 @@ public class LjosActivity extends GameActivity {
             int cutoutLeft, int cutoutTop, int cutoutRight, int cutoutBottom,
             int imeLeft, int imeTop, int imeRight, int imeBottom);
 
+    /**
+     * The system's clipboard holds something else. Since Android 10 only
+     * the application with the keyboard's focus hears of it, which is when
+     * a paste can follow.
+     */
+    private static native void nativeClipboardChanged();
+
     private OnBackPressedCallback back;
+
+    private final ClipboardManager.OnPrimaryClipChangedListener clipChanged =
+            LjosActivity::nativeClipboardChanged;
 
     /**
      * The combining accent a dead key left waiting for the next key, or 0.
@@ -124,6 +135,19 @@ public class LjosActivity extends GameActivity {
             }
         };
         getOnBackPressedDispatcher().addCallback(this, back);
+        ClipboardManager clipboard = getSystemService(ClipboardManager.class);
+        if (clipboard != null) {
+            clipboard.addPrimaryClipChangedListener(clipChanged);
+        }
+    }
+
+    @Override
+    protected void onDestroy() {
+        ClipboardManager clipboard = getSystemService(ClipboardManager.class);
+        if (clipboard != null) {
+            clipboard.removePrimaryClipChangedListener(clipChanged);
+        }
+        super.onDestroy();
     }
 
     /**

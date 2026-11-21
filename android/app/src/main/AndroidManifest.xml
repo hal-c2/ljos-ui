@@ -19,5 +19,17 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <!-- A picture the application copies is on the clipboard as a
+             content URI of this provider, which lends it to whoever
+             pastes it (LjosServices.setClipboardImage). -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.ljos.clipboard"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/ljos_clipboard_paths" />
+        </provider>
     </application>
 </manifest>
