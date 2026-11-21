@@ -113,7 +113,8 @@ impl MallocPeak {
     /// because it had no room to make the error it meant to throw.
     pub(crate) fn ran_out(&self) -> bool {
         // SAFETY: a live runtime (`of`).
-        unsafe { JS_NullErrorCount(self.rt) } != self.nulls_from.get()
+        let now = unsafe { JS_NullErrorCount(self.rt) };
+        now != self.nulls_from.get()
     }
 }
 
