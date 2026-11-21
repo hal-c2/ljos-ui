@@ -3896,9 +3896,7 @@ impl Engine {
                 let c = contexts.get(id)?;
                 if let Some(o) = c.id(name) {
                     drop(contexts);
-                    // Tracked: a binding that read the id reads again when
-                    // it goes, as one of the file's items does.
-                    return Some(self.live(Value::Object(o)));
+                    return Some(self.id_value(id, o));
                 }
                 if let Some(v) = c.props.get(name) {
                     return Some(v.clone());
@@ -3927,12 +3925,13 @@ impl Engine {
     pub(crate) fn context_name(&self, ctx: ContextId, name: &str) -> Option<Value> {
         crate::lookups::name();
         let mut cur = Some(ctx);
-        let found = loop {
+        let (at, found) = loop {
             let objects = {
                 let contexts = self.inner.contexts.borrow();
-                let c = contexts.get(cur?)?;
+                let at = cur?;
+                let c = contexts.get(at)?;
                 if let Some(o) = c.id(name) {
-                    break o;
+                    break (at, o);
                 }
                 if let Some(v) = c.props.get(name) {
                     return Some(v.clone());
@@ -3946,8 +3945,23 @@ impl Engine {
                 }
             }
         };
-        // Tracked: a binding that read the id reads again when it goes.
-        Some(self.live(Value::Object(found)))
+        Some(self.id_value(at, found))
+    }
+
+    /// The object of an id `ctx` declares, `null` once it is gone. An id of
+    /// the root context is the application's object, which it deletes when
+    /// it likes, so a binding that read it is tracked to read again when it
+    /// goes, as Qt 6.12.0 does. An id of a file's context is not tracked:
+    /// tracking one costs a closed Menu four values (ljos_controls'
+    /// budget), and a file's id read this way was not tracked before.
+    fn id_value(&self, ctx: ContextId, o: ObjectId) -> Value {
+        if ctx == self.inner.root_context {
+            self.live(Value::Object(o))
+        } else if self.is_alive(o) {
+            Value::Object(o)
+        } else {
+            Value::Null
+        }
     }
 
     /// Where `name` is from `ctx` outwards: the context object that has a
