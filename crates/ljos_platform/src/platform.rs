@@ -279,6 +279,10 @@ pub struct Platform {
     cancels: RefCell<HashMap<u64, (Cancel, u64)>>,
     next_fetch: Cell<u64>,
     resources: RefCell<HashMap<String, Rc<[u8]>>>,
+    /// Bytes held elsewhere (the files a pack carries, in the program or
+    /// read once), copied for whoever reads one: the one copy is kept
+    /// where it is.
+    kept_resources: RefCell<HashMap<String, ljos_engine::ResourceBytes>>,
     /// Files a program keeps inside itself, where they are until it is
     /// built: one by its address, and a prefix naming a directory's.
     resource_files: RefCell<HashMap<String, PathBuf>>,
@@ -343,6 +347,7 @@ impl Default for Platform {
             cancels: RefCell::new(HashMap::new()),
             next_fetch: Cell::new(0),
             resources: RefCell::new(HashMap::new()),
+            kept_resources: RefCell::new(HashMap::new()),
             resource_files: RefCell::new(HashMap::new()),
             resource_dirs: RefCell::new(Vec::new()),
             window_hooks: RefCell::new(Vec::new()),
@@ -1024,9 +1029,25 @@ impl Platform {
             .insert(url.to_owned(), bytes.into());
     }
 
+    /// [`register_resource`](Self::register_resource) of bytes held
+    /// elsewhere (a file a pack carries), copied only when one is read: a
+    /// file is read once or twice where it is loaded, and a pack's are
+    /// many and mostly never read.
+    pub fn register_kept_resource(&self, url: &str, bytes: impl Into<ljos_engine::ResourceBytes>) {
+        self.kept_resources
+            .borrow_mut()
+            .insert(url.to_owned(), bytes.into());
+    }
+
     /// The bytes registered for `url`, if any.
     pub fn resource(&self, url: &str) -> Option<Rc<[u8]>> {
-        self.resources.borrow().get(url).cloned()
+        if let Some(bytes) = self.resources.borrow().get(url) {
+            return Some(Rc::clone(bytes));
+        }
+        self.kept_resources
+            .borrow()
+            .get(url)
+            .map(|b| Rc::from(&**b))
     }
 
     /// Makes `url` name the file at `path`: a file the program keeps
