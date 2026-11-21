@@ -148,6 +148,11 @@ struct Run {
     backoff: Backoff,
     /// The making [`Run::backoff`] waits for.
     waiting: Option<TimerId>,
+    /// How often `content` has changed. A making that sees it move has been
+    /// overtaken: a handler of what was made gave the boundary content
+    /// again, even the same content back (A→B→A), and the content watch
+    /// made and showed that already.
+    changes: u64,
 }
 
 /// The flattened indices of the `fault.*` leaves.
@@ -181,6 +186,7 @@ impl ErrorBoundary {
     fn completed(cx: &Cx) -> Result<(), EngineError> {
         let (e, me) = (cx.engine, cx.this);
         e.watch(me, ErrorBoundary::CONTENT.index, move |e, _| {
+            with_run(e, me, |r| r.changes = r.changes.wrapping_add(1));
             // New content is tried at once, whatever stopped the old.
             stop_waiting(e, me);
             publish(e, me, None);
@@ -508,21 +514,21 @@ fn make_content(e: &Engine, me: ObjectId) -> Result<(), Fault> {
         set(e, me, ErrorBoundary::FAILED.index, false.into());
         return Ok(());
     };
-    let made = e
-        .component_create_owned(content, me, place)
-        .map_err(|err| creation_fault(e, err))?;
+    let changes = with_run(e, me, |r| r.changes);
+    let made = e.component_create_owned(content, me, place);
     if !e.is_alive(me) {
         return Ok(());
     }
-    // A handler of what was made gave the boundary other content: the
-    // content watch has made and shown that already, and this is no one's.
-    let current = e
-        .untrack(|| e.read(me, ErrorBoundary::CONTENT.index))
-        .as_object();
-    if current != Some(content) {
-        discard(e, made);
+    // A handler of what was made gave the boundary content again: the
+    // content watch has made and shown that already. What this making
+    // made is no one's, and a fault of it is not the shown content's.
+    if with_run(e, me, |r| r.changes) != changes {
+        if let Ok(made) = made {
+            discard(e, made);
+        }
         return Ok(());
     }
+    let made = made.map_err(|err| creation_fault(e, err))?;
     if let Some(kept) = with_run(e, me, |r| r.kept.take()).flatten() {
         e.restore_subtree(made, kept);
     }
