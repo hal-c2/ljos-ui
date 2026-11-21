@@ -91,3 +91,47 @@ fn a_deep_nesting_is_walked_within_the_budget() {
         .join()
         .unwrap();
 }
+
+const SHARED: &str = r#"import QtQuick
+Item {
+  property var row: ({ s: "row" })
+  property var rows
+  Item { property var rows }
+  Item { property var rows }
+  Item { property var rows }
+  QtObject { property var tail: ({ s: "tail" }) }
+}
+"#;
+
+/// A list many objects share is charged to the budget once, not once per
+/// object, so a model every delegate holds leaves room to name the types
+/// after them, and each of them is still counted as holding it.
+#[test]
+fn a_list_many_objects_share_is_charged_once() {
+    let h = engine();
+    let e = &h.engine;
+    let root = h.load(SHARED);
+    let row = h.get(root, "row");
+    assert!(matches!(row, Value::Js(_)), "{row:?}");
+    let rows = Value::list(vec![row; 10_000]);
+    let mut holders = 0;
+    for obj in std::iter::once(root).chain(e.children(root)) {
+        if e.write_by_name(obj, "rows", rows.clone()).is_ok() {
+            holders += 1;
+        }
+    }
+    assert_eq!(holders, 4);
+    // Charged once per object, the four would take 40,000.
+    let held = e.script_heap_holders(20_000).expect("scripts ran");
+    assert!(!held.truncated, "{held:?}");
+    let named = |name: &str| {
+        held.holders
+            .iter()
+            .find(|t| t.name == name)
+            .map(|t| t.objects)
+    };
+    assert_eq!(named("QtObject"), Some(1), "{held:?}");
+    // The root and its three Items, whatever the root's type is named.
+    let holding: usize = held.holders.iter().map(|t| t.objects).sum();
+    assert_eq!(holding, 5, "{held:?}");
+}
