@@ -395,6 +395,10 @@ impl<U: Send + 'static> Pump<'_, U> {
                     cursor: reported.selection.end,
                     compose: reported.compose_region.map(|c| c.start..c.end),
                 };
+                // A report the method made by now, the state read above
+                // among it, forgets the writes before it: what was read is
+                // then the method's own and not the main thread behind.
+                self.input();
                 // A write of ours still on its way to the main thread is
                 // what the method is about to hold.
                 let holds = self.writes.holds(reported.clone());

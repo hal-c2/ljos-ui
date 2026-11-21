@@ -701,3 +701,37 @@ fn writes_past_the_most_kept_let_the_oldest_go() {
     // the method's own.
     assert_eq!(full().holds(state(0)), state(0));
 }
+
+#[test]
+fn a_report_the_same_as_two_writes_lets_go_only_of_the_oldest() {
+    let mut writes = Writes::default();
+    let empty = holds("", [0, 0], None);
+    let a = holds("a", [1, 1], None);
+    let ab = holds("ab", [2, 2], None);
+    let abc = holds("abc", [3, 3], None);
+    writes.wrote(&empty, a.clone());
+    writes.wrote(&empty, ab.clone());
+    writes.wrote(&empty, a.clone());
+    // The platform got to the first "a"; the "ab" and the second "a" are
+    // still on their way.
+    assert_eq!(writes.holds(a.clone()), a);
+    writes.wrote(&a, abc.clone());
+    // It got to "ab": "abc" is still on its way, and is what a request is
+    // compared with.
+    assert_eq!(writes.holds(ab.clone()), abc);
+}
+
+#[test]
+fn a_report_of_the_state_before_the_writes_is_the_platform_behind_until_the_method_reports() {
+    let mut writes = Writes::default();
+    let a = holds("a", [1, 1], None);
+    let ab = holds("ab", [2, 2], None);
+    writes.wrote(&a, ab.clone());
+    // Whether the platform has yet to apply "ab", or applied it and the
+    // user deleted the "b", it reports "a": until the method's own report
+    // arrives, that is the platform behind.
+    assert_eq!(writes.holds(a.clone()), ab);
+    // Once the method has reported, "a" is its own.
+    writes.clear();
+    assert_eq!(writes.holds(a.clone()), a);
+}
