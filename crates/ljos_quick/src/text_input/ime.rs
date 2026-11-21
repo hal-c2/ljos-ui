@@ -119,6 +119,16 @@ impl TextInputClient for Client {
         h.finish()
     }
 
+    fn text_digest(&self, engine: &Engine, item: ObjectId) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::hash::DefaultHasher::new();
+        if let Some(st) = ops::ready(engine, item) {
+            let s = st.borrow();
+            (s.model.text(), s.editing).hash(&mut h);
+        }
+        h.finish()
+    }
+
     fn set_selection(&self, engine: &Engine, item: ObjectId, anchor: usize, cursor: usize) {
         ops::act(engine, item, |st| {
             let mut s = st.borrow_mut();
@@ -396,11 +406,17 @@ impl QuickScene {
             // method holds it: the method is told to start anew. A method
             // that typed nothing yet has no selection in the field, which
             // keeps its own (all of it, selected on focus).
-            let keep = took && (edited || was_held);
+            let mut keep = took && (edited || was_held);
             if keep {
                 let want = (start + anchor, start + cursor);
                 if client.selection(engine, item) != want {
+                    let written = client.text_digest(engine, item);
                     client.set_selection(engine, item, want.0, want.1);
+                    // A handler of the move may write the field: what the
+                    // method typed is then not where it is held, and the
+                    // digest taken below is of the field so written.
+                    keep = client.text_digest(engine, item) == written
+                        && client.selection(engine, item) == want;
                 }
             }
             *hidden_held(engine).0.borrow_mut() = keep.then(|| HiddenHeld {

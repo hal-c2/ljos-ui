@@ -100,6 +100,15 @@ pub trait TextInputClient {
         (s.text, s.anchor, s.cursor).hash(&mut h);
         h.finish()
     }
+    /// A digest of the item's text alone, also of a text it hides: it
+    /// tells a write to the field from a move of its selection. It never
+    /// leaves the process, as [`digest`](Self::digest) does not.
+    fn text_digest(&self, engine: &Engine, item: ObjectId) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::hash::DefaultHasher::new();
+        self.surrounding(engine, item).text.hash(&mut h);
+        h.finish()
+    }
     /// Ends the composition and types `text` over the selection. Returns
     /// whether the item took it.
     fn commit(&self, engine: &Engine, item: ObjectId, text: &str) -> bool {
