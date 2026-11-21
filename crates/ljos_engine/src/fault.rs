@@ -221,6 +221,16 @@ impl Drop for OriginGuard<'_> {
 }
 
 impl Engine {
+    /// Runs `f` with the origin the panic being caught unwound out of set
+    /// aside: a fault `f` reports names its own origin, and the caught one
+    /// keeps its origin for whoever reports it after.
+    pub(crate) fn apart_from_unwound<R>(&self, f: impl FnOnce() -> R) -> R {
+        let first = self.inner.faults.unwound.take();
+        let r = f();
+        self.inner.faults.unwound.set(first);
+        r
+    }
+
     /// `obj`'s code runs until the guard is dropped. `None` leaves the
     /// origin as it is.
     pub(crate) fn origin(&self, obj: Option<ObjectId>) -> OriginGuard<'_> {
@@ -724,6 +734,21 @@ fn is_generated_name(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A panic caught while another's origin waits to be reported names
+    /// its own origin, and leaves the waiting one to whoever reports it.
+    #[test]
+    fn a_fault_reported_apart_from_an_unwound_panic_leaves_it_its_origin() {
+        let e = Engine::new();
+        let obj = e.create_native(crate::QtObject::default(), None).unwrap();
+        e.inner.faults.unwound.set(Some(obj));
+        e.apart_from_unwound(|| e.report_fault(None, Fault::Panic("told".into())));
+        e.report_fault(None, Fault::Panic("made".into()));
+        let filed = e.faults();
+        assert_eq!(filed.len(), 2, "{filed:?}");
+        assert_eq!(filed[0].origin, None, "{filed:?}");
+        assert_eq!(filed[1].origin, Some(obj), "{filed:?}");
+    }
 
     #[test]
     fn stack_lines_are_parsed() {

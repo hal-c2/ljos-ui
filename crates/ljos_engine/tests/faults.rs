@@ -11,7 +11,7 @@ use ljos_engine::{
     Boundary, BoundaryConfig, Cx, Engine, FaultReport, ObjectId, QmlObject, QtObject, Value,
     fault_kind, qml_impl,
 };
-use ljos_runtime::{Fault, Intensity, JobPoll, Restart};
+use ljos_runtime::{Clock, Fault, Intensity, JobPoll, Restart};
 use support::{Harness, engine};
 
 /// A native type whose methods fail the way a bug in one would.
@@ -872,4 +872,231 @@ fn a_creation_whose_parent_goes_while_it_completes_leaves_nothing() {
     let inc = e.read_by_name(root, "inc").as_object().expect("kept");
     assert_eq!(e.read_by_name(inc, "status").to_number(), 3.0);
     assert!(e.read_by_name(inc, "object").as_object().is_none());
+}
+
+thread_local! {
+    /// Whether making a `Dud` panics now: not while its type is registered.
+    static DUDS_PANIC: Cell<bool> = const { Cell::new(false) };
+}
+
+/// A native type whose making panics, as a bug in a constructor would. It
+/// stands in for `Text` so the compiler, which knows only the types it
+/// was built with, takes the file.
+#[derive(Debug, QmlObject)]
+#[qml(module = "QtQuick", name = "Text", extends = QtObject)]
+struct Dud {
+    #[qml(base)]
+    base: QtObject,
+}
+
+impl Default for Dud {
+    fn default() -> Self {
+        assert!(!DUDS_PANIC.get(), "a dud");
+        Self {
+            base: QtObject::default(),
+        }
+    }
+}
+
+const INCUBATE_DUD: &str = r#"import QtQuick
+Item {
+    id: root
+    property var inc: null
+    property string seen: ""
+    Component {
+        id: comp
+        Item {
+            objectName: "kid"
+            Item {} Item {} Item {} Item {}
+            Text {}
+        }
+    }
+    property Component c: comp
+    function start() {
+        inc = comp.incubateObject(root)
+        inc.onStatusChanged = function(s) { seen += s + " " }
+        return inc.status
+    }
+    function force() { inc.forceCompletion(); return inc.status }
+}
+"#;
+
+/// Runs what is queued to incubate as a frame's scheduler does, and gives
+/// the faults it reported.
+fn run_incubations(e: &Engine) -> Vec<(ljos_runtime::ProcId, Fault)> {
+    let clock = ljos_runtime::VirtualClock::new();
+    let mut s = ljos_runtime::Scheduler::<()>::new();
+    for job in e.take_incubations() {
+        s.spawn(Box::new(job));
+    }
+    let mut faults = Vec::new();
+    for _ in 0..1000 {
+        if s.is_empty() {
+            break;
+        }
+        let budget = ljos_runtime::FrameBudget::new(clock.now(), Duration::from_millis(16));
+        faults.extend(s.run_frame(&mut (), budget, &clock).faults);
+        clock.advance(Duration::from_millis(1));
+    }
+    assert!(s.is_empty(), "the jobs never end");
+    faults
+}
+
+#[test]
+fn an_incubation_whose_making_panics_tells_its_incubator_and_leaves_nothing() {
+    let h = engine();
+    let e = &h.engine;
+    e.register_module(ljos_engine::module!("QtQuick" 2.0 => [Dud]));
+    let root = h.load(INCUBATE_DUD);
+    let before = e.object_count();
+    DUDS_PANIC.set(true);
+    assert_eq!(
+        e.invoke_by_name(root, "start", &[]).unwrap(),
+        Value::from(2.0)
+    );
+    let faults = run_incubations(e);
+    DUDS_PANIC.set(false);
+    // The scheduler still hears of the panic, for the job's owner.
+    assert!(
+        faults
+            .iter()
+            .any(|(_, f)| matches!(f, Fault::Panic(m) if m.contains("a dud"))),
+        "{faults:?}"
+    );
+    let inc = h.get(root, "inc").as_object().expect("kept");
+    assert_eq!(h.num(inc, "status"), 3.0, "Component.Error");
+    assert_eq!(statuses(&h, root), "3 ", "told once");
+    assert!(h.get(inc, "object").as_object().is_none());
+    assert!(!e.has_half_made());
+    // `inc` itself is the one object more.
+    assert_eq!(e.object_count(), before + 1, "what was made went away");
+}
+
+#[test]
+fn a_forced_incubation_whose_making_panics_reports_the_fault() {
+    let h = engine();
+    let e = &h.engine;
+    e.register_module(ljos_engine::module!("QtQuick" 2.0 => [Dud]));
+    let root = h.load(INCUBATE_DUD);
+    let before = e.object_count();
+    DUDS_PANIC.set(true);
+    assert_eq!(
+        e.invoke_by_name(root, "start", &[]).unwrap(),
+        Value::from(2.0)
+    );
+    // No scheduler runs it: the script makes it all at once. The making's
+    // panic goes on out of `forceCompletion()`, as out of any native call,
+    // so the script's call is cut short and the incubator is asked after.
+    let _ = e.invoke_by_name(root, "force", &[]);
+    DUDS_PANIC.set(false);
+    let inc = h.get(root, "inc").as_object().expect("kept");
+    assert_eq!(h.num(inc, "status"), 3.0, "Component.Error");
+    let faults = e.faults();
+    assert!(
+        faults
+            .iter()
+            .any(|f| f.kind() == "Panic" && f.message().contains("a dud")),
+        "{faults:?}"
+    );
+    assert_eq!(statuses(&h, root), "3 ", "told once");
+    assert!(!e.has_half_made());
+    assert_eq!(e.object_count(), before + 1, "what was made went away");
+}
+
+#[test]
+fn a_creation_job_that_panics_calls_on_done_with_an_error() {
+    let h = engine();
+    let e = &h.engine;
+    e.register_module(ljos_engine::module!("QtQuick" 2.0 => [Dud]));
+    let root = h.load(INCUBATE_DUD);
+    let comp = h.get(root, "c").as_object().expect("the component");
+    let before = e.object_count();
+    let seen = Rc::new(RefCell::new(None));
+    let s = seen.clone();
+    let (job, handle) = e.make_later(
+        ljos_engine::Request::component(comp).parent(Some(root)),
+        ljos_runtime::Lane::Visible,
+        ljos_runtime::ProcId::new(0, 0),
+    );
+    e.incubate(job.on_done(move |_, r| *s.borrow_mut() = Some(r.clone())));
+    DUDS_PANIC.set(true);
+    let faults = run_incubations(e);
+    DUDS_PANIC.set(false);
+    assert_eq!(faults.len(), 1, "{faults:?}");
+    let told = seen.borrow().clone().expect("whoever waits is told");
+    let err = told.expect_err("a panic is no object");
+    assert!(err.to_string().contains("a dud"), "{err}");
+    assert_eq!(handle.result().map(|r| r.is_err()), Some(true));
+    assert_eq!(e.object_count(), before, "what was made went away");
+}
+
+/// Whoever waits may panic on being told of the panic: the creation is
+/// still closed, so what waits for no creation to run still runs.
+#[test]
+fn a_creation_job_whose_on_done_panics_on_its_error_still_closes_the_creation() {
+    let h = engine();
+    let e = &h.engine;
+    e.register_module(ljos_engine::module!("QtQuick" 2.0 => [Dud]));
+    let root = h.load(INCUBATE_DUD);
+    let comp = h.get(root, "c").as_object().expect("the component");
+    let (job, handle) = e.make_later(
+        ljos_engine::Request::component(comp).parent(Some(root)),
+        ljos_runtime::Lane::Visible,
+        ljos_runtime::ProcId::new(0, 0),
+    );
+    e.incubate(job.on_done(|_, r| {
+        assert!(r.is_ok(), "told twice over");
+    }));
+    DUDS_PANIC.set(true);
+    let faults = run_incubations(e);
+    DUDS_PANIC.set(false);
+    assert_eq!(faults.len(), 1, "{faults:?}");
+    assert_eq!(handle.result().map(|r| r.is_err()), Some(true));
+    // The job's owner reports the making's panic after the job is done,
+    // and on_done's panic, reported as it happened, comes first. Neither
+    // names an object here: a constructor panics before its object
+    // exists, and the hooks that run with an object (handlers,
+    // `on_complete`, invokables) catch their own panics. That on_done's
+    // report leaves the making's origin alone is pinned in fault.rs.
+    let (_, making) = faults.into_iter().next().expect("the making's fault");
+    e.report_fault(None, making);
+    let filed: Vec<String> = e.faults().iter().map(|f| f.fault.to_string()).collect();
+    let told = filed.iter().position(|f| f.contains("told twice over"));
+    let made = filed.iter().position(|f| f.contains("a dud"));
+    assert!(
+        told.is_some() && told < made,
+        "on_done's panic, then the making's: {filed:?}"
+    );
+    let ran = Rc::new(Cell::new(false));
+    let r = ran.clone();
+    e.after_creation(move |_| r.set(true));
+    assert!(ran.get(), "a creation was left open");
+}
+
+/// A panic in `on_done` after the object was made comes after the result
+/// is out: whoever waits keeps the object, it is not unmade, and the
+/// creation still closes.
+#[test]
+fn a_creation_job_whose_on_done_panics_on_success_keeps_its_object() {
+    let h = engine();
+    let e = &h.engine;
+    e.register_module(ljos_engine::module!("QtQuick" 2.0 => [Dud]));
+    let root = h.load(INCUBATE_DUD);
+    let comp = h.get(root, "c").as_object().expect("the component");
+    let (job, handle) = e.make_later(
+        ljos_engine::Request::component(comp).parent(Some(root)),
+        ljos_runtime::Lane::Visible,
+        ljos_runtime::ProcId::new(0, 0),
+    );
+    e.incubate(job.on_done(|_, r| {
+        assert!(r.is_err(), "whoever waits panics on success");
+    }));
+    let faults = run_incubations(e);
+    assert_eq!(faults.len(), 1, "{faults:?}");
+    let made = handle.result().expect("told").expect("the object was made");
+    assert!(e.is_alive(made), "the object was unmade");
+    let ran = Rc::new(Cell::new(false));
+    let r = ran.clone();
+    e.after_creation(move |_| r.set(true));
+    assert!(ran.get(), "a creation was left open");
 }
