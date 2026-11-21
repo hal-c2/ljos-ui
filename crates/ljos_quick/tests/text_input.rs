@@ -450,6 +450,7 @@ fn what_is_copied_waits_for_the_host_and_what_the_host_gives_is_pasted() {
 struct SystemBoard {
     writes: std::cell::RefCell<Vec<String>>,
     text: std::cell::RefCell<Option<String>>,
+    refuses_html: bool,
 }
 
 impl ljos_platform::ClipboardService for SystemBoard {
@@ -472,6 +473,9 @@ impl ljos_platform::ClipboardService for SystemBoard {
         None
     }
     fn set_html(&self, _: &str, alt: &str) -> Result<(), ljos_platform::ClipboardError> {
+        if self.refuses_html {
+            return Err(ljos_platform::ClipboardError::Denied);
+        }
         self.writes.borrow_mut().push(format!("html {alt}"));
         *self.text.borrow_mut() = Some(alt.to_owned());
         Ok(())
@@ -515,6 +519,35 @@ Item {
     e.invoke_by_name(rich, "copy", &[]).unwrap();
     // A phone shows each copy, and tells every listener of each.
     assert_eq!(*board.writes.borrow(), ["html bold"]);
+}
+
+#[test]
+fn a_system_clipboard_that_refuses_formatting_still_gets_the_characters() {
+    let e = engine();
+    let board = Rc::new(SystemBoard {
+        refuses_html: true,
+        ..SystemBoard::default()
+    });
+    ljos_platform::Platform::of(&e).set_clipboard(board.clone());
+    let (root, mut s) = ready(
+        &e,
+        r#"
+import QtQuick
+Item {
+    width: 300; height: 200
+    TextEdit {
+        objectName: "rich"; width: 200; height: 80
+        textFormat: TextEdit.RichText; text: "a<b>bold</b>c"
+    }
+}
+"#,
+    );
+    let rich = find(&e, root, "rich");
+    focus(&e, &mut s, rich);
+    e.invoke_by_name(rich, "select", &[Value::Int(1), Value::Int(5)])
+        .unwrap();
+    e.invoke_by_name(rich, "copy", &[]).unwrap();
+    assert_eq!(*board.writes.borrow(), ["text bold"]);
 }
 
 #[test]
