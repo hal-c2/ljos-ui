@@ -730,6 +730,64 @@ impl<M: Send + 'static> ShellApp<M> {
     pub(crate) fn set_backdrop(&mut self, on: bool) {
         self.backdrop = on;
     }
+
+    /// What a host whose `Window`s are items of the scene, with no
+    /// platform window each, clears its one window to after a pass: what
+    /// the view left for it ([`QmlView::backdrop`]), else the colour of
+    /// a root `Window`, which no item paints, else the background. As the
+    /// desktop clears a root window.
+    #[cfg_attr(not(all(feature = "android", target_os = "android")), allow(dead_code))]
+    pub(crate) fn clear_color(&self) -> egui::Color32 {
+        if let Some(folded) = self.view.backdrop() {
+            return folded;
+        }
+        // A translucent background is painted behind the root
+        // (`set_backdrop`): clearing to it as well would blend it twice.
+        let color = self
+            .view
+            .scene()
+            .root()
+            .and_then(|root| window_color(self.engine(), root))
+            .unwrap_or_else(|| self.background.to_srgba_unmultiplied());
+        window_spec::clear(color)
+    }
+
+    /// Chooses what is drawn behind the root of a host whose `Window`s are
+    /// items of the scene, as the desktop does: a translucent background
+    /// is painted behind a plain root, and otherwise the view leaves its
+    /// backdrop to the clear ([`ShellApp::clear_color`]); a root `Window`
+    /// is cleared to its own colour, with nothing painted over it.
+    /// Chosen in every pass before the scene is shown, so a root that
+    /// changes kind is drawn under the right choice at once. Whether the
+    /// choice changed.
+    #[cfg_attr(not(all(feature = "android", target_os = "android")), allow(dead_code))]
+    pub(crate) fn backdrop_for_root(&mut self) -> bool {
+        let window = self
+            .view
+            .scene()
+            .root()
+            .and_then(|root| window_color(self.engine(), root))
+            .is_some();
+        let backdrop = !window && self.background.a() < 255;
+        let changed = backdrop != self.backdrop;
+        self.set_backdrop(backdrop);
+        self.view.set_fold_backdrop(!backdrop);
+        changed
+    }
+
+    /// Calls `changed` whenever the colour of the root, a `Window`,
+    /// changes, until the root is gone: a host that clears to it
+    /// ([`ShellApp::clear_color`]) draws a frame, which nothing in the
+    /// scene asks for. The root watched; `None` when it is no `Window`.
+    #[cfg_attr(not(all(feature = "android", target_os = "android")), allow(dead_code))]
+    pub(crate) fn on_root_color(&self, changed: impl Fn() + 'static) -> Option<ObjectId> {
+        let engine = self.engine();
+        let root = self.view.scene().root()?;
+        window_color(engine, root)?;
+        let color = ljos_quick::Rectangle::COLOR.index;
+        engine.watch(root, color, move |_, _| changed()).ok()?;
+        Some(root)
+    }
 }
 
 #[cfg(feature = "eframe")]
@@ -837,6 +895,21 @@ pub(crate) fn give_back_freed_heap() {
     }
 }
 
+/// The colour of `obj` if it is a `Window`, as its [`WindowSpec`] would
+/// say it, read without the rest of the spec: a host reads it every frame.
+///
+/// [`WindowSpec`]: ljos_controls::WindowSpec
+#[cfg_attr(not(all(feature = "android", target_os = "android")), allow(dead_code))]
+fn window_color(engine: &Engine, obj: ObjectId) -> Option<[u8; 4]> {
+    engine.with::<ljos_controls::Window, _>(obj, |_| ()).ok()?;
+    Some(
+        match engine.untrack(|| engine.read(obj, ljos_quick::Rectangle::COLOR.index)) {
+            ljos_engine::Value::Color(c) => c.to_rgba8(),
+            _ => [255; 4],
+        },
+    )
+}
+
 /// Locks `m` whether or not a thread went down holding it: what the
 /// shell's threads share is whole between their steps, and a panic on
 /// one of them is not to stop the others.
@@ -918,5 +991,123 @@ mod tests {
         let root = app.view().scene().root().unwrap();
         assert_eq!(engine.read_by_name(root, "made").to_number(), 1600.0);
         assert_eq!(engine.read_by_name(root, "width").to_number(), 1600.0);
+    }
+
+    /// A host whose `Window`s are items of the scene, as on Android, has
+    /// no platform window to give a root `Window`'s colour to: it clears
+    /// to it, and is told when it changes.
+    #[cfg(feature = "dev")]
+    #[test]
+    fn a_root_window_scenes_draw_in_is_cleared_to_its_colour() {
+        use std::cell::Cell;
+        use std::rc::Rc;
+        use std::sync::Arc;
+
+        use ljos_runtime::SystemClock;
+
+        let dir = tempfile::tempdir().unwrap();
+        let entry = dir.path().canonicalize().unwrap().join("Main.qml");
+        std::fs::write(
+            &entry,
+            "import QtQuick\nWindow {\n  visible: true\n  color: \"#10141c\"\n}\n",
+        )
+        .unwrap();
+        let config = super::ShellConfig::default().with_background(ljos_engine::Color::BLACK);
+        let app = super::ShellApp::new(
+            &egui::Context::default(),
+            &config,
+            Arc::new(SystemClock::new()),
+            |setup: &mut super::Setup<'_, ()>| setup.watch(&entry),
+        )
+        .unwrap();
+        assert_eq!(
+            app.clear_color(),
+            egui::Color32::from_rgb(16, 20, 28),
+            "the Window's colour, not the background"
+        );
+
+        let told = Rc::new(Cell::new(0));
+        let root = app.view().scene().root();
+        assert_eq!(
+            app.on_root_color({
+                let told = Rc::clone(&told);
+                move || told.set(told.get() + 1)
+            }),
+            root
+        );
+        let engine = app.engine();
+        let root = app.view().scene().root().unwrap();
+        engine
+            .write_by_name(
+                root,
+                "color",
+                ljos_engine::Value::Color(ljos_engine::Color::from_rgba8(200, 30, 40, 255)),
+            )
+            .unwrap();
+        assert_eq!(told.get(), 1, "a change of colour asks for a frame");
+        assert_eq!(app.clear_color(), egui::Color32::from_rgb(200, 30, 40));
+    }
+
+    /// A translucent background is painted behind a plain root, never
+    /// over a root `Window`, which is cleared to its own colour.
+    #[cfg(feature = "dev")]
+    #[test]
+    fn a_translucent_background_is_painted_behind_a_plain_root_only() {
+        use std::sync::Arc;
+
+        use ljos_runtime::SystemClock;
+
+        let dir = tempfile::tempdir().unwrap();
+        let entry = dir.path().canonicalize().unwrap().join("Main.qml");
+        for (qml, backdrop) in [
+            ("Window {\n  visible: true\n  color: \"#10141c\"\n}", false),
+            ("Item {}", true),
+        ] {
+            std::fs::write(&entry, format!("import QtQuick\n{qml}\n")).unwrap();
+            let config = super::ShellConfig::default()
+                .with_background(ljos_engine::Color::from_rgba8(1, 2, 3, 128));
+            let mut app = super::ShellApp::new(
+                &egui::Context::default(),
+                &config,
+                Arc::new(SystemClock::new()),
+                |setup: &mut super::Setup<'_, ()>| setup.watch(&entry),
+            )
+            .unwrap();
+            app.set_backdrop(!backdrop);
+            assert!(app.backdrop_for_root(), "{qml}: the choice changed");
+            assert_eq!(app.backdrop, backdrop, "{qml}");
+            assert!(!app.backdrop_for_root(), "{qml}: and stays");
+        }
+    }
+
+    /// A plain root has no colour of its own: the window is cleared to
+    /// an opaque background, and to nothing under a translucent one,
+    /// which is painted behind the root instead.
+    #[cfg(feature = "dev")]
+    #[test]
+    fn a_plain_root_is_cleared_to_the_background() {
+        use std::sync::Arc;
+
+        use ljos_runtime::SystemClock;
+
+        let dir = tempfile::tempdir().unwrap();
+        let entry = dir.path().canonicalize().unwrap().join("Main.qml");
+        std::fs::write(&entry, "import QtQuick\nItem {}\n").unwrap();
+        for (alpha, cleared) in [
+            (255, egui::Color32::from_rgb(1, 2, 3)),
+            (128, egui::Color32::TRANSPARENT),
+        ] {
+            let config = super::ShellConfig::default()
+                .with_background(ljos_engine::Color::from_rgba8(1, 2, 3, alpha));
+            let app = super::ShellApp::new(
+                &egui::Context::default(),
+                &config,
+                Arc::new(SystemClock::new()),
+                |setup: &mut super::Setup<'_, ()>| setup.watch(&entry),
+            )
+            .unwrap();
+            assert_eq!(app.clear_color(), cleared, "background alpha {alpha}");
+            assert_eq!(app.on_root_color(|| {}), None, "nothing to watch");
+        }
     }
 }
