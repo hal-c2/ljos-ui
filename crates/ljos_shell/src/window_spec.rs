@@ -130,6 +130,17 @@ pub(crate) fn transparent(spec: &WindowSpec) -> bool {
     spec.color[3] < 255
 }
 
+/// What a window of `color` ([`WindowSpec::color`]) is cleared to: its
+/// colour, or nothing at all where that lets through what is behind it.
+pub(crate) fn clear(color: [u8; 4]) -> egui::Color32 {
+    let [r, g, b, a] = color;
+    if a < 255 {
+        egui::Color32::TRANSPARENT
+    } else {
+        egui::Color32::from_rgba_unmultiplied(r, g, b, a)
+    }
+}
+
 /// A size the application gave; a window without one leaves it to the
 /// platform.
 fn asked_size(spec: &WindowSpec) -> Option<[f64; 2]> {
