@@ -479,15 +479,23 @@ impl Engine {
         host: bool,
     ) -> Result<ObjectId, EngineError> {
         let mut a = self.template_allocation(template, parent)?;
-        let made = loop {
-            match self.allocate_step(cr, &mut a) {
-                Ok(Some(inst)) => {
-                    break self.allocated_template(cr, inst, parent, append, host);
+        // As in a job's allocation: a panic in a constructor gives back
+        // what was allocated before it goes on.
+        let made = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            loop {
+                match self.allocate_step(cr, &mut a) {
+                    Ok(Some(inst)) => {
+                        break self.allocated_template(cr, inst, parent, append, host);
+                    }
+                    Ok(None) => {}
+                    Err(e) => break Err(e),
                 }
-                Ok(None) => {}
-                Err(e) => break Err(e),
             }
-        };
+        }));
+        let made = made.unwrap_or_else(|payload| {
+            self.discard_allocation(cr, &a);
+            std::panic::resume_unwind(payload)
+        });
         if made.is_err() {
             self.discard_allocation(cr, &a);
         }

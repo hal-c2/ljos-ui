@@ -345,7 +345,7 @@ impl Engine {
         } = req;
         let made = self.not_script_time(|| {
             let errors = self.open_creation();
-            let made = (|| {
+            let made = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 let (template, ctx) = self.template_of(&source, scope)?;
                 let mut cr = Creation::default();
                 let host = by == By::Native;
@@ -382,9 +382,12 @@ impl Engine {
                         return r.map(|root| (root, Settled { withheld }));
                     }
                 }
-            })();
+            }));
+            // A panic ends the creation too: left open, it would hold the
+            // warnings of every creation after it, and what waits for no
+            // creation to be running would never run.
             self.close_creation(errors);
-            made
+            made.unwrap_or_else(|payload| std::panic::resume_unwind(payload))
         });
         if let (Ok((root, _)), Some(record)) = (&made, record) {
             self.reload_note_asked(*root, record);
