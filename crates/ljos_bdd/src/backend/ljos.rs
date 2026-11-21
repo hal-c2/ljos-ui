@@ -1795,6 +1795,14 @@ impl Application for LjosBackend {
         self.live()?.user_qml_dir_made_again()
     }
 
+    fn user_qml_dir_read(&mut self) -> Result<()> {
+        self.live()?.user_qml_dir_read()
+    }
+
+    fn user_qml_left_alone(&mut self, wall: std::time::Duration) -> Result<()> {
+        self.live()?.user_qml_left_alone(wall)
+    }
+
     fn user_qml_modules(&mut self, dir: &str) -> Result<()> {
         self.live()?.user()?.modules = Some(dir.to_owned());
         Ok(())
