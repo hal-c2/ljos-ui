@@ -402,6 +402,34 @@ Feature: A shipped application its users change while it runs
       And the property "error" of "loader" is ""
       And the property "width" of "loader/user-shell" is 50
 
+    Scenario: A user's shell no watch saw is shown once a click asks for the files to be read again
+      Given the user's file "Card.qml":
+        """qml
+        import QtQuick
+        import QtQuick.Controls
+        Button {
+          text: "Reload"
+          onClicked: {
+            for (const item of parent.children) {
+              if (item.objectName === "loader") item.reload()
+            }
+          }
+        }
+        """
+      And the application reads its user's files only when it starts and when asked
+      When the application runs "Main.qml" built ahead, with the user's directory over it
+      And the user saves the file "Shell.qml" as:
+        """qml
+        import QtQuick
+        Rectangle { objectName: "user-shell"; width: 50; height: 20 }
+        """
+      Then the object "loader/default-shell" exists
+      When the user clicks the "button" "Reload"
+      Then the object "loader/user-shell" exists
+      And the object "default-shell" does not exist
+      And the property "status" of "loader" is 1
+      And 1 save of the user's files has been applied
+
   Rule: A user's shell that is a Window is the application's window
 
     An application whose root is a `ShellLoader` shows a shell that is a
