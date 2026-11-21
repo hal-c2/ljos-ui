@@ -2638,6 +2638,88 @@ fn reading_numbers_counts_against_the_walk_budget() {
     assert!(held.truncated, "{held:?}");
 }
 
+/// The budget is the walk's, not each object's: many arrays, each within
+/// it, are cut when together they are past it.
+#[test]
+fn reads_across_many_objects_count_against_one_budget() {
+    let host = plain();
+    let rows = host
+        .enter("make", host.config().slice, |s| {
+            let v = s.eval::<rquickjs::Value, _>(
+                "Array.from({ length: 50 }, () => Array.from({ length: 100 }, (_, i) => i))",
+            )?;
+            Ok(s.keep(v))
+        })
+        .unwrap();
+    let whole = host
+        .enter("walk", host.config().slice, |s| {
+            Ok(s.held_by([vec![&rows]], usize::MAX))
+        })
+        .unwrap();
+    assert!(!whole.truncated, "{whole:?}");
+    let cut = host
+        .enter("walk", host.config().slice, |s| {
+            Ok(s.held_by([vec![&rows]], 1000))
+        })
+        .unwrap();
+    assert!(
+        cut.truncated,
+        "5,050 reads under a budget of 1,000: {cut:?}"
+    );
+}
+
+/// A string doubled by concatenation is a chain of halves sharing one
+/// leaf: what it holds is the leaf and the chain, not its length.
+#[test]
+fn a_rope_is_counted_by_what_it_holds_not_its_length() {
+    let host = plain();
+    let rope = host
+        .enter("make", host.config().slice, |s| {
+            let v = s.eval::<rquickjs::Value, _>(
+                "(() => { let t = 'x'.repeat(8192); \
+                 for (let i = 0; i < 12; i++) t = t + t; return t })()",
+            )?;
+            Ok(s.keep(v))
+        })
+        .unwrap();
+    let held = host
+        .enter("walk", host.config().slice, |s| {
+            Ok(s.held_by([vec![&rope]], usize::MAX))
+        })
+        .unwrap();
+    assert!(!held.truncated, "{held:?}");
+    assert!(held.bytes[0] >= 8192, "the leaf is counted: {held:?}");
+    assert!(
+        held.bytes[0] < 64 * 1024,
+        "32 MiB long, about 8 KiB held: {held:?}"
+    );
+}
+
+/// QuickJS makes a built-in's methods when they are first read; a walk
+/// that only measures must not make them, nor grow the heap it measures.
+#[test]
+fn a_walk_does_not_make_what_quickjs_makes_on_first_read() {
+    let host = plain();
+    let math = host
+        .enter("make", host.config().slice, |s| {
+            let v = s.eval::<rquickjs::Value, _>("Math")?;
+            Ok(s.keep(v))
+        })
+        .unwrap();
+    let (before, after, held) = host
+        .enter("walk", host.config().slice, |s| {
+            let before = host.heap_bytes();
+            let held = s.held_by([vec![&math]], usize::MAX);
+            Ok((before, host.heap_bytes(), held))
+        })
+        .unwrap();
+    assert!(!held.truncated, "{held:?}");
+    assert!(
+        after <= before,
+        "the walk grew the heap from {before} to {after} bytes"
+    );
+}
+
 #[test]
 fn an_array_no_script_has_read_is_not_made_to_be_measured() {
     let host = plain();
