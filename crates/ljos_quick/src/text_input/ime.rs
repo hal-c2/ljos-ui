@@ -106,7 +106,15 @@ impl TextInputClient for Client {
         let mut h = std::hash::DefaultHasher::new();
         if let Some(st) = ops::ready(engine, item) {
             let s = st.borrow();
-            (s.model.text(), s.model.anchor(), s.model.cursor()).hash(&mut h);
+            // A field that clears on edit starts over once it is focused
+            // again: what the method typed is no longer in it.
+            (
+                s.model.text(),
+                s.model.anchor(),
+                s.model.cursor(),
+                s.editing,
+            )
+                .hash(&mut h);
         }
         h.finish()
     }
