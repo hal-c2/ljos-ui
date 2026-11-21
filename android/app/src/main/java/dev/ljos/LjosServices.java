@@ -168,7 +168,7 @@ public final class LjosServices {
         // Read once, into the application's own bytes: a provider asked
         // twice may answer with another picture the second time, larger
         // than the size the first answer was shrunk for.
-        byte[] encoded;
+        Bytes encoded;
         try (InputStream in = resolver.openInputStream(uri)) {
             encoded = in == null ? null : readAtMost(in, MOST_PASTED_BYTES);
         }
@@ -179,13 +179,13 @@ public final class LjosServices {
         // copies of hundreds of megabytes on its way to the application.
         BitmapFactory.Options bounds = new BitmapFactory.Options();
         bounds.inJustDecodeBounds = true;
-        BitmapFactory.decodeByteArray(encoded, 0, encoded.length, bounds);
+        BitmapFactory.decodeByteArray(encoded.held(), 0, encoded.size(), bounds);
         if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
             return null;
         }
         BitmapFactory.Options decode = new BitmapFactory.Options();
         decode.inSampleSize = sampleSize(bounds.outWidth, bounds.outHeight);
-        Bitmap bitmap = BitmapFactory.decodeByteArray(encoded, 0, encoded.length, decode);
+        Bitmap bitmap = BitmapFactory.decodeByteArray(encoded.held(), 0, encoded.size(), decode);
         if (bitmap == null) {
             return null;
         }
@@ -206,9 +206,20 @@ public final class LjosServices {
     /** The most bytes of a pasted picture read, as its file holds it. */
     static final int MOST_PASTED_BYTES = 64 << 20;
 
+    /**
+     * Bytes read, decoded where they were read to: a copy of the
+     * {@link #MOST_PASTED_BYTES} a picture may take would need the heap twice.
+     */
+    static final class Bytes extends ByteArrayOutputStream {
+        /** The bytes read so far, then capacity not yet filled. */
+        byte[] held() {
+            return buf;
+        }
+    }
+
     /** All of {@code in}, or null when it holds more than {@code most} bytes. */
-    static byte[] readAtMost(InputStream in, int most) throws IOException {
-        ByteArrayOutputStream out = new ByteArrayOutputStream();
+    static Bytes readAtMost(InputStream in, int most) throws IOException {
+        Bytes out = new Bytes();
         byte[] chunk = new byte[64 << 10];
         int n;
         while ((n = in.read(chunk)) != -1) {
@@ -217,7 +228,7 @@ public final class LjosServices {
             }
             out.write(chunk, 0, n);
         }
-        return out.toByteArray();
+        return out;
     }
 
     /**
