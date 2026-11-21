@@ -5136,8 +5136,9 @@ ApplicationWindow {
                                             parent: tableScroll
                                             x: tableScroll.width - width
                                             y: rowsView.y - tableScroll.contentY
-                                            // Short of the sideways bar, so the two do not cross in the corner.
-                                            height: rowsView.height - (tableBar.visible ? tableBar.height : 0)
+                                            // Short of the sideways bar when there is one to cross in the
+                                            // corner: the bar is always visible, only its handle fades.
+                                            height: rowsView.height - (tableScroll.contentWidth > tableScroll.width ? tableBar.height : 0)
                                             Accessible.name: "Rows"
                                         }
                                         delegate: Item {
