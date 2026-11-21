@@ -1600,6 +1600,9 @@ pub(crate) fn paint(
             if clear && !ljos_render::run_has_color_glyphs(&run.glyphs) {
                 continue;
             }
+            // A transparent text's copies show what it shows: its colour
+            // glyphs, not its other glyphs in the style's colour.
+            let shadow = if clear { color } else { shadow };
             for by in style_offsets(t.text_style) {
                 out.glyphs(
                     Arc::clone(&run.glyphs),
