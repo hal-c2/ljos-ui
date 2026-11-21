@@ -63,6 +63,9 @@ mod gl_mesh;
 mod gl_scene3d;
 #[cfg(gl_painter)]
 mod gl_shader;
+// The Android shell's; built everywhere so that its tests run on any host.
+#[cfg_attr(not(all(feature = "android", target_os = "android")), allow(dead_code))]
+mod gpu_flags;
 mod headless;
 #[cfg(target_os = "macos")]
 mod layer_color_space;
