@@ -204,6 +204,9 @@ struct Phone<M, S> {
     due: Arc<Mutex<Option<Instant>>>,
     waker: ljos_host::Waker,
     focused: bool,
+    /// The activity was stopped: the user cannot see the application,
+    /// whether or not its surface has gone yet.
+    hidden: bool,
     /// What of the screen the system keeps, in physical pixels.
     insets: Insets,
     /// What the activity was last told about Back: whether the
@@ -271,6 +274,7 @@ where
             due,
             waker,
             focused: true,
+            hidden: false,
             insets: Insets::default(),
             back_taken: crate::back_told::BackTold::default(),
             keyboard: SoftKeyboard::default(),
@@ -688,6 +692,24 @@ where
         }
     }
 
+    /// The system is short of memory (`onTrimMemory`, `onLowMemory`): the
+    /// view gives back what it can draw again, and the scripts what they
+    /// no longer hold. The application's objects and values stay.
+    fn trim(&mut self, host: &mut RelayControl<'_, NativeWindow>) {
+        let shown = self.surface.is_some() && !self.hidden;
+        if let Stage::Running(app) = &mut self.stage {
+            let level = crate::pressure::pressure_for(shown);
+            let freed = app.view_mut().trim(level);
+            app.engine().collect_if_idle();
+            log::info!("short of memory: trimmed at {level:?}, {freed} bytes given back");
+            if shown {
+                // What it gave back is built again by the next frame.
+                host.request_redraw(WINDOW);
+            }
+        }
+        crate::give_back_freed_heap();
+    }
+
     fn quit_requested(&self) -> bool {
         match &self.stage {
             Stage::Running(app) => app.engine().quit_requested(),
@@ -759,14 +781,13 @@ where
                     host.request_redraw(WINDOW);
                 }
             },
-            Event::AppState(AppState::Active) => host.request_redraw(WINDOW),
-            Event::AppState(_) => {}
-            Event::MemoryPressure => {
-                if let Stage::Running(app) = &self.stage {
-                    app.engine().collect_if_idle();
+            Event::AppState(state) => {
+                self.hidden = matches!(state, AppState::Hidden | AppState::Suspended);
+                if state == AppState::Active {
+                    host.request_redraw(WINDOW);
                 }
-                crate::give_back_freed_heap();
             }
+            Event::MemoryPressure => self.trim(host),
             Event::Wake | Event::User(Message::Wake) => host.request_redraw(WINDOW),
             Event::AboutToWait => {
                 if self.quit_requested() {
