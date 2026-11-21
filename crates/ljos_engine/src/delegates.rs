@@ -182,7 +182,7 @@ fn whole(
 }
 
 /// What a panic said, as the incubator reports it.
-fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
+pub(crate) fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
     match (
         payload.downcast_ref::<&'static str>(),
         payload.downcast_ref::<String>(),
