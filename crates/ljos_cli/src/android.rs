@@ -858,6 +858,28 @@ mod tests {
     }
 
     #[test]
+    fn a_keyboard_that_moves_the_cursor_tells_the_native_side() {
+        let java = |name: &str| {
+            TEMPLATE
+                .iter()
+                .find(|(p, _)| p.ends_with(name))
+                .map(|(_, t)| t.split_whitespace().collect::<String>())
+                .unwrap()
+        };
+        // GameTextInput's own setSelection and setComposingRegion change
+        // only its Editable, so a keyboard moving the cursor by itself (a
+        // space-bar swipe) would never reach the field.
+        let of = java("TextInputOf.java");
+        assert!(of.contains("publicbooleansetSelection(intstart,intend)"));
+        assert!(of.contains("publicbooleansetComposingRegion(intstart,intend)"));
+        let activity = java("LjosActivity.java");
+        assert!(activity.contains("TextInputOf.surface(this,"));
+        // GameTextInput sets the native side's own state through the same
+        // two calls; that is not told back.
+        assert!(activity.contains("TextInputOf.quietly(mSurfaceView,()->super.setTextInputState(state));"));
+    }
+
+    #[test]
     fn each_java_file_is_written_where_its_package_says() {
         let java: Vec<_> = TEMPLATE
             .iter()
