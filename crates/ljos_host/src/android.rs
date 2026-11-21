@@ -388,6 +388,11 @@ impl<U: Send + 'static> Pump<'_, U> {
                 );
             }
             Request::Held { now: held, over } => {
+                // A report the method made by now forgets the writes before
+                // it, and the state is read after it: a request is judged
+                // against the newest text, so it never writes over text the
+                // user typed since the last read.
+                self.input();
                 let reported = self.app.text_input_state();
                 let reported = HeldText {
                     text: reported.text,
@@ -395,10 +400,6 @@ impl<U: Send + 'static> Pump<'_, U> {
                     cursor: reported.selection.end,
                     compose: reported.compose_region.map(|c| c.start..c.end),
                 };
-                // A report the method made by now, the state read above
-                // among it, forgets the writes before it: what was read is
-                // then the method's own and not the main thread behind.
-                self.input();
                 // A write of ours still on its way to the main thread is
                 // what the method is about to hold.
                 let holds = self.writes.holds(reported.clone());
