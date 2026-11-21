@@ -129,6 +129,9 @@ impl Engine {
     /// running, if any, is run again after a wait, as is every other one
     /// cut short until then. Called where every fault is reported.
     pub(crate) fn run_again_after(&self, fault: &Fault) {
+        if matches!(fault, Fault::JsOutOfMemory) {
+            self.note_heap_ran_out();
+        }
         let r = self.extension::<RunAgain>();
         if !is_resource_fault(fault) {
             // While a resource fault waits to be tried again, a script
@@ -178,7 +181,7 @@ impl Engine {
             r.timer.set(None);
             // Timers run between scripts, where the heap can be.
             if r.full.take() {
-                e.collect_garbage();
+                e.collect_garbage_for_full_heap();
             }
             let mut backoff = r.backoff.get();
             backoff.trying(e.now());
