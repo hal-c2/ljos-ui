@@ -198,6 +198,10 @@ impl Engine {
         }
         let Ok(js) = self.js() else { return false };
         let owned = self.extension::<ScriptOwned>();
+        // A fault the review or the flush files (a wrapper rebuilt on a
+        // full heap) came during this collection, not before it: it stays
+        // owed one.
+        let covered = self.faults_reported();
         self.review_held(&owned);
         // What Rust let go of since the last script ran is still held
         // until this.
@@ -205,7 +209,7 @@ impl Engine {
         if !js.host.collect_now() {
             return false;
         }
-        owned.collected_through.set(self.faults_reported());
+        owned.collected_through.set(covered);
         true
     }
 
@@ -231,16 +235,17 @@ impl Engine {
         if js.host.in_run() {
             return false;
         }
+        let covered = self.faults_reported();
         let let_go = self.review_held(&owned);
         js.host.flush_released();
         if js.host.collected_since_ran_out() && !let_go && !js.host.may_hold_garbage() {
-            owned.collected_through.set(self.faults_reported());
+            owned.collected_through.set(covered);
             return false;
         }
         if !js.host.collect_now() {
             return false;
         }
-        owned.collected_through.set(self.faults_reported());
+        owned.collected_through.set(covered);
         true
     }
 }
@@ -259,18 +264,17 @@ pub struct ScriptMemory {
 impl Engine {
     /// Runs the JS collector if the scripts allocated enough since it last
     /// ran, for a host about to rest. False inside a script, before any
-    /// ran, and when the heap did not grow.
+    /// ran, and when the heap did not grow. It does not review the held
+    /// objects, so it covers no fault that the heap ran out: one not yet
+    /// delivered may wait on a held object its review lets go of
+    /// ([`Engine::collect_for_full_heap`] still skips collecting again when
+    /// nothing was let go of since).
     pub fn collect_if_idle(&self) -> bool {
         if !self.js_started() {
             return false;
         }
         let Ok(js) = self.js() else { return false };
-        if !js.host.collect_if_idle() {
-            return false;
-        }
-        let owned = self.extension::<ScriptOwned>();
-        owned.collected_through.set(self.faults_reported());
-        true
+        js.host.collect_if_idle()
     }
 
     /// Whether [`Engine::collect_if_idle`] would collect now; a host that
