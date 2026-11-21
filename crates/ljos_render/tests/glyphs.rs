@@ -26,6 +26,10 @@ const FONT: &[u8] = include_bytes!("../../ljos_text/fonts/LiberationSans-Regular
 /// at 20 pixels per em, red above and blue below, 16 pixels above the
 /// baseline, with no outline.
 const COLOR_FONT: &[u8] = include_bytes!("../../../features/text/fonts/LjosColorTest-Regular.ttf");
+/// A colour layer font (`COLR`), as Windows' and newer Android's emoji fonts
+/// are: glyph 1 is a version 0 glyph, 2 a version 1 glyph (see
+/// make-colr-test.py beside it).
+const COLR_FONT: &[u8] = include_bytes!("../../../features/text/fonts/LjosColrTest-Regular.ttf");
 
 const WHITE_BG: RasterConfig = RasterConfig {
     background: Rgba::WHITE,
@@ -86,6 +90,20 @@ fn color_run(size: f32, baseline: f32) -> GlyphRun {
         f64::from(baseline + size),
     );
     GlyphRun::new(color_font(), size, glyphs, baseline, bounds)
+}
+
+fn colr_font() -> FontData {
+    static DATA: OnceLock<FontData> = OnceLock::new();
+    DATA.get_or_init(|| FontData::new(Blob::new(Arc::new(COLR_FONT)), 0))
+        .clone()
+}
+
+/// Glyph `id` of the colour layer font, once, with its origin on `baseline`.
+fn colr_run(id: u32, size: f32, baseline: f32) -> GlyphRun {
+    let mut run = color_run(size, baseline);
+    run.font = colr_font();
+    run.glyphs[0].id = id;
+    run
 }
 
 struct Scene {
@@ -435,6 +453,99 @@ fn colour_glyph_ink_is_its_picture() {
     let boxes = glyph_ink_bounds(&color_run(20.0, 30.0));
     let b = boxes[0].expect("a colour glyph has ink");
     assert_eq!((b.x0, b.y0, b.x1, b.y1), (0.0, 14.0, 20.0, 34.0));
+}
+
+/// A colour layer glyph at 20 pixels, its origin at (10, 30), in `colour`.
+fn colr_scene(id: u32, colour: Rgba, opacity: f32) -> Scene {
+    let mut s = Scene::new(60.0, 60.0);
+    let n = s.node(None, 0.0, 0.0, 60.0, 60.0);
+    s.tree.set_opacity(n, opacity);
+    s.paint(n, |b| {
+        b.glyphs(
+            Arc::new(colr_run(id, 20.0, 0.0)),
+            Vec2::new(10.0, 30.0),
+            colour,
+            Decorations::default(),
+        );
+    });
+    s
+}
+
+const RED: [u8; 4] = [255, 0, 0, 255];
+const BLUE: [u8; 4] = [0, 0, 255, 255];
+const PAPER: [u8; 4] = [255, 255, 255, 255];
+
+#[test]
+fn r_draws_colour_layers_in_their_palettes_colours() {
+    for id in [1, 2] {
+        let img = colr_scene(id, Rgba::BLACK, 1.0).render(1.0);
+        // Red from 16 to 6 pixels above the baseline at row 30, the em wide;
+        // nothing of the glyph's plain box outline around it.
+        assert_eq!(img.pixel(15, 18), RED, "glyph {id}");
+        assert_eq!(img.pixel(29, 14), RED, "glyph {id}");
+        assert_eq!(img.pixel(15, 13), PAPER, "glyph {id}");
+        assert_eq!(img.pixel(9, 20), PAPER, "glyph {id}");
+        assert_eq!(img.pixel(30, 20), PAPER, "glyph {id}");
+        assert_eq!(img.pixel(15, 34), PAPER, "glyph {id}");
+    }
+    // Version 0: the lower layer is blue.
+    let img = colr_scene(1, Rgba::BLACK, 1.0).render(1.0);
+    assert_eq!(img.pixel(14, 31), BLUE);
+    // Version 1: a gradient, blue at the left edge to green at the right.
+    let img = colr_scene(2, Rgba::BLACK, 1.0).render(1.0);
+    let [r, g, b, _] = img.pixel(10, 31);
+    assert!(r < 8 && g < 16 && b > 239, "{:?}", [r, g, b]);
+    let [r, g, b, _] = img.pixel(29, 31);
+    assert!(r < 8 && g > 239 && b < 16, "{:?}", [r, g, b]);
+}
+
+#[test]
+fn r_fills_text_coloured_layers_in_the_texts_colour() {
+    let lime = Rgba::rgb(0, 255, 0);
+    for id in [1, 2] {
+        // The square 8 to 12 pixels across and 1 to 5 above the baseline.
+        for (colour, want) in [
+            (Rgba::BLACK, [0, 0, 0, 255]),
+            (lime, [0, 255, 0, 255]),
+            (Rgba::WHITE, PAPER),
+        ] {
+            let img = colr_scene(id, colour, 1.0).render(1.0);
+            assert_eq!(img.pixel(20, 27), want, "glyph {id} in {colour:?}");
+            assert_eq!(img.pixel(15, 18), RED, "glyph {id} in {colour:?}");
+        }
+        // A transparent text shows the layers that are not its colour.
+        let img = colr_scene(id, Rgba::TRANSPARENT, 1.0).render(1.0);
+        assert_eq!(img.pixel(15, 18), RED, "glyph {id}");
+        assert_ne!(img.pixel(20, 27), PAPER, "glyph {id}");
+        assert_eq!(img.pixel(20, 27)[0], 0, "glyph {id}");
+    }
+}
+
+#[test]
+fn r_fades_colour_layers_with_the_items_opacity() {
+    let img = colr_scene(1, Rgba::WHITE, 0.5).render(1.0);
+    let [r, g, b, _] = img.pixel(15, 18);
+    assert_eq!(r, 255);
+    assert!((126..=129).contains(&g) && g == b, "{:?}", [r, g, b]);
+}
+
+#[test]
+fn runs_say_whether_they_hold_colour_layer_glyphs() {
+    assert!(ljos_render::run_has_color_glyphs(&colr_run(1, 20.0, 0.0)));
+    assert!(ljos_render::run_has_color_glyphs(&colr_run(2, 20.0, 0.0)));
+}
+
+#[test]
+fn colour_layer_glyph_ink_is_its_layers() {
+    for id in [1, 2] {
+        let boxes = glyph_ink_bounds(&colr_run(id, 20.0, 30.0));
+        let b = boxes[0].expect("a colour layer glyph has ink");
+        assert_eq!(
+            (b.x0, b.y0, b.x1, b.y1),
+            (0.0, 14.0, 20.0, 34.0),
+            "glyph {id}"
+        );
+    }
 }
 
 #[cfg(feature = "b0")]
@@ -1000,6 +1111,35 @@ mod b0 {
             for v in quads[0] {
                 assert!((126..=129).contains(&v.color.a()), "{:?}", v.color);
                 assert_eq!(v.color.r(), v.color.a(), "{:?}", v.color);
+            }
+        }
+    }
+
+    /// A colour layer glyph is a picture too, its plain box outline not
+    /// filled over it, whatever the text's colour.
+    #[test]
+    fn b0_draws_colour_layer_glyphs_as_pictures() {
+        for id in [1, 2] {
+            for colour in [Rgba::BLACK, Rgba::TRANSPARENT] {
+                let mut s = colr_scene(id, colour, 1.0);
+                let ctx = Context::default();
+                let mut be = EpaintBackend::new();
+                let (shapes, stats) = frame(&mut s, &mut be, &ctx, 1.0);
+                assert_eq!(stats.warnings, 0);
+                let quads: Vec<_> = shapes
+                    .iter()
+                    .filter_map(|c| match &c.shape {
+                        Shape::Mesh(m) => Some(m),
+                        _ => None,
+                    })
+                    .flat_map(|m| m.vertices.as_chunks::<4>().0.iter())
+                    .collect();
+                assert_eq!(quads.len(), 1, "glyph {id} in {colour:?}: one picture");
+                let (tl, br) = (quads[0][0], quads[0][2]);
+                assert_eq!(
+                    (tl.pos.x, tl.pos.y, br.pos.x, br.pos.y),
+                    (10.0, 14.0, 30.0, 34.0)
+                );
             }
         }
     }
