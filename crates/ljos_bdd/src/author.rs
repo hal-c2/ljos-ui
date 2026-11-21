@@ -27,7 +27,7 @@ mod desktop;
 mod packed;
 mod rate;
 pub use desktop::Setting;
-pub use packed::{Errors, Log};
+pub use packed::{Errors, Log, Packing};
 
 use crate::backend::{
     inspector::{self, Answer, Ask, Refusal, Seen},
@@ -438,6 +438,10 @@ struct Rig {
     family: Option<Family>,
     /// The packed application that ran last.
     packed: Option<packed::Packed>,
+    /// The bytes each file of [`Slot::give`] was last written with.
+    written_bytes: BTreeMap<String, Vec<u8>>,
+    /// The pack the project was last packed into, as a program reads it.
+    pack: Option<ljos_engine::MapSource>,
 }
 
 /// A real parent, a shell, with `ljos` as its child: killing the shell
@@ -506,6 +510,8 @@ impl Rig {
             app: None,
             family: None,
             packed: None,
+            written_bytes: BTreeMap::new(),
+            pack: None,
         })
     }
 
@@ -541,6 +547,23 @@ impl Rig {
                 fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).map_err(failed)?;
             }
             self.written.insert(name.clone(), source.clone());
+        }
+        Ok(())
+    }
+
+    /// Writes the files of bytes the scenario gave since the last time.
+    fn sync_bytes(&mut self, given: &BTreeMap<String, Vec<u8>>) -> Result<(), String> {
+        for (name, bytes) in given {
+            if self.written_bytes.get(name) == Some(bytes) {
+                continue;
+            }
+            let path = self.path(name)?;
+            let failed = |e: std::io::Error| format!("cannot write {name:?}: {e}");
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent).map_err(failed)?;
+            }
+            fs::write(&path, bytes).map_err(failed)?;
+            self.written_bytes.insert(name.clone(), bytes.clone());
         }
         Ok(())
     }
@@ -1090,12 +1113,17 @@ fn thread_wakes(pid: u32) -> Result<BTreeMap<u32, (String, u64)>, String> {
 
 /// The authoring side of a scenario: nothing until a step asks for it.
 #[derive(Default)]
-pub struct Slot(Option<Rig>);
+pub struct Slot {
+    rig: Option<Rig>,
+    /// The files of bytes the scenario gave (fonts, pictures), written
+    /// into the project once there is one.
+    given: BTreeMap<String, Vec<u8>>,
+}
 
 impl std::fmt::Debug for Slot {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Slot")
-            .field("project", &self.0.as_ref().map(|rig| rig.dir.path()))
+            .field("project", &self.rig.as_ref().map(|rig| rig.dir.path()))
             .finish_non_exhaustive()
     }
 }
@@ -1106,19 +1134,26 @@ pub type Files = BTreeMap<String, String>;
 impl Slot {
     /// The project, with every file the scenario has given so far.
     fn rig(&mut self, files: &Files) -> Result<&mut Rig, String> {
-        let rig = match &mut self.0 {
+        let rig = match &mut self.rig {
             Some(rig) => rig,
             empty => empty.insert(Rig::new()?),
         };
         rig.sync(files)?;
+        rig.sync_bytes(&self.given)?;
         Ok(rig)
+    }
+
+    /// A file of bytes beside the QML, for the project the author's steps
+    /// act on. Nothing is made until a step of theirs asks for it.
+    pub fn give(&mut self, name: &str, bytes: &[u8]) {
+        self.given.insert(name.to_owned(), bytes.to_vec());
     }
 
     /// Whether an agent of the authoring tools is the one the scenario's
     /// agent steps speak for.
     #[must_use]
     pub fn connected(&self) -> bool {
-        self.0.as_ref().is_some_and(|rig| rig.server.is_some())
+        self.rig.as_ref().is_some_and(|rig| rig.server.is_some())
     }
 
     /// Starts `ljos mcp` on the project with `caps` (comma separated) and,
@@ -1173,7 +1208,7 @@ impl Slot {
     /// # Errors
     /// No agent is connected.
     pub fn seen(&self) -> Result<&Seen, String> {
-        self.0
+        self.rig
             .as_ref()
             .filter(|rig| rig.server.is_some())
             .map(|rig| &rig.seen)
@@ -1311,7 +1346,7 @@ impl Slot {
     }
 
     fn rig_started(&mut self) -> Result<&mut Rig, String> {
-        self.0
+        self.rig
             .as_mut()
             .ok_or_else(|| "no program has started a child".to_owned())
     }
@@ -1320,7 +1355,7 @@ impl Slot {
     /// scenario changes or waits for is that application's.
     #[must_use]
     pub fn started(&self) -> bool {
-        self.0.as_ref().is_some_and(|rig| rig.app.is_some())
+        self.rig.as_ref().is_some_and(|rig| rig.app.is_some())
     }
 
     /// Writes the files the scenario changed into the project, as an
@@ -1482,6 +1517,27 @@ impl Slot {
         self.rig(files)?.start_packed()
     }
 
+    /// Packs the project as a build script would, as `packing` says.
+    ///
+    /// # Errors
+    /// The project does not compile, or the pack cannot be written.
+    pub fn pack(&mut self, files: &Files, packing: &Packing) -> Result<(), String> {
+        self.rig(files)?.pack(packing).map(drop)
+    }
+
+    /// The pack [`pack`](Self::pack) wrote, as a program reads it.
+    ///
+    /// # Errors
+    /// The project has not been packed.
+    pub fn packed_source(&self) -> Result<&ljos_engine::MapSource, String> {
+        self.rig
+            .as_ref()
+            .and_then(|rig| rig.pack.as_ref())
+            .ok_or_else(|| {
+                "the project has not been packed; use `When the project is packed`".to_owned()
+            })
+    }
+
     /// Whether the packed application's stderr, or its stdout, mentions
     /// `text` as `mentions` says.
     ///
@@ -1489,7 +1545,7 @@ impl Slot {
     /// No packed application ran, or it does not.
     pub fn packed_says(&mut self, stdout: bool, text: &str, mentions: bool) -> Result<(), String> {
         let packed = self
-            .0
+            .rig
             .as_ref()
             .ok_or("the packed application has not run")?
             .packed()?;
@@ -1518,7 +1574,7 @@ impl Slot {
     /// No packed application ran, or it took longer.
     pub fn packed_took_at_most(&mut self, most: Duration) -> Result<(), String> {
         let took = self
-            .0
+            .rig
             .as_ref()
             .ok_or("the packed application has not run")?
             .packed()?
@@ -1609,7 +1665,7 @@ impl Slot {
     }
 
     fn app(&mut self) -> Result<&mut App, String> {
-        self.0
+        self.rig
             .as_mut()
             .ok_or_else(|| "the author has started no application".to_owned())?
             .app()
@@ -1638,7 +1694,7 @@ impl Slot {
     /// # Errors
     /// The author has not run anything.
     pub fn ran(&self) -> Result<&Ran, String> {
-        self.0
+        self.rig
             .as_ref()
             .and_then(|rig| rig.ran.as_ref())
             .ok_or_else(|| "the author has not run anything; use `When the author runs`".to_owned())

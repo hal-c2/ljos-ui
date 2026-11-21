@@ -136,6 +136,26 @@ impl LjosWorld {
         self.files.insert(name.to_owned(), source.to_owned());
     }
 
+    /// A file of bytes beside the QML (a font, a picture), on every
+    /// backend and in the author's project.
+    ///
+    /// # Errors
+    /// A backend cannot take it.
+    pub fn resource(&mut self, name: &str, bytes: &[u8]) -> Result<(), String> {
+        self.author.give(name, bytes);
+        self.each(|b| b.files()?.resource(name, bytes))
+    }
+
+    /// A text file beside the QML that is not a source (a settings file),
+    /// on every backend and in the author's project.
+    ///
+    /// # Errors
+    /// A backend cannot take it.
+    pub fn text_file(&mut self, name: &str, text: &str) -> Result<(), String> {
+        self.author.give(name, text.as_bytes());
+        self.each(|b| b.files()?.text_file(name, text))
+    }
+
     /// Instantiate `entry` (staged earlier) on every backend.
     ///
     /// # Errors

@@ -489,6 +489,23 @@ inspector above (`When the agent calls the tool …`, `When the agent reads the 
 | `Then the command exits with status N` | |
 | `Then the command's output mentions "text"` / `does not mention "text"` | in what it wrote to its output or as errors |
 
+### A packed application (`tooling/packed-log.feature`, `tooling/pack-files.feature`; all `@ljos-only`)
+
+The scenario's files (the QML, and the pictures, fonts and other files given with the steps of
+files above) are a project, compiled into a pack the way a program's build script does
+(`ljos::build::Options`), and a program that links no parser runs it.
+
+| Step | Meaning |
+|---|---|
+| `When the packed application runs` | the pack built and run by a program of its own, until it quits; it carries the files its build carries by default |
+| `When the project is packed` | the pack built, not run; a QML file that does not compile fails the build |
+| `When the project is packed with the files that do not compile` | the same, with a file that does not compile kept in the pack with why |
+| `When the project is packed carrying only "png, ttf" files` / `carrying no other files` | the same, carrying the files of those kinds alone, or none besides the QML |
+| `Then the packed application's errors mention "text"` / `do not mention "text"` | what the program wrote as errors (its log) |
+| `Then the pack carries the files:` + table `file` | every file the pack carries besides its QML, by its path under the project |
+| `Then the pack carries no files besides its QML` | |
+| `Then the pack says these files did not compile:` + table `file`, `why` | each QML file the pack says did not compile, by its name without `.qml`, and part of why |
+
 ### A user's directory (`hot-reload/user-qml.feature`; all `@ljos-only`)
 
 A shipped application built ahead that lets its users change it (`App::user_qml`, the `ljos`
