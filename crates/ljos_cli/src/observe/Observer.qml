@@ -3014,59 +3014,70 @@ ApplicationWindow {
                                 required property string message
                                 required property string where
                                 width: ListView.view.width
-                                height: 24
+                                // Too narrow for the message beside the rest,
+                                // it takes the whole width of a line below,
+                                // wrapped: elided there it would show nothing.
+                                readonly property bool narrow: width < 560
+                                height: narrow ? 24 + entryMessage.height + 4 : 24
                                 Rectangle {
                                     anchors.fill: parent
                                     color: entry.index % 2 ? theme.cardAlt : "transparent"
                                 }
-                                Row {
+                                Text {
                                     x: 6
-                                    height: parent.height
-                                    spacing: 10
-                                    Text {
-                                        width: 64
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        // A line of the log has no name of its own: each of its words
-                                        // is read out by itself, as it is shown.
-                                        Accessible.role: Accessible.StaticText
-                                        Accessible.name: text
-                                        text: entry.level
-                                        color: logs.tone(entry.level)
-                                        font.bold: entry.level === "warning" || entry.level === "critical"
-                                        font.pixelSize: 12
-                                    }
-                                    Text {
-                                        width: 110
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        Accessible.role: Accessible.StaticText
-                                        Accessible.name: text
-                                        text: entry.category
-                                        color: theme.subtle
-                                        elide: Text.ElideRight
-                                        font.pixelSize: 12
-                                    }
-                                    Text {
-                                        width: entry.width - 64 - 110 - 160 - 50
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        Accessible.role: Accessible.StaticText
-                                        Accessible.name: text
-                                        text: entry.message
-                                        color: theme.text
-                                        elide: Text.ElideRight
-                                        font.family: theme.mono
-                                        font.pixelSize: 12
-                                    }
-                                    Text {
-                                        width: 160
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        horizontalAlignment: Text.AlignRight
-                                        Accessible.role: Accessible.StaticText
-                                        Accessible.name: text
-                                        text: entry.where
-                                        color: theme.subtle
-                                        elide: Text.ElideLeft
-                                        font.pixelSize: 11
-                                    }
+                                    width: 64
+                                    height: 24
+                                    verticalAlignment: Text.AlignVCenter
+                                    // A line of the log has no name of its own: each of its words
+                                    // is read out by itself, as it is shown.
+                                    Accessible.role: Accessible.StaticText
+                                    Accessible.name: text
+                                    text: entry.level
+                                    color: logs.tone(entry.level)
+                                    font.bold: entry.level === "warning" || entry.level === "critical"
+                                    font.pixelSize: 12
+                                }
+                                Text {
+                                    x: 80
+                                    width: 110
+                                    height: 24
+                                    verticalAlignment: Text.AlignVCenter
+                                    Accessible.role: Accessible.StaticText
+                                    Accessible.name: text
+                                    text: entry.category
+                                    color: theme.subtle
+                                    elide: Text.ElideRight
+                                    font.pixelSize: 12
+                                }
+                                Text {
+                                    id: entryMessage
+                                    x: entry.narrow ? 6 : 200
+                                    y: entry.narrow ? 24 : 0
+                                    width: entry.narrow ? entry.width - 12 : entry.width - 200 - 10 - 160 - 6
+                                    height: entry.narrow ? implicitHeight : 24
+                                    verticalAlignment: Text.AlignVCenter
+                                    Accessible.role: Accessible.StaticText
+                                    Accessible.name: text
+                                    text: entry.message
+                                    color: theme.text
+                                    wrapMode: entry.narrow ? Text.WrapAnywhere : Text.NoWrap
+                                    maximumLineCount: entry.narrow ? 6 : 1
+                                    elide: Text.ElideRight
+                                    font.family: theme.mono
+                                    font.pixelSize: 12
+                                }
+                                Text {
+                                    x: entry.narrow ? 200 : entry.width - 6 - 160
+                                    width: entry.narrow ? entry.width - 200 - 6 : 160
+                                    height: 24
+                                    verticalAlignment: Text.AlignVCenter
+                                    horizontalAlignment: Text.AlignRight
+                                    Accessible.role: Accessible.StaticText
+                                    Accessible.name: text
+                                    text: entry.where
+                                    color: theme.subtle
+                                    elide: Text.ElideLeft
+                                    font.pixelSize: 11
                                 }
                             }
                         }
@@ -3349,14 +3360,18 @@ ApplicationWindow {
                                 required property string name
                                 required property string what
                                 width: ListView.view.width
-                                height: 24
+                                // Too narrow for one line, what changed and
+                                // its value go on a line below, under the
+                                // object, so that neither runs past the edge.
+                                readonly property bool narrow: width < 560
+                                height: narrow ? 44 : 24
                                 Rectangle {
                                     anchors.fill: parent
                                     color: traceRow.index % 2 ? theme.cardAlt : "transparent"
                                 }
                                 Row {
                                     x: 6
-                                    height: parent.height
+                                    height: 24
                                     spacing: 10
                                     Text {
                                         width: 80
@@ -3372,7 +3387,7 @@ ApplicationWindow {
                                         font.pixelSize: 12
                                     }
                                     Text {
-                                        width: 180
+                                        width: traceRow.narrow ? Math.max(40, traceRow.width - 6 - 80 - 10 - 10 - 70 - 6) : 180
                                         anchors.verticalCenter: parent.verticalCenter
                                         Accessible.role: Accessible.StaticText
                                         Accessible.name: text
@@ -3390,6 +3405,12 @@ ApplicationWindow {
                                         color: trace.tone(traceRow.kind)
                                         font.pixelSize: 12
                                     }
+                                }
+                                Row {
+                                    x: traceRow.narrow ? 6 + 80 + 10 : 6 + 80 + 10 + 180 + 10 + 70 + 10
+                                    y: traceRow.narrow ? 20 : 0
+                                    height: 24
+                                    spacing: 10
                                     Text {
                                         width: 150
                                         anchors.verticalCenter: parent.verticalCenter
@@ -3402,7 +3423,7 @@ ApplicationWindow {
                                         font.pixelSize: 12
                                     }
                                     Text {
-                                        width: traceRow.width - 80 - 180 - 70 - 150 - 50
+                                        width: Math.max(0, traceRow.width - parent.x - 150 - 10 - 6)
                                         anchors.verticalCenter: parent.verticalCenter
                                         Accessible.role: Accessible.StaticText
                                         Accessible.name: text
@@ -3536,8 +3557,10 @@ ApplicationWindow {
                         id: supTable
                         Layout.fillWidth: true
                         // Up to ten rows; more scroll. A height taken from
-                        // the page's would lay the page out again.
-                        Layout.preferredHeight: supHeads.height + 1 + Math.min(10, Math.max(1, supRows.count)) * rowHeight
+                        // the page's would lay the page out again. A row
+                        // laid out over more lines is taller, and three of
+                        // them leave the faults below room of their own.
+                        Layout.preferredHeight: supHeads.height + 1 + Math.min(narrow ? 3 : 10, Math.max(1, supRows.count)) * rowHeight
                         radius: 9
                         color: theme.card
                         border.color: theme.rule
@@ -3656,6 +3679,8 @@ ApplicationWindow {
                     Rectangle {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
+                        // The supervisors above never take all the room.
+                        Layout.minimumHeight: 160
                         radius: 9
                         color: theme.card
                         border.color: theme.rule
@@ -4672,7 +4697,11 @@ ApplicationWindow {
                                     required property int count
                                     required property real bytes
                                     width: ListView.view.width
-                                    height: 22
+                                    // Where the bar would have too little room
+                                    // beside the words to compare one type with
+                                    // another, it has a line of its own below.
+                                    readonly property bool narrow: width - 370 < 120
+                                    height: narrow ? 34 : 22
                                     Accessible.role: Accessible.ListItem
                                     Accessible.name: type + ", " + count + (count === 1 ? " object, " : " objects, ") + window.bytes(bytes)
                                     Rectangle {
@@ -4681,10 +4710,10 @@ ApplicationWindow {
                                     }
                                     Row {
                                         x: 6
-                                        height: parent.height
+                                        height: 22
                                         spacing: 10
                                         Text {
-                                            width: 180
+                                            width: typeRow.narrow ? Math.max(40, typeRow.width - 6 - 60 - 10 - 80 - 10 - 6 - 10) : 180
                                             anchors.verticalCenter: parent.verticalCenter
                                             text: typeRow.type
                                             color: theme.text
@@ -4710,12 +4739,22 @@ ApplicationWindow {
                                             font.pixelSize: 12
                                         }
                                         Rectangle {
+                                            visible: !typeRow.narrow
                                             anchors.verticalCenter: parent.verticalCenter
                                             height: 10
                                             radius: 2
                                             width: Math.max(1, (typeRow.width - 370) * typeRow.bytes / memory.most)
                                             color: theme.accent
                                         }
+                                    }
+                                    Rectangle {
+                                        visible: typeRow.narrow
+                                        x: 6
+                                        y: 23
+                                        height: 6
+                                        radius: 2
+                                        width: Math.max(1, (typeRow.width - 12) * typeRow.bytes / memory.most)
+                                        color: theme.accent
                                     }
                                 }
                             }
@@ -4730,10 +4769,12 @@ ApplicationWindow {
                                 required property string scene
                                 required property string render
                                 Layout.fillWidth: true
+                                // Wrapped, so that a renderer with much to say
+                                // grows the page, which scrolls only up and down.
                                 // Read out line by line, as each is shown.
-                                Text { Accessible.role: Accessible.StaticText; Accessible.name: text; text: windowRow.name; color: theme.text; font.pixelSize: 12; font.bold: true }
-                                Text { Accessible.role: Accessible.StaticText; Accessible.name: text; text: "scene: " + windowRow.scene; color: theme.subtle; font.pixelSize: 12 }
-                                Text { Accessible.role: Accessible.StaticText; Accessible.name: text; text: "renderer: " + windowRow.render; color: theme.subtle; font.pixelSize: 12 }
+                                Text { Accessible.role: Accessible.StaticText; Accessible.name: text; width: windowRow.width; wrapMode: Text.Wrap; text: windowRow.name; color: theme.text; font.pixelSize: 12; font.bold: true }
+                                Text { Accessible.role: Accessible.StaticText; Accessible.name: text; width: windowRow.width; wrapMode: Text.Wrap; text: "scene: " + windowRow.scene; color: theme.subtle; font.pixelSize: 12 }
+                                Text { Accessible.role: Accessible.StaticText; Accessible.name: text; width: windowRow.width; wrapMode: Text.Wrap; text: "renderer: " + windowRow.render; color: theme.subtle; font.pixelSize: 12 }
                             }
                         }
                     }
@@ -5453,11 +5494,13 @@ ApplicationWindow {
                         }
                     }
 
-                    // Beside the list on a wide page, under it on a narrow
-                    // one, where the list needs the whole width.
+                    // Beside the list where the panels shown leave it room
+                    // for a row, under it where they do not: a wake opened
+                    // adds its panel, which must not squeeze the list away.
                     GridLayout {
                         id: wakesBody
-                        readonly property bool narrow: width < 560
+                        readonly property real dueWidth: Math.max(200, Math.min(320, wakes.width * 0.3))
+                        readonly property bool narrow: width < 350 + 10 + dueWidth + (wakes.one !== null ? 440 + 10 : 0)
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         columns: narrow ? 1 : 3
@@ -5664,7 +5707,7 @@ ApplicationWindow {
 
                         // What wakes it next.
                         Rectangle {
-                            Layout.preferredWidth: wakesBody.narrow ? -1 : Math.max(200, Math.min(320, wakes.width * 0.3))
+                            Layout.preferredWidth: wakesBody.narrow ? -1 : wakesBody.dueWidth
                             Layout.fillWidth: wakesBody.narrow
                             Layout.preferredHeight: wakesBody.narrow ? 140 : -1
                             Layout.fillHeight: !wakesBody.narrow
@@ -5993,7 +6036,11 @@ ApplicationWindow {
                                     required property var modelData
                                     readonly property bool current: modelData.component === components.picked
                                     width: ListView.view.width
-                                    height: 24
+                                    // Too narrow for one line, the counts and
+                                    // their bar go on a line below, under the
+                                    // name, so that none is past the edge.
+                                    readonly property bool narrow: width < 600
+                                    height: narrow ? 44 : 24
                                     Rectangle {
                                         anchors.fill: parent
                                         radius: 4
@@ -6003,7 +6050,7 @@ ApplicationWindow {
                                     }
                                     Row {
                                         x: 6
-                                        height: parent.height
+                                        height: 24
                                         spacing: 10
                                         Text {
                                             width: 60
@@ -6024,7 +6071,7 @@ ApplicationWindow {
                                         // by where in its file it is, so that
                                         // two delegates of one type differ.
                                         Text {
-                                            width: 200
+                                            width: compRow.narrow ? Math.max(40, compRow.width - 6 - 60 - 10 - 120 - 10 - 6) : 200
                                             anchors.verticalCenter: parent.verticalCenter
                                             text: compRow.modelData.kind === "file"
                                                   ? compRow.modelData.url.substring(compRow.modelData.url.lastIndexOf("/") + 1)
@@ -6033,6 +6080,13 @@ ApplicationWindow {
                                             elide: Text.ElideLeft
                                             font.pixelSize: 11
                                         }
+                                    }
+                                    Row {
+                                        id: compCounts
+                                        x: compRow.narrow ? 6 + 60 + 10 : 6 + 60 + 10 + 120 + 10 + 200 + 10
+                                        y: compRow.narrow ? 20 : 0
+                                        height: 24
+                                        spacing: 10
                                         Text {
                                             width: 50
                                             anchors.verticalCenter: parent.verticalCenter
@@ -6061,7 +6115,10 @@ ApplicationWindow {
                                             anchors.verticalCenter: parent.verticalCenter
                                             height: 10
                                             radius: 2
-                                            width: Math.max(1, (compRow.width - 580) * compRow.modelData.bytes / components.most)
+                                            // The room left on its line, so that bars
+                                            // compare at any width.
+                                            width: Math.max(1, (compRow.width - compCounts.x - 50 - 10 - 80 - 10 - 6)
+                                                               * compRow.modelData.bytes / components.most)
                                             color: theme.accent
                                         }
                                     }
