@@ -163,3 +163,25 @@ fn moderate_pressure_keeps_what_is_on_screen() {
     assert_eq!(backend.image_textures(), 1);
     assert_eq!(backend.texture_uploads(), uploads);
 }
+
+#[test]
+fn a_trim_says_how_many_bytes_it_gave_back() {
+    let _turn = gpu_turn();
+    let (e, mut h) = scene();
+    let store = ImageStore::of(&e);
+    h.run();
+    let drawn = h.state().view.backend().memory().bytes();
+    let cached = store.bytes();
+    assert!(drawn > 0);
+
+    h.state_mut().view.set_drawn(false);
+    let freed = h.state_mut().view.trim(MemoryPressure::Critical);
+    let kept = h.state().view.backend().memory().bytes();
+    // The renderer's meshes, atlas and textures, and the picture nothing
+    // shows: a host reports this, so it is all of what went.
+    assert_eq!(freed, drawn - kept + (cached - store.bytes()));
+    assert!(freed >= 16 * 16 * 4 + (drawn - kept));
+    assert!(drawn - kept > 0);
+    // Nothing more to give back.
+    assert_eq!(h.state_mut().view.trim(MemoryPressure::Critical), 0);
+}

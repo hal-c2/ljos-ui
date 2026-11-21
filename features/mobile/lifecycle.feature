@@ -6,6 +6,8 @@
 #   docs/ARCHITECTURE.md (§10.2: the application outlives its screen)
 #   docs/spikes/01-android-ime-accesskit.md (§6, the lifecycle table)
 #   https://github.com/hal-c2/ljos-ui/issues/613
+#   https://developer.android.com/reference/android/content/ComponentCallbacks2#onTrimMemory(int)
+#   docs/ARCHITECTURE.md (§8.5: what a hidden window gives back)
 # A phone takes the application's screen away when its user leaves it,
 # gives it a new one when they come back, and may end the screen of an
 # application it hides to save memory. On Ljós the application, its
@@ -68,6 +70,15 @@ Feature: An application on a phone outlives its screen
     When the user goes to the home screen
     And the system ends the application's screen
     And the user opens the application again
+    Then the application is in front
+    And the property "taps" of "w" is 2
+    And the system has not found the application unresponsive
+
+  Scenario: A hidden application short of memory gives back what it can draw again
+    When the user goes to the home screen
+    And the system is short of memory
+    Then the application gave back memory it can rebuild
+    When the user opens the application again
     Then the application is in front
     And the property "taps" of "w" is 2
     And the system has not found the application unresponsive

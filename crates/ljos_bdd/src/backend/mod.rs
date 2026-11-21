@@ -532,6 +532,23 @@ pub trait Device: Backend {
         ))
     }
 
+    /// The system tells the application it is short of memory (Android's
+    /// `onTrimMemory`, `am send-trim-memory`).
+    fn short_of_memory(&mut self) -> Result<()> {
+        Err(BackendError::NotImplemented(
+            "the system being short of memory",
+        ))
+    }
+
+    /// The bytes the application said it gave back the last time the
+    /// system was short of memory: what it draws again (glyph atlas,
+    /// textures, decoded pictures), never its objects or their values.
+    fn memory_given_back(&mut self) -> Result<usize> {
+        Err(BackendError::NotImplemented(
+            "the memory the application gave back",
+        ))
+    }
+
     /// The system ends the application's process, as it ends a hidden
     /// one to save memory; the user opening it again starts a new one.
     fn end_process(&mut self) -> Result<()> {
