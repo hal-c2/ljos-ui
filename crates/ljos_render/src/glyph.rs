@@ -170,6 +170,11 @@ const COLOR_SIZE_STEPS: f64 = 4.0;
 /// for every step.
 const KEEP_COLOR_PICTURES: usize = 256;
 
+/// Past this many bytes of pictures, those a frame did not draw are let go
+/// too: a big emoji whose size animates makes a picture of up to 4 MiB a
+/// frame, so the count alone would let the cache reach a gigabyte.
+const KEEP_COLOR_BYTES: usize = 64 << 20;
+
 /// A colour glyph (an emoji) as a picture, at one size in device pixels.
 #[derive(Debug)]
 pub(crate) struct ColorGlyph {
@@ -217,6 +222,14 @@ struct Picture {
     used: u64,
 }
 
+impl Picture {
+    fn bytes(&self) -> usize {
+        self.glyph.as_ref().map_or(0, |g| {
+            g.image.width() as usize * g.image.height() as usize * 4
+        })
+    }
+}
+
 /// Colour glyph pictures by font, glyph, size and, for a glyph with layers
 /// in the text's colour, that colour. A glyph that has none is remembered as
 /// [`ColorKind::Plain`], so text without emoji asks once per glyph.
@@ -224,6 +237,8 @@ struct Picture {
 pub(crate) struct ColorGlyphCache {
     kinds: HashMap<GlyphKey, ColorKind>,
     pictures: HashMap<ColorKey, Picture>,
+    /// What the pictures in `pictures` take, in bytes.
+    bytes: usize,
     frame: u64,
 }
 
@@ -238,6 +253,7 @@ impl std::fmt::Debug for ColorGlyphCache {
         f.debug_struct("ColorGlyphCache")
             .field("kinds", &self.kinds.len())
             .field("pictures", &self.pictures.len())
+            .field("bytes", &self.bytes)
             .finish()
     }
 }
@@ -277,30 +293,40 @@ impl ColorGlyphCache {
             foreground: packed,
         };
         let frame = self.frame;
+        let bytes = &mut self.bytes;
         let picture = self.pictures.entry(key).or_insert_with(|| {
             let size = steps / COLOR_SIZE_STEPS;
             let glyph = match kind {
                 ColorKind::Bitmap => load_bitmap(run, glyph, size),
                 _ => load_colr(run, glyph, size, foreground),
             };
-            Picture {
+            let picture = Picture {
                 glyph: glyph.map(Arc::new),
                 used: frame,
-            }
+            };
+            *bytes += picture.bytes();
+            picture
         });
         picture.used = frame;
         picture.glyph.clone()
     }
 
-    /// Starts a frame: with many pictures kept, the ones the last frame did
-    /// not ask for and no one else holds are let go. A renderer that keeps
-    /// what it built (B0's cached lists) holds its pictures, so a picture it
-    /// still draws stays here too and isn't made again.
+    /// Starts a frame: with many pictures kept, or many bytes of them, the
+    /// ones the last frame did not ask for and no one else holds are let go.
+    /// A renderer that keeps what it built (B0's cached lists) holds its
+    /// pictures, so a picture it still draws stays here too and isn't made
+    /// again.
     pub(crate) fn begin_frame(&mut self) {
-        if self.pictures.len() > KEEP_COLOR_PICTURES {
+        if self.pictures.len() > KEEP_COLOR_PICTURES || self.bytes > KEEP_COLOR_BYTES {
             let frame = self.frame;
+            let bytes = &mut self.bytes;
             self.pictures.retain(|_, p| {
-                p.used == frame || p.glyph.as_ref().is_some_and(|g| Arc::strong_count(g) > 1)
+                let keep =
+                    p.used == frame || p.glyph.as_ref().is_some_and(|g| Arc::strong_count(g) > 1);
+                if !keep {
+                    *bytes -= p.bytes();
+                }
+                keep
             });
         }
         self.frame += 1;
@@ -310,6 +336,7 @@ impl ColorGlyphCache {
     pub(crate) fn clear(&mut self) {
         self.kinds.clear();
         self.pictures.clear();
+        self.bytes = 0;
     }
 }
 
@@ -930,4 +957,39 @@ pub fn glyph_advances(
         .map(|id| metrics.advance_width(GlyphId::new(*id)).unwrap_or(0.0))
         .collect();
     Some((units_per_em, advances))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::display_list::PositionedGlyph;
+    use vello_cpu::peniko::Blob;
+
+    const COLR_FONT: &[u8] =
+        include_bytes!("../../../features/text/fonts/LjosColrTest-Regular.ttf");
+
+    #[test]
+    fn huge_pictures_whose_size_animates_stay_within_the_byte_budget() {
+        let font = FontData::new(Blob::new(Arc::new(COLR_FONT)), 0);
+        let glyphs = vec![PositionedGlyph {
+            id: 1,
+            x: 0.0,
+            y: 0.0,
+        }];
+        let run = GlyphRun::new(font, 20.0, glyphs, 0.0, Rect::ZERO);
+        let mut cache = ColorGlyphCache::default();
+        let mut most = 0;
+        // Each step is a new size past the cap, so a new 1024 px picture.
+        for step in 0..40 {
+            cache.begin_frame();
+            let size = 2000.0 + f64::from(step);
+            let picture = cache.get(&run, 1, size, Rgba::BLACK).unwrap();
+            assert_eq!(picture.image.width().max(picture.image.height()), 1024);
+            most = most.max(cache.bytes);
+        }
+        let one = 1024 * 1024 * 4;
+        assert!(most <= KEEP_COLOR_BYTES + one, "{most} bytes kept");
+        let sum: usize = cache.pictures.values().map(Picture::bytes).sum();
+        assert_eq!(cache.bytes, sum);
+    }
 }
