@@ -157,7 +157,10 @@ fn content(engine: &Engine, e: &Entry) -> OverrideContent {
                 if let Some(c) = ours {
                     return Value::Color(c);
                 }
-                let own = read(roles);
+                // `roles` is a `var`: once it has been worked out again, as a
+                // change of scheme or contrast does, it holds the script's
+                // array rather than a list.
+                let own = engine.plain(&read(roles));
                 index
                     .and_then(|i| own.as_list()?.get(i).cloned())
                     .unwrap_or_default()
