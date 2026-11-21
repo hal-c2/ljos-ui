@@ -191,6 +191,32 @@ Item {
     assert_eq!(due(&h), Some(ljos_runtime::Time::from_millis(400)));
 }
 
+/// Runs that came due at rest are caught up on although a turn ran after
+/// them: only what came due inside the turn is dropped.
+#[test]
+fn a_repeating_timer_catches_up_on_runs_due_at_rest_before_a_slow_turn() {
+    let h = engine();
+    let root = h.load(
+        r#"import QtQuick
+Item {
+  property int ticks: 0
+  Timer { interval: 100; running: true; repeat: true; onTriggered: ticks++ }
+}
+"#,
+    );
+    h.clock.set(ljos_runtime::Time::from_millis(350));
+    h.engine
+        .turn(None, || {
+            h.clock.advance(std::time::Duration::from_millis(100))
+        })
+        .unwrap();
+    let late = h.clock.now();
+    h.engine.advance_timers(late);
+    // 100, 200 and 300 came at rest; 400 came inside the turn.
+    assert_eq!(h.num(root, "ticks"), 3.0);
+    assert_eq!(due(&h), Some(ljos_runtime::Time::from_millis(500)));
+}
+
 /// What some work arms runs up to `by` in one call, and a repeating timer
 /// among it still runs once there: the work was busy until `by`, so its
 /// next run is the first of its phase after that.

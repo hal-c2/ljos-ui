@@ -653,11 +653,12 @@ pub(crate) struct TimerState {
     calls_due: Option<Time>,
     /// While the queue drains, when it began to.
     draining: Option<Time>,
-    /// When the engine last stopped working: the end of the last turn, or
-    /// of an [`Engine::advance_timers`] call, that took time on the clock.
-    /// The runs of a repeating timer due before then came while the engine
-    /// was busy, so they are dropped rather than caught up on.
-    busy_until: Time,
+    /// When the engine was last at work, oldest first: the turns, and the
+    /// [`Engine::advance_timers`] calls, that took time on the clock, with
+    /// those that overlap or touch merged. The runs of a repeating timer
+    /// due inside one came while the engine was busy, so they are dropped
+    /// rather than caught up on; those due between them are not.
+    busy: Vec<(Time, Time)>,
     /// When the turn in progress began.
     turn_from: Option<Time>,
     quit: bool,
@@ -681,7 +682,7 @@ impl Default for TimerState {
             calls: Vec::new(),
             calls_due: None,
             draining: None,
-            busy_until: Time::ZERO,
+            busy: Vec::new(),
             turn_from: None,
             quit: false,
             wake: None,
@@ -705,6 +706,10 @@ pub struct RunningTimer {
 /// Most timer fires one [`Engine::advance_timers`] call catches up on, so a
 /// long stall does not replay thousands of ticks.
 const MAX_CATCH_UP: u32 = 100;
+
+/// How many of the engine's last busy times it keeps: enough to cover the
+/// runs a late timer missed, and a few words however long it runs.
+const BUSY_KEPT: usize = 32;
 
 pub(crate) fn register(engine: &Engine) {
     engine.register_module(crate::module!("QtQml" 2.0 => [
@@ -833,7 +838,7 @@ impl Engine {
         let mut st = self.inner.timers.borrow_mut();
         st.clock = clock;
         // A time on the old clock means nothing on the new one.
-        st.busy_until = Time::ZERO;
+        st.busy.clear();
         st.turn_from = None;
     }
 
@@ -1021,23 +1026,21 @@ impl Engine {
                         // shot or a stopped timer is no longer due.
                         st.due_at.remove(&o);
                     }
-                    // Until when the engine was busy: the timer's next run
-                    // is after that. The clock moves on while handlers run
-                    // here, so the deadlines a slow handler covered are
-                    // read at the next call, from `busy_until`.
+                    // The timer's next run is after `skip`: what some work
+                    // armed runs once up to its `by`, and a timer caught up
+                    // on too often goes on from now.
                     let n = fired.entry(o).or_default();
                     *n += 1;
-                    let busy = self.inner.timers.borrow().busy_until;
-                    let busy = match &made {
-                        Some((ids, by)) if ids.contains(&due.origin) => busy.max(*by),
-                        _ => busy,
+                    let skip = match &made {
+                        Some((ids, by)) if ids.contains(&due.origin) => *by,
+                        _ => Time::ZERO,
                     };
-                    let busy = if *n >= MAX_CATCH_UP {
-                        busy.max(now)
+                    let skip = if *n >= MAX_CATCH_UP {
+                        skip.max(now)
                     } else {
-                        busy
+                        skip
                     };
-                    self.timer_fire(o, due.deadline, busy, due.origin);
+                    self.timer_fire(o, due.deadline, skip, due.origin);
                 }
             }
         }
@@ -1055,8 +1058,20 @@ impl Engine {
             return;
         };
         let end = st.clock.now();
-        if end > from {
-            st.busy_until = st.busy_until.max(end);
+        if end <= from {
+            return;
+        }
+        match st.busy.last_mut() {
+            Some(last) if from <= last.1 => {
+                last.0 = last.0.min(from);
+                last.1 = last.1.max(end);
+            }
+            _ => {
+                if st.busy.len() == BUSY_KEPT {
+                    st.busy.remove(0);
+                }
+                st.busy.push((from, end));
+            }
         }
     }
 
@@ -1284,10 +1299,11 @@ impl Engine {
         self.wake_host();
     }
 
-    /// A timer came due at `at` and is fired now, with the engine busy
-    /// until `busy`: re-arm (repeat) or stop, then emit. `origin` is its
-    /// first run's id, which the next run keeps.
-    fn timer_fire(&self, obj: ObjectId, at: Time, busy: Time, origin: TimerId) {
+    /// A timer came due at `at` and is fired now: re-arm (repeat) at its
+    /// next run after `skip` that did not come due while the engine was
+    /// busy, or stop, then emit. `origin` is its first run's id, which the
+    /// next run keeps.
+    fn timer_fire(&self, obj: ObjectId, at: Time, skip: Time, origin: TimerId) {
         let Ok((running, repeat, interval)) =
             self.with::<Timer, _>(obj, |t| (t.running, t.repeat, t.interval))
         else {
@@ -1300,13 +1316,23 @@ impl Engine {
             *self.inner.timers.borrow_mut().fired.entry(obj).or_default() += 1;
         }
         if repeat {
-            // Runs that came due while the engine was busy are skipped:
-            // the next is the first of its phase after `busy`.
             let step = u64::try_from(interval.max(1)).unwrap_or(1) * 1000;
-            // Both are microseconds on the same clock, so this fits.
-            let late = u64::try_from(busy.saturating_since(at).as_micros()).unwrap_or(u64::MAX);
-            let from = at + Duration::from_micros(late - late % step);
-            self.timer_schedule(obj, from, interval.max(1), Some(origin));
+            // The first run of the timer's phase after `t`.
+            let after = |t: Time| {
+                // Both are microseconds on the same clock, so this fits.
+                let late = u64::try_from(t.saturating_since(at).as_micros()).unwrap_or(u64::MAX);
+                at + Duration::from_micros((late - late % step).saturating_add(step))
+            };
+            let mut next = after(skip);
+            {
+                // Runs that came due while the engine was busy are
+                // dropped; it moves on past each busy time it lands in.
+                let st = self.inner.timers.borrow();
+                while let Some(&(_, end)) = st.busy.iter().find(|(f, e)| *f < next && next <= *e) {
+                    next = after(end);
+                }
+            }
+            self.timer_schedule_at(obj, next, interval.max(1), Some(origin));
         } else {
             // The timer stopping itself is not an assignment: a binding on
             // `running` stays.
