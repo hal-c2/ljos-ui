@@ -217,7 +217,14 @@ impl Reached for OnPhone {
 /// A scenario's own directory in `parent`. `ljos android connect` puts
 /// the inspector's token in it, and refuses one that others can enter.
 fn scenario_dir(parent: &Path) -> std::io::Result<tempfile::TempDir> {
-    tempfile::Builder::new().prefix("android-").tempdir_in(parent)
+    let mut dir = tempfile::Builder::new();
+    dir.prefix("android-");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        dir.permissions(std::fs::Permissions::from_mode(0o700));
+    }
+    dir.tempdir_in(parent)
 }
 
 pub struct AndroidBackend {
