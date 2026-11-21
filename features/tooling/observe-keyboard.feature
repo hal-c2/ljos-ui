@@ -9,9 +9,10 @@
 Feature: The observer's pages are chosen from the keyboard
   Every page of the observer is one key press away, as it is one click
   away. Tab reaches the list of pages at the tab of the page shown; the
-  arrow keys move between the tabs, past the last back to the first; Space
-  or Return shows the page whose tab has focus and asks the application
-  for what it shows, as a click does.
+  arrow keys move between the tabs, past the last back to the first, and
+  Home and End go to the first and the last; Space, Return or Enter shows
+  the page whose tab has focus and asks the application for what it
+  shows, as a click does.
 
   Background:
     Given the QML:
@@ -41,3 +42,15 @@ Feature: The observer's pages are chosen from the keyboard
     Then the observer has "role=tab[name=\"Audit\"][focused]"
     When the observer is given the keys "Space"
     Then the observer shows "Not run"
+
+  Scenario: Home and End go to the first and last tab, Up and Down step, and Enter shows a page
+    When the application is observed
+    And the observer is given the keys "Tab End"
+    Then the observer has "role=tab[name=\"Audit\"][focused]"
+    When the observer is given the keys "Home"
+    Then the observer has "role=tab[name=\"Overview\"][focused]"
+    When the observer is given the keys "Down Down Down Down Up"
+    Then the observer has "role=tab[name=\"Objects\"][focused]"
+    And the observer does not have "role=listitem[name=\"Scenario\"]"
+    When the observer is given the keys "Enter"
+    Then the observer has "role=listitem[name=\"Scenario\"]"

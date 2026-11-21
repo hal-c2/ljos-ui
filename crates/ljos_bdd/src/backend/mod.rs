@@ -1671,6 +1671,41 @@ pub trait Probes: Backend {
         })
     }
 
+    /// Calls the application's inspector itself until it turns a call
+    /// away for asking too often, and goes on calling it for `kept` more,
+    /// so that what its observer asks of it meanwhile is turned away too
+    /// (ARCHITECTURE.md §19.7). Answers when the application's second was
+    /// full; [`Probes::calls_answered_again`] waits for the rest.
+    fn turn_calls_away(&mut self, _kept: std::time::Duration) -> Result<std::time::Instant> {
+        Err(BackendError::Unsupported {
+            backend: self.name(),
+            what: "turning the application's calls away",
+        })
+    }
+
+    /// [`Probes::observer_call`] without waiting for what it woke to be
+    /// done: the next call follows while the application is still asked.
+    fn observer_call_now(
+        &mut self,
+        _tool: &str,
+        _arguments: serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        Err(BackendError::Unsupported {
+            backend: self.name(),
+            what: "driving an observer window",
+        })
+    }
+
+    /// Waits for the calls [`Probes::turn_calls_away`] goes on making to
+    /// end, and then for what the observer and the application were
+    /// asked meanwhile to be done.
+    fn calls_answered_again(&mut self) -> Result<()> {
+        Err(BackendError::Unsupported {
+            backend: self.name(),
+            what: "turning the application's calls away",
+        })
+    }
+
     /// Starts counting the work the application and its observer do
     /// (passes, frames, jobs, messages), less what the counting causes.
     fn count_work(&mut self) -> Result<()> {

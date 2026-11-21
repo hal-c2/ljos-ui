@@ -458,6 +458,8 @@ pub struct DesktopBackend {
     /// The scenario changes files under the running application, which
     /// `ljos run --watch` applies.
     watch: bool,
+    /// The calls that keep the application's second full, while they go on.
+    turning_away: Option<std::thread::JoinHandle<std::result::Result<(), String>>>,
 }
 
 impl Drop for DesktopBackend {
@@ -1341,6 +1343,76 @@ impl Probes for DesktopBackend {
         observer.settle()?;
         self.running()?.settle()?;
         Ok(answer)
+    }
+
+    fn turn_calls_away(&mut self, kept: Duration) -> Result<Instant> {
+        use crate::author::rate;
+        let dir = self.dir.as_ref().expect("files are written first").path();
+        let app = self.running()?.app.id();
+        let (addr, token) = rate::target(&dir.join(format!("target/ljos/mcp-{app}.json")))
+            .map_err(BackendError::Failed)?;
+        // What the steps before asked is let pass first, so that the
+        // second is full of these calls alone and frees no room before
+        // its end.
+        std::thread::sleep(Duration::from_secs(1));
+        let started = Instant::now();
+        let mut id = 0;
+        loop {
+            id += 1;
+            if rate::call(addr, &token, id)
+                .map_err(BackendError::Failed)?
+                .status
+                == 429
+            {
+                break;
+            }
+            if started.elapsed() > SEEN {
+                return Err(BackendError::Failed(format!(
+                    "the application's inspector answered {id} calls in {} s and turned none away",
+                    SEEN.as_secs()
+                )));
+            }
+        }
+        let full = Instant::now();
+        if !kept.is_zero() {
+            // Room comes free a second after each call answered, and a
+            // call follows at once to take it: the observer's calls find
+            // none. A pause between them keeps the loopback's ports to a
+            // few thousand.
+            self.turning_away = Some(std::thread::spawn(move || {
+                while full.elapsed() < kept {
+                    id += 1;
+                    rate::call(addr, &token, id)?;
+                    std::thread::sleep(Duration::from_micros(500));
+                }
+                Ok(())
+            }));
+        }
+        Ok(full)
+    }
+
+    fn observer_call_now(&mut self, tool: &str, arguments: Value) -> Result<Value> {
+        self.observer
+            .as_mut()
+            .ok_or_else(|| BackendError::Failed("the application is not observed".into()))?
+            .ask(tool, arguments)
+    }
+
+    fn calls_answered_again(&mut self) -> Result<()> {
+        if let Some(calls) = self.turning_away.take() {
+            calls
+                .join()
+                .map_err(|_| {
+                    BackendError::Failed(
+                        "the calls that kept the application's second full panicked".into(),
+                    )
+                })?
+                .map_err(BackendError::Failed)?;
+        }
+        if let Some(observer) = self.observer.as_mut() {
+            observer.settle()?;
+        }
+        self.running()?.settle()
     }
 
     fn count_work(&mut self) -> Result<()> {

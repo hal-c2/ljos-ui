@@ -550,6 +550,8 @@ leaves items out fails rather than check part of them.
 | `When the application is observed` | the observer opens on the application, in a window of its own |
 | `When the observer's window is W by H pixels` | its window is given that size, as a window manager or a page holding it would |
 | `When the observer's "locator" is clicked` | once the observer shows it |
+| `When the observer's "locator" is clicked while the application turns every call away` | the application's second is kept full of other calls for 2.5 s from just before the click, so that what the observer asks of it, and the one time its wire asks that again, is turned away (429) |
+| `When the observer's "a" is clicked while the application turns calls away for a moment, and its "b" once it answers again` | `a`'s call is turned away and its wire asks again a second later; `b` is clicked in between, once there is room, and answered first; fails, saying so, when the observer takes too long to be clicked for that order |
 | `When the observer's "locator" is scrolled N notches right` / `left` / `up` / `down` | the wheel turned over it, once the observer shows it; whatever scrolls under the pointer takes it |
 | `When the observer's "locator" is shown` | waits for what an answer still on its way lays out, failing if it never comes |
 | `Then the observer shows "text"` / `does not show "text"` | an item whose words contain the text, whatever the case |

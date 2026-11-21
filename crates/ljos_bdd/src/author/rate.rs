@@ -1,6 +1,8 @@
 //! Calls made to a started application's inspector as fast as one client
 //! makes them, written as plain HTTP so that a refusal is seen as it is
 //! and not asked again, as an MCP client would (ARCHITECTURE.md §19.7).
+//! The desktop backend fills an application's second with them too, to
+//! see what its observer does when it is turned away.
 
 use std::{
     io::{Read as _, Write as _},
@@ -16,7 +18,7 @@ const WINDOW: Duration = Duration::from_secs(1);
 
 /// What one call was answered.
 #[derive(Clone, Debug)]
-pub(super) struct Called {
+pub(crate) struct Called {
     pub status: u16,
     /// The answer's header lines, lower-cased.
     pub head: String,
@@ -30,7 +32,7 @@ pub(super) struct Burst {
 }
 
 /// The address and the token the inspector's token file names.
-fn target(token_file: &Path) -> Result<(SocketAddr, String), String> {
+pub(crate) fn target(token_file: &Path) -> Result<(SocketAddr, String), String> {
     let text = std::fs::read_to_string(token_file)
         .map_err(|e| format!("cannot read {}: {e}", token_file.display()))?;
     let body: Value =
@@ -48,7 +50,8 @@ fn target(token_file: &Path) -> Result<(SocketAddr, String), String> {
     Ok((addr, token))
 }
 
-fn call(addr: SocketAddr, token: &str, id: usize) -> Result<Called, String> {
+/// One `ping`, answered or refused.
+pub(crate) fn call(addr: SocketAddr, token: &str, id: usize) -> Result<Called, String> {
     let body = format!(r#"{{"jsonrpc":"2.0","id":{id},"method":"ping"}}"#);
     let request = format!(
         "POST /mcp HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\
