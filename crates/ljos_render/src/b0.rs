@@ -22,8 +22,8 @@
 //!   is skipped;
 //! * an image larger than the GPU's texture limit is drawn from a smaller
 //!   copy;
-//! * gradient text uses its first stop colour, and colour glyphs (emoji) are
-//!   not drawn;
+//! * gradient text uses its first stop colour, also for the layers of a
+//!   colour glyph (`COLR`) that take the text's colour;
 //! * the unshaped `Text` op ignores rotation and shear;
 //! * a [`DrawOp::Shape`] that should be drawn from pixels (see below) and
 //!   cannot be is drawn as triangles, a radial or conical gradient then in
@@ -68,7 +68,7 @@ use crate::display_list::{
     Decorations, DisplayList, DisplayListId, DrawOp, GlyphRun, LinearGradient, Paint, PathStyle,
     TextAlign, fill_area,
 };
-use crate::glyph::{baseline_snap, is_upright, snap_bar};
+use crate::glyph::{ColorGlyph, ColorGlyphCache, baseline_snap, is_upright, snap_bar};
 use crate::glyph_atlas::{BINS, Full, GlyphAtlas, GlyphKey, Slot};
 use crate::image::{ImageBlit, ImageHandle, WeakImage, image_blit, nine_patch_blits};
 use crate::image_atlas::{ImageAtlas, Place};
@@ -1045,6 +1045,11 @@ struct ListEntry {
     /// painted again) is drawn by no one, and an idle window draws too few
     /// frames for the age of an entry to say so soon.
     owner: Weak<DisplayList>,
+    /// The colour glyph pictures its quads draw. The quads hold them only
+    /// weakly, and the cache lets go of pictures a frame didn't ask for,
+    /// which a cached list never does again; so the list keeps them.
+    #[expect(dead_code, reason = "held only to keep the pictures alive")]
+    pictures: Box<[Arc<ColorGlyph>]>,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -1091,6 +1096,9 @@ pub struct EpaintBackend {
     /// [`EncodeStats::warnings`] of the last `encode`.
     warnings: u32,
     atlas: GlyphAtlas,
+    /// Colour glyphs (emoji) as pictures. Their quads hold them only
+    /// weakly, as they do every image, so this keeps them.
+    colors: ColorGlyphCache,
     textures: FxHashMap<TextureKey, TextureEntry>,
     /// The shared pages small pictures are put on.
     pages: ImageAtlas,
@@ -1417,6 +1425,7 @@ impl EpaintBackend {
             glyph_meshes_built: 0,
             warnings: 0,
             atlas: GlyphAtlas::default(),
+            colors: ColorGlyphCache::default(),
             textures: FxHashMap::default(),
             pages: ImageAtlas::default(),
             texture_uploads: 0,
@@ -1607,12 +1616,14 @@ impl EpaintBackend {
             self.shapes.clear();
             // Glyphs are filled per device size; none of the old ones match.
             self.atlas.clear();
+            self.colors.clear();
         }
     }
 
     fn build_list(&mut self, list: &Arc<DisplayList>) -> ListEntry {
         self.tessellations += 1;
         let mut segs: Vec<LocalSeg> = Vec::new();
+        let mut pictures = Vec::new();
         let mut cur = Mesh::default();
         let mut warnings = 0u32;
         let mut warn = |what: &str| {
@@ -1819,14 +1830,52 @@ impl EpaintBackend {
                             continue;
                         }
                     };
-                    if color.is_transparent() {
-                        continue;
-                    }
                     if !cur.is_empty() {
                         segs.push(LocalSeg::Mesh(Arc::new(std::mem::take(&mut cur))));
                     }
+                    // A colour glyph has no outline for the atlas to fill:
+                    // it is a picture, drawn whatever colour the text is.
+                    let size = f64::from(run.font_size) * f64::from(self.ppp);
+                    let inv_ppp = 1.0 / f64::from(self.ppp);
+                    let mut pictured = Vec::new();
+                    for (i, g) in run.glyphs.iter().enumerate() {
+                        let Some(picture) = self.colors.get(run, g.id, size, color) else {
+                            continue;
+                        };
+                        pictured.push(i);
+                        let at = *origin + Vec2::new(f64::from(g.x), f64::from(g.y));
+                        let r = picture.rect;
+                        let dst = Rect::new(
+                            r.x0 * inv_ppp,
+                            r.y0 * inv_ppp,
+                            r.x1 * inv_ppp,
+                            r.y1 * inv_ppp,
+                        ) + at;
+                        let blit = image_blit(picture.image.rect(), dst, None, [false, false]);
+                        image_segs(&mut segs, &picture.image, &[blit], true, 1.0, None, || 1);
+                        pictures.push(picture);
+                    }
+                    if color.is_transparent() {
+                        continue;
+                    }
+                    // A colour outline glyph (COLR) also has a plain
+                    // outline, for renderers without colour; it must not be
+                    // filled over its picture.
+                    let run = if pictured.is_empty() {
+                        Arc::clone(run)
+                    } else {
+                        let mut plain = GlyphRun::clone(run);
+                        let mut at = pictured.iter().peekable();
+                        let mut i = 0;
+                        plain.glyphs.retain(|_| {
+                            let keep = at.next_if_eq(&&i).is_none();
+                            i += 1;
+                            keep
+                        });
+                        Arc::new(plain)
+                    };
                     segs.push(LocalSeg::Glyphs(GlyphsCmd {
-                        run: Arc::clone(run),
+                        run,
                         origin: *origin,
                         color,
                         decorations: *decorations,
@@ -1855,6 +1904,7 @@ impl EpaintBackend {
             warnings,
             last_used: self.frame,
             owner: Arc::downgrade(list),
+            pictures: pictures.into(),
         }
     }
 
@@ -2162,6 +2212,7 @@ impl RenderBackend for EpaintBackend {
         self.frame = snap.frame;
         self.encoded = snap.frame;
         self.shapes.begin_frame();
+        self.colors.begin_frame();
         let mut stats = EncodeStats::default();
         let mut warned_clips = FxHashSet::default();
         let shift = Affine::translate((
@@ -2589,6 +2640,7 @@ impl RenderBackend for EpaintBackend {
                 self.nodes.clear();
                 self.shapes.clear();
                 self.atlas.reset();
+                self.colors.clear();
                 self.textures.clear();
                 self.pages.sweep();
             }
