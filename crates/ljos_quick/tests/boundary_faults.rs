@@ -430,3 +430,56 @@ fn a_handler_of_the_content_that_ran_over_its_time_leaves_the_content_shown() {
 fn fault_name(e: &Engine, o: ObjectId) -> String {
     e.label_of(o).unwrap_or_default()
 }
+
+/// A boundary whose handler of `failed` gives it other content.
+const SWAPS: &str = r#"
+import QtQuick
+import Ljos
+Item {
+    id: root
+    property bool on: false
+    ErrorBoundary {
+        id: boundary
+        objectName: "boundary"
+        fallback: Text { objectName: "sorry" }
+        onFailedChanged: if (failed) content = root.other
+        Item {
+            objectName: "content"
+            property int size: root.on ? root.make().length : 0
+        }
+    }
+    property Component other: Component {
+        Item { objectName: "other"; property int size: 1 }
+    }
+    function make() {
+        const a = [];
+        for (let i = 0; i < 20000; i++) a.push({ i: i, s: "row " + i });
+        return a;
+    }
+    function litter(n) {
+        for (let i = 0; i < n; i++) { const a = { b: [i, i + 1, "x" + i] }; a.self = a }
+    }
+}
+"#;
+
+#[test]
+fn content_a_handler_gives_as_the_old_stops_for_want_of_heap_is_shown_not_the_fallback() {
+    let e = engine();
+    let clock = Arc::new(VirtualClock::new());
+    e.set_clock(Rc::new(clock.clone()));
+    compile(&e, &[("Main", SWAPS)]);
+    let root = e.create_from_url("Main", None, Vec::new()).unwrap();
+    let boundary = find(&e, root, "boundary");
+    e.invoke_by_name(root, "litter", &[Value::from(0.0)])
+        .unwrap();
+    assert!(e.collect_garbage());
+    let held = e.script_memory().unwrap().bytes;
+    assert!(e.set_script_heap_limit(Some(held + 64 * 1024)));
+    set(&e, root, "on", Value::Bool(true));
+    settle(&e, &clock, boundary);
+    assert!(e.set_script_heap_limit(None));
+    settle(&e, &clock, boundary);
+    assert_eq!(shown(&e, boundary), "other");
+    assert!(!get(&e, boundary, "failed").to_boolean());
+    assert_eq!(e.next_timer_deadline(), None, "nothing waits to be made");
+}

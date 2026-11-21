@@ -96,3 +96,40 @@ fn a_task_whose_start_ran_out_of_heap_fails_and_starts_again_once_there_is_room(
     assert_eq!(shown(&e, root), "done 10");
     assert_eq!(e.next_timer_deadline(), None, "nothing more to wait for");
 }
+
+#[test]
+fn a_task_whose_args_change_back_while_a_start_waits_never_starts_the_old_ones() {
+    let e = engine();
+    let clock = Arc::new(VirtualClock::new());
+    e.set_clock(Rc::new(clock.clone()));
+    compile(&e, &[("Main", MAIN)]);
+    let root = e.create_from_url("Main", None, Vec::new()).unwrap();
+    settle(&e, &clock);
+    assert_eq!(shown(&e, root), "done 42");
+    e.invoke_by_name(root, "litter", &[Value::from(0.0)])
+        .unwrap();
+    assert!(e.collect_garbage());
+    let held = e.script_memory().unwrap().bytes;
+    assert!(e.set_script_heap_limit(Some(held + 256)));
+    set(&e, root, "n", Value::from(5.0));
+    settle(&e, &clock);
+    assert!(shown(&e, root).starts_with("failed"), "{}", shown(&e, root));
+    e.take_warnings();
+
+    // Back to the args of the last run while [5] waits: those run, and
+    // [5] is not started later.
+    assert!(e.set_script_heap_limit(None));
+    set(&e, root, "n", Value::from(21.0));
+    settle(&e, &clock);
+    settle(&e, &clock);
+    assert_eq!(shown(&e, root), "done 42");
+    for _ in 0..10 {
+        let Some(due) = e.next_timer_deadline() else {
+            break;
+        };
+        clock.set(due);
+        settle(&e, &clock);
+        settle(&e, &clock);
+    }
+    assert_eq!(shown(&e, root), "done 42", "the old args never ran");
+}
