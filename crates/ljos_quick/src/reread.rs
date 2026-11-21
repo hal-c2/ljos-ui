@@ -59,7 +59,9 @@ impl Rereads {
     }
 
     /// The host reads the files no more: an ask from here on is answered
-    /// at once, as [`Reread::Unchanged`].
+    /// at once, as [`Reread::Unchanged`]. One it took goes with it, as the
+    /// host goes only with the application: a loader that asked tries its
+    /// source again at its next `reload()`.
     pub fn stop_serving(&self) {
         self.host.borrow_mut().take();
         self.asked.set(false);
