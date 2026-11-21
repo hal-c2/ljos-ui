@@ -620,3 +620,47 @@ fn a_held_request_is_dropped_once_the_method_has_changed_its_composition_since()
         &holds("ab", [2, 2], Some([1, 1]))
     ));
 }
+
+#[test]
+fn a_held_request_made_while_the_last_write_is_on_its_way_reaches_the_method() {
+    let mut writes = Writes::default();
+    let a = holds("a", [1, 1], None);
+    let b = holds("ab", [2, 2], None);
+    let c = holds("abc", [3, 3], None);
+    // The application writes "ab" over "a"; the platform holds "a" still.
+    let seen = writes.holds(a.clone());
+    assert!(!held_is_stale(Some(&a), &seen));
+    writes.wrote(&a, b.clone());
+    // It writes "abc" over "ab" before the platform got to "ab": the
+    // platform reporting "a" has not typed, it is behind.
+    let seen = writes.holds(a.clone());
+    assert_eq!(seen, b);
+    assert!(!held_is_stale(Some(&b), &seen));
+    writes.wrote(&a, c.clone());
+    // The platform got to "ab" but not yet "abc".
+    let d = holds("abcd", [4, 4], None);
+    let seen = writes.holds(b.clone());
+    assert_eq!(seen, c);
+    assert!(!held_is_stale(Some(&c), &seen));
+    writes.wrote(&b, d.clone());
+    // Both applied, then the method typed "e": a request made over "abcd"
+    // is stale, as before.
+    let typed = holds("abcde", [5, 5], None);
+    let seen = writes.holds(typed.clone());
+    assert_eq!(seen, typed);
+    assert!(held_is_stale(Some(&d), &seen));
+}
+
+#[test]
+fn a_method_that_typed_before_the_write_reached_it_still_drops_the_request() {
+    let mut writes = Writes::default();
+    let a = holds("a", [1, 1], None);
+    let b = holds("ab", [2, 2], None);
+    writes.wrote(&a, b.clone());
+    // The method typed "x" over "a" before the platform got to "ab".
+    let typed = holds("ax", [2, 2], None);
+    let seen = writes.holds(typed.clone());
+    assert_eq!(seen, typed);
+    assert!(held_is_stale(Some(&holds("abc", [3, 3], None)), &seen));
+    assert!(held_is_stale(Some(&b), &seen));
+}

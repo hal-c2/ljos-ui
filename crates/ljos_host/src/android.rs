@@ -118,6 +118,7 @@ impl<U: Send + 'static> Attach<U> {
             closed: false,
             finishing: false,
             dead_key: DeadKey::default(),
+            writes: crate::relay::Writes::default(),
         };
         while keeps_pumping(pump.destroyed, pump.closed, pump.finishing) {
             // Sleeps until the activity has something or a request wakes it.
@@ -267,6 +268,9 @@ struct Pump<'a, U: Send + 'static> {
     finishing: bool,
     /// The accent a dead key on a hardware keyboard left waiting.
     dead_key: DeadKey,
+    /// What was written to the method that the main thread may not have
+    /// applied yet.
+    writes: crate::relay::Writes,
 }
 
 impl<U: Send + 'static> Pump<'_, U> {
@@ -383,16 +387,20 @@ impl<U: Send + 'static> Pump<'_, U> {
                 );
             }
             Request::Held { now: held, over } => {
-                let holds = self.app.text_input_state();
-                let holds = HeldText {
-                    text: holds.text,
-                    anchor: holds.selection.start,
-                    cursor: holds.selection.end,
-                    compose: holds.compose_region.map(|c| c.start..c.end),
+                let reported = self.app.text_input_state();
+                let reported = HeldText {
+                    text: reported.text,
+                    anchor: reported.selection.start,
+                    cursor: reported.selection.end,
+                    compose: reported.compose_region.map(|c| c.start..c.end),
                 };
+                // A write of ours still on its way to the main thread is
+                // what the method is about to hold.
+                let holds = self.writes.holds(reported.clone());
                 if crate::relay::held_is_stale(over.as_ref(), &holds) {
                     return;
                 }
+                self.writes.wrote(&reported, held.clone());
                 let span = |r: &std::ops::Range<usize>| TextSpan {
                     start: r.start,
                     end: r.end,
@@ -401,7 +409,7 @@ impl<U: Send + 'static> Pump<'_, U> {
                 let unit = |n: usize| i32::try_from(n).unwrap_or(i32::MAX);
                 // The keyboard is told of a cursor that moved, but must
                 // read text that changed anew.
-                let replaced = self.app.text_input_state().text != held.text;
+                let replaced = holds.text != held.text;
                 let told = ActivityCall::InputStateChanged {
                     selection: [unit(held.anchor), unit(held.cursor)],
                     compose: compose.map_or([-1, -1], |c| [unit(c.start), unit(c.end)]),

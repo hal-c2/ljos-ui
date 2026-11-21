@@ -143,6 +143,55 @@ pub fn held_is_stale(over: Option<&crate::HeldText>, holds: &crate::HeldText) ->
     })
 }
 
+/// What this side wrote to the platform's method and the platform may not
+/// hold yet. A platform that applies a write later, on its own thread
+/// (Android's GameActivity queues it for the main thread), reports the
+/// older state until then; compared with that, a second write made
+/// meanwhile would look stale (see [`held_is_stale`]) and be dropped, and
+/// the method would keep the older text with nothing to tell it again.
+#[derive(Debug, Default)]
+pub struct Writes {
+    /// What the platform held when the oldest write still pending was made.
+    before: Option<crate::HeldText>,
+    /// The writes the platform has not reported holding, oldest first.
+    pending: std::collections::VecDeque<crate::HeldText>,
+}
+
+/// Writes kept pending at most: the platform applies each within a turn of
+/// its main thread, so more are a platform that has stopped applying them,
+/// and the oldest is let go.
+const PENDING_WRITES: usize = 16;
+
+impl Writes {
+    /// What a [`Request::Held`] is to take the method to hold now that the
+    /// platform reports it `holds` this: the newest write while the report
+    /// is the state before the writes or one of them, which the platform
+    /// has yet to get past; otherwise the report itself, the method having
+    /// changed it after the writes.
+    pub fn holds(&mut self, holds: crate::HeldText) -> crate::HeldText {
+        let same = |a: &crate::HeldText, b: &crate::HeldText| !held_is_stale(Some(a), b);
+        if let Some(applied) = self.pending.iter().rposition(|w| same(w, &holds)) {
+            self.pending.drain(..=applied);
+            self.before = Some(holds.clone());
+        } else if !self.before.as_ref().is_some_and(|b| same(b, &holds)) {
+            self.before = None;
+            self.pending.clear();
+        }
+        self.pending.back().cloned().unwrap_or(holds)
+    }
+
+    /// The platform was told to hold `now` while it reported `holds`.
+    pub fn wrote(&mut self, holds: &crate::HeldText, now: crate::HeldText) {
+        if self.pending.is_empty() {
+            self.before = Some(holds.clone());
+        }
+        if self.pending.len() == PENDING_WRITES {
+            self.before = self.pending.pop_front();
+        }
+        self.pending.push_back(now);
+    }
+}
+
 enum Msg<S, U> {
     Arrival(Arrival<S>),
     User(U),
