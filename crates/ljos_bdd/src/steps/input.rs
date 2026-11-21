@@ -433,7 +433,9 @@ fn input_method_told_widths(w: &mut LjosWorld) -> StepResult {
 }
 
 // Characters of both directions side by side: each box is its own
-// character's, not the stretch between two cursor positions.
+// character's, not the stretch between two cursor positions. Each unit is
+// held apart from every other, two in one box as well: for text whose
+// characters are a unit each.
 #[then("the input method is told no two composed characters overlap")]
 fn input_method_told_apart(w: &mut LjosWorld) -> StepResult {
     geometry(w, |g| {
@@ -443,10 +445,9 @@ fn input_method_told_apart(w: &mut LjosWorld) -> StepResult {
         }
         for (i, a) in rects.iter().enumerate() {
             for (j, b) in rects.iter().enumerate().skip(i + 1) {
-                let same = a.iter().zip(b).all(|(p, q)| (p - q).abs() < 1e-3);
                 let across = a[0] < b[0] + b[2] - 1e-3 && b[0] < a[0] + a[2] - 1e-3;
                 let down = a[1] < b[1] + b[3] - 1e-3 && b[1] < a[1] + a[3] - 1e-3;
-                if !same && across && down {
+                if across && down {
                     return Err(format!(
                         "the input method is told composed units {i} and {j} overlap: {a:?} and {b:?}"
                     ));

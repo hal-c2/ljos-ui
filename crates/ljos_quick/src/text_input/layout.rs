@@ -607,8 +607,8 @@ pub(crate) fn relayout(
 }
 
 /// Each UTF-16 unit of what an input method is composing, in the item's
-/// coordinates as the cursor rectangle has them: its character's own box
-/// on its line (right to left or not, before a wrap or not), as tall as
+/// coordinates as the cursor rectangle has them: the box of its
+/// character's cluster on its line (right to left or not, before a wrap or not), as tall as
 /// the line. A character outside the Basic Multilingual Plane gives both
 /// its units its box. Nothing while nothing is composed or shown.
 pub(crate) fn preedit_rects(st: &SharedState) -> Vec<kurbo::Rect> {
@@ -625,10 +625,15 @@ pub(crate) fn preedit_rects(st: &SharedState) -> Vec<kurbo::Rect> {
     for c in composed.chars() {
         let end = at + c.len_utf8();
         let line_x = |line: usize| s.geo.line_x.get(line).copied().unwrap_or(0.0);
-        // The character's cluster, where the layout shows it. A character
-        // that shares a cluster with others (a ligature) or is a line
-        // break has none of its own: where the cursor stands before it.
-        let r = match layout.range_rects(at..end).first() {
+        // The character's cluster, where the layout shows it: a mark on
+        // its letter, or a letter of a ligature, has the cluster it is
+        // part of. A line break has none: where the cursor stands before it.
+        let cluster = layout.lines[layout.line_of(at)]
+            .clusters
+            .iter()
+            .find(|c| c.range.contains(&at))
+            .map_or(at..end, |c| c.range.start.min(at)..c.range.end.max(end));
+        let r = match layout.range_rects(cluster).first() {
             Some(&(line, r)) => r + kurbo::Vec2::new(line_x(line), s.geo.top),
             None => {
                 let a = layout.caret(at);
