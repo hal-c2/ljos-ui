@@ -2890,8 +2890,8 @@ impl JsHost {
     fn hold_to_share(&self) {
         let cap = self.heap_cap();
         self.peak.set_cap(cap);
-        if let Some(cap) = cap {
-            self.peak.collect_before(cap);
+        if let (Some(cap), Some(limit)) = (cap, self.memory_limit.get()) {
+            self.peak.collect_before(cap, limit);
         }
     }
 
@@ -2912,7 +2912,9 @@ impl JsHost {
         // What grew the heap is cleared with it.
         let most = self.pressure.borrow().most();
         self.state.let_go.set(false);
+        let before = self.peak.held();
         self.rt.run_gc();
+        self.peak.collected(before);
         self.collected.set(self.objects.get());
         self.last_collect.set(self.heap_bytes());
         self.collections.set(self.collections.get() + 1);

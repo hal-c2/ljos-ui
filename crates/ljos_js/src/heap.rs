@@ -62,6 +62,30 @@ pub(crate) struct MallocPeak {
     rt: *mut rquickjs::qjs::JSRuntime,
     /// `JS_NullErrorCount` as the run began.
     nulls_from: Cell<u64>,
+    ahead: Ahead,
+}
+
+/// What bringing the collector's threshold down led to, for
+/// [`MallocPeak::collect_before`].
+#[derive(Default)]
+struct Ahead {
+    /// QuickJS's collections as last looked at.
+    seen: Cell<Triggered>,
+    /// The threshold is down, and no collection of QuickJS's ran since:
+    /// what that one has to free to have paid, and how often it has not.
+    lowered: Cell<Option<(usize, u32)>>,
+    /// The last collection it led to freed less than that.
+    futile: Cell<Option<Futile>>,
+}
+
+#[derive(Clone, Copy)]
+struct Futile {
+    /// What was held as the dispatch after it began.
+    held: usize,
+    /// A change of this much is another heap: one to try again on.
+    step: usize,
+    /// How many in a row were futile: each halves the margin before the cap.
+    times: u32,
 }
 
 /// The most the runtime held in a run, in the units QuickJS checks its
@@ -75,7 +99,13 @@ impl MallocPeak {
     ///
     /// `rt` is a live runtime, and outlives what this is handed to.
     pub(crate) unsafe fn of(rt: *mut rquickjs::qjs::JSRuntime) -> Self {
-        Self(rt)
+        // SAFETY: a live runtime (the caller's promise).
+        let nulls_from = Cell::new(unsafe { JS_NullErrorCount(rt) });
+        Self {
+            rt,
+            nulls_from,
+            ahead: Ahead::default(),
+        }
     }
 
     /// Starts the high-water mark again from what is held now; a host
@@ -113,20 +143,90 @@ impl MallocPeak {
     }
 
     /// Sees that the collector runs before the run is refused room at
-    /// `cap`; called with [`MallocPeak::set_cap`], as a run begins.
-    /// QuickJS sets its next collection from what lived at the last one,
-    /// and only then: once the heap shrank, or near the limit, that can be
-    /// past the cap, and garbage in cycles would be told as the heap running
-    /// out. It is only ever brought down, and to the last eighth of the
-    /// share: lower, a run that comes near the same height each time would
-    /// collect each time.
-    pub(crate) fn collect_before(&self, cap: usize) {
-        let last = cap - cap.saturating_sub(self.get()) / 8;
+    /// `cap`, under `limit`; called with [`MallocPeak::set_cap`], as a run
+    /// begins. QuickJS sets its next collection from what lived at the last
+    /// one, and only then: once the heap shrank, or near the limit, that can
+    /// be past the cap, and garbage in cycles would be told as the heap
+    /// running out. It is only ever brought down, and to the last eighth of
+    /// the share: lower, a run that comes near the same height each time
+    /// would collect each time.
+    ///
+    /// That is for garbage. Each time the collection it led to frees less
+    /// than the margin, the margin before the cap is halved, and under a
+    /// 64th of the limit, as close as QuickJS sets its own, the threshold
+    /// is left to QuickJS: a heap full of what lives is not walked again by
+    /// each dispatch that comes near its share. It starts over when a
+    /// collection frees a margin, the host's or QuickJS's, or what is held
+    /// moved by one. So garbage in cycles that a dispatch makes after that
+    /// can be refused room once: the host collects after it, which starts
+    /// over.
+    pub(crate) fn collect_before(&self, cap: usize, limit: usize) {
+        let held = self.get();
+        let eighth = cap.saturating_sub(held) / 8;
+        self.settle(held, eighth);
+        let futile = self.ahead.futile.get();
+        let times = match futile {
+            Some(f) if held.abs_diff(f.held) < f.step => f.times,
+            Some(_) => {
+                self.ahead.futile.set(None);
+                0
+            }
+            None => 0,
+        };
+        let margin = eighth.checked_shr(times).unwrap_or(0);
+        if times > 0 && margin < limit >> 6 {
+            return;
+        }
+        let last = cap - margin;
         // SAFETY: a live runtime (`of`); both only read or write a field.
         unsafe {
             if rquickjs::qjs::JS_GetGCThreshold(self.rt) as usize > last {
                 rquickjs::qjs::JS_SetGCThreshold(self.rt, last as _);
+                self.ahead.lowered.set(Some((margin, times)));
             }
+        }
+    }
+
+    /// Judges what QuickJS collected since this was last asked: `held` is
+    /// what is held now, and `step` an eighth of the share there.
+    fn settle(&self, held: usize, step: usize) {
+        let now = self.triggered();
+        let seen = self.ahead.seen.replace(now);
+        if now.runs == seen.runs {
+            return;
+        }
+        // A count of the runtime's whole life: on 32 bits it can wrap.
+        let freed = now.freed.wrapping_sub(seen.freed);
+        let lowered = self.ahead.lowered.take();
+        let paid = lowered.map_or(step, |(margin, _)| margin).max(1);
+        if freed >= paid {
+            self.ahead.futile.set(None);
+        } else if let Some((_, times)) = lowered {
+            self.ahead.futile.set(Some(Futile {
+                held,
+                step: step.max(1),
+                times: times + 1,
+            }));
+        }
+    }
+
+    /// Starts collecting ahead over when the host's own collection, from
+    /// `before` held, found garbage to free.
+    pub(crate) fn collected(&self, before: usize) {
+        let freed = before.saturating_sub(self.held());
+        if self.ahead.futile.get().is_some_and(|f| freed >= f.step) {
+            self.ahead.futile.set(None);
+        }
+    }
+
+    /// What is held now, in the limit's units, leaving the mark as it was.
+    pub(crate) fn held(&self) -> usize {
+        // SAFETY: a live runtime (`of`); the mark taken is put back.
+        unsafe {
+            let peak = JS_MarkMallocPeak(self.rt);
+            let held = JS_ResumeMallocPeak(self.rt, 0);
+            JS_ResumeMallocPeak(self.rt, peak);
+            held
         }
     }
 
