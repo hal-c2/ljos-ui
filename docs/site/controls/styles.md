@@ -32,7 +32,7 @@ Each style brings its own default control sizes:
 - **Fusion**: `Button` is `80 × 24` with `padding: 4`
 - **Material**: `Button` is `64 × 52` and `TextField` is `120 × 56`
 - **Universal**: `Button` is `32 × 32`
-- **macOS**: `Button` is `64 × 21`, a small rounded rectangle; a flat button has no plate until held down, which is the shape of a toolbar item
+- **macOS**: `Button` is `64 × 21` empty or with a short one-line label, and grows with larger content; it is a small rounded rectangle, and a flat button has no plate until held down, checked or highlighted, which is the shape of a toolbar item
 
 ## Material and Universal attached properties
 
