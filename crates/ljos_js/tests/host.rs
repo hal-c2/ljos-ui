@@ -1274,6 +1274,64 @@ fn a_dispatch_shares_the_room_under_a_limit_set_later() {
     assert_eq!(big.unwrap(), (20 * 1024 * 1024) as f64);
 }
 
+/// QuickJS keeps an arena while one block in it lives, so what it took
+/// from the system can be past the limit with room left under it. A
+/// dispatch and a job still get their share of that room, and no more of
+/// it for finding the blocks they need free in arenas already taken.
+#[test]
+fn a_fragmented_heap_shares_the_room_the_limit_leaves() {
+    let host = small(32);
+    let slice = Slice {
+        soft: Duration::from_secs(5),
+        hard: Duration::from_secs(10),
+    };
+    host.enter("fragment", slice, |s| {
+        s.eval::<(), _>(
+            "globalThis.kept = []; \
+             (() => { \
+                 const all = []; \
+                 for (let i = 0; i < 40000; i++) all.push({ i }); \
+                 for (let i = 0; i < all.length; i += 40) kept.push(all[i]); \
+             })()",
+        )
+    })
+    .unwrap();
+    host.collect_now();
+    let live = host.memory_stats().unwrap().malloc_size;
+    let limit = live + MIB / 2;
+    let taken = host.heap_bytes();
+    assert!(taken > limit, "not fragmented: {taken} taken, {live} live");
+    assert!(host.set_memory_limit(Some(limit)));
+    let run = host.enter("run", slice, |s| {
+        s.eval::<f64, _>("'x'.repeat(128 * 1024).length")
+    });
+    assert_eq!(run.unwrap(), (128 * 1024) as f64);
+    host.enter("queue", slice, |s| {
+        s.eval::<(), _>(
+            "globalThis.made = 0; \
+             Promise.resolve().then(() => { made = 'x'.repeat(128 * 1024).length })",
+        )
+    })
+    .unwrap();
+    let pumped = host.pump_jobs(Instant::now() + Duration::from_secs(5));
+    assert!(pumped.faults.is_empty(), "{:?}", pumped.faults);
+    assert_eq!(eval_num(&host, "made").unwrap(), (128 * 1024) as f64);
+    host.collect_now();
+    let before = host.memory_stats().unwrap().malloc_size;
+    let err = host
+        .enter("refill", slice, |s| {
+            s.eval::<(), _>("for (let i = 0; ; i++) kept.push({ i })")
+        })
+        .unwrap_err();
+    assert!(matches!(err, JsFault::JsOutOfMemory { .. }), "{err:?}");
+    let held = host.memory_stats().unwrap().malloc_size;
+    let room = limit - before;
+    assert!(
+        held <= before + room / 8 * 7,
+        "{held} held of {limit}, from {before}"
+    );
+}
+
 #[test]
 fn an_error_thrown_after_a_caught_refusal_is_the_scripts_own() {
     let host = JsHost::new(JsConfig {

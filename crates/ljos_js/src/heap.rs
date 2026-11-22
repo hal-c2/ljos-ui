@@ -1,5 +1,5 @@
 //! The runtime's allocator: the system's, as QuickJS's own default, but
-//! counting what it holds, and holding a dispatch to its share of it.
+//! counting what it holds.
 //!
 //! QuickJS keeps that count too, but reads it out only with
 //! `JS_ComputeMemoryUsage`, which walks every object, shape and atom. Asked
@@ -15,71 +15,19 @@ use rquickjs::allocator::Allocator;
 /// checked against: a block freed in an arena still in use is still held
 /// here ([`MallocPeak`] is in the limit's units).
 #[derive(Debug, Clone, Default)]
-pub(crate) struct HeapCount(Rc<Count>);
-
-#[derive(Debug, Default)]
-struct Count {
-    bytes: Cell<usize>,
-    /// The most the heap may grow to while the dispatch running now runs
-    /// (`JsConfig::dispatch_heap_share`). Held here and not in the
-    /// interrupt handler: QuickJS asks that only every 10k opcodes, and a
-    /// loop that allocates as it goes is past any share by then.
-    cap: Cell<Option<usize>>,
-    /// Room was refused for being past the cap.
-    over_share: Cell<bool>,
-}
+pub(crate) struct HeapCount(Rc<Cell<usize>>);
 
 impl HeapCount {
     pub(crate) fn bytes(&self) -> usize {
-        self.0.bytes.get()
-    }
-
-    pub(crate) fn set_cap(&self, cap: Option<usize>) {
-        self.0.cap.set(cap);
-    }
-
-    /// Whether room was refused for being past the cap since it was last
-    /// cleared ([`HeapCount::clear_over_share`]).
-    pub(crate) fn over_share(&self) -> bool {
-        self.0.over_share.get()
-    }
-
-    /// Forgets a refusal: done where a dispatch, a job or a nested run
-    /// begins, and where a dispatch or a job ends.
-    pub(crate) fn clear_over_share(&self) {
-        self.0.over_share.set(false);
-    }
-
-    /// Ends a nested run: the run around it was refused room if it was
-    /// before the nested run began, or if the nested run was, since that
-    /// ran inside it. So a nested run that fails for its own reason leaves
-    /// the run around it knowing it was refused, and is judged by its own
-    /// refusals only.
-    pub(crate) fn resume_over_share(&self, outer: bool) {
-        self.0.over_share.set(outer || self.over_share());
-    }
-
-    /// Whether growing by `more` bytes would pass the cap; noted if so.
-    /// QuickJS takes a refusal as the heap running out, as it does at its
-    /// own limit.
-    fn refuses(&self, more: usize) -> bool {
-        let over = self
-            .0
-            .cap
-            .get()
-            .is_some_and(|cap| self.bytes().saturating_add(more) > cap);
-        if over {
-            self.0.over_share.set(true);
-        }
-        over
+        self.0.get()
     }
 
     fn add(&self, bytes: usize) {
-        self.0.bytes.set(self.bytes().saturating_add(bytes));
+        self.0.set(self.bytes().saturating_add(bytes));
     }
 
     fn sub(&self, bytes: usize) {
-        self.0.bytes.set(self.bytes().saturating_sub(bytes));
+        self.0.set(self.bytes().saturating_sub(bytes));
     }
 }
 
@@ -88,15 +36,22 @@ unsafe extern "C" {
     fn JS_MarkMallocPeak(rt: *mut rquickjs::qjs::JSRuntime) -> usize;
     fn JS_ResumeMallocPeak(rt: *mut rquickjs::qjs::JSRuntime, outer: usize) -> usize;
     fn JS_GCObjectDigest(rt: *mut rquickjs::qjs::JSRuntime) -> u64;
-    fn JS_IsOOMError(ctx: *mut rquickjs::qjs::JSContext, val: rquickjs::qjs::JSValue) -> bool;
+    fn JS_NullErrorCount(rt: *mut rquickjs::qjs::JSRuntime) -> u64;
+    fn JS_SetMallocCap(rt: *mut rquickjs::qjs::JSRuntime, cap: usize);
+    fn JS_MallocCapRefused(rt: *mut rquickjs::qjs::JSRuntime) -> bool;
+    fn JS_SetMallocCapRefused(rt: *mut rquickjs::qjs::JSRuntime, refused: bool);
 }
 
-/// Whether `thrown` is the error QuickJS throws when the heap has no room
-/// for one. Allocates nothing and runs no script.
-pub(crate) fn is_oom_error(thrown: &rquickjs::Value<'_>) -> bool {
-    // SAFETY: the value and its context are live while `thrown` is
-    // borrowed; the call compares pointers only.
-    unsafe { JS_IsOOMError(thrown.ctx().as_raw().as_ptr(), thrown.as_raw()) }
+/// What the runtime went through in a run: the most it held, in the
+/// units QuickJS checks its limit in (`malloc_size`, block by block),
+/// whether it was refused room past its share, and whether QuickJS threw
+/// `null` for want of room to make an error. A
+/// script can throw `null` itself, on a heap as full as it likes: only the
+/// second tells the two apart.
+pub(crate) struct MallocPeak {
+    rt: *mut rquickjs::qjs::JSRuntime,
+    /// `JS_NullErrorCount` as the run began.
+    nulls_from: Cell<u64>,
 }
 
 /// The most the runtime held in a run, in the units QuickJS checks its
@@ -132,7 +87,52 @@ impl MallocPeak {
     /// The most held since the last [`MallocPeak::mark`].
     pub(crate) fn get(&self) -> usize {
         // SAFETY: a live runtime (`of`); 0 is never above a mark.
-        unsafe { JS_ResumeMallocPeak(self.0, 0) }
+        unsafe { JS_ResumeMallocPeak(self.rt, 0) }
+    }
+
+    /// Holds the run to `cap` (`JsConfig::dispatch_heap_share`), which is
+    /// in the limit's units, so it is QuickJS's allocators that refuse:
+    /// [`Counted`] sees whole arenas, and nothing of the blocks reused in
+    /// them. Not the interrupt handler either: QuickJS asks that only
+    /// every 10k opcodes, and a loop that allocates as it goes is past any
+    /// share by then.
+    pub(crate) fn set_cap(&self, cap: Option<usize>) {
+        // SAFETY: a live runtime (`of`); a runtime always holds something,
+        // so a cap is never the 0 that means none.
+        unsafe { JS_SetMallocCap(self.rt, cap.unwrap_or(0)) };
+    }
+
+    /// Whether room was refused for being past the cap since it was last
+    /// cleared ([`MallocPeak::clear_over_share`]).
+    pub(crate) fn over_share(&self) -> bool {
+        // SAFETY: a live runtime (`of`).
+        unsafe { JS_MallocCapRefused(self.rt) }
+    }
+
+    /// Forgets a refusal: done where a dispatch, a job or a nested run
+    /// begins, and where a dispatch or a job ends.
+    pub(crate) fn clear_over_share(&self) {
+        // SAFETY: a live runtime (`of`).
+        unsafe { JS_SetMallocCapRefused(self.rt, false) };
+    }
+
+    /// Ends a nested run: the run around it was refused room if it was
+    /// before the nested run began, or if the nested run was, since that
+    /// ran inside it. So a nested run that fails for its own reason leaves
+    /// the run around it knowing it was refused, and is judged by its own
+    /// refusals only.
+    pub(crate) fn resume_over_share(&self, outer: bool) {
+        let refused = outer || self.over_share();
+        // SAFETY: a live runtime (`of`).
+        unsafe { JS_SetMallocCapRefused(self.rt, refused) };
+    }
+
+    /// Whether QuickJS threw `null` since the last [`MallocPeak::mark`]
+    /// because it had no room to make the error it meant to throw.
+    pub(crate) fn ran_out(&self) -> bool {
+        // SAFETY: a live runtime (`of`).
+        let now = unsafe { JS_NullErrorCount(self.rt) };
+        now != self.nulls_from.get()
     }
 }
 
@@ -205,9 +205,6 @@ mod system {
 #[cfg(any(target_os = "linux", target_os = "android", target_vendor = "apple"))]
 unsafe impl Allocator for Counted {
     fn alloc(&mut self, size: usize) -> *mut u8 {
-        if self.count.refuses(size) {
-            return std::ptr::null_mut();
-        }
         // SAFETY: plain malloc; a null result is passed on.
         let ptr = unsafe { system::malloc(size) }.cast::<u8>();
         if !ptr.is_null() {
@@ -218,9 +215,6 @@ unsafe impl Allocator for Counted {
     }
 
     fn calloc(&mut self, count: usize, size: usize) -> *mut u8 {
-        if self.count.refuses(count.saturating_mul(size)) {
-            return std::ptr::null_mut();
-        }
         // SAFETY: plain calloc, which checks the product itself.
         let ptr = unsafe { system::calloc(count, size) }.cast::<u8>();
         if !ptr.is_null() {
@@ -244,11 +238,6 @@ unsafe impl Allocator for Counted {
             // SAFETY: a live allocation of ours (caller's contract).
             unsafe { system::usable(ptr) }
         };
-        // A shrink gives memory back, so it is never refused, even with the
-        // count past the cap (the allocator rounds up what it records).
-        if new_size > old && self.count.refuses(new_size - old) {
-            return std::ptr::null_mut();
-        }
         // SAFETY: as above.
         let moved = unsafe { system::realloc(ptr.cast(), new_size) }.cast::<u8>();
         if !moved.is_null() {
@@ -274,9 +263,6 @@ unsafe impl Allocator for Counted {
 #[cfg(not(any(target_os = "linux", target_os = "android", target_vendor = "apple")))]
 unsafe impl Allocator for Counted {
     fn alloc(&mut self, size: usize) -> *mut u8 {
-        if self.count.refuses(size) {
-            return std::ptr::null_mut();
-        }
         let ptr = rquickjs::allocator::RustAllocator.alloc(size);
         if !ptr.is_null() {
             // SAFETY: just allocated.
@@ -286,9 +272,6 @@ unsafe impl Allocator for Counted {
     }
 
     fn calloc(&mut self, count: usize, size: usize) -> *mut u8 {
-        if self.count.refuses(count.saturating_mul(size)) {
-            return std::ptr::null_mut();
-        }
         let ptr = rquickjs::allocator::RustAllocator.calloc(count, size);
         if !ptr.is_null() {
             // SAFETY: just allocated.
@@ -310,10 +293,6 @@ unsafe impl Allocator for Counted {
         }
         // SAFETY: a live allocation of ours (caller's contract).
         let old = unsafe { Self::usable_size(ptr) };
-        // A shrink is never refused, as above.
-        if new_size > old && self.count.refuses(new_size - old) {
-            return std::ptr::null_mut();
-        }
         // SAFETY: as above.
         let moved = unsafe { rquickjs::allocator::RustAllocator.realloc(ptr, new_size) };
         if !moved.is_null() {
@@ -334,20 +313,28 @@ unsafe impl Allocator for Counted {
 mod tests {
     use super::*;
 
-    /// The allocator's rounding can leave the count past a cap set just
+    /// The allocator's rounding can leave the heap past a cap set just
     /// above what was asked for: giving memory back must still work then.
     #[test]
     fn a_block_shrinks_when_the_heap_is_past_its_cap() {
-        let count = HeapCount::default();
-        let mut heap = Counted::new(count.clone());
-        let block = heap.alloc(4096);
-        assert!(!block.is_null());
-        count.set_cap(Some(count.bytes() - 1));
-        // SAFETY: `block` is a live allocation of `heap`'s.
-        let smaller = unsafe { heap.realloc(block, 1024) };
-        assert!(!smaller.is_null(), "a shrink past the cap was refused");
-        assert!(!count.over_share(), "a shrink is not a refusal");
-        // SAFETY: as above.
-        unsafe { heap.dealloc(smaller) };
+        use rquickjs::qjs;
+        // SAFETY: a runtime of the test's own, used here only and freed
+        // last, after the one block taken from it.
+        unsafe {
+            let rt = qjs::JS_NewRuntime();
+            assert!(!rt.is_null());
+            let heap = MallocPeak::of(rt);
+            let block = qjs::js_malloc_rt(rt, 4096);
+            assert!(!block.is_null());
+            heap.set_cap(Some(1));
+            assert!(qjs::js_malloc_rt(rt, 16).is_null(), "room past the cap");
+            assert!(heap.over_share());
+            heap.clear_over_share();
+            let smaller = qjs::js_realloc_rt(rt, block, 1024);
+            assert!(!smaller.is_null(), "a shrink past the cap was refused");
+            assert!(!heap.over_share(), "a shrink is not a refusal");
+            qjs::js_free_rt(rt, smaller);
+            qjs::JS_FreeRuntime(rt);
+        }
     }
 }
