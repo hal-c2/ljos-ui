@@ -512,6 +512,15 @@ Item {
 
 /// [`snug`] with another shell as the source.
 fn snug_as(source: &str) -> (Engine, Arc<VirtualClock>, ObjectId, ObjectId, ObjectId) {
+    snug_in(source, SNUG_MAIN, FULL)
+}
+
+/// [`snug_as`] in another app, with another fallback as `Full`.
+fn snug_in(
+    source: &str,
+    main: &str,
+    full: &str,
+) -> (Engine, Arc<VirtualClock>, ObjectId, ObjectId, ObjectId) {
     let farewell = SNUG.replace(
         "    Component.onCompleted: {",
         "    Component.onDestruction: root.made += 0\n    Component.onCompleted: {",
@@ -523,8 +532,8 @@ fn snug_as(source: &str) -> (Engine, Arc<VirtualClock>, ObjectId, ObjectId, Obje
     compile(
         &e,
         &[
-            ("Main", SNUG_MAIN),
-            ("Full", FULL),
+            ("Main", main),
+            ("Full", full),
             ("Snug", SNUG),
             ("Other", SNUG),
             ("Light", LIGHT),
@@ -801,4 +810,78 @@ fn a_source_with_room_as_a_hold_ends_is_still_shown_at_once() {
     assert_eq!(status(&e, loader), 1, "{}", error(&e, loader));
     assert_eq!(shown(&e, loader), "light");
     assert_eq!(error(&e, loader), "");
+}
+
+/// Where a handler sets `source` as a load ends a hold, so that the load of
+/// that one finds no hold to end.
+#[derive(Clone, Copy, Debug)]
+enum Chooses {
+    /// The held fallback, as it hears it goes.
+    Fallback,
+    /// The app, as the held shell is no longer the loader's item.
+    ItemChanged,
+}
+
+/// [`snug`] whose app sets `source` to `next` from `by`.
+fn chosen_as_let_go(by: Chooses) -> (Engine, Arc<VirtualClock>, ObjectId, ObjectId, ObjectId) {
+    let mut main = SNUG_MAIN.replace(
+        "    property int made: 0\n",
+        "    property int made: 0\n    property string next\n",
+    );
+    let mut full = FULL.to_owned();
+    match by {
+        Chooses::Fallback => {
+            full = full.replace(
+                "    Component.onCompleted: {",
+                "    Component.onDestruction: if (root.next) root.source = root.next\n    \
+                 Component.onCompleted: {",
+            );
+        }
+        Chooses::ItemChanged => {
+            main = main.replace(
+                "        fallback: root.fallback\n",
+                "        fallback: root.fallback\n        \
+                 onItemChanged: if (!item && root.next) root.source = root.next\n",
+            );
+        }
+    }
+    snug_in("Snug", &main, &full)
+}
+
+#[test]
+fn a_source_chosen_as_the_held_one_is_let_go_is_tried_with_its_room() {
+    for by in [Chooses::Fallback, Chooses::ItemChanged] {
+        // Let go for another fallback, and for another source.
+        for change in ["fallback", "source"] {
+            let case = format!("{by:?}, {change}");
+            let (e, clock, root, loader, fallback) = chosen_as_let_go(by);
+            e.invoke_by_name(loader, "reload", &[]).unwrap();
+            assert_eq!(status(&e, loader), 1, "{case}: {}", error(&e, loader));
+            set(&e, root, "next", Value::from("Wide"));
+            set(&e, root, change, Value::from("Light"));
+            assert_eq!(status(&e, loader), 3, "{case}: Error until the one try");
+            assert_eq!(shown(&e, loader), "", "{case}: no fallback is made yet");
+            deleted_and_tried(&e, &clock, loader, fallback);
+            assert_eq!(status(&e, loader), 1, "{case}: {}", error(&e, loader));
+            assert_eq!(shown(&e, loader), "wide", "{case}");
+            assert_eq!(error(&e, loader), "", "{case}");
+            assert_eq!(e.next_timer_deadline(), None, "{case}");
+        }
+    }
+}
+
+#[test]
+fn a_shell_dropped_by_a_source_its_held_one_chose_works_out_nothing_it_owed() {
+    let (e, clock, root, loader, fallback) = chosen_as_let_go(Chooses::Fallback);
+    e.invoke_by_name(loader, "reload", &[]).unwrap();
+    set(&e, root, "next", Value::from("Light"));
+    let before = out_of_memory(&e);
+    // The load this sets off ends the hold, and the one nested in it drops
+    // the shell.
+    set(&e, root, "fallback", Value::from("Other"));
+    assert_eq!(shown(&e, loader), "light", "{}", error(&e, loader));
+    assert_eq!(out_of_memory(&e), before, "{:?}", e.faults());
+    turn(&e, &clock, loader, fallback);
+    assert!(!e.is_alive(fallback));
+    assert_eq!(status(&e, loader), 1, "{}", error(&e, loader));
 }
