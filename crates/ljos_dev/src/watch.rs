@@ -116,6 +116,7 @@ enum Cmd {
     /// A followed data file, and how far its save is.
     DataFile(PathBuf, Save),
     Rescan,
+    /// Only a wake: the flushes asked are counted in [`Asked`].
     Flush,
     Ack(u64),
     Reject(u64),
@@ -137,9 +138,21 @@ enum Save {
 /// A running watcher. Dropping it stops the thread.
 pub struct Watcher {
     tx: SyncSender<Cmd>,
+    asked: Arc<Mutex<Asked>>,
     thread: Option<JoinHandle<()>>,
     wakes: Arc<AtomicU64>,
     follower: Follower,
+}
+
+/// The flushes asked of the watcher's thread that it has not taken yet.
+/// They are counted here, not queued, so asking never waits on a full
+/// queue, and the thread's end still answers each one it never got to.
+#[derive(Default)]
+struct Asked {
+    flushes: usize,
+    /// The thread ended: whatever it did not take, it answered as it
+    /// ended, if anyone could be answered.
+    closed: bool,
 }
 
 /// Has data files watched, from the application's thread: see
@@ -361,7 +374,10 @@ impl Watcher {
             watching: Arc::downgrade(&watching),
             followed: followed.clone(),
         };
+        let asked = Arc::new(Mutex::new(Asked::default()));
         let mut run = Run {
+            rx,
+            asked: asked.clone(),
             reloader,
             sink: Box::new(sink),
             watching,
@@ -375,20 +391,15 @@ impl Watcher {
             saved: None,
             in_flight: None,
             flushing: false,
-            answering: false,
+            answering: 0,
         };
         let thread = std::thread::Builder::new()
             .name("ljos-dev-watcher".to_owned())
-            .spawn(move || {
-                run.run(&rx);
-                // The commands go first: once whoever the sink tells
-                // sees it dropped, a flush already finds nobody to take it.
-                drop(rx);
-                drop(run);
-            })
+            .spawn(move || run.run())
             .map_err(WatchError::Thread)?;
         Ok(Self {
             tx,
+            asked,
             thread: Some(thread),
             wakes,
             follower,
@@ -418,9 +429,35 @@ impl Watcher {
     /// asker is always answered, even when no file changed. False when the
     /// watcher's thread has ended (its sink was closed, or a build
     /// panicked): nothing will answer, and the asker has to say so itself.
+    /// It never waits on the watcher: a flush asked while the thread is
+    /// busy is taken when the thread gets to it, and answered that it
+    /// failed should the thread panic before then.
     #[must_use = "a watcher that has stopped never answers the flush"]
     pub fn flush(&self) -> bool {
-        self.tx.send(Cmd::Flush).is_ok()
+        {
+            let mut asked = lock(&self.asked);
+            if asked.closed {
+                return false;
+            }
+            asked.flushes += 1;
+        }
+        match self.tx.try_send(Cmd::Flush) {
+            // A full queue wakes the thread already, and it takes the
+            // count after each command.
+            Ok(()) | Err(TrySendError::Full(_)) => true,
+            // The thread closed the count before its queue: this flush
+            // was counted as it ended, and answered if it panicked.
+            Err(TrySendError::Disconnected(_)) => {
+                let mut asked = lock(&self.asked);
+                if asked.flushes > 0 {
+                    // It ended as asked to, or with nobody to tell.
+                    asked.flushes -= 1;
+                    false
+                } else {
+                    true
+                }
+            }
+        }
     }
 
     /// Whether the watcher's thread still runs: one that ended answers no
@@ -526,6 +563,10 @@ struct Watching {
 }
 
 struct Run<O> {
+    /// Dropped before the sink: once whoever the sink tells sees it
+    /// dropped, a flush already finds nobody to take it.
+    rx: mpsc::Receiver<Cmd>,
+    asked: Arc<Mutex<Asked>>,
     reloader: Arc<Mutex<Reloader<O>>>,
     sink: Box<dyn FnMut(DevMsg) -> bool + Send>,
     watching: Arc<Mutex<Watching>>,
@@ -547,15 +588,29 @@ struct Run<O> {
     /// A [`Watcher::flush`] waits for the build; it waits for the patch
     /// in flight to be answered first.
     flushing: bool,
-    /// A flush was taken and its [`DevMsg::Idle`] is not sent yet.
-    answering: bool,
+    /// How many flushes were taken whose [`DevMsg::Idle`] is not sent
+    /// yet.
+    answering: usize,
 }
 
 impl<O> Drop for Run<O> {
     fn drop(&mut self) {
-        // A build that panicked never sends the answer it owes: whoever
-        // asked would wait for good. What it read is not applied.
-        if self.answering && std::thread::panicking() {
+        // Before the queue goes: a flush that finds the queue gone was
+        // counted here.
+        let pending = {
+            let mut asked = lock(&self.asked);
+            asked.closed = true;
+            if std::thread::panicking() {
+                std::mem::take(&mut asked.flushes)
+            } else {
+                0
+            }
+        };
+        // A build that panicked never sends the answers it owes, nor those
+        // of the flushes it had not got to: whoever asked would wait for
+        // good. What it read is not applied.
+        let owed = self.answering + pending;
+        if owed > 0 && std::thread::panicking() {
             let fault = CompileFault {
                 file: self
                     .roots
@@ -571,26 +626,29 @@ impl<O> Drop for Run<O> {
             // with it; at worst the ask stays unanswered.
             let sink = &mut self.sink;
             let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                sink(DevMsg::Failed(vec![fault])) && sink(DevMsg::Idle)
+                sink(DevMsg::Failed(vec![fault])) && (0..owed).all(|_| sink(DevMsg::Idle))
             }));
         }
     }
 }
 
 impl<O: TypeOracle + Clone> Run<O> {
-    fn run(&mut self, rx: &mpsc::Receiver<Cmd>) {
+    fn run(&mut self) {
         loop {
             // A deadline only while a save waits and the application can
             // take a patch; otherwise sleep until something is sent.
             let cmd = match (self.debounce.deadline(), self.in_flight) {
                 (Some(due), None) => {
-                    match rx.recv_timeout(due.saturating_duration_since(Instant::now())) {
+                    match self
+                        .rx
+                        .recv_timeout(due.saturating_duration_since(Instant::now()))
+                    {
                         Ok(cmd) => Some(cmd),
                         Err(RecvTimeoutError::Timeout) => None,
                         Err(RecvTimeoutError::Disconnected) => return,
                     }
                 }
-                _ => match rx.recv() {
+                _ => match self.rx.recv() {
                     Ok(cmd) => Some(cmd),
                     Err(_) => return,
                 },
@@ -633,12 +691,8 @@ impl<O: TypeOracle + Clone> Run<O> {
                     self.touch_all();
                     self.touched(false);
                 }
-                Some(Cmd::Flush) => {
-                    // Events may be late or lost; the directory is read.
-                    self.touch_all();
-                    self.flushing = true;
-                    self.answering = true;
-                }
+                // Taken below, with the flushes asked since the last command.
+                Some(Cmd::Flush) => {}
                 Some(Cmd::Ack(generation)) => {
                     lock(&self.reloader).ack(generation);
                     if self.in_flight == Some(generation) {
@@ -653,6 +707,13 @@ impl<O: TypeOracle + Clone> Run<O> {
                 }
                 Some(Cmd::Stop) => return,
                 None => {}
+            }
+            let asked = std::mem::take(&mut lock(&self.asked).flushes);
+            if asked > 0 {
+                // Events may be late or lost; the directory is read.
+                self.touch_all();
+                self.flushing = true;
+                self.answering += asked;
             }
             if self.overflow.swap(false, Ordering::AcqRel) {
                 self.touch_all();
@@ -702,9 +763,15 @@ impl<O: TypeOracle + Clone> Run<O> {
         if !flushed || self.flushing {
             return true;
         }
-        let sent = (self.sink)(DevMsg::Idle);
-        self.answering = false;
-        sent
+        // Counted down as each is sent: one the sink panics on is still
+        // owed.
+        while self.answering > 0 {
+            if !(self.sink)(DevMsg::Idle) {
+                return false;
+            }
+            self.answering -= 1;
+        }
+        true
     }
 
     /// `asked`: a reload was asked for, and files are taken as they are
