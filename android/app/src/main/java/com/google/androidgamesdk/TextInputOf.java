@@ -3,6 +3,10 @@ package com.google.androidgamesdk;
 import android.content.Context;
 import android.os.Handler;
 import android.os.Looper;
+import android.text.Editable;
+import android.text.Selection;
+import android.text.Spanned;
+import android.view.KeyEvent;
 import android.view.View;
 import android.view.inputmethod.EditorInfo;
 import com.google.androidgamesdk.gametextinput.InputConnection;
@@ -15,7 +19,8 @@ import com.google.androidgamesdk.gametextinput.Settings;
  * to hear an input method ask where the text is on screen, which
  * GameTextInput's own connection refuses, and to pass on a selection or
  * composing region an input method sets without changing the text, which
- * GameTextInput's own connection keeps to its Editable.
+ * GameTextInput's own connection keeps to its Editable. What the native
+ * side wrote itself is not told back to it.
  */
 public final class TextInputOf {
     private TextInputOf() {}
@@ -65,9 +70,41 @@ public final class TextInputOf {
         /** Inside BaseInputConnection's batch that sets a composing region. */
         private boolean composing;
 
+        /**
+         * On the Editable from here on: gone when GameTextInput's setState,
+         * which is final and clears every span, wrote a state.
+         */
+        private final Object unwritten = new Object();
+
+        /** The last state told or written, as {@link #state} gives it. */
+        private String known;
+
+        /** The last of those was written. */
+        private boolean holdsWrite;
+
+        /** Inside GameTextInput's handling of a key, which tells by itself. */
+        private boolean keyed;
+
+        /** Inside closeConnection, which ends a composition. */
+        private boolean closing;
+
         Connection(Context context, View view, Settings settings, CursorUpdates updates) {
             super(context, view, settings);
             this.updates = updates;
+            mark();
+            known = state();
+        }
+
+        private void mark() {
+            getEditable().setSpan(unwritten, 0, 0, Spanned.SPAN_INCLUSIVE_INCLUSIVE);
+        }
+
+        /** All that the listener is told of the Editable, to compare. */
+        private String state() {
+            Editable text = getEditable();
+            return Selection.getSelectionStart(text) + "," + Selection.getSelectionEnd(text)
+                    + "," + getComposingSpanStart(text) + "," + getComposingSpanEnd(text)
+                    + "," + text;
         }
 
         @Override
@@ -120,30 +157,75 @@ public final class TextInputOf {
             }
         }
 
+        @Override
+        public boolean onKey(View view, int code, KeyEvent event) {
+            keyed = true;
+            boolean handled = super.onKey(view, code, event);
+            keyed = false;
+            return handled;
+        }
+
         // GameTextInput restarts at the end of setState, whose state is the
-        // native side's, and at the end of a key it handled, which it has
-        // reported itself: neither is told again.
+        // native side's, at the end of a key it handled, which it has told
+        // itself, and on showing or hiding the keyboard. The first two are
+        // what is known now and nothing is left to tell; a move made before
+        // the third still is.
         @Override
         public void restartInput() {
-            moved = false;
+            Editable text = getEditable();
+            boolean written = text.getSpanStart(unwritten) < 0;
+            if (written) {
+                mark();
+                // Set where a state is told, and a write is not.
+                EditorInfo info = getEditorInfo();
+                info.initialSelStart = Selection.getSelectionStart(text);
+                info.initialSelEnd = Selection.getSelectionEnd(text);
+            }
+            if (written || keyed) {
+                moved = false;
+                known = state();
+                holdsWrite = written;
+            }
             super.restartInput();
         }
 
-        // BaseInputConnection's own, setting a composing region, is told
-        // by tell(), or not at all inside setState.
+        // Only a state that differs from the last told or written is told.
+        // A restart, this one's or LjosActivity's, closes the connection
+        // and that ends a batch: told, a write would come back to the
+        // native side as the method's report, which forgets the writes
+        // still on their way. BaseInputConnection's own batch, setting a
+        // composing region, is told by tell(), or not at all inside setState.
         @Override
         public boolean endBatchEdit() {
             if (composing) {
                 return false;
             }
             moved = false;
+            String now = state();
+            if (now.equals(known)) {
+                return false;
+            }
+            known = now;
+            holdsWrite = false;
             return super.endBatchEdit();
+        }
+
+        // Closing finishes the method's composition. One the native side
+        // wrote stays, as the native side holds it.
+        @Override
+        public boolean finishComposingText() {
+            if (closing && holdsWrite && state().equals(known)) {
+                return true;
+            }
+            return super.finishComposingText();
         }
 
         @Override
         public void closeConnection() {
             updates.cursorUpdatesRequested(0);
+            closing = true;
             super.closeConnection();
+            closing = false;
         }
     }
 }

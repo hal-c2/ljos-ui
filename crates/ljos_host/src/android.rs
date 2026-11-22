@@ -541,8 +541,8 @@ fn translate(
         }
         InputEvent::TextEvent(state) => {
             // The method reports for itself only once it holds what was
-            // written before (GameTextInput's own writes report nothing),
-            // so none of those is still on its way.
+            // written before (TextInputOf's connection tells no write
+            // back), so none of those is still on its way.
             writes.clear();
             let compose = state
                 .compose_region
