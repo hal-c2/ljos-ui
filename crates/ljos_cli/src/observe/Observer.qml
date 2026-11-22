@@ -7516,6 +7516,8 @@ ApplicationWindow {
                 id: status
                 // How many answers about objects' values are awaited.
                 property int inspectsWaiting: 0
+                Accessible.role: Accessible.StaticText
+                Accessible.name: text
                 Layout.fillWidth: true
                 Layout.leftMargin: 18
                 Layout.rightMargin: 18
