@@ -312,7 +312,8 @@ impl Options {
     /// directory's root as the QML is keyed (the first directory's file of
     /// a path wins), and those a module's build keeps inside the program
     /// (`RESOURCES`) of whatever kind; a file of a module is also at its
-    /// `qrc:` address. Prints nothing for Cargo.
+    /// `qrc:` address, which loads that file even where an earlier
+    /// directory's file holds its path. Prints nothing for Cargo.
     pub fn pack(&self, source: &MapSource, dirs: &[&Path]) -> Result<Vec<u8>, BuildError> {
         let trailer = if self.sources {
             sources_of(dirs).encode(true)
@@ -333,13 +334,14 @@ impl Options {
             move |source| BuildError::Read { path, source }
         };
         // By path from its root, where each file is and which of `dirs` it
-        // was found under.
+        // was found under: the first directory's file of a path wins.
         let mut carried: BTreeMap<String, (PathBuf, usize)> = BTreeMap::new();
-        let mut addresses = Vec::new();
-        // Each module's `qrc:` address, with its directory's path and which
-        // of `dirs` it is in.
-        let mut modules = Vec::new();
-        for (at, &dir) in dirs.iter().enumerate() {
+        // Each `qrc:` address and the key of the file it names: the first
+        // directory's of those an import sees.
+        let mut addresses: BTreeMap<String, String> = BTreeMap::new();
+        let kept = ljos_compiler::root_files(dirs)
+            .map_err(|(path, source)| BuildError::Read { path, source })?;
+        for (at, (&dir, kept)) in dirs.iter().zip(kept).enumerate() {
             let root = std::fs::canonicalize(dir).map_err(unread(dir))?;
             // A file is the project's only where it really is under its
             // root: a link that leads out of it (`pics/dot.png` to a
@@ -353,6 +355,7 @@ impl Options {
                 let parts: Option<Vec<&str>> = relative.iter().map(|p| p.to_str()).collect();
                 (plain && inside).then_some(parts?.join("/"))
             };
+            let mut mine = BTreeMap::new();
             let mut files = Vec::new();
             ljos_compiler::files_below_naming(dir, |_| true, &mut files)
                 .map_err(|(path, source)| BuildError::Read { path, source })?;
@@ -366,34 +369,59 @@ impl Options {
                     .and_then(|n| n.to_str())
                     .is_none_or(|n| n.starts_with('.'));
                 if let (true, false, Some(key)) = (wanted, hidden, key(&path)) {
-                    carried.entry(key).or_insert((path, at));
+                    mine.insert(key, path);
                 }
             }
-            for (address, path) in ljos_compiler::resources(dir).map_err(unread(dir))? {
+            // Kept in the program by its build, whatever its kind.
+            for path in kept.kept {
                 if let Some(key) = key(&path) {
-                    // Kept in the program by its build, whatever its kind.
-                    carried.entry(key.clone()).or_insert((path, at));
-                    addresses.push((address, key));
+                    mine.insert(key, path);
                 }
             }
-            for (prefix, module) in ljos_compiler::resource_dirs(dir).map_err(unread(dir))? {
-                if let Some(under) = key(&module) {
-                    modules.push((prefix, under, at));
+            for (file, path) in &mine {
+                carried
+                    .entry(file.clone())
+                    .or_insert_with(|| (path.clone(), at));
+            }
+            let mut named = Vec::new();
+            for (address, path) in &kept.resources {
+                if let Some(key) = key(path) {
+                    named.push((address.clone(), key));
                 }
             }
-        }
-        for (prefix, under, at) in modules {
-            let under = if under.is_empty() {
-                under
-            } else {
-                format!("{under}/")
-            };
-            // A module's address names the files of its own directory: a
-            // file at the same path under another of `dirs` is not its.
-            for (key, (_, from)) in &carried {
-                if let (Some(rest), true) = (key.strip_prefix(&under), *from == at) {
-                    addresses.push((format!("{prefix}/{rest}"), key.clone()));
+            // A module's address names the files of its own directory.
+            for (prefix, module) in &kept.resource_dirs {
+                let Some(under) = key(module) else {
+                    continue;
+                };
+                let under = if under.is_empty() {
+                    under
+                } else {
+                    format!("{under}/")
+                };
+                for file in mine.keys() {
+                    if let Some(rest) = file.strip_prefix(&under) {
+                        named.push((format!("{prefix}/{rest}"), file.clone()));
+                    }
                 }
+            }
+            // Where an earlier directory's file holds its path, this one's
+            // is carried under the first address that names it.
+            let mut shadowed: BTreeMap<String, String> = BTreeMap::new();
+            for (address, file) in named {
+                if addresses.contains_key(&address) {
+                    continue;
+                }
+                let carried_as = if carried[&file].1 == at {
+                    file
+                } else if let Some(first) = shadowed.get(&file) {
+                    first.clone()
+                } else {
+                    carried.insert(address.clone(), (mine[&file].clone(), at));
+                    shadowed.insert(file, address.clone());
+                    address.clone()
+                };
+                addresses.insert(address, carried_as);
             }
         }
         for (key, (path, _)) in carried {
