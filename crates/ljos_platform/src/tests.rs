@@ -162,6 +162,36 @@ fn a_document_to_save_is_typed_by_the_selected_name_filter() {
 }
 
 #[test]
+fn a_second_save_suggests_the_name_the_first_did() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let e = engine(dir.path());
+    let fake = FakeDialogs::default();
+    let platform = Platform::of(&e);
+    platform.set_dialogs(Rc::new(fake.clone()));
+    let d = make::<FileDialog>(&e);
+    e.write_by_name(d, "fileMode", Value::Int(2)).expect("save");
+    let suggested = |file: Option<&str>| {
+        if let Some(file) = file {
+            e.write_by_name(d, "currentFile", Value::from(file))
+                .expect("named");
+        }
+        e.invoke_by_name(d, "open", &[]).expect("opened");
+        let name = fake.request().expect("shown").file_name;
+        // A provider's document says nothing of its name.
+        assert!(fake.choose_documents(vec!["content://docs/document/31".to_owned()]));
+        platform.finish(&e);
+        name
+    };
+    let report = Some("report.txt".to_owned());
+    assert_eq!(suggested(Some("file:///report.txt")), report);
+    assert_eq!(suggested(None), report);
+    assert_eq!(suggested(None), report);
+    let notes = Some("notes.md".to_owned());
+    assert_eq!(suggested(Some("file:///notes.md")), notes);
+    assert_eq!(suggested(None), notes);
+}
+
+#[test]
 fn a_document_the_system_hands_out_is_selected_by_its_url() {
     let dir = tempfile::tempdir().expect("temp dir");
     let e = engine(dir.path());
