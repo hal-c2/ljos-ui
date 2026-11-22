@@ -1004,6 +1004,7 @@ impl LoadedFile {
             (0, n) => format!("{}.qml.js?generation={n}", self.key),
             (t, _) => format!("{}.qml.js?text={t}", self.key),
         };
+        engine.forget_if_outermost(&js);
         let handle = match &self.bytecode {
             Some(b) => js.host.load_module_bytecode(b),
             None => js.host.load_module(&name, &self.ir.js.source),

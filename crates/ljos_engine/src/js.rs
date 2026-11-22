@@ -1446,6 +1446,15 @@ impl Engine {
         }
     }
 
+    /// Script is about to run: outside a run it begins the outermost one,
+    /// which nothing was thrown through yet. For every way into the host
+    /// that can report a fault or run an application's code.
+    pub(crate) fn forget_if_outermost(&self, js: &JsState) {
+        if !js.host.in_run() {
+            self.forget_thrown_through();
+        }
+    }
+
     /// One run of JS, outermost or nested, noting which run an interrupt
     /// stopped for the dispatch's fault ([`FaultReport::stopped_outside`]).
     /// An outermost run gives back the one noted in it; a nested run gives
@@ -1459,10 +1468,8 @@ impl Engine {
         what: impl FnOnce() -> String,
         f: impl for<'js> FnOnce(&Scope<'js>) -> rquickjs::Result<R>,
     ) -> (Result<R, JsFault>, Option<crate::fault::Stopped>) {
-        let began_in = (!js.host.in_run()).then(|| {
-            self.forget_thrown_through();
-            self.swap_js_stopped(None)
-        });
+        self.forget_if_outermost(js);
+        let began_in = (!js.host.in_run()).then(|| self.swap_js_stopped(None));
         let r = js.host.enter_naming(label, what, js.slice(), f);
         if matches!(r, Err(JsFault::JsInterrupted { .. })) && js.host.interrupted() {
             self.note_js_stopped();
@@ -1564,6 +1571,7 @@ impl Engine {
     pub fn eval_js(&self, source: &str) -> Result<Value, EngineError> {
         let js = self.js()?;
         let slice = js.slice();
+        self.forget_if_outermost(&js);
         js.host
             .enter("eval", slice, |s| {
                 let v: rquickjs::Value = s.ctx().eval(source)?;
