@@ -11,6 +11,7 @@ import android.view.View;
 import android.view.inputmethod.EditorInfo;
 import com.google.androidgamesdk.gametextinput.InputConnection;
 import com.google.androidgamesdk.gametextinput.Settings;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * The connection GameTextInput keeps for the surface's editor. GameActivity
@@ -20,7 +21,8 @@ import com.google.androidgamesdk.gametextinput.Settings;
  * GameTextInput's own connection refuses, and to pass on a selection or
  * composing region an input method sets without changing the text, which
  * GameTextInput's own connection keeps to its Editable. What the native
- * side wrote itself is not told back to it.
+ * side wrote itself is not told back to it, unless it landed on a state
+ * told after it was written: the native side would keep that one.
  */
 public final class TextInputOf {
     private TextInputOf() {}
@@ -38,6 +40,24 @@ public final class TextInputOf {
     /** The surface's connection, or null before an input method asked for one. */
     public static InputConnection connection(GameActivity.InputEnabledSurfaceView view) {
         return view == null ? null : view.mInputConnection;
+    }
+
+    /**
+     * The native side is about to write: before it reads what was told
+     * last, so whatever is told from here on is known to be overtaken. On
+     * any thread; waits for none.
+     */
+    public static void writeComing(GameActivity.InputEnabledSurfaceView view) {
+        if (connection(view) instanceof Connection) {
+            ((Connection) connection(view)).writing.incrementAndGet();
+        }
+    }
+
+    /** The write {@link #writeComing} announced was not made. */
+    public static void writeDropped(GameActivity.InputEnabledSurfaceView view) {
+        if (connection(view) instanceof Connection) {
+            ((Connection) connection(view)).writing.decrementAndGet();
+        }
     }
 
     /**
@@ -78,6 +98,15 @@ public final class TextInputOf {
 
         /** The last state told or written, as {@link #state} gives it. */
         private String known;
+
+        /** Writes the native side announced and that have not landed. */
+        final AtomicInteger writing = new AtomicInteger();
+
+        /** A state was told with a write on its way, which will replace it. */
+        private boolean overtaken;
+
+        /** A write replaced a state told after it, and is yet to be told. */
+        private boolean overwrote;
 
         /** The last of those was written. */
         private boolean holdsWrite;
@@ -162,7 +191,19 @@ public final class TextInputOf {
             keyed = true;
             boolean handled = super.onKey(view, code, event);
             keyed = false;
+            if (handled) {
+                reported();
+            }
             return handled;
+        }
+
+        // A report was made, and the native side can read it by now. Read
+        // after the listener returns: a write announced later is judged on
+        // this report. Nothing is held for a write, so one that never lands
+        // costs no report.
+        private void reported() {
+            overtaken = writing.get() > 0;
+            overwrote = false;
         }
 
         // GameTextInput restarts at the end of setState, whose state is the
@@ -183,13 +224,27 @@ public final class TextInputOf {
             }
             if (written || keyed) {
                 moved = false;
-                known = state();
+                String now = state();
+                if (written) {
+                    if (writing.get() > 0) {
+                        writing.decrementAndGet();
+                    }
+                    // What lands is the newest write, whichever command
+                    // brought it, so it is what the native side is to end on.
+                    overwrote |= overtaken && !now.equals(known);
+                    overtaken = false;
+                }
+                known = now;
                 holdsWrite = written;
+                if (written && overwrote) {
+                    tell();
+                }
             }
             super.restartInput();
         }
 
-        // Only a state that differs from the last told or written is told.
+        // Only a state that differs from the last told or written is told,
+        // and a write that overwrote a report, once.
         // A restart, this one's or LjosActivity's, closes the connection
         // and that ends a batch: told, a write would come back to the
         // native side as the method's report, which forgets the writes
@@ -203,11 +258,18 @@ public final class TextInputOf {
             moved = false;
             String now = state();
             if (now.equals(known)) {
-                return false;
+                if (!overwrote) {
+                    return false;
+                }
+                boolean more = super.endBatchEdit();
+                reported();
+                return more;
             }
             known = now;
             holdsWrite = false;
-            return super.endBatchEdit();
+            boolean more = super.endBatchEdit();
+            reported();
+            return more;
         }
 
         // Closing finishes the method's composition. One the native side

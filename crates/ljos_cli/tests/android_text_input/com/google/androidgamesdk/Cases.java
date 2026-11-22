@@ -18,13 +18,14 @@ public final class Cases {
 
     private final GameActivity activity = new GameActivity();
     private final View view;
+    private final GameActivity.InputEnabledSurfaceView surface;
     private final InputConnection connection;
     private final Handler main = new Handler(Looper.getMainLooper());
 
     private Cases(boolean shown, boolean served) {
         Handler.runQueued();
         InputMethodManager.served = served;
-        GameActivity.InputEnabledSurfaceView surface = TextInputOf.surface(activity, mode -> true);
+        surface = TextInputOf.surface(activity, mode -> true);
         view = surface;
         connection = TextInputOf.connection(surface);
         if (shown) {
@@ -33,7 +34,14 @@ public final class Cases {
         Handler.runQueued();
     }
 
+    /** The native side's write, landed as it is made. */
     private void write(String text, int cursor, int composeStart, int composeEnd) {
+        TextInputOf.writeComing(surface);
+        land(text, cursor, composeStart, composeEnd);
+    }
+
+    /** A write issued earlier reaches the UI thread; the newest state is what lands. */
+    private void land(String text, int cursor, int composeStart, int composeEnd) {
         connection.setState(new State(text, cursor, cursor, composeStart, composeEnd));
     }
 
@@ -143,6 +151,93 @@ public final class Cases {
         it.told("a composition, then hide", "hello!|6,6|5,6", "hello!|6,6|-1,-1");
     }
 
+    private static void overtakenReportIsFollowedByTheWrite() {
+        for (boolean served : BOTH) {
+            for (boolean composing : BOTH) {
+                String what = "a write over a report, served=" + served + " composing=" + composing;
+                Cases it = new Cases(true, served).hello();
+                TextInputOf.writeComing(it.surface);
+                it.connection.commitText("!", 1);
+                it.told(what + ", the report is not held", "hello!|6,6|-1,-1");
+                it.land("hi", 2, composing ? 0 : -1, composing ? 2 : -1);
+                InputMethodManager.restartInput(it.connection);
+                Handler.runQueued();
+                InputMethodManager.restartInput(it.connection);
+                Handler.runQueued();
+                it.told(what, "hello!|6,6|-1,-1", composing ? "hi|2,2|0,2" : "hi|2,2|-1,-1");
+            }
+        }
+
+        Cases moved = new Cases(true, true).hello();
+        TextInputOf.writeComing(moved.surface);
+        moved.connection.setSelection(1, 1);
+        Handler.runQueued();
+        moved.land("hello", 5, -1, -1);
+        Handler.runQueued();
+        moved.told("a write over a move", "hello|1,1|-1,-1", "hello|5,5|-1,-1");
+
+        Cases keyed = new Cases(true, true).hello();
+        TextInputOf.writeComing(keyed.surface);
+        keyed.connection.onKey(keyed.view, 21, new KeyEvent());
+        Handler.runQueued();
+        keyed.land("hello", 5, -1, -1);
+        Handler.runQueued();
+        keyed.told("a write over a key", "hello|4,4|-1,-1", "hello|5,5|-1,-1");
+    }
+
+    private static void writesOnTheirWayAreToldOnce() {
+        Cases it = new Cases(true, true).hello();
+        TextInputOf.writeComing(it.surface);
+        TextInputOf.writeComing(it.surface);
+        it.connection.commitText("!", 1);
+        it.land("ab", 2, -1, -1);
+        it.land("ab", 2, -1, -1);
+        Handler.runQueued();
+        it.told("two writes over a report", "hello!|6,6|-1,-1", "ab|2,2|-1,-1");
+
+        // The first to land doesn't end the second's race.
+        it = new Cases(true, true).hello();
+        TextInputOf.writeComing(it.surface);
+        TextInputOf.writeComing(it.surface);
+        it.land("ab", 2, -1, -1);
+        Handler.runQueued();
+        it.connection.commitText("c", 1);
+        it.land("ab", 2, -1, -1);
+        Handler.runQueued();
+        it.told("a report between two writes", "abc|3,3|-1,-1", "ab|2,2|-1,-1");
+    }
+
+    private static void writeAcrossTheToldWriteIsToldInItsTurn() {
+        Cases it = new Cases(true, true).hello();
+        TextInputOf.writeComing(it.surface);
+        it.connection.commitText("!", 1);
+        it.land("hi", 2, -1, -1);
+        // Announced before what landed was told.
+        TextInputOf.writeComing(it.surface);
+        Handler.runQueued();
+        it.land("ho", 2, -1, -1);
+        Handler.runQueued();
+        it.told("a write across the told write",
+                "hello!|6,6|-1,-1", "hi|2,2|-1,-1", "ho|2,2|-1,-1");
+    }
+
+    private static void writeThatNeverLandsHoldsNothing() {
+        Cases lost = new Cases(true, true).hello();
+        TextInputOf.writeComing(lost.surface);
+        lost.connection.commitText("!", 1);
+        lost.connection.setSelection(1, 1);
+        Handler.runQueued();
+        lost.told("a write that was lost", "hello!|6,6|-1,-1", "hello!|1,1|-1,-1");
+
+        Cases dropped = new Cases(true, true).hello();
+        TextInputOf.writeComing(dropped.surface);
+        TextInputOf.writeDropped(dropped.surface);
+        dropped.connection.commitText("!", 1);
+        dropped.write("hi", 2, -1, -1);
+        Handler.runQueued();
+        dropped.told("a write the native side dropped", "hello!|6,6|-1,-1");
+    }
+
     public static void main(String[] args) {
         writtenStateIsNotToldBack();
         secondWriteStays();
@@ -150,6 +245,10 @@ public final class Cases {
         moveIsToldBeforeTheNextEdit();
         moveOutlivesShowingAndHiding();
         endedCompositionIsTold();
+        overtakenReportIsFollowedByTheWrite();
+        writesOnTheirWayAreToldOnce();
+        writeAcrossTheToldWriteIsToldInItsTurn();
+        writeThatNeverLandsHoldsNothing();
         FAILED.forEach(System.out::println);
         System.out.println(FAILED.isEmpty() ? "every case holds" : FAILED.size() + " failed");
         System.exit(FAILED.isEmpty() ? 0 : 1);
