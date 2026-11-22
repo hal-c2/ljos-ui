@@ -491,6 +491,15 @@ fn turn(e: &Engine, clock: &VirtualClock, loader: ObjectId, fallback: ObjectId) 
 /// `Full` shown because `Snug` was not ready, and the heap as full as that
 /// leaves it; `Snug` is ready now.
 fn snug() -> (Engine, Arc<VirtualClock>, ObjectId, ObjectId, ObjectId) {
+    snug_as("Snug")
+}
+
+/// [`snug`] with another shell as the source.
+fn snug_as(source: &str) -> (Engine, Arc<VirtualClock>, ObjectId, ObjectId, ObjectId) {
+    let farewell = SNUG.replace(
+        "    Component.onCompleted: {",
+        "    Component.onDestruction: root.made += 0\n    Component.onCompleted: {",
+    );
     let e = engine();
     let clock = Arc::new(VirtualClock::new());
     e.set_clock(Rc::new(clock.clone()));
@@ -502,9 +511,12 @@ fn snug() -> (Engine, Arc<VirtualClock>, ObjectId, ObjectId, ObjectId) {
             ("Snug", SNUG),
             ("Other", SNUG),
             ("Light", LIGHT),
+            ("Farewell", &farewell),
         ],
     );
-    let root = e.create_from_url("Main", None, Vec::new()).unwrap();
+    let root = e
+        .create_from_url("Main", None, vec![("source".into(), Value::from(source))])
+        .unwrap();
     let loader = find(&e, root, "loader");
     e.deliver_faults();
     e.process_deferred_deletes();
@@ -661,4 +673,27 @@ fn changing_the_source_or_the_fallback_discards_the_held_one_and_gives_its_room_
         );
         assert_eq!(e.next_timer_deadline(), None, "{property}");
     }
+}
+
+/// A shell that hears of its end is settled, which can need the room it
+/// is giving back. That fault is the discarded shell's: the next is shown,
+/// and one after it has the room.
+#[test]
+fn a_discarded_shell_that_overflows_as_it_hears_it_goes_leaves_a_loader_that_works() {
+    let (e, clock, root, loader, fallback) = snug_as("Farewell");
+    e.invoke_by_name(loader, "reload", &[]).unwrap();
+    assert_eq!(status(&e, loader), 1, "{}", error(&e, loader));
+    set(&e, root, "source", Value::from("Light"));
+    let overflowed = out_of_memory(&e);
+    assert!(overflowed > 0, "its lots were worked out as it went");
+    turn(&e, &clock, loader, fallback);
+    assert!(!e.is_alive(fallback));
+    assert_eq!(shown(&e, loader), "light");
+    assert_eq!(status(&e, loader), 1);
+    assert_eq!(error(&e, loader), "");
+
+    set(&e, root, "source", Value::from("Other"));
+    turn(&e, &clock, loader, fallback);
+    assert_eq!(shown(&e, loader), "snug", "{}", error(&e, loader));
+    assert_eq!(out_of_memory(&e), overflowed, "{:?}", e.faults());
 }

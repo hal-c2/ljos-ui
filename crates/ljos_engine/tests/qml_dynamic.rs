@@ -7,7 +7,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use ljos_compiler::{Project, Severity, compile_text};
-use ljos_engine::{QmlText, QmlTextCompiler, QmlTextError, Value};
+use ljos_engine::{QmlText, QmlTextCompiler, QmlTextError, SignalIndex, Value};
 use qml_front::QtTypeOracle;
 use support::{Harness, engine};
 
@@ -464,4 +464,64 @@ fn without_a_compiler_a_file_the_program_was_not_built_with_says_so() {
         format!("{gone}: No such file or directory\n")
     );
     let _ = std::fs::remove_dir_all(dir);
+}
+
+const DISCARDS: &str = r#"import QtQuick
+Item {
+    id: root
+    property int size: 4
+    property string seen: ""
+    Component { id: quiet; Item { property int owed: root.size * 2 } }
+    Component {
+        id: heard
+        Item {
+            id: kid
+            property int owed: root.size * 2
+            Item { Component.onDestruction: root.seen += kid.owed }
+        }
+    }
+    function makeQuiet() { return quiet.createObject(root) }
+    function makeHeard() { return heard.createObject(root) }
+}
+"#;
+
+#[test]
+fn a_discarded_object_nothing_of_which_hears_it_go_works_out_nothing_it_owed() {
+    let h = engine();
+    let root = h.load(DISCARDS);
+    let quiet = call(&h, root, "makeQuiet", &[]).as_object().expect("quiet");
+    // Another's handler is no reason to settle this one.
+    let heard = call(&h, root, "makeHeard", &[]).as_object().expect("heard");
+    let before = h.engine.graph().stats().evaluations;
+    h.engine.announce_discarded(quiet);
+    h.engine.destroy(quiet);
+    h.engine.process_deferred_deletes();
+    assert_eq!(h.engine.graph().stats().evaluations, before);
+    assert!(h.engine.is_alive(heard));
+}
+
+#[test]
+fn a_discarded_object_that_hears_it_go_reads_what_it_owed() {
+    let h = engine();
+    let root = h.load(DISCARDS);
+    let heard = call(&h, root, "makeHeard", &[]).as_object().expect("heard");
+    h.engine.announce_discarded(heard);
+    assert_eq!(
+        h.get(root, "seen"),
+        Value::from("8"),
+        "Component.onDestruction"
+    );
+
+    let told = call(&h, root, "makeQuiet", &[]).as_object().expect("told");
+    let owed = Rc::new(RefCell::new(None));
+    let saw = owed.clone();
+    h.engine
+        .connect(told, SignalIndex::DESTROYED, move |e, _| {
+            *saw.borrow_mut() = Some(e.read_by_name(told, "owed"));
+        })
+        .unwrap();
+    h.engine.announce_discarded(told);
+    h.engine.destroy(told);
+    h.engine.process_deferred_deletes();
+    assert_eq!(*owed.borrow(), Some(Value::Int(8)), "destroyed");
 }
