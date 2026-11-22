@@ -33,38 +33,49 @@ Network requests are a host service provided by `Platform`:
 - **Full HTTP requests in Rust.** For `POST` or other methods, custom headers or request bodies, use `Platform::request` with `Request::new(Method::Post, url).json(body)` (`Method`, `Request` and `Response` are in `ljos::prelude`). It returns `Ok(Response)` for any HTTP status the server sends—a 404 is a `Response` whose status and body you can inspect—and returns `Err` only for transport failures.
 - **In headless tests.** A headless `Engine` has no network by default and fails every fetch with `FetchError::NoNetwork` unless the test installs a stand-in with `set_fetcher`.
 
-From QML, scripts can also make asynchronous HTTP requests using the built-in `XMLHttpRequest` global, which shares the same native helper:
+From QML, scripts send requests with the built-in `fetch`, which goes through the same `Platform`: the request runs on a thread of its own, and the promise settles on the `Engine` thread:
 
-```qml
-pragma Scripts: JavaScript
+```json file=act.json group=act
+{"activity": "Walk to the lighthouse"}
+```
+
+```qml group=act
 import Ljos.Ui
 import Ljos.Core
 
 Item {
     id: root
     objectName: "root"
-    property string states: ""
     property string got: ""
 
-    Component.onCompleted: {
-        let http = new XMLHttpRequest()
-        http.onreadystatechange = function () {
-            root.states += http.readyState
-            if (http.readyState === XMLHttpRequest.DONE)
-                root.got = http.status + " " + http.statusText + " "
-                    + JSON.parse(http.responseText.toString()).activity + " "
-                    + http.getResponseHeader("Content-Type")
+    function load(): void {
+        const run = async (): Promise<void> => {
+            try {
+                const reply = await fetch("act.json")
+                if (!reply.ok) {
+                    root.got = `${reply.status} ${reply.statusText}`
+                    return
+                }
+                const given: unknown = await reply.json()
+                if (typeof given === "object" && given !== null && "activity" in given && typeof given.activity === "string") {
+                    root.got = given.activity
+                }
+            } catch (error) {
+                if (typeof error === "object" && error !== null && "message" in error && typeof error.message === "string") {
+                    root.got = error.message
+                }
+            }
         }
-        http.open("GET", "https://example.com/act.json", true)
-        http.setRequestHeader("Content-type", "application/json")
-        http.setRequestHeader("Connection", "close")
-        http.send()
-        root.states += "/"
+        run()
     }
+
+    Component.onCompleted: load()
 }
 ```
 
-When an `XMLHttpRequest` reply has an XML content type, `http.responseXML` exposes a read-only W3C DOM document (`documentElement`, `childNodes`, `xmlVersion`, `xmlEncoding`, `xmlStandalone`), parsed out of the reply only when a script reads `responseXML`.
+On ljos.dev, and in a browser, a relative address is read against the page, so `got` becomes "Walk to the lighthouse". On the desktop an address names a server, `https://…`: a relative one is not an address there, so `got` is the message of the `TypeError` that `fetch` rejects with.
+
+A file written against Qt's API keeps `XMLHttpRequest`, which is sent through the same `Platform`. When an `XMLHttpRequest` reply has an XML content type, the request's `responseXML` exposes a read-only W3C DOM document (`documentElement`, `childNodes`, `xmlVersion`, `xmlEncoding`, `xmlStandalone`), parsed out of the reply only when a script reads `responseXML`.
 
 ## Talking to the Engine with `UiHandle`
 
