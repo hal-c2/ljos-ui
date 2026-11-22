@@ -27,6 +27,7 @@ Rectangle {
     property string source: "Shell"
     property string fallback: "Fallback"
     property int pressed: 0
+    property int others: 0
     color: {
         if (watching && !looked.length) {
             looked.push(true)
@@ -73,7 +74,10 @@ Rectangle {
 
 const OTHER: &str = r#"
 import QtQuick
-Rectangle { objectName: "other" }
+Rectangle {
+    objectName: "other"
+    Component.onCompleted: root.others++
+}
 "#;
 
 /// A loader showing its fallback, with the user's state in it, whose
@@ -188,6 +192,32 @@ impl Held {
     }
 }
 
+/// Sets the source to `Other` once the loader shows nothing.
+fn choose_other_when_nothing_is_shown(h: &Held) {
+    let (root, loader) = (h.root, h.loader);
+    h.e.connect_by_name(loader, "itemChanged", move |e, _| {
+        if get(e, loader, "item").as_object().is_none() {
+            set(e, root, "source", Value::from("Other"));
+        }
+    })
+    .unwrap();
+}
+
+/// `Other` is shown as the source's, and is the only one that was made.
+fn assert_other_shown(e: &Engine, root: ObjectId, loader: ObjectId, case: &str) {
+    assert_eq!(num(e, loader, "status"), 1.0, "{case}: Ready");
+    assert_eq!(
+        get(e, loader, "error").to_js_string().as_str(),
+        "",
+        "{case}"
+    );
+    let item = get(e, loader, "item").as_object().expect("the one chosen");
+    assert!(!e.is_going(item), "{case}");
+    let name = get(e, item, "objectName").to_js_string();
+    assert_eq!(name.as_str(), "other", "{case}");
+    assert_eq!(num(e, root, "others"), 1.0, "{case}: one shell");
+}
+
 fn frame_when_due(s: &mut QuickScene, h: &Held) {
     let due = h.e.next_timer_deadline().expect("a timer");
     h.clock.set(due);
@@ -228,6 +258,72 @@ fn a_reload_from_item_changed_where_nothing_was_shown_makes_no_second_shell() {
     h.e.invoke_by_name(h.loader, "reload", &[]).unwrap();
     assert_eq!(num(&h.e, h.loader, "status"), 1.0);
     assert_eq!(*seen.borrow(), [h.item()], "one shell");
+}
+
+#[test]
+fn a_source_chosen_as_a_failed_shell_is_dropped_is_not_replaced_by_the_fallback() {
+    let h = Held::new();
+    h.retry();
+    h.e.deliver_faults();
+    h.assert_released();
+    choose_other_when_nothing_is_shown(&h);
+    h.fault_in_shell();
+    h.e.deliver_faults();
+    assert_other_shown(&h.e, h.root, h.loader, "stop");
+}
+
+#[test]
+fn a_source_chosen_as_a_fallback_is_dropped_for_another_is_made_once() {
+    let h = Held::new();
+    choose_other_when_nothing_is_shown(&h);
+    set(&h.e, h.root, "fallback", Value::from("Fallback2"));
+    assert_other_shown(&h.e, h.root, h.loader, "load");
+}
+
+#[test]
+fn a_source_chosen_as_a_shell_judged_at_creation_is_dropped_is_the_one_shown() {
+    for (source, fallback) in [("Broken", "Fallback"), ("", "Broken")] {
+        let e = engine();
+        let main = r#"
+import QtQuick
+import Ljos.Blocks
+Item {
+    id: root
+    property string source: "SOURCE"
+    property int others: 0
+    property int pressed: 0
+    ShellLoader {
+        id: shells
+        objectName: "loader"
+        source: root.source
+        fallback: "FALLBACK"
+        onItemChanged: if (!shells.item) root.source = "Other"
+    }
+}
+"#
+        .replace("SOURCE", source)
+        .replace("FALLBACK", fallback);
+        let broken = r#"
+import QtQuick
+Rectangle {
+    id: shell
+    property var size
+    width: shell.size.width
+}
+"#;
+        compile(
+            &e,
+            &[
+                ("Main", &main),
+                ("Broken", broken),
+                ("Fallback", FALLBACK),
+                ("Other", OTHER),
+            ],
+        );
+        let root = e.create_from_url("Main", None, Vec::new()).unwrap();
+        let loader = find(&e, root, "loader");
+        assert_other_shown(&e, root, loader, &format!("judged, from {source:?}"));
+    }
 }
 
 #[test]
