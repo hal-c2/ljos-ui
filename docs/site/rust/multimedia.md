@@ -15,7 +15,7 @@ The `QtMultimedia` module provides `MediaPlayer`, `AudioOutput`, `VideoOutput`, 
 
 A `MediaPlayer` opens a local file or URL, reports what tracks and metadata it found, and sends audio and video frames to the `AudioOutput` and `VideoOutput` connected to it:
 
-```qml
+```qml files=clip.webm
 import QtQuick
 import QtMultimedia
 
@@ -28,7 +28,8 @@ Item {
     MediaPlayer {
         id: player
         objectName: "player"
-        source: "clip.mp4"
+        source: "clip.webm"
+        autoPlay: true
         audioOutput: AudioOutput {}
         videoOutput: output
         onMetaDataChanged: title = metaData.stringValue(MediaMetaData.Title)
