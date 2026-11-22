@@ -168,6 +168,12 @@ pub struct Writes {
     before: Option<crate::HeldText>,
     /// The writes the platform has not reported holding, oldest first.
     pending: std::collections::VecDeque<crate::HeldText>,
+    /// The last writes made, landed, let go or on their way: what a method
+    /// can hold by this side's doing.
+    written: std::collections::VecDeque<crate::HeldText>,
+    /// The method's own report, until a write follows it.
+    #[cfg_attr(not(any(target_os = "android", test)), allow(dead_code))]
+    typed: Option<crate::HeldText>,
 }
 
 /// Writes kept pending at most: the platform applies each within a turn of
@@ -188,7 +194,10 @@ impl Writes {
         if let Some(applied) = self.pending.iter().position(|w| same(w, &holds)) {
             self.pending.drain(..=applied);
             self.before = Some(holds.clone());
-        } else if !self.before.as_ref().is_some_and(|b| same(b, &holds)) {
+        } else if !self.before.as_ref().is_some_and(|b| same(b, &holds))
+            // A write let go for a report can land after a newer was made.
+            && !self.written.iter().any(|w| same(w, &holds))
+        {
             self.before = None;
             self.pending.clear();
         }
@@ -218,12 +227,58 @@ impl Writes {
         if self.pending.len() == PENDING_WRITES {
             self.before = self.pending.pop_front();
         }
+        if self.written.len() == PENDING_WRITES {
+            self.written.pop_front();
+        }
+        self.written.push_back(now.clone());
+        self.typed = None;
         self.pending.push_back(now);
+    }
+}
+
+#[cfg(any(target_os = "android", test))]
+impl Writes {
+    pub(crate) fn wrote_it(&self, state: &crate::HeldText) -> bool {
+        self.written.iter().any(|w| !held_is_stale(Some(w), state))
+    }
+
+    /// The method reported `now` for itself.
+    pub(crate) fn reported(&mut self, now: &crate::HeldText) {
+        self.clear();
+        self.typed = Some(now.clone());
+    }
+
+    /// For a report of `state`: what to tell the application, when it is a
+    /// write told back and not the method's own (`says_write`, asked only
+    /// of a state that was written). That is the newest write, and none on
+    /// its way is forgotten for it: one older can't age one newer.
+    pub(crate) fn told_back(
+        &mut self,
+        state: &crate::HeldText,
+        says_write: impl FnOnce() -> bool,
+    ) -> Option<crate::HeldText> {
+        (self.wrote_it(state) && says_write()).then(|| self.holds(state.clone()))
+    }
+
+    /// Whether a request made `over` is stale now that the method is taken
+    /// to hold `holds` ([`Writes::holds`]). It is not while that is a write
+    /// and not the method's last report: nothing was typed that it would
+    /// put back, whichever of the writes and reports it was made over.
+    pub(crate) fn stale(&self, over: Option<&crate::HeldText>, holds: &crate::HeldText) -> bool {
+        let typed = self
+            .typed
+            .as_ref()
+            .is_some_and(|t| !held_is_stale(Some(t), holds));
+        held_is_stale(over, holds) && (typed || !self.wrote_it(holds))
     }
 }
 
 enum Msg<S, U> {
     Arrival(Arrival<S>),
+    /// A write told back, with how many the application had asked for when
+    /// the platform's side said it.
+    #[cfg(any(target_os = "android", test))]
+    ToldBack(u64, crate::HeldText),
     User(U),
     Wake,
 }
@@ -297,12 +352,22 @@ impl<S: Send + 'static, U: Send + 'static> Relay<S, U> {
     /// write follows them. Not the method's own report, so what was written
     /// is not forgotten for it ([`Writes::clear`]).
     #[cfg(any(target_os = "android", test))]
-    pub(crate) fn tell_again(&self, seen: u64, now: &crate::HeldText) -> Result<(), HostError> {
-        if self.reports.load(Ordering::Acquire) <= seen {
+    pub(crate) fn tell_again(&self, asked: Asked, now: &crate::HeldText) -> Result<(), HostError> {
+        if self.reports.load(Ordering::Acquire) <= asked.seen {
             return Ok(());
         }
-        let text = crate::TextEvent::Held(now.clone());
-        self.send(Arrival::Window(WindowEvent::Text(text)))
+        self.tell_back(asked.writes, now.clone())
+    }
+
+    /// The method holds `now` by this side's doing, said once the first
+    /// `through` writes the application asked for were handled. One it
+    /// asked for since is newer, so it is not handed `now` after that.
+    #[cfg(any(target_os = "android", test))]
+    pub(crate) fn tell_back(&self, through: u64, now: crate::HeldText) -> Result<(), HostError> {
+        self.reports.fetch_add(1, Ordering::AcqRel);
+        self.tx
+            .send(Msg::ToldBack(through, now))
+            .map_err(|_| HostError::Closed)
     }
 
     fn waker(&self) -> Waker {
@@ -325,8 +390,18 @@ impl<S: Send + 'static, U: Send + 'static> Relay<S, U> {
     }
 }
 
-/// Told, with each request, how many reports the application had then.
-type Requests = Arc<dyn Fn(Request, u64) + Send + Sync>;
+/// What the application had, and had asked, when it made a request.
+#[cfg_attr(not(any(target_os = "android", test)), allow(dead_code))]
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Asked {
+    /// The reports it had.
+    pub(crate) seen: u64,
+    /// The writes it had asked for, the request among them if it is one.
+    pub(crate) writes: u64,
+}
+
+/// Told each request with how the application stood then.
+type Requests = Arc<dyn Fn(Request, Asked) + Send + Sync>;
 
 fn is_report<S>(arrival: &Arrival<S>) -> bool {
     matches!(
@@ -371,7 +446,7 @@ impl<S: Send + 'static, U: From<Wake> + Send + 'static> RelayHost<S, U> {
     /// `Relay::tell_again`.
     pub(crate) fn stamped(
         capabilities: Capabilities,
-        requests: impl Fn(Request, u64) + Send + Sync + 'static,
+        requests: impl Fn(Request, Asked) + Send + Sync + 'static,
     ) -> (Self, Relay<S, U>) {
         let (tx, rx) = mpsc::sync_channel(QUEUE);
         let relay = Relay {
@@ -417,6 +492,17 @@ struct State<S> {
     requests: Requests,
     /// The method's reports the application has had.
     seen: u64,
+    /// The writes it has asked for; atomic as a request takes `&self`.
+    writes: AtomicU64,
+}
+
+impl<S> State<S> {
+    fn asked(&self) -> Asked {
+        Asked {
+            seen: self.seen,
+            writes: self.writes.load(Ordering::Relaxed),
+        }
+    }
 }
 
 /// What a [`RelayHost`]'s application may ask while it handles an event.
@@ -439,7 +525,10 @@ impl<S> RelayControl<'_, S> {
 
     /// Asks something of the platform's thread.
     pub fn request(&self, request: Request) {
-        (self.state.requests)(request, self.state.seen);
+        if matches!(request, Request::Held { .. }) {
+            self.state.writes.fetch_add(1, Ordering::Relaxed);
+        }
+        (self.state.requests)(request, self.state.asked());
     }
 
     /// Whether the application is in front of its user.
@@ -541,6 +630,7 @@ impl<S: Send + 'static, U: From<Wake> + Send + 'static> PlatformHost for RelayHo
             capabilities,
             requests,
             seen: 0,
+            writes: AtomicU64::new(0),
         };
         // Insets kept until there was a window are told right after what
         // made it, whatever that was (a message, or the wait that follows a
@@ -603,6 +693,15 @@ impl<S: Send + 'static, U: From<Wake> + Send + 'static> PlatformHost for RelayHo
                     }
                     Msg::User(u) => deliver(&mut state, Event::User(u)),
                     Msg::Arrival(arrival) => arrive(&mut state, &mut deliver, arrival),
+                    #[cfg(any(target_os = "android", test))]
+                    Msg::ToldBack(through, now) => {
+                        if state.writes.load(Ordering::Relaxed) > through {
+                            state.seen += 1;
+                        } else {
+                            let text = WindowEvent::Text(crate::TextEvent::Held(now));
+                            arrive(&mut state, &mut deliver, Arrival::Window(text));
+                        }
+                    }
                 }
                 taken += 1;
                 if state.exit || taken == TURN {
@@ -642,7 +741,7 @@ impl<S: Send + 'static, U: From<Wake> + Send + 'static> PlatformHost for RelayHo
             }
         }
         deliver(&mut state, Event::Exiting);
-        (state.requests)(Request::Exit, state.seen);
+        (state.requests)(Request::Exit, state.asked());
         Ok(())
     }
 }

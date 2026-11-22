@@ -755,11 +755,11 @@ fn a_report_of_the_state_before_the_writes_is_the_platform_behind_until_the_meth
 #[test]
 fn a_write_made_before_the_application_saw_a_report_is_told_after_that_report() {
     let log = Log::default();
-    let asked: Arc<Mutex<Vec<(Request, u64)>>> = Arc::default();
+    let asked: Arc<Mutex<Vec<(Request, Asked)>>> = Arc::default();
     let pushed = Arc::clone(&asked);
     let (host, relay): (RelayHost<u32, Msg>, Relay<u32, Msg>) =
-        RelayHost::stamped(Capabilities::default(), move |request, seen| {
-            pushed.lock().unwrap().push((request, seen));
+        RelayHost::stamped(Capabilities::default(), move |request, stamp| {
+            pushed.lock().unwrap().push((request, stamp));
         });
     relay
         .send(Arrival::SurfaceCreated {
@@ -786,8 +786,8 @@ fn a_write_made_before_the_application_saw_a_report_is_told_after_that_report() 
                 over: None,
             });
             // The platform accepted the write.
-            let seen = asked.lock().unwrap().last().unwrap().1;
-            relay.tell_again(seen, &write).unwrap();
+            let stamp = asked.lock().unwrap().last().unwrap().1;
+            relay.tell_again(stamp, &write).unwrap();
             relay.post(Msg::Stop).unwrap();
         }
     }));
@@ -804,7 +804,110 @@ fn a_write_made_before_the_application_saw_a_report_is_told_after_that_report() 
     assert_eq!(held, [told(&report), told(&write)]);
     // The application had both when it left: a write made then is not told
     // again, and so nothing is sent to the relay that closed.
-    let seen = asked.lock().unwrap().last().unwrap().1;
-    assert_eq!(seen, 2);
-    relay.tell_again(seen, &write).unwrap();
+    let stamp = asked.lock().unwrap().last().unwrap().1;
+    assert_eq!(stamp.seen, 2);
+    relay.tell_again(stamp, &write).unwrap();
+}
+
+#[test]
+fn a_write_made_over_one_on_its_way_lands_though_an_older_write_is_told_back() {
+    let [a, typed, w1, w2, w3] =
+        ["a", "a!", "w1", "w2", "w3"].map(|text| holds(text, [0, 0], None));
+    // The second write is judged before the first lands (whose command then
+    // lands the second), after it landed, or just as it lands.
+    for (judged, landed) in [(&typed, &w2), (&w1, &w1), (&typed, &w1)] {
+        let mut writes = Writes::default();
+        writes.wrote(&a, w1.clone());
+        // Typed with the first write on its way, and read by both sides.
+        writes.reported(&typed);
+        // The application writes over what was typed.
+        let seen = writes.holds(judged.clone());
+        assert!(
+            !writes.stale(Some(&typed), &seen),
+            "w2, judged on {judged:?}"
+        );
+        writes.wrote(judged, w2.clone());
+        // The connection tells what landed: older than the write on its way.
+        assert_eq!(writes.told_back(landed, || true), Some(w2.clone()));
+        // The newest write, over that one, is made and lands.
+        let seen = writes.holds(landed.clone());
+        assert!(!writes.stale(Some(&w2), &seen), "w3, judged on {landed:?}");
+        writes.wrote(landed, w3.clone());
+        assert_eq!(writes.holds(w3.clone()), w3);
+    }
+}
+
+#[test]
+fn a_write_over_a_report_lands_though_another_write_is_yet_to_be_told() {
+    let [a, typed, w1, w2, w3] =
+        ["a", "a!", "w1", "w2", "w3"].map(|text| holds(text, [0, 0], None));
+    let mut writes = Writes::default();
+    writes.wrote(&a, w1.clone());
+    // A write made before the application saw what was typed.
+    writes.reported(&typed);
+    writes.wrote(&w1, w2.clone());
+    // It took the report, and writes over that before w2 was told again.
+    let seen = writes.holds(w1.clone());
+    assert!(!writes.stale(Some(&typed), &seen));
+    writes.wrote(&w1, w3.clone());
+    assert_eq!(writes.holds(w3.clone()), w3);
+}
+
+#[test]
+fn what_the_method_typed_after_a_write_is_no_write_told_back() {
+    let [a, typed, w1, w2] = ["a", "a!", "w1", "w2"].map(|text| holds(text, [0, 0], None));
+    let mut writes = Writes::default();
+    writes.wrote(&a, w1.clone());
+    writes.wrote(&a, w2.clone());
+    // Only what the connection says it told back, and only of a write.
+    assert_eq!(writes.told_back(&w1, || false), None);
+    assert_eq!(writes.told_back(&typed, || true), None);
+    // Typed, and as it happens what was written before: the method's own.
+    writes.reported(&w1);
+    let seen = writes.holds(w1.clone());
+    assert_eq!(seen, w1);
+    assert!(writes.stale(Some(&w2), &seen));
+    writes.reported(&typed);
+    let seen = writes.holds(typed.clone());
+    assert!(writes.stale(Some(&w2), &seen));
+}
+
+#[test]
+fn what_is_told_back_never_follows_a_newer_write_of_the_application() {
+    let log = Log::default();
+    let (host, relay): (RelayHost<u32, Msg>, Relay<u32, Msg>) =
+        RelayHost::stamped(Capabilities::default(), |_, _| {});
+    relay
+        .send(Arrival::SurfaceCreated {
+            surface: 1,
+            px: [100, 100],
+            scale: 1.0,
+        })
+        .unwrap();
+    let [w2, w3] = ["w2", "w3"].map(|text| holds(text, [0, 0], None));
+    let mut app = App::new(&log);
+    app.on_first = Some(Box::new({
+        let relay = relay.clone();
+        let (w2, w3) = (w2.clone(), w3.clone());
+        move |host: &mut RelayControl<'_, u32>| {
+            let write = |now: &crate::HeldText| Request::Held {
+                now: now.clone(),
+                over: None,
+            };
+            host.request(write(&w2));
+            // Told back for the first write, with the second on its way.
+            relay.tell_back(1, w2.clone()).unwrap();
+            host.request(write(&w3));
+            relay.tell_back(2, w3.clone()).unwrap();
+            relay.post(Msg::Stop).unwrap();
+        }
+    }));
+    host.run(app).unwrap();
+
+    let held: Vec<String> = lines(&log)
+        .into_iter()
+        .filter(|line| line.contains("Held("))
+        .collect();
+    let event = WindowEvent::Text(crate::TextEvent::Held(w3));
+    assert_eq!(held, [format!("{event:?}")]);
 }

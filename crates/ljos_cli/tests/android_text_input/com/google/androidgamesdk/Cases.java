@@ -151,6 +151,22 @@ public final class Cases {
         it.told("a composition, then hide", "hello!|6,6|5,6", "hello!|6,6|-1,-1");
     }
 
+    private static void writeToldBackSaysSo() {
+        Cases it = new Cases(true, true).hello();
+        TextInputOf.writeComing(it.surface);
+        it.connection.commitText("!", 1);
+        same("a report says it is a write", TextInputOf.toldWrite(it.surface) ? 1 : 0, 0);
+        it.land("w1", 2, -1, -1);
+        TextInputOf.writeComing(it.surface);
+        Handler.runQueued();
+        it.told("a write told back with the next on its way", "hello!|6,6|-1,-1", "w1|2,2|-1,-1");
+        same("a write told back says so", TextInputOf.toldWrite(it.surface) ? 1 : 0, 1);
+        it.land("w3", 2, -1, -1);
+        Handler.runQueued();
+        it.connection.commitText("?", 1);
+        same("typing after it says it is a write", TextInputOf.toldWrite(it.surface) ? 1 : 0, 0);
+    }
+
     private static void overtakenReportIsFollowedByTheWrite() {
         for (boolean served : BOTH) {
             for (boolean composing : BOTH) {
@@ -246,6 +262,7 @@ public final class Cases {
         moveOutlivesShowingAndHiding();
         endedCompositionIsTold();
         overtakenReportIsFollowedByTheWrite();
+        writeToldBackSaysSo();
         writesOnTheirWayAreToldOnce();
         writeAcrossTheToldWriteIsToldInItsTurn();
         writeThatNeverLandsHoldsNothing();

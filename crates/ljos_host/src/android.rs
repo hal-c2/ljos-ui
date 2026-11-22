@@ -77,8 +77,8 @@ impl<U: Send + 'static> std::fmt::Debug for Attach<U> {
 pub fn host<U: From<Wake> + Send + 'static>() -> (AndroidHost<U>, Attach<U>) {
     let requests = Arc::new(Mutex::new(Requests::default()));
     let asked = Arc::clone(&requests);
-    let (host, relay) = RelayHost::stamped(capabilities(), move |request, seen| {
-        lock(&asked).ask((request, seen));
+    let (host, relay) = RelayHost::stamped(capabilities(), move |request, stamp| {
+        lock(&asked).ask((request, stamp));
     });
     (host.with_screen_name("display"), Attach { relay, requests })
 }
@@ -107,6 +107,7 @@ impl<U: Send + 'static> Attach<U> {
             finishing: false,
             dead_key: DeadKey::default(),
             writes: crate::relay::Writes::default(),
+            handled: 0,
             method_holds: false,
         };
         while keeps_pumping(pump.destroyed, pump.closed, pump.finishing) {
@@ -121,8 +122,8 @@ impl<U: Send + 'static> Attach<U> {
                 continue;
             };
             pump.input();
-            for (request, seen) in asked {
-                pump.request(request, seen);
+            for (request, stamp) in asked {
+                pump.request(request, stamp);
             }
         }
         drop(pumping);
@@ -268,6 +269,8 @@ struct Pump<'a, U: Send + 'static> {
     /// What was written to the method that the main thread may not have
     /// applied yet.
     writes: crate::relay::Writes,
+    /// The writes the application asked for that were made or dropped.
+    handled: u64,
     /// This activity's input method reported a text. Until then it may hold
     /// none at all, not even an empty text: a write of ours is applied on
     /// the main thread later, or dropped while no keyboard is connected.
@@ -362,7 +365,17 @@ impl<U: Send + 'static> Pump<'_, U> {
         let mut out = Vec::new();
         let dead_key = &mut self.dead_key;
         let writes = &mut self.writes;
-        while events.next(|event| translate(self.app, dead_key, writes, event, &mut out)) {}
+        let mut back = None;
+        while events.next(|event| translate(self.app, dead_key, writes, &mut back, event, &mut out))
+        {
+        }
+        if let Some(now) = back {
+            self.method_holds = true;
+            // Before the rest: the text is read first, as the glue hands it.
+            if self.relay.tell_back(self.handled, now).is_err() {
+                self.closed = true;
+            }
+        }
         if out
             .iter()
             .any(|e| matches!(e, WindowEvent::Text(TextEvent::Held(_))))
@@ -374,7 +387,7 @@ impl<U: Send + 'static> Pump<'_, U> {
         }
     }
 
-    fn request(&mut self, request: Request, seen: u64) {
+    fn request(&mut self, request: Request, stamp: crate::relay::Asked) {
         match request {
             Request::Keyboard(true) => self.app.show_soft_input(false),
             Request::Keyboard(false) => self.app.hide_soft_input(false),
@@ -406,6 +419,8 @@ impl<U: Send + 'static> Pump<'_, U> {
                 // against the newest text, so it never writes over text the
                 // user typed since the last read.
                 self.input();
+                // What is told back from here on knows of this write.
+                self.handled = stamp.writes;
                 // Before the method reports, it holds what an empty one
                 // would, plus the writes of ours still on their way.
                 let reported = if self.method_holds {
@@ -428,8 +443,14 @@ impl<U: Send + 'static> Pump<'_, U> {
                     // none is told back (TextInputOf.java).
                     self.writes.unreported()
                 };
-                if crate::relay::held_is_stale(over.as_ref(), &holds) {
+                if self.writes.stale(over.as_ref(), &holds) {
                     call_activity(self.app, ActivityCall::WriteDropped);
+                    // A write told back was passed over for this one.
+                    if self.writes.wrote_it(&holds)
+                        && self.relay.tell_back(self.handled, holds).is_err()
+                    {
+                        self.closed = true;
+                    }
                     return;
                 }
                 self.writes.wrote(&reported, held.clone());
@@ -449,7 +470,7 @@ impl<U: Send + 'static> Pump<'_, U> {
                 };
                 // A report on its way to the application is older than
                 // this write, which is what the method ends on.
-                if self.relay.tell_again(seen, &held).is_err() {
+                if self.relay.tell_again(stamp, &held).is_err() {
                     self.closed = true;
                 }
                 self.app.set_text_input_state(TextInputState {
@@ -480,6 +501,7 @@ fn translate(
     app: &AndroidApp,
     dead_key: &mut DeadKey,
     writes: &mut crate::relay::Writes,
+    back: &mut Option<HeldText>,
     event: &InputEvent<'_>,
     out: &mut Vec<WindowEvent>,
 ) -> InputStatus {
@@ -552,20 +574,26 @@ fn translate(
             InputStatus::Handled
         }
         InputEvent::TextEvent(state) => {
-            // What is compared from here on is the method's report. A write
-            // still on its way replaces it when it lands, and TextInputOf's
-            // connection then tells that: else it tells no write back.
-            writes.clear();
             let compose = state
                 .compose_region
                 .map(|c| c.start.min(c.end)..c.start.max(c.end))
                 .filter(|c| c.start < c.end);
-            out.push(WindowEvent::Text(TextEvent::Held(HeldText {
+            let now = HeldText {
                 text: state.text.clone(),
                 anchor: state.selection.start,
                 cursor: state.selection.end,
                 compose,
-            })));
+            };
+            // TextInputOf's connection tells a write back when it landed on
+            // a report, and says so. Else what is compared from here on is
+            // the method's report: a write still on its way replaces it
+            // when it lands, and is then told.
+            if let Some(write) = writes.told_back(&now, || told_write(app)) {
+                *back = Some(write);
+            } else {
+                writes.reported(&now);
+                out.push(WindowEvent::Text(TextEvent::Held(now)));
+            }
             InputStatus::Handled
         }
         InputEvent::TextAction(_) => {
@@ -693,6 +721,30 @@ fn floats<'local>(
     let array = env.new_float_array(v.len())?;
     array.set_region(env, 0, v)?;
     Ok(array)
+}
+
+/// `LjosActivity.textInputToldWrite`: whether the connection's last tell
+/// was a write told back. An unanswered call takes it for a report.
+fn told_write(app: &AndroidApp) -> bool {
+    use jni::objects::JObject;
+    use jni::{jni_sig, jni_str};
+    // SAFETY: android-activity keeps the VM and the activity alive while
+    // `app` is.
+    let vm = unsafe { jni::JavaVM::from_raw(app.vm_as_ptr().cast()) };
+    let activity = app.activity_as_ptr() as jni::sys::jobject;
+    vm.attach_current_thread(|env| -> jni::errors::Result<bool> {
+        // SAFETY: the activity outlives this call, and a cast does not
+        // delete the reference.
+        let activity = unsafe { env.as_cast_raw::<JObject>(&activity)? };
+        env.call_method(
+            &activity,
+            jni_str!("textInputToldWrite"),
+            jni_sig!(() -> jboolean),
+            &[],
+        )?
+        .z()
+    })
+    .unwrap_or(false)
 }
 
 /// Calls the activity on this thread, which android-activity attached to

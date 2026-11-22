@@ -226,6 +226,14 @@ public class LjosActivity extends GameActivity {
         TextInputOf.writeComing(mSurfaceView);
     }
 
+    /**
+     * Whether what the keyboard's connection told last is a write, told
+     * back. A read on the native side's thread, which waits for no other.
+     */
+    public boolean textInputToldWrite() {
+        return TextInputOf.toldWrite(mSurfaceView);
+    }
+
     /** The write announced was stale, and is not made. */
     public void textInputWriteDropped() {
         TextInputOf.writeDropped(mSurfaceView);
