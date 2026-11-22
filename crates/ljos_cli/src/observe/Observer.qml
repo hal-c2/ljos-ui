@@ -101,6 +101,21 @@ ApplicationWindow {
     // functions.
     property var waiting: ({})
 
+    // What kind of call the error shown is of; "" for a note, which any
+    // answer clears. An error waits for a success of its own kind.
+    property string statusOf: ""
+
+    function say(text, kind) {
+        status.text = text
+        statusOf = text === "" ? "" : kind
+    }
+
+    // The kind of what `route` names: a part of the tree is the tree's.
+    function kindOf(route) {
+        var kind = (route || "").split(":")[0]
+        return kind === "objects+" ? "objects" : kind
+    }
+
     // The name the traces started here are held by: the inspector stops
     // them once this window no longer watches the application, as when
     // it is closed.
@@ -112,7 +127,7 @@ ApplicationWindow {
         var next = waiting
         next[serial] = route
         waiting = next
-        if (route !== undefined && route.indexOf("inspect:") === 0)
+        if (kindOf(route) === "inspect")
             status.inspectsWaiting += 1
     }
 
@@ -203,23 +218,32 @@ ApplicationWindow {
             var values = route !== undefined && route.indexOf("inspect:") === 0
             if (values)
                 status.inspectsWaiting -= 1
+            // An answer about an object picked before says nothing of
+            // the one picked since.
+            var past = (values || picture) && route.substring(8) !== objects.picked
             if (!ok && route !== "watch" && !edit
                     && String(result).indexOf("rate_limited") >= 0) {
                 var again = (values || picture) && objects.valuesTurnedAway(route.substring(8), picture)
+                var note = "The application is asked too often; showing the last answer"
                 if (again && objects.shownOf !== route.substring(8))
-                    status.text = "The application is asked too often; its values are asked again in a moment"
+                    note = "The application is asked too often; its values are asked again in a moment"
                 else if (again)
-                    status.text = "The application is asked too often; showing the last answer until it is asked again"
-                else
-                    status.text = "The application is asked too often; showing the last answer"
+                    note += " until it is asked again"
+                if (!past && window.statusOf === "")
+                    window.say(note, "")
                 if (route && route.indexOf("objects") === 0)
                     objects.turnedAway(parseInt(route.substring(route.indexOf(":") + 1)))
                 return
             }
             // A picture that cannot be taken is said where the picture
             // would be.
-            if (route !== "watch" && !picture && route !== "audit-shot")
-                status.text = ok ? "" : tool + ": " + window.refusal(result)
+            if (route !== "watch" && !picture && route !== "audit-shot" && !past) {
+                var kind = window.kindOf(route)
+                if (!ok)
+                    window.say(tool + ": " + window.refusal(result), kind)
+                else if (window.statusOf === "" || window.statusOf === kind)
+                    window.say("", "")
+            }
             window.answered(route || "", ok, ok ? JSON.parse(result) : result)
         }
     }
@@ -229,7 +253,12 @@ ApplicationWindow {
                                    "Supervision", "Frames", "Memory", "Models", "Wakes", "Components",
                                    "Bindings", "Growth", "Audit"]
     property int page: 0
-    onPageChanged: watcher.start()
+    onPageChanged: {
+        // An error is of the page it was met on.
+        if (statusOf !== "")
+            say("", "")
+        watcher.start()
+    }
 
     // A page chosen, by a click or a key, is asked for anew: what the
     // watch told while it was hidden was not followed.
@@ -528,6 +557,8 @@ ApplicationWindow {
                 // and they wrap, so that every page is one press away.
                 Flow {
                     id: tabs
+                    // The tab with focus; -1 while the list has none.
+                    property int at: -1
                     Layout.fillWidth: true
                     spacing: window.compact ? 4 : 2
                     Repeater {
@@ -551,9 +582,17 @@ ApplicationWindow {
                             // speaks.
                             Accessible.role: Accessible.PageTab
                             Accessible.name: tab.modelData
-                            // The list is one stop of Tab, at the page
-                            // shown; the arrows go to the other tabs.
-                            activeFocusOnTab: tab.shown
+                            // The list is one stop of Tab: at the page
+                            // shown from outside it, and at the tab with
+                            // focus inside it, so that Tab leaves forward
+                            // from whichever tab an arrow went to.
+                            activeFocusOnTab: tabs.at < 0 ? tab.shown : tabs.at === tab.index
+                            onActiveFocusChanged: {
+                                if (activeFocus)
+                                    tabs.at = tab.index
+                                else if (tabs.at === tab.index)
+                                    tabs.at = -1
+                            }
                             border.width: activeFocus ? 2 : 0
                             border.color: theme.accent
                             function go(by) {
@@ -1910,7 +1949,7 @@ ApplicationWindow {
                         var going = partCursor !== ""
                         partCursor = ""
                         if (!ok) {
-                            status.text = window.refusal(r)
+                            window.say(window.refusal(r), "objects")
                             // A row that cannot be opened is not opened
                             // again.
                             if (opening !== "") {
@@ -2112,6 +2151,9 @@ ApplicationWindow {
                         // asked again, with other bindings or more
                         // properties, keeps its values until then.
                         if (handle !== picked) {
+                            // So is an error about the one picked before.
+                            if (window.statusOf === "edited" || window.statusOf === "inspect")
+                                window.say("", "")
                             askAgain.stop()
                             valuesOwed = false
                             pictureOwed = false

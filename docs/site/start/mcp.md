@@ -125,14 +125,14 @@ ljos attach .
 
 | Tool | What an agent can do | Capability |
 |---|---|---|
-| `app_status` | Read windows, size, scale, appearance, focus, clock kind (`real` or `virtual`), active animations, painter backend, startup timings, reload state and granted capabilities | `inspect` |
+| `app_status` | Read windows (`windows[0].active` says whether it has the keyboard), size, scale, appearance, focus, clock kind (`real` or `virtual`), active animations, painter backend, startup timings, reload state and granted capabilities | `inspect` |
 | `app_snapshot` | Get an indented accessibility-tree outline with short refs (`[e3]`), `id=` and `obj=` labels, virtual list windows and optional `pointer: true` lines for items with a `PointerArea` or `Tap` that have no accessible role | `inspect` |
 | `app_find` | Search for nodes by `role`, `name` (exact, substring or regex), `objectName`, `text` or state | `inspect` |
 | `app_inspect` | Inspect one object in depth: type chain, source location, properties with provenance (`assigned`, `bound` at tier `0`/`1`/`JS`, `animated`, `host`, `default`), geometry, window singletons, and binding `dependencies` or `bindings` | `inspect` |
 | `app_binding_graph` | Read the sources and dependents of a property and why it last evaluated | `inspect` |
 | `app_get_property` / `app_set_property` | Read or write a property, set a live `binding` expression (with `eval`), cover an existing binding with `keep_binding`, `revert` a devtools edit, or write a cell of a model with `row` | `inspect` / `mutate` (+ `eval` for `binding`) |
 | `app_invoke` | Emit a signal or call an invokable QML/Rust method on an object | `mutate` |
-| `app_click`, `app_type`, `app_press`, `app_scroll`, `app_touch` | Send pointer, keyboard, wheel and touch input through the scene's real input router and focus tree; returns a snapshot delta after the next frame. `app_click` takes an item (`target`, its centre) or a point of the window (`at: [x, y]` in logical pixels) | `input` |
+| `app_click`, `app_type`, `app_press`, `app_scroll`, `app_touch` | Send pointer, keyboard, wheel and touch input through the scene's real input router and focus tree; returns a snapshot delta after the next frame. `app_click` takes an item (`target`, its centre) or a point of the window (`at: [x, y]` in logical pixels). `app_press` and `app_type` are refused with `not_actionable`, before any click, while the window does not have the keyboard | `input` |
 | `app_batch` | Run a sequence of tool steps in one call, stopping at the first error and returning one combined outline delta at the end | per step |
 | `app_screenshot` | Render the window or a specific node to a PNG (up to 1280 px) using the R backend, even when the window is occluded or headless | `inspect` |
 | `app_resize` / `app_set_appearance` | Resize the window or switch between light/dark appearance, high contrast, reduced motion and font scale | `input` |
