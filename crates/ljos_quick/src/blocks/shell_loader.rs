@@ -174,6 +174,10 @@ pub(crate) fn retry(e: &Engine, me: ObjectId) {
         return;
     }
     let source = url(e, me, ShellLoader::SOURCE.index);
+    if source.is_empty() && status == shell_status::FALLBACK {
+        // Nothing to try: the fallback is what this loader shows.
+        return;
+    }
     if status == shell_status::NULL || source.is_empty() {
         load(e, me);
         return;
@@ -358,7 +362,8 @@ fn again_after(e: &Engine, me: ObjectId, report: Option<&FaultReport>) {
             r.backoff.trying(e.now());
         });
         if tried.is_some() {
-            load(e, me);
+            // The fallback stays shown while the source is tried.
+            retry(e, me);
         }
     });
     if let Some(Some(old)) = with_run(e, me, |r| r.waiting.replace(timer)) {
