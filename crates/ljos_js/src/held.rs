@@ -43,6 +43,11 @@ unsafe extern "C" {
 struct Walk<'js> {
     seen: HashSet<usize>,
     stack: Vec<Value<'js>>,
+    /// References still to look at: a group's, and those found in what is
+    /// not made yet.
+    refs: Vec<JsRef>,
+    /// What was not made yet and has been looked into, by [`JsRef::id`].
+    unmade: HashSet<u64>,
     /// What is left of the budget: a value walked and a property read
     /// cost one each, so the work is bounded by it whatever the shape.
     left: usize,
@@ -58,8 +63,11 @@ impl<'js> Scope<'js> {
     /// its first read is left unmade. A function holds what its closure
     /// holds, which QuickJS does not show: only the function is counted,
     /// and so for a proxy, a host's object and the other kinds whose
-    /// insides are the engine's. A reference no longer held is left out.
-    /// Stops after `budget` values and property reads in all.
+    /// insides are the engine's. An array or object not made yet is left
+    /// unmade and only what it refers to is counted. A reference no longer
+    /// held is left out. Nothing is made, so a heap at its limit is walked
+    /// as far as any other. Stops after `budget` values, entries and
+    /// property reads in all.
     pub fn held_by<'r, G>(&self, groups: impl IntoIterator<Item = G>, budget: usize) -> Held
     where
         G: IntoIterator<Item = &'r JsRef>,
@@ -67,6 +75,8 @@ impl<'js> Scope<'js> {
         let mut walk = Walk {
             seen: HashSet::new(),
             stack: Vec::new(),
+            refs: Vec::new(),
+            unmade: HashSet::new(),
             left: budget,
             values: 0,
             cut: false,
@@ -79,32 +89,47 @@ impl<'js> Scope<'js> {
                     walk.cut = true;
                     break;
                 }
-                // A value not made yet (an array a host handed over that no
-                // script has read) is not in the heap: making it to look
-                // would run the script's hook and grow what is measured.
-                if r.key().is_none() {
-                    continue;
-                }
-                match self.restore(r) {
-                    Ok(v) => walk.stack.push(v),
-                    Err(_) => {
-                        let _ = self.ctx().catch();
-                    }
-                }
-                while let Some(v) = walk.stack.pop() {
-                    if walk.left == 0 {
-                        walk.cut = true;
-                        walk.stack.clear();
-                        break;
-                    }
-                    bytes += self.held_at(&v, &mut walk);
-                }
+                walk.refs.push(r.clone());
+                bytes += self.held_from(&mut walk);
             }
             held.bytes.push(bytes);
         }
         held.values = walk.values;
         held.truncated = walk.cut;
         held
+    }
+
+    /// What is reached from the references waiting on the walk.
+    fn held_from(&self, walk: &mut Walk<'js>) -> usize {
+        let mut bytes = 0;
+        while let Some(r) = walk.refs.pop() {
+            if walk.left == 0 {
+                walk.cut = true;
+                walk.refs.clear();
+                break;
+            }
+            match r.key() {
+                Some(key) => walk.stack.extend(self.live_value(key)),
+                // A value not made yet (an array a host handed over that no
+                // script has read) is not in the heap, though what it
+                // refers to may be: making it to look would run the
+                // script's hook and grow what is measured.
+                None => {
+                    if walk.unmade.insert(r.id()) {
+                        walk.cut |= !r.pending_refs(&mut walk.left, &mut walk.refs);
+                    }
+                }
+            }
+            while let Some(v) = walk.stack.pop() {
+                if walk.left == 0 {
+                    walk.cut = true;
+                    walk.stack.clear();
+                    break;
+                }
+                bytes += self.held_at(&v, walk);
+            }
+        }
+        bytes
     }
 
     /// What `v` itself holds, its first time; what it refers to goes on

@@ -648,16 +648,22 @@ impl<'js> Scope<'js> {
         let Some(key) = r.key() else {
             return self.materialise(r);
         };
-        let p = self
-            .state
-            .handles
-            .borrow()
-            .get(&key)
-            .map(|h| h.value.clone());
-        match p {
+        match self.handle(key) {
             Some(p) => p.restore(&self.ctx),
             None => Err(self.stale()),
         }
+    }
+
+    /// What is held under `key`, with no error made where nothing is.
+    fn handle(&self, key: u64) -> Option<Persistent<Value<'static>>> {
+        let handles = self.state.handles.borrow();
+        handles.get(&key).map(|h| h.value.clone())
+    }
+
+    /// [`Scope::restore`] for a walk that only measures: what is live, and
+    /// `None` for the rest, with nothing made or thrown.
+    pub(crate) fn live_value(&self, key: u64) -> Option<Value<'js>> {
+        self.handle(key)?.restore(&self.ctx).ok()
     }
 
     fn stale(&self) -> rquickjs::Error {
