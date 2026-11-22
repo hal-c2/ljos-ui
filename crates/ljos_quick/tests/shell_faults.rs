@@ -539,12 +539,12 @@ fn a_shell_that_fits_only_without_the_fallback_stays_on_it_and_waits_between_tri
             e.invoke_by_name(loader, "reload", &[]).unwrap();
         } else {
             let due = e.next_timer_deadline().expect("the source is tried again");
-            let wait = due.saturating_since(clock.now());
+            let from = clock.now();
+            let wait = due.saturating_since(from);
             waits.push(wait.as_secs());
             if wait >= Duration::from_secs(1) {
                 for early in [wait / 2, wait - Duration::from_millis(20)] {
-                    let at = due - (wait - early);
-                    clock.set(at);
+                    clock.set(from + early);
                     turn(&e, &clock, loader, fallback);
                     assert_eq!(num(&e, root, "made"), made, "no try before it is due");
                     assert_eq!(out_of_memory(&e), faults);
