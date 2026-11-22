@@ -24,6 +24,10 @@ Rectangle {
     property bool watching: false
     property bool choose: false
     property var chooser
+    property bool greedy: false
+    property string chosenWhenLetGo
+    property bool reloadWhenLetGo: false
+    property int shells: 0
     property string sawFirst
     property var looked: []
     property string source: "Shell"
@@ -58,7 +62,9 @@ Rectangle {
     objectName: "shell"
     color: root.heavy && new ArrayBuffer(268435456).byteLength ? "red" : "blue"
     Component.onCompleted: {
+        root.shells++
         if (root.choose) root.chooser = shell
+        if (root.greedy) new ArrayBuffer(268435456)
         if (!root.ready) throw new Error("not ready")
         if (root.choose) root.source = "Other"
     }
@@ -77,6 +83,10 @@ Rectangle {
     Accessible.name: "The fallback"
     MouseArea { anchors.fill: parent; onPressed: root.pressed++ }
     Item { objectName: "field"; focus: true }
+    Component.onDestruction: {
+        if (root.chosenWhenLetGo) root.source = root.chosenWhenLetGo
+        if (root.reloadWhenLetGo) holder.children[0].reload()
+    }
 }
 "#;
 
@@ -252,6 +262,41 @@ fn assert_other_replaced_the_chooser(h: &Held, case: &str) {
     assert_other_shown(&h.e, h.root, h.loader, case);
 }
 
+/// Sets the source to `Other` as `property` first says a shell failed.
+fn choose_other_as_it_fails(h: &Held, property: &'static str) {
+    let (root, loader) = (h.root, h.loader);
+    h.e.connect_by_name(loader, &format!("{property}Changed"), move |e, _| {
+        let failed = match property {
+            "status" => num(e, loader, property) > 1.0,
+            _ => get(e, loader, property)
+                .to_js_string()
+                .to_string()
+                .contains("out of memory"),
+        };
+        if failed {
+            set(e, root, "source", Value::from("Other"));
+        }
+    })
+    .unwrap();
+}
+
+/// `Other` is shown, and nothing waits to try another source again.
+fn assert_other_shown_and_no_wait(h: &Held, case: &str) {
+    assert_other_shown(&h.e, h.root, h.loader, case);
+    assert!(h.e.next_timer_deadline().is_none(), "{case}: no backoff");
+}
+
+/// Sets the source to `Other` as the log first says `said`.
+fn choose_other_as_it_is_logged(e: &Engine, root: ObjectId, said: &'static str) {
+    let (engine, mut chosen) = (e.clone(), false);
+    e.add_log_listener(move |entry| {
+        if !chosen && entry.message.contains(said) {
+            chosen = true;
+            set(&engine, root, "source", Value::from("Other"));
+        }
+    });
+}
+
 fn frame_when_due(s: &mut QuickScene, h: &Held) {
     let due = h.e.next_timer_deadline().expect("a timer");
     h.clock.set(due);
@@ -391,6 +436,165 @@ fn a_source_chosen_as_a_fallback_completes_is_shown_and_guarded() {
         2.0,
         "its fault is the loader's"
     );
+}
+
+#[test]
+fn a_source_chosen_as_no_fallback_is_said_is_the_one_shown() {
+    for property in ["error", "status"] {
+        let h = Held::new();
+        set(&h.e, h.root, "fallback", Value::from(""));
+        choose_other_as_it_fails(&h, property);
+        h.fault_in_shell();
+        h.e.deliver_faults();
+        assert_other_shown_and_no_wait(&h, property);
+    }
+}
+
+#[test]
+fn a_source_chosen_as_a_failed_fallback_is_said_is_the_one_shown() {
+    for property in ["error", "status"] {
+        let h = Held::new();
+        set(&h.e, h.root, "fallback", Value::from("Missing"));
+        choose_other_as_it_fails(&h, property);
+        h.fault_in_shell();
+        h.e.deliver_faults();
+        assert_other_shown_and_no_wait(&h, property);
+    }
+}
+
+#[test]
+fn a_source_chosen_as_a_failed_retry_is_said_starts_no_backoff() {
+    let h = Held::new();
+    set(&h.e, h.root, "greedy", Value::Bool(true));
+    choose_other_as_it_fails(&h, "error");
+    h.e.invoke_by_name(h.loader, "reload", &[]).unwrap();
+    assert_other_shown_and_no_wait(&h, "retry");
+}
+
+#[test]
+fn a_source_chosen_as_the_held_fallback_is_said_is_the_one_shown() {
+    for property in ["error", "status"] {
+        let h = Held::new();
+        h.retry();
+        choose_other_as_it_fails(&h, property);
+        h.fault_in_shell();
+        h.e.deliver_faults();
+        assert_other_shown_and_no_wait(&h, property);
+    }
+}
+
+#[test]
+fn a_source_chosen_as_a_fallback_judged_at_creation_is_said_is_the_one_shown() {
+    let e = engine();
+    let main = r#"
+import QtQuick
+import Ljos.Blocks
+Item {
+    id: root
+    property string source
+    property int others: 0
+    ShellLoader {
+        id: shells
+        objectName: "loader"
+        source: root.source
+        fallback: "Broken"
+        onErrorChanged: if (shells.error) root.source = "Other"
+    }
+}
+"#;
+    let broken = r#"
+import QtQuick
+Rectangle {
+    id: shell
+    property var size
+    width: shell.size.width
+}
+"#;
+    compile(&e, &[("Main", main), ("Broken", broken), ("Other", OTHER)]);
+    let root = e.create_from_url("Main", None, Vec::new()).unwrap();
+    let loader = find(&e, root, "loader");
+    assert_other_shown(&e, root, loader, "judged");
+}
+
+#[test]
+fn a_source_chosen_as_the_held_fallback_goes_keeps_its_own_error() {
+    let h = Held::new();
+    h.retry();
+    set(&h.e, h.root, "chosenWhenLetGo", Value::from("Missing"));
+    h.e.deliver_faults();
+    assert_eq!(num(&h.e, h.loader, "status"), 2.0, "the one chosen failed");
+    assert_ne!(h.error(), "", "and that is said");
+}
+
+#[test]
+fn a_source_chosen_as_a_change_lets_go_of_the_held_one_is_made_once() {
+    let h = Held::new();
+    h.retry();
+    set(&h.e, h.root, "chosenWhenLetGo", Value::from("Other"));
+    set(&h.e, h.root, "fallback", Value::from("Missing"));
+    assert_other_shown(&h.e, h.root, h.loader, "let go");
+}
+
+#[test]
+fn a_reload_as_the_fallback_is_dropped_is_not_loaded_over() {
+    for ready in [true, false] {
+        let h = Held::new();
+        set(&h.e, h.root, "ready", Value::Bool(ready));
+        set(&h.e, h.root, "shells", Value::from(0.0));
+        set(&h.e, h.root, "reloadWhenLetGo", Value::Bool(true));
+        set(&h.e, h.root, "fallback", Value::from(""));
+        assert_eq!(num(&h.e, h.root, "shells"), 1.0, "{ready}: one shell");
+        let status = num(&h.e, h.loader, "status");
+        assert_eq!(status, if ready { 1.0 } else { 3.0 }, "{ready}");
+        assert_eq!(h.item().is_some(), ready, "{ready}");
+    }
+}
+
+#[test]
+fn a_source_chosen_as_a_judged_fallback_is_logged_is_not_dropped() {
+    let e = engine();
+    let main = r#"
+import QtQuick
+import Ljos.Blocks
+Item {
+    id: root
+    property string source
+    property int others: 0
+    function show() { shells.createObject(root) }
+    Component {
+        id: shells
+        ShellLoader {
+            objectName: "loader"
+            source: root.source
+            fallback: "Broken"
+        }
+    }
+}
+"#;
+    let broken = r#"
+import QtQuick
+Rectangle {
+    id: shell
+    property var size
+    width: shell.size.width
+}
+"#;
+    compile(&e, &[("Main", main), ("Broken", broken), ("Other", OTHER)]);
+    let root = e.create_from_url("Main", None, Vec::new()).unwrap();
+    choose_other_as_it_is_logged(&e, root, "ShellLoader: fallback:");
+    e.invoke_by_name(root, "show", &[]).unwrap();
+    let loader = find(&e, root, "loader");
+    assert_other_shown(&e, root, loader, "logged");
+}
+
+#[test]
+fn a_source_chosen_as_a_backoff_is_logged_cancels_it() {
+    let h = Held::new();
+    set(&h.e, h.root, "fallback", Value::from(""));
+    choose_other_as_it_is_logged(&h.e, h.root, "trying the source again");
+    h.fault_in_shell();
+    h.e.deliver_faults();
+    assert_other_shown_and_no_wait(&h, "logged");
 }
 
 #[test]
