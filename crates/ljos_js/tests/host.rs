@@ -720,12 +720,129 @@ fn the_error_thrown_for_want_of_heap_and_thrown_again_is_running_out_of_memory()
         "function fill() { let h = null; for (;;) h = { n: h } }\n\
          try { fill() } catch (e) {\n\
            if (e.message !== 'out of memory') throw new Error('not out of memory: ' + e);\n\
-           try { e.message = 'mine' } catch (_) {}\n\
+           e.message = 'mine';\n\
            throw e\n\
          }",
     )
     .unwrap_err();
     assert!(matches!(err, JsFault::JsOutOfMemory { .. }), "{err:?}");
+}
+
+/// A `catch` may write on what it caught before it throws it again, as
+/// error reporting does. On the error every throw for want of room shares,
+/// the write neither throws, which would put a `TypeError` in the place of
+/// running out, nor shows in the next throw.
+#[test]
+fn writing_on_the_error_thrown_for_want_of_heap_neither_throws_nor_changes_it() {
+    for write in [
+        "if (e instanceof Error) e.context = 'load'",
+        "e.message = 'load'",
+        "e.name = 'Load'",
+        "e['context'] = 'load'",
+        "e.stack = 'load'",
+        "Object.assign(e, { context: 'load', message: 'load' })",
+        "Object.defineProperty(e, 'context', { value: 'load' })",
+        "Object.defineProperty(e, 'message', { value: 'load' })",
+        "delete e.message",
+        "Object.setPrototypeOf(e, null)",
+    ] {
+        let host = small(16);
+        host.collect_now();
+        let held = host.memory_stats().unwrap().malloc_size;
+        assert!(host.set_memory_limit(Some(held + 4 * MIB)));
+        let err = eval_num(
+            &host,
+            &format!(
+                "'use strict';\n\
+                 function fill() {{ let h = null; for (;;) h = {{ n: h }} }}\n\
+                 try {{ fill() }} catch (e) {{\n\
+                   globalThis.kept = e;\n\
+                   {write};\n\
+                   throw e\n\
+                 }}"
+            ),
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, JsFault::JsOutOfMemory { .. }),
+            "{write}: {err:?}"
+        );
+        // Also while a script still holds the one it wrote on.
+        let unchanged = eval_num(
+            &host,
+            "function again() { let h = null; for (;;) h = { n: h } }\n\
+             let same = 0;\n\
+             try { again() } catch (e) {\n\
+               same = e === kept && e instanceof Error && e.name === 'InternalError'\n\
+                 && e.message === 'out of memory' && e.stack === ''\n\
+                 && e.context === undefined ? 1 : 0\n\
+             }\n\
+             same",
+        );
+        assert_eq!(unchanged, Ok(1.0), "{write}");
+    }
+}
+
+/// With no room left for "interrupted", an interrupt is still one no
+/// `catch` takes, and it leaves the error thrown for want of room as it
+/// was: the next run that runs out catches it, and an async function that
+/// runs out rejects.
+#[test]
+fn an_interrupt_on_a_full_heap_is_uncatchable_and_leaves_running_out_catchable() {
+    let host = small(16);
+    let slice = host.config().slice;
+    // Made beforehand, so nothing between running out and the interrupt
+    // allocates.
+    host.enter("setup", slice, |s| {
+        s.eval::<(), _>(
+            "globalThis.full = false; globalThis.caught = false; globalThis.h = null;\n\
+             globalThis.fill = function () { for (;;) h = { n: h } };\n\
+             globalThis.go = function () {\n\
+               try { fill() } catch (e) { full = e.stack === '' }\n\
+               try { for (;;) {} } catch (_) { caught = true }\n\
+             };\n\
+             globalThis.chain = function () { let t = null; for (;;) t = { n: t } };\n\
+             undefined",
+        )
+    })
+    .unwrap();
+    host.collect_now();
+    let held = host.memory_stats().unwrap().malloc_size;
+    assert!(host.set_memory_limit(Some(held + MIB)));
+    let spin = Slice {
+        soft: Duration::from_secs(1),
+        hard: Duration::from_secs(2),
+    };
+    let out = host.enter("go", spin, |s| s.eval::<(), _>("go()"));
+    assert!(host.set_memory_limit(None));
+    assert!(matches!(out, Err(JsFault::JsInterrupted { .. })), "{out:?}");
+    assert_eq!(
+        eval_num(&host, "full ? 1 : 0"),
+        Ok(1.0),
+        "the heap was not full when the interrupt fired"
+    );
+    assert_eq!(eval_num(&host, "caught ? 1 : 0"), Ok(0.0));
+
+    assert_eq!(eval_num(&host, "h = null; 0"), Ok(0.0));
+    host.collect_now();
+    let held = host.memory_stats().unwrap().malloc_size;
+    assert!(host.set_memory_limit(Some(held + 4 * MIB)));
+    let later = eval_num(
+        &host,
+        "let got = 0; try { chain() } catch (e) { got = e.stack === '' ? 1 : 2 }; got",
+    );
+    assert_eq!(later, Ok(1.0));
+    host.enter("reject", slice, |s| {
+        s.eval::<(), _>(
+            "globalThis.rejected = false;\n\
+             (async () => chain())().catch(() => { rejected = true });\n\
+             undefined",
+        )
+    })
+    .unwrap();
+    let pumped = host.pump_jobs(Instant::now() + Duration::from_secs(5));
+    assert!(pumped.faults.is_empty(), "{:?}", pumped.faults);
+    assert_eq!(eval_num(&host, "rejected ? 1 : 0"), Ok(1.0));
 }
 
 /// A run that catches running out and swallows it has room again; a
