@@ -150,6 +150,7 @@ fn a_document_the_system_hands_out_is_selected_by_its_url() {
         e.read_by_name(d, "currentFile").to_js_string().as_str(),
         url
     );
+    assert!(fake.unheard().is_empty(), "a heard answer went back");
 }
 
 #[test]
@@ -168,6 +169,25 @@ fn documents_that_arrive_after_the_dialog_closed_go_back_to_the_system() {
     e.invoke_by_name(d, "close", &[]).expect("closed");
     platform.finish(&e);
     assert_eq!(accepted.get(), 0);
+    assert_eq!(
+        fake.unheard(),
+        vec![crate::dialogs::DialogReply::Documents(urls)]
+    );
+}
+
+#[test]
+fn documents_that_arrive_after_the_dialog_was_destroyed_go_back_to_the_system() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let e = engine(dir.path());
+    let fake = FakeDialogs::default();
+    let platform = Platform::of(&e);
+    platform.set_dialogs(Rc::new(fake.clone()));
+    let d = make::<FileDialog>(&e);
+    e.invoke_by_name(d, "open", &[]).expect("opened");
+    let urls = vec!["file:///cache/documents/2/0/notes.txt".to_owned()];
+    assert!(fake.choose_documents(urls.clone()));
+    assert!(e.destroy_now(d));
+    platform.finish(&e);
     assert_eq!(
         fake.unheard(),
         vec![crate::dialogs::DialogReply::Documents(urls)]

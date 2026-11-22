@@ -433,6 +433,20 @@ fn system_shows_none(w: &mut LjosWorld) -> StepResult {
     })
 }
 
+#[then(regex = r#"^the system is told that its answer "([^"]+)" was not heard$"#)]
+fn system_told_unheard(w: &mut LjosWorld, chosen: String) -> StepResult {
+    w.each(|b| {
+        let unheard = b.platform()?.unheard_system_answers()?;
+        if unheard.contains(&chosen) {
+            Ok(())
+        } else {
+            Err(BackendError::Failed(format!(
+                "the system was told that {unheard:?} was not heard, not {chosen:?}"
+            )))
+        }
+    })
+}
+
 #[then(regex = r#"^the system was asked to open "([^"]*)"$"#)]
 fn system_opened(w: &mut LjosWorld, url: String) -> StepResult {
     w.each(|b| {
