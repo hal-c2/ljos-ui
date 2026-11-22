@@ -2528,4 +2528,108 @@ mod tests {
             "files no watcher reads are not as they were: {reports:?}"
         );
     }
+
+    #[test]
+    fn an_ask_after_a_theme_that_failed_at_the_start_is_answered_failed() {
+        let root = tempfile::tempdir().expect("a directory");
+        write(&root.path().join(THEME_FILE), "{ \"Colors\": ");
+        let engine = engine();
+        let (mut session, woke) = session(&engine, root.path(), false);
+        let clock = ljos_runtime::SystemClock::new();
+        let _ = session.pump(&engine, &clock, &mut NoWindow);
+        while woke.try_recv().is_ok() {}
+        // Read again as it is, the broken theme has nothing new to tell.
+        session.read_again(&engine);
+        let reports = answered(&engine, &mut session, &woke);
+        assert!(
+            !reports.contains(&Report::Unchanged),
+            "a theme that does not work is not as it was: {reports:?}"
+        );
+        assert_eq!(
+            session.answers,
+            [Reread::Failed],
+            "the theme failed at the start, and fails still"
+        );
+    }
+
+    #[test]
+    fn an_ask_after_a_file_that_failed_at_the_start_is_answered_failed() {
+        let root = tempfile::tempdir().expect("a directory");
+        write(&root.path().join("Card.qml"), "import QtQuick\nItem {\n");
+        let engine = engine();
+        let (mut session, woke) = session(&engine, root.path(), false);
+        let clock = ljos_runtime::SystemClock::new();
+        let _ = session.pump(&engine, &clock, &mut NoWindow);
+        while woke.try_recv().is_ok() {}
+        session.read_again(&engine);
+        let reports = answered(&engine, &mut session, &woke);
+        assert!(
+            !reports.contains(&Report::Unchanged),
+            "a file that does not compile is not as it was: {reports:?}"
+        );
+        assert_eq!(
+            session.answers,
+            [Reread::Failed],
+            "the file failed at the start, and fails still"
+        );
+    }
+
+    #[test]
+    fn an_ask_whose_first_file_the_compiler_panics_on_is_answered_that_it_failed() {
+        let root = tempfile::tempdir().expect("a directory");
+        let engine = engine();
+        let (mut session, woke) = session(&engine, root.path(), false);
+        let clock = ljos_runtime::SystemClock::new();
+        let _ = session.pump(&engine, &clock, &mut NoWindow);
+        // A compiler that panics, as one with a bug would.
+        let State::Dormant { watch, .. } = std::mem::replace(&mut session.state, State::Off) else {
+            panic!("the user has no file yet");
+        };
+        session.state = State::Dormant {
+            make: Box::new(|_: &Engine| -> Make {
+                Box::new(|_: Making| -> Built { panic!("the compiler panics") })
+            }),
+            watch,
+        };
+        write(&root.path().join("Card.qml"), "import QtQuick\nItem { }\n");
+        session.read_again(&engine);
+        let _ = answered(&engine, &mut session, &woke);
+        assert_eq!(
+            session.answers,
+            [Reread::Failed],
+            "nothing built the first file"
+        );
+        // Asked again, nothing is read either.
+        session.read_again(&engine);
+        let _ = answered(&engine, &mut session, &woke);
+        assert_eq!(session.answers, [Reread::Failed, Reread::Failed]);
+    }
+
+    #[test]
+    fn an_ask_after_a_picture_was_replaced_is_answered_that_it_was_applied() {
+        let root = tempfile::tempdir().expect("a directory");
+        write(&root.path().join("Card.qml"), "import QtQuick\nItem { }\n");
+        let logo = root.path().join("logo.png");
+        write(&logo, "a picture");
+        let engine = engine();
+        let (mut session, woke) = session(&engine, root.path(), false);
+        let clock = ljos_runtime::SystemClock::new();
+        let _ = session.pump(&engine, &clock, &mut NoWindow);
+        while woke.try_recv().is_ok() {}
+        session.read_again(&engine);
+        let _ = answered(&engine, &mut session, &woke);
+        // No watch saw it: the ask's read finds it.
+        write(&logo, "another, longer picture");
+        session.read_again(&engine);
+        let reports = answered(&engine, &mut session, &woke);
+        assert!(
+            !reports.contains(&Report::Unchanged),
+            "a replaced picture is not as it was: {reports:?}"
+        );
+        assert_eq!(
+            session.answers,
+            [Reread::Unchanged, Reread::Applied],
+            "the picture is shown again"
+        );
+    }
 }

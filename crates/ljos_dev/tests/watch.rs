@@ -1028,6 +1028,43 @@ fn a_watcher_whose_answer_panics_again_while_it_panics_leaves_the_process_runnin
     );
 }
 
+/// A flush asked while the watcher's thread is busy with a save, which
+/// panics before the thread gets to the flush, is answered that it failed.
+#[test]
+fn a_flush_queued_behind_a_build_that_panics_is_answered_that_it_failed() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().canonicalize().unwrap();
+    write(&dir, "Main.qml", MAIN);
+    let mut reloader = ljos_dev::Reloader::open(&dir, QtTypeOracle).unwrap();
+    reloader.start();
+    let (inside_tx, inside) = mpsc::channel();
+    let (go, go_rx) = mpsc::channel::<()>();
+    let (tx, rx) = mpsc::channel();
+    let mut first = true;
+    let watcher =
+        ljos_dev::Watcher::spawn_with_quiet(reloader, Duration::from_millis(20), move |m| {
+            if std::mem::take(&mut first) {
+                // What the save brings is held up while the flush is
+                // asked, then panics.
+                let _ = inside_tx.send(());
+                let _ = go_rx.recv();
+                panic!("telling of the save panics");
+            }
+            tx.send(m).is_ok()
+        })
+        .unwrap();
+    write(&dir, "Main.qml", &MAIN.replace("10;", "12;"));
+    inside.recv_timeout(PATIENCE).expect("the save is built");
+    assert!(watcher.flush(), "a running watcher takes the flush");
+    go.send(()).unwrap();
+    let told = rx.recv_timeout(PATIENCE).expect("the flush is answered");
+    assert!(
+        matches!(&told, ljos_dev::DevMsg::Failed(faults) if !faults.is_empty()),
+        "it failed: {told:?}"
+    );
+    assert_eq!(rx.recv_timeout(PATIENCE), Ok(ljos_dev::DevMsg::Idle));
+}
+
 /// A project in a directory whose name holds what a URL gives a meaning
 /// to (`#`, `?`, `%`) runs, and its files are named by URLs that mean
 /// that directory.
