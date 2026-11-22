@@ -228,6 +228,78 @@ Feature: A theme file sets the roles of Ljos.Design
     Then the property "gap" of "root" is 18
     And the property "wide" of "root" is 30
 
+  Scenario Outline: A step too large for an int stops at the largest one (unit <unit>)
+    Given the theme file "theme.json" is:
+      """json
+      { "Spacing": { "unit": <unit> } }
+      """
+    And the QML:
+      """qml
+      import QtQuick
+      import Ljos.Design
+      Item {
+        objectName: "root"
+        readonly property var scale: [Spacing.none, Spacing.xxs, Spacing.xs, Spacing.sm,
+          Spacing.md, Spacing.lg, Spacing.xl, Spacing.xxl, Spacing.xxxl]
+        property bool negative: scale.some(step => step < 0)
+        property string steps: scale.join(" ")
+      }
+      """
+    Then the property "negative" of "root" is false
+    And the property "steps" of "root" is "<steps>"
+
+    Examples:
+      | unit | steps |
+      | 134217727 | 0 134217727 268435454 402653181 536870908 805306362 1073741816 1610612724 2147483632 |
+      | 134217728 | 0 134217728 268435456 402653184 536870912 805306368 1073741824 1610612736 2147483647 |
+      | 2147483647 | 0 2147483647 2147483647 2147483647 2147483647 2147483647 2147483647 2147483647 2147483647 |
+
+  Scenario: A step the theme sets keeps its value under a unit too large for the rest
+    Given the theme file "theme.json" is:
+      """json
+      { "Spacing": { "unit": 2147483647, "md": 18 } }
+      """
+    And the QML:
+      """qml
+      import QtQuick
+      import Ljos.Design
+      Item {
+        objectName: "root"
+        readonly property var scale: [Spacing.none, Spacing.xxs, Spacing.xs, Spacing.sm,
+          Spacing.md, Spacing.lg, Spacing.xl, Spacing.xxl, Spacing.xxxl]
+        property bool negative: scale.some(step => step < 0)
+        property string steps: scale.join(" ")
+      }
+      """
+    Then the property "steps" of "root" is "0 2147483647 2147483647 2147483647 18 2147483647 2147483647 2147483647 2147483647"
+
+  Scenario: Steps that stopped at the largest int follow the next unit
+    Given the theme file "theme.json" is:
+      """json
+      { "Spacing": { "unit": 2147483647 } }
+      """
+    And the QML:
+      """qml
+      import QtQuick
+      import Ljos.Design
+      Item {
+        objectName: "root"
+        readonly property var scale: [Spacing.none, Spacing.xxs, Spacing.xs, Spacing.sm,
+          Spacing.md, Spacing.lg, Spacing.xl, Spacing.xxl, Spacing.xxxl]
+        property bool negative: scale.some(step => step < 0)
+        property string steps: scale.join(" ")
+      }
+      """
+    When the theme file "theme.json" is changed to:
+      """json
+      { "Spacing": { "unit": 5 } }
+      """
+    And 120 milliseconds pass
+    Then the property "steps" of "root" is "0 5 10 15 20 30 40 60 80"
+    When the theme file "theme.json" is removed
+    And 120 milliseconds pass
+    Then the property "steps" of "root" is "0 4 8 12 16 24 32 48 64"
+
   Scenario: An edit of the theme sets the roles again and keeps what the user did
     Given the theme file "theme.json" is:
       """json
