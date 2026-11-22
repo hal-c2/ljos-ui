@@ -2345,15 +2345,12 @@ impl JsHost {
         });
         let mut listing = Listing {
             closed: !def.plain,
+            engine_owned: def.engine_owned,
             ..Listing::default()
         };
         let proto = self.enter("register_type", self.cfg.load_slice, |scope| {
-            let proto = Object::new(scope.ctx.clone())?;
             let weak = Rc::downgrade(&scope.state);
             let ctx = &scope.ctx;
-            if !scope.state.connect_installed.replace(true) {
-                signal_fn::install_connect(ctx)?;
-            }
             // A base's entries are its type's too. They are listed first,
             // as Qt lists what a base has before what a type adds; the
             // accessors are the base's, not made again.
@@ -2364,6 +2361,12 @@ impl JsHost {
                 }
                 Some(Some((p, l))) => Some((p.restore(ctx)?, l)),
             };
+            let outside_share = def.engine_owned.then(|| self.peak.outside_share());
+            let proto = Object::new(scope.ctx.clone())?;
+            if !scope.state.connect_installed.get() {
+                signal_fn::install_connect(ctx)?;
+                scope.state.connect_installed.set(true);
+            }
             let mut own_props: Vec<Option<&PropDef>> = def.props.iter().map(Some).collect();
             let mut own_signals: Vec<Option<&SignalDef>> = def.signals.iter().map(Some).collect();
             let mut own_methods: Vec<Option<&MethodDef>> = def.methods.iter().map(Some).collect();
@@ -2440,7 +2443,11 @@ impl JsHost {
             if !def.plain {
                 install_to_json(ctx, &proto)?;
             }
-            Ok(Persistent::save(ctx, proto))
+            let proto = Persistent::save(ctx, proto);
+            if let Some(outside) = outside_share {
+                outside.keep();
+            }
+            Ok(proto)
         })?;
         let listing = Some(Rc::new(listing));
         let mut listings = self.state.listings.borrow_mut();
@@ -2476,9 +2483,22 @@ impl JsHost {
         let Some(proto) = proto else {
             return Ok(());
         };
+        let engine_owned = self
+            .state
+            .listings
+            .borrow()
+            .get(id.0 as usize)
+            .and_then(|l| l.as_ref())
+            .is_some_and(|l| l.engine_owned);
         let name = name.to_owned();
         self.enter("name_type", self.cfg.load_slice, |scope| {
-            install_to_string(&scope.ctx, &proto.restore(&scope.ctx)?, name)
+            let proto = proto.restore(&scope.ctx)?;
+            let outside_share = engine_owned.then(|| self.peak.outside_share());
+            install_to_string(&scope.ctx, &proto, name)?;
+            if let Some(outside) = outside_share {
+                outside.keep();
+            }
+            Ok(())
         })
     }
 
@@ -2855,6 +2875,8 @@ impl JsHost {
     /// stopped: what it holds plus its share of the room left, all in the
     /// limit's units. Called straight after [`MallocPeak::mark`], when the
     /// most held since the mark is what is held now, read without a walk.
+    /// An engine's registration of its own type raises it by what that
+    /// kept ([`MallocPeak::outside_share`]).
     fn heap_cap(&self) -> Option<usize> {
         let limit = self.memory_limit.get().filter(|l| *l > 0)?;
         let share = self.cfg.dispatch_heap_share?.clamp(0.0, 1.0);
@@ -3025,12 +3047,24 @@ fn install_prop(proto: &Object<'_>, p: &PropDef) -> rquickjs::Result<rquickjs::q
     // the atom is freed after it.
     unsafe {
         let getter = qjs::JS_NewCFunctionData(ctx, Some(raw_get), 0, 0, 1, &raw mut id);
+        if qjs::JS_IsException(getter) {
+            return Err(rquickjs::Error::Exception);
+        }
         let setter = if p.writable {
             qjs::JS_NewCFunctionData(ctx, Some(raw_set), 1, 0, 1, &raw mut id)
         } else {
             qjs::JS_UNDEFINED
         };
+        if qjs::JS_IsException(setter) {
+            qjs::JS_FreeValue(ctx, getter);
+            return Err(rquickjs::Error::Exception);
+        }
         let atom = qjs::JS_NewAtomLen(ctx, p.name.as_ptr().cast(), p.name.len() as _);
+        if atom == qjs::JS_ATOM_NULL {
+            qjs::JS_FreeValue(ctx, getter);
+            qjs::JS_FreeValue(ctx, setter);
+            return Err(rquickjs::Error::Exception);
+        }
         let flags = (qjs::JS_PROP_CONFIGURABLE | qjs::JS_PROP_ENUMERABLE) as std::ffi::c_int;
         let r = qjs::JS_DefinePropertyGetSet(ctx, proto.as_raw(), atom, getter, setter, flags);
         qjs::JS_FreeAtom(ctx, atom);
@@ -4314,6 +4348,8 @@ pub(crate) struct Listing {
     /// A write of a name the type has not is thrown an `Error`, as a QML
     /// object holds only the properties its type gives it.
     pub(crate) closed: bool,
+    /// `TypeDef::engine_owned`, for the name the type is given later.
+    engine_owned: bool,
 }
 
 /// A property of a type, as its wrappers answer for it.

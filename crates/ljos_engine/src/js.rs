@@ -596,7 +596,18 @@ fn type_def(_engine: &Engine, meta: &MetaRef) -> TypeDef {
         signals,
         plain: meta.plain_object,
         base: None,
+        engine_owned: engine_owned(meta),
     }
+}
+
+/// Whether registering `meta` is outside a dispatch's share of the heap
+/// (`TypeDef::engine_owned`). A `Static` description is one of those built
+/// into the program or registered with it, and its prototype is never let
+/// go, so each is made once. A script can cause `Shared` ones without end
+/// (a type declared in QML, a model row's for its members, a
+/// `PropertyMap`'s for its keys), and they are made again once let go.
+fn engine_owned(meta: &MetaRef) -> bool {
+    matches!(meta, MetaRef::Static(_))
 }
 
 /// The parameters, by position, a method takes by copy
@@ -668,6 +679,7 @@ fn own_type_def(meta: &MetaRef) -> TypeDef {
         signals,
         plain: meta.plain_object,
         base: None,
+        engine_owned: engine_owned(meta),
     }
 }
 

@@ -368,6 +368,9 @@ struct JSRuntime {
        for no cap, and whether room was refused for being past it. */
     size_t malloc_cap;
     bool malloc_cap_refused;
+    /* Ljós: malloc_cap is not checked: the host is making what is not the
+       dispatch's (JS_PauseMallocCap). */
+    bool malloc_cap_paused;
     /* Ljós: how many times JS_ThrowError2 threw `null` for want of heap to
        make its error, so that `null` is told from a script's own. */
     uint64_t null_errors;
@@ -2018,7 +2021,7 @@ static void js_arena_free_all(JSRuntime *rt)
 /* Ljós: whether growing by `more` bytes passes malloc_cap; noted if so. */
 static inline bool js_over_malloc_cap(JSRuntime *rt, size_t more)
 {
-    if (likely(rt->malloc_cap == 0 ||
+    if (likely(rt->malloc_cap == 0 || rt->malloc_cap_paused ||
                rt->malloc_state.malloc_size + more <= rt->malloc_cap))
         return false;
     rt->malloc_cap_refused = true;
@@ -2522,6 +2525,27 @@ bool JS_MallocCapRefused(JSRuntime *rt)
 void JS_SetMallocCapRefused(JSRuntime *rt, bool refused)
 {
     rt->malloc_cap_refused = refused;
+}
+
+/* Ljós: stops checking malloc_cap, never malloc_limit, until
+   JS_ResumeMallocCap or an error is thrown, whichever is first. Gives what
+   is held. The host does it only where no script can run but by a throw. */
+size_t JS_PauseMallocCap(JSRuntime *rt)
+{
+    rt->malloc_cap_paused = true;
+    return rt->malloc_state.malloc_size;
+}
+
+/* Ljós: checks malloc_cap again. With `keep`, what was made since the
+   pause began, at `since`, is added to it: the room left under it is what
+   it was. */
+void JS_ResumeMallocCap(JSRuntime *rt, size_t since, bool keep)
+{
+    size_t held = rt->malloc_state.malloc_size;
+
+    rt->malloc_cap_paused = false;
+    if (keep && rt->malloc_cap != 0 && held > since)
+        rt->malloc_cap += held - since;
 }
 
 /* Ljós: starts the high-water mark of malloc_size again from what is held
@@ -8593,6 +8617,9 @@ JS_ThrowError2(JSContext *ctx, JSErrorEnum error_num, bool add_backtrace,
 {
     JSValue obj;
 
+    /* Ljós: an error is the script's, as is what Error.prepareStackTrace
+       does while it is made. */
+    ctx->rt->malloc_cap_paused = false;
     obj = JS_MakeError(ctx, error_num, add_backtrace, fmt, ap);
     if (unlikely(JS_IsException(obj))) {
         /* out of memory: throw JS_NULL to avoid recursing */

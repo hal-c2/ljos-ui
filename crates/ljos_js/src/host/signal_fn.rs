@@ -76,6 +76,10 @@ pub(super) fn install(proto: &Object<'_>, sig: &SignalDef) -> rquickjs::Result<(
             return Err(rquickjs::Error::Exception);
         }
         let atom = qjs::JS_NewAtomLen(ctx, sig.name.as_ptr().cast(), sig.name.len() as _);
+        if atom == qjs::JS_ATOM_NULL {
+            qjs::JS_FreeValue(ctx, getter);
+            return Err(rquickjs::Error::Exception);
+        }
         let flags = (qjs::JS_PROP_CONFIGURABLE | qjs::JS_PROP_ENUMERABLE) as std::ffi::c_int;
         let r = qjs::JS_DefinePropertyGetSet(
             ctx,
