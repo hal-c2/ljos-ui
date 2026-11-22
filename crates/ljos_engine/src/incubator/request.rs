@@ -230,6 +230,16 @@ impl<A> Request<A> {
 }
 
 impl Request {
+    /// `f` is told the root once every object of it exists, and before any
+    /// binding of them has run: whoever asks can know its own content
+    /// while that is still being made.
+    pub fn placed(
+        self,
+        f: impl FnOnce(&Engine, ObjectId) + 'static,
+    ) -> Request<impl Allocated + 'static> {
+        self.allocated(move |e: &Engine, root: ObjectId, _: ContextId| f(e, root))
+    }
+
     /// Whether a reload makes the object again as one a script made: what
     /// a `Component` makes, asked for by a script. A file is made again as
     /// a root of its own, whoever asked for it.

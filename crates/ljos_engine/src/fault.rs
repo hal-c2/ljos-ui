@@ -205,8 +205,17 @@ pub(crate) struct FaultState {
     /// What to throw for code that stopped as a script throws but is not
     /// one (compiled code): no exception is pending.
     pub(crate) thrown_message: RefCell<Option<String>>,
+    /// The objects whose functions an exception left for the calling
+    /// script since the outermost run began: what that run's full heap
+    /// cut short besides its own origin, which alone is reported. One
+    /// caught on the way is in it too, which errs toward breaking.
+    thrown_through: RefCell<Vec<ObjectId>>,
     pub(crate) boundaries: crate::boundary::Boundaries,
 }
+
+/// How many objects [`FaultState::thrown_through`] tells apart. One more
+/// is kept, to say that there were more.
+pub(crate) const THROWN_THROUGH_KEPT: usize = 16;
 
 /// Names the object whose code runs until it is dropped. On unwinding it
 /// leaves the innermost such object for the catch.
@@ -257,6 +266,23 @@ impl Engine {
         self.turn_for(crate::TurnCause::Host, origin, f)
     }
 
+    /// Code of `obj` threw out to the script that called it.
+    pub(crate) fn note_thrown_through(&self, obj: Option<ObjectId>) {
+        let Some(obj) = obj else {
+            return;
+        };
+        let state = &self.inner.faults;
+        let mut through = state.thrown_through.borrow_mut();
+        if through.len() <= THROWN_THROUGH_KEPT && !through.contains(&obj) {
+            through.push(obj);
+        }
+    }
+
+    /// An outermost run of script begins: nothing was thrown out of yet.
+    pub(crate) fn forget_thrown_through(&self) {
+        self.inner.faults.thrown_through.borrow_mut().clear();
+    }
+
     /// [`Engine::turn`] for something other than host code: a message
     /// from another thread is named by its mailbox and kind when the turn
     /// runs long.
@@ -291,7 +317,7 @@ impl Engine {
             Fault::Panic(_) => self.inner.faults.unwound.take().or(origin),
             _ => origin,
         };
-        self.run_again_after(origin, &fault);
+        self.run_again_after(origin, &[], &fault);
         let (file, line) = self.declared_place(origin);
         let place = origin.and_then(|o| self.declared_at(o)).unwrap_or_default();
         self.warn(format!("{place}{fault}"));
@@ -363,7 +389,8 @@ impl Engine {
         let state = &self.inner.faults;
         let origin = state.origin.get();
         if !matches!(fault, JsFault::Panic { .. }) {
-            self.run_again_after(origin, &fault.clone().into());
+            let through = state.thrown_through.borrow().clone();
+            self.run_again_after(origin, &through, &fault.clone().into());
         }
         match fault {
             JsFault::JsException {

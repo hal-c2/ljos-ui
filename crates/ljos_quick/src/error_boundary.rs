@@ -142,6 +142,8 @@ struct Run {
     fallback_item: Option<ObjectId>,
     /// The fallback is being made: nothing the boundary owns is content.
     making_fallback: bool,
+    /// The root of the content being made, until it is the `item`.
+    making: Option<ObjectId>,
     /// What the stopped content's natives wanted kept.
     kept: Option<SubtreeSnapshot>,
     /// When the content is made again after a resource fault.
@@ -300,6 +302,12 @@ impl Boundary for Behaviour {
             !b.run.making_fallback && b.run.fallback_item != Some(child)
         })
         .unwrap_or(false)
+    }
+
+    fn discards(&self, e: &Engine, me: ObjectId, child: ObjectId) -> bool {
+        self.guards(e, me, child)
+            && (e.with(me, |b: &ErrorBoundary| b.run.making) == Ok(Some(child))
+                || e.read(me, ErrorBoundary::ITEM.index).as_object() == Some(child))
     }
 
     fn stop(&self, e: &Engine, me: ObjectId, report: &FaultReport) {
@@ -517,7 +525,23 @@ fn make_content(e: &Engine, me: ObjectId) -> Result<(), Fault> {
         return Ok(());
     };
     let changes = with_run(e, me, |r| r.changes);
-    let made = e.component_create_owned(content, me, place);
+    let made = e.component_create_owned(content, me, |e, root| {
+        with_run(e, me, |r| r.making = Some(root));
+        place(e, root);
+    });
+    let shown = show_content(e, me, changes, made);
+    with_run(e, me, |r| r.making = None);
+    shown
+}
+
+/// Shows what was `made` of the content, unless the content has changed
+/// since `changes`.
+fn show_content(
+    e: &Engine,
+    me: ObjectId,
+    changes: Option<u64>,
+    made: Result<ObjectId, EngineError>,
+) -> Result<(), Fault> {
     if !e.is_alive(me) {
         return Ok(());
     }

@@ -102,6 +102,8 @@ unsafe extern "C" fn raw_direct(
             free_all(ctx, &args);
             return ret;
         }
+        // Before the retelling, which a full heap has no room for.
+        super::tell_threw_out(ctx, slot(THIS));
         let thrown = qjs::JS_GetException(ctx);
         // An interrupt is no script's to catch, nor to retell.
         if qjs::JS_IsUncatchableError(thrown) {

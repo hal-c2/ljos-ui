@@ -51,9 +51,9 @@ use std::time::Duration;
 
 use ljos_engine::backoff::{Backoff, SECOND_CHANCE, seconds, wait_for};
 use ljos_engine::{
-    Atom, Boundary, BoundaryConfig, CreationHandle, Cx, Engine, EngineError, FaultReport, Initial,
-    Interception, LogLevel, MetaRef, Migrate, ObjectId, PropIndex, QmlObject, QmlType, Request,
-    Url, Value, WriteKind, qml_impl,
+    Allocated, Atom, Boundary, BoundaryConfig, CreationHandle, Cx, Engine, EngineError,
+    FaultReport, Initial, Interception, LogLevel, MetaRef, Migrate, ObjectId, PropIndex, QmlObject,
+    QmlType, Request, Url, Value, WriteKind, qml_impl,
 };
 use ljos_runtime::{Fault, Intensity, Lane, Restart, Time};
 
@@ -133,6 +133,9 @@ struct Run {
     job: Option<CreationHandle>,
     /// The half-made root of the running job.
     incubating: Option<ObjectId>,
+    /// The root of what is being made, at once or by the job, until it is
+    /// the `item`. Not `incubating`, which is the first child to come.
+    making: Option<ObjectId>,
     /// `setSource`'s property values and the source they belong to: they
     /// last until the source changes.
     props: Vec<(String, Value)>,
@@ -410,11 +413,17 @@ impl Boundary for LoaderBoundary {
         }
     }
 
+    fn discards(&self, e: &Engine, me: ObjectId, child: ObjectId) -> bool {
+        e.with(me, |l: &Loader| l.run.making) == Ok(Some(child))
+            || e.read(me, Loader::ITEM.index).as_object() == Some(child)
+    }
+
     fn stop(&self, e: &Engine, me: ObjectId, report: &FaultReport) {
         let begun = with_run(e, me, |r| {
             // What a running job makes is not wanted any more.
             let made_in = r.generation;
             r.generation += 1;
+            r.making = None;
             let making = r.job.is_some() || report.seq <= r.made_through;
             let again = if making || !report.stopped_outside(me) {
                 Again::Counted
@@ -682,6 +691,7 @@ fn reload(e: &Engine, me: ObjectId, force: bool) {
             return None;
         }
         r.generation += 1;
+        r.making = None;
         r.origin = want.clone();
         Some((
             r.generation,
@@ -749,7 +759,12 @@ fn reload(e: &Engine, me: ObjectId, force: bool) {
         Origin::Component(c) => Request::component(*c),
     }
     .parent(Some(me))
-    .props(props, how);
+    .props(props, how)
+    .placed(move |e, root| {
+        if is_current(e, me, generation) {
+            with_run(e, me, |r| r.making = Some(root));
+        }
+    });
     if asynchronous {
         start_job(e, me, generation, req);
         return;
@@ -781,7 +796,7 @@ fn is_current(e: &Engine, me: ObjectId, generation: u64) -> bool {
     e.is_alive(me) && with_run(e, me, |r| r.generation) == Some(generation)
 }
 
-fn start_job(e: &Engine, me: ObjectId, generation: u64, req: Request) {
+fn start_job(e: &Engine, me: ObjectId, generation: u64, req: Request<impl Allocated + 'static>) {
     // The Loader is the boundary of what it makes, and so its owner.
     let owner = e.boundary_proc(me);
     let (job, handle) = e.make_later(req, Lane::Visible, owner);
@@ -838,7 +853,10 @@ fn finish(e: &Engine, me: ObjectId, generation: u64, made: Result<ObjectId, Engi
         }
     }
     if is_current(e, me, generation) {
-        with_run(e, me, |r| r.made_through = e.faults_reported());
+        with_run(e, me, |r| {
+            r.making = None;
+            r.made_through = e.faults_reported();
+        });
     }
 }
 

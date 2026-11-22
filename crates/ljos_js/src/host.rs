@@ -3354,6 +3354,23 @@ unsafe fn raw_state(ctx: *mut rquickjs::qjs::JSContext) -> Option<Rc<HostState>>
     }
 }
 
+/// Tells the host that a direct method of the object `this` wraps threw
+/// ([`HostObjects::threw_out`]). It allocates nothing in the script's heap.
+///
+/// # Safety
+/// `ctx` is live and entered, and `this` a live value of it.
+unsafe fn tell_threw_out(ctx: *mut rquickjs::qjs::JSContext, this: rquickjs::qjs::JSValue) {
+    // SAFETY: as the caller's.
+    unsafe {
+        let Some(state) = raw_state(ctx) else { return };
+        if let Some(id) = wrapper_id(state.wrapper_class, this)
+            && let Ok(host) = state.host()
+        {
+            host.threw_out(id);
+        }
+    }
+}
+
 /// Runs `f` for the wrapper `this` is ([`raw_entry`]).
 unsafe fn raw_accessor<'js>(
     raw: *mut rquickjs::qjs::JSContext,
