@@ -123,7 +123,7 @@ pub fn chosen(answer: Option<&str>) -> Option<Vec<String>> {
 }
 
 /// Removes the copies among `urls`, an answer no dialog heard. Only what
-/// has a copy's path, `documents/<code>/<n>/<name>`, is touched: anything
+/// has a copy's path, `documents/<pick>/<n>/<name>`, is touched: anything
 /// else an answer names is the user's.
 pub fn remove_copies(urls: &[String]) {
     for url in urls.iter().filter(|url| url.starts_with("file://")) {

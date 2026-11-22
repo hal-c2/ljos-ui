@@ -28,6 +28,9 @@ import java.util.Set;
  * application's native side (ljos_platform's AndroidDialogs), which shows a
  * file or folder dialog with it.
  *
+ * <p>A copy is kept a week, or until the system clears the cache: its path
+ * is no lasting name for the document.
+ *
  * <p>A document opened is copied into the application's cache, on a thread
  * of its own, and its copy's path is the answer, so whatever reads a file
  * reads it. A document to save to, and a folder, are answered with the
@@ -47,6 +50,9 @@ public final class LjosDocuments {
 
     /** What a copy leaves free where the cache is: the system's, and the application's to run on. */
     private static final long ROOM_LEFT = 64L * 1024 * 1024;
+
+    /** How long a copy is kept in the cache, which the system may clear sooner. */
+    private static final long KEPT_MS = 7L * 24 * 60 * 60 * 1000;
 
     /** The picker each request code on screen is. */
     private static final SparseIntArray showing = new SparseIntArray();
@@ -188,8 +194,15 @@ public final class LjosDocuments {
             return;
         }
         Context context = activity.getApplicationContext();
+        File copies = new File(context.getCacheDir(), "documents");
+        // Codes start again in each process: the time keeps an earlier
+        // run's copy from being replaced. Digits alone, as remove_copies
+        // (android_documents.rs) takes a directory of copies to be.
+        File dir = new File(copies,
+                String.format(java.util.Locale.ROOT, "%d%05d", System.currentTimeMillis(), code));
         new Thread(() -> {
-            String chosen = copy(context, code, uris);
+            prune(copies);
+            String chosen = copy(context, code, dir, uris);
             synchronized (showing) {
                 copying.remove(code);
                 closed.remove(code);
@@ -197,7 +210,7 @@ public final class LjosDocuments {
             // A close can come after the last look at the mark: whether
             // anyone took the answer, only the native side knows.
             if (!nativeAnswered(code, chosen)) {
-                remove(new File(context.getCacheDir(), "documents/" + code));
+                remove(dir);
             }
         }, "ljos-documents").start();
     }
@@ -285,15 +298,13 @@ public final class LjosDocuments {
     }
 
     /**
-     * Copies each document into the cache's {@code documents/<code>/<n>/},
+     * Copies each document into the cache's {@code documents/<pick>/<n>/},
      * under its own name; the copies' paths, a line each, or null when one
      * could not be read or held, or the dialog was closed meanwhile. A selection that
      * fails, or is no longer wanted, leaves no copy behind: the application
      * is told of none, so nothing else would remove them.
      */
-    private static String copy(Context context, int code, List<Uri> uris) {
-        File dir = new File(context.getCacheDir(), "documents/" + code);
-        remove(dir);
+    private static String copy(Context context, int code, File dir, List<Uri> uris) {
         StringBuilder out = new StringBuilder();
         for (int i = 0; i < uris.size(); i++) {
             Uri uri = uris.get(i);
@@ -372,6 +383,21 @@ public final class LjosDocuments {
     }
 
     /** Removes an earlier picker's copies, which a code used again replaces. */
+    /** Removes the directories of copies made longer ago than they are kept. */
+    private static void prune(File copies) {
+        File[] made = copies.listFiles();
+        if (made == null) {
+            return;
+        }
+        long now = System.currentTimeMillis();
+        for (File dir : made) {
+            if (dir.isDirectory() && dir.getName().matches("[0-9]+")
+                    && now - dir.lastModified() > KEPT_MS) {
+                remove(dir);
+            }
+        }
+    }
+
     private static void remove(File file) {
         File[] inside = file.listFiles();
         if (inside != null) {
