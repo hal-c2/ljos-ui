@@ -13,9 +13,12 @@ import java.util.List;
 /** The listener, keeping what the native side was told. */
 public final class GameActivity extends Context implements Listener {
     final List<String> told = new ArrayList<>();
+    /** What LjosActivity's override does before it hands a state on. */
+    Runnable telling = () -> { };
 
     @Override
     public void stateChanged(State state, boolean dismissed) {
+        telling.run();
         told.add(state.toString());
     }
 

@@ -22,12 +22,19 @@ public final class Cases {
     private final InputConnection connection;
     private final Handler main = new Handler(Looper.getMainLooper());
 
+    private boolean toldAsWrite;
+
     private Cases(boolean shown, boolean served) {
         Handler.runQueued();
         InputMethodManager.served = served;
         surface = TextInputOf.surface(activity, mode -> true);
         view = surface;
         connection = TextInputOf.connection(surface);
+        activity.telling = () -> {
+            TextInputOf.telling(surface);
+            // The native side can ask from here on.
+            toldAsWrite = TextInputOf.toldWrite(surface);
+        };
         if (shown) {
             connection.setSoftKeyboardActive(true, 0);
         }
@@ -165,6 +172,15 @@ public final class Cases {
         Handler.runQueued();
         it.connection.commitText("?", 1);
         same("typing after it says it is a write", TextInputOf.toldWrite(it.surface) ? 1 : 0, 0);
+
+        Cases keyed = new Cases(true, true).hello();
+        TextInputOf.writeComing(keyed.surface);
+        keyed.connection.commitText("!", 1);
+        keyed.land("w1", 2, -1, -1);
+        Handler.runQueued();
+        same("a write told back says so as it is told", keyed.toldAsWrite ? 1 : 0, 1);
+        keyed.connection.onKey(keyed.view, 21, new KeyEvent());
+        same("a key says it is a write as it is told", keyed.toldAsWrite ? 1 : 0, 0);
     }
 
     private static void overtakenReportIsFollowedByTheWrite() {
