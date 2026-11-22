@@ -42,6 +42,14 @@ unsafe extern "C" {
     fn JS_SetMallocCapRefused(rt: *mut rquickjs::qjs::JSRuntime, refused: bool);
     fn JS_PauseMallocCap(rt: *mut rquickjs::qjs::JSRuntime) -> usize;
     fn JS_ResumeMallocCap(rt: *mut rquickjs::qjs::JSRuntime, since: usize, keep: bool);
+    fn JS_TriggeredGC(rt: *mut rquickjs::qjs::JSRuntime, freed: *mut usize) -> u64;
+}
+
+/// The collections QuickJS triggered itself, and what they freed in all.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct Triggered {
+    pub(crate) runs: u64,
+    pub(crate) freed: usize,
 }
 
 /// What the runtime went through in a run: the most it held, in the
@@ -120,6 +128,14 @@ impl MallocPeak {
                 rquickjs::qjs::JS_SetGCThreshold(self.rt, last as _);
             }
         }
+    }
+
+    /// What QuickJS's own trigger collected since the runtime began.
+    pub(crate) fn triggered(&self) -> Triggered {
+        let mut freed = 0;
+        // SAFETY: a live runtime (`of`), and `freed` is written once.
+        let runs = unsafe { JS_TriggeredGC(self.rt, &mut freed) };
+        Triggered { runs, freed }
     }
 
     /// Begins what is not the dispatch's: an engine's registration of a
