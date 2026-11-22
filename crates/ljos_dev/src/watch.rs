@@ -567,7 +567,12 @@ impl<O> Drop for Run<O> {
                 message: "reading the files again panicked: nothing of what changed is applied"
                     .to_owned(),
             };
-            let _ = (self.sink)(DevMsg::Failed(vec![fault])) && (self.sink)(DevMsg::Idle);
+            // A sink that panics again here would take the process down
+            // with it; at worst the ask stays unanswered.
+            let sink = &mut self.sink;
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                sink(DevMsg::Failed(vec![fault])) && sink(DevMsg::Idle)
+            }));
         }
     }
 }
