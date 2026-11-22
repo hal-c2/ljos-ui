@@ -389,6 +389,19 @@ fn the_swap_that_shows_the_sources_window_does_not_destroy_the_held_one() {
 }
 
 #[test]
+fn the_held_window_a_swap_took_out_of_its_window_gets_no_other() {
+    let h = Held::shown_at_the_root();
+    let swaps = RootSwaps::of(&h.e);
+    h.retry();
+    assert!(!swaps.keeps_back(h.fallback), "it is shown still");
+    h.swap(true);
+    assert!(swaps.keeps_back(h.fallback), "until the first read is over");
+    h.fault_in_shell();
+    h.swap(true);
+    assert!(!swaps.keeps_back(h.fallback), "shown again");
+}
+
+#[test]
 fn a_fault_after_the_swap_presents_the_held_window_again() {
     let h = Held::shown_at_the_root();
     h.retry();
