@@ -2708,4 +2708,119 @@ mod tests {
             "the copy is shown"
         );
     }
+
+    /// The session's files, where the first watcher panics as it answers.
+    struct PanicsOnce {
+        layers: Rc<dyn Layers>,
+        spawned: Cell<u32>,
+    }
+
+    impl Layers for PanicsOnce {
+        fn provide(&self, key: &str) -> Option<Result<Arc<CompiledFile>, String>> {
+            self.layers.provide(key)
+        }
+
+        fn take_refused(&self) -> Vec<CompileFault> {
+            self.layers.take_refused()
+        }
+
+        fn spawn(&self, mut sink: Sink, flush: bool, follow: bool) -> Result<Watcher, WatchError> {
+            let first = self.spawned.replace(self.spawned.get() + 1) == 0;
+            let mut panics = first;
+            let sink = Box::new(move |msg: DevMsg| {
+                if msg == DevMsg::Idle && std::mem::take(&mut panics) {
+                    panic!("the watcher's answer panics");
+                }
+                sink(msg)
+            });
+            self.layers.spawn(sink, flush, follow)
+        }
+
+        fn text(
+            &self,
+            key: &str,
+            text: &str,
+            beside: &[(String, String)],
+        ) -> Result<CompiledFile, Vec<QmlTextError>> {
+            self.layers.text(key, text, beside)
+        }
+    }
+
+    /// A session over a sound file, whose next watcher panics as it answers.
+    fn with_a_watcher_that_panics(
+        engine: &Engine,
+        root: &Path,
+    ) -> (UserSession, std::sync::mpsc::Receiver<()>) {
+        write(&root.join("Card.qml"), "import QtQuick\nItem { }\n");
+        let (mut session, woke) = session(engine, root, false);
+        let clock = ljos_runtime::SystemClock::new();
+        let _ = session.pump(engine, &clock, &mut NoWindow);
+        let layers = session
+            .shared
+            .layers
+            .borrow()
+            .clone()
+            .expect("the user's files run");
+        *session.shared.layers.borrow_mut() = Some(Rc::new(PanicsOnce {
+            layers,
+            spawned: Cell::new(0),
+        }));
+        session.state = State::Active { watcher: None };
+        session.answers.clear();
+        (session, woke)
+    }
+
+    #[test]
+    fn a_watcher_that_ended_does_not_answer_the_ask_of_the_one_that_replaced_it() {
+        let root = tempfile::tempdir().expect("a directory");
+        let engine = engine();
+        let (mut session, woke) = with_a_watcher_that_panics(&engine, root.path());
+        session.read_again(&engine);
+        // It ends, and what it sent is not taken yet.
+        let ended_by = std::time::Instant::now() + PATIENCE;
+        while matches!(&session.state, State::Active { watcher: Some(w) } if w.is_running()) {
+            assert!(std::time::Instant::now() < ended_by, "the watcher ends");
+            std::thread::yield_now();
+        }
+        session.read_again(&engine);
+        let _ = answered(&engine, &mut session, &woke);
+        assert_eq!(
+            session.answers,
+            [Reread::Unchanged],
+            "the replacement's read is what answers"
+        );
+    }
+
+    #[test]
+    fn a_watcher_that_panicked_fails_its_own_ask_and_no_later_one() {
+        let root = tempfile::tempdir().expect("a directory");
+        let engine = engine();
+        let (mut session, woke) = with_a_watcher_that_panics(&engine, root.path());
+        session.read_again(&engine);
+        let _ = answered(&engine, &mut session, &woke);
+        session.read_again(&engine);
+        let _ = answered(&engine, &mut session, &woke);
+        assert_eq!(
+            session.answers,
+            [Reread::Failed, Reread::Unchanged],
+            "sound files read again are as they were"
+        );
+    }
+
+    #[test]
+    fn a_watcher_that_panicked_leaves_a_file_that_does_not_compile_failed() {
+        let root = tempfile::tempdir().expect("a directory");
+        let engine = engine();
+        let (mut session, woke) = with_a_watcher_that_panics(&engine, root.path());
+        write(&root.path().join("Card.qml"), "import QtQuick\nItem {\n");
+        for _ in 0..3 {
+            session.read_again(&engine);
+            let _ = answered(&engine, &mut session, &woke);
+        }
+        assert_eq!(
+            session.answers,
+            [Reread::Failed, Reread::Failed, Reread::Failed],
+            "the file still fails, whichever watcher reads it"
+        );
+    }
 }
