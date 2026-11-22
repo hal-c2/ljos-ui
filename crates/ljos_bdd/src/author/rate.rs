@@ -33,6 +33,7 @@ pub(crate) struct Called {
 /// the inspector's second full. Let go of, they stop and are waited for:
 /// a step that failed before [`Flood::finish`] leaves none behind to turn
 /// away the calls of the next.
+#[derive(Debug)]
 pub(crate) struct Flood {
     stop: Arc<AtomicBool>,
     calls: Option<JoinHandle<Result<(), String>>>,
