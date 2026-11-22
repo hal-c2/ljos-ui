@@ -137,6 +137,9 @@ struct Run {
     /// one asked to be tried again meanwhile reads the source as it is
     /// already.
     making: bool,
+    /// How often [`load`] was asked: what dropped a shell sees by it that
+    /// a handler of that asked for another, which is then what is shown.
+    loads: u64,
     fallback_item: Option<ObjectId>,
     /// The fallback while it is held through the first read of the shell
     /// that replaces it.
@@ -300,8 +303,11 @@ impl Boundary for Behaviour {
             }
             return;
         }
-        drop_item(e, me);
+        let goes_on = drop_item(e, me);
         warn(e, format!("ShellLoader: {why}"));
+        if !goes_on {
+            return;
+        }
         if show_fallback(e, me, why) || is_resource(&report.fault) {
             again_after(e, me, Some(report));
         }
@@ -365,6 +371,7 @@ fn load(e: &Engine, me: ObjectId) {
     if !e.is_alive(me) || with_run(e, me, |r| r.completed) != Some(true) {
         return;
     }
+    with_run(e, me, |r| r.loads += 1);
     if let Some(Some(timer)) = with_run(e, me, |r| r.waiting.take()) {
         e.cancel_call(timer);
     }
@@ -372,7 +379,9 @@ fn load(e: &Engine, me: ObjectId) {
     if let Some(held) = end_hold(e, me) {
         let_go_of(e, me, held.fallback);
     }
-    drop_item(e, me);
+    if !drop_item(e, me) {
+        return;
+    }
     let source = url(e, me, ShellLoader::SOURCE.index);
     if source.is_empty() {
         if show_fallback(e, me, String::new()) {
@@ -576,7 +585,9 @@ fn judge_again(e: &Engine, me: ObjectId, obj: ObjectId, told: &[FaultReport]) {
         } else {
             format!("{first}\nfallback: {why}")
         };
-        drop_item(e, me);
+        if !drop_item(e, me) {
+            return;
+        }
         set(e, me, ShellLoader::ERROR.index, both.as_str().into());
         set(e, me, ShellLoader::STATUS.index, shell_status::ERROR.into());
         if is_resource(&report.fault) {
@@ -591,8 +602,11 @@ fn judge_again(e: &Engine, me: ObjectId, obj: ObjectId, told: &[FaultReport]) {
         }
         return;
     }
-    drop_item(e, me);
+    let goes_on = drop_item(e, me);
     warn(e, format!("ShellLoader: {why}"));
+    if !goes_on {
+        return;
+    }
     if show_fallback(e, me, why) || resource {
         again_after(e, me, Some(report));
     }
@@ -746,21 +760,27 @@ fn show_held_again(e: &Engine, me: ObjectId, why: &str) -> bool {
     true
 }
 
-/// Takes away the shell shown.
-fn drop_item(e: &Engine, me: ObjectId) {
+/// Shows nothing and lets go of what was shown. False where a handler of
+/// that asked for another shell, which is then not the caller's to replace.
+fn drop_item(e: &Engine, me: ObjectId) -> bool {
     let item = e
         .untrack(|| e.read(me, ShellLoader::ITEM.index))
         .as_object();
-    let was = with_run(e, me, |r| {
+    let Some((was, loads)) = with_run(e, me, |r| {
         r.fallback_item = None;
-        std::mem::replace(&mut r.making, true)
-    })
-    .unwrap_or(false);
+        (std::mem::replace(&mut r.making, true), r.loads)
+    }) else {
+        return false;
+    };
+    // In a batch, so that the window is let go of before a handler asks
+    // for another, whose window would go with it otherwise.
+    let let_go = e.batch(|| {
+        set(e, me, ShellLoader::ITEM.index, Value::Null);
+        RootSwaps::of(e).present(e, me, None)
+    });
     // Who drops it shows another next: a `reload()` from a handler of this
     // would make a second under that one.
-    set(e, me, ShellLoader::ITEM.index, Value::Null);
     with_run(e, me, |r| r.making = was);
-    let let_go = RootSwaps::of(e).present(e, me, None);
     if let Some(item) = item {
         if let_go {
             // The window it showed goes once no window shows it.
@@ -769,6 +789,8 @@ fn drop_item(e: &Engine, me: ObjectId) {
             discard(e, item);
         }
     }
+    // Asked last: the shell's own handlers of its destruction may ask too.
+    with_run(e, me, |r| r.loads) == Some(loads)
 }
 
 /// A shell that is a window of its own, as a `Window` is where each has a
