@@ -245,28 +245,98 @@ pub fn load(located: &Located, stage: Stage) -> Result<Arc<Compiled>, Error> {
         path: path.display().to_string(),
         message: e.to_string(),
     })?;
-    let compiled = match located {
-        Located::Artifact(_) => Compiled::from_artifact(&text).map_err(|message| Error::Read {
-            path: path.display().to_string(),
-            message,
-        })?,
-        Located::Source(_) => compile_source(&text, stage)?,
-    };
-    if compiled.stage != stage {
-        return Err(Error::Read {
-            path: path.display().to_string(),
-            message: format!(
-                "is a {} shader, not a {} one",
-                compiled.stage.name(),
-                stage.name()
-            ),
-        });
-    }
-    let compiled = Arc::new(compiled);
+    let artifact = matches!(located, Located::Artifact(_));
+    let compiled = Arc::new(program(
+        &text,
+        &path.display().to_string(),
+        artifact,
+        stage,
+    )?);
     if let (Some((t, l)), Ok(mut cache)) = (before, by_path().lock()) {
         cache.insert((path.clone(), stage), (t, l, compiled.clone()));
     }
     Ok(compiled)
+}
+
+/// The program `text` holds, which `shown` names.
+fn program(text: &str, shown: &str, artifact: bool, stage: Stage) -> Result<Compiled, Error> {
+    let unread = |message| Error::Read {
+        path: shown.to_owned(),
+        message,
+    };
+    let compiled = if artifact {
+        Compiled::from_artifact(text).map_err(unread)?
+    } else {
+        compile_source(text, stage)?
+    };
+    if compiled.stage != stage {
+        return Err(unread(format!(
+            "is a {} shader, not a {} one",
+            compiled.stage.name(),
+            stage.name()
+        )));
+    }
+    Ok(compiled)
+}
+
+/// A shader the program carries, which has a URL and no file.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Kept {
+    url: String,
+    bytes: Vec<u8>,
+    artifact: bool,
+}
+
+impl Kept {
+    /// Finds what `url` names among what `get` has, as [`locate`] does
+    /// among files. `None`: it has nothing of that name.
+    pub fn find(url: &str, get: impl Fn(&str) -> Option<Vec<u8>>) -> Option<Result<Self, Error>> {
+        let base = url.strip_suffix(".qsb").unwrap_or(url);
+        let suffix = format!(".{ARTIFACT_SUFFIX}");
+        let kept = |url: String, bytes, artifact| {
+            Some(Ok(Self {
+                url,
+                bytes,
+                artifact,
+            }))
+        };
+        if base.ends_with(&suffix) {
+            return kept(base.to_owned(), get(base)?, true);
+        }
+        let source = get(base);
+        if cfg!(feature = "compile")
+            && let Some(bytes) = source
+        {
+            return kept(base.to_owned(), bytes, false);
+        }
+        let artifact = format!("{base}{suffix}");
+        if let Some(bytes) = get(&artifact) {
+            return kept(artifact, bytes, true);
+        }
+        if get(base).is_some() {
+            return Some(Err(Error::NotCompiled(base.to_owned())));
+        }
+        get(url).map(|_| {
+            Err(Error::Qsb {
+                qsb: url.to_owned(),
+                glsl: base.to_owned(),
+            })
+        })
+    }
+
+    /// Whether it is a `.ljsh`, which is read at once.
+    pub fn is_artifact(&self) -> bool {
+        self.artifact
+    }
+
+    /// Loads the program, compiling it if it is source (see [`load`]).
+    pub fn load(&self, stage: Stage) -> Result<Arc<Compiled>, Error> {
+        let text = std::str::from_utf8(&self.bytes).map_err(|e| Error::Read {
+            path: self.url.clone(),
+            message: e.to_string(),
+        })?;
+        program(text, &self.url, self.artifact, stage).map(Arc::new)
+    }
 }
 
 #[cfg(feature = "compile")]
