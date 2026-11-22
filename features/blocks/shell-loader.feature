@@ -463,7 +463,9 @@ Feature: A ShellLoader shows a user's shell, or the application's own when the u
       And the property "height" of "other-window" is 240
 
     # Giving it its height changes the implicit width its width follows;
-    # the width stays the window's.
+    # the width stays the window's. It is bound as the shell is made, not
+    # declared: Qt's `Window` has no implicit size to declare, and Ljós's
+    # is an item underneath.
     Scenario: A Window shell whose implicit width follows its height keeps the size the window has
       Given the file "Shell.qml":
         """qml
@@ -473,7 +475,11 @@ Feature: A ShellLoader shows a user's shell, or the application's own when the u
       And the file "Other.qml":
         """qml
         import QtQuick
-        Window { objectName: "other-window"; visible: true; implicitWidth: height * 2 }
+        Window {
+          id: shell
+          objectName: "other-window"; visible: true
+          Component.onCompleted: shell.implicitWidth = Qt.binding(() => shell.height * 2)
+        }
         """
       When the file "Main.qml" is opened in a window of its own
       And the property "source" of "loader" is set to "Other.qml"

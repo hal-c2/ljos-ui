@@ -9,7 +9,7 @@ use ljos_controls::{
     WindowShow, WindowSystem,
 };
 use ljos_engine::{Engine, ObjectId, Value};
-use ljos_quick::QuickScene;
+use ljos_quick::{Item, QuickScene};
 use ljos_render::kurbo;
 use ljos_runtime::Time;
 
@@ -179,13 +179,28 @@ fn a_window_whose_implicit_size_follows_its_other_side_has_the_size_the_platform
     // Giving it one side changes the implicit size of the other, which it
     // still follows: it declares no size. Between the second and the third
     // size only the width changes, then only the height: the side the
-    // platform gives again as it was still holds.
-    for follows in ["implicitWidth: height * 2", "implicitHeight: width * 2"] {
+    // platform gives again as it was still holds. The implicit size is
+    // bound from here, as Qt's `Window` has none: a file cannot declare
+    // one where Qt's table is read, though Ljós's window is an item
+    // underneath.
+    for (follows, implicit, of) in [
+        (
+            "implicitWidth: height * 2",
+            Item::IMPLICIT_WIDTH,
+            Item::HEIGHT,
+        ),
+        (
+            "implicitHeight: width * 2",
+            Item::IMPLICIT_HEIGHT,
+            Item::WIDTH,
+        ),
+    ] {
         let (e, _) = hosted();
-        let main = load(
-            &e,
-            &format!("import QtQuick\nWindow {{ visible: true; {follows} }}\n"),
-        );
+        let main = load(&e, "import QtQuick\nWindow { visible: true }\n");
+        e.bind(main, implicit.index, move |e| {
+            (e.get(main, of).unwrap_or(0.0) * 2.0).into()
+        })
+        .unwrap();
         let sys = WindowSystem::of(&e);
         for (w, h) in [(320, 240), (500, 240), (500, 400), (320, 400)] {
             sys.resized(&e, main, [f64::from(w), f64::from(h)]);
