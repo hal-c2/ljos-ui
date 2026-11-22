@@ -259,6 +259,7 @@ impl Engine {
             soft: limit,
             hard: limit,
         };
+        self.forget_if_outermost(&js);
         self.untrack(|| {
             js.host
                 .enter("devtools eval", slice, |s| {
