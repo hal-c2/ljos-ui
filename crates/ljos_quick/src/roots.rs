@@ -7,7 +7,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use ljos_engine::{Engine, LogLevel, ObjectFlags, ObjectId, WeakEngine};
+use ljos_engine::{Engine, LogLevel, ObjectFlags, ObjectId};
 
 use crate::Item;
 use crate::item::{give_host_size, is_item, is_window, size_follows_implicit};
@@ -87,8 +87,6 @@ pub struct RootSwaps {
     /// Each window a holder keeps though it stands for another, and
     /// whether the platform window it was shown in went to that other.
     held: RefCell<Vec<(ObjectId, bool)>>,
-    /// The engine, for [`hides`](Self::hides), which is given none.
-    engine: RefCell<Option<WeakEngine>>,
     wake: RefCell<Option<Rc<dyn Fn()>>>,
 }
 
@@ -168,22 +166,9 @@ impl RootSwaps {
         }
     }
 
-    /// The host no longer shows `root`. A window a holder let go of that
-    /// it showed still is destroyed, unless the holder keeps it yet.
+    /// The host no longer shows `root`.
     pub fn hides(&self, root: ObjectId) {
         self.shown.borrow_mut().retain(|r| *r != root);
-        let was_left = {
-            let mut left = self.left.borrow_mut();
-            let before = left.len();
-            left.retain(|(_, w)| *w != root);
-            left.len() != before
-        };
-        if was_left && !self.keep(root) {
-            let engine = self.engine.borrow().as_ref().and_then(|w| w.upgrade());
-            if let Some(engine) = engine {
-                engine.destroy(root);
-            }
-        }
     }
 
     /// Whether `window` gave the window it was shown in to another and is
@@ -324,9 +309,6 @@ impl RootSwaps {
         root: ObjectId,
         show: &mut dyn FnMut(ObjectId, ObjectId) -> bool,
     ) -> (ObjectId, Vec<ObjectId>) {
-        if self.engine.borrow().is_none() {
-            *self.engine.borrow_mut() = Some(engine.downgrade());
-        }
         let mut root = root;
         let mut gone = Vec::new();
         loop {

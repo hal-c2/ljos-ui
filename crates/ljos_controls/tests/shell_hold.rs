@@ -10,7 +10,7 @@ use ljos_engine::{Engine, ObjectId, Value};
 use ljos_quick::roots::{RootSwaps, replace_root};
 use ljos_quick::{QuickScene, Rectangle};
 use ljos_render::kurbo;
-use ljos_runtime::{Fault, Time};
+use ljos_runtime::{Fault, Time, VirtualClock};
 
 /// The loader is the application's root.
 const AT_THE_ROOT: &str = r#"
@@ -109,6 +109,8 @@ impl Gone {
 
 struct Held {
     e: Engine,
+    /// What the engine's timers read: a frame runs them up to its time.
+    clock: VirtualClock,
     root: ObjectId,
     loader: ObjectId,
     fallback: ObjectId,
@@ -121,6 +123,8 @@ impl Held {
     fn new(main: &str, hosted: bool) -> Self {
         use ljos_compiler::{Project, compile_file};
         let e = Engine::new();
+        let clock = VirtualClock::new();
+        e.set_clock(Rc::new(clock.clone()));
         ljos_quick::register(&e);
         ljos_controls::register(&e);
         // As an application that works a binding out when it is read.
@@ -171,6 +175,7 @@ impl Held {
         .unwrap();
         Held {
             e,
+            clock,
             root,
             loader,
             fallback,
@@ -320,6 +325,7 @@ fn a_window_a_timer_made_inside_another_frame_waits_for_its_own() {
             e.invoke_by_name(loader, "reload", &[]).unwrap();
         });
         let due = h.e.next_timer_deadline().expect("a timer");
+        h.clock.set(due);
         other.frame(&h.e, due);
         assert_eq!(h.status(), 1.0, "made in that frame");
         h.assert_held();
@@ -535,10 +541,55 @@ fn the_loaders_destruction_takes_the_window_left_shown() {
 }
 
 #[test]
-fn a_window_left_shown_that_the_host_hides_is_destroyed() {
-    let h = Held::left_shown();
-    RootSwaps::of(&h.e).hides(h.fallback);
-    assert!(h.e.is_going(h.fallback));
+fn a_reload_from_item_changed_as_a_hold_starts_makes_no_second_shell() {
+    let h = Held::shown_at_the_root();
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    let (items, loader) = (seen.clone(), h.loader);
+    h.e.connect_by_name(loader, "itemChanged", move |e, _| {
+        let first = items.borrow().is_empty();
+        items
+            .borrow_mut()
+            .push(e.read_by_name(loader, "item").as_object());
+        if first {
+            e.invoke_by_name(loader, "reload", &[]).unwrap();
+        }
+    })
+    .unwrap();
+    h.retry();
+    let shell = h.item();
+    assert_eq!(*seen.borrow(), [Some(shell)], "one shell");
+    h.swap(true);
+    assert_eq!(h.shown.get(), shell, "the host shows the loader's item");
+    h.frame_shell();
+    h.assert_released();
+    h.e.process_deferred_deletes();
+    assert!(h.e.is_alive(shell));
+}
+
+#[test]
+fn a_source_set_from_item_changed_as_a_hold_starts_leaves_no_shell_behind() {
+    let h = Held::shown_at_the_root();
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    let (items, loader, root) = (seen.clone(), h.loader, h.root);
+    h.e.connect_by_name(loader, "itemChanged", move |e, _| {
+        let first = items.borrow().is_empty();
+        items
+            .borrow_mut()
+            .push(e.read_by_name(loader, "item").as_object());
+        if first {
+            set(e, root, "wanted", Value::from("Other"));
+        }
+    })
+    .unwrap();
+    h.e.invoke_by_name(h.loader, "reload", &[]).unwrap();
+    let first = seen.borrow()[0].expect("the retried shell");
+    assert_ne!(h.item(), first, "the new source's is the item");
+    h.swap(true);
+    assert_eq!(h.shown.get(), h.loader, "which is no window");
+    h.e.process_deferred_deletes();
+    assert!(!h.e.is_alive(first), "the retried shell goes");
+    assert!(!h.e.is_alive(h.fallback), "and the fallback");
+    h.assert_cleared();
 }
 
 #[test]
