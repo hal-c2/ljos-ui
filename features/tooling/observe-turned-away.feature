@@ -10,7 +10,8 @@ Feature: The observer shows the object picked while the application is asked too
   rest away. An object picked on the Objects page whose values were turned
   away is asked of again in a while: an application at rest tells the
   observer of no change that would ask again. The answer about an object
-  picked before, which comes late, is not shown in its place.
+  picked before, which comes late, is not shown in its place, and that
+  one's values are put away at once, so none of them is pressed for it.
 
   Background:
     Given the QML:
@@ -33,6 +34,14 @@ Feature: The observer shows the object picked while the application is asked too
     When the observer's "role=listitem[name~=\"#b$\"]" is clicked while the application turns every call away
     Then the observer has "role=button[name=\"second\"]"
     And the observer does not have "role=button[name=\"first\"]"
+
+  Scenario: The values of the object picked before are put away before those of the one picked come
+    When the application is observed
+    And the observer's "text=Objects" is clicked
+    And the observer's "role=listitem[name~=\"#a$\"]" is clicked
+    Then the observer has "role=button[name=\"first\"]"
+    When the observer's "role=listitem[name~=\"#b$\"]" is clicked while the application turns every call away, and its "role=button[name=\"first\"]" is put away meanwhile
+    Then the observer has "role=button[name=\"second\"]"
 
   Scenario: The values of an object picked before are not shown when they come after those of the one picked since
     When the application is observed

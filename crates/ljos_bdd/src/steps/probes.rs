@@ -155,10 +155,24 @@ fn observer_clicked(w: &mut LjosWorld, locator: String) -> StepResult {
     regex = r#"^the observer's "((?:[^"\\]|\\.)+)" is clicked while the application turns every call away$"#
 )]
 fn observer_clicked_turned_away(w: &mut LjosWorld, locator: String) -> StepResult {
+    turned_away(w, &locator, None)
+}
+
+// What the click puts away is looked for before any answer can come: none
+// does while every call is turned away.
+#[when(
+    regex = r#"^the observer's "((?:[^"\\]|\\.)+)" is clicked while the application turns every call away, and its "((?:[^"\\]|\\.)+)" is put away meanwhile$"#
+)]
+fn observer_clicked_put_away(w: &mut LjosWorld, locator: String, gone: String) -> StepResult {
+    turned_away(w, &locator, Some(&gone))
+}
+
+fn turned_away(w: &mut LjosWorld, locator: &str, gone: Option<&str>) -> StepResult {
     // Past the wire's second try, which follows the first's refusal by
     // the second its `Retry-After` names.
     const KEPT: Duration = Duration::from_millis(2500);
-    let locator = unquoted(&locator);
+    let locator = unquoted(locator);
+    let gone = gone.map(unquoted);
     w.each(|b| {
         let probes = b.probes()?;
         let looked = observer_until(probes, &locator, true)?;
@@ -174,9 +188,12 @@ fn observer_clicked_turned_away(w: &mut LjosWorld, locator: String) -> StepResul
         let clicked =
             probes.observer_call_now("app_click", serde_json::json!({ "target": locator }));
         let took = filling.elapsed();
-        let refused = match &clicked {
-            Ok(_) => observer_told_turned_away(probes, filling + KEPT),
-            Err(_) => Ok(()),
+        let refused = match (&clicked, &gone) {
+            (Err(_), _) => Ok(()),
+            (Ok(_), Some(gone)) => {
+                observer_put_away(probes, gone, filling + Duration::from_secs(1))
+            }
+            (Ok(_), None) => observer_told_turned_away(probes, filling + KEPT),
         };
         // Also after a click that failed: the next step is not to be turned
         // away in this one's place.
@@ -275,6 +292,27 @@ fn observer_clicked_answered_late(w: &mut LjosWorld, first: String, then: String
         let came = observer_inspects_answered(probes);
         probes.calls_answered_again().and(came)
     })
+}
+
+fn observer_put_away(
+    probes: &mut dyn crate::backend::Probes,
+    gone: &str,
+    by: Instant,
+) -> Result<(), BackendError> {
+    loop {
+        let found = probes.observer_call_now("app_find", serde_json::json!({ "locator": gone }))?;
+        if found["total"].as_u64() == Some(0) {
+            return Ok(());
+        }
+        if Instant::now() >= by {
+            return Err(BackendError::Failed(format!(
+                "the observer still showed {gone} while the application turned away what was \
+                 asked of the one picked since: it can be pressed for that one"
+            )));
+        }
+        // A frame, for what the click changed.
+        std::thread::sleep(Duration::from_millis(16));
+    }
 }
 
 // The answer that comes late changes nothing shown, which is what is
