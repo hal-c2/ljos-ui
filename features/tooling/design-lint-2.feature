@@ -583,3 +583,78 @@ Feature: More design rules a file's source can show
         """
       Then the answer's "/diagnostics/0/code" is "layout-spacing-scale"
       And the answer's "/diagnostics/0/message" matches "multiple of 4 \(8 or 12\)"
+
+  Rule: A spacing unit the scan cannot see leaves nothing to advise
+
+    Scenario Outline: A theme that is a link leaves the unit unknown (<link>)
+      Given the file "elsewhere/theme.json" outside the project:
+        """json
+        { "Spacing": { "unit": 5 } }
+        """
+      And the project's "<link>" is a link to "elsewhere/theme.json" outside the project
+      And the file "Main.qml":
+        """qml
+        import QtQuick
+
+        Item {
+            width: 200; height: 80
+            Column { spacing: 7 }
+        }
+        """
+      When the agent calls the tool "qml_lint" with:
+        """json
+        {"paths": ["Main.qml"]}
+        """
+      Then the answer does not contain "layout-spacing-scale"
+
+      Examples:
+        | link |
+        | theme.json |
+        | app/theme.json |
+
+    Scenario: A linked theme beside one that can be read leaves the unit unknown
+      Given the file "theme.json":
+        """json
+        { "Spacing": { "unit": 5 } }
+        """
+      And the file "elsewhere/theme.json" outside the project:
+        """json
+        { "Spacing": { "unit": 5 } }
+        """
+      And the project's "app/theme.json" is a link to "elsewhere/theme.json" outside the project
+      And the file "Main.qml":
+        """qml
+        import QtQuick
+
+        Item {
+            width: 200; height: 80
+            Column { spacing: 8 }
+        }
+        """
+      When the agent calls the tool "qml_lint" with:
+        """json
+        {"paths": ["Main.qml"]}
+        """
+      Then the answer does not contain "layout-spacing-scale"
+
+    Scenario: A link of another name leaves the unit known
+      Given the file "elsewhere/notes.json" outside the project:
+        """json
+        {}
+        """
+      And the project's "notes.json" is a link to "elsewhere/notes.json" outside the project
+      And the file "Main.qml":
+        """qml
+        import QtQuick
+
+        Item {
+            width: 200; height: 80
+            Column { spacing: 7 }
+        }
+        """
+      When the agent calls the tool "qml_lint" with:
+        """json
+        {"paths": ["Main.qml"]}
+        """
+      Then the answer's "/diagnostics/0/code" is "layout-spacing-scale"
+      And the answer's "/diagnostics/0/message" matches "multiple of 4"

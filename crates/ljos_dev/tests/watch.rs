@@ -13,7 +13,7 @@ use std::{
 };
 
 use ljos_dev::{DevSession, Host, QUIET, Report};
-use ljos_engine::{Color, Engine, ObjectId, Value};
+use ljos_engine::{Color, Engine, ObjectId, OverrideContent, Value};
 use ljos_quick::QuickScene;
 use ljos_render::kurbo;
 use ljos_runtime::{Clock as _, SystemClock};
@@ -1272,4 +1272,69 @@ fn a_farther_theme_saved_under_a_nearer_one_changes_nothing() {
         "{reports:?}"
     );
     assert_eq!(app.num("root", "gap"), 31.0);
+}
+
+const STEPS: &str = "\
+import QtQuick
+import Ljos.Design
+Item {
+    property string steps: [Spacing.none, Spacing.xxs, Spacing.xs, Spacing.sm,
+        Spacing.md, Spacing.lg, Spacing.xl, Spacing.xxl, Spacing.xxxl].join(\" \")
+}
+";
+
+/// The steps `app` shows once devtools hold `Spacing.unit` at `unit`.
+fn steps_with_the_unit_overridden(app: &mut App, unit: i32) -> String {
+    let spacing = app
+        .engine
+        .singleton_by_name("Ljos.Design", "Spacing")
+        .expect("the module has the singleton");
+    let prop = app
+        .engine
+        .find_property(spacing, "unit")
+        .expect("it has a unit");
+    app.engine
+        .push_override(spacing, prop, OverrideContent::Value(Value::Int(unit)))
+        .expect("the unit takes an override");
+    app.frame();
+    let root = app.scene.root().expect("something is shown");
+    app.engine
+        .read_by_name(root, "steps")
+        .to_js_string()
+        .to_string()
+}
+
+#[test]
+fn an_overridden_spacing_unit_too_large_for_the_steps_stops_at_the_largest_int() {
+    let mut app = app(&[("Main.qml", STEPS)]);
+    let max = i32::MAX;
+    assert_eq!(
+        steps_with_the_unit_overridden(&mut app, 134_217_728),
+        "0 134217728 268435456 402653184 536870912 805306368 1073741824 1610612736 2147483647"
+    );
+    assert_eq!(
+        steps_with_the_unit_overridden(&mut app, max),
+        format!("0{}", format!(" {max}").repeat(8))
+    );
+}
+
+#[test]
+fn an_overridden_spacing_unit_below_zero_gives_no_negative_step() {
+    let mut app = app(&[("Main.qml", STEPS)]);
+    assert_eq!(
+        steps_with_the_unit_overridden(&mut app, -5),
+        "0 0 0 0 0 0 0 0 0"
+    );
+}
+
+#[test]
+fn an_overridden_spacing_unit_moves_the_steps_a_theme_had_saturated() {
+    let mut app = app(&[
+        ("Main.qml", STEPS),
+        ("theme.json", r##"{ "Spacing": { "unit": 2147483647 } }"##),
+    ]);
+    assert_eq!(
+        steps_with_the_unit_overridden(&mut app, 5),
+        "0 5 10 15 20 30 40 60 80"
+    );
 }
