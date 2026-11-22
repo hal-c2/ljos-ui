@@ -46,8 +46,9 @@ One directory per language or toolkit area, not per surface. Surfaces are tags.
 - Reverse and failure paths are scenarios of their own: unbind, a file that does not parse, a binding loop.
 - QML goes in a doc string labelled `qml`, at most 25 lines, one concept.
 - Counts of live objects are bands (`at most 14`), never exact numbers Qt itself does not guarantee.
-- Every file starts with a `# Sources:` block naming Qt *documentation* URLs or Ljós research
-  reports. Never Qt or Slint source code (CLEAN_ROOM.md).
+- Every file starts with a `# Sources:` block naming what its rules come from: Qt *documentation*
+  URLs, Ljós's own docs and research reports, or published standards. Never Qt or Slint source code
+  (CLEAN_ROOM.md).
 - A file with `@qt-parity` also names the Qt version it was verified against, on its own header line:
   `# Verified on Qt 6.11.2 (qml6, offscreen).`
 
@@ -574,6 +575,7 @@ leaves items out fails rather than check part of them.
 | `When the application is observed` | the observer opens on the application, in a window of its own |
 | `When the observer's window is W by H pixels` | its window is given that size, as a window manager or a page holding it would |
 | `When the observer's "locator" is clicked` | once the observer shows it |
+| `When the observer is given the keys "Tab Right Return"` | its window is first given the keyboard, then the chords, separated by spaces, are pressed one after another on what has focus |
 | `When the observer's "locator" is clicked while the application turns every call away` | the application's second is kept full of other calls for 2.5 s from just before the click, so that what the observer asks of it, and the one time its wire asks that again, is turned away (429) |
 | `When the observer's "a" is clicked while the application turns calls away for a moment, and its "b" once it answers again` | `a`'s call is turned away and its wire asks again a second later; `b` is clicked in between, once there is room, and answered first; fails, saying so, when the observer takes too long to be clicked for that order |
 | `When the observer's "locator" is scrolled N notches right` / `left` / `up` / `down` | the wheel turned over it, once the observer shows it; whatever scrolls under the pointer takes it |

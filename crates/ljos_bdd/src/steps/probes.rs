@@ -173,6 +173,7 @@ fn observer_clicked_turned_away(w: &mut LjosWorld, locator: String) -> StepResul
         let filling = probes.turn_calls_away(KEPT)?;
         probes.observer_call_now("app_click", serde_json::json!({ "target": locator }))?;
         let took = filling.elapsed();
+        let refused = observer_told_turned_away(probes, filling + KEPT);
         let answered = probes.calls_answered_again();
         if took > Duration::from_secs(1) {
             return Err(BackendError::Failed(format!(
@@ -182,8 +183,33 @@ fn observer_clicked_turned_away(w: &mut LjosWorld, locator: String) -> StepResul
                 took.as_millis()
             )));
         }
-        answered
+        answered.and(refused)
     })
+}
+
+// The observer says so only once both refusals came, the wire's second
+// try's being the one handed to it. A look that waits for its window to
+// rest would come after the application answers again and the text went.
+fn observer_told_turned_away(
+    probes: &mut dyn crate::backend::Probes,
+    by: Instant,
+) -> Result<(), BackendError> {
+    const TOLD: &str =
+        "text=The application is asked too often; its values are asked again in a moment";
+    loop {
+        let found = probes.observer_call_now("app_find", serde_json::json!({ "locator": TOLD }))?;
+        if found["total"].as_u64().unwrap_or(0) > 0 {
+            return Ok(());
+        }
+        if Instant::now() >= by {
+            return Err(BackendError::Failed(
+                "the observer did not say it was turned away while the application's second \
+                 was full: its call and the one asked again were not both refused"
+                    .into(),
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
 }
 
 // The object clicked first is asked of while the application's second is
@@ -239,10 +265,41 @@ fn observer_clicked_answered_late(w: &mut LjosWorld, first: String, then: String
         if Instant::now() + frame > again {
             return Err(late(&then, next, again - frame));
         }
-        // The first object's answer has come by then.
-        sleep_until(asked + Duration::from_millis(1500));
-        probes.calls_answered_again()
+        let came = observer_inspects_answered(probes);
+        probes.calls_answered_again().and(came)
     })
+}
+
+// The answer that comes late changes nothing shown, which is what is
+// tested, so no frame tells of it: the observer's count of what it awaits
+// is read until it is none.
+fn observer_inspects_answered(probes: &mut dyn crate::backend::Probes) -> Result<(), BackendError> {
+    let by = Instant::now() + OBSERVER_ANSWERS;
+    loop {
+        let told = probes
+            .observer_call_now("app_inspect", serde_json::json!({ "target": "id=status" }))?;
+        let waiting = told["properties"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|p| p["name"] == "inspectsWaiting")
+            .map(|p| p["value"].to_string().trim_matches('"').to_owned())
+            .ok_or_else(|| {
+                BackendError::Failed(format!(
+                    "the observer's window does not tell how many inspects it awaits: {told}"
+                ))
+            })?;
+        if waiting == "0" {
+            return Ok(());
+        }
+        if Instant::now() >= by {
+            return Err(BackendError::Failed(format!(
+                "the observer still awaited {waiting} answers about objects' values after {} s",
+                OBSERVER_ANSWERS.as_secs()
+            )));
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
 }
 
 fn sleep_until(at: Instant) {
