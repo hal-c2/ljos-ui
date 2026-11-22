@@ -25,9 +25,15 @@ pub struct FakeDialogs {
     /// Whether the system ignores being told to take a dialog away, as
     /// rfd's does.
     stays: Rc<Cell<bool>>,
+    unheard: Rc<RefCell<Vec<DialogReply>>>,
 }
 
 impl FakeDialogs {
+    /// The answers given back to the system as heard by no dialog.
+    pub fn unheard(&self) -> Vec<DialogReply> {
+        self.unheard.borrow().clone()
+    }
+
     /// From now on the system cannot take away a dialog it shows: one the
     /// application closes stays until the user answers it.
     pub fn cannot_close(&self) {
@@ -116,5 +122,9 @@ impl DialogService for FakeDialogs {
             // ended the dialog its own way and forgotten the ticket.
             drop(closed);
         }
+    }
+
+    fn unheard(&self, reply: &DialogReply) {
+        self.unheard.borrow_mut().push(reply.clone());
     }
 }
