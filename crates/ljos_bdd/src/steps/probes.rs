@@ -171,11 +171,6 @@ fn turned_away(w: &mut LjosWorld, locator: &str, gone: Option<&str>) -> StepResu
     // Past the wire's second try, which follows the first's refusal by
     // the second its `Retry-After` names.
     const KEPT: Duration = Duration::from_millis(2500);
-    // Each call that filled the second frees its place a second later, and
-    // is asked again a moment after that. A click made as soon as the second
-    // is full has its second try come into that moment and may be let in;
-    // one made this much later finds every place taken again.
-    const REFILLED: Duration = Duration::from_millis(200);
     let locator = unquoted(locator);
     let gone = gone.map(unquoted);
     w.each(|b| {
@@ -190,10 +185,24 @@ fn turned_away(w: &mut LjosWorld, locator: &str, gone: Option<&str>) -> StepResu
             ));
         }
         let filling = probes.turn_calls_away(KEPT)?;
-        std::thread::sleep(REFILLED);
+        let filled = Instant::now();
+        let room = filling + Duration::from_secs(1);
+        // The places free again as they were taken, a second on, and a call
+        // takes each a moment after. A second try, a second after the click's
+        // refusal, finds none when the click comes after the last was taken
+        // and before the first frees: half way gives that moment and the
+        // click as much of what is left as there is, however long filling took.
+        sleep_until(filled + room.saturating_duration_since(filled) / 2);
+        let asked = Instant::now();
         let clicked =
             probes.observer_call_now("app_click", serde_json::json!({ "target": locator }));
         let took = filling.elapsed();
+        let timed = format!(
+            "filling the second took {} ms, the wait after it {} ms and the click {} ms",
+            (filled - filling).as_millis(),
+            (asked - filled).as_millis(),
+            asked.elapsed().as_millis()
+        );
         let refused = match (&clicked, &gone) {
             (Err(_), _) => Ok(()),
             (Ok(_), Some(gone)) => {
@@ -212,11 +221,14 @@ fn turned_away(w: &mut LjosWorld, locator: &str, gone: Option<&str>) -> StepResu
             return Err(BackendError::Failed(format!(
                 "the observer was clicked {} ms after the first call that filled the \
                  application's second: too late for its call and the one asked again to be \
-                 turned away",
+                 turned away ({timed})",
                 took.as_millis()
             )));
         }
-        answered.and(refused)
+        answered.and(refused.map_err(|e| match e {
+            BackendError::Failed(why) => BackendError::Failed(format!("{why} ({timed})")),
+            other => other,
+        }))
     })
 }
 
