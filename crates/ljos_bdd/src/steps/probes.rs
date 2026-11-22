@@ -237,11 +237,20 @@ fn observer_told_turned_away(
 fn observer_now_until(
     probes: &mut dyn crate::backend::Probes,
     by: Instant,
+    seen: impl FnMut(&mut dyn crate::backend::Probes) -> Result<bool, BackendError>,
+) -> Result<bool, BackendError> {
+    observer_now_until_told(probes, by, "frames", seen)
+}
+
+fn observer_now_until_told(
+    probes: &mut dyn crate::backend::Probes,
+    by: Instant,
+    topic: &str,
     mut seen: impl FnMut(&mut dyn crate::backend::Probes) -> Result<bool, BackendError>,
 ) -> Result<bool, BackendError> {
     // Taken before the window is looked at, as in `observer_until`.
     let mut told =
-        probes.observer_call_now("app_watch", serde_json::json!({ "topics": ["frames"] }))?;
+        probes.observer_call_now("app_watch", serde_json::json!({ "topics": [topic] }))?;
     loop {
         if seen(probes)? {
             return Ok(true);
@@ -250,14 +259,14 @@ fn observer_now_until(
         if left.is_zero() {
             return Ok(false);
         }
-        let frames = told["counts"]["frames"].as_u64().ok_or_else(|| {
-            BackendError::Failed(format!("the observer counts no frames: {told}"))
+        let count = told["counts"][topic].as_u64().ok_or_else(|| {
+            BackendError::Failed(format!("the observer counts no {topic}: {told}"))
         })?;
         told = probes.observer_call_now(
             "app_watch",
             serde_json::json!({
-                "since": { "frames": frames },
-                "topics": ["frames"],
+                "since": { (topic): count },
+                "topics": [topic],
                 "wait_ms": u64::try_from(left.as_millis()).unwrap_or(u64::MAX).max(1),
                 "settle_ms": 16,
             }),
@@ -283,14 +292,20 @@ fn status_property(status: &Value, name: &str) -> Result<String, BackendError> {
         })
 }
 
-// The object clicked first is asked of while the application's second is
-// full, and its wire asks again a second later; the one clicked next is
-// asked of in between, once there is room, and is answered first.
+// The object clicked first is asked of while every call is turned away.
+// Its wire's second try is kept by the test until the observer shows the
+// values of the one clicked next, so the order of the answers is the
+// test's and not the clock's.
 #[when(
-    regex = r#"^the observer's "((?:[^"\\]|\\.)+)" is clicked while the application turns calls away for a moment, and its "((?:[^"\\]|\\.)+)" once it answers again$"#
+    regex = r#"^the observer's "((?:[^"\\]|\\.)+)" is clicked while the application turns calls away for a moment, and its "((?:[^"\\]|\\.)+)" once it answers again, which shows "((?:[^"\\]|\\.)+)" before the first is answered$"#
 )]
-fn observer_clicked_answered_late(w: &mut LjosWorld, first: String, then: String) -> StepResult {
-    let (first, then) = (unquoted(&first), unquoted(&then));
+fn observer_clicked_answered_late(
+    w: &mut LjosWorld,
+    first: String,
+    then: String,
+    shows: String,
+) -> StepResult {
+    let (first, then, shows) = (unquoted(&first), unquoted(&then), unquoted(&shows));
     w.each(|b| {
         let probes = b.probes()?;
         for locator in [&first, &then] {
@@ -304,41 +319,47 @@ fn observer_clicked_answered_late(w: &mut LjosWorld, first: String, then: String
                 ));
             }
         }
-        // The second has room again a second after the first call that
-        // filled it, and the first object's call is asked again a second
-        // after it was turned away (`Retry-After: 1`). The first click is
-        // made half way: the second has as long as the first click to
-        // come, and each click as long as there is of that second.
-        let full = probes.turn_calls_away()?;
-        let room = full + Duration::from_secs(1);
-        sleep_until(full + Duration::from_millis(500));
-        let asked = Instant::now();
-        probes.observer_call_now("app_click", serde_json::json!({ "target": first }))?;
-        // A frame for what the click asks, once it is answered.
-        let frame = Duration::from_millis(40);
-        let late = |what: &str, clicked: Instant, by: Instant| {
-            BackendError::Failed(format!(
-                "the observer answered a click on {what} {} ms after it was clicked; the order \
-                 of the answers needs it within {} ms, so it was too busy to tell",
-                clicked.elapsed().as_millis(),
-                by.saturating_duration_since(clicked).as_millis()
-            ))
-        };
-        // Turned away: asked before the second has room.
-        if Instant::now() + frame > room {
-            return Err(late(&first, asked, room - frame));
-        }
-        sleep_until(room + Duration::from_millis(20));
-        let next = Instant::now();
-        probes.observer_call_now("app_click", serde_json::json!({ "target": then }))?;
-        // Answered before the first object's call is asked again.
-        let again = asked + Duration::from_secs(1);
-        if Instant::now() + frame > again {
-            return Err(late(&then, next, again - frame));
-        }
-        let came = observer_inspects_answered(probes);
+        probes.turn_calls_away("app_inspect")?;
+        let came = answered_late(probes, &first, &then, &shows);
         probes.calls_answered_again().and(came)
     })
+}
+
+fn answered_late(
+    probes: &mut dyn crate::backend::Probes,
+    first: &str,
+    then: &str,
+    shows: &str,
+) -> Result<(), BackendError> {
+    probes.observer_call_now("app_click", serde_json::json!({ "target": first }))?;
+    probes.late_call_turned_away()?;
+    probes.observer_call_now("app_click", serde_json::json!({ "target": then }))?;
+    let locator = serde_json::json!({ "locator": shows });
+    let shown = observer_now_until(probes, Instant::now() + OBSERVER_ANSWERS, |probes| {
+        let found = probes.observer_call_now("app_find", locator.clone())?;
+        Ok(found["total"].as_u64().is_some_and(|n| n > 0))
+    })?;
+    if !shown {
+        return Err(BackendError::Failed(format!(
+            "the observer did not show {shows} for {then}, clicked once the application \
+             answered again, while the answer about {first} was kept back"
+        )));
+    }
+    if status_property(&observer_status(probes)?, "inspectsWaiting")? == "0" {
+        return Err(BackendError::Failed(format!(
+            "the observer no longer awaited the answer about {first}: none could come late"
+        )));
+    }
+    // Traced from before the answer is let through, so that none is missed.
+    probes.observer_call_now(
+        "app_trace",
+        serde_json::json!({ "target": "id=status", "names": ["inspectsWaiting"] }),
+    )?;
+    let came = probes
+        .late_call_passed_on()
+        .and_then(|()| observer_inspects_answered(probes));
+    let stopped = probes.observer_call_now("app_trace", serde_json::json!({ "stop": true }));
+    came.and(stopped.map(|_| ()))
 }
 
 fn observer_put_away(
@@ -361,27 +382,21 @@ fn observer_put_away(
 }
 
 // The answer that comes late changes nothing shown, which is what is
-// tested, so no frame tells of it: the observer's count of what it awaits
-// is read until it is none.
+// tested, so no frame tells of it: the trace of the observer's count of
+// what it awaits does. The count is none only once that answer was applied.
 fn observer_inspects_answered(probes: &mut dyn crate::backend::Probes) -> Result<(), BackendError> {
     let by = Instant::now() + OBSERVER_ANSWERS;
-    loop {
-        let waiting = status_property(&observer_status(probes)?, "inspectsWaiting")?;
-        if waiting == "0" {
-            return Ok(());
-        }
-        if Instant::now() >= by {
-            return Err(BackendError::Failed(format!(
-                "the observer still awaited {waiting} answers about objects' values after {} s",
-                OBSERVER_ANSWERS.as_secs()
-            )));
-        }
-        std::thread::sleep(Duration::from_millis(100));
+    let answered = observer_now_until_told(probes, by, "traces", |probes| {
+        Ok(status_property(&observer_status(probes)?, "inspectsWaiting")? == "0")
+    })?;
+    if answered {
+        return Ok(());
     }
-}
-
-fn sleep_until(at: Instant) {
-    std::thread::sleep(at.saturating_duration_since(Instant::now()));
+    let waiting = status_property(&observer_status(probes)?, "inspectsWaiting")?;
+    Err(BackendError::Failed(format!(
+        "the observer still awaited {waiting} answers about objects' values after {} s",
+        OBSERVER_ANSWERS.as_secs()
+    )))
 }
 
 // A part of a page that does not fit is scrolled to, as a person turns

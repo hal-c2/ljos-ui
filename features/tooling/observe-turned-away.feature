@@ -46,6 +46,6 @@ Feature: The observer shows the object picked while the application is asked too
   Scenario: The values of an object picked before are not shown when they come after those of the one picked since
     When the application is observed
     And the observer's "text=Objects" is clicked
-    And the observer's "role=listitem[name~=\"#a$\"]" is clicked while the application turns calls away for a moment, and its "role=listitem[name~=\"#b$\"]" once it answers again
+    And the observer's "role=listitem[name~=\"#a$\"]" is clicked while the application turns calls away for a moment, and its "role=listitem[name~=\"#b$\"]" once it answers again, which shows "role=button[name=\"second\"]" before the first is answered
     Then the observer has "role=button[name=\"second\"]"
     And the observer does not have "role=button[name=\"first\"]"

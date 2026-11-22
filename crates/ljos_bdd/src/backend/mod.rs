@@ -1800,14 +1800,31 @@ pub trait Probes: Backend {
         })
     }
 
-    /// Fills the application's second with calls of the test's own, so
-    /// that what its observer asks of it before that second has room is
-    /// turned away (ARCHITECTURE.md §19.7). Answers when the first of
-    /// them was made: there is room again a second later.
-    fn turn_calls_away(&mut self) -> Result<std::time::Instant> {
+    /// Turns the application's calls away until
+    /// [`Probes::late_call_turned_away`], and keeps the first of `late`
+    /// when it is made again (ARCHITECTURE.md §19.7).
+    fn turn_calls_away(&mut self, _late: &'static str) -> Result<()> {
         Err(BackendError::Unsupported {
             backend: self.name(),
             what: "turning the application's calls away",
+        })
+    }
+
+    /// Waits until that call was turned away, and has the application
+    /// answer what is asked from then on.
+    fn late_call_turned_away(&mut self) -> Result<()> {
+        Err(BackendError::Unsupported {
+            backend: self.name(),
+            what: "turning the application's calls away",
+        })
+    }
+
+    /// Waits until that call was made again and has the application
+    /// answer it, which it doesn't before this.
+    fn late_call_passed_on(&mut self) -> Result<()> {
+        Err(BackendError::Unsupported {
+            backend: self.name(),
+            what: "answering a call late",
         })
     }
 
