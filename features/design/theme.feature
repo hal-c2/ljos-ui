@@ -150,6 +150,24 @@ Feature: A theme file sets the roles of Ljos.Design
       """
     Then the property "accent" of "root" is "#005e8c"
 
+  Scenario: A change to high contrast gives the module's own colour
+    Given the theme file "theme.json" is:
+      """json
+      { "Colors": { "accent": "#9c4dc4" } }
+      """
+    And the QML:
+      """qml
+      import QtQuick
+      import Ljos.Design
+      Item {
+        objectName: "root"
+        property color accent: Colors.accent
+      }
+      """
+    When the system setting "contrast" changes to "high"
+    Then the property "accent" of "root" is "#005e8c"
+    And the log has no warning matching "Unable to assign"
+
   Scenario: Spacing and type sizes are set too
     Given the theme file "theme.json" is:
       """json
