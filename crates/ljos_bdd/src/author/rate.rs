@@ -27,6 +27,28 @@ pub(crate) struct Called {
     pub status: u16,
     /// The answer's header lines, lower-cased.
     pub head: String,
+    pub body: String,
+}
+
+impl Called {
+    /// What a caller reads of a refusal: the status, when to ask again,
+    /// what the body is and what it says.
+    fn refusal(&self) -> Result<Value, String> {
+        let header = |name: &str| {
+            self.head.lines().find_map(|line| {
+                let (n, value) = line.split_once(':')?;
+                (n == name).then(|| value.trim().to_owned())
+            })
+        };
+        let body: Value = serde_json::from_str(&self.body)
+            .map_err(|e| format!("a refusal's body is not JSON: {e}: {:?}", self.body))?;
+        Ok(serde_json::json!({
+            "status": self.status,
+            "retry-after": header("retry-after"),
+            "content-type": header("content-type"),
+            "body": body,
+        }))
+    }
 }
 
 /// Every call to an application's inspector turned away, for as long as
@@ -352,7 +374,7 @@ pub(crate) fn call(addr: SocketAddr, token: &str, id: usize) -> Result<Called, S
         .read_to_end(&mut raw)
         .map_err(|e| format!("call {id}: {e}"))?;
     let raw = String::from_utf8_lossy(&raw);
-    let head = raw.split_once("\r\n\r\n").map_or(&*raw, |(h, _)| h);
+    let (head, body) = raw.split_once("\r\n\r\n").unwrap_or((&*raw, ""));
     let status = head
         .split_whitespace()
         .nth(1)
@@ -361,6 +383,7 @@ pub(crate) fn call(addr: SocketAddr, token: &str, id: usize) -> Result<Called, S
     Ok(Called {
         status,
         head: head.to_ascii_lowercase(),
+        body: body.to_owned(),
     })
 }
 
@@ -423,6 +446,32 @@ impl Burst {
         } else {
             Err(format!("call {nth} has no {header:?}:\n{}", call.head))
         }
+    }
+
+    /// Whether call `nth`, refused by the application's inspector, reads
+    /// as a call [`Refusals`] refuses. What the observer's scenarios show
+    /// of a refusal holds of the inspector's only while it does.
+    pub(super) fn refused_as_by_listener(&self, nth: usize) -> Result<(), String> {
+        let real = nth
+            .checked_sub(1)
+            .and_then(|at| self.calls.get(at))
+            .ok_or_else(|| format!("only {} calls were made, not {nth}", self.calls.len()))?
+            .refusal()?;
+        let dir = tempfile::tempdir().map_err(|e| e.to_string())?;
+        let file = dir.path().join("mcp-1.json");
+        std::fs::write(&file, r#"{"url":"http://127.0.0.1:9/mcp","token":"t"}"#)
+            .map_err(|e| e.to_string())?;
+        let held = Refusals::start(&file)?;
+        let (addr, token) = target(&file)?;
+        let ours = call(addr, &token, nth)?.refusal()?;
+        drop(held);
+        if ours == real {
+            return Ok(());
+        }
+        Err(format!(
+            "the inspector refused call {nth} with {real}, the scenarios' listener refuses \
+             with {ours}: the observer's scenarios test a refusal the inspector does not give"
+        ))
     }
 }
 

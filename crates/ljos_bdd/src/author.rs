@@ -1377,6 +1377,15 @@ impl Slot {
         self.burst()?.refused(nth, status, header)
     }
 
+    /// Whether call `nth` of the burst was refused as the listener that
+    /// stands in for a full inspector refuses.
+    ///
+    /// # Errors
+    /// No burst was made, or the two refusals differ.
+    pub fn call_refused_as_by_listener(&mut self, nth: usize) -> Result<(), String> {
+        self.burst()?.refused_as_by_listener(nth)
+    }
+
     fn burst(&mut self) -> Result<&rate::Burst, String> {
         self.app()?.burst.as_ref().ok_or_else(|| {
             "no calls were made; use `When a client makes N calls to the started \
