@@ -651,17 +651,10 @@ fn changing_the_source_or_the_fallback_discards_the_held_one_and_gives_its_room_
         assert_eq!(status(&e, loader), 1, "{property}: {}", error(&e, loader));
         assert_eq!(shown(&e, loader), "snug", "{property}");
         assert_eq!(error(&e, loader), "", "{property}");
-        // The shell it discarded unread may say it found no room: the one
-        // that took its place is the one to fit.
         let item = get(&e, loader, "item").as_object();
         assert_ne!(item, discarded, "{property}: another took its place");
-        let not_the_discarded = e
-            .faults()
-            .iter()
-            .filter(|f| f.kind() == "JsOutOfMemory" && f.origin != discarded)
-            .count();
         assert_eq!(
-            not_the_discarded,
+            out_of_memory(&e),
             0,
             "{property}: fits without the fallback: item {item:?}, discarded {discarded:?}, {:?}",
             e.faults()
