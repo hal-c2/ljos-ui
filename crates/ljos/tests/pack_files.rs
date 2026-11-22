@@ -28,11 +28,11 @@ fn a_modules_address_names_the_files_of_its_own_directory() {
     assert_eq!(named, [("qrc:/qt/qml/Shapes/dot.png", "Shapes/dot.png")]);
 }
 
-/// What a pack of `dirs` carries, by key, and its addresses.
-fn packed(
-    options: ljos::build::Options,
-    dirs: &[&std::path::Path],
-) -> (Vec<(String, Vec<u8>)>, Vec<(String, String)>) {
+/// What a pack carries, by key, and the key at each of its addresses.
+type Packed = (Vec<(String, Vec<u8>)>, Vec<(String, String)>);
+
+/// The [`Packed`] of a pack of `dirs`.
+fn packed(options: ljos::build::Options, dirs: &[&std::path::Path]) -> Packed {
     let pack = options
         .without_sources()
         .pack(&ljos::MapSource::new(), dirs)
@@ -50,10 +50,7 @@ fn packed(
 }
 
 /// The bytes the pack serves at `address`.
-fn at<'a>(
-    (carried, named): &'a (Vec<(String, Vec<u8>)>, Vec<(String, String)>),
-    address: &str,
-) -> Option<&'a [u8]> {
+fn at<'a>((carried, named): &'a Packed, address: &str) -> Option<&'a [u8]> {
     let (_, key) = named.iter().find(|(a, _)| a == address)?;
     carried
         .iter()
