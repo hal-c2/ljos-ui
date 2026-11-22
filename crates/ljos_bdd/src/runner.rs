@@ -70,6 +70,20 @@ fn changes_files(
 /// How long closing web pages and shutting CEF down may take at the end.
 const SHUTDOWN_DEADLINE: std::time::Duration = std::time::Duration::from_secs(60);
 
+/// Where a scenario with these tags runs: an `@android` one that names no
+/// other surface runs on the phone when there is one.
+fn surface_of(tags: &[String], phone: bool) -> crate::backend::Surface {
+    use crate::backend::Surface;
+    let has = |t: &str| tags.iter().any(|tag| tag == t);
+    if has("desktop") {
+        Surface::Desktop
+    } else if phone && has("android") && !has("headless") {
+        Surface::Phone
+    } else {
+        Surface::Headless
+    }
+}
+
 /// Run the ledger and return whether every selected scenario passed.
 ///
 /// Every scenario has a deadline (`LJOS_BDD_SCENARIO_DEADLINE`, see
@@ -99,6 +113,12 @@ pub fn run() -> bool {
             Some(why) if why.is_empty() => {}
             Some(why) => eprintln!("@desktop scenarios not run: {why}"),
         }
+    }
+    // The phone is the device `mise run features:android` names; without
+    // one the `@android` scenarios are left out, as they always were.
+    let phone = mode != BackendMode::Qt && crate::backend::android::device().is_some();
+    if phone {
+        selection.surfaces.push("android".into());
     }
     // A page needs a web engine: Qt's always has one; Ljós's is a feature
     // of the build and a runtime beside it.
@@ -157,7 +177,7 @@ pub fn run() -> bool {
                     .chain(&scenario.tags)
                     .cloned()
                     .collect();
-                world.prepare(for_oracle(&tags), tags.iter().any(|t| t == "desktop"));
+                world.prepare(for_oracle(&tags), surface_of(&tags, phone));
                 if changes_files(feature, rule, scenario) {
                     world.watch_files();
                 }

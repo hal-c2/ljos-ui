@@ -70,8 +70,8 @@ impl LjosWorld {
     }
 
     /// Called from the `before` hook: picks the backends this scenario runs on.
-    pub fn prepare(&mut self, qt_parity: bool, desktop: bool) {
-        self.backends = self.mode.backends_for(qt_parity, desktop);
+    pub fn prepare(&mut self, qt_parity: bool, surface: crate::backend::Surface) {
+        self.backends = self.mode.backends_for(qt_parity, surface);
     }
 
     /// Called from the `before` hook for a scenario that changes files

@@ -70,7 +70,7 @@ fn a_process_whose_engine_dropped_an_open_page_ends() {
 #[ignore = "the child of a_process_whose_engine_dropped_an_open_page_ends"]
 fn child_drops_an_open_page() {
     let mut world = futures::executor::block_on(<LjosWorld as World>::new()).expect("a world");
-    world.prepare(false, false);
+    world.prepare(false, ljos_bdd::backend::Surface::Headless);
     world
         .each(|b| {
             b.files()?.text_file(
