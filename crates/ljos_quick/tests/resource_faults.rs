@@ -4,12 +4,13 @@
 
 mod common;
 
+use std::cell::Cell;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
 use common::*;
-use ljos_engine::{Engine, ObjectId, Value};
+use ljos_engine::{Engine, ObjectId, QmlObject, QtObject, Value, qml_impl};
 use ljos_quick::QuickScene;
 use ljos_runtime::{Clock, VirtualClock};
 
@@ -452,21 +453,71 @@ const FILLS: &str =
 const CONTENT_FAULTS: [(&str, &str); 4] = [
     (
         "an ErrorBoundary's content",
-        "ErrorBoundary { Item { Component.onCompleted: FILL } }",
+        r#"ErrorBoundary { Item { id: c; Component.onCompleted: { FILL c.objectName = "back" } } }"#,
     ),
     (
         "a function of an ErrorBoundary's content",
-        "ErrorBoundary { Item { id: c; function work() FILL Component.onCompleted: c.work() } }",
+        r#"ErrorBoundary { Item { id: c; function work() FILL Component.onCompleted: { c.work(); c.objectName = "back" } } }"#,
     ),
     (
         "a Loader's item",
-        "Loader { sourceComponent: Component { Item { Component.onCompleted: FILL } } }",
+        r#"Loader { sourceComponent: Component { Item { id: c; Component.onCompleted: { FILL c.objectName = "back" } } } }"#,
     ),
     (
         "a ShellLoader's shell",
         r#"ShellLoader { source: "Shell" }"#,
     ),
 ];
+
+thread_local! {
+    /// The panics left in [`Flaky`]: they outlast what is made again.
+    static PANICS_LEFT: Cell<u32> = const { Cell::new(0) };
+}
+
+/// A native type whose method panics while there are panics left, then
+/// works. Under the name of a type that is not `ljos_quick`'s to
+/// implement, so the compiler knows it whichever table of types it reads.
+#[derive(Debug, Default, QmlObject)]
+#[qml(module = "QtQuick.Templates", name = "ButtonGroup", extends = QtObject)]
+struct Flaky {
+    #[qml(base)]
+    base: QtObject,
+}
+
+#[qml_impl]
+impl Flaky {
+    #[qml(invokable)]
+    fn work(&self) {
+        let left = PANICS_LEFT.get();
+        if left > 0 {
+            PANICS_LEFT.set(left - 1);
+            panic!("not yet");
+        }
+    }
+}
+
+/// A boundary that has given up by the time native work inside it no
+/// longer panics, with how many panics that takes. `WORK` is the content's.
+const PANIC_FAULTS: [(&str, u32, &str); 3] = [
+    (
+        "a Loader's item",
+        1,
+        "Loader { sourceComponent: Component { Item { WORK } } }",
+    ),
+    (
+        "an ErrorBoundary that restarts nothing",
+        1,
+        "ErrorBoundary { maxRestarts: 0; Item { WORK } }",
+    ),
+    (
+        "an ErrorBoundary past its restarts",
+        4,
+        "ErrorBoundary { Item { WORK } }",
+    ),
+];
+
+/// Calls what panics from inside the content, then says it is whole.
+const WORKS: &str = r#"ButtonGroup { id: f; Component.onCompleted: { f["work"](); d.ok = true } }"#;
 
 /// A root left half made by a fault in an object of a boundary's own, one
 /// that boundary never makes again.
@@ -519,6 +570,7 @@ fn made_file(ok: bool, inner: &str, singleton: bool) -> String {
         r#"{pragma}import QtQuick
 import Ljos
 import Ljos.Blocks
+import QtQuick.Templates
 Item {{
     id: d
     width: 12; height: 10
@@ -589,6 +641,7 @@ impl Making {
     /// Makes `file` on `path` with the heap `room` bytes from full.
     fn start(path: Path, file: &str, room: usize) -> Self {
         let (e, clock) = timed();
+        e.register_module(ljos_engine::module!("QtQuick.Templates" 2.0 => [Flaky]));
         let one = |main: &str| main.replace("root.on ? 3 : 0", "root.on ? 1 : 0");
         let (main, key) = match path {
             Path::Repeater => (one(REPEATER), "Line"),
@@ -596,7 +649,8 @@ impl Making {
             Path::Incubated => (INSTANTIATOR.to_owned(), "Line"),
             Path::Singleton => (HOLDS_THEME.to_owned(), "Theme"),
         };
-        let shell = "import QtQuick\nItem { Component.onCompleted: FILL }\n".replace("FILL", FILLS);
+        let shell = "import QtQuick\nItem { id: s; Component.onCompleted: { FILL s.objectName = \"back\" } }\n"
+            .replace("FILL", FILLS);
         compile(&e, &[("Main", &main), (key, file), ("Shell", &shell)]);
         let root = e.create_from_url("Main", None, Vec::new()).unwrap();
         fill(&e, root, room);
@@ -643,6 +697,9 @@ impl Making {
     /// The heap has room again, and what waits for that runs.
     fn make_room(&mut self) {
         assert!(self.e.set_script_heap_limit(None));
+        // A singleton is made after its frame's faults were delivered: no
+        // timer waits until the next frame has delivered its own.
+        frame(&mut self.s, &self.e);
         for _ in 0..16 {
             if self.e.next_timer_deadline().is_none() {
                 break;
@@ -661,6 +718,21 @@ fn ran_out(m: &Making) -> bool {
         .any(|w| w.contains("JS heap limit exceeded"))
 }
 
+/// Whether an object named `name` is at or below `root`.
+fn exists(e: &Engine, root: ObjectId, name: &str) -> bool {
+    let mut stack = vec![root];
+    while let Some(o) = stack.pop() {
+        if !e.is_alive(o) {
+            continue;
+        }
+        if get(e, o, "objectName").to_js_string().as_str() == name {
+            return true;
+        }
+        stack.extend(e.children(o));
+    }
+    false
+}
+
 /// Every case of `inner` is kept as it was first made; says which are not.
 fn assert_kept(path: Path, inner: &[(&str, &str)]) {
     let mut wrong = Vec::new();
@@ -676,8 +748,11 @@ fn assert_kept(path: Path, inner: &[(&str, &str)]) {
             continue;
         };
         m.make_room();
+        assert!(!m.e.has_pending_faults(), "{what}: a fault was never taken");
         if m.object() != Some(first) {
             wrong.push(format!("{what}: made again"));
+        } else if !exists(&m.e, first, "back") {
+            wrong.push(format!("{what}: what is inside never came back"));
         }
     }
     assert!(wrong.is_empty(), "{wrong:#?}");
@@ -702,6 +777,48 @@ fn assert_made_again(path: Path, inner: &[(&str, &str)]) {
         }
     }
     assert!(wrong.is_empty(), "{wrong:#?}");
+}
+
+/// Every case of [`PANIC_FAULTS`] is whole once the panics are over, as it
+/// is when what is made is thrown away; says which are not.
+fn assert_recovers_from_panics(path: Path) {
+    let mut wrong = Vec::new();
+    for (what, panics, qml) in PANIC_FAULTS {
+        PANICS_LEFT.set(panics);
+        let inner = qml.replace("WORK", WORKS);
+        let mut m = Making::start(
+            path,
+            &made_file(false, &inner, matches!(path, Path::Singleton)),
+            // Room for all of it: only the panics break it.
+            16 * 1024 * 1024,
+        );
+        assert!(PANICS_LEFT.get() < panics, "{what}: nothing panicked");
+        m.make_room();
+        if !m.is_whole() {
+            wrong.push(format!("{what}: never whole again"));
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+}
+
+#[test]
+fn a_repeater_row_recovers_from_panics_a_boundary_inside_gave_up_on() {
+    assert_recovers_from_panics(Path::Repeater);
+}
+
+#[test]
+fn a_list_view_delegate_recovers_from_panics_a_boundary_inside_gave_up_on() {
+    assert_recovers_from_panics(Path::ListView);
+}
+
+#[test]
+fn an_incubated_object_recovers_from_panics_a_boundary_inside_gave_up_on() {
+    assert_recovers_from_panics(Path::Incubated);
+}
+
+#[test]
+fn a_singleton_recovers_from_panics_a_boundary_inside_gave_up_on() {
+    assert_recovers_from_panics(Path::Singleton);
 }
 
 #[test]
