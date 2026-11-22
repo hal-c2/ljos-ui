@@ -15,7 +15,7 @@
 //! of what it made on the surface before the platform frees it.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender, TrySendError};
 use std::time::Instant;
 
@@ -233,6 +233,8 @@ enum Msg<S, U> {
 pub struct Relay<S, U> {
     tx: SyncSender<Msg<S, U>>,
     wake_queued: Arc<AtomicBool>,
+    /// The method's reports handed to the application so far.
+    reports: Arc<AtomicU64>,
 }
 
 impl<S, U> std::fmt::Debug for Relay<S, U> {
@@ -248,6 +250,7 @@ impl<S, U> Clone for Relay<S, U> {
         Self {
             tx: self.tx.clone(),
             wake_queued: Arc::clone(&self.wake_queued),
+            reports: Arc::clone(&self.reports),
         }
     }
 }
@@ -258,6 +261,9 @@ impl<S: Send + 'static, U: Send + 'static> Relay<S, U> {
     /// # Errors
     /// The application's loop has ended.
     pub fn send(&self, arrival: Arrival<S>) -> Result<(), HostError> {
+        if is_report(&arrival) {
+            self.reports.fetch_add(1, Ordering::AcqRel);
+        }
         self.tx
             .send(Msg::Arrival(arrival))
             .map_err(|_| HostError::Closed)
@@ -285,6 +291,20 @@ impl<S: Send + 'static, U: Send + 'static> Relay<S, U> {
             .map_err(|_| HostError::Closed)
     }
 
+    /// The platform took the write `now`, asked for when the application
+    /// had `seen` of the method's reports. With more on their way to it, it
+    /// would end on the last of those and the method on the write: so the
+    /// write follows them. Not the method's own report, so what was written
+    /// is not forgotten for it ([`Writes::clear`]).
+    #[cfg(any(target_os = "android", test))]
+    pub(crate) fn tell_again(&self, seen: u64, now: &crate::HeldText) -> Result<(), HostError> {
+        if self.reports.load(Ordering::Acquire) <= seen {
+            return Ok(());
+        }
+        let text = crate::TextEvent::Held(now.clone());
+        self.send(Arrival::Window(WindowEvent::Text(text)))
+    }
+
     fn waker(&self) -> Waker {
         let tx = self.tx.clone();
         let queued = Arc::clone(&self.wake_queued);
@@ -305,7 +325,15 @@ impl<S: Send + 'static, U: Send + 'static> Relay<S, U> {
     }
 }
 
-type Requests = Arc<dyn Fn(Request) + Send + Sync>;
+/// Told, with each request, how many reports the application had then.
+type Requests = Arc<dyn Fn(Request, u64) + Send + Sync>;
+
+fn is_report<S>(arrival: &Arrival<S>) -> bool {
+    matches!(
+        arrival,
+        Arrival::Window(WindowEvent::Text(crate::TextEvent::Held(_)))
+    )
+}
 
 /// The application's side of a relayed platform. `S` is what a surface is
 /// on the platform (an `ANativeWindow` on Android).
@@ -335,10 +363,21 @@ impl<S: Send + 'static, U: From<Wake> + Send + 'static> RelayHost<S, U> {
         capabilities: Capabilities,
         requests: impl Fn(Request) + Send + Sync + 'static,
     ) -> (Self, Relay<S, U>) {
+        Self::stamped(capabilities, move |request, _| requests(request))
+    }
+
+    /// As [`RelayHost::new`], each request with how many of the method's
+    /// reports the application had when it asked, for
+    /// `Relay::tell_again`.
+    pub(crate) fn stamped(
+        capabilities: Capabilities,
+        requests: impl Fn(Request, u64) + Send + Sync + 'static,
+    ) -> (Self, Relay<S, U>) {
         let (tx, rx) = mpsc::sync_channel(QUEUE);
         let relay = Relay {
             tx,
             wake_queued: Arc::new(AtomicBool::new(false)),
+            reports: Arc::new(AtomicU64::new(0)),
         };
         let host = Self {
             rx,
@@ -376,6 +415,8 @@ struct State<S> {
     name: String,
     capabilities: Capabilities,
     requests: Requests,
+    /// The method's reports the application has had.
+    seen: u64,
 }
 
 /// What a [`RelayHost`]'s application may ask while it handles an event.
@@ -398,7 +439,7 @@ impl<S> RelayControl<'_, S> {
 
     /// Asks something of the platform's thread.
     pub fn request(&self, request: Request) {
-        (self.state.requests)(request);
+        (self.state.requests)(request, self.state.seen);
     }
 
     /// Whether the application is in front of its user.
@@ -499,6 +540,7 @@ impl<S: Send + 'static, U: From<Wake> + Send + 'static> PlatformHost for RelayHo
             name,
             capabilities,
             requests,
+            seen: 0,
         };
         // Insets kept until there was a window are told right after what
         // made it, whatever that was (a message, or the wait that follows a
@@ -600,7 +642,7 @@ impl<S: Send + 'static, U: From<Wake> + Send + 'static> PlatformHost for RelayHo
             }
         }
         deliver(&mut state, Event::Exiting);
-        (state.requests)(Request::Exit);
+        (state.requests)(Request::Exit, state.seen);
         Ok(())
     }
 }
@@ -618,6 +660,10 @@ fn arrive<S, U>(
         event,
         raw: None,
     };
+    if is_report(&arrival) {
+        // Before it is delivered: what is asked while handling it knows it.
+        state.seen += 1;
+    }
     match arrival {
         Arrival::SurfaceCreated { surface, px, scale } => {
             state.surface = Some(surface);

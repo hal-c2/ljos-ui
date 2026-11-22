@@ -220,7 +220,7 @@ public class LjosActivity extends GameActivity {
 
     /**
      * The application is about to write what the input method holds. On
-     * the application's thread, and waits for no other.
+     * the native side's thread, and waits for no other.
      */
     public void textInputWriteComing() {
         TextInputOf.writeComing(mSurfaceView);

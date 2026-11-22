@@ -38,7 +38,9 @@ pub fn capabilities() -> Capabilities {
     }
 }
 
-type Requests = pump::Requests<Request, AndroidAppWaker>;
+/// Each with how many of the method's reports the application had when
+/// it asked.
+type Requests = pump::Requests<(Request, u64), AndroidAppWaker>;
 
 impl Wakes for AndroidAppWaker {
     fn wake(&self) {
@@ -75,8 +77,8 @@ impl<U: Send + 'static> std::fmt::Debug for Attach<U> {
 pub fn host<U: From<Wake> + Send + 'static>() -> (AndroidHost<U>, Attach<U>) {
     let requests = Arc::new(Mutex::new(Requests::default()));
     let asked = Arc::clone(&requests);
-    let (host, relay) = RelayHost::new(capabilities(), move |request| {
-        lock(&asked).ask(request);
+    let (host, relay) = RelayHost::stamped(capabilities(), move |request, seen| {
+        lock(&asked).ask((request, seen));
     });
     (host.with_screen_name("display"), Attach { relay, requests })
 }
@@ -119,8 +121,8 @@ impl<U: Send + 'static> Attach<U> {
                 continue;
             };
             pump.input();
-            for request in asked {
-                pump.request(request);
+            for (request, seen) in asked {
+                pump.request(request, seen);
             }
         }
         drop(pumping);
@@ -372,7 +374,7 @@ impl<U: Send + 'static> Pump<'_, U> {
         }
     }
 
-    fn request(&mut self, request: Request) {
+    fn request(&mut self, request: Request, seen: u64) {
         match request {
             Request::Keyboard(true) => self.app.show_soft_input(false),
             Request::Keyboard(false) => self.app.hide_soft_input(false),
@@ -445,6 +447,11 @@ impl<U: Send + 'static> Pump<'_, U> {
                     compose: compose.map_or([-1, -1], |c| [unit(c.start), unit(c.end)]),
                     replaced,
                 };
+                // A report on its way to the application is older than
+                // this write, which is what the method ends on.
+                if self.relay.tell_again(seen, &held).is_err() {
+                    self.closed = true;
+                }
                 self.app.set_text_input_state(TextInputState {
                     text: held.text,
                     selection: TextSpan {
@@ -545,9 +552,9 @@ fn translate(
             InputStatus::Handled
         }
         InputEvent::TextEvent(state) => {
-            // The method reports for itself only once it holds what was
-            // written before (TextInputOf's connection tells no write
-            // back), so none of those is still on its way.
+            // What is compared from here on is the method's report. A write
+            // still on its way replaces it when it lands, and TextInputOf's
+            // connection then tells that: else it tells no write back.
             writes.clear();
             let compose = state
                 .compose_region
