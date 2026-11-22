@@ -532,6 +532,7 @@ fn a_shell_that_fits_only_without_the_fallback_stays_on_it_and_waits_between_tri
     })
     .unwrap();
 
+    let backoff = [0, 1, 2, 4, 8, 16];
     let mut waits = Vec::new();
     for attempt in 0..7 {
         let (made, faults) = (num(&e, root, "made"), out_of_memory(&e));
@@ -540,11 +541,21 @@ fn a_shell_that_fits_only_without_the_fallback_stays_on_it_and_waits_between_tri
         } else {
             let from = clock.now();
             let mut due = e.next_timer_deadline().expect("the source is tried again");
-            // A timer that isn't the retry, which is a second or more away
-            // after the first. Measured from the failure, not from them.
-            while attempt > 1 && due.saturating_since(from) < Duration::from_secs(1) {
+            // The engine has timers of its own (it runs again a binding a
+            // full heap cut short). However far off one is, no try comes
+            // with it: the retry is the backoff's wait from the failure.
+            let retry = from + Duration::from_secs(backoff[attempt - 1]);
+            let mut others = 0;
+            while due < retry {
                 clock.set(due);
                 turn(&e, &clock, loader, fallback);
+                assert_eq!(
+                    num(&e, root, "made"),
+                    made,
+                    "a try before its wait was over"
+                );
+                others += 1;
+                assert!(others < 32, "a timer is always due, now at {due:?}");
                 due = e.next_timer_deadline().expect("the source is tried again");
             }
             let wait = due.saturating_since(from);
@@ -572,14 +583,23 @@ fn a_shell_that_fits_only_without_the_fallback_stays_on_it_and_waits_between_tri
             "the same fallback"
         );
         assert_eq!(num(&e, fallback, "touched"), 7.0);
-        assert_eq!(num(&e, root, "made"), made + 1.0, "one try");
+        assert_eq!(
+            num(&e, root, "made"),
+            made + 1.0,
+            "one try (try {attempt}, waits {waits:?}); next {:?} at {:?}; error {}; faults {:?}; said {:?}",
+            e.next_timer_deadline(),
+            clock.now(),
+            error(&e, loader),
+            e.faults(),
+            e.take_warnings()
+        );
         assert_eq!(out_of_memory(&e), faults + 1, "{:?}", e.faults());
         assert!(error(&e, loader).contains("out of memory"));
         assert_eq!(before.status, 1, "Ready while the first read is ahead");
         assert!(before.fallback_alive, "held through the first read");
         assert_ne!(before.error, "", "the fault is said until the read is over");
     }
-    assert_eq!(waits, [0, 1, 2, 4, 8, 16], "the backoff");
+    assert_eq!(waits, backoff, "the backoff");
     assert!(
         errors.borrow().iter().all(|said: &String| !said.is_empty()),
         "a failing try blanked the fault: {:?}",
@@ -607,6 +627,11 @@ fn changing_the_source_or_the_fallback_discards_the_held_one_and_gives_its_room_
         .unwrap();
         e.invoke_by_name(loader, "reload", &[]).unwrap();
         assert!(e.is_alive(fallback), "{property}: held before the change");
+        let discarded = get(&e, loader, "item").as_object();
+        assert!(
+            discarded.is_some() && discarded != Some(fallback),
+            "{property}: the retried shell is the item while held"
+        );
         assert_ne!(error(&e, loader), "", "{property}: said while held");
         assert!(
             errors.borrow().is_empty(),
@@ -629,12 +654,18 @@ fn changing_the_source_or_the_fallback_discards_the_held_one_and_gives_its_room_
         // The shell it discarded unread may say it found no room: the one
         // that took its place is the one to fit.
         let item = get(&e, loader, "item").as_object();
-        let in_item = e
+        assert_ne!(item, discarded, "{property}: another took its place");
+        let not_the_discarded = e
             .faults()
             .iter()
-            .filter(|f| f.kind() == "JsOutOfMemory" && f.origin == item)
+            .filter(|f| f.kind() == "JsOutOfMemory" && f.origin != discarded)
             .count();
-        assert_eq!(in_item, 0, "{property}: fits without the fallback");
+        assert_eq!(
+            not_the_discarded,
+            0,
+            "{property}: fits without the fallback: item {item:?}, discarded {discarded:?}, {:?}",
+            e.faults()
+        );
         assert_eq!(e.next_timer_deadline(), None, "{property}");
     }
 }
