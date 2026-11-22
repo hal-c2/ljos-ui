@@ -703,6 +703,22 @@ fn writes_past_the_most_kept_let_the_oldest_go() {
 }
 
 #[test]
+fn a_method_that_reports_nothing_holds_the_newest_write() {
+    let empty = crate::HeldText::default();
+    let mut writes = Writes::default();
+    let mut over = empty.clone();
+    assert_eq!(writes.unreported(), empty);
+    // More writes than are kept, each over the one before, and no report.
+    for n in 1..=PENDING_WRITES + 2 {
+        let holds_now = writes.unreported();
+        assert!(!held_is_stale(Some(&over), &holds_now), "write {n}");
+        over = holds(&"x".repeat(n), [n, n], None);
+        writes.wrote(&empty, over.clone());
+    }
+    assert_eq!(writes.unreported(), over);
+}
+
+#[test]
 fn a_report_the_same_as_two_writes_lets_go_only_of_the_oldest() {
     let mut writes = Writes::default();
     let empty = holds("", [0, 0], None);
