@@ -22,11 +22,14 @@
 //! URL is the copy's `file://`. A document to save to, and a folder, are
 //! the provider's `content://` URL, kept across restarts with the
 //! system's persistable grant: nothing else can stand for them.
+//!
+//! A copy lives for the dialog that asked for it: closed, it stops the copy
+//! under way, and the copies of an answer it did not hear are removed.
 
 use std::path::Path;
 
 use crate::dialogs::{DialogKind, DialogRequest};
-use crate::paths::file_url;
+use crate::paths::{file_url, url_path};
 
 /// Which picker a dialog is, as the Java side numbers them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -88,8 +91,43 @@ pub fn chosen(answer: Option<&str>) -> Option<Vec<String>> {
     (!urls.is_empty()).then_some(urls)
 }
 
-/// Removes the copies among `urls`, an answer no dialog heard.
-pub fn remove_copies(_urls: &[String]) {}
+/// Removes the copies among `urls`, an answer no dialog heard. Only what
+/// has a copy's path, `documents/<code>/<n>/<name>`, is touched: anything
+/// else an answer names is the user's.
+pub fn remove_copies(urls: &[String]) {
+    for url in urls.iter().filter(|url| url.starts_with("file://")) {
+        let Some(file) = url_path(url) else {
+            continue;
+        };
+        let Some((of_document, of_request)) = copy_directories(&file) else {
+            continue;
+        };
+        match std::fs::remove_file(&file) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+                log::warn!("an unheard copy stays: {}: {e}", file.display());
+            }
+            _ => {
+                // These remove only what is empty: the request's directory
+                // holds the answer's other copies until the last has gone.
+                let _ = std::fs::remove_dir(of_document);
+                let _ = std::fs::remove_dir(of_request);
+            }
+        }
+    }
+}
+
+/// The two directories the Java side made for a copy, if `file` is one.
+fn copy_directories(file: &Path) -> Option<(&Path, &Path)> {
+    let numbered = |dir: &Path| {
+        dir.file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| !name.is_empty() && name.bytes().all(|b| b.is_ascii_digit()))
+    };
+    let of_document = file.parent()?;
+    let of_request = of_document.parent()?;
+    let copies = of_request.parent()?.file_name()? == "documents";
+    (copies && numbered(of_document) && numbered(of_request)).then_some((of_document, of_request))
+}
 
 /// The name a save picker suggests: the dialog's, or none.
 pub fn suggested_name(request: &DialogRequest) -> String {
@@ -112,7 +150,7 @@ mod java {
     use ljos_jni::jni::{EnvUnowned, jni_sig, jni_str};
     use ljos_jni::{app_class, with_java};
 
-    use super::{Picker, chosen, extensions, suggested_name};
+    use super::{Picker, chosen, extensions, remove_copies, suggested_name};
     use crate::dialogs::{DialogAnswer, DialogReply, DialogRequest, DialogService};
 
     /// Android's document picker as the system's file and folder dialogs.
@@ -215,6 +253,13 @@ mod java {
             });
             if let Err(e) = closed {
                 log::warn!("the document picker was not taken away: {e}");
+            }
+        }
+
+        fn unheard(&self, reply: &DialogReply) {
+            // The close came after the Java side handed the answer over.
+            if let DialogReply::Documents(urls) = reply {
+                remove_copies(urls);
             }
         }
     }

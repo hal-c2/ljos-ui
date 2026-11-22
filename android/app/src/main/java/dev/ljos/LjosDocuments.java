@@ -17,8 +17,10 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -30,6 +32,10 @@ import java.util.Set;
  * of its own, and its copy's path is the answer, so whatever reads a file
  * reads it. A document to save to, and a folder, are answered with the
  * provider's URI, whose grant is kept across restarts.
+ *
+ * <p>A document says nothing reliable of its size, and may never end: a
+ * copy stops when the dialog is closed, also in a read that waits, and
+ * leaves {@link #ROOM_LEFT} of the storage free.
  */
 public final class LjosDocuments {
     private LjosDocuments() {}
@@ -38,6 +44,9 @@ public final class LjosDocuments {
     private static final int OPEN_MANY = 1;
     private static final int SAVE = 2;
     private static final int FOLDER = 3;
+
+    /** What a copy leaves free where the cache is: the system's, and the application's to run on. */
+    private static final long ROOM_LEFT = 64L * 1024 * 1024;
 
     /** The picker each request code on screen is. */
     private static final SparseIntArray showing = new SparseIntArray();
@@ -50,6 +59,9 @@ public final class LjosDocuments {
      * side no longer waits for; under {@code showing}.
      */
     private static final Set<Integer> closed = new HashSet<>();
+
+    /** The document each copy is reading, for a close to end; under {@code showing}. */
+    private static final Map<Integer, InputStream> reading = new HashMap<>();
 
     /**
      * Shows a picker from the activity on screen; its answer comes to the
@@ -108,16 +120,27 @@ public final class LjosDocuments {
 
     /** Takes away the picker shown with {@code code}, if it is still up. */
     public static void close(int code) {
+        InputStream read;
         synchronized (showing) {
             // A picker that has just answered, or a selection still being
             // copied, would answer no one: its copies are not left behind.
             if (showing.indexOfKey(code) >= 0 || copying.contains(code)) {
                 closed.add(code);
             }
+            read = reading.remove(code);
         }
         LjosActivity activity = LjosActivity.current();
         if (activity != null) {
             activity.runOnUiThread(() -> activity.finishActivity(code));
+        }
+        // A read of a provider that sends nothing sees no mark: closing its
+        // stream is what ends it.
+        if (read != null) {
+            try {
+                read.close();
+            } catch (IOException e) {
+                Log.w("ljos", "the document being read was not closed", e);
+            }
         }
     }
 
@@ -264,7 +287,7 @@ public final class LjosDocuments {
     /**
      * Copies each document into the cache's {@code documents/<code>/<n>/},
      * under its own name; the copies' paths, a line each, or null when one
-     * could not be read or the dialog was closed meanwhile. A selection that
+     * could not be read or held, or the dialog was closed meanwhile. A selection that
      * fails, or is no longer wanted, leaves no copy behind: the application
      * is told of none, so nothing else would remove them.
      */
@@ -290,11 +313,28 @@ public final class LjosDocuments {
                 if (in == null) {
                     throw new IOException("the provider gave nothing to read");
                 }
-                byte[] buffer = new byte[64 * 1024];
-                for (int n; (n = in.read(buffer)) > 0; ) {
-                    to.write(buffer, 0, n);
-                    if (unwanted(code)) {
+                synchronized (showing) {
+                    // Closed while the provider opened it: no close will
+                    // find this stream to end.
+                    if (closed.contains(code)) {
                         throw new IOException("the dialog was closed");
+                    }
+                    reading.put(code, in);
+                }
+                try {
+                    byte[] buffer = new byte[64 * 1024];
+                    for (int n; (n = in.read(buffer)) > 0; ) {
+                        if (context.getCacheDir().getUsableSpace() < ROOM_LEFT + n) {
+                            throw new IOException("the storage has no room for the copy");
+                        }
+                        to.write(buffer, 0, n);
+                        if (unwanted(code)) {
+                            throw new IOException("the dialog was closed");
+                        }
+                    }
+                } finally {
+                    synchronized (showing) {
+                        reading.remove(code);
                     }
                 }
             } catch (IOException | SecurityException e) {
