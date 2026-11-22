@@ -3343,3 +3343,62 @@ fn an_array_no_script_has_read_is_not_made_to_be_measured() {
     assert_eq!(held.bytes, [0], "{held:?}");
     assert_eq!(eval_num(&host, "made").unwrap(), 0.0, "nothing was made");
 }
+
+/// A loop whose error object fits under its share's cap where, at some
+/// sizes of heap, the error's words do not: QuickJS then throws an
+/// `InternalError` that says nothing.
+const FILLS_ITS_SHARE: &str = "globalThis.h = null; for (;;) h = [h, new ArrayBuffer(300)]";
+
+/// Runs `refused` on a heap of each of 400 sizes about 2 MiB, half of whose
+/// room is a dispatch's, and gives what was not told as running out.
+fn not_told_as_out_of_memory(refused: impl Fn(&JsHost) -> JsFault) -> (usize, String) {
+    let mut others = 0;
+    let mut first = String::new();
+    for i in 0..400 {
+        let host = JsHost::new(JsConfig {
+            memory_limit: Some(2 * MIB + i * 41),
+            dispatch_heap_share: Some(0.5),
+            ..JsConfig::default()
+        })
+        .unwrap();
+        let fault = refused(&host);
+        if !matches!(fault, JsFault::JsOutOfMemory { .. }) {
+            others += 1;
+            if first.is_empty() {
+                first = format!("limit 2 MiB + {}: {fault:?}", i * 41);
+            }
+        }
+    }
+    (others, first)
+}
+
+/// A refusal past the share is the heap running out also where the error's
+/// words found no room, which the limit, with room left, does not tell.
+#[test]
+fn a_refusal_with_no_room_for_its_words_is_running_out_of_memory() {
+    let slice = Slice {
+        soft: Duration::from_secs(5),
+        hard: Duration::from_secs(10),
+    };
+    let (others, first) = not_told_as_out_of_memory(|host| {
+        host.enter("fill", slice, |s| s.eval::<(), _>(FILLS_ITS_SHARE))
+            .unwrap_err()
+    });
+    assert_eq!(others, 0, "{others} of 400, the first at {first}");
+}
+
+/// So it is in a promise job.
+#[test]
+fn a_jobs_refusal_with_no_room_for_its_words_is_running_out_of_memory() {
+    let queue = format!("queueMicrotask(() => {{ {FILLS_ITS_SHARE} }})");
+    let (others, first) = not_told_as_out_of_memory(|host| {
+        host.enter("setup", host.config().slice, |s| {
+            s.eval::<(), _>(queue.as_str())
+        })
+        .unwrap();
+        let mut pumped = host.pump_jobs(Instant::now() + Duration::from_secs(5));
+        assert_eq!(pumped.faults.len(), 1, "{:?}", pumped.faults);
+        pumped.faults.remove(0)
+    });
+    assert_eq!(others, 0, "{others} of 400, the first at {first}");
+}
