@@ -83,10 +83,11 @@ impl Default for JsConfig {
             idle_collect_min_growth: 256 * 1024,
             // A quarter of the room is left for the rest. A dispatch that
             // makes objects meets a collection in the last eighth of its
-            // share at the latest (`MallocPeak::collect_before`). QuickJS
-            // asks for one only as it makes an object, so a single
-            // allocation that steps over that eighth, or strings alone, can
-            // still be refused room that garbage holds, as at the limit.
+            // share, until collecting there frees too little and backs off
+            // (`MallocPeak::collect_before`). QuickJS asks for one only as
+            // it makes an object, so a single allocation that steps over
+            // that point, strings alone, or garbage made after backing off
+            // can still be refused room that garbage holds, as at the limit.
             dispatch_heap_share: Some(0.75),
         }
     }
