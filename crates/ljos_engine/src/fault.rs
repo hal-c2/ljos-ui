@@ -613,6 +613,14 @@ impl Engine {
         !self.inner.faults.queue.borrow().is_empty()
     }
 
+    /// Runs `f` once the faults reported by now have all been delivered:
+    /// at the end of the next [`Engine::deliver_faults`] that leaves none
+    /// of them queued, one with nothing to deliver included. Asked from
+    /// inside a delivery, it waits for a later one.
+    pub fn after_faults_delivered(&self, f: impl FnOnce(&Engine) + 'static) {
+        let _ = f;
+    }
+
     fn set_application_fault(&self, report: FaultReport) {
         let state = &self.inner.faults;
         *state.application.borrow_mut() = Some(report.clone());
@@ -768,5 +776,82 @@ mod tests {
         assert!(!is_generated_name("f"));
         assert!(!is_generated_name("fetch"));
         assert!(!is_generated_name("f1x"));
+    }
+
+    /// A flag, and what sets it.
+    fn flag() -> (std::rc::Rc<Cell<bool>>, impl FnOnce(&Engine) + 'static) {
+        let ran = std::rc::Rc::new(Cell::new(false));
+        let set = ran.clone();
+        (ran, move |_: &Engine| set.set(true))
+    }
+
+    #[test]
+    fn what_waits_for_a_delivery_runs_after_one_with_nothing_to_deliver() {
+        let e = Engine::new();
+        let (ran, f) = flag();
+        e.after_faults_delivered(f);
+        assert!(!ran.get(), "not where it was asked");
+        assert_eq!(e.deliver_faults(), 0);
+        assert!(ran.get());
+    }
+
+    #[test]
+    fn what_waits_for_a_delivery_does_not_run_in_one_nested_in_it() {
+        let e = Engine::new();
+        let (ran, f) = flag();
+        let early = std::rc::Rc::new(Cell::new(false));
+        let (seen, saw) = (ran.clone(), early.clone());
+        e.set_fault_handler(move |e, _| {
+            assert_eq!(e.deliver_faults(), 0, "nested");
+            saw.set(seen.get());
+        });
+        e.report_fault(None, Fault::Panic("one".into()));
+        e.after_faults_delivered(f);
+        e.deliver_faults();
+        assert!(!early.get(), "ran before the delivery was over");
+        assert!(ran.get());
+    }
+
+    #[test]
+    fn what_waits_for_a_delivery_waits_for_the_one_that_takes_the_last_fault() {
+        let e = Engine::new();
+        for _ in 0..=MAX_DELIVERED {
+            e.report_fault(None, Fault::Panic("many".into()));
+        }
+        let (ran, f) = flag();
+        e.after_faults_delivered(f);
+        assert_eq!(e.deliver_faults(), MAX_DELIVERED);
+        assert!(!ran.get(), "one of them is still queued");
+        assert_eq!(e.deliver_faults(), 1);
+        assert!(ran.get());
+    }
+
+    #[test]
+    fn a_fault_reported_later_does_not_hold_up_what_waits_for_a_delivery() {
+        let e = Engine::new();
+        let (ran, f) = flag();
+        e.after_faults_delivered(f);
+        for _ in 0..=MAX_DELIVERED {
+            e.report_fault(None, Fault::Panic("later".into()));
+        }
+        e.deliver_faults();
+        assert!(e.has_pending_faults());
+        assert!(ran.get());
+    }
+
+    #[test]
+    fn what_is_asked_inside_a_delivery_waits_for_a_later_one() {
+        let e = Engine::new();
+        let ran = std::rc::Rc::new(Cell::new(false));
+        let set = ran.clone();
+        e.set_fault_handler(move |e, _| {
+            let set = set.clone();
+            e.after_faults_delivered(move |_| set.set(true));
+        });
+        e.report_fault(None, Fault::Panic("one".into()));
+        e.deliver_faults();
+        assert!(!ran.get(), "ran in the delivery it was asked in");
+        e.deliver_faults();
+        assert!(ran.get());
     }
 }

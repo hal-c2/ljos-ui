@@ -809,14 +809,7 @@ impl<M: Send + 'static> Desktop<M> {
                 self.app.view_mut().set_waker(waker(root, &self.proxy));
                 self.slots.push(Slot::new(key, Some(win), ctx, Some(view)));
             }
-            Err(e) => {
-                engine.log(
-                    LogLevel::Warning,
-                    CATEGORY,
-                    format!("a window cannot be shown: {e}"),
-                );
-                self.refused.push(win);
-            }
+            Err(e) => not_added(engine, &mut self.refused, win, &e),
         }
     }
 
@@ -1106,17 +1099,14 @@ impl<M: Send + 'static> Desktop<M> {
     /// The platform refused a window. Without the root's there is no
     /// application to show; another window is left out.
     fn fail(&mut self, host: &mut Control<'_>, i: usize, error: ShellError, engine: &Engine) {
-        self.slots[i].broken = true;
+        let slot = &mut self.slots[i];
         if i == 0 {
+            slot.broken = true;
             *self.failure.borrow_mut() = Some(error);
             self.exiting = true;
             host.exit();
         } else {
-            engine.log(
-                LogLevel::Warning,
-                CATEGORY,
-                format!("a window cannot be shown: {error}"),
-            );
+            left_out(engine, &mut slot.broken, slot.window, &error);
         }
     }
 
@@ -2493,6 +2483,38 @@ fn only_software(display: &egui_winit::winit::event_loop::OwnedDisplayHandle) ->
     }
 }
 
+/// What [`Desktop::add_slot`] does about a window no view could be made
+/// for. Apart from the desktop, which takes an event loop to make.
+fn not_added(
+    engine: &Engine,
+    refused: &mut Vec<ObjectId>,
+    win: ObjectId,
+    why: &dyn std::fmt::Display,
+) {
+    say_not_shown(engine, why);
+    refused.push(win);
+}
+
+/// What [`Desktop::fail`] does about a window other than the root's that
+/// the platform refused. Apart from the desktop, as [`not_added`] is.
+fn left_out(
+    engine: &Engine,
+    broken: &mut bool,
+    _win: Option<ObjectId>,
+    why: &dyn std::fmt::Display,
+) {
+    *broken = true;
+    say_not_shown(engine, why);
+}
+
+fn say_not_shown(engine: &Engine, why: &dyn std::fmt::Display) {
+    engine.log(
+        LogLevel::Warning,
+        CATEGORY,
+        format!("a window cannot be shown: {why}"),
+    );
+}
+
 /// Says that a window GL was asked for is drawn with wgpu, and why.
 fn log_gl_refused(engine: &Engine, why: &str) {
     engine.log(
@@ -2965,5 +2987,87 @@ mod tests {
         // One that ran early, asked for at once, starts a rhythm of its own.
         slot.drawn(t + ms(55), t + ms(57));
         assert_eq!(slot.held, Some(t + ms(75)));
+    }
+
+    /// A loader that holds its fallback for a `Window` with a host, until
+    /// that window's first frame.
+    fn holding() -> (Engine, ObjectId, ObjectId, ObjectId) {
+        let e = Engine::new();
+        ljos_quick::register(&e);
+        ljos_controls::register(&e);
+        WindowSystem::of(&e).set_host(|| {});
+        let files = [
+            (
+                "Main",
+                r#"
+import QtQuick
+import Ljos.Blocks
+ShellLoader {
+    id: root
+    property bool ready: false
+    source: "Shell"
+    fallback: "Fallback"
+}
+"#,
+            ),
+            (
+                "Shell",
+                r#"
+import QtQuick
+Window {
+    visible: true
+    Component.onCompleted: if (!root.ready) throw new Error("not ready")
+}
+"#,
+            ),
+            ("Fallback", "import QtQuick\nItem {}\n"),
+        ];
+        let mut project = ljos_compiler::Project::new(ljos::dev::EngineOracle::from_engine(&e));
+        for (name, source) in files {
+            project.add(name, source);
+        }
+        let mut made = ljos_engine::MapSource::new();
+        for (name, _) in files {
+            let c = ljos_compiler::compile_file(&project, name)
+                .unwrap_or_else(|d| panic!("{name}: {d:?}"));
+            assert!(!c.has_errors(), "{name}: {:?}", c.diagnostics);
+            made.insert(name, c.file);
+        }
+        e.set_component_source(made);
+        let loader = e.create_from_url("Main", None, Vec::new()).unwrap();
+        e.deliver_faults();
+        let fallback = e.read_by_name(loader, "item").as_object().unwrap();
+        e.write_by_name(loader, "ready", ljos_engine::Value::Bool(true))
+            .unwrap();
+        e.invoke_by_name(loader, "reload", &[]).unwrap();
+        let shell = e.read_by_name(loader, "item").as_object().unwrap();
+        assert!(!e.is_going(fallback), "the fallback is held");
+        e.deliver_faults();
+        assert!(!e.is_going(fallback), "until the window's first frame");
+        (e, loader, shell, fallback)
+    }
+
+    fn assert_released(e: &Engine, loader: ObjectId, fallback: ObjectId) {
+        e.deliver_faults();
+        assert!(e.is_going(fallback), "the refusal releases the fallback");
+        assert_eq!(e.read_by_name(loader, "error").to_js_string().as_str(), "");
+    }
+
+    #[test]
+    fn a_window_no_view_could_be_made_for_releases_the_fallback_held_for_it() {
+        let (e, loader, shell, fallback) = holding();
+        let mut refused = Vec::new();
+        not_added(&e, &mut refused, shell, &"no view");
+        assert_eq!(refused, [shell]);
+        assert_released(&e, loader, fallback);
+    }
+
+    #[test]
+    fn a_window_the_platform_refused_releases_the_fallback_held_for_it() {
+        let (e, loader, shell, fallback) = holding();
+        let mut broken = false;
+        left_out(&e, &mut broken, Some(shell), &"refused");
+        assert!(broken);
+        assert_released(&e, loader, fallback);
     }
 }
