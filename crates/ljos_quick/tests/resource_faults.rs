@@ -491,7 +491,7 @@ const OWN_CHILD_FAULTS: [(&str, &str); 4] = [
 
 /// A root left half updated by a fault in its own function, which content
 /// of a boundary inside it called.
-const OUTER_CODE_FAULTS: [(&str, &str); 2] = [
+const OUTER_CODE_FAULTS: [(&str, &str); 4] = [
     (
         "called from an ErrorBoundary's content",
         "ErrorBoundary { Item { Component.onCompleted: d.init() } }",
@@ -499,6 +499,17 @@ const OUTER_CODE_FAULTS: [(&str, &str); 2] = [
     (
         "called from a Loader's item",
         "Loader { sourceComponent: Component { Item { Component.onCompleted: d.init() } } }",
+    ),
+    // A completed object's method is called with no host in between.
+    (
+        "in a function of an object declared before the boundary",
+        r#"Item { id: h; function run() { if (d.started) return; d.started = true; FILL d.ok = true } }
+    ErrorBoundary { Item { Component.onCompleted: h.run() } }"#,
+    ),
+    (
+        "in a function of an object declared after the boundary",
+        r#"ErrorBoundary { Item { Component.onCompleted: h.run() } }
+    Item { id: h; function run() { if (d.started) return; d.started = true; FILL d.ok = true } }"#,
     ),
 ];
 
