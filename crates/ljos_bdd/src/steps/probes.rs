@@ -171,10 +171,17 @@ fn observer_clicked_turned_away(w: &mut LjosWorld, locator: String) -> StepResul
             ));
         }
         let filling = probes.turn_calls_away(KEPT)?;
-        probes.observer_call_now("app_click", serde_json::json!({ "target": locator }))?;
+        let clicked =
+            probes.observer_call_now("app_click", serde_json::json!({ "target": locator }));
         let took = filling.elapsed();
-        let refused = observer_told_turned_away(probes, filling + KEPT);
+        let refused = match &clicked {
+            Ok(_) => observer_told_turned_away(probes, filling + KEPT),
+            Err(_) => Ok(()),
+        };
+        // Also after a click that failed: the next step is not to be turned
+        // away in this one's place.
         let answered = probes.calls_answered_again();
+        clicked?;
         if took > Duration::from_secs(1) {
             return Err(BackendError::Failed(format!(
                 "the observer was clicked {} ms after the first call that filled the \

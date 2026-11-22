@@ -8,6 +8,10 @@ use std::{
     io::{Read as _, Write as _},
     net::{SocketAddr, TcpStream},
     path::Path,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     thread::JoinHandle,
     time::{Duration, Instant},
 };
@@ -26,8 +30,11 @@ pub(crate) struct Called {
 }
 
 /// Calls made on a thread of their own for as long as they are to keep
-/// the inspector's second full.
+/// the inspector's second full. Let go of, they stop and are waited for:
+/// a step that failed before [`Flood::finish`] leaves none behind to turn
+/// away the calls of the next.
 pub(crate) struct Flood {
+    stop: Arc<AtomicBool>,
     calls: Option<JoinHandle<Result<(), String>>>,
 }
 
@@ -36,8 +43,10 @@ impl Flood {
         until: Instant,
         mut call: impl FnMut() -> Result<(), String> + Send + 'static,
     ) -> Self {
+        let stop = Arc::new(AtomicBool::new(false));
+        let stopped = Arc::clone(&stop);
         let calls = std::thread::spawn(move || {
-            while Instant::now() < until {
+            while Instant::now() < until && !stopped.load(Ordering::Relaxed) {
                 call()?;
                 // A pause between them keeps the loopback's ports to a few
                 // thousand.
@@ -45,7 +54,10 @@ impl Flood {
             }
             Ok(())
         });
-        Self { calls: Some(calls) }
+        Self {
+            stop,
+            calls: Some(calls),
+        }
     }
 
     /// Waits for the last of the calls.
@@ -56,6 +68,16 @@ impl Flood {
                 Err("the calls that kept the application's second full panicked".into())
             }
             None => Ok(()),
+        }
+    }
+}
+
+impl Drop for Flood {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(calls) = self.calls.take() {
+            // What they came to was for `finish` to say.
+            let _ = calls.join();
         }
     }
 }
@@ -192,8 +214,6 @@ pub(super) fn stated(token_file: &Path) -> Result<Value, String> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
     use super::*;
 
     #[test]
