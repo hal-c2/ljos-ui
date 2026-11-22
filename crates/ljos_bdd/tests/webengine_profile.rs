@@ -242,7 +242,7 @@ WebEngineView {{
 /// the profiles keep is written.
 fn load_and_shut_down(qml: &str, views: &[&str]) {
     let mut world = futures::executor::block_on(<LjosWorld as World>::new()).expect("a world");
-    world.prepare(false, false);
+    world.prepare(false, ljos_bdd::backend::Surface::Headless);
     world.web().expect("a web server").serve(
         "page.html",
         b"<!doctype html><html><head><title>Fixture Page</title></head>\
@@ -371,7 +371,7 @@ fn asking_world(storage: &str) -> (LjosWorld, String) {
     });
     let origin = format!("127.0.0.1:{port}");
     let mut world = futures::executor::block_on(<LjosWorld as World>::new()).expect("a world");
-    world.prepare(false, false);
+    world.prepare(false, ljos_bdd::backend::Surface::Headless);
     world.stage(
         MAIN_FILE,
         &format!(

@@ -4,6 +4,8 @@ use std::fmt;
 
 use serde_json::Value;
 
+pub mod android;
+mod attached;
 #[cfg(target_os = "linux")]
 pub mod desktop;
 pub mod fake_platform;
@@ -242,6 +244,15 @@ pub enum A11yTextAction {
     Select(usize, usize),
     ReplaceSelection(String),
     SetValue(String),
+}
+
+/// Where a scenario runs: in this process, on the desktop sandbox
+/// (`@desktop`) or on a phone (`@android`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Surface {
+    Headless,
+    Desktop,
+    Phone,
 }
 
 /// The surface the steps drive: a running application a scenario loads,
@@ -1880,11 +1891,18 @@ impl BackendMode {
     }
 
     /// Backends for a scenario. Only `@qt-parity` scenarios reach Qt; a
-    /// `@desktop` one runs Ljós on the desktop sandbox instead of headless.
+    /// `@desktop` one runs Ljós on the desktop sandbox instead of headless,
+    /// and an `@android` one on the phone.
     #[must_use]
-    pub fn backends_for(self, qt_parity: bool, desktop: bool) -> Vec<Box<dyn Backend>> {
+    pub fn backends_for(self, qt_parity: bool, surface: Surface) -> Vec<Box<dyn Backend>> {
         let mut out: Vec<Box<dyn Backend>> = Vec::new();
-        if desktop {
+        if surface == Surface::Phone {
+            if matches!(self, Self::Ljos | Self::Both) {
+                out.push(Box::new(android::AndroidBackend::new()));
+            }
+            return out;
+        }
+        if surface == Surface::Desktop {
             // Off Linux the runner has left these scenarios out already.
             #[cfg(target_os = "linux")]
             if matches!(self, Self::Ljos | Self::Both) {
@@ -1974,7 +1992,10 @@ mod tests {
     #[test]
     fn only_parity_scenarios_reach_qt() {
         let names = |m: BackendMode, p| -> Vec<&'static str> {
-            m.backends_for(p, false).iter().map(|b| b.name()).collect()
+            m.backends_for(p, Surface::Headless)
+                .iter()
+                .map(|b| b.name())
+                .collect()
         };
         assert_eq!(names(BackendMode::Both, true), ["qt", "ljos"]);
         assert_eq!(names(BackendMode::Both, false), ["ljos"]);

@@ -1,0 +1,28 @@
+[package]
+name = "ljos_example_android_scenarios"
+description = "The application the phone's scenario runner installs once: a window in place of a scenario, with the files of the scenario laid over it each time it starts, and the inspector the runner drives it through"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+# The library the activity loads, and the same code as a Rust library for
+# the test that starts it without a phone.
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+# `user-qml`: the scenario's files go over the window built in.
+[dependencies]
+ljos = { path = "../../crates/ljos", default-features = false, features = ["shell", "user-qml"] }
+
+[target.'cfg(target_os = "android")'.dependencies]
+ljos = { path = "../../crates/ljos", default-features = false, features = ["android", "user-qml"] }
+
+# `user-qml` here packs the sources a scenario's file is compiled against.
+[build-dependencies]
+ljos = { path = "../../crates/ljos", default-features = false, features = ["build", "user-qml"] }
+
+[lints]
+workspace = true

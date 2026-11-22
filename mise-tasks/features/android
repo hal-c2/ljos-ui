@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+#MISE description="Run the @android scenarios on a running emulator or a device over adb: features:android [globs…, default features/mobile] [-t tagexpr] [-n name-regex]. Builds and installs examples/android_scenarios with its inspector once; each scenario's QML goes over it"
+#MISE dir="{{config_root}}"
+#USAGE flag "-t --tags <tagexpr>" help="Only scenarios matching the tag expression"
+#USAGE flag "-n --name <regex>" help="Only scenarios whose name matches"
+#USAGE arg "[globs]..." var=#true help="Paths under features/, as for features:run (default features/mobile)"
+set -euo pipefail
+# shellcheck source-path=SCRIPTDIR source=../_lib/env.sh
+. "$(dirname "$0")/../_lib/env.sh"
+# shellcheck source-path=SCRIPTDIR source=../_lib/android.sh
+. "$(dirname "$0")/../_lib/android.sh"
+cd "$ljos_root"
+need_pinned_rust
+adb="$(android_adb)"
+# One device: ANDROID_SERIAL picks it when more than one is attached.
+devices="$("$adb" devices | awk 'NR > 1 && $2 == "device" { print $1 }')"
+[ -n "$devices" ] ||
+  die "$(task_name) needs a running emulator or a device with USB debugging on (adb devices lists none)"
+serial="${ANDROID_SERIAL:-}"
+if [ -z "$serial" ]; then
+  [ "$(printf '%s\n' "$devices" | wc -l)" -eq 1 ] ||
+    die "$(task_name): more than one device is attached; set ANDROID_SERIAL to one of: $(printf '%s\n' "$devices" | tr '\n' ' ')"
+  serial="$devices"
+fi
+abi="$("$adb" -s "$serial" shell getprop ro.product.cpu.abi | tr -d '\r')"
+need_rust_target "$(android_rust_target "$abi")"
+work="$(checkout_dir features)"
+mkdir -p "$work"
+# The computer's side: `ljos android` builds the application, and the
+# backend connects to its inspector and attaches with it. Pinned, as
+# features:run pins it, against another checkout building the same target.
+if [ -z "${LJOS_BIN:-}" ]; then
+  programs="$(pin_programs "$work/bin" build --quiet -p ljos_cli --bin ljos)" || die "features: ljos did not build"
+  LJOS_BIN="$(pinned_program ljos "$programs")"
+  [ -n "$LJOS_BIN" ] || die "features: the build made no ljos"
+  export LJOS_BIN
+fi
+# The phone's side, once for the run: the scenarios take no build.
+"$LJOS_BIN" android run examples/android_scenarios --abi "$abi" --device "$serial" \
+  --mcp=inspect,input,mutate,eval
+"$adb" -s "$serial" shell am force-stop dev.ljos.ljos_example_android_scenarios
+export LJOS_BDD_ANDROID="$serial"
+if sdk="$(android_sdk)"; then
+  export ANDROID_HOME="$sdk"
+fi
+[ $# -gt 0 ] || set -- features/mobile
+exec "$(dirname "$0")/run" --backend ljos "$@"

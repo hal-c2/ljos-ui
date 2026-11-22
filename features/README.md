@@ -592,6 +592,14 @@ Items are text; an item `key=value` is coalesced by its key, any other by all of
 What the user and the system do to an application on a phone, which owns its screen
 (ARCHITECTURE.md 10.2). Only a phone's runner does them; anywhere else they are not implemented.
 
+The phone's runner is `mise run features:android [path…]` (default `features/mobile`), with one
+phone or emulator on adb (`ANDROID_SERIAL` picks one of several). It installs one application,
+`examples/android_scenarios`, once, and starts it anew for each scenario with the scenario's files
+in the application's own directory, so a scenario takes no build; the steps ask the application's
+inspector over adb. It provides `@android`; a scenario that also names `@headless` runs headless.
+The pointer, keys, the platform's clipboard, pictures and the system's store of secrets are not
+yet driven on the phone, so their steps are pending there.
+
 | Step | Meaning |
 |---|---|
 | `When the user goes to the home screen` / `When the user opens the application again` | the application leaves the screen and comes back, from its icon or the recent applications |
