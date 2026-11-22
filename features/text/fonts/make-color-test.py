@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Writes LjosColorTest-Regular.ttf: a colour bitmap font of one character.
+"""Writes LjosColorTest-Regular.ttf: a colour bitmap font of one picture.
 
 Colour emoji fonts on Linux and Android (Noto Color Emoji) keep their
 glyphs as PNG pictures in the CBLC and CBDT tables, with no outlines. This
-font is made the same way, small enough to read: U+F8F1 is a picture of 20
-by 20 pixels at 20 pixels per em, red above and blue below, with its top 16
-pixels above the baseline. Its advance is the em, 1000 units of 1000.
+font is made the same way, small enough to read: U+F8F1 (private use) and
+U+2614 (an emoji by its Emoji_Presentation) are the same picture of 20 by 20
+pixels at 20 pixels per em, red above and blue below, with its top 16 pixels
+above the baseline. Its advance is the em, 1000 units of 1000.
 
 A picture's colours are its own, so a scenario can tell that it was drawn
 as a picture, whatever colour the text is.
@@ -19,6 +20,7 @@ import zlib
 
 UPM = 1000
 CHAR = 0xF8F1
+EMOJI = 0x2614
 PPEM = 20
 SIDE = 20
 ABOVE = 16
@@ -96,8 +98,9 @@ def name_table(family):
 
 
 def cmap_table():
-    # Format 4: the character, then the closing segment.
-    segs = [(CHAR, CHAR, (1 - CHAR) & 0xFFFF), (0xFFFF, 0xFFFF, 1)]
+    # Format 4: both characters on glyph 1, in order, then the closing segment.
+    segs = [(c, c, (1 - c) & 0xFFFF) for c in sorted((EMOJI, CHAR))]
+    segs.append((0xFFFF, 0xFFFF, 1))
     n = len(segs)
     search = 2 ** (n.bit_length() - 1)
     f4 = struct.pack(">HHH", 4, 0, 0)  # length filled below
@@ -144,8 +147,9 @@ def build(family) -> bytes:
     tables[b"OS/2"] = struct.pack(
         ">HhHHHhhhhhhhhhhh10sIIII4sHHHhhhHHII",
         4, UPM, 400, 5, 0, 650, 700, 0, 140, 650, 700, 0, 480, 50, 250, 0,
-        b"\0" * 10, 0, 1 << 28, 0, 0, b"LJOS", 0x40,
-        CHAR, CHAR, 800, -200, 0, 800, 200, 1, 0,
+        # Ranges 46 (miscellaneous symbols) and 60 (private use).
+        b"\0" * 10, 0, 1 << 14 | 1 << 28, 0, 0, b"LJOS", 0x40,
+        EMOJI, CHAR, 800, -200, 0, 800, 200, 1, 0,
     )
     tables[b"OS/2"] += struct.pack(">hhHHH", 500, 700, 0, 0x20, 0)
 
