@@ -1986,7 +1986,7 @@ impl JsHost {
         let heap_before = self.heap_bytes();
         self.interrupt.fired.set(false);
         self.peak.clear_over_share();
-        self.peak.set_cap(self.heap_cap());
+        self.hold_to_share();
         self.interrupt.stopped_in.take();
         self.state.stopped.set(false);
         let start = self.interrupt.now(Timing::Enter);
@@ -2640,7 +2640,7 @@ impl JsHost {
             // stop it filling the heap over many, and `script_holders`
             // is what says who holds it then.
             self.peak.clear_over_share();
-            self.peak.set_cap(self.heap_cap());
+            self.hold_to_share();
             match self.rt.execute_pending_job() {
                 Ok(true) => pumped.ran += 1,
                 Ok(false) => break,
@@ -2883,6 +2883,16 @@ impl JsHost {
         let held = self.peak.get();
         let room = limit.saturating_sub(held);
         Some(held + (room as f64 * f64::from(share)) as usize)
+    }
+
+    /// Holds what begins now, a dispatch or a promise job, to its share of
+    /// the heap, with a collection ahead of a refusal.
+    fn hold_to_share(&self) {
+        let cap = self.heap_cap();
+        self.peak.set_cap(cap);
+        if let Some(cap) = cap {
+            self.peak.collect_before(cap);
+        }
     }
 
     /// Unconditional collection (memory pressure). Not available inside a run.
