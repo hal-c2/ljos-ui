@@ -850,6 +850,8 @@ enum UserMsg {
     Ready(Box<Built>),
     /// Making the compiler for the user's first file panicked.
     Unmade,
+    /// The watcher's thread panicked while it owed an answer.
+    Stopped(Vec<CompileFault>),
     Dev(DevMsg),
 }
 
@@ -859,18 +861,20 @@ impl UserMsg {
             Self::Woke => "woke",
             Self::Ready(_) => "ready",
             Self::Unmade => "unmade",
+            Self::Stopped(_) => "stopped",
             Self::Dev(msg) => msg.kind(),
         }
     }
 }
 
-const INBOX: usize = 6;
+const INBOX: usize = 7;
 const WOKE_KEY: CoalesceKey = CoalesceKey(0x006c_6a6f_7375_7372);
 const READY_KEY: CoalesceKey = CoalesceKey(0x006c_6a6f_7375_7373);
 const DEV_KEY: CoalesceKey = CoalesceKey(0x006c_6a6f_7375_7374);
 const IDLE_KEY: CoalesceKey = CoalesceKey(0x006c_6a6f_7375_7375);
 const THEME_KEY: CoalesceKey = CoalesceKey(0x006c_6a6f_7375_7376);
 const PICTURES_KEY: CoalesceKey = CoalesceKey(0x006c_6a6f_7375_7377);
+const STOPPED_KEY: CoalesceKey = CoalesceKey(0x006c_6a6f_7375_7378);
 
 /// How far the session is.
 enum State {
@@ -1281,6 +1285,16 @@ impl UserSession {
         let handle = self.handle.clone();
         let pictures = self.pictures.clone();
         Box::new(move |msg| {
+            let msg = match msg {
+                // Sent as the thread unwinds: what failed is the reading,
+                // not the files, which another watcher may find sound.
+                DevMsg::Failed(faults) if std::thread::panicking() => {
+                    return !handle
+                        .send_coalesced(STOPPED_KEY, UserMsg::Stopped(faults))
+                        .is_err_and(|e| e.is_disconnected());
+                }
+                msg => msg,
+            };
             let key = match &msg {
                 DevMsg::Idle => IDLE_KEY,
                 DevMsg::Theme { .. } | DevMsg::ThemeFailed(_) => THEME_KEY,
@@ -1359,11 +1373,20 @@ impl UserSession {
         match &self.state {
             State::Active {
                 watcher: Some(watcher),
-            } if self.flushing && watcher.is_running() => {
+            } if self.flushing => {
                 // The flush on its way may have read the files before this
                 // ask: they are read once more when it is answered, and
                 // only that answer is this ask's.
                 self.again = true;
+                if !watcher.is_running() {
+                    // All that an ended watcher sent is in the inbox, and
+                    // is taken before another is started, which it would
+                    // answer. This ends that, and stands in for an answer
+                    // the thread could not send.
+                    let _ = self
+                        .handle
+                        .send_coalesced(IDLE_KEY, UserMsg::Dev(DevMsg::Idle));
+                }
             }
             State::Active {
                 watcher: Some(watcher),
@@ -1557,6 +1580,11 @@ impl UserSession {
                 UserMsg::Woke => self.woke(engine),
                 UserMsg::Ready(built) => self.activate(engine, *built, true),
                 UserMsg::Unmade => self.unmade(engine),
+                UserMsg::Stopped(faults) => {
+                    self.read(Read::Reading, Reread::Failed);
+                    self.tell(engine, &faults);
+                    out.push(failed(&faults));
+                }
                 UserMsg::Dev(msg) => self.dev(engine, host, msg, &mut out),
             }
         }
@@ -1669,7 +1697,12 @@ impl UserSession {
                     // the rest (a theme still broken, a change that runs)
                     // stays in the answer.
                     if let Some(reading) = self.reading.replace(Reading::default()) {
-                        self.read_before = reading.over(self.read_before);
+                        self.read_before = Reading {
+                            // Whether anything can read is the next read's
+                            // to find.
+                            reading: None,
+                            ..reading.over(self.read_before)
+                        };
                     }
                     self.read_again(engine);
                     return;
