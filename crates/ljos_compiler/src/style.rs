@@ -21,8 +21,11 @@ pub fn controls_style(
 /// The style a program that chooses none has on `os` (as
 /// `std::env::consts::OS` names it), as Qt documents the default of each
 /// platform: Fusion on Linux, Material on Android. `None` is Basic, which
-/// is also where Qt has a style of the platform's own (macOS, Windows,
-/// iOS) that Ljós does not have.
+/// is also where Qt has a style of the platform's own that Ljós does not
+/// have (Windows, iOS). On macOS Qt's default is its macOS style; Ljós
+/// has `QtQuick.Controls.macOS`, but it draws only `Button` so far, so a
+/// program that chooses no style keeps Basic there until it draws more
+/// (`docs/site/controls/styles.md`).
 // DECISION: the platform is that of the machine that compiles; a program
 // compiled for another names its style.
 pub fn platform_style(os: &str) -> Option<&'static str> {

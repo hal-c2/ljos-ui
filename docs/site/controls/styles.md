@@ -135,7 +135,7 @@ To build a custom style for your application, create a `qmldir` module containin
 ## Limits
 
 - There are no Windows or iOS styles; on Linux the platform style is Fusion.
-- The macOS style differs from Qt's: Qt ships it only on macOS, drawn with native frameworks, and falls back to Fusion for the controls it does not support yet. Ljós compiles it on every platform, draws `Button` itself and takes every other control from Basic. An `icon.name` naming an SF Symbol shows nothing, because Ljós has no icon theme and no SF Symbols; give the button an `icon.source`, or let its `text` be its tooltip and accessible name, as a toolbar item does.
+- The macOS style differs from Qt's: Qt ships it only on macOS, drawn with native frameworks, and falls back to Fusion for the controls it does not support yet. Ljós compiles it on every platform, draws `Button` itself and takes every other control from Basic. An `icon.name` naming an SF Symbol shows nothing, because Ljós has no icon theme and no SF Symbols; give the button an `icon.source`, or let its `text` be its tooltip and accessible name, as a toolbar item does. A program that chooses no style on macOS still gets Basic, where Qt's default there is its macOS style: Ljós's draws only `Button` so far, so it is used only when a program imports it or names it in `QT_QUICK_CONTROLS_STYLE`.
 - Material's `variant` and `shade()` are not available, and the built-in styles draw Basic's shapes in each style's metrics and colours rather than the full Material or Fluent visual effects.
 
 ## See also

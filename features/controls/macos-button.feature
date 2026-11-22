@@ -60,6 +60,22 @@ Feature: A button of the macOS style
     Scenario: A flat button shows no plate
       Then the property "background.visible" of "toolbar" is false
 
+    Scenario Outline: The button's text is its tooltip and accessible name
+      Then the property "<property>" of "toolbar" is "Sidebar"
+
+      Examples:
+        | property         |
+        | Accessible.name  |
+        | ToolTip.text     |
+
+    @api-QtQuick.Controls.Control.visualFocus
+    Scenario: Tab shows a flat button's focus ring without a plate
+      When the user presses "Tab"
+      Then the property "visualFocus" of "toolbar" is true
+      And the property "background.visible" of "toolbar" is true
+      And the property "background.border.width" of "toolbar" is 2
+      And the property "background.color" of "toolbar" is "#00000000"
+
     Scenario Outline: A button without text has the size of its background
       Then the property "<property>" of "plain" is <value>
 

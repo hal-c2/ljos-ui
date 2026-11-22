@@ -42,11 +42,16 @@ T.Button {
 
     background: Component {
         Rectangle {
+            // A flat button has a plate only while held down, checked or
+            // highlighted; its focus ring shows without one, on the window.
+            readonly property bool plate: !control.flat || control.down
+                                          || control.checked || control.highlighted
             implicitWidth: 64
             implicitHeight: 21
             radius: 6
-            visible: !control.flat || control.down || control.checked || control.highlighted
-            color: control.checked || control.highlighted ? control.palette.dark
+            visible: plate || control.visualFocus
+            color: !plate ? "transparent"
+                 : control.checked || control.highlighted ? control.palette.dark
                  : control.down ? control.palette.mid
                  : control.palette.button
             border.color: control.palette.highlight
