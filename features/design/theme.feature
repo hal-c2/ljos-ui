@@ -115,6 +115,24 @@ Feature: A theme file sets the roles of Ljos.Design
     Then the property "canvas" of "root" is "#0c0c0c"
     And the log has no warning matching "Unable to assign"
 
+  Scenario: A colour the theme gives only for light follows the system into dark
+    Given the theme file "theme.json" is:
+      """json
+      { "Colors": { "canvas": { "light": "#fffaf2" } } }
+      """
+    And the QML:
+      """qml
+      import QtQuick
+      import Ljos.Design
+      Item {
+        objectName: "root"
+        property color canvas: Colors.canvas
+      }
+      """
+    When the system setting "color scheme" changes to dark
+    Then the property "canvas" of "root" is "#0c0c0c"
+    And the log has no warning matching "Unable to assign"
+
   Scenario: High contrast without a value of the theme's keeps the module's own
     Given the system setting "contrast" is "high"
     And the theme file "theme.json" is:
