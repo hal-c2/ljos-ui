@@ -248,6 +248,48 @@ fn a_shell_asked_to_load_again_that_runs_out_of_heap_keeps_the_fallback_through_
     assert_eq!(shown(&e, loader), "heavy");
 }
 
+/// The same of a shell that fills the heap while it is made, not when it
+/// is first read.
+#[test]
+fn a_shell_asked_to_load_again_that_runs_out_of_heap_while_made_keeps_the_fallback_through_its_tries()
+ {
+    let (e, clock, root, loader) = timed("Hungry");
+    compile(&e, &[("Hungry", HUNGRY), ("Light", LIGHT)]);
+    e.invoke_by_name(root, "litter", &[Value::from(0.0)])
+        .unwrap();
+    assert!(e.collect_garbage());
+    let held = e.script_memory().unwrap().bytes;
+    assert!(e.set_script_heap_limit(Some(held + 64 * 1024)));
+    set(&e, root, "on", Value::Bool(true));
+    settle(&e, &clock, loader);
+    assert_eq!(status(&e, loader), 2, "the fallback stands in");
+    let fallback = get(&e, loader, "item").as_object().expect("the fallback");
+    set(&e, fallback, "objectName", Value::from("light-touched"));
+
+    e.invoke_by_name(loader, "reload", &[]).unwrap();
+    settle(&e, &clock, loader);
+    assert_eq!(shown(&e, loader), "light-touched", "the fallback is kept");
+    for _ in 0..3 {
+        let due = e.next_timer_deadline().expect("the source is tried again");
+        clock.set(due);
+        settle(&e, &clock, loader);
+        assert_eq!(status(&e, loader), 2);
+        assert_eq!(
+            shown(&e, loader),
+            "light-touched",
+            "the fallback is kept through the tries"
+        );
+    }
+
+    // Room again: the source's shell takes the fallback's place.
+    assert!(e.set_script_heap_limit(None));
+    let due = e.next_timer_deadline().expect("the source is tried again");
+    clock.set(due);
+    settle(&e, &clock, loader);
+    assert_eq!(status(&e, loader), 1, "{:?}", get(&e, loader, "error"));
+    assert_eq!(shown(&e, loader), "hungry");
+}
+
 #[test]
 fn a_shell_that_cannot_be_made_for_its_own_reasons_stays_on_the_fallback() {
     let (e, clock, root, loader) = timed("Missing");

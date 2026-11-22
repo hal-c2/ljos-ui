@@ -462,6 +462,78 @@ Feature: A ShellLoader shows a user's shell, or the application's own when the u
       And the log has 1 info matching "the application's shell is made"
       And the log has 2 warnings matching "^ShellLoader: .*NoSuchThing"
 
+    Scenario: A shell that runs out of memory the first time it is read gives way to the same fallback, through its tries
+      Given the application works out a binding only when it is read
+      And the file "Default.qml":
+        """qml
+        import QtQuick
+        Rectangle {
+          objectName: "default-shell"; width: 40; height: 30
+          property int touched: 0
+          Component.onCompleted: console.info("the application's shell is made")
+        }
+        """
+      And the file "Shell.qml":
+        """qml
+        import QtQuick
+        Rectangle {
+          objectName: "user-shell"; width: 50; height: 20
+          color: new ArrayBuffer(1610612736).byteLength ? "red" : "blue"
+          Component.onCompleted: if (!root.ready) throw new Error("not ready")
+        }
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        import Ljos.Blocks
+        Item {
+          id: root
+          objectName: "root"
+          property bool ready: false
+          ShellLoader { objectName: "loader"; source: "Shell.qml"; fallback: "Default.qml" }
+        }
+        """
+      Then the property "status" of "loader" is 2
+      When the property "touched" of "default-shell" is set to 7
+      And the property "ready" of "root" is set to true
+      And the method "reload" of "loader" is called
+      Then the property "status" of "loader" is 2
+      And the property "touched" of "default-shell" is 7
+      When 3 seconds pass
+      Then the property "status" of "loader" is 2
+      And the property "touched" of "default-shell" is 7
+      And the log has 1 info matching "the application's shell is made"
+
+    Scenario: A failing binding that nothing reads does not hold the fallback
+      Given the application works out a binding only when it is read
+      And the file "Shell.qml":
+        """qml
+        import QtQuick
+        Rectangle {
+          objectName: "user-shell"; width: 50; height: 20
+          property var unread: new ArrayBuffer(1610612736)
+          Component.onCompleted: if (!root.ready) throw new Error("not ready")
+        }
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        import Ljos.Blocks
+        Item {
+          id: root
+          objectName: "root"
+          property bool ready: false
+          ShellLoader { objectName: "loader"; source: "Shell.qml"; fallback: "Default.qml" }
+        }
+        """
+      Then the property "status" of "loader" is 2
+      When the property "ready" of "root" is set to true
+      And the method "reload" of "loader" is called
+      Then the object "loader/user-shell" exists
+      And the object "default-shell" does not exist
+      And the property "status" of "loader" is 1
+      And the property "error" of "loader" is ""
+
     Scenario: A loader with no source, asked to load again, keeps the fallback it shows
       Given the file "Default.qml":
         """qml
