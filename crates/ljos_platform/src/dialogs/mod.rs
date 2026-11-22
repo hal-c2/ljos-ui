@@ -542,6 +542,27 @@ enum Shown {
 struct Dialogs {
     shown: RefCell<HashMap<ObjectId, Shown>>,
     tickets: RefCell<HashMap<u64, ObjectId>>,
+    /// The name each file dialog suggested last, for when what it then has
+    /// is a provider's document, whose URL doesn't say its name.
+    suggested: RefCell<HashMap<ObjectId, String>>,
+}
+
+impl Dialogs {
+    /// The name to suggest for `obj`, which its own files say is `named`.
+    fn suggest(&self, engine: &Engine, obj: ObjectId, named: Option<String>) -> Option<String> {
+        // Read before the borrow: a binding of either can open a dialog.
+        let document = named.is_none()
+            && ["currentFile", "selectedFile"]
+                .iter()
+                .any(|file| text(engine, obj, file).starts_with("content:"));
+        let mut kept = self.suggested.borrow_mut();
+        kept.retain(|&dialog, _| engine.is_alive(dialog));
+        if let Some(name) = named {
+            kept.insert(obj, name.clone());
+            return Some(name);
+        }
+        document.then(|| kept.get(&obj).cloned()).flatten()
+    }
 }
 
 /// A ticket for a dialog the system shows, unique in the process: a
@@ -620,7 +641,10 @@ fn show(engine: &Engine, obj: ObjectId) {
     if dialogs.shown.borrow().contains_key(&obj) {
         return;
     }
-    let req = request(engine, obj);
+    let mut req = request(engine, obj);
+    if is_a::<FileDialog>(engine, obj) {
+        req.file_name = dialogs.suggest(engine, obj, req.file_name.take());
+    }
     let platform = Platform::of(engine);
     let service = platform.dialogs();
     if req.kind.is_some() && service.can_show(&req) {
