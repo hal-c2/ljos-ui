@@ -18,6 +18,12 @@
 //! `fallback` holds nothing. Both shells are in the heap through that
 //! read, so a source that fits only without the fallback is not shown.
 //!
+//! A change that ends a hold discards both, which are in the heap until
+//! the deletion pass. Where the source fails for room then, no fallback
+//! is made yet: `status` is Error, `item` null and `error` the reason for
+//! that frame, and the pass schedules one more try, which falls back as
+//! ever if it fails. What is set or reloaded meanwhile wins.
+//!
 //! A resource fault (the script heap ran out, the shell could not be made
 //! in its time) is not the shell's own: the fallback stands in for it
 //! while the loader waits as a Loader does ([`Backoff`]: a second, twice
@@ -55,7 +61,7 @@ use std::time::Duration;
 use ljos_engine::backoff::{Backoff, seconds};
 use ljos_engine::{
     Atom, Boundary, BoundaryConfig, Cx, Engine, EngineError, FaultReport, LogLevel, ObjectId,
-    PropIndex, QmlObject, Request, Url, Value, WriteKind, qml_impl,
+    PropIndex, QmlObject, Request, SignalIndex, Url, Value, WriteKind, qml_impl,
 };
 use ljos_runtime::{Fault, Intensity, Restart, TimerId};
 
@@ -77,7 +83,9 @@ pub mod shell_status {
     pub const READY: i32 = 1;
     /// The fallback is shown; `error` says why.
     pub const FALLBACK: i32 = 2;
-    /// Nothing could be shown; `error` says why for both.
+    /// Nothing could be shown; `error` says why for both. For a frame,
+    /// also a source with no room until what a hold kept is deleted: it
+    /// is tried once more then, and `error` has its reason alone.
     pub const ERROR: i32 = 3;
 }
 
@@ -434,8 +442,15 @@ fn load(e: &Engine, me: ObjectId) {
     // Asked for another shell, the loader keeps none for the last one:
     // what a hold kept goes to give the next its room.
     let mut going = Going::Settled;
+    let mut discarded = [None, None];
     if let Some(held) = end_hold(e, me) {
         going = Going::ForRoom;
+        // The shell is destroyed after the fallback: asked of first, the
+        // try follows both.
+        let shell = e
+            .untrack(|| e.read(me, ShellLoader::ITEM.index))
+            .as_object();
+        discarded = [shell, Some(held.fallback)];
         let_go_of(e, me, held.fallback, going);
     }
     if !still(e, me, loads) || !drop_item(e, me, going) {
@@ -458,9 +473,69 @@ fn load(e: &Engine, me: ObjectId) {
         Ok(obj) => e.batch(|| show_source(e, me, obj)),
         Err(Failed { why, resource }) => {
             warn(e, format!("ShellLoader: {why}"));
-            if show_fallback(e, me, loads, why).is_some_and(|again| again || resource) {
-                again_after(e, me, loads, None);
+            if resource && try_once_deleted(e, me, loads, discarded) {
+                // Not final, and there is no Loading to say it with.
+                say_failed(e, me, loads, &why, shell_status::ERROR);
+            } else {
+                fall_back(e, me, loads, why, resource);
             }
+        }
+    }
+}
+
+fn fall_back(e: &Engine, me: ObjectId, loads: u64, why: String, resource: bool) {
+    if show_fallback(e, me, loads, why).is_some_and(|again| again || resource) {
+        again_after(e, me, loads, None);
+    }
+}
+
+/// Has the deletion pass schedule one try of the source, for the room of
+/// what `discarded` holds. False where none of that waits for the pass, as
+/// a window that is still shown does not.
+fn try_once_deleted(
+    e: &Engine,
+    me: ObjectId,
+    loads: u64,
+    discarded: [Option<ObjectId>; 2],
+) -> bool {
+    let waits = |obj: &ObjectId| e.is_alive(*obj) && e.is_going(*obj);
+    let Some(obj) = discarded.into_iter().flatten().find(waits) else {
+        return false;
+    };
+    // Connected once it was told: it is no reason to settle it.
+    e.connect(obj, SignalIndex::DESTROYED, move |e, _| {
+        if !still(e, me, loads) {
+            return;
+        }
+        // Its memory goes as the pass goes on, so the try is the next turn's.
+        let timer = e.call_at(e.now(), move |e| {
+            with_run(e, me, |r| r.waiting = None);
+            try_with_room(e, me, loads);
+        });
+        if let Some(Some(old)) = with_run(e, me, |r| r.waiting.replace(timer)) {
+            e.cancel_call(old);
+        }
+    })
+    .is_ok()
+}
+
+fn try_with_room(e: &Engine, me: ObjectId, loads: u64) {
+    if !still(e, me, loads) {
+        return;
+    }
+    e.collect_garbage_for_full_heap();
+    let source = url(e, me, ShellLoader::SOURCE.index);
+    if !still(e, me, loads) {
+        return;
+    }
+    let Some(made) = make(e, me, &source) else {
+        return;
+    };
+    match made {
+        Ok(obj) => e.batch(|| show_source(e, me, obj)),
+        Err(Failed { why, resource }) => {
+            warn(e, format!("ShellLoader: {why}"));
+            fall_back(e, me, loads, why, resource);
         }
     }
 }
