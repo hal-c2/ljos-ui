@@ -23,6 +23,8 @@ ljos_engine = { path = "../ljos_engine" }
 ljos_ir = { path = "../ljos_ir" }
 ljos_reactive = { path = "../ljos_reactive" }
 ljos_runtime = { path = "../ljos_runtime" }
+# The Android document picker's portable half warns on every host.
+log.workspace = true
 # responseXML's document is read with the reader XmlListModel uses.
 quick-xml.workspace = true
 raw-window-handle.workspace = true
@@ -42,7 +44,6 @@ rustls = { workspace = true, optional = true }
 ljos_jni = { path = "../ljos_jni" }
 # Named here as well: `jni_str!` and `jni_sig!` expand to paths in `::jni`.
 jni.workspace = true
-log.workspace = true
 
 [build-dependencies]
 # The fallback dialogs' QML is compiled when this crate is built; the crate
