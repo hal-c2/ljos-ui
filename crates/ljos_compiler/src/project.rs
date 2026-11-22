@@ -1016,7 +1016,7 @@ impl<O: TypeOracle> Project<O> {
         }
         let counted = counted(&found, aliases);
         let resource_dirs = addressed(&found, &counted);
-        let resources = named(&resources, &counted);
+        let resources = named(&resources, &building(&found, &counted, aliases));
         let modules: Vec<(String, Module)> = found
             .into_iter()
             .map(|(dir, _, module)| (dir, module))
@@ -1272,10 +1272,10 @@ impl Kept {
 }
 
 /// The files of `kept` the program names by an address: each kept by
-/// itself, and each of a module an import sees.
-fn named(kept: &[Kept], counted: &[bool]) -> Vec<(String, PathBuf)> {
+/// itself, and each of a module whose build is the module's ([`building`]).
+fn named(kept: &[Kept], building: &[bool]) -> Vec<(String, PathBuf)> {
     kept.iter()
-        .filter(|file| file.module.is_none_or(|i| counted[i]))
+        .filter(|file| file.module.is_none_or(|i| building[i]))
         .map(|file| (file.address.clone(), file.path.clone()))
         .collect()
 }
@@ -1325,11 +1325,13 @@ pub fn root_files(roots: &[&Path]) -> Result<Vec<RootFiles>, (PathBuf, std::io::
         }
         read.push((first..found.len(), kept));
     }
-    let counted = counted(&found, &Aliases::new());
+    let aliases = Aliases::new();
+    let counted = counted(&found, &aliases);
+    let building = building(&found, &counted, &aliases);
     Ok(read
         .into_iter()
         .map(|(modules, kept)| RootFiles {
-            resources: named(&kept, &counted),
+            resources: named(&kept, &building),
             resource_dirs: addressed(&found[modules.clone()], &counted[modules]),
             kept: kept.into_iter().map(|file| file.path).collect(),
         })
@@ -1345,7 +1347,8 @@ fn files_of(root: &Path) -> std::io::Result<RootFiles> {
 /// module, `qt_add_resources`), by the address the program names each by
 /// (`qrc:/qt/qml/Thermostat/icons/close.svg`) and where each is on disk. A
 /// file the build names that is not there is left out, as is one of a
-/// module's directory an import does not see ([`resource_dirs`]).
+/// stand-in for a module: a build that is neither in the directory an
+/// import sees ([`resource_dirs`]) nor in one above it.
 pub fn resources(root: &Path) -> std::io::Result<Vec<(String, PathBuf)>> {
     files_of(root).map(|files| files.resources)
 }
@@ -1359,6 +1362,30 @@ pub fn resources(root: &Path) -> std::io::Result<Vec<(String, PathBuf)>> {
 /// is the module's: the other's files are not at its address.
 pub fn resource_dirs(root: &Path) -> std::io::Result<Vec<(String, PathBuf)>> {
     files_of(root).map(|files| files.resource_dirs)
+}
+
+/// Which of the modules of `found` have a build whose `RESOURCES` are at
+/// the module's address: each an import sees, and one described above the
+/// directory an import sees, as the top `CMakeLists.txt` of a project
+/// describes the module in `App/`. That build is no stand-in: the files it
+/// lists are where it is, and no other directory has them.
+fn building(found: &[(String, PathBuf, Module)], counted: &[bool], aliases: &Aliases) -> Vec<bool> {
+    found
+        .iter()
+        .zip(counted)
+        .map(|((dir_key, dir, m), seen)| {
+            *seen
+                || match aliases.get(&m.uri) {
+                    Some(target) => {
+                        std::fs::canonicalize(dir).is_ok_and(|real| target.starts_with(real))
+                    }
+                    None => {
+                        dir_key.is_empty()
+                            || m.uri.replace('.', "/").starts_with(&format!("{dir_key}/"))
+                    }
+                }
+        })
+        .collect()
 }
 
 /// Each module of `found` an import sees by its address, with its
