@@ -26,6 +26,7 @@ Feature: How many calls a second the inspector answers
       And a client makes 21 calls to the started application's inspector within one second
       Then the first 20 calls are answered
       And call 21 is refused with status 429 and "Retry-After: 1"
+      And call 21 is refused as the scenarios' own listener refuses a call
 
     Scenario: The token file states the default rate
       When the author starts "ljos run Main.qml --headless --mcp=inspect"

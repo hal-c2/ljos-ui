@@ -192,6 +192,11 @@ fn call_refused(w: &mut LjosWorld, nth: usize, status: u16, header: String) -> S
     w.author().0.call_refused(nth, status, &header)
 }
 
+#[then(regex = r"^call (\d+) is refused as the scenarios' own listener refuses a call$")]
+fn call_refused_as_by_listener(w: &mut LjosWorld, nth: usize) -> StepResult {
+    w.author().0.call_refused_as_by_listener(nth)
+}
+
 #[then(regex = r"^the started application's token file says (\d+) calls a second$")]
 fn token_file_rate(w: &mut LjosWorld, rate: u64) -> StepResult {
     w.author().0.token_file_rate(rate)
