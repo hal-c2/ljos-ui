@@ -264,7 +264,7 @@ These need a local `qml6`, Qt 6.11 or newer. Nothing else in Ljós does.
 
 ### Behaviour that differs
 
-- **Styles.** There are no macOS, Windows or iOS styles. Fusion, Material and Universal draw Basic's shapes in their own sizes and colours, and Material's `variant` and `shade()` are not available. A plain `Item` gives child controls the style's default colours where Qt on the desktop reads the platform palette.
+- **Styles.** There are no Windows or iOS styles. `import QtQuick.Controls.macOS` works on every platform, but draws only `Button`: the other controls are Basic's, where Qt's fall back to Fusion, and a program that chooses no style on macOS gets Basic. Fusion, Material and Universal draw Basic's shapes in their own sizes and colours, and Material's `variant` and `shade()` are not available. A plain `Item` gives child controls the style's default colours where Qt on the desktop reads the platform palette.
 - **Accessibility.** Controls' default roles and states follow Qt's specification; Qt does not expose them to QML, so they are not compared at run time. `Qt.styleHints.accessibility.motionPreference` is there, though Qt documents it for a release after 6.11, and `fontScale`, `screenReaderActive` and `font.scaleWithSystem` are Ljós's own.
 - **Reduced motion.** Ljós applies reduced motion to every animation; Qt leaves it to the application. A file that must behave the same under `qml6` gates its own motion (see [Gating motion in your own components](../quality/motion.md#gating-motion-in-your-own-components)).
 - **Translations.** Compiled `.qm` catalogues are not read: Ljós reads `.ts` in development and its own `.ljl` at run time. A small override table covers languages where Qt's numerus forms differ from CLDR's plural rules.

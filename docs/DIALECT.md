@@ -1720,7 +1720,7 @@ renames are theirs: they follow when those types are in `Ljos.Ui`.
 | `Canvas`, `Shape` | the same | none; `QtQuick.Shapes` import lowered (§4.2) |
 | `QtQuick.Controls.Basic` | `Ljos.Controls.Basic` | mechanical, for the controls the module has (§4.16) |
 | `QtQuick.Controls` | `Ljos.Controls.Basic` | mechanical where the program starts with Basic; kept with another style (§4.16) |
-| `QtQuick.Controls.Material`, `.Fusion`, `.Universal`, `.impl`, `QtQuick.Templates` | — | DECISION: kept (a style's own API, or the parts a style is built from) |
+| `QtQuick.Controls.Material`, `.Fusion`, `.Universal`, `.macOS`, `.impl`, `QtQuick.Templates` | — | DECISION: kept (a style's own API, or the parts a style is built from) |
 | `QtQuick.Dialogs` | `Ljos.Controls.Basic` | mechanical for `FileDialog` and `FolderDialog`; kept for the others (§4.16) |
 
 ### 4.15 What this changes for the engine

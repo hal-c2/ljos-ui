@@ -21,6 +21,8 @@ T.Button {
 
     padding: 6
     horizontalPadding: padding + 6
+    // A line of text fits in the plate's height.
+    verticalPadding: Math.max(0, padding - 4)
     spacing: 6
 
     icon.width: 20
@@ -50,10 +52,20 @@ T.Button {
             implicitHeight: 21
             radius: 6
             visible: plate || control.visualFocus
-            color: !plate ? "transparent"
-                 : control.checked || control.highlighted ? control.palette.dark
-                 : control.down ? control.palette.mid
-                 : control.palette.button
+            color: {
+                if (!plate)
+                    return "transparent"
+                const mid = control.palette.mid
+                if (!control.checked && !control.highlighted)
+                    return control.down ? mid : control.palette.button
+                const dark = control.palette.dark
+                if (!control.down)
+                    return dark
+                // A dark plate held down is half way to `mid`, as in Basic.
+                return Qt.rgba(Math.round((dark.r + mid.r) * 127.5 + 0.001) / 255,
+                               Math.round((dark.g + mid.g) * 127.5 + 0.001) / 255,
+                               Math.round((dark.b + mid.b) * 127.5 + 0.001) / 255, 1)
+            }
             border.color: control.palette.highlight
             border.width: control.visualFocus ? 2 : 0
         }

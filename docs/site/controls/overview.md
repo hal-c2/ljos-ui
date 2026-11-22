@@ -197,7 +197,7 @@ Keep a common pitfall in mind: a plain `Text` item does not inherit the `font` o
 
 ## Limits
 
-- There are no macOS, Windows or iOS styles; on Linux the platform style is Fusion.
+- There are no Windows or iOS styles, and the macOS style draws only `Button` (the other controls are Basic's); on Linux the platform style is Fusion.
 - Fusion, Material and Universal draw Basic's shapes in each style's sizes and colours rather than each design system's full visuals. Material's `variant` and `shade()` are not available.
 - `ToolTip` uses one shared instance per window. Popups play their `enter` and `exit` transitions (fading instead of moving under reduced motion), and a `Menu` or `ComboBox` popup with more rows than fit scrolls.
 - In the Basic style, `palette.placeholderText` has a `3.04:1` contrast ratio on white; set `palette.placeholderText` yourself if your application needs WCAG AA contrast. `Ljos.Controls` meets 4.5:1 for its `placeholder` role.
