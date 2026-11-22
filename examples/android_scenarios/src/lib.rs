@@ -8,7 +8,7 @@
 //! user's files are over a shipped application's (`App::user_qml`), so a
 //! new scenario takes no new build.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Where the scenario's files are: `qml/` beside the inspector's token
 /// file, which the activity puts in the application's files directory
@@ -28,10 +28,28 @@ pub fn fault_file() -> PathBuf {
     scenario_dir().with_file_name("scenario-fault.txt")
 }
 
+/// The file the runner leaves in the files directory for a scenario whose
+/// application may read local files through `XMLHttpRequest`: the phone
+/// takes no `QML_XHR_ALLOW_FILE_READ` from the runner.
+pub const XHR_LOCAL_READ: &str = "xhr-local-read";
+
+/// Lets `engine` read local files when `files` holds the runner's word
+/// for it.
+pub fn allow_local_file_read(engine: &ljos::prelude::Engine, files: &Path) {
+    if files.join(XHR_LOCAL_READ).is_file() {
+        ljos::prelude::Platform::of(engine).set_local_file_read(true);
+    }
+}
+
 /// The application, ready to build or run.
 #[must_use]
 pub fn app() -> ljos::App {
     ljos::App::new("Ljós scenarios")
+        .register(|engine| {
+            if let Some(files) = scenario_dir().parent() {
+                allow_local_file_read(engine, files);
+            }
+        })
         .source(ljos::include_qml!("qml.pack"))
         .user_qml(ljos::UserQml::dir(scenario_dir()).on_fault(|fault| {
             let _ = std::fs::write(fault_file(), fault.to_string());

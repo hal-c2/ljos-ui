@@ -24,7 +24,9 @@ use std::time::{Duration, Instant};
 use serde_json::{Value, json};
 
 use super::attached::{Reached, Running, SEEN};
-use super::{Backend, BackendError, Device, LogEntry, LogLevel, PointerStep, QmlFile, Result};
+use super::{
+    Backend, BackendError, Device, LogEntry, LogLevel, Platform, PointerStep, QmlFile, Result,
+};
 
 /// Names the device the scenarios run on, as `adb -s` takes it; set when
 /// one is there.
@@ -48,6 +50,9 @@ const STARTUP: Duration = Duration::from_secs(60);
 const FILES: &str = "files/qml";
 /// What the application writes when the scenario's files do not compile.
 const FAULT: &str = "files/scenario-fault.txt";
+/// What lets the scenario's application read local files, when it is
+/// there (`examples/android_scenarios`).
+const XHR_LOCAL_READ: &str = "files/xhr-local-read";
 
 /// The device the scenarios run on, when there is one.
 #[must_use]
@@ -232,6 +237,8 @@ pub struct AndroidBackend {
     running: Option<Running<OnPhone>>,
     /// Where the token file `ljos android connect` writes is kept.
     dir: Option<tempfile::TempDir>,
+    /// Whether the scenario's application may read local files.
+    xhr_local_read: bool,
 }
 
 impl Drop for AndroidBackend {
@@ -368,7 +375,13 @@ impl Backend for AndroidBackend {
         self.running = None;
         let phone = self.phone()?.clone();
         phone.shell(&format!("am force-stop {}", phone.id))?;
-        phone.as_app(&format!("rm -rf {FILES} {FAULT} && mkdir -p {FILES}"), None)?;
+        phone.as_app(
+            &format!("rm -rf {FILES} {FAULT} {XHR_LOCAL_READ} && mkdir -p {FILES}"),
+            None,
+        )?;
+        if self.xhr_local_read {
+            phone.as_app(&format!("touch {XHR_LOCAL_READ}"), None)?;
+        }
         for f in files {
             let name = if f.name == entry {
                 "Main.qml"
@@ -479,6 +492,23 @@ impl Backend for AndroidBackend {
 
     fn as_device(&mut self) -> Option<&mut dyn Device> {
         Some(self)
+    }
+
+    fn as_platform(&mut self) -> Option<&mut dyn Platform> {
+        Some(self)
+    }
+}
+
+impl Platform for AndroidBackend {
+    fn xhr_local_read(&mut self) -> Result<()> {
+        if self.running.is_some() {
+            // It reads the word once, as it starts.
+            return Err(not_yet(
+                "letting a running application on the phone read local files",
+            ));
+        }
+        self.xhr_local_read = true;
+        Ok(())
     }
 }
 
