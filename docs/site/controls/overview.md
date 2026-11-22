@@ -72,7 +72,7 @@ Each built-in style brings its own metrics:
 - **Fusion**: desktop metrics, such as an `80 × 24` `Button` with `4` px padding
 - **Material**: `64 × 52` `Button` and `120 × 56` `TextField`, with attached `Material.theme` and `Material.accent` properties
 - **Universal**: `32 × 32` `Button`, with attached `Universal.theme` and `Universal.accent` properties
-- **macOS**: `64 × 21` `Button`; every other control is Basic's
+- **macOS**: `Button` is `64 × 21` empty or with a short one-line label, and grows with larger content; every other control is Basic's
 
 The Basic style module (`QtQuick.Controls.Basic`) provides 61 types: `ApplicationWindow`, `BusyIndicator`, `Button`, `CheckBox`, `CheckDelegate`, `ComboBox`, `Control`, `DayOfWeekRow`, `DelayButton`, `Dial`, `Dialog`, `DialogButtonBox`, `DoubleSpinBox`, `Drawer`, `Frame`, `GroupBox`, `HorizontalHeaderView`, `HorizontalHeaderViewDelegate`, `ItemDelegate`, `Label`, `Menu`, `MenuBar`, `MenuBarItem`, `MenuItem`, `MenuSeparator`, `MonthGrid`, `Page`, `PageIndicator`, `Pane`, `Popup`, `ProgressBar`, `RadioButton`, `RadioDelegate`, `RangeSlider`, `RoundButton`, `ScrollBar`, `ScrollIndicator`, `ScrollView`, `SelectionRectangle`, `Slider`, `SpinBox`, `SplitView`, `StackView`, `SwipeDelegate`, `SwipeView`, `Switch`, `SwitchDelegate`, `TabBar`, `TabButton`, `TableViewDelegate`, `TextArea`, `TextField`, `ToolBar`, `ToolButton`, `ToolSeparator`, `ToolTip`, `TreeViewDelegate`, `Tumbler`, `VerticalHeaderView`, `VerticalHeaderViewDelegate`, and `WeekNumberColumn`. In addition, `QtQuick.Controls` provides `Calendar`, `ContextMenu`, and `ContextMenuAttached`.
 
