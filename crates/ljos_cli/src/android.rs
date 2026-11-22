@@ -874,18 +874,24 @@ mod tests {
             "publicbooleansetSelection(intstart,intend){booleanset=super.setSelection(start,end);tell();returnset;}"
         ));
         assert!(of.contains(
-            "publicbooleansetComposingRegion(intstart,intend){booleanset=super.setComposingRegion(start,end);tell();returnset;}"
+            "publicbooleansetComposingRegion(intstart,intend){composing=true;booleanset=super.setComposingRegion(start,end);composing=false;tell();returnset;}"
         ));
         // Told once the call is done, unless it was GameTextInput setting
         // the native side's own state: its final setState sets the cursor
         // through those same two calls, then restarts the input, and an
         // echo of that state arriving late would undo a newer edit.
-        assert!(of.contains("privatevoidtell(){if(!moved){moved=true;view.post(this::told);}}"));
+        // Ahead of the keyboard's next call, which may be a key for the
+        // cursor it just moved.
+        assert!(of.contains(
+            "privatevoidtell(){if(!moved){moved=true;main.postAtFrontOfQueue(this::told);}}"
+        ));
         assert!(of.contains("privatevoidtold(){if(moved){endBatchEdit();}}"));
         assert!(of.contains("publicvoidrestartInput(){moved=false;super.restartInput();}"));
-        assert!(
-            of.contains("publicbooleanendBatchEdit(){moved=false;returnsuper.endBatchEdit();}")
-        );
+        // BaseInputConnection sets a composing region inside a batch, whose
+        // end would report a setState before its restart cancels that.
+        assert!(of.contains(
+            "publicbooleanendBatchEdit(){if(composing){returnfalse;}moved=false;returnsuper.endBatchEdit();}"
+        ));
         let activity = java("LjosActivity.java");
         assert!(activity.contains("TextInputOf.surface(this,"));
         // The native side writes through GameActivity_setTextInputState
