@@ -49,36 +49,20 @@ public final class TextInputOf {
         return view;
     }
 
-    /**
-     * Runs {@code push}, which sets the state the native side asked for,
-     * without telling the native side that state back: GameTextInput sets
-     * it through the same setSelection and setComposingRegion an input
-     * method calls, and an echo arriving late would undo a newer edit.
-     */
-    public static void quietly(GameActivity.InputEnabledSurfaceView view, Runnable push) {
-        InputConnection connection = connection(view);
-        if (!(connection instanceof Connection)) {
-            push.run();
-            return;
-        }
-        Connection ours = (Connection) connection;
-        Thread before = ours.pushing;
-        ours.pushing = Thread.currentThread();
-        try {
-            push.run();
-        } finally {
-            ours.pushing = before;
-        }
-    }
-
     private static final class Connection extends InputConnection {
+        private final View view;
         private final CursorUpdates updates;
 
-        /** The thread setting a state from the native side, or null. */
-        volatile Thread pushing;
+        /**
+         * The selection or composing region moved and the listener is yet
+         * to be told. The UI thread's alone: an input method and
+         * GameTextInput's setState both call in on it.
+         */
+        private boolean moved;
 
         Connection(Context context, View view, Settings settings, CursorUpdates updates) {
             super(context, view, settings);
+            this.view = view;
             this.updates = updates;
         }
 
@@ -111,11 +95,36 @@ public final class TextInputOf {
         // only its Editable; the end of a batch edit is where it tells its
         // listener the state, so close one to pass the new cursor on. Its
         // base class keeps no batch count, so an input method's own batch
-        // is not cut short.
+        // is not cut short. It is closed once the call is done: the native
+        // side's own state comes in through GameTextInput's final setState,
+        // which sets the cursor through these same two calls and then
+        // restarts the input, and that state told back late would undo a
+        // newer edit.
         private void tell() {
-            if (pushing != Thread.currentThread()) {
+            if (!moved) {
+                moved = true;
+                view.post(this::told);
+            }
+        }
+
+        private void told() {
+            if (moved) {
                 endBatchEdit();
             }
+        }
+
+        // A restart hands the input method the state as it stands, which
+        // the native side has, so what moved before it is not told.
+        @Override
+        public void restartInput() {
+            moved = false;
+            super.restartInput();
+        }
+
+        @Override
+        public boolean endBatchEdit() {
+            moved = false;
+            return super.endBatchEdit();
         }
 
         @Override
