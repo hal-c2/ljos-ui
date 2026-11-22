@@ -118,6 +118,9 @@ struct Run {
     /// The fallback is being made or is shown: a fault in it is not the
     /// loader's to handle.
     making_fallback: bool,
+    /// A shell is being made: one asked to be tried again meanwhile reads
+    /// the source as it is already.
+    making: bool,
     fallback_item: Option<ObjectId>,
     /// Faults up to this one were dealt with while a shell was made; the
     /// boundary hears of them only afterwards.
@@ -167,6 +170,11 @@ impl ShellLoader {
 /// the fallback once it does, and says why again when it still does not.
 pub(crate) fn retry(e: &Engine, me: ObjectId) {
     if !e.is_alive(me) || with_run(e, me, |r| r.completed) != Some(true) {
+        return;
+    }
+    // Asked by the shell being made, as it completes: making it again
+    // would make a second shell of the same files under the first.
+    if with_run(e, me, |r| r.making) == Some(true) {
         return;
     }
     let status = e.untrack(|| e.read(me, ShellLoader::STATUS.index).to_number()) as i32;
@@ -434,6 +442,7 @@ fn show_fallback(e: &Engine, me: ObjectId, why: String) -> bool {
 /// Makes the shell at `url`, or says why it could not: it did not
 /// compile, or something in it faulted while it was made.
 fn make(e: &Engine, me: ObjectId, url: &str) -> Result<ObjectId, Failed> {
+    let was = with_run(e, me, |r| std::mem::replace(&mut r.making, true)).unwrap_or(false);
     let (made, filed) = e.noting_faults(|| {
         e.make(
             Request::url(e.resolve_url(me, url))
@@ -442,6 +451,7 @@ fn make(e: &Engine, me: ObjectId, url: &str) -> Result<ObjectId, Failed> {
         )
         .map(|(shell, _)| shell)
     });
+    with_run(e, me, |r| r.making = was);
     let after = last_fault(e);
     with_run(e, me, |r| r.handled = after);
     let obj = made.map_err(|err| Failed {

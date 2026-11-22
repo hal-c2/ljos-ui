@@ -848,6 +848,8 @@ enum UserMsg {
     Woke,
     /// The compiler was made for the user's first file.
     Ready(Box<Built>),
+    /// Making the compiler for the user's first file panicked.
+    Unmade,
     Dev(DevMsg),
 }
 
@@ -856,6 +858,7 @@ impl UserMsg {
         match self {
             Self::Woke => "woke",
             Self::Ready(_) => "ready",
+            Self::Unmade => "unmade",
             Self::Dev(msg) => msg.kind(),
         }
     }
@@ -995,6 +998,8 @@ enum Read {
     Theme,
     /// The QML files, built together.
     Files,
+    /// The pictures the files show.
+    Pictures,
     /// Reading at all: whether anything could read the files.
     Reading,
 }
@@ -1005,6 +1010,7 @@ enum Read {
 struct Reading {
     theme: Option<Reread>,
     files: Option<Reread>,
+    pictures: Option<Reread>,
     reading: Option<Reread>,
 }
 
@@ -1013,6 +1019,7 @@ impl Reading {
         match what {
             Read::Theme => &mut self.theme,
             Read::Files => &mut self.files,
+            Read::Pictures => &mut self.pictures,
             Read::Reading => &mut self.reading,
         }
     }
@@ -1030,12 +1037,13 @@ impl Reading {
         Reading {
             theme: self.theme.or(before.theme),
             files: self.files.or(before.files),
+            pictures: self.pictures.or(before.pictures),
             reading: self.reading.or(before.reading),
         }
     }
 
     fn did(self) -> Reread {
-        let all = [self.theme, self.files, self.reading];
+        let all = [self.theme, self.files, self.pictures, self.reading];
         if all.contains(&Some(Reread::Failed)) {
             Reread::Failed
         } else if all.contains(&Some(Reread::Applied)) {
@@ -1249,7 +1257,13 @@ impl UserSession {
             if let Err(faults) = theme.and_then(|t| set_theme(engine, t.as_ref(), generation)) {
                 self.theme_fault = faults.first().map(fault_of);
                 self.tell(engine, &faults);
+                // A later ask that finds the theme as it is finds it as
+                // broken.
+                self.read(Read::Theme, Reread::Failed);
             }
+        }
+        if !faults.is_empty() {
+            self.read(Read::Files, Reread::Failed);
         }
         self.tell(engine, &faults);
         // The first edit is read now whether or not saves are followed:
@@ -1542,6 +1556,7 @@ impl UserSession {
             match message {
                 UserMsg::Woke => self.woke(engine),
                 UserMsg::Ready(built) => self.activate(engine, *built, true),
+                UserMsg::Unmade => self.unmade(engine),
                 UserMsg::Dev(msg) => self.dev(engine, host, msg, &mut out),
             }
         }
@@ -1593,8 +1608,14 @@ impl UserSession {
         // that its frames go on while they are.
         let handle = self.handle.clone();
         let compile = move || {
-            let built = make(making);
-            let _ = handle.send_coalesced(READY_KEY, UserMsg::Ready(Box::new(built)));
+            // A compiler that panics still answers: the session would wait
+            // for its files, and an ask for its answer, for good.
+            let msg = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| make(making)))
+            {
+                Ok(built) => UserMsg::Ready(Box::new(built)),
+                Err(_) => UserMsg::Unmade,
+            };
+            let _ = handle.send_coalesced(READY_KEY, msg);
         };
         #[cfg(test)]
         let spawned = if self.no_threads {
@@ -1612,6 +1633,21 @@ impl UserSession {
             self.read(Read::Reading, Reread::Failed);
             let fault = self.fault(format!("cannot start the compiler's thread: {e}"));
             self.tell(engine, &[fault]);
+        }
+    }
+
+    /// Making the compiler for the user's first file panicked: the files
+    /// are not read from here on, as for any fault that keeps them from
+    /// being read, and an ask that waited for that build is answered.
+    fn unmade(&mut self, engine: &Engine) {
+        if !matches!(self.state, State::Making) {
+            return;
+        }
+        self.state = State::Off;
+        let fault = self.fault("reading the user's files panicked: they are not loaded".to_owned());
+        self.tell(engine, &[fault]);
+        if self.reading.is_some() {
+            self.answer_read(Reread::Failed);
         }
     }
 
@@ -1665,6 +1701,9 @@ impl UserSession {
                 if shown > 0 {
                     out.push(Report::Pictures { shown });
                 }
+                // A picture that changed is applied whether or not one
+                // is shown now: one made later shows it as it is.
+                self.read(Read::Pictures, Reread::Applied);
             }
             DevMsg::Theme { theme, generation } => {
                 let started = Instant::now();

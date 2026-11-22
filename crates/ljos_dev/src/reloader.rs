@@ -75,6 +75,9 @@ pub struct Reloader<O> {
     carried: bool,
     /// Pictures saved since they were last taken, to be shown again.
     pictures: BTreeSet<PathBuf>,
+    /// What each picture of the project was when last looked at: a read
+    /// no event brought finds the pictures that changed by it.
+    picture_prints: BTreeMap<PathBuf, PicturePrint>,
     /// The paths the last build read: read again by the build after a
     /// [`Build::Unsettled`].
     read: BTreeSet<PathBuf>,
@@ -196,6 +199,7 @@ impl<O: TypeOracle + Clone> Reloader<O> {
         self.take_saves(false);
         let faults = self.session.start_seeded();
         self.prints.replace(texts(&self.session));
+        self.picture_prints = self.scan_pictures();
         faults
     }
 
@@ -231,6 +235,7 @@ impl<O: TypeOracle + Clone> Reloader<O> {
             parked: BTreeSet::new(),
             carried: false,
             pictures: BTreeSet::new(),
+            picture_prints: BTreeMap::new(),
             read: BTreeSet::new(),
             held: None,
             refused: false,
@@ -398,6 +403,7 @@ impl<O: TypeOracle + Clone> Reloader<O> {
         self.take_saves(false);
         let files = self.session.start().clone();
         self.prints.replace(texts(&self.session));
+        self.picture_prints = self.scan_pictures();
         files
     }
 
@@ -434,6 +440,10 @@ impl<O: TypeOracle + Clone> Reloader<O> {
         match classify(root, path, is_dir) {
             Touch::Ignore => return false,
             Touch::Picture => {
+                match picture_print(path) {
+                    Some(print) => self.picture_prints.insert(path.to_owned(), print),
+                    None => self.picture_prints.remove(path),
+                };
                 self.pictures.insert(path.to_owned());
             }
             Touch::File => {
@@ -467,12 +477,47 @@ impl<O: TypeOracle + Clone> Reloader<O> {
         std::mem::take(&mut self.pictures).into_iter().collect()
     }
 
-    /// The directory may have changed in ways no event told of.
+    /// The directory may have changed in ways no event told of: the
+    /// pictures that changed since they were last looked at are among
+    /// those [`take_pictures`](Self::take_pictures) gives.
     pub fn touch_all(&mut self) {
         self.rescan = true;
         if let Some(t) = &mut self.theme {
             t.touched = true;
         }
+        let now = self.scan_pictures();
+        let before = std::mem::take(&mut self.picture_prints);
+        let changed = now
+            .iter()
+            .filter(|(path, print)| before.get(*path) != Some(print))
+            .map(|(path, _)| path);
+        let gone = before.keys().filter(|path| !now.contains_key(*path));
+        self.pictures.extend(changed.chain(gone).cloned());
+        self.picture_prints = now;
+    }
+
+    /// Every picture in the project's directories as it is now.
+    fn scan_pictures(&self) -> BTreeMap<PathBuf, PicturePrint> {
+        let mut out = BTreeMap::new();
+        for place in self.session.places() {
+            for dir in project_dirs(&place) {
+                let Ok(read) = std::fs::read_dir(&dir) else {
+                    continue;
+                };
+                for entry in read.flatten() {
+                    let path = entry.path();
+                    if !entry.file_type().is_ok_and(|kind| kind.is_file())
+                        || classify(&place, &path, false) != Touch::Picture
+                    {
+                        continue;
+                    }
+                    if let Some(print) = picture_print(&path) {
+                        out.insert(path, print);
+                    }
+                }
+            }
+        }
+        out
     }
 
     /// Whether a build would have anything to look at.
@@ -722,6 +767,15 @@ pub fn classify(root: &Path, path: &Path, is_dir: bool) -> Touch {
         return Touch::Rescan;
     }
     Touch::Ignore
+}
+
+/// What a picture file is, as far as telling that it changed goes: its
+/// length and when it was last written.
+type PicturePrint = (u64, Option<std::time::SystemTime>);
+
+fn picture_print(path: &Path) -> Option<PicturePrint> {
+    let meta = std::fs::metadata(path).ok()?;
+    Some((meta.len(), meta.modified().ok()))
 }
 
 /// Directories the compiler does not look into, so nothing in them is a
