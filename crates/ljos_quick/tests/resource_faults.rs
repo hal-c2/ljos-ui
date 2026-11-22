@@ -442,3 +442,331 @@ fn a_list_view_delegate_whose_own_boundary_took_a_full_heap_is_shown_at_once() {
     assert_eq!(first, again, "the delegates are not made again");
     assert!(e.application_fault().is_none());
 }
+
+/// What fills the heap, and frees it when it is cut short: `FILL` below.
+const FILLS: &str =
+    r#"{ const a = []; for (let i = 0; i < 20000; i++) a.push({ i: i, s: "row " + i }) }"#;
+
+/// A root that is whole as it is: what fills the heap is content that a
+/// boundary inside it discards.
+const CONTENT_FAULTS: [(&str, &str); 4] = [
+    (
+        "an ErrorBoundary's content",
+        "ErrorBoundary { Item { Component.onCompleted: FILL } }",
+    ),
+    (
+        "a function of an ErrorBoundary's content",
+        "ErrorBoundary { Item { id: c; function work() FILL Component.onCompleted: c.work() } }",
+    ),
+    (
+        "a Loader's item",
+        "Loader { sourceComponent: Component { Item { Component.onCompleted: FILL } } }",
+    ),
+    (
+        "a ShellLoader's shell",
+        r#"ShellLoader { source: "Shell" }"#,
+    ),
+];
+
+/// A root left half made by a fault in an object of a boundary's own, one
+/// that boundary never makes again.
+const OWN_CHILD_FAULTS: [(&str, &str); 4] = [
+    (
+        "an ErrorBoundary's property object",
+        "ErrorBoundary { property QtObject helper: QtObject { Component.onCompleted: { FILL d.ok = true } } Item {} }",
+    ),
+    (
+        "a Loader's property object",
+        "Loader { property QtObject helper: QtObject { Component.onCompleted: { FILL d.ok = true } } }",
+    ),
+    (
+        "a Loader's declared child",
+        "Loader { Item { Component.onCompleted: { FILL d.ok = true } } }",
+    ),
+    (
+        "a ShellLoader's declared child",
+        "ShellLoader { Item { Component.onCompleted: { FILL d.ok = true } } }",
+    ),
+];
+
+/// A root left half updated by a fault in its own function, which content
+/// of a boundary inside it called.
+const OUTER_CODE_FAULTS: [(&str, &str); 2] = [
+    (
+        "called from an ErrorBoundary's content",
+        "ErrorBoundary { Item { Component.onCompleted: d.init() } }",
+    ),
+    (
+        "called from a Loader's item",
+        "Loader { sourceComponent: Component { Item { Component.onCompleted: d.init() } } }",
+    ),
+];
+
+/// The file of what is made: `ok` says whether it is whole.
+fn made_file(ok: bool, inner: &str, singleton: bool) -> String {
+    format!(
+        r#"{pragma}import QtQuick
+import Ljos
+import Ljos.Blocks
+Item {{
+    id: d
+    width: 12; height: 10
+    property bool ok: {ok}
+    property bool started: false
+    function init() {{
+        if (started) return;
+        started = true;
+        FILL
+        ok = true
+    }}
+    {inner}
+}}
+"#,
+        pragma = if singleton { "pragma Singleton\n" } else { "" },
+    )
+    .replace("FILL", FILLS)
+}
+
+const INSTANTIATOR: &str = r#"
+import QtQuick
+Item {
+    id: root
+    property bool on: false
+    Instantiator {
+        objectName: "instantiator"
+        asynchronous: true
+        model: root.on ? 1 : 0
+        delegate: Line {}
+    }
+    function litter(n) {
+        for (let i = 0; i < n; i++) { const a = { b: [i, i + 1, "x" + i] }; a.self = a }
+    }
+}
+"#;
+
+const HOLDS_THEME: &str = r#"
+import QtQuick
+Item {
+    id: root
+    property bool on: false
+    property var theme: root.on ? Theme : null
+    function litter(n) {
+        for (let i = 0; i < n; i++) { const a = { b: [i, i + 1, "x" + i] }; a.self = a }
+    }
+}
+"#;
+
+/// Each way an object is made that is thrown away when it is not whole.
+#[derive(Clone, Copy)]
+enum Path {
+    Repeater,
+    ListView,
+    /// In slices, by a creation job.
+    Incubated,
+    Singleton,
+}
+
+struct Making {
+    e: Engine,
+    clock: Arc<VirtualClock>,
+    s: QuickScene,
+    root: ObjectId,
+    path: Path,
+}
+
+impl Making {
+    /// Makes `file` on `path` with the heap `room` bytes from full.
+    fn start(path: Path, file: &str, room: usize) -> Self {
+        let (e, clock) = timed();
+        let one = |main: &str| main.replace("root.on ? 3 : 0", "root.on ? 1 : 0");
+        let (main, key) = match path {
+            Path::Repeater => (one(REPEATER), "Line"),
+            Path::ListView => (one(LIST_VIEW), "Line"),
+            Path::Incubated => (INSTANTIATOR.to_owned(), "Line"),
+            Path::Singleton => (HOLDS_THEME.to_owned(), "Theme"),
+        };
+        let shell = "import QtQuick\nItem { Component.onCompleted: FILL }\n".replace("FILL", FILLS);
+        compile(&e, &[("Main", &main), (key, file), ("Shell", &shell)]);
+        let root = e.create_from_url("Main", None, Vec::new()).unwrap();
+        fill(&e, root, room);
+        set(&e, root, "on", Value::Bool(true));
+        let s = scene(&e, root, 200.0, 200.0);
+        let mut m = Self {
+            e,
+            clock,
+            s,
+            root,
+            path,
+        };
+        // A job is made a slice a frame.
+        for _ in 0..64 {
+            frame(&mut m.s, &m.e);
+            if m.object().is_some() {
+                break;
+            }
+        }
+        m
+    }
+
+    fn object(&self) -> Option<ObjectId> {
+        let (e, root) = (&self.e, self.root);
+        let call = |name: &str, method: &str| {
+            e.invoke_by_name(find(e, root, name), method, &[Value::from(0.0)])
+                .ok()
+                .and_then(|v| v.as_object())
+        };
+        match self.path {
+            Path::Repeater => call("repeater", "itemAt"),
+            Path::ListView => call("view", "itemAtIndex"),
+            Path::Incubated => call("instantiator", "objectAt"),
+            Path::Singleton => get(e, root, "theme").as_object(),
+        }
+        .filter(|o| e.is_alive(*o))
+    }
+
+    fn is_whole(&self) -> bool {
+        self.object()
+            .is_some_and(|o| get(&self.e, o, "ok").to_boolean())
+    }
+
+    /// The heap has room again, and what waits for that runs.
+    fn make_room(&mut self) {
+        assert!(self.e.set_script_heap_limit(None));
+        for _ in 0..16 {
+            if self.e.next_timer_deadline().is_none() {
+                break;
+            }
+            wait_out(&self.e, &self.clock, &mut self.s);
+            for _ in 0..8 {
+                frame(&mut self.s, &self.e);
+            }
+        }
+    }
+}
+
+fn ran_out(m: &Making) -> bool {
+    m.e.take_warnings()
+        .iter()
+        .any(|w| w.contains("JS heap limit exceeded"))
+}
+
+/// Every case of `inner` is kept as it was first made; says which are not.
+fn assert_kept(path: Path, inner: &[(&str, &str)]) {
+    let mut wrong = Vec::new();
+    for (what, qml) in inner {
+        let mut m = Making::start(
+            path,
+            &made_file(true, qml, matches!(path, Path::Singleton)),
+            64 * 1024,
+        );
+        assert!(ran_out(&m), "{what}: nothing filled the heap");
+        let Some(first) = m.object() else {
+            wrong.push(format!("{what}: not shown"));
+            continue;
+        };
+        m.make_room();
+        if m.object() != Some(first) {
+            wrong.push(format!("{what}: made again"));
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+}
+
+/// Every case of `inner` is thrown away and made again; says which are not.
+fn assert_made_again(path: Path, inner: &[(&str, &str)]) {
+    let mut wrong = Vec::new();
+    for (what, qml) in inner {
+        let mut m = Making::start(
+            path,
+            &made_file(false, qml, matches!(path, Path::Singleton)),
+            64 * 1024,
+        );
+        assert!(ran_out(&m), "{what}: nothing filled the heap");
+        if m.object().is_some() && !m.is_whole() {
+            wrong.push(format!("{what}: shown half made"));
+        }
+        m.make_room();
+        if !m.is_whole() {
+            wrong.push(format!("{what}: never made again"));
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+}
+
+#[test]
+fn a_repeater_row_is_kept_when_content_inside_it_filled_the_heap() {
+    assert_kept(Path::Repeater, &CONTENT_FAULTS);
+}
+
+#[test]
+fn a_repeater_row_is_made_again_when_a_boundary_s_own_child_filled_the_heap() {
+    assert_made_again(Path::Repeater, &OWN_CHILD_FAULTS);
+}
+
+#[test]
+fn a_repeater_row_is_made_again_when_content_filled_the_heap_in_its_function() {
+    assert_made_again(Path::Repeater, &OUTER_CODE_FAULTS);
+}
+
+#[test]
+fn a_list_view_delegate_is_kept_when_content_inside_it_filled_the_heap() {
+    assert_kept(Path::ListView, &CONTENT_FAULTS);
+}
+
+#[test]
+fn a_list_view_delegate_is_made_again_when_a_boundary_s_own_child_filled_the_heap() {
+    assert_made_again(Path::ListView, &OWN_CHILD_FAULTS);
+}
+
+#[test]
+fn a_list_view_delegate_is_made_again_when_content_filled_the_heap_in_its_function() {
+    assert_made_again(Path::ListView, &OUTER_CODE_FAULTS);
+}
+
+#[test]
+fn an_incubated_object_is_kept_when_content_inside_it_filled_the_heap() {
+    assert_kept(Path::Incubated, &CONTENT_FAULTS);
+}
+
+#[test]
+fn an_incubated_object_is_made_again_when_a_boundary_s_own_child_filled_the_heap() {
+    assert_made_again(Path::Incubated, &OWN_CHILD_FAULTS);
+}
+
+#[test]
+fn an_incubated_object_is_made_again_when_content_filled_the_heap_in_its_function() {
+    assert_made_again(Path::Incubated, &OUTER_CODE_FAULTS);
+}
+
+#[test]
+fn a_singleton_is_kept_when_content_inside_it_filled_the_heap() {
+    assert_kept(Path::Singleton, &CONTENT_FAULTS);
+}
+
+#[test]
+fn a_singleton_is_made_again_when_a_boundary_s_own_child_filled_the_heap() {
+    assert_made_again(Path::Singleton, &OWN_CHILD_FAULTS);
+}
+
+#[test]
+fn a_singleton_is_made_again_when_content_filled_the_heap_in_its_function() {
+    assert_made_again(Path::Singleton, &OUTER_CODE_FAULTS);
+}
+
+/// The engine keeps who took the last 32 faults. Past that it cannot tell,
+/// so what met them is not taken to be whole.
+#[test]
+fn a_making_is_kept_through_32_taken_faults_and_not_through_33() {
+    for (count, kept) in [(32, true), (33, false)] {
+        let inner = "ErrorBoundary { Item { Component.onCompleted: FILL } }\n".repeat(count);
+        // Room for the boundaries themselves, none for one content's fill.
+        let m = Making::start(Path::Repeater, &made_file(true, &inner, false), 512 * 1024);
+        let faults =
+            m.e.take_warnings()
+                .iter()
+                .filter(|w| w.contains("JS heap limit exceeded"))
+                .count();
+        assert!(faults >= count, "{count} boundaries, {faults} faults");
+        assert_eq!(m.object().is_some(), kept, "{count} faults");
+    }
+}
