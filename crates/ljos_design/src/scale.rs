@@ -4,8 +4,9 @@
 //! gaps line up and `layout-spacing-scale` can tell a step from a stray
 //! number. Type sizes grow by one ratio from a body size (a modular scale,
 //! as typographic guidance since Bringhurst describes it), and each line
-//! height is rounded to the spacing unit so text sits on the same rhythm
-//! as everything around it. Material 3's type scale and Apple's Dynamic
+//! height is rounded to a baseline grid of 4 px. That grid is the type
+//! scale's own: a theme's `Spacing.unit` moves the spacing steps and
+//! leaves text metrics alone. Material 3's type scale and Apple's Dynamic
 //! Type table are the reference for the body size (14 to 17 logical
 //! pixels) and for line heights of about 1.4 for running text and 1.25 for
 //! headings.
@@ -49,8 +50,8 @@ pub fn spacing() -> Vec<Space> {
         .collect()
 }
 
-/// Whether `px` is a step of the scale's unit (and so allowed by
-/// `layout-spacing-scale`).
+/// Whether `px` is a step of the default unit (and so allowed by
+/// `layout-spacing-scale` where no theme sets another).
 pub fn on_spacing_scale(px: f32) -> bool {
     let units = px / limits::SPACING_UNIT_PX;
     (units - units.round()).abs() < 1e-3
@@ -64,7 +65,8 @@ pub struct TypeStep {
     /// Logical pixels (`font.pixelSize`).
     pub px: u32,
     /// Logical pixels between baselines (`lineHeight` with
-    /// `Text.FixedHeight`), a step of the spacing unit.
+    /// `Text.FixedHeight`), on the baseline grid of 4 px whatever the
+    /// theme's spacing unit.
     pub line_height: u32,
     /// `font.weight`.
     pub weight: u16,

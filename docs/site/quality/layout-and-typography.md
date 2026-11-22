@@ -17,7 +17,7 @@ A layout works only when it holds at every window size and font scale a user cho
 
 - **Use `Ljos.Layout` (`Row`, `Column`, `Grid`):** A box respects each child's `implicitWidth`, `implicitHeight`, and minimum sizes as text grows, and gives spare room to a child with `Layout.fillWidth` or `Layout.fillHeight`. A file still in Qt's QML uses `QtQuick.Layouts` (`RowLayout`, `ColumnLayout`, `GridLayout`), which the audit checks the same way. Fixed `x`/`y` coordinates and manual anchors break when strings are translated or scaled.
 - **Size surfaces from content:** Let popups, cards, and dialogs take their size from `implicitWidth` and `implicitHeight` up to a maximum, scrolling when content exceeds the available space.
-- **Follow the 4 px spacing scale (`layout-spacing-scale`):** Keep every `spacing`, `margins`, and `padding` value a multiple of `limits::SPACING_UNIT_PX` (`4`, `8`, `12`, `16`, `24`, `32`).
+- **Follow the theme's spacing scale (`layout-spacing-scale`):** Keep every `spacing`, `margins`, and `padding` value a multiple of the theme's `Spacing.unit`. The steps follow that unit, which is `limits::SPACING_UNIT_PX` (4 px) by default (`4`, `8`, `12`, `16`, `24`, `32`).
 - **Match nested corner radii (`layout-nested-radius`):** When a `Rectangle` fills another with a margin (`anchors.margins: 2`), make the inner `radius` equal to the outer `radius` minus the gap, never larger.
 
 ### Layout rules
@@ -37,7 +37,7 @@ A layout works only when it holds at every window size and font scale a user cho
 | `layout-window-controls` | Warning (runtime) | A frameless window (`Qt.FramelessWindowHint`) lacks a visible close button at the top corner within `limits::WINDOW_CONTROLS_MAX_INSET_PX`. Add a `ToolButton` named `Close` in the header `ToolBar`. |
 | `layout-reflow` | Warning (runtime) | At `limits::REFLOW_WIDTH_PX` (`320 px` wide), a `ScrollView` or `Flickable` containing reading text scrolls both horizontally and vertically. Bind the label's `width` to `view.availableWidth` with `wrapMode: Text.Wrap`. |
 | `layout-misaligned` | Hint (runtime) | Stacked controls in a column have left edges differing by 1 to `limits::MISALIGN_MAX_PX`, or form fields of the same kind have inconsistent widths. Align them in a `Grid` with `Layout.fillWidth: true`. |
-| `layout-spacing-scale` | Hint (static) | A `spacing`, `margins`, or `padding` literal is not a multiple of 4 px (for example, `7` or `13`). Round to the 4 px grid (`8` or `12`). |
+| `layout-spacing-scale` | Hint (static) | A `spacing`, `margins`, or `padding` literal is not a multiple of the theme's unit, 4 px by default (for example, `7` or `13`). Round to a multiple of the unit (`8` or `12` at the default). The check says nothing where it cannot tell which unit a theme sets. |
 | `layout-wrap-separator` | Hint (runtime) | A wrapped `Flow` starts or ends a line with a standalone separator (`·`, `|`, `ToolSeparator`). Attach the separator prefix to each item after index 0 instead. |
 | `layout-menu-ungrouped` | Hint (static, runtime) | A `Menu` has more than `limits::MENU_MAX_UNGROUPED` (`10`) items without a `MenuSeparator` or submenu. Group related actions with `MenuSeparator {}`. |
 | `layout-nested-radius` | Hint (static) | An inner `Rectangle` filling a parent `Rectangle` has a larger literal `radius` than the outer one. Set the inner radius to the outer radius minus the margin. |

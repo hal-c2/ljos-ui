@@ -6,7 +6,7 @@ A layout is right when it holds at every window size and font scale a user can c
 
 - **Let layouts place things.** `RowLayout`, `ColumnLayout` and `GridLayout` know each item's implicit and minimum size; anchors and fixed `x`/`y` do not, and stop working when text grows.
 - **Sizes come from content.** A popup, card or dialog takes `implicitWidth`/`implicitHeight` from what it holds, within a maximum, and scrolls past it.
-- **One spacing scale.** Every margin, padding and spacing is a multiple of `limits::SPACING_UNIT_PX` (Material's 4 dp grid): 4, 8, 12, 16, 24, 32. Related things sit closer than unrelated ones (proximity).
+- **One spacing scale.** Every margin, padding and spacing is a multiple of the theme's `Spacing.unit`, `limits::SPACING_UNIT_PX` by default (Material's 4 dp grid): 4, 8, 12, 16, 24, 32. Related things sit closer than unrelated ones (proximity).
 - **Decide what gives way.** At the smallest window, write down what wraps, what elides, what scrolls and what moves into an overflow menu. Nothing operable may leave the window.
 - **Nested corners.** A child's radius is the parent's radius less the padding between them, never more.
 
@@ -174,7 +174,7 @@ Sources: https://doc.qt.io/qt-6/qtquicklayouts-overview.html
 <a id="layout-spacing-scale"></a>
 ### `layout-spacing-scale`
 
-**Hint, static.** A spacing, margin or padding is not a multiple of `limits::SPACING_UNIT_PX`. Off-scale gaps (7, 13, 19) make rhythm uneven.
+**Hint, static.** A spacing, margin or padding is not a multiple of the unit: the `Spacing.unit` of the project's themes, `limits::SPACING_UNIT_PX` by default. Off-scale gaps (7, 13, 19 at the default) make rhythm uneven. The rule says nothing where the source cannot tell the unit: the project's `theme.json` files differ in it, only a directory below the root sets another, a theme that sets it would be refused, or it is 0. A theme named with `--theme` is not seen.
 
 ```qml
 // Bad

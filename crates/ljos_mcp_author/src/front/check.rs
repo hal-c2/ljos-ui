@@ -326,6 +326,7 @@ fn file(
                 shapes: &shapes,
                 path,
                 source,
+                loader: env.loader,
             },
             &doc.root,
             out,

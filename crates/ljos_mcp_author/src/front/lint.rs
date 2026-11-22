@@ -21,6 +21,7 @@ use super::{
     check::Shape,
     diagnostic,
     facts::{child_objects, find_binding, has_binding, is_accessibly_described, string_literal},
+    load::Loader,
 };
 use crate::{Diagnostic, lints};
 
@@ -30,6 +31,8 @@ pub(super) struct Cx<'c, 'a> {
     pub shapes: &'c [Shape],
     pub path: &'c Path,
     pub source: &'c str,
+    /// What the rules ask of the project beyond the file.
+    pub loader: &'c Loader<'c>,
 }
 
 pub(super) fn run<'a>(cx: &Cx<'_, 'a>, root: &QmlObject<'a>, out: &mut Vec<Diagnostic>) {

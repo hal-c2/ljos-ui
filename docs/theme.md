@@ -62,7 +62,11 @@ module's value.
 
 `Spacing`'s steps are multiples of `unit` (`xxs` 1, `xs` 2, `sm` 3, `md` 4,
 `lg` 6, `xl` 8, `xxl` 12, `xxxl` 16), so a theme that sets only `unit`
-moves the whole scale; a step the theme sets itself keeps its value.
+moves the whole scale; a step the theme sets itself keeps its value. A
+step that would pass 2147483647, the largest `int`, stops there, so none
+wraps to a negative number. `Typography`'s line heights do not follow
+`unit`: they are on a baseline grid of their own, 4 px, and a theme changes
+one with its `{step}LineHeight`.
 
 The colour roles: `canvas`, `surface`, `surfaceRaised`, `surfaceHover`,
 `surfacePressed`, `surfaceSelected`, `border`, `borderStrong`, `focusRing`,
