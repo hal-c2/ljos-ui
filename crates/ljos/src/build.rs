@@ -362,13 +362,27 @@ impl Options {
             // root: a link that leads out of it (`pics/dot.png` to a
             // private file elsewhere) would ship a file nobody chose.
             let key = |path: &Path| {
-                let relative = path.strip_prefix(dir).ok()?;
-                let plain = relative
-                    .components()
-                    .all(|part| matches!(part, std::path::Component::Normal(_)));
-                let inside = std::fs::canonicalize(path).is_ok_and(|real| real.starts_with(&root));
+                let real = std::fs::canonicalize(path).ok()?;
+                let under = real.strip_prefix(&root).ok()?;
+                let mut relative = std::path::PathBuf::new();
+                let mut climbs = false;
+                for part in path.strip_prefix(dir).ok()?.components() {
+                    match part {
+                        std::path::Component::Normal(name) => relative.push(name),
+                        std::path::Component::CurDir => {}
+                        // A build may list a file above its own directory
+                        // (`../images/a.csv`), though none above the root.
+                        std::path::Component::ParentDir if relative.pop() => climbs = true,
+                        _ => return None,
+                    }
+                }
+                // After a link, `..` climbs from where the link leads.
+                if climbs && std::fs::canonicalize(dir.join(&relative)).ok().as_ref() != Some(&real)
+                {
+                    relative = under.to_owned();
+                }
                 let parts: Option<Vec<&str>> = relative.iter().map(|p| p.to_str()).collect();
-                (plain && inside).then_some(parts?.join("/"))
+                Some(parts?.join("/"))
             };
             let mut mine = BTreeMap::new();
             let mut files = Vec::new();
