@@ -593,6 +593,9 @@ struct JSContext {
        meant to throw. Upstream throws `null` there, which a script's own
        `throw null` cannot be told from once caught and thrown again. */
     JSValue oom_error;
+    /* Ljós: the same for "interrupted", which no catch takes. An error of
+       its own: flagging oom_error would make every later one uncatchable. */
+    JSValue interrupted_error;
     JSValue error_back_trace;
     JSValue error_prepare_stack;
     JSValue error_stack_trace_limit;
@@ -2523,6 +2526,16 @@ bool JS_IsOOMError(JSContext *ctx, JSValueConst val)
         && JS_VALUE_GET_OBJ(val) == JS_VALUE_GET_OBJ(ctx->oom_error);
 }
 
+/* Ljós: whether a refused write to p is to be ignored. oom_error is
+   frozen because every throw for want of room shares it. A catch that
+   writes on what it caught and throws it again must still throw that
+   error, and not a TypeError about the write, so refusing one is silent. */
+static bool js_ignores_write(JSContext *ctx, const JSObject *p)
+{
+    return JS_VALUE_GET_TAG(ctx->oom_error) == JS_TAG_OBJECT
+        && p == JS_VALUE_GET_OBJ(ctx->oom_error);
+}
+
 void JS_SetDumpFlags(JSRuntime *rt, uint64_t flags)
 {
 #ifdef ENABLE_DUMPS
@@ -2957,6 +2970,7 @@ JSContext *JS_NewContextRaw(JSRuntime *rt)
     ctx->promise_ctor = JS_NULL;
     ctx->error_ctor = JS_NULL;
     ctx->oom_error = JS_UNDEFINED; /* Ljós */
+    ctx->interrupted_error = JS_UNDEFINED; /* Ljós */
     ctx->error_back_trace = JS_UNDEFINED;
     ctx->error_prepare_stack = JS_UNDEFINED;
     ctx->error_stack_trace_limit = js_int32(10);
@@ -3088,6 +3102,7 @@ static void JS_MarkContext(JSRuntime *rt, JSContext *ctx,
     }
     JS_MarkValue(rt, ctx->error_ctor, mark_func);
     JS_MarkValue(rt, ctx->oom_error, mark_func); /* Ljós */
+    JS_MarkValue(rt, ctx->interrupted_error, mark_func); /* Ljós */
     JS_MarkValue(rt, ctx->error_back_trace, mark_func);
     JS_MarkValue(rt, ctx->error_prepare_stack, mark_func);
     JS_MarkValue(rt, ctx->error_stack_trace_limit, mark_func);
@@ -3171,6 +3186,7 @@ void JS_FreeContext(JSContext *ctx)
     }
     JS_FreeValue(ctx, ctx->error_ctor);
     JS_FreeValue(ctx, ctx->oom_error); /* Ljós */
+    JS_FreeValue(ctx, ctx->interrupted_error); /* Ljós */
     JS_FreeValue(ctx, ctx->error_back_trace);
     JS_FreeValue(ctx, ctx->error_prepare_stack);
     JS_FreeValue(ctx, ctx->error_stack_trace_limit);
@@ -8728,6 +8744,9 @@ static JSValue JS_ThrowTypeErrorInvalidClass(JSContext *ctx, int class_id)
 static void JS_ThrowInterrupted(JSContext *ctx)
 {
     JS_ThrowInternalError(ctx, "interrupted");
+    /* Ljós: with no room for that error, the one made in advance */
+    if (JS_IsOOMError(ctx, ctx->rt->current_exception))
+        JS_Throw(ctx, js_dup(ctx->interrupted_error));
     JS_SetUncatchableError(ctx, ctx->rt->current_exception);
 }
 
@@ -8796,6 +8815,8 @@ static int JS_SetPrototypeInternal(JSContext *ctx, JSValueConst obj,
         return false;
     }
     if (!p->extensible) {
+        if (js_ignores_write(ctx, p)) /* Ljós */
+            return true;
         if (throw_flag) {
             JS_ThrowTypeError(ctx, "object is not extensible");
             return -1;
@@ -10819,7 +10840,10 @@ retry:
 
     if (p == JS_VALUE_GET_OBJ(obj)) {
         if (unlikely(!p->extensible)) {
-            ret = JS_ThrowTypeErrorOrFalse(ctx, flags, "object is not extensible");
+            if (js_ignores_write(ctx, p)) /* Ljós */
+                ret = true;
+            else
+                ret = JS_ThrowTypeErrorOrFalse(ctx, flags, "object is not extensible");
             goto done;
         }
         if (p->is_exotic) {
@@ -10855,7 +10879,10 @@ retry:
         } else if (!(desc_flags & JS_PROP_WRITABLE) ||
                    p->class_id == JS_CLASS_MODULE_NS) {
         read_only_prop:
-            ret = JS_ThrowTypeErrorReadOnly(ctx, flags, prop);
+            if (js_ignores_write(ctx, p)) /* Ljós */
+                ret = true;
+            else
+                ret = JS_ThrowTypeErrorReadOnly(ctx, flags, prop);
             goto done;
         }
         ret = JS_DefineProperty(ctx, this_obj, prop, val,
@@ -10863,7 +10890,10 @@ retry:
                                 JS_PROP_HAS_VALUE);
     } else {
         if (unlikely(!p->extensible)) {
-            ret = JS_ThrowTypeErrorOrFalse(ctx, flags, "object is not extensible");
+            if (js_ignores_write(ctx, p)) /* Ljós */
+                ret = true;
+            else
+                ret = JS_ThrowTypeErrorOrFalse(ctx, flags, "object is not extensible");
             goto done;
         }
     generic_create_prop:
@@ -11183,6 +11213,8 @@ static int JS_CreateProperty(JSContext *ctx, JSObject *p,
 
     if (!p->extensible) {
     not_extensible:
+        if (js_ignores_write(ctx, p)) /* Ljós */
+            return true;
         return JS_ThrowTypeErrorOrFalse(ctx, flags, "object is not extensible");
     }
 
@@ -11331,6 +11363,8 @@ int JS_DefineProperty(JSContext *ctx, JSValueConst this_obj,
         /* property already exists */
         if (!check_define_prop_flags(prs->flags, flags)) {
         not_configurable:
+            if (js_ignores_write(ctx, p)) /* Ljós */
+                return true;
             return JS_ThrowTypeErrorOrFalse(ctx, flags, "property is not configurable");
         }
 
@@ -12013,6 +12047,8 @@ int JS_DeleteProperty(JSContext *ctx, JSValueConst obj, JSAtom prop, int flags)
     JS_FreeValue(ctx, obj1);
     if (res != false)
         return res;
+    if (JS_IsOOMError(ctx, obj)) /* Ljós: as a write to it */
+        return true;
     if ((flags & JS_PROP_THROW) ||
         ((flags & JS_PROP_THROW_STRICT) && is_strict_mode(ctx))) {
         JS_ThrowTypeError(ctx, "could not delete property");
@@ -12147,6 +12183,9 @@ static void js_set_uncatchable_error(JSContext *ctx, JSValueConst val, bool flag
     if (JS_VALUE_GET_TAG(val) != JS_TAG_OBJECT)
         return;
     p = JS_VALUE_GET_OBJ(val);
+    /* Ljós: never the out-of-memory error, which every later one shares */
+    if (flag && JS_IsOOMError(ctx, val))
+        return;
     if (p->class_id == JS_CLASS_ERROR)
         p->is_uncatchable_error = flag;
 }
@@ -58747,6 +58786,28 @@ static const char * const native_error_name[JS_NATIVE_ERROR_COUNT] = {
     "SuppressedError",
 };
 
+/* Ljós: an error to throw when the heap has no room for one. Its stack
+   is set now, empty, so a throw never builds one: a backtrace of the first
+   throw would be told of every later one. Frozen, as every throw shares
+   it. */
+static JSValue js_make_error_in_advance(JSContext *ctx, const char *message)
+{
+    JSValue obj;
+    JSObject *p;
+
+    obj = JS_MakeError2(ctx, JS_INTERNAL_ERROR, false, message);
+    if (JS_IsException(obj))
+        return JS_EXCEPTION;
+    p = JS_VALUE_GET_OBJ(obj);
+    JS_FreeValue(ctx, p->u.object_data);
+    p->u.object_data = js_empty_string(ctx->rt);
+    if (JS_FreezeObject(ctx, obj) < 0) {
+        JS_FreeValue(ctx, obj);
+        return JS_EXCEPTION;
+    }
+    return obj;
+}
+
 /* Minimum amount of objects to be able to compile code and display
    error messages. No JSAtom should be allocated by this function. */
 /* Minimum amount of objects to be able to compile code and display
@@ -58797,19 +58858,12 @@ static int JS_AddIntrinsicBasicObjects(JSContext *ctx)
         ctx->native_error_proto[i] = proto;
     }
 
-    /* Ljós: the error to throw when the heap has no room for one. Its
-       stack is set now, empty, so a throw never builds one: a backtrace of
-       the first throw would be told of every later one. */
-    ctx->oom_error = JS_MakeError2(ctx, JS_INTERNAL_ERROR, false,
-                                   "out of memory");
+    /* Ljós: the errors to throw when the heap has no room for one */
+    ctx->oom_error = js_make_error_in_advance(ctx, "out of memory");
     if (JS_IsException(ctx->oom_error))
         return -1;
-    {
-        JSObject *p = JS_VALUE_GET_OBJ(ctx->oom_error);
-        JS_FreeValue(ctx, p->u.object_data);
-        p->u.object_data = js_empty_string(ctx->rt);
-    }
-    if (JS_FreezeObject(ctx, ctx->oom_error) < 0)
+    ctx->interrupted_error = js_make_error_in_advance(ctx, "interrupted");
+    if (JS_IsException(ctx->interrupted_error))
         return -1;
 
     /* the array prototype is an array */
