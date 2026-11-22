@@ -148,10 +148,9 @@ fn observer_clicked(w: &mut LjosWorld, locator: String) -> StepResult {
     })
 }
 
-// While the application's second is kept full, what the observer asks of
-// it is turned away for asking too often, and so is the one time its wire
-// asks again a second later (ARCHITECTURE.md §19.7): only the observer
-// itself can ask once more.
+// While every call is turned away, the observer's is too, and so is the
+// one time its wire asks again a second later (ARCHITECTURE.md §19.7):
+// only the observer itself can ask once more.
 #[when(
     regex = r#"^the observer's "((?:[^"\\]|\\.)+)" is clicked while the application turns every call away$"#
 )]
@@ -171,7 +170,7 @@ fn observer_clicked_put_away(w: &mut LjosWorld, locator: String, gone: String) -
 fn turned_away(w: &mut LjosWorld, locator: &str, gone: Option<&str>) -> StepResult {
     // Past the wire's second try, which follows the first's refusal by
     // the second its `Retry-After` names.
-    const KEPT: Duration = Duration::from_millis(2500);
+    const TOLD_WITHIN: Duration = Duration::from_millis(2500);
     let locator = unquoted(locator);
     let gone = gone.map(unquoted);
     w.each(|b| {
@@ -185,91 +184,84 @@ fn turned_away(w: &mut LjosWorld, locator: &str, gone: Option<&str>) -> StepResu
                 "nothing to click",
             ));
         }
-        let told = told_turned_away(&observer_status(probes)?)?;
-        let filling = probes.turn_calls_away(KEPT)?;
-        let filled = Instant::now();
-        let room = filling + Duration::from_secs(1);
-        // The places free again as they were taken, a second on, and a call
-        // takes each a moment after. A second try, a second after the click's
-        // refusal, finds none when the click comes after the last was taken
-        // and before the first frees: half way gives that moment and the
-        // click as much of what is left as there is, however long filling took.
-        sleep_until(filled + room.saturating_duration_since(filled) / 2);
-        let asked = Instant::now();
-        let clicked =
-            probes.observer_call_now("app_click", serde_json::json!({ "target": locator }));
-        let took = filling.elapsed();
-        let timed = format!(
-            "filling the second took {} ms, the wait after it {} ms and the click {} ms",
-            (filled - filling).as_millis(),
-            (asked - filled).as_millis(),
-            asked.elapsed().as_millis()
-        );
-        let refused = match (&clicked, &gone) {
-            (Err(_), _) => Ok(()),
-            (Ok(_), Some(gone)) => {
-                // Put away before an answer can come, and no answer came:
-                // one that was let in puts it away as well.
-                observer_put_away(probes, gone, filling + Duration::from_secs(1))
-                    .and_then(|()| observer_told_turned_away(probes, told, filling + KEPT))
-            }
-            (Ok(_), None) => observer_told_turned_away(probes, told, filling + KEPT),
-        };
-        // Also after a click that failed: the next step is not to be turned
-        // away in this one's place.
+        // Held before the click and until what follows it was seen: no
+        // call the click makes can find a place, however late it comes.
+        probes.turn_every_call_away()?;
+        let held = Instant::now();
+        let seen = probes
+            .observer_call_now("app_click", serde_json::json!({ "target": locator }))
+            .and_then(|_| match &gone {
+                Some(gone) => observer_put_away(probes, gone, held + Duration::from_secs(1)),
+                None => Ok(()),
+            })
+            .and_then(|()| observer_told_turned_away(probes, held + TOLD_WITHIN));
+        // Also after a failure: the next step is not to be turned away in
+        // this one's place.
         let answered = probes.calls_answered_again();
-        clicked?;
-        if took > Duration::from_secs(1) {
-            return Err(BackendError::Failed(format!(
-                "the observer was clicked {} ms after the first call that filled the \
-                 application's second: too late for its call and the one asked again to be \
-                 turned away ({timed})",
-                took.as_millis()
-            )));
-        }
-        answered.and(refused.map_err(|e| match e {
-            BackendError::Failed(why) => BackendError::Failed(format!("{why} ({timed})")),
-            other => other,
-        }))
+        seen.and(answered)
     })
 }
 
 // The observer says so only once both refusals came, the wire's second
-// try's being the one handed to it. The note is gone as soon as anything
-// else is said, so the count of it is read: one that came late still
-// counts, and a call that got through leaves none awaited.
+// try's being the one handed to it, and nothing can take the note away
+// while the application answers no call. It is read as the status's text,
+// whole, and found as what the window shows.
 fn observer_told_turned_away(
     probes: &mut dyn crate::backend::Probes,
-    before: u64,
-    kept_until: Instant,
+    by: Instant,
 ) -> Result<(), BackendError> {
-    let by = kept_until + OBSERVER_ANSWERS;
-    loop {
-        let status = observer_status(probes)?;
-        if told_turned_away(&status)? > before {
-            return Ok(());
+    const NOTE: &str = "The application is asked too often; its values are asked again in a moment";
+    let shown = format!("text={NOTE}");
+    let mut said = String::new();
+    let told = observer_now_until(probes, by, |probes| {
+        said = status_property(&observer_status(probes)?, "text")?;
+        if said != NOTE {
+            return Ok(false);
         }
-        let now = Instant::now();
-        let waiting = status_property(&status, "inspectsWaiting")?;
-        let cause = if waiting == "0" && now >= kept_until {
-            "it awaits no answer about values any more: a call got through, or was not \
-             refused for asking too often"
-                .to_owned()
-        } else if now >= by {
-            format!(
-                "it still awaited {waiting} answers about values {} s after the application \
-                 stopped turning calls away",
-                OBSERVER_ANSWERS.as_secs()
-            )
-        } else {
-            std::thread::sleep(Duration::from_millis(100));
-            continue;
-        };
-        return Err(BackendError::Failed(format!(
-            "the observer did not say it was turned away while the application's second \
-             was full: {cause}; its status says {:?}",
-            status_property(&status, "text").unwrap_or_default()
-        )));
+        let found =
+            probes.observer_call_now("app_find", serde_json::json!({ "locator": shown }))?;
+        Ok(found["total"].as_u64().unwrap_or(0) > 0)
+    })?;
+    if told {
+        return Ok(());
+    }
+    Err(BackendError::Failed(format!(
+        "the observer did not show that it was turned away while every call to the \
+         application was: its status says {said:?}, not {NOTE:?}"
+    )))
+}
+
+/// Whether `seen` came by `by`, looked for again after each frame of the
+/// observer's window. Unlike [`observer_until`] it asks nothing of the
+/// application, which may be turning every call away.
+fn observer_now_until(
+    probes: &mut dyn crate::backend::Probes,
+    by: Instant,
+    mut seen: impl FnMut(&mut dyn crate::backend::Probes) -> Result<bool, BackendError>,
+) -> Result<bool, BackendError> {
+    // Taken before the window is looked at, as in `observer_until`.
+    let mut told =
+        probes.observer_call_now("app_watch", serde_json::json!({ "topics": ["frames"] }))?;
+    loop {
+        if seen(probes)? {
+            return Ok(true);
+        }
+        let left = by.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return Ok(false);
+        }
+        let frames = told["counts"]["frames"].as_u64().ok_or_else(|| {
+            BackendError::Failed(format!("the observer counts no frames: {told}"))
+        })?;
+        told = probes.observer_call_now(
+            "app_watch",
+            serde_json::json!({
+                "since": { "frames": frames },
+                "topics": ["frames"],
+                "wait_ms": u64::try_from(left.as_millis()).unwrap_or(u64::MAX).max(1),
+                "settle_ms": 16,
+            }),
+        )?;
     }
 }
 
@@ -289,15 +281,6 @@ fn status_property(status: &Value, name: &str) -> Result<String, BackendError> {
                 "the observer's status does not tell its {name}: {status}"
             ))
         })
-}
-
-fn told_turned_away(status: &Value) -> Result<u64, BackendError> {
-    let told = status_property(status, "valuesToldTurnedAway")?;
-    told.parse().map_err(|_| {
-        BackendError::Failed(format!(
-            "the observer's count of values turned away is no number: {told:?}"
-        ))
-    })
 }
 
 // The object clicked first is asked of while the application's second is
@@ -326,7 +309,7 @@ fn observer_clicked_answered_late(w: &mut LjosWorld, first: String, then: String
         // after it was turned away (`Retry-After: 1`). The first click is
         // made half way: the second has as long as the first click to
         // come, and each click as long as there is of that second.
-        let full = probes.turn_calls_away(Duration::ZERO)?;
+        let full = probes.turn_calls_away()?;
         let room = full + Duration::from_secs(1);
         sleep_until(full + Duration::from_millis(500));
         let asked = Instant::now();
@@ -363,20 +346,18 @@ fn observer_put_away(
     gone: &str,
     by: Instant,
 ) -> Result<(), BackendError> {
-    loop {
-        let found = probes.observer_call_now("app_find", serde_json::json!({ "locator": gone }))?;
-        if found["total"].as_u64() == Some(0) {
-            return Ok(());
-        }
-        if Instant::now() >= by {
-            return Err(BackendError::Failed(format!(
-                "the observer still showed {gone} while the application turned away what was \
-                 asked of the one picked since: it can be pressed for that one"
-            )));
-        }
-        // A frame, for what the click changed.
-        std::thread::sleep(Duration::from_millis(16));
+    let locator = serde_json::json!({ "locator": gone });
+    let put_away = observer_now_until(probes, by, |probes| {
+        let found = probes.observer_call_now("app_find", locator.clone())?;
+        Ok(found["total"].as_u64() == Some(0))
+    })?;
+    if put_away {
+        return Ok(());
     }
+    Err(BackendError::Failed(format!(
+        "the observer still showed {gone} while the application turned away what was \
+         asked of the one picked since: it can be pressed for that one"
+    )))
 }
 
 // The answer that comes late changes nothing shown, which is what is

@@ -452,6 +452,17 @@ mod tests {
         assert_eq!(status_after(&failed, "picture:b", true, came), said);
     }
 
+    // The note's whole text: what the window shows is what this sets.
+    #[test]
+    fn values_put_away_and_turned_away_are_said_to_be_asked_again() {
+        let note = "The application is asked too often; its values are asked again in a moment";
+        for route in ["inspect:b", "picture:b"] {
+            let window = window();
+            let busy = "rate_limited: wait";
+            assert_eq!(status_after(&window, route, false, busy), note, "{route}");
+        }
+    }
+
     /// How many times the status said that values put away are asked again.
     fn told_turned_away((engine, root): &(Engine, ObjectId)) -> u64 {
         let out = engine

@@ -458,8 +458,8 @@ pub struct DesktopBackend {
     /// The scenario changes files under the running application, which
     /// `ljos run --watch` applies.
     watch: bool,
-    /// The calls that keep the application's second full, while they go on.
-    turning_away: Option<crate::author::rate::Flood>,
+    /// What turns the application's calls away, held or let go since.
+    turning_away: Option<crate::author::rate::Refusals>,
 }
 
 impl Drop for DesktopBackend {
@@ -577,6 +577,7 @@ impl DesktopBackend {
         self.work_from.clear();
         self.observer = None;
         self.running = None;
+        self.turning_away = None;
         self.other = None;
         let sandbox = match &self.sandbox {
             Some(s) => s,
@@ -1416,7 +1417,7 @@ impl Probes for DesktopBackend {
         }
     }
 
-    fn turn_calls_away(&mut self, kept: Duration) -> Result<Instant> {
+    fn turn_calls_away(&mut self) -> Result<Instant> {
         use crate::author::rate;
         let app = self.running()?.app.id();
         let dir = self.dir.as_ref().expect("files are written first").path();
@@ -1456,16 +1457,18 @@ impl Probes for DesktopBackend {
                     .into(),
             )
         })?;
-        if !kept.is_zero() {
-            // Room comes free a second after each call answered, and a
-            // call follows at once to take it: the observer's calls find
-            // none.
-            self.turning_away = Some(rate::Flood::start(first + kept, move || {
-                id += 1;
-                rate::call(addr, &token, id).map(|_| ())
-            }));
-        }
         Ok(first)
+    }
+
+    fn turn_every_call_away(&mut self) -> Result<()> {
+        let app = self.running()?.app.id();
+        let dir = self.dir.as_ref().expect("files are written first").path();
+        let file = dir.join(format!("target/ljos/mcp-{app}.json"));
+        // The last one gives the file back before this one reads it.
+        self.turning_away = None;
+        self.turning_away =
+            Some(crate::author::rate::Refusals::start(&file).map_err(BackendError::Failed)?);
+        Ok(())
     }
 
     fn observer_call_now(&mut self, tool: &str, arguments: Value) -> Result<Value> {
@@ -1476,8 +1479,8 @@ impl Probes for DesktopBackend {
     }
 
     fn calls_answered_again(&mut self) -> Result<()> {
-        if let Some(calls) = self.turning_away.take() {
-            calls.finish().map_err(BackendError::Failed)?;
+        if let Some(refusals) = self.turning_away.as_mut() {
+            refusals.release().map_err(BackendError::Failed)?;
         }
         if let Some(observer) = self.observer.as_mut() {
             observer.settle()?;

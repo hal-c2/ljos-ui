@@ -1681,16 +1681,25 @@ pub trait Probes: Backend {
         })
     }
 
-    /// Calls the application's inspector itself until it turns a call
-    /// away for asking too often, and goes on calling it for `kept` more,
-    /// so that what its observer asks of it meanwhile is turned away too
-    /// (ARCHITECTURE.md §19.7). Answers when the first of the calls that
-    /// filled the application's second was made: it has room again a
-    /// second later. [`Probes::calls_answered_again`] waits for the rest.
-    fn turn_calls_away(&mut self, _kept: std::time::Duration) -> Result<std::time::Instant> {
+    /// Fills the application's second with calls of the test's own, so
+    /// that what its observer asks of it before that second has room is
+    /// turned away (ARCHITECTURE.md §19.7). Answers when the first of
+    /// them was made: there is room again a second later.
+    fn turn_calls_away(&mut self) -> Result<std::time::Instant> {
         Err(BackendError::Unsupported {
             backend: self.name(),
             what: "turning the application's calls away",
+        })
+    }
+
+    /// Turns away every call made of the application's inspector from
+    /// now until [`Probes::calls_answered_again`], as the inspector does
+    /// when its second is full. The application is not to be asked
+    /// meanwhile: that call is turned away as well.
+    fn turn_every_call_away(&mut self) -> Result<()> {
+        Err(BackendError::Unsupported {
+            backend: self.name(),
+            what: "turning every call to the application away",
         })
     }
 
@@ -1707,9 +1716,9 @@ pub trait Probes: Backend {
         })
     }
 
-    /// Waits for the calls [`Probes::turn_calls_away`] goes on making to
-    /// end, and then for what the observer and the application were
-    /// asked meanwhile to be done.
+    /// Lets go of what [`Probes::turn_every_call_away`] holds, and waits
+    /// for what the observer and the application were asked meanwhile to
+    /// be done.
     fn calls_answered_again(&mut self) -> Result<()> {
         Err(BackendError::Unsupported {
             backend: self.name(),

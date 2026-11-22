@@ -5,9 +5,9 @@
 //! see what its observer does when it is turned away.
 
 use std::{
-    io::{Read as _, Write as _},
-    net::{SocketAddr, TcpStream},
-    path::Path,
+    io::{BufRead as _, BufReader, Read as _, Write as _},
+    net::{SocketAddr, TcpListener, TcpStream},
+    path::{Path, PathBuf},
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -29,58 +29,122 @@ pub(crate) struct Called {
     pub head: String,
 }
 
-/// Calls made on a thread of their own for as long as they are to keep
-/// the inspector's second full. Let go of, they stop and are waited for:
-/// a step that failed before [`Flood::finish`] leaves none behind to turn
-/// away the calls of the next.
+/// Every call to an application's inspector turned away, for as long as
+/// they are held: its token file names a listener of the test's own, which
+/// answers what the inspector answers when its second is full. Nothing
+/// frees a place there, so nothing races a call for one. What reads the
+/// file for each call, as `ljos observe` and `ljos attach` do, is refused
+/// from the first call after [`Refusals::start`] returns.
+///
+/// The listener outlives [`Refusals::release`]: a wire asks again where it
+/// was turned away, and is then turned away there rather than finding no
+/// inspector. It ends when this is let go of.
 #[derive(Debug)]
-pub(crate) struct Flood {
+pub(crate) struct Refusals {
+    token_file: PathBuf,
+    /// The file as the application wrote it, while calls are held.
+    kept: Option<String>,
+    addr: SocketAddr,
     stop: Arc<AtomicBool>,
-    calls: Option<JoinHandle<Result<(), String>>>,
+    answering: Option<JoinHandle<()>>,
 }
 
-impl Flood {
-    pub(crate) fn start(
-        until: Instant,
-        mut call: impl FnMut() -> Result<(), String> + Send + 'static,
-    ) -> Self {
+impl Refusals {
+    pub(crate) fn start(token_file: &Path) -> Result<Self, String> {
+        let said = |e: &dyn std::fmt::Display| format!("{}: {e}", token_file.display());
+        let kept = std::fs::read_to_string(token_file).map_err(|e| said(&e))?;
+        let mut body: Value = serde_json::from_str(&kept).map_err(|e| said(&e))?;
+        let listener = TcpListener::bind(("127.0.0.1", 0)).map_err(|e| said(&e))?;
+        let addr = listener.local_addr().map_err(|e| said(&e))?;
+        body["url"] = format!("http://{addr}/mcp").into();
         let stop = Arc::new(AtomicBool::new(false));
         let stopped = Arc::clone(&stop);
-        let calls = std::thread::spawn(move || {
-            while Instant::now() < until && !stopped.load(Ordering::Relaxed) {
-                call()?;
-                // A pause between them keeps the loopback's ports to a few
-                // thousand.
-                std::thread::sleep(Duration::from_micros(500));
+        let answering = std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                if stopped.load(Ordering::Relaxed) {
+                    break;
+                }
+                if let Ok(stream) = stream {
+                    // A caller that left has nothing to be told.
+                    let _ = refuse(stream);
+                }
             }
-            Ok(())
         });
-        Self {
+        let held = Self {
+            token_file: token_file.to_owned(),
+            kept: Some(kept),
+            addr,
             stop,
-            calls: Some(calls),
-        }
+            answering: Some(answering),
+        };
+        replace(token_file, &body.to_string())?;
+        Ok(held)
     }
 
-    /// Waits for the last of the calls.
-    pub(crate) fn finish(mut self) -> Result<(), String> {
-        match self.calls.take().map(JoinHandle::join) {
-            Some(Ok(made)) => made,
-            Some(Err(_)) => {
-                Err("the calls that kept the application's second full panicked".into())
-            }
-            None => Ok(()),
+    /// Gives the calls that follow the application's inspector again.
+    pub(crate) fn release(&mut self) -> Result<(), String> {
+        if let Some(kept) = &self.kept {
+            replace(&self.token_file, kept)?;
+            self.kept = None;
+        }
+        Ok(())
+    }
+}
+
+impl Drop for Refusals {
+    fn drop(&mut self) {
+        // The file is gone with a scenario's directory that went first.
+        let _ = self.release();
+        self.stop.store(true, Ordering::Relaxed);
+        // A connection is what wakes a listener that waits for one.
+        if TcpStream::connect(self.addr).is_ok()
+            && let Some(answering) = self.answering.take()
+        {
+            let _ = answering.join();
         }
     }
 }
 
-impl Drop for Flood {
-    fn drop(&mut self) {
-        self.stop.store(true, Ordering::Relaxed);
-        if let Some(calls) = self.calls.take() {
-            // What they came to was for `finish` to say.
-            let _ = calls.join();
+/// The inspector's answer to a call past its rate (ARCHITECTURE.md §19.7).
+fn refuse(mut stream: TcpStream) -> std::io::Result<()> {
+    stream.set_read_timeout(Some(WINDOW))?;
+    let mut request = BufReader::new(stream.try_clone()?);
+    let mut length = 0;
+    loop {
+        let mut line = String::new();
+        if request.read_line(&mut line)? == 0 || line.trim().is_empty() {
+            break;
+        }
+        if let Some((name, value)) = line.split_once(':')
+            && name.eq_ignore_ascii_case("content-length")
+        {
+            length = value.trim().parse().unwrap_or(0);
         }
     }
+    // Closed on what is unread, the connection is reset and the answer lost.
+    std::io::copy(&mut request.take(length), &mut std::io::sink())?;
+    let body = serde_json::json!({ "error": {
+        "code": "rate_limited",
+        "message": "too many calls in one second; wait a moment and ask again",
+    } })
+    .to_string();
+    write!(
+        stream,
+        "HTTP/1.1 429 Too Many Requests\r\nContent-Type: application/json\r\n\
+         Retry-After: 1\r\nConnection: close\r\nContent-Length: {}\r\n\r\n{body}",
+        body.len()
+    )
+}
+
+/// Replaces the file in one step, its user's alone as the inspector's is:
+/// a caller reads the one text or the other.
+fn replace(path: &Path, text: &str) -> Result<(), String> {
+    let said = |e: &dyn std::fmt::Display| format!("{}: {e}", path.display());
+    let dir = path.parent().ok_or_else(|| said(&"no directory"))?;
+    let mut file = tempfile::NamedTempFile::new_in(dir).map_err(|e| said(&e))?;
+    file.write_all(text.as_bytes()).map_err(|e| said(&e))?;
+    file.persist(path).map_err(|e| said(&e))?;
+    Ok(())
 }
 
 /// What a burst of calls came to.
@@ -218,31 +282,41 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_flood_let_go_of_early_has_ended_when_it_is_gone() {
-        let held = Arc::new(());
-        let by_call = Arc::clone(&held);
-        let flood = Flood::start(Instant::now() + Duration::from_secs(20), move || {
-            let _ = &by_call;
-            Ok(())
-        });
-        let let_go = Instant::now();
-        drop(flood);
-        assert_eq!(
-            Arc::strong_count(&held),
-            1,
-            "the calls go on after what started them let go of them"
-        );
-        assert!(
-            let_go.elapsed() < Duration::from_secs(10),
-            "letting go of the calls waited for their end"
-        );
+    fn held_calls_are_turned_away_until_released_and_the_old_address_after() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("mcp-1.json");
+        let written = r#"{"url":"http://127.0.0.1:9/mcp","token":"t","pid":1}"#;
+        std::fs::write(&file, written).unwrap();
+
+        let mut held = Refusals::start(&file).unwrap();
+        let (addr, token) = target(&file).unwrap();
+        assert_eq!((addr, token.as_str()), (held.addr, "t"));
+        for id in 0..3 {
+            let called = call(addr, &token, id).unwrap();
+            assert_eq!(called.status, 429);
+            assert!(called.head.contains("retry-after: 1"), "{}", called.head);
+        }
+
+        held.release().unwrap();
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), written);
+        assert_eq!(call(addr, &token, 3).unwrap().status, 429);
     }
 
     #[test]
-    fn a_flood_waited_for_says_what_its_last_call_said() {
-        let flood = Flood::start(Instant::now() + Duration::from_secs(20), || {
-            Err("refused".into())
-        });
-        assert_eq!(flood.finish(), Err("refused".to_owned()));
+    fn held_calls_let_go_of_early_are_given_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("mcp-1.json");
+        let written = r#"{"url":"http://127.0.0.1:9/mcp","token":"t","pid":1}"#;
+        std::fs::write(&file, written).unwrap();
+
+        let held = Refusals::start(&file).unwrap();
+        let stop = Arc::clone(&held.stop);
+        drop(held);
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), written);
+        assert_eq!(
+            Arc::strong_count(&stop),
+            1,
+            "the listener goes on after what started it let go of it"
+        );
     }
 }
