@@ -3,7 +3,9 @@
 
 mod support;
 
-use ljos_engine::fault_kind;
+use ljos_engine::{
+    MetaBuilder, MetaRef, PropertyFlags, QmlType, QtObject, TypeTag, Value, fault_kind,
+};
 use support::{Harness, engine};
 
 /// A dispatch that asks for `ask` bytes at once and one after it that asks
@@ -32,6 +34,77 @@ fn ran_out(h: &Harness) -> bool {
         .faults()
         .iter()
         .any(|f| fault_kind(&f.fault) == "JsOutOfMemory")
+}
+
+/// A type of `WIDE` properties, so that making what a script needs to meet
+/// one of its objects is most of a small room.
+fn wide() -> MetaBuilder {
+    const WIDE: usize = 4000;
+    (0..WIDE).fold(
+        MetaBuilder::new("Wide").base(QtObject::static_meta()),
+        |b, i| b.property(&format!("p{i}"), TypeTag::Var, PropertyFlags::empty(), true),
+    )
+}
+
+/// An engine whose script is about to read its first object of `meta`: the
+/// next 10 ms meet it.
+fn about_to_meet(meta: MetaRef) -> (Harness, ljos_engine::ObjectId) {
+    let h = engine();
+    let root = h.load(
+        r#"import QtQuick
+Item {
+  id: page
+  property var target: null
+  property int met: 0
+  Timer {
+    interval: 10; running: true; repeat: true
+    onTriggered: if (page.target) { var first = page.target.p0; page.met = 1 }
+  }
+}
+"#,
+    );
+    // Once without it, so all else the handler needs is made already.
+    h.pass_ms(10);
+    let target = h.engine.create(meta, Some(root)).unwrap();
+    h.set(root, "target", Value::Object(target));
+    h.engine.collect_garbage();
+    (h, root)
+}
+
+/// Meets an object of `make`'s type with a quarter more room than meeting
+/// one keeps: enough, and more than a dispatch's share of it.
+fn meet_with_little_room(make: impl Fn() -> MetaRef) -> (Harness, f64) {
+    let (h, root) = about_to_meet(make());
+    let before = h.engine.script_heap_bytes().unwrap();
+    h.pass_ms(10);
+    assert_eq!(h.num(root, "met"), 1.0, "not met with room to spare");
+    h.engine.collect_garbage();
+    let kept = h.engine.script_heap_bytes().unwrap() - before;
+
+    let (h, root) = about_to_meet(make());
+    let limit = h.engine.script_heap_bytes().unwrap() + kept / 4 * 5;
+    assert!(h.engine.set_script_heap_limit(Some(limit)));
+    h.pass_ms(10);
+    let met = h.num(root, "met");
+    (h, met)
+}
+
+/// Registering a type built into the program is the engine's, made once,
+/// and outside the share of the dispatch that first meets it.
+#[test]
+fn first_meeting_a_wide_built_in_type_is_outside_the_share() {
+    let (h, met) = meet_with_little_room(|| MetaRef::Static(Box::leak(Box::new(wide().build()))));
+    assert_eq!(met, 1.0, "{:?}", h.engine.faults());
+    assert!(!ran_out(&h), "{:?}", h.engine.faults());
+}
+
+/// A script can cause types like one QML declares without end, so making
+/// one is the dispatch's.
+#[test]
+fn first_meeting_as_wide_a_declared_type_is_within_the_share() {
+    let (h, met) = meet_with_little_room(|| wide().build_shared());
+    assert_eq!(met, 0.0, "registered past the share");
+    assert!(ran_out(&h), "{:?}", h.engine.faults());
 }
 
 /// The limit and the share are both the defaults. One buffer of 85 % of

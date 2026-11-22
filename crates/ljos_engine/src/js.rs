@@ -1312,6 +1312,8 @@ fn holds_js_within(v: &Value, depth: u32) -> bool {
 fn holds_js_deep(v: &Value) -> bool {
     let mut stack = vec![v];
     while let Some(v) = stack.pop() {
+        #[cfg(test)]
+        holds_js_tests::LOOKED_AT.with(|n| n.set(n.get() + 1));
         match v {
             Value::Js(_) => return true,
             Value::List(items) => stack.extend(items.iter()),
@@ -1320,6 +1322,33 @@ fn holds_js_deep(v: &Value) -> bool {
         }
     }
     false
+}
+
+#[cfg(test)]
+mod holds_js_tests {
+    use super::{HOLDS_JS_DEPTH, holds_js};
+    use crate::value::{JsHandle, Value};
+
+    thread_local! {
+        /// What [`super::holds_js_deep`] looked at.
+        pub(super) static LOOKED_AT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    }
+
+    /// Past the depth recursion goes to, as before it, the first script
+    /// value found ends the look: the rest of a wide list is not gone to.
+    #[test]
+    fn a_deep_look_stops_at_the_first_script_value() {
+        let mut wide = vec![Value::Undefined; 100_000];
+        wide[0] = Value::Js(JsHandle(ljos_js::JsRef::object(Vec::new())));
+        let mut v = Value::list(wide);
+        for _ in 0..HOLDS_JS_DEPTH {
+            v = Value::list(vec![v]);
+        }
+        LOOKED_AT.with(|n| n.set(0));
+        assert!(holds_js(&v));
+        let looked = LOOKED_AT.with(|n| n.get());
+        assert!((1..10).contains(&looked), "looked at {looked}");
+    }
 }
 
 /// How deep [`Engine::deep_copy`] goes: past it an object is left to the
