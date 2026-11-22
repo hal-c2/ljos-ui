@@ -214,6 +214,41 @@ impl JsRef {
         self.0.live.get().map(|l| l.key)
     }
 
+    /// The references in what this one is to be made from, through the
+    /// lists, maps and typed values between, put on `out` with nothing
+    /// made. An entry looked at costs `left` one; false when that ran out
+    /// first.
+    pub(crate) fn pending_refs(&self, left: &mut usize, out: &mut Vec<JsRef>) -> bool {
+        let Ok(pending) = self.0.pending.lock() else {
+            return true;
+        };
+        let first: Box<dyn Iterator<Item = &JsValue> + '_> = match pending.as_ref() {
+            Some(Pending::Array(items)) => Box::new(items.iter()),
+            Some(Pending::Object(fields)) => Box::new(fields.iter().map(|(_, v)| v)),
+            None => return true,
+        };
+        let mut open = vec![first];
+        while let Some(rest) = open.last_mut() {
+            let Some(v) = rest.next() else {
+                open.pop();
+                continue;
+            };
+            if *left == 0 {
+                return false;
+            }
+            *left -= 1;
+            match v {
+                JsValue::Handle(r) => out.push(r.clone()),
+                JsValue::Array(items) | JsValue::Typed(_, items) => {
+                    open.push(Box::new(items.iter()));
+                }
+                JsValue::Map(fields) => open.push(Box::new(fields.iter().map(|(_, v)| v))),
+                _ => {}
+            }
+        }
+        true
+    }
+
     /// Takes what to build the JS value from.
     pub(crate) fn take_pending(&self) -> Option<Pending> {
         self.0.pending.lock().ok()?.take()
