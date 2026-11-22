@@ -329,4 +329,9 @@ Feature: Material, Fusion and Universal styles
       | Material  |
       | Fusion    |
       | Universal |
-      | macOS     |
+
+    # Qt ships the macOS style only on macOS.
+    @ljos-only
+    Examples:
+      | style |
+      | macOS |
