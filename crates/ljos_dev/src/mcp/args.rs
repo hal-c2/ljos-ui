@@ -102,7 +102,8 @@ that hides its text is not echoed back. Answers with what changed.";
 pub const PRESS: &str = "\
 Press keys: `Enter`, `Tab`, `Escape`, `F5`, a chord such as `Ctrl+A` or `Shift+Tab`; several \
 separated by a space. `repeat` presses them again (up to 100). With `target` the item is clicked \
-first. Goes to the item with keyboard focus. Answers with what changed.";
+first. Goes to the item with keyboard focus; refused while its window is inactive. Answers \
+with what changed.";
 
 pub const SCROLL: &str = "\
 Turn the mouse wheel over `target` (default: the middle of the window) by `dx`, `dy` notches. \

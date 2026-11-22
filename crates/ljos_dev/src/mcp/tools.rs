@@ -1146,6 +1146,10 @@ impl Look<'_> {
         window.insert("height".into(), num(viewport.height()));
         window.insert("scale".into(), num(f64::from(self.scene.scale_factor())));
         window.insert("visible".into(), json!(visible));
+        // Keys reach only the window that has the keyboard: an agent that
+        // gave a window the focus waits for this before pressing.
+        let active = self.scene.is_window_active(engine);
+        window.insert("active".into(), json!(active));
         window.insert(
             "appearance".into(),
             json!({
@@ -1195,6 +1199,12 @@ impl Look<'_> {
             if prefs.reduced_motion { "on" } else { "off" },
             num(prefs.font_scale)
         );
+        if !active {
+            let _ = writeln!(
+                text,
+                "the window is not active: another window has the keyboard"
+            );
+        }
         let _ = match &focus {
             Value::Null => writeln!(text, "keyboard focus: nowhere"),
             f => writeln!(

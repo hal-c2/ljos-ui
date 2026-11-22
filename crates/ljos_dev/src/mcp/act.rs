@@ -522,6 +522,17 @@ impl Hands<'_> {
 
     fn press(&mut self, a: &PressArgs) -> Result<Done, SurfaceError> {
         let chords = Chords::parse(&a.keys).map_err(SurfaceError::invalid_argument)?;
+        // A window in the background hears no key, as a person's keys do
+        // not reach it: answering "pressed" would tell the agent of keys
+        // that went nowhere. A click on the window does not bring it to
+        // the front either; that is the window system's to do.
+        if self.scene.root().is_some() && !self.scene.is_window_active(self.engine) {
+            return Err(not_actionable(
+                "the window is not active: another window has the keyboard, so keys pressed now \
+                 reach nothing. Bring the window to the front first; `app_status` says when it \
+                 has the keyboard (`windows[0].active`)",
+            ));
+        }
         if let Some(target) = &a.target {
             let at = self.aim(target, "app_press")?;
             self.click_at(at, MouseButtons::LEFT, 1)?;

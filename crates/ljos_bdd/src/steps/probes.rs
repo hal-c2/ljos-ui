@@ -286,11 +286,15 @@ fn observer_scrolled(w: &mut LjosWorld, locator: String, notches: f64, way: Stri
 
 // Keys go to what has the observer's keyboard focus, as someone using
 // only a keyboard would press them: `"Tab Right Return"`, one chord after
-// another.
+// another. They type into the observer's window, which is brought to the
+// front first: it comes up a while after its inspector answers, and until
+// then the application's window has the keyboard.
 #[when(regex = r#"^the observer is given the keys "([^"]+)"$"#)]
 fn observer_given_keys(w: &mut LjosWorld, keys: String) -> StepResult {
     w.each(|b| {
-        b.probes()?
+        let probes = b.probes()?;
+        probes.give_observer_keyboard()?;
+        probes
             .observer_call("app_press", serde_json::json!({ "keys": keys }))
             .map(|_| ())
     })

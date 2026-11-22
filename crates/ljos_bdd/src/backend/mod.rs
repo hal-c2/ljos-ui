@@ -1671,6 +1671,16 @@ pub trait Probes: Backend {
         })
     }
 
+    /// Gives the observer's window the keyboard as a person does, by
+    /// bringing it to the front, and waits until its window says it has
+    /// it: keys given to a window in the background reach nothing.
+    fn give_observer_keyboard(&mut self) -> Result<()> {
+        Err(BackendError::Unsupported {
+            backend: self.name(),
+            what: "driving an observer window",
+        })
+    }
+
     /// Calls the application's inspector itself until it turns a call
     /// away for asking too often, and goes on calling it for `kept` more,
     /// so that what its observer asks of it meanwhile is turned away too
