@@ -680,8 +680,11 @@ fn running_out_of_heap_is_told_after_its_locals_go() {
 /// full the heap is, it is the script's exception.
 #[test]
 fn a_null_a_script_throws_on_a_nearly_full_heap_is_its_own() {
+    // One run fills the heap here, which a dispatch's share would refuse: the
+    // share is off, and the tests after this one throw `null` with it on.
     let host = JsHost::new(JsConfig {
         memory_limit: Some(16 * 1024 * 1024),
+        dispatch_heap_share: None,
         ..JsConfig::default()
     })
     .unwrap();
@@ -709,9 +712,79 @@ fn a_null_a_script_throws_on_a_nearly_full_heap_is_its_own() {
     assert_eq!(eval_num(&host, "40 + 2").unwrap(), 42.0);
 }
 
-/// What QuickJS throws for want of heap is out of memory however it reaches
-/// the host: caught and thrown again by the script, too, and a script
-/// cannot make it read as anything else.
+/// A script's own `throw null` is its own on a nearly full heap with the
+/// default share as well, the heap filled a share at a time.
+#[test]
+fn a_null_a_script_throws_on_a_heap_filled_a_share_at_a_time_is_its_own() {
+    let host = small(16);
+    host.collect_now();
+    let held = host.memory_stats().unwrap().malloc_size;
+    let limit = held + 4 * MIB;
+    assert!(host.set_memory_limit(Some(limit)));
+    eval_num(&host, "var kept = []; 0").unwrap();
+    for _ in 0..8 {
+        let now = host.memory_stats().unwrap().malloc_size;
+        if now + limit / 16 >= limit {
+            break;
+        }
+        // Within the three quarters of what is left a run may take.
+        let bytes = (limit - now) * 7 / 10;
+        eval_num(&host, &format!("kept.push(new ArrayBuffer({bytes})); 0")).unwrap();
+    }
+    let now = host.memory_stats().unwrap().malloc_size;
+    assert!(now + limit / 16 >= limit, "nearly full: {now} of {limit}");
+    let err = eval_num(&host, "throw null").unwrap_err();
+    assert!(matches!(err, JsFault::JsException { .. }), "{err:?}");
+}
+
+/// A refusal past the share that the script caught says nothing of a `null`
+/// it throws itself after: QuickJS threw none, as its count tells.
+#[test]
+fn a_null_a_script_throws_after_a_caught_refusal_is_its_own() {
+    let host = small(16);
+    // One block past the share, so there is room left to make the error.
+    let err = eval_num(
+        &host,
+        "let refused = false; \
+         try { new ArrayBuffer(15 * 1024 * 1024) } catch (e) { refused = e.message === 'out of memory' } \
+         if (!refused) throw new Error('not refused'); \
+         throw null",
+    )
+    .unwrap_err();
+    match err {
+        JsFault::JsException { message, .. } => {
+            assert!(!message.contains("not refused"), "{message}")
+        }
+        other => panic!("told as {other:?}"),
+    }
+}
+
+/// So it is in a promise job, which is judged on its own.
+#[test]
+fn a_null_a_job_throws_after_a_caught_refusal_is_its_own() {
+    let host = small(16);
+    host.enter("setup", host.config().slice, |s| {
+        s.eval::<(), _>(
+            "queueMicrotask(() => { \
+                 let refused = false; \
+                 try { new ArrayBuffer(15 * 1024 * 1024) } catch (e) { refused = e.message === 'out of memory' } \
+                 if (!refused) throw new Error('not refused'); \
+                 throw null \
+             })",
+        )
+    })
+    .unwrap();
+    let pumped = host.pump_jobs(Instant::now() + Duration::from_secs(5));
+    match &pumped.faults[..] {
+        [JsFault::JsException { message, .. }] => {
+            assert!(!message.contains("not refused"), "{message}")
+        }
+        other => panic!("told as {other:?}"),
+    }
+}
+
+/// The `null` QuickJS throws for want of heap is out of memory however it
+/// reaches the host: caught and thrown again by the script, too.
 #[test]
 fn the_error_thrown_for_want_of_heap_and_thrown_again_is_running_out_of_memory() {
     let host = JsHost::new(JsConfig {
