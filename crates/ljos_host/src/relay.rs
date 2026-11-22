@@ -174,6 +174,9 @@ pub struct Writes {
     /// The method's own report, until a write follows it.
     #[cfg_attr(not(any(target_os = "android", test)), allow(dead_code))]
     typed: Option<crate::HeldText>,
+    /// The newest request dropped for typing a write on its way can replace.
+    #[cfg_attr(not(any(target_os = "android", test)), allow(dead_code))]
+    passed: Option<crate::HeldText>,
 }
 
 /// Writes kept pending at most: the platform applies each within a turn of
@@ -232,6 +235,7 @@ impl Writes {
         }
         self.written.push_back(now.clone());
         self.typed = None;
+        self.passed = None;
         self.pending.push_back(now);
     }
 }
@@ -258,6 +262,18 @@ impl Writes {
         says_write: impl FnOnce() -> bool,
     ) -> Option<crate::HeldText> {
         (self.wrote_it(state) && says_write()).then(|| self.holds(state.clone()))
+    }
+
+    /// `now` was dropped as stale. Whatever it was made over, it lost only
+    /// to typing, and a write made before can still land on that.
+    pub(crate) fn passed_over(&mut self, now: &crate::HeldText) {
+        self.passed = (!self.written.is_empty()).then(|| now.clone());
+    }
+
+    /// A write told back replaced the typing: what was dropped for that
+    /// typing puts nothing of the method's back, and is written after all.
+    pub(crate) fn to_write_again(&mut self) -> Option<crate::HeldText> {
+        self.passed.take()
     }
 
     /// Whether a request made `over` is stale now that the method is taken
