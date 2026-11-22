@@ -74,6 +74,12 @@ impl Dev {
     pub(crate) fn aliases(&self) -> &Aliases {
         self.session.aliases()
     }
+
+    /// The compiler's warnings on what runs, when they changed.
+    #[cfg(feature = "mcp")]
+    pub(crate) fn take_warnings(&mut self) -> Option<&[ljos_dev::CompileFault]> {
+        self.session.take_warnings()
+    }
 }
 
 impl<M> Setup<'_, M> {

@@ -144,9 +144,16 @@ impl<M> ShellApp<M> {
         #[cfg(feature = "mcp")]
         {
             let watched = self.is_watched();
-            let Self { view, tools, .. } = self;
+            let Self {
+                view, tools, dev, ..
+            } = self;
             if let Some(served) = tools.inspector.as_mut() {
                 served.set_watched(watched);
+                // Before the pump, which tells a reload to who waits for
+                // one: its warnings are to be there by then.
+                if let Some(warnings) = dev.as_mut().and_then(|dev| dev.take_warnings()) {
+                    served.set_warnings(warnings);
+                }
                 view.without_wake(|view| served.pump(view));
             }
             // An agent asked for a reload: the watcher reads the files at
@@ -586,6 +593,11 @@ mod inspector {
             aliases: impl IntoIterator<Item = (&'a str, &'a std::path::Path)>,
         ) {
             self.inspector.set_aliases(aliases);
+        }
+
+        /// Tells the inspector the compiler's warnings on what runs.
+        pub(crate) fn set_warnings(&mut self, warnings: &[ljos_dev::CompileFault]) {
+            self.inspector.set_warnings(warnings);
         }
 
         /// Answers the agent that waits for a reload, with how it went.

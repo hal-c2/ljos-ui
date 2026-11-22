@@ -1685,7 +1685,7 @@ Static resources carry long `ttlMs` values.
 
 | Tool | Does | Cap |
 |---|---|---|
-| `app_status` | Windows (`windows[0].active`: whether it has the keyboard), size, scale, appearance, focus, visibility state, clock (real or virtual), animations under way, capabilities | inspect |
+| `app_status` | Windows (`windows[0].active`: whether it has the keyboard), size, scale, appearance, focus, visibility state, clock (real or virtual), animations under way, capabilities; under `/reload` how the last reload went and the compiler's warnings on what runs (below) | inspect |
 | `app_snapshot` | Accessibility-tree outline with refs; `root`, `depth`, `include`, `max_nodes`, `cursor`, `since` (delta), `pointer` (also the shown items that take the pointer and have no accessible role, as `pointer` lines), optional image | inspect |
 | `app_find` | Nodes by role, name (exact, substring or regex), `objectName`, text or state. Cheaper than a snapshot | inspect |
 | `app_inspect` | One node in depth: type, `ObjectKey`, source location, properties with **provenance** (assigned, bound at tier 0, 1 or JS, animated, host (what the toolkit wrote itself), default), geometry, lattice state; `dependencies` names one property and gives what its binding read, what reads it and its tier, and `bindings` gives the same for every binding written for the object (not those a type keeps for itself, such as `childrenRect`). Each end names its object as the file does (its `id`, else its objectName, else its type) and gives its handle, which is a target of its own | inspect |
@@ -1697,7 +1697,7 @@ Static resources carry long `ttlMs` values.
 | `app_advance` | Advance the virtual `Clock` of an application on one (`ljos test`, an in-process host); `ljos run` is on the system clock and refuses it | input |
 | `app_screenshot` | PNG of a window or node from the R renderer, so it works headless or occluded; at most 1280 px | inspect |
 | `app_resize` / `app_set_appearance` | Size, DPI and orientation; light or dark, contrast, reduced motion, font scale (`SystemPrefs`) | input |
-| `app_reload` | Force recompile and reload. Answers `applied` with the generation when a reload was applied since the last `app_reload` was answered, so a save the watcher applied before the call was taken up is told as the agent's own; `failed` with the compiler's message; `unchanged` only when nothing was | mutate |
+| `app_reload` | Force recompile and reload. Answers `applied` with the generation when a reload was applied since the last `app_reload` was answered, so a save the watcher applied before the call was taken up is told as the agent's own; `failed` with the compiler's message; `unchanged` only when nothing was. Each answer has the warnings below | mutate |
 | `app_alias` | `{module, dir}` imports the module from that directory (under the project, a root, or one aliased at the start) and reloads, keeping state as a reload does; `dir: null` drops the alias. Answers as `app_reload` does, with the `generation` to wait for in `app_status {after_reload}`; `app_status` lists the aliases in force under `/reload/aliases`. Needs the files watched | mutate |
 | `app_logs` / `app_metrics` | Logs and JS errors with QML file and line; `FrameReport` summaries, lane times, top `ProcId`s, budgets (section 8.5) | inspect |
 | `app_processes` | What does work (section 3.4, the observer): threads with state, CPU time and wakeups, running Timers and animations, scheduler owners, the supervision tree (`kind: "supervisor"`), the last faults and what took each (`kind: "fault"`, in `faults`), what will wake the UI thread (`kind: "waker"`), and the named `UiInbox`es and side streams (kind `inbox` or `batch`, depth, capacity, oldest age, sent, refused, replaced, evicted, drained, senders, kinds). `kind` keeps one kind; `kind: "mailbox"` with `mailbox` keeps one inbox or stream, `peek` names its front kinds (at most 20), never contents. Mailboxes and processes share the answer, either with at least half of its room, and what doesn't fit is counted (`processes_left_out`, `mailboxes_left_out`). The inboxes are read on the server's thread, so a stuck UI thread still shows them, with what it did not answer in `ui_thread` | inspect |
@@ -1708,6 +1708,37 @@ Static resources carry long `ttlMs` values.
 | `app_watch` | Waits until frames, drawn passes, log lines, reloads, traced events, kept wakes or changes of a followed model move past the counts given as `since`, at most an hour; `settle_ms` gathers a burst into one answer. Named in `topics`, `rests` counts the times the UI thread went to sleep saying something new, and every answer's `rest` says what it last said: when it wakes by itself next (`wake_in_ms`, `null` for not until input or a message), whether the primary window still owes a frame (`frame_owed`: a pass of it due within a frame, or asked of the window system and not yet run) and the pointer as the primary window's last pass saw it, with `animating` (an animation that is not paused is under way) and `at_rest` (neither of those, and nothing a tool sent since the last rest); `until_rest` waits for `at_rest`, at most `wait_ms`. A timer due does not stop a rest: it moves nothing by itself, and `wake_in_ms` tells of it. Sleeps on the server's thread and wakes nothing in the application | inspect |
 | `app_eval` | JS in the engine context under a `JsHost` deadline; result wrapped as `{value}`, at most 64 KB | eval |
 | `app_batch` | A list of steps in one call, stopping at the first error | per step |
+
+**Reload warnings.** `app_status` (under `/reload`), `ljos://app/reload`,
+and the answers of `app_reload` and `app_alias` (at the top) have
+`warnings`, a list of `{file, line, column, message}` ordered by place,
+with `warnings_truncated` and `warnings_omitted`.
+
+- They are all the compiler's warnings on the QML files the application
+  loaded, as they run now, where the errors `ljos run` prints have each
+  only once. The first load's are there, and a file a `Loader` reaches
+  later adds its own.
+- A reload that was applied replaces them, so one without any leaves an
+  empty list. One that failed leaves them as they were, its error being
+  in `message`; so do `unchanged` and a reload of only the theme.
+- `warnings` is `null` when the host tells none: without `--watch`, and
+  in a host that does not compile. That is not an empty list.
+- `file` is written as in a reload's error: with `/`, relative to the
+  project's root (`--project`, else the directory of the file run), with
+  `.qml`. A file a `Loader` reached is written the same
+  (`parts/Panel.qml`). With several roots it is relative to the first
+  that has it. A file of an alias whose directory is outside the roots is
+  `.aliases/<module>/<path>`, the module with its dots
+  (`.aliases/App.Media/Player.qml`): `<path>` is relative to that
+  module's `dir` in `/reload/aliases`, which is absolute.
+- At most 20 are listed, in at most 8 KiB of JSON, a message cut at 1000
+  characters and a file at 256, each with "…" where it was cut.
+  `warnings_omitted` counts those not listed, and `warnings_truncated`
+  is true when any was left out or cut. Secrets are masked before a cut.
+- Only the compiler's typed diagnostics are in the list. The log and the
+  process's errors are never read for it, so nothing the application
+  prints can add one. A message may quote names from the source, so a
+  client takes it as data.
 
 **Resources:** `ljos://app/tree` (subscribable, updated on reload or a change in tree structure), `ljos://app/logs`, `ljos://app/metrics` and `ljos://app/source/{path}`. The inspector also serves the authoring resources, so one connection is enough.
 
