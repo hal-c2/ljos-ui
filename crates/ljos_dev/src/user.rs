@@ -2671,4 +2671,41 @@ mod tests {
             "the picture is shown again"
         );
     }
+
+    /// A picture replaced by a copy of the same size that keeps its
+    /// source's time (`cp -p`, `rsync -a`, an unpacked archive) is another
+    /// file all the same.
+    #[cfg(unix)]
+    #[test]
+    fn an_ask_after_a_picture_was_replaced_by_a_copy_of_its_size_and_time_is_answered_applied() {
+        let root = tempfile::tempdir().expect("a directory");
+        write(&root.path().join("Card.qml"), "import QtQuick\nItem { }\n");
+        let logo = root.path().join("logo.png");
+        write(&logo, "a picture");
+        let engine = engine();
+        let (mut session, woke) = session(&engine, root.path(), false);
+        let clock = ljos_runtime::SystemClock::new();
+        let _ = session.pump(&engine, &clock, &mut NoWindow);
+        while woke.try_recv().is_ok() {}
+        session.read_again(&engine);
+        let _ = answered(&engine, &mut session, &woke);
+        let written = std::fs::metadata(&logo)
+            .and_then(|m| m.modified())
+            .expect("a time");
+        let copy = root.path().join("unpacked");
+        write(&copy, "b picture");
+        std::fs::File::options()
+            .write(true)
+            .open(&copy)
+            .and_then(|f| f.set_modified(written))
+            .expect("the time kept");
+        std::fs::rename(&copy, &logo).expect("moved into place");
+        session.read_again(&engine);
+        let _ = answered(&engine, &mut session, &woke);
+        assert_eq!(
+            session.answers,
+            [Reread::Unchanged, Reread::Applied],
+            "the copy is shown"
+        );
+    }
 }
