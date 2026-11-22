@@ -4342,6 +4342,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "ljos_example_android_scenarios"
+version = "0.0.0"
+dependencies = [
+ "ljos",
+]
+
+[[package]]
 name = "ljos_example_aot_spike"
 version = "0.0.0"
 dependencies = [
