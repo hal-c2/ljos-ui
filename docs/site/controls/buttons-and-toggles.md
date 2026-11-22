@@ -167,6 +167,7 @@ Watch out for keyboard activation on `DelayButton`: pressing and immediately rel
 ## Style coverage
 
 - Material, Fusion, and Universal restyle a subset of these controls (for example, Material provides its own `Button`, `CheckBox`, `RadioButton`, `RoundButton`, and `Switch`) and inherit the remaining controls from Basic.
+- macOS restyles only `Button`; every other control here is Basic's.
 
 ## See also
 

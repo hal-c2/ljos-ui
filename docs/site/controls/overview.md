@@ -1,6 +1,6 @@
 ---
 title: Controls Overview
-description: Use Ljós's own controls from Ljos.Controls, or the Basic, Fusion, Material and Universal style modules existing QML imports, and learn the Control base type, sizing, padding, palettes and fonts.
+description: Use Ljós's own controls from Ljos.Controls, or the Basic, Fusion, Material, Universal and macOS style modules existing QML imports, and learn the Control base type, sizing, padding, palettes and fonts.
 section: controls
 order: 1
 ---
@@ -53,7 +53,7 @@ A file chooses its style by its import and nothing else, so it draws the same wh
 
 ## Style modules
 
-Files that import `QtQuick.Controls` choose among four style modules: Basic, Fusion, Material and Universal. Every control exists in every style module, so a `SpinBox` or `ComboBox` works the same way whether your program runs under Basic, Fusion, Material, or Universal.
+Files that import `QtQuick.Controls` choose among five style modules: Basic, Fusion, Material, Universal and macOS. Every control exists in every style module, so a `SpinBox` or `ComboBox` works the same way whether your program runs under Basic, Fusion, Material, Universal or macOS.
 
 The Basic style is the neutral foundation that the other styles and custom controls build on. When a style does not provide its own version of a control, it falls back to Basic unless another fallback style is named. If your program does not choose a style, it uses the platform style, which is Fusion on Linux.
 
@@ -72,6 +72,7 @@ Each built-in style brings its own metrics:
 - **Fusion**: desktop metrics, such as an `80 × 24` `Button` with `4` px padding
 - **Material**: `64 × 52` `Button` and `120 × 56` `TextField`, with attached `Material.theme` and `Material.accent` properties
 - **Universal**: `32 × 32` `Button`, with attached `Universal.theme` and `Universal.accent` properties
+- **macOS**: `64 × 21` `Button`; every other control is Basic's
 
 The Basic style module (`QtQuick.Controls.Basic`) provides 61 types: `ApplicationWindow`, `BusyIndicator`, `Button`, `CheckBox`, `CheckDelegate`, `ComboBox`, `Control`, `DayOfWeekRow`, `DelayButton`, `Dial`, `Dialog`, `DialogButtonBox`, `DoubleSpinBox`, `Drawer`, `Frame`, `GroupBox`, `HorizontalHeaderView`, `HorizontalHeaderViewDelegate`, `ItemDelegate`, `Label`, `Menu`, `MenuBar`, `MenuBarItem`, `MenuItem`, `MenuSeparator`, `MonthGrid`, `Page`, `PageIndicator`, `Pane`, `Popup`, `ProgressBar`, `RadioButton`, `RadioDelegate`, `RangeSlider`, `RoundButton`, `ScrollBar`, `ScrollIndicator`, `ScrollView`, `SelectionRectangle`, `Slider`, `SpinBox`, `SplitView`, `StackView`, `SwipeDelegate`, `SwipeView`, `Switch`, `SwitchDelegate`, `TabBar`, `TabButton`, `TableViewDelegate`, `TextArea`, `TextField`, `ToolBar`, `ToolButton`, `ToolSeparator`, `ToolTip`, `TreeViewDelegate`, `Tumbler`, `VerticalHeaderView`, `VerticalHeaderViewDelegate`, and `WeekNumberColumn`. In addition, `QtQuick.Controls` provides `Calendar`, `ContextMenu`, and `ContextMenuAttached`.
 
