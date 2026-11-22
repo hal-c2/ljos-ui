@@ -400,3 +400,230 @@ fn a_shell_whose_scripts_ran_over_their_time_is_kept_and_its_binding_runs_again(
     frame(&e);
     assert_eq!(e.next_timer_deadline(), None, "nothing more to wait for");
 }
+
+const SNUG_MAIN: &str = r#"
+import QtQuick
+import Ljos.Blocks
+Item {
+    id: root
+    property bool ready: false
+    property int made: 0
+    property string source: "Snug"
+    property string fallback: "Full"
+    ShellLoader {
+        objectName: "loader"
+        source: root.source
+        fallback: root.fallback
+    }
+}
+"#;
+
+/// A fallback whose state takes more room than [`SNUG`] needs.
+const FULL: &str = r#"
+import QtQuick
+Item {
+    objectName: "full"
+    property int touched: 0
+    property var held: []
+    Component.onCompleted: {
+        for (let i = 0; i < 40000; i++) held.push({ i: i, s: "held " + i });
+    }
+}
+"#;
+
+/// A shell that fits only without [`FULL`], which its first read finds out.
+const SNUG: &str = r#"
+import QtQuick
+Item {
+    objectName: "snug"
+    property var lots: {
+        const a = [];
+        for (let i = 0; i < 20000; i++) a.push({ i: i, s: "row " + i });
+        return a;
+    }
+    Component.onCompleted: {
+        root.made++;
+        if (!root.ready) throw new Error("not ready");
+    }
+}
+"#;
+
+/// What the loader said just before the shown shell was read.
+struct BeforeRead {
+    status: i32,
+    error: String,
+    fallback_alive: bool,
+}
+
+fn error(e: &Engine, loader: ObjectId) -> String {
+    get(e, loader, "error").to_js_string().to_string()
+}
+
+fn out_of_memory(e: &Engine) -> usize {
+    e.faults()
+        .iter()
+        .filter(|f| f.kind() == "JsOutOfMemory")
+        .count()
+}
+
+/// A frame's order: what is due runs and what was destroyed goes, so its
+/// room is there before the shown shell is read. Only then are the faults
+/// delivered: a delivery before the read would be the end of the first read
+/// to an engine with no scene.
+fn turn(e: &Engine, clock: &VirtualClock, loader: ObjectId, fallback: ObjectId) -> BeforeRead {
+    e.advance_timers(clock.now());
+    e.run_pending_calls();
+    e.process_deferred_deletes();
+    e.collect_garbage();
+    let before = BeforeRead {
+        status: status(e, loader),
+        error: error(e, loader),
+        fallback_alive: e.is_alive(fallback),
+    };
+    if let Some(item) = get(e, loader, "item").as_object() {
+        let _ = get(e, item, "lots");
+    }
+    e.deliver_faults();
+    e.process_deferred_deletes();
+    before
+}
+
+/// `Full` shown because `Snug` was not ready, and the heap as full as that
+/// leaves it; `Snug` is ready now.
+fn snug() -> (Engine, Arc<VirtualClock>, ObjectId, ObjectId, ObjectId) {
+    let e = engine();
+    let clock = Arc::new(VirtualClock::new());
+    e.set_clock(Rc::new(clock.clone()));
+    compile(
+        &e,
+        &[
+            ("Main", SNUG_MAIN),
+            ("Full", FULL),
+            ("Snug", SNUG),
+            ("Other", SNUG),
+            ("Light", LIGHT),
+        ],
+    );
+    let root = e.create_from_url("Main", None, Vec::new()).unwrap();
+    let loader = find(&e, root, "loader");
+    e.deliver_faults();
+    e.process_deferred_deletes();
+    assert_eq!(shown(&e, loader), "full", "{}", error(&e, loader));
+    let fallback = get(&e, loader, "item").as_object().expect("the fallback");
+    set(&e, fallback, "touched", Value::from(7.0));
+    set(&e, root, "ready", Value::Bool(true));
+    assert!(e.collect_garbage());
+    let held = e.script_memory().unwrap().bytes;
+    assert!(e.set_script_heap_limit(Some(held + 64 * 1024)));
+    let _ = e.take_warnings();
+    (e, clock, root, loader, fallback)
+}
+
+/// Holding the fallback through the first read takes its room from the
+/// source: one that fits only without it stays on it, keeps saying why, and
+/// is tried at the backoff.
+#[test]
+fn a_shell_that_fits_only_without_the_fallback_stays_on_it_and_waits_between_tries() {
+    let (e, clock, root, loader, fallback) = snug();
+    let errors = Rc::new(std::cell::RefCell::new(Vec::new()));
+    let seen = errors.clone();
+    e.connect_by_name(loader, "errorChanged", move |e, _| {
+        seen.borrow_mut().push(error(e, loader));
+    })
+    .unwrap();
+
+    let mut waits = Vec::new();
+    for attempt in 0..7 {
+        let (made, faults) = (num(&e, root, "made"), out_of_memory(&e));
+        if attempt == 0 {
+            e.invoke_by_name(loader, "reload", &[]).unwrap();
+        } else {
+            let due = e.next_timer_deadline().expect("the source is tried again");
+            let wait = due.saturating_since(clock.now());
+            waits.push(wait.as_secs());
+            if wait >= Duration::from_secs(1) {
+                for early in [wait / 2, wait - Duration::from_millis(20)] {
+                    let at = due - (wait - early);
+                    clock.set(at);
+                    turn(&e, &clock, loader, fallback);
+                    assert_eq!(num(&e, root, "made"), made, "no try before it is due");
+                    assert_eq!(out_of_memory(&e), faults);
+                    assert_eq!(e.next_timer_deadline(), Some(due));
+                }
+            }
+            clock.set(due);
+        }
+        let before = turn(&e, &clock, loader, fallback);
+        assert_eq!(
+            status(&e, loader),
+            2,
+            "a source that fits only without the fallback stays on it (try {attempt})"
+        );
+        assert_eq!(
+            get(&e, loader, "item").as_object(),
+            Some(fallback),
+            "the same fallback"
+        );
+        assert_eq!(num(&e, fallback, "touched"), 7.0);
+        assert_eq!(num(&e, root, "made"), made + 1.0, "one try");
+        assert_eq!(out_of_memory(&e), faults + 1, "{:?}", e.faults());
+        assert!(error(&e, loader).contains("out of memory"));
+        assert_eq!(before.status, 1, "Ready while the first read is ahead");
+        assert!(before.fallback_alive, "held through the first read");
+        assert_ne!(before.error, "", "the fault is said until the read is over");
+    }
+    assert_eq!(waits, [0, 1, 2, 4, 8, 16], "the backoff");
+    assert!(
+        errors.borrow().iter().all(|said: &String| !said.is_empty()),
+        "a failing try blanked the fault: {:?}",
+        errors.borrow()
+    );
+    let tries = e
+        .take_warnings()
+        .iter()
+        .filter(|w| w.contains("ShellLoader: trying the source again in"))
+        .count();
+    assert_eq!(tries, 7, "one warning a fault");
+}
+
+/// The control of the test above, and the scope of holding: changing
+/// `source` or `fallback` discards the held one, and then the source fits.
+#[test]
+fn changing_the_source_or_the_fallback_discards_the_held_one_and_gives_its_room_back() {
+    for (property, to) in [("source", "Other"), ("fallback", "Light")] {
+        let (e, clock, root, loader, fallback) = snug();
+        let errors = Rc::new(std::cell::RefCell::new(Vec::new()));
+        let seen = errors.clone();
+        e.connect_by_name(loader, "errorChanged", move |e, _| {
+            seen.borrow_mut().push(error(e, loader));
+        })
+        .unwrap();
+        e.invoke_by_name(loader, "reload", &[]).unwrap();
+        assert!(e.is_alive(fallback), "{property}: held before the change");
+        assert_ne!(error(&e, loader), "", "{property}: said while held");
+        assert!(
+            errors.borrow().is_empty(),
+            "{property}: unchanged while held"
+        );
+        set(&e, root, property, Value::from(to));
+        turn(&e, &clock, loader, fallback);
+        assert!(
+            !e.is_alive(fallback),
+            "{property}: the held one is discarded"
+        );
+        assert_eq!(
+            *errors.borrow(),
+            [""],
+            "{property}: the clearing is signalled"
+        );
+        assert_eq!(status(&e, loader), 1, "{property}: {}", error(&e, loader));
+        assert_eq!(shown(&e, loader), "snug", "{property}");
+        assert_eq!(error(&e, loader), "", "{property}");
+        assert_eq!(
+            out_of_memory(&e),
+            0,
+            "{property}: fits without the fallback"
+        );
+        assert_eq!(e.next_timer_deadline(), None, "{property}");
+    }
+}
