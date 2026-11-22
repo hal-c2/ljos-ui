@@ -4,7 +4,8 @@
 //! `PropertyMap`) makes a generation of script objects per publish; with
 //! a large live table the sweep that frees the replaced generations must
 //! not wait for the table to double, or for a count of newer records when
-//! each is large, or they pile up to the heap's cap.
+//! each is large, or they pile up to the heap's cap. A collection lets
+//! go of them all, whatever the sweep still waits for.
 
 use std::sync::Arc;
 
@@ -32,7 +33,11 @@ fn generation(n: usize, items: usize, repeats: usize) -> Value {
         .map(|i| {
             Value::Map(Arc::new(vec![(
                 Atom::intern("t"),
-                Value::from(format!("item {i} of generation {n} ").repeat(repeats).as_str()),
+                Value::from(
+                    format!("item {i} of generation {n} ")
+                        .repeat(repeats)
+                        .as_str(),
+                ),
             )]))
         })
         .collect();
@@ -44,6 +49,12 @@ fn generation(n: usize, items: usize, repeats: usize) -> Value {
 
 fn heap(engine: &Engine) -> usize {
     engine.collect_garbage();
+    held(engine)
+}
+
+/// What the heap holds without collecting first: a collection lets go of
+/// every dead record, so it would hide how many wait for a sweep.
+fn held(engine: &Engine) -> usize {
     engine.script_memory().expect("scripts ran").bytes
 }
 
@@ -100,10 +111,10 @@ fn replaced_records_are_let_go_within_a_few_newer_ones() {
             200.0 + n as f64
         );
         if n == 50 {
-            at_fifty = heap(&engine);
+            at_fifty = held(&engine);
         }
     }
-    let after = heap(&engine);
+    let after = held(&engine);
     assert!(
         after < at_fifty + 4 * 1024 * 1024,
         "script heap grew from {at_fifty} (generation 50, base {base}) to {after} \
@@ -132,4 +143,36 @@ fn a_few_large_replaced_records_do_not_fill_the_heap() {
         );
         assert_eq!(read, 1_000.0 + n as f64);
     }
+}
+
+/// A large tree replaced by a small one makes too few bytes and entries
+/// to be swept, so a collection, above all the one that is to make room in
+/// a full heap, has to let go of it.
+fn collecting_lets_go_of_a_replaced_tree(collect: impl FnOnce(&Engine) -> bool) {
+    let (engine, map, root) = shell();
+    map.insert(&engine, "big", generation(1, 1_000, 80));
+    assert_eq!(engine.read_by_name(root, "bn").to_number(), 1_001.0);
+    let with_tree = heap(&engine);
+    map.insert(&engine, "big", generation(2, 1, 1));
+    assert_eq!(engine.read_by_name(root, "bn").to_number(), 3.0);
+    assert!(collect(&engine), "it collected");
+    let after = held(&engine);
+    assert!(
+        after + 1024 * 1024 < with_tree,
+        "the heap held {with_tree} bytes with the tree and {after} after \
+         collecting: the replaced tree was kept"
+    );
+}
+
+#[test]
+fn a_collection_lets_go_of_replaced_records() {
+    collecting_lets_go_of_a_replaced_tree(Engine::collect_garbage);
+}
+
+#[test]
+fn a_collection_for_a_full_heap_lets_go_of_replaced_records() {
+    collecting_lets_go_of_a_replaced_tree(|engine| {
+        engine.report_fault(None, ljos_runtime::Fault::JsOutOfMemory);
+        engine.collect_for_full_heap(engine.faults_reported())
+    });
 }

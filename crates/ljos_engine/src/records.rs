@@ -211,6 +211,74 @@ mod tests {
         }
     }
 
+    /// Filling through a script's reads, where each record has an object
+    /// and its bytes, is linear too.
+    #[test]
+    fn filling_a_table_with_script_objects_is_linear() {
+        for n in [1_000, 10_000] {
+            let records = Records::default();
+            let held: Vec<_> = (0..n).map(record).collect();
+            let text = "x".repeat(1024);
+            for r in &held {
+                let reader = r.clone();
+                let kept = records.map(&reader, || {
+                    vec![("text".to_owned(), JsValue::String(text.clone()))]
+                });
+                assert!(kept.is_some(), "a held record is kept");
+            }
+            let checked = records.checked.get();
+            assert!(
+                checked <= 10 * n,
+                "filling {n} read records checked {checked} entries in sweeps"
+            );
+        }
+    }
+
+    /// Under steady replacing, the dead entries stay under an eighth of
+    /// the live ones (or a few in a small table) however little each
+    /// weighs: what one holds by a handle is not in its weight.
+    #[test]
+    fn replaced_records_stay_a_bounded_share_of_the_entries() {
+        for n in [0, 20_000] {
+            let records = Records::default();
+            let live: Vec<_> = (0..n).map(record).collect();
+            for r in &live {
+                records.copy_each_read(r);
+            }
+            let mut current = record(0);
+            records.copy_each_read(&current);
+            let mut most_dead = 0;
+            for i in 1..100_000 {
+                current = record(i);
+                records.copy_each_read(&current);
+                // Every entry but the live ones and the current one is dead.
+                let len = records.by_address.borrow().len();
+                most_dead = most_dead.max(len - live.len() - 1);
+            }
+            let bound = ((n + 1) / SWEEP_SHARE).max(64) + 1;
+            assert!(
+                most_dead <= bound,
+                "{most_dead} replaced records were held at once beside {n} live \
+                 ones (bound {bound})"
+            );
+        }
+    }
+
+    /// A module's value is an object of its members, which can be large.
+    #[test]
+    fn a_typed_value_weighs_what_its_members_hold() {
+        const TEXT: usize = 64 * 1024;
+        let typed = JsValue::Typed(
+            ljos_js::ValueKind::nth(0),
+            vec![JsValue::String("x".repeat(TEXT))],
+        );
+        let bytes = object_bytes(&[("value".to_owned(), typed)]);
+        assert!(
+            bytes >= TEXT,
+            "{TEXT} bytes of text were counted as {bytes}"
+        );
+    }
+
     /// What replaced records hold stays under an eighth of the live bytes,
     /// or the floor, plus the newest record: whether one key is republished
     /// or many in turn, so each record is held for a while before it dies.
