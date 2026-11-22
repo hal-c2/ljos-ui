@@ -854,41 +854,13 @@ mod tests {
     }
 
     #[test]
-    fn a_keyboard_that_moves_the_cursor_tells_the_native_side() {
-        let java = |name: &str| {
-            TEMPLATE
-                .iter()
-                .find(|(p, _)| p.ends_with(name))
-                .map(|(_, t)| t.split_whitespace().collect::<String>())
-                .unwrap()
-        };
-        // GameTextInput's own setSelection and setComposingRegion change
-        // only its Editable, so a keyboard moving the cursor by itself (a
-        // space-bar swipe) would never reach the field.
-        let of = java("TextInputOf.java");
-        assert!(of.contains(
-            "publicbooleansetSelection(intstart,intend){booleanset=super.setSelection(start,end);tell();returnset;}"
-        ));
-        assert!(of.contains(
-            "publicbooleansetComposingRegion(intstart,intend){composing=true;booleanset=super.setComposingRegion(start,end);composing=false;tell();returnset;}"
-        ));
-        // Told once the call is done, unless it was GameTextInput setting
-        // the native side's own state: its final setState sets the cursor
-        // through those same two calls, then restarts the input, and an
-        // echo of that state arriving late would undo a newer edit.
-        // Ahead of the keyboard's next call, which may be a key for the
-        // cursor it just moved.
-        assert!(of.contains(
-            "privatevoidtell(){if(!moved){moved=true;main.postAtFrontOfQueue(this::told);}}"
-        ));
-        assert!(of.contains("privatevoidtold(){if(moved){endBatchEdit();}}"));
-        assert!(of.contains("publicvoidrestartInput(){moved=false;super.restartInput();}"));
-        // BaseInputConnection sets a composing region inside a batch, whose
-        // end would report a setState before its restart cancels that.
-        assert!(of.contains(
-            "publicbooleanendBatchEdit(){if(composing){returnfalse;}moved=false;returnsuper.endBatchEdit();}"
-        ));
-        let activity = java("LjosActivity.java");
+    fn the_native_side_writes_to_the_templates_own_connection() {
+        let activity: String = TEMPLATE
+            .iter()
+            .find(|(p, _)| p.ends_with("LjosActivity.java"))
+            .map(|(_, t)| t.split_whitespace().collect())
+            .unwrap();
+        // What that connection tells is tests/android_text_input.rs's.
         assert!(activity.contains("TextInputOf.surface(this,"));
         // The native side writes through GameActivity_setTextInputState
         // straight to the connection; GameActivity's Java one is not on
