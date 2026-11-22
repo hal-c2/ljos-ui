@@ -15,9 +15,10 @@ use tokio::sync::watch;
 
 use super::tools::clip;
 
-/// How many warnings are listed, in how many bytes of JSON, and how long
-/// each text may be in characters. An answer carries its value twice, so
-/// the bytes are well under half of what a reply may have.
+/// How many warnings are listed, in how many bytes of JSON, how long a
+/// message may be before it is cut and a file before its warning is left
+/// out (both in characters). An answer carries its value twice, so the
+/// bytes are well under half of what a reply may have.
 const MOST_WARNINGS: usize = 20;
 const MOST_WARNING_BYTES: usize = 8 * 1024;
 const MOST_MESSAGE_CHARS: usize = 1000;
@@ -33,21 +34,27 @@ pub(crate) struct Warnings {
 }
 
 impl Warnings {
-    /// The first of `faults` by place, each text through `mask` and then
-    /// cut, so that no cut leaves a part of a secret.
+    /// The first of `faults` as they are ordered, each text through `mask`
+    /// before a message is cut, so that no cut leaves a part of a secret. A
+    /// file is never cut, as a cut path opens nothing: its warning is
+    /// counted as omitted.
     pub(crate) fn bounded(faults: &[CompileFault], mask: impl Fn(&mut String)) -> Self {
-        let mut sorted: Vec<&CompileFault> = faults.iter().collect();
-        sorted.sort_by(|a, b| (&a.file, a.line, a.column).cmp(&(&b.file, b.line, b.column)));
         let mut listed = Vec::new();
         let mut truncated = false;
         // The array's brackets, then each entry with its comma.
         let mut bytes = 2;
-        for fault in sorted.into_iter().take(MOST_WARNINGS) {
+        for fault in faults {
+            if listed.len() == MOST_WARNINGS {
+                break;
+            }
             let (mut file, mut message) = (fault.file.clone(), fault.message.clone());
             mask(&mut file);
+            if file.chars().count() > MOST_FILE_CHARS {
+                continue;
+            }
             mask(&mut message);
             let entry = json!({
-                "file": clip(&file, MOST_FILE_CHARS),
+                "file": file,
                 "line": fault.line,
                 "column": fault.column,
                 "message": clip(&message, MOST_MESSAGE_CHARS),
@@ -56,8 +63,7 @@ impl Warnings {
             if bytes > MOST_WARNING_BYTES {
                 break;
             }
-            truncated |= file.chars().count() > MOST_FILE_CHARS
-                || message.chars().count() > MOST_MESSAGE_CHARS;
+            truncated |= message.chars().count() > MOST_MESSAGE_CHARS;
             listed.push(entry);
         }
         let omitted = faults.len() - listed.len();
@@ -225,17 +231,37 @@ mod tests {
     }
 
     #[test]
-    fn a_long_text_is_cut_and_marked() {
-        let faults = [fault(1, &"f".repeat(300), &"m".repeat(1200))];
+    fn a_long_message_is_cut_and_marked() {
+        let faults = [fault(1, "Main.qml", &"m".repeat(1200))];
         let told = Warnings::bounded(&faults, |_| {});
         let one = &told.listed[0];
-        assert_eq!(one["file"], format!("{}…", "f".repeat(MOST_FILE_CHARS)));
+        assert_eq!(one["file"], "Main.qml");
         assert_eq!(
             one["message"],
             format!("{}…", "m".repeat(MOST_MESSAGE_CHARS))
         );
         assert!(told.truncated);
         assert_eq!(told.omitted, 0);
+    }
+
+    #[test]
+    fn a_long_file_is_omitted_and_never_cut() {
+        let most = "f".repeat(MOST_FILE_CHARS);
+        let over = format!("{most}f");
+        let faults = [fault(1, &over, "left out"), fault(2, &most, "listed")];
+        let told = Warnings::bounded(&faults, |_| {});
+        assert_eq!(told.listed.len(), 1);
+        assert_eq!(told.listed[0]["file"], most);
+        assert_eq!(told.omitted, 1);
+        assert!(told.truncated);
+    }
+
+    #[test]
+    fn the_order_given_is_the_order_cut() {
+        let faults: Vec<_> = (1..=21).rev().map(|n| fault(n, "Main.qml", "w")).collect();
+        let told = Warnings::bounded(&faults, |_| {});
+        assert_eq!(told.listed[0]["line"], 21);
+        assert_eq!(told.listed.len(), MOST_WARNINGS);
     }
 
     #[test]

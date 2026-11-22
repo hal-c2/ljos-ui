@@ -531,7 +531,8 @@ impl Inspector {
     }
 
     /// Says the compiler's warnings on what runs (`DevSession::take_warnings`):
-    /// all of them, none included. Tell them at the start and after every
+    /// all of them, none included, in the order they are to be listed, as
+    /// the bound cuts from the end. Tell them at the start and after every
     /// change, before [`finish_reload`](Self::finish_reload), and give only
     /// what the compiler said: clients take the list as the compiler's, so
     /// no text of the application's log may be in it. `app_status` and the

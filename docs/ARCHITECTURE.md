@@ -1711,8 +1711,9 @@ Static resources carry long `ttlMs` values.
 
 **Reload warnings.** `app_status` (under `/reload`), `ljos://app/reload`,
 and the answers of `app_reload` and `app_alias` (at the top) have
-`warnings`, a list of `{file, line, column, message}` ordered by place,
-with `warnings_truncated` and `warnings_omitted`.
+`warnings`, a list of `{file, line, column, message}`, with
+`warnings_truncated` and `warnings_omitted`. `message` is the compiler's
+alone, with no position or severity before it.
 
 - They are all the compiler's warnings on the QML files the application
   loaded, as they run now, where the errors `ljos run` prints have each
@@ -1721,6 +1722,12 @@ with `warnings_truncated` and `warnings_omitted`.
 - A reload that was applied replaces them, so one without any leaves an
   empty list. One that failed leaves them as they were, its error being
   in `message`; so do `unchanged` and a reload of only the theme.
+- Those new in the last reload come first, so the cut takes them last;
+  the others follow by place, and a file loaded since after them. A line
+  moves with an edit above it, so one is new when its file has more of
+  its message than before. Among several of one message in a file the
+  new one can't be told: those where none stood come first, then the
+  others of that message.
 - `warnings` is `null` when the host tells none: without `--watch`, and
   in a host that does not compile. That is not an empty list.
 - `file` is written as in a reload's error: with `/`, relative to the
@@ -1732,7 +1739,8 @@ with `warnings_truncated` and `warnings_omitted`.
   (`.aliases/App.Media/Player.qml`): `<path>` is relative to that
   module's `dir` in `/reload/aliases`, which is absolute.
 - At most 20 are listed, in at most 8 KiB of JSON, a message cut at 1000
-  characters and a file at 256, each with "…" where it was cut.
+  characters with "…". A `file` is never cut, as a cut path opens
+  nothing: a warning whose file is over 256 characters is omitted.
   `warnings_omitted` counts those not listed, and `warnings_truncated`
   is true when any was left out or cut. Secrets are masked before a cut.
 - Only the compiler's typed diagnostics are in the list. The log and the

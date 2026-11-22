@@ -1007,7 +1007,8 @@ impl DevSession {
 
     /// The compiler's warnings on the files the program loaded, as they
     /// run now: some the first time, and once after each change. They are
-    /// all of them, where a [`Report`] has those not told before. Only the
+    /// all of them, where a [`Report`] has those not told before: those
+    /// the last reload made first, then the others by place. Only the
     /// compiler writes them: nothing the application logs is among them.
     pub fn take_warnings(&mut self) -> Option<&[CompileFault]> {
         std::mem::take(&mut self.warnings_changed).then_some(self.warnings.as_slice())
@@ -1146,9 +1147,17 @@ impl DevSession {
             return None;
         }
         let current = (self.warnings_of.0)(&keys);
-        self.warnings
-            .retain(|w| !key_of(&w.file).is_some_and(|key| keys.iter().any(|k| k == key)));
-        self.warnings.extend(current.iter().cloned());
+        // A reload loads its files again: those told stay in their order.
+        self.warnings.retain(|w| {
+            current.contains(w) || !key_of(&w.file).is_some_and(|key| keys.iter().any(|k| k == key))
+        });
+        let mut joined: Vec<CompileFault> = current
+            .iter()
+            .filter(|w| !self.warnings.contains(w))
+            .cloned()
+            .collect();
+        by_place(&mut joined);
+        self.warnings.extend(joined);
         self.warnings_changed = true;
         let (new, now) = untold(&self.told, current);
         for (place, n) in now {
@@ -1312,10 +1321,11 @@ impl DevSession {
         // to any is one patch; the developer hears of the ones the program
         // reached, as Qt never compiles the others. The patch runs by now,
         // so these replace the warnings before even when no root was made.
-        self.warnings = warnings
+        let warnings: Vec<CompileFault> = warnings
             .into_iter()
             .filter(|w| key_of(&w.file).is_some_and(|key| engine.has_loaded(key)))
             .collect();
+        self.warnings = new_first(&self.warnings, warnings.clone());
         self.warnings_changed = true;
         if let Err(fault) = chosen {
             engine.set_last_reload_error(Some(fault.clone()));
@@ -1332,7 +1342,7 @@ impl DevSession {
             engine.set_last_reload_error(Some(fault.clone()));
         }
         self.reloads += 1;
-        let (warnings, now) = untold(&self.told, self.warnings.iter().cloned());
+        let (warnings, now) = untold(&self.told, warnings);
         self.told = now;
         Report::Reloaded(ReloadStats {
             generation: done.generation,
@@ -1405,4 +1415,64 @@ fn untold(
         }
     }
     (new, now)
+}
+
+fn by_place(warnings: &mut [CompileFault]) {
+    warnings.sort_by(|a, b| (&a.file, a.line, a.column).cmp(&(&b.file, b.line, b.column)));
+}
+
+/// `warnings` with those that are new since `before` first, as a list of
+/// them is cut from its end, and the others after them by place. A line
+/// moves with an edit above it, so a warning is new when its file has more
+/// of its message than before, as [`untold`] counts. Which of those is the
+/// new one can't be known: the ones where none stood come first, then the
+/// rest of them.
+fn new_first(before: &[CompileFault], mut warnings: Vec<CompileFault>) -> Vec<CompileFault> {
+    let (_, counts) = untold(&HashMap::new(), before.iter().cloned());
+    let (more, _) = untold(&counts, warnings.iter().cloned());
+    by_place(&mut warnings);
+    warnings.sort_by_key(|w| {
+        let grew = more
+            .iter()
+            .any(|m| m.file == w.file && m.message == w.message);
+        (!grew, grew && before.contains(w))
+    });
+    warnings
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn warning(line: u32, message: &str) -> CompileFault {
+        CompileFault {
+            file: "Main.qml".to_owned(),
+            line,
+            column: 5,
+            message: message.to_owned(),
+        }
+    }
+
+    fn lines(warnings: &[CompileFault]) -> Vec<u32> {
+        warnings.iter().map(|w| w.line).collect()
+    }
+
+    #[test]
+    fn a_new_warning_is_first_and_moved_ones_follow_by_place() {
+        let before = [warning(3, "a"), warning(5, "b")];
+        let now = vec![warning(8, "b"), warning(4, "a"), warning(9, "c")];
+        assert_eq!(lines(&new_first(&before, now)), [9, 4, 8]);
+    }
+
+    #[test]
+    fn one_more_of_the_same_message_is_first() {
+        let before = [warning(3, "a"), warning(4, "b"), warning(5, "a")];
+        let now = vec![
+            warning(3, "a"),
+            warning(4, "b"),
+            warning(5, "a"),
+            warning(9, "a"),
+        ];
+        assert_eq!(lines(&new_first(&before, now)), [9, 3, 5, 4]);
+    }
 }
