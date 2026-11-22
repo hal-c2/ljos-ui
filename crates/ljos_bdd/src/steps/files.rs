@@ -42,6 +42,26 @@ fn the_design_module(w: &mut LjosWorld) -> StepResult {
     Ok(())
 }
 
+// The exported module with its one knob turned by hand, as an application
+// that owns the files may do.
+#[given(regex = r"^the files of the module Ljos.Design with Spacing.unit edited to (-?\d+)$")]
+fn the_design_module_edited(w: &mut LjosWorld, unit: i32) -> StepResult {
+    use ljos_design::module::{DIRECTORY, Seeds, files};
+    let written = "readonly property int unit: 4\n";
+    let edited = format!("readonly property int unit: {unit}\n");
+    for f in files(Seeds::Hues) {
+        let mut text = f.text;
+        if f.name == "Spacing.qml" {
+            if !text.contains(written) {
+                return Err(format!("Spacing.qml has no line {written:?} to edit"));
+            }
+            text = text.replace(written, &edited);
+        }
+        w.stage(&format!("{DIRECTORY}/{}", f.name), &text);
+    }
+    Ok(())
+}
+
 // An application of `examples/`, every file of it at its own path: its
 // QML and scripts as files to load, anything else (models, pictures) as
 // files beside them. A scenario then loads its `Main.qml`, so what it

@@ -300,6 +300,29 @@ Feature: A theme file sets the roles of Ljos.Design
     And 120 milliseconds pass
     Then the property "steps" of "root" is "0 4 8 12 16 24 32 48 64"
 
+  Scenario Outline: An exported module edited to another unit stays in an int (unit <unit>)
+    Given the files of the module Ljos.Design with Spacing.unit edited to <unit>
+    And the QML:
+      """qml
+      import QtQuick
+      import "Ljos/Design" as Edited
+      Item {
+        objectName: "root"
+        readonly property var scale: [Edited.Spacing.none, Edited.Spacing.xxs,
+          Edited.Spacing.xs, Edited.Spacing.sm, Edited.Spacing.md, Edited.Spacing.lg,
+          Edited.Spacing.xl, Edited.Spacing.xxl, Edited.Spacing.xxxl]
+        property string steps: scale.join(" ")
+      }
+      """
+    Then the property "steps" of "root" is "<steps>"
+
+    Examples:
+      | unit | steps |
+      | 5 | 0 5 10 15 20 30 40 60 80 |
+      | 134217728 | 0 134217728 268435456 402653184 536870912 805306368 1073741824 1610612736 2147483647 |
+      | 2147483647 | 0 2147483647 2147483647 2147483647 2147483647 2147483647 2147483647 2147483647 2147483647 |
+      | -5 | 0 0 0 0 0 0 0 0 0 |
+
   Scenario: An edit of the theme sets the roles again and keeps what the user did
     Given the theme file "theme.json" is:
       """json

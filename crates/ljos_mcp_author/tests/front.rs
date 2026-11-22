@@ -694,3 +694,31 @@ fn a_type_given_as_a_component_is_a_use_of_it() {
         .collect();
     assert_eq!(types, ["Item", "Loader", "Rectangle"], "{usage:?}");
 }
+
+/// The directories the project walk reads at most, the root among them.
+const SCANNED_DIRS: usize = 20_000;
+
+/// What the spacing lint says in a project of `dirs` directories, the root
+/// among them, that has no theme where the walk looks.
+fn spacing_hints_in(dirs: usize) -> usize {
+    let dir = project(&[(
+        "Main.qml",
+        "import QtQuick\nItem {\n    Column { spacing: 7 }\n}\n",
+    )]);
+    for n in 1..dirs {
+        std::fs::create_dir(dir.path().join(format!("d{n}"))).unwrap();
+    }
+    let found = run(dir.path(), &["Main.qml"], true);
+    with_code(&found, "layout-spacing-scale").len()
+}
+
+#[test]
+fn a_scan_that_hit_its_limit_leaves_the_spacing_unit_unknown() {
+    // The theme may be in the directory that was not read.
+    assert_eq!(spacing_hints_in(SCANNED_DIRS + 1), 0);
+}
+
+#[test]
+fn a_scan_that_read_every_directory_up_to_its_limit_knows_the_spacing_unit() {
+    assert_eq!(spacing_hints_in(SCANNED_DIRS), 1);
+}
