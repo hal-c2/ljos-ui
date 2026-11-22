@@ -809,9 +809,9 @@ fn a_null_a_job_throws_after_another_caught_running_out_is_its_own() {
     );
 }
 
-/// A nested run counts from its own start, and the run around it from its
-/// own again once the nested one is done: the error QuickJS threw in the
-/// outer run before it, caught and thrown again after, is out of memory.
+/// A nested run does not change what the run around it threw: the error
+/// QuickJS threw in the outer run before it, caught and thrown again after,
+/// is out of memory.
 #[test]
 fn the_error_thrown_for_want_of_heap_before_a_nested_run_is_still_out_of_memory_after() {
     let host = JsHost::new(JsConfig {
