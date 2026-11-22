@@ -415,7 +415,13 @@ impl<U: Send + 'static> Pump<'_, U> {
                 };
                 // A write of ours still on its way to the main thread is
                 // what the method is about to hold.
-                let holds = self.writes.holds(reported.clone());
+                let holds = if self.method_holds {
+                    self.writes.holds(reported.clone())
+                } else {
+                    // Nothing is read to tell which write it got to, and
+                    // none is told back (TextInputOf.java).
+                    self.writes.unreported()
+                };
                 if crate::relay::held_is_stale(over.as_ref(), &holds) {
                     return;
                 }

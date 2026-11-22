@@ -195,6 +195,13 @@ impl Writes {
         self.pending.back().cloned().unwrap_or(holds)
     }
 
+    /// What a method that has reported nothing, and so is not read, is
+    /// taken to hold: the newest write, however many were let go before it,
+    /// or what an empty one holds.
+    pub fn unreported(&self) -> crate::HeldText {
+        self.pending.back().cloned().unwrap_or_default()
+    }
+
     /// The method reported what it holds for itself: what was written
     /// before has reached it, and a later report of the state from before
     /// those writes is the method's own, not the platform behind.
