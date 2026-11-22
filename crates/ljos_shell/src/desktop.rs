@@ -36,6 +36,7 @@ use ljos_host::{
     AppState, Event, HostApp, HostControl, PlatformHost, ResizeEdge, Screen, Wake, WindowChange,
     WindowEvent, WindowId, WinitControl, WinitHost,
 };
+use ljos_quick::roots::RootSwaps;
 use ljos_runtime::{MemoryPressure, SystemClock};
 
 use self::input::{asks_paste, follow_modifiers, starts_input};
@@ -734,6 +735,7 @@ impl<M: Send + 'static> Desktop<M> {
         for win in &windows {
             let known = Some(*win) == root_window
                 || self.refused.contains(win)
+                || RootSwaps::of(engine).keeps_back(*win)
                 || self.slots.iter().any(|s| s.window == Some(*win));
             // A window that was never shown needs nothing yet.
             if !known && sys.spec(engine, *win).is_some_and(|s| s.visible) {
@@ -2493,6 +2495,7 @@ fn not_added(
 ) {
     say_not_shown(engine, why);
     refused.push(win);
+    RootSwaps::of(engine).refuses(engine, win);
 }
 
 /// What [`Desktop::fail`] does about a window other than the root's that
@@ -2500,11 +2503,14 @@ fn not_added(
 fn left_out(
     engine: &Engine,
     broken: &mut bool,
-    _win: Option<ObjectId>,
+    win: Option<ObjectId>,
     why: &dyn std::fmt::Display,
 ) {
     *broken = true;
     say_not_shown(engine, why);
+    if let Some(win) = win {
+        RootSwaps::of(engine).refuses(engine, win);
+    }
 }
 
 fn say_not_shown(engine: &Engine, why: &dyn std::fmt::Display) {

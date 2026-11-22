@@ -1129,7 +1129,7 @@ impl A11yPass {
             st.part_keys = keys;
         }
         if changed {
-            let start = engine.untrack(|| shown_children(engine, obj));
+            let start = engine.untrack(|| described_children(engine, obj));
             let mut kids = self.exposed_below(engine, start);
             if let Some(st) = self.items.get(&obj) {
                 kids.extend(&st.part_keys);
@@ -1249,7 +1249,7 @@ impl A11yPass {
         }
         for t in targets {
             let start = match t {
-                Some(obj) => engine.untrack(|| shown_children(engine, obj)),
+                Some(obj) => engine.untrack(|| described_children(engine, obj)),
                 None => root.into_iter().chain(self.layer).collect(),
             };
             let mut kids = self.exposed_below(engine, start);
@@ -1292,7 +1292,7 @@ impl A11yPass {
                 out.push(key);
                 continue;
             }
-            let mut kids = engine.untrack(|| shown_children(engine, o));
+            let mut kids = engine.untrack(|| described_children(engine, o));
             kids.reverse();
             stack.extend(kids);
         }
@@ -1697,4 +1697,16 @@ impl QuickScene {
         crate::focus::force_active_focus(engine, item, crate::focus::FocusReason::Other);
         true
     }
+}
+
+/// The children of `obj` that are described: those shown, but for a
+/// fallback held through the first read of the shell that replaces it.
+/// Left out only here, as an item left out of the scene loses its state.
+fn described_children(engine: &Engine, obj: ObjectId) -> Vec<ObjectId> {
+    let mut kids = shown_children(engine, obj);
+    let out = crate::first_read::left_out(engine);
+    if !out.is_empty() {
+        kids.retain(|c| !out.contains(c));
+    }
+    kids
 }

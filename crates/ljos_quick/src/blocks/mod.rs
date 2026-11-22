@@ -26,6 +26,7 @@ use std::rc::Rc;
 use ljos_engine::Engine;
 
 pub use contribution::{Contribution, contribution_mode};
+pub(crate) use shell_loader::own_window as is_own_window;
 pub(crate) use shell_loader::retry as retry_shell;
 pub use shell_loader::{ShellLoader, shell_status};
 pub use slot::Slot;

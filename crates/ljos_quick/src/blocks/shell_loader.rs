@@ -51,10 +51,14 @@ use ljos_engine::{
 use ljos_runtime::{Fault, Intensity, Restart, TimerId};
 
 use super::contribution::text;
+use crate::first_read;
+use crate::focus::FocusReason;
+use crate::focus::tree::{force_active_focus, is_under, top_of, tree_focus_item};
 use crate::item::{Item, is_item, size_follows_implicit, write_computed};
 use crate::reread::Rereads;
-use crate::roots::RootSwaps;
+use crate::roots::{RootSwaps, lasts};
 use crate::tree;
+use crate::views::cull;
 
 /// `ShellLoader.status`.
 pub mod shell_status {
@@ -122,6 +126,9 @@ struct Run {
     /// the source as it is already.
     making: bool,
     fallback_item: Option<ObjectId>,
+    /// The fallback while it is held through the first read of the shell
+    /// that replaces it.
+    held: Option<Held>,
     /// Faults up to this one were dealt with while a shell was made; the
     /// boundary hears of them only afterwards.
     handled: u64,
@@ -129,6 +136,16 @@ struct Run {
     backoff: Backoff,
     /// The try [`Run::backoff`] waits for.
     waiting: Option<TimerId>,
+}
+
+/// A fallback held through a first read ([`first_read`]).
+#[derive(Clone, Copy, Debug)]
+struct Held {
+    fallback: ObjectId,
+    /// The item of it that had the keyboard.
+    focus: Option<ObjectId>,
+    /// The hold's number.
+    n: u64,
 }
 
 #[qml_impl]
@@ -199,6 +216,22 @@ pub(crate) fn retry(e: &Engine, me: ObjectId) {
             if let Some(Some(timer)) = with_run(e, me, |r| r.waiting.take()) {
                 e.cancel_call(timer);
             }
+            // Made is not working: bindings are lazy. A fallback that is
+            // shown is held until the shell was read once, so that it is
+            // the same one, with what the user did in it, if that fails.
+            if let Some(fallback) = shown_fallback(e, me, status) {
+                hold_for(e, me, fallback, obj);
+                set(e, me, ShellLoader::ITEM.index, Value::Object(obj));
+                if with_run(e, me, |r| r.held.is_some()) != Some(true) {
+                    // A handler of `itemChanged` asked for another shell.
+                    return;
+                }
+                // What it let go of is held: none of it is destroyed here.
+                RootSwaps::of(e).present(e, me, None);
+                present(e, me, obj);
+                set(e, me, ShellLoader::STATUS.index, shell_status::READY.into());
+                return;
+            }
             drop_item(e, me);
             set(e, me, ShellLoader::ITEM.index, Value::Object(obj));
             present(e, me, obj);
@@ -235,10 +268,13 @@ impl Boundary for Behaviour {
     }
 
     fn guards(&self, e: &Engine, me: ObjectId, child: ObjectId) -> bool {
-        e.with(me, |l: &ShellLoader| {
-            !l.run.making_fallback && l.run.fallback_item != Some(child)
-        })
-        .unwrap_or(false)
+        let guarded = e
+            .with(me, |l: &ShellLoader| {
+                !l.run.making_fallback && l.run.fallback_item != Some(child)
+            })
+            .unwrap_or(false);
+        // A fallback's window that waits to give way is a fallback still.
+        guarded && !RootSwaps::of(e).lets_go(me, child)
     }
 
     fn stop(&self, e: &Engine, me: ObjectId, report: &FaultReport) {
@@ -246,8 +282,14 @@ impl Boundary for Behaviour {
         if report.seq <= handled || failed(e, me) {
             return;
         }
-        drop_item(e, me);
         let why = describe(report);
+        if show_held_again(e, me, &why) {
+            if is_resource(&report.fault) {
+                again_after(e, me, Some(report));
+            }
+            return;
+        }
+        drop_item(e, me);
         warn(e, format!("ShellLoader: {why}"));
         if show_fallback(e, me, why) || is_resource(&report.fault) {
             again_after(e, me, Some(report));
@@ -314,6 +356,10 @@ fn load(e: &Engine, me: ObjectId) {
     }
     if let Some(Some(timer)) = with_run(e, me, |r| r.waiting.take()) {
         e.cancel_call(timer);
+    }
+    // Asked for another shell, the loader keeps none for the last one.
+    if let Some(held) = end_hold(e, me) {
+        let_go_of(e, me, held.fallback);
     }
     drop_item(e, me);
     let source = url(e, me, ShellLoader::SOURCE.index);
@@ -519,9 +565,15 @@ fn judge_again(e: &Engine, me: ObjectId, obj: ObjectId, told: &[FaultReport]) {
         }
         return;
     }
+    let resource = is_resource(&report.fault);
+    if show_held_again(e, me, &why) {
+        if resource {
+            again_after(e, me, Some(report));
+        }
+        return;
+    }
     drop_item(e, me);
     warn(e, format!("ShellLoader: {why}"));
-    let resource = is_resource(&report.fault);
     if show_fallback(e, me, why) || resource {
         again_after(e, me, Some(report));
     }
@@ -553,6 +605,128 @@ fn describe(report: &FaultReport) -> String {
     }
 }
 
+/// The fallback shown, where `status` says one is and it is to last.
+fn shown_fallback(e: &Engine, me: ObjectId, status: i32) -> Option<ObjectId> {
+    if status != shell_status::FALLBACK {
+        return None;
+    }
+    let shown = e
+        .untrack(|| e.read(me, ShellLoader::ITEM.index))
+        .as_object();
+    let fallback = with_run(e, me, |r| r.fallback_item)?;
+    fallback.filter(|f| shown == Some(*f) && lasts(e, *f))
+}
+
+/// Holds `fallback` until `shell`'s first read is over. An item is not
+/// drawn, pointed at or described meanwhile; nothing of it is written.
+fn hold_for(e: &Engine, me: ObjectId, fallback: ObjectId, shell: ObjectId) {
+    let focus = tree_focus_item(e, e.untrack(|| top_of(e, fallback)))
+        .filter(|it| is_under(e, *it, fallback));
+    let window = own_window(e, me, fallback);
+    if window {
+        RootSwaps::of(e).hold(fallback);
+    } else {
+        cull::pool(e, fallback, true);
+    }
+    let out = (!window).then_some(fallback);
+    let n = first_read::hold(e, me, shell, out, read_over);
+    if !window {
+        crate::scene::described(e, fallback);
+    }
+    with_run(e, me, |r| r.held = Some(Held { fallback, focus, n }));
+}
+
+/// Ends the hold there is: the fallback is as any other item again.
+fn end_hold(e: &Engine, me: ObjectId) -> Option<Held> {
+    let held = with_run(e, me, |r| r.held.take())??;
+    first_read::end(e, held.n);
+    cull::pool(e, held.fallback, false);
+    crate::scene::described(e, held.fallback);
+    Some(held)
+}
+
+/// The shell's first read is over and it did not fail: it has replaced
+/// the fallback, and `error` goes.
+fn read_over(e: &Engine, me: ObjectId, n: u64) {
+    if with_run(e, me, |r| r.held.map(|h| h.n)) != Some(Some(n)) {
+        return;
+    }
+    let Some(held) = end_hold(e, me) else {
+        return;
+    };
+    with_run(e, me, |r| r.fallback_item = None);
+    let_go_of(e, me, held.fallback);
+    set(e, me, ShellLoader::ERROR.index, "".into());
+}
+
+/// Destroys `fallback`, which is held no longer, unless a window shows it
+/// still: that one goes once the window shows what replaces it.
+fn let_go_of(e: &Engine, me: ObjectId, fallback: ObjectId) {
+    let swaps = RootSwaps::of(e);
+    if swaps.lets_go(me, fallback) {
+        swaps.release(fallback);
+    } else {
+        discard(e, fallback);
+    }
+}
+
+/// The shell failed its first read for `why`: shows the fallback that was
+/// held, the same object, in its place. False when none is held to show.
+fn show_held_again(e: &Engine, me: ObjectId, why: &str) -> bool {
+    let Some(Some(held)) = with_run(e, me, |r| r.held) else {
+        return false;
+    };
+    if !lasts(e, held.fallback) {
+        end_hold(e, me);
+        return false;
+    }
+    let fallback = held.fallback;
+    let shell = e
+        .untrack(|| e.read(me, ShellLoader::ITEM.index))
+        .as_object();
+    // Judged before anything moves: what took the keyboard outside the
+    // loader since keeps it.
+    let taken = tree_focus_item(e, e.untrack(|| top_of(e, fallback))).is_some_and(|it| {
+        !is_under(e, it, fallback)
+            && !shell.is_some_and(|s| is_under(e, it, s))
+            && !is_under(e, me, it)
+    });
+    end_hold(e, me);
+    let swaps = RootSwaps::of(e);
+    swaps.release(fallback);
+    warn(e, format!("ShellLoader: {why}"));
+    // In one call: a window that has the fallback still keeps it.
+    let window = own_window(e, me, fallback).then_some(fallback);
+    let gives = swaps.present(e, me, window);
+    swaps.takes_back(me, fallback);
+    set(e, me, ShellLoader::ITEM.index, Value::Object(fallback));
+    if let Some(shell) = shell {
+        if gives {
+            e.announce_destruction(shell);
+        } else {
+            discard(e, shell);
+        }
+    }
+    let item = e
+        .untrack(|| e.read(me, ShellLoader::ITEM.index))
+        .as_object();
+    if item != Some(fallback) {
+        // A handler asked for another shell as it was shown.
+        return true;
+    }
+    set(e, me, ShellLoader::ERROR.index, why.into());
+    set(
+        e,
+        me,
+        ShellLoader::STATUS.index,
+        shell_status::FALLBACK.into(),
+    );
+    if !taken && let Some(item) = held.focus.filter(|it| e.is_alive(*it)) {
+        force_active_focus(e, item, FocusReason::Other);
+    }
+    true
+}
+
 /// Takes away the shell shown.
 fn drop_item(e: &Engine, me: ObjectId) {
     let item = e
@@ -581,7 +755,7 @@ fn present(e: &Engine, me: ObjectId, obj: ObjectId) {
 }
 
 /// Whether `obj` is a `Window` that is not among the loader's items.
-fn own_window(e: &Engine, me: ObjectId, obj: ObjectId) -> bool {
+pub(crate) fn own_window(e: &Engine, me: ObjectId, obj: ObjectId) -> bool {
     e.is_alive(obj)
         && e.untrack(|| e.visual_parent(obj)) != Some(me)
         && e.meta_of(obj).is_some_and(|m| m.inherits_name("Window"))
