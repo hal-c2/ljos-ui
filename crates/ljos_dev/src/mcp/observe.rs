@@ -944,6 +944,47 @@ mod tests {
     use crate::mcp::process::Thread;
 
     #[test]
+    fn a_crowd_of_mailboxes_leaves_the_processes_their_rows() {
+        let (_inbox, handle) = ljos_runtime::UiInbox::<()>::channel(4);
+        let _crowd: Vec<_> = (0..400)
+            .map(|_| {
+                handle.batch::<()>(
+                    "observe-test.crowd",
+                    2,
+                    ljos_runtime::BatchPolicy::DropOldest,
+                )
+            })
+            .collect();
+        let mut rows = vec![json!({ "kind": "timer", "name": "Timer#tick" })];
+        for i in 0..20 {
+            rows.push(json!({ "kind": "thread", "name": format!("worker {i}") }));
+        }
+        let all = rows.len();
+        let args = ProcessesArgs {
+            mailbox: Some("observe-test.crowd".into()),
+            ..ProcessesArgs::default()
+        };
+        let per_copy = ljos_mcp_core::DEFAULT_RESULT_BYTES / 2;
+        let reply = with_mailboxes(
+            ToolReply::from(json!({ "processes": rows })).with_text("the processes"),
+            &args,
+            per_copy,
+        );
+        let (answer, text) = (&reply.structured, reply.text.as_deref().unwrap());
+        assert!(answer.to_string().len() <= per_copy);
+        assert!(text.len() <= per_copy, "{} bytes of text", text.len());
+        assert_eq!(answer["processes"].as_array().unwrap().len(), all, "{text}");
+        let listed = answer["mailboxes"].as_array().unwrap().len();
+        let left_out = answer["mailboxes_left_out"].as_u64().unwrap() as usize;
+        assert!(listed > 0);
+        assert_eq!(listed + left_out, 400);
+        assert!(
+            text.contains(&format!("{left_out} more mailboxes not listed")),
+            "{text}"
+        );
+    }
+
+    #[test]
     fn a_thread_is_known_by_its_name() {
         assert_eq!(thread_kind("ljos-compute", false), "pool");
         assert_eq!(thread_kind("ljos-screen-rea", false), "screen_reader");
