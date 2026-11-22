@@ -872,7 +872,7 @@ mod tests {
         for method in [
             "public static boolean show(Context context, int picker, String extensions, String name, int code)",
             "public static void close(int code)",
-            "private static native void nativeAnswered(int code, String chosen);",
+            "private static native boolean nativeAnswered(int code, String chosen);",
         ] {
             assert!(java.contains(method), "{method}");
         }

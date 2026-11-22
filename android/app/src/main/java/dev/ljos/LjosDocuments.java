@@ -126,17 +126,6 @@ public final class LjosDocuments {
      * the user chose goes to the native side.
      */
     static void answered(LjosActivity activity, int code, int result, Intent data) {
-        int picker = forget(code);
-        if (picker < 0) {
-            return;
-        }
-        if (unwanted(code)) {
-            synchronized (showing) {
-                closed.remove(code);
-            }
-            nativeAnswered(code, null);
-            return;
-        }
         List<Uri> uris = new ArrayList<>();
         if (result == Activity.RESULT_OK && data != null) {
             ClipData many = data.getClipData();
@@ -148,7 +137,21 @@ public final class LjosDocuments {
                 uris.add(data.getData());
             }
         }
-        if (uris.isEmpty()) {
+        int picker;
+        boolean wanted;
+        // From shown to copied in one step: a close in between is marked.
+        synchronized (showing) {
+            picker = showing.get(code, -1);
+            if (picker < 0) {
+                return;
+            }
+            showing.delete(code);
+            wanted = !closed.remove(code) && !uris.isEmpty();
+            if (wanted && (picker == OPEN || picker == OPEN_MANY)) {
+                copying.add(code);
+            }
+        }
+        if (!wanted) {
             nativeAnswered(code, null);
             return;
         }
@@ -162,20 +165,15 @@ public final class LjosDocuments {
             return;
         }
         Context context = activity.getApplicationContext();
-        synchronized (showing) {
-            copying.add(code);
-        }
         new Thread(() -> {
             String chosen = copy(context, code, uris);
-            boolean wanted;
             synchronized (showing) {
                 copying.remove(code);
-                wanted = !closed.remove(code);
+                closed.remove(code);
             }
-            if (wanted) {
-                nativeAnswered(code, chosen);
-            } else {
-                // Closed after the copy's last look.
+            // A close can come after the last look at the mark: whether
+            // anyone took the answer, only the native side knows.
+            if (!nativeAnswered(code, chosen)) {
                 remove(new File(context.getCacheDir(), "documents/" + code));
             }
         }, "ljos-documents").start();
@@ -183,9 +181,10 @@ public final class LjosDocuments {
 
     /**
      * What the user chose, to ljos_platform: a line each, the path of a copy
-     * or the provider's URI; null when the user chose nothing.
+     * or the provider's URI; null when the user chose nothing. False when
+     * no dialog waited for it, as one closed does not.
      */
-    private static native void nativeAnswered(int code, String chosen);
+    private static native boolean nativeAnswered(int code, String chosen);
 
     /** The picker shown with {@code code}, no longer shown; -1 if none was. */
     private static int forget(int code) {

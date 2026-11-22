@@ -105,6 +105,7 @@ mod java {
     use std::sync::{Mutex, MutexGuard, OnceLock};
 
     use ljos_jni::jni::objects::{JClass, JString, JValue};
+    use ljos_jni::jni::sys::jboolean;
     use ljos_jni::jni::{EnvUnowned, jni_sig, jni_str};
     use ljos_jni::{app_class, with_java};
 
@@ -216,16 +217,17 @@ mod java {
     }
 
     /// The picker's answer, from `LjosDocuments`: what was chosen, a line
-    /// each, or null when the user left it.
+    /// each, or null when the user left it. False when no dialog waited for
+    /// it, so that the Java side removes the copies it made.
     #[unsafe(no_mangle)]
     pub extern "system" fn Java_dev_ljos_LjosDocuments_nativeAnswered<'caller>(
         mut unowned: EnvUnowned<'caller>,
         _class: JClass<'caller>,
         code: i32,
         answer: JString<'caller>,
-    ) {
+    ) -> jboolean {
         unowned
-            .with_env(|env| -> ljos_jni::jni::errors::Result<()> {
+            .with_env(|env| -> ljos_jni::jni::errors::Result<jboolean> {
                 let answer = if answer.is_null() {
                     None
                 } else {
@@ -234,13 +236,13 @@ mod java {
                 // Taken out of the lock before it is sent, which posts to
                 // the application's inbox.
                 let Some(waiting) = pending().remove(&code) else {
-                    return Ok(());
+                    return Ok(false);
                 };
                 match chosen(answer.as_deref()) {
                     Some(urls) => waiting.answer.send(DialogReply::Documents(urls)),
                     None => waiting.answer.send(DialogReply::Dismissed),
                 }
-                Ok(())
+                Ok(true)
             })
             .resolve::<ljos_jni::jni::errors::ThrowRuntimeExAndDefault>()
     }
