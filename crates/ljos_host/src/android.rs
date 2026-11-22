@@ -369,8 +369,14 @@ impl<U: Send + 'static> Pump<'_, U> {
         while events.next(|event| translate(self.app, dead_key, writes, &mut back, event, &mut out))
         {
         }
-        if let Some(now) = back {
+        if let Some(mut now) = back {
             self.method_holds = true;
+            if let Some(held) = self.writes.to_write_again() {
+                call_activity(self.app, ActivityCall::WriteComing);
+                self.writes.wrote(&now, held.clone());
+                self.write(&now, held.clone());
+                now = held;
+            }
             // Before the rest: the text is read first, as the glue hands it.
             if self.relay.tell_back(self.handled, now).is_err() {
                 self.closed = true;
@@ -385,6 +391,34 @@ impl<U: Send + 'static> Pump<'_, U> {
         for event in out {
             self.send(Arrival::Window(event));
         }
+    }
+
+    /// Has the method hold `held` in place of `holds`.
+    fn write(&self, holds: &HeldText, held: HeldText) {
+        let span = |r: &std::ops::Range<usize>| TextSpan {
+            start: r.start,
+            end: r.end,
+        };
+        let compose = held.compose.as_ref().filter(|c| c.start < c.end);
+        let unit = |n: usize| i32::try_from(n).unwrap_or(i32::MAX);
+        // The keyboard is told of a cursor that moved, but must
+        // read text that changed anew.
+        let replaced = holds.text != held.text;
+        let told = ActivityCall::InputStateChanged {
+            selection: [unit(held.anchor), unit(held.cursor)],
+            compose: compose.map_or([-1, -1], |c| [unit(c.start), unit(c.end)]),
+            replaced,
+        };
+        self.app.set_text_input_state(TextInputState {
+            text: held.text,
+            selection: TextSpan {
+                start: held.anchor,
+                end: held.cursor,
+            },
+            compose_region: compose.map(span),
+        });
+        // GameTextInput does not tell the keyboard itself.
+        call_activity(self.app, told);
     }
 
     fn request(&mut self, request: Request, stamp: crate::relay::Asked) {
@@ -445,6 +479,7 @@ impl<U: Send + 'static> Pump<'_, U> {
                 };
                 if self.writes.stale(over.as_ref(), &holds) {
                     call_activity(self.app, ActivityCall::WriteDropped);
+                    self.writes.passed_over(&held);
                     // A write told back was passed over for this one.
                     if self.writes.wrote_it(&holds)
                         && self.relay.tell_back(self.handled, holds).is_err()
@@ -454,35 +489,12 @@ impl<U: Send + 'static> Pump<'_, U> {
                     return;
                 }
                 self.writes.wrote(&reported, held.clone());
-                let span = |r: &std::ops::Range<usize>| TextSpan {
-                    start: r.start,
-                    end: r.end,
-                };
-                let compose = held.compose.as_ref().filter(|c| c.start < c.end);
-                let unit = |n: usize| i32::try_from(n).unwrap_or(i32::MAX);
-                // The keyboard is told of a cursor that moved, but must
-                // read text that changed anew.
-                let replaced = holds.text != held.text;
-                let told = ActivityCall::InputStateChanged {
-                    selection: [unit(held.anchor), unit(held.cursor)],
-                    compose: compose.map_or([-1, -1], |c| [unit(c.start), unit(c.end)]),
-                    replaced,
-                };
                 // A report on its way to the application is older than
                 // this write, which is what the method ends on.
                 if self.relay.tell_again(stamp, &held).is_err() {
                     self.closed = true;
                 }
-                self.app.set_text_input_state(TextInputState {
-                    text: held.text,
-                    selection: TextSpan {
-                        start: held.anchor,
-                        end: held.cursor,
-                    },
-                    compose_region: compose.map(span),
-                });
-                // GameTextInput does not tell the keyboard itself.
-                call_activity(self.app, told);
+                self.write(&holds, held);
             }
             Request::Anchor(anchor) => {
                 call_activity(self.app, ActivityCall::CursorAnchor(anchor));

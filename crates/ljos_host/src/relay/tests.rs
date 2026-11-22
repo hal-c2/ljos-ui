@@ -911,3 +911,45 @@ fn what_is_told_back_never_follows_a_newer_write_of_the_application() {
     let event = WindowEvent::Text(crate::TextEvent::Held(w3));
     assert_eq!(held, [format!("{event:?}")]);
 }
+
+#[test]
+fn a_write_dropped_for_typing_lands_once_an_older_write_replaced_that_typing() {
+    let [a, typed, w2, w3, w4] =
+        ["a", "a!", "w2", "w3", "w4"].map(|text| holds(text, [0, 0], None));
+    let dropped = || {
+        let mut writes = Writes::default();
+        writes.wrote(&a, w2.clone());
+        // Typed with w2 on its way; w3 was made over w2 before that was seen.
+        writes.reported(&typed);
+        let seen = writes.holds(typed.clone());
+        assert!(writes.stale(Some(&w2), &seen));
+        writes.passed_over(&w3);
+        writes
+    };
+    // w2 lands on the typing, which leaves nothing w3 would put back.
+    let mut writes = dropped();
+    assert_eq!(writes.told_back(&w2, || true), Some(w2.clone()));
+    assert_eq!(writes.to_write_again(), Some(w3.clone()));
+    assert_eq!(writes.to_write_again(), None);
+    // Not once the application wrote something newer.
+    let mut writes = dropped();
+    writes.wrote(&typed, w4.clone());
+    assert_eq!(writes.to_write_again(), None);
+    // The newest of two dropped, the second made over the first.
+    let mut writes = dropped();
+    writes.passed_over(&w4);
+    assert_eq!(writes.to_write_again(), Some(w4.clone()));
+    // And one made over what was typed, dropped for what was typed next.
+    let mut writes = dropped();
+    let more = holds("a!!", [0, 0], None);
+    writes.reported(&more);
+    assert!(writes.stale(Some(&typed), &more));
+    writes.passed_over(&w4);
+    assert_eq!(writes.told_back(&w2, || true), Some(w2.clone()));
+    assert_eq!(writes.to_write_again(), Some(w4.clone()));
+    // Nor one with no write that could land on the typing: the typing was all it lost to.
+    let mut writes = Writes::default();
+    writes.reported(&typed);
+    writes.passed_over(&w3);
+    assert_eq!(writes.to_write_again(), None);
+}
