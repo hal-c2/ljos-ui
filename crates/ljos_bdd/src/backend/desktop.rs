@@ -138,7 +138,7 @@ pub struct DesktopBackend {
     /// `ljos run --watch` applies.
     watch: bool,
     /// The calls that keep the application's second full, while they go on.
-    turning_away: Option<std::thread::JoinHandle<std::result::Result<(), String>>>,
+    turning_away: Option<crate::author::rate::Flood>,
 }
 
 impl Drop for DesktopBackend {
@@ -1145,15 +1145,10 @@ impl Probes for DesktopBackend {
         if !kept.is_zero() {
             // Room comes free a second after each call answered, and a
             // call follows at once to take it: the observer's calls find
-            // none. A pause between them keeps the loopback's ports to a
-            // few thousand.
-            self.turning_away = Some(std::thread::spawn(move || {
-                while first.elapsed() < kept {
-                    id += 1;
-                    rate::call(addr, &token, id)?;
-                    std::thread::sleep(Duration::from_micros(500));
-                }
-                Ok(())
+            // none.
+            self.turning_away = Some(rate::Flood::start(first + kept, move || {
+                id += 1;
+                rate::call(addr, &token, id).map(|_| ())
             }));
         }
         Ok(first)
@@ -1168,14 +1163,7 @@ impl Probes for DesktopBackend {
 
     fn calls_answered_again(&mut self) -> Result<()> {
         if let Some(calls) = self.turning_away.take() {
-            calls
-                .join()
-                .map_err(|_| {
-                    BackendError::Failed(
-                        "the calls that kept the application's second full panicked".into(),
-                    )
-                })?
-                .map_err(BackendError::Failed)?;
+            calls.finish().map_err(BackendError::Failed)?;
         }
         if let Some(observer) = self.observer.as_mut() {
             observer.settle()?;
