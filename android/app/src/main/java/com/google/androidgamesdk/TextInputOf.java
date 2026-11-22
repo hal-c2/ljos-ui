@@ -61,6 +61,17 @@ public final class TextInputOf {
     }
 
     /**
+     * The listener is being told, and has yet to hand it to the native
+     * side, which asks {@link #toldWrite} once it has it.
+     */
+    public static void telling(GameActivity.InputEnabledSurfaceView view) {
+        if (connection(view) instanceof Connection) {
+            Connection told = (Connection) connection(view);
+            told.toldWrite = told.echoing;
+        }
+    }
+
+    /**
      * Whether the last state told is a write, told back for having landed
      * on one the input method made. On any thread; waits for none.
      */
@@ -116,6 +127,9 @@ public final class TextInputOf {
 
         /** The last state told is a write; read on the native side's thread. */
         volatile boolean toldWrite;
+
+        /** Inside the tell of a write back. */
+        private boolean echoing;
 
         /** A write replaced a state told after it, and is yet to be told. */
         private boolean overwrote;
@@ -204,7 +218,6 @@ public final class TextInputOf {
             boolean handled = super.onKey(view, code, event);
             keyed = false;
             if (handled) {
-                toldWrite = false;
                 reported();
             }
             return handled;
@@ -274,15 +287,14 @@ public final class TextInputOf {
                 if (!overwrote) {
                     return false;
                 }
-                // Before it is told: the native side asks once it has it.
-                toldWrite = true;
+                echoing = true;
                 boolean more = super.endBatchEdit();
+                echoing = false;
                 reported();
                 return more;
             }
             known = now;
             holdsWrite = false;
-            toldWrite = false;
             boolean more = super.endBatchEdit();
             reported();
             return more;

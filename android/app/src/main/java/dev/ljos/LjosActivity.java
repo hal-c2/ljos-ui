@@ -202,6 +202,14 @@ public class LjosActivity extends GameActivity {
         TextInputOf.writeComing(mSurfaceView);
     }
 
+    // Every tell passes here, a key's too, before the native side has it.
+    @Override
+    public void stateChanged(
+            com.google.androidgamesdk.gametextinput.State state, boolean dismissed) {
+        TextInputOf.telling(mSurfaceView);
+        super.stateChanged(state, dismissed);
+    }
+
     /**
      * Whether what the keyboard's connection told last is a write, told
      * back. A read on the native side's thread, which waits for no other.
