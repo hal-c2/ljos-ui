@@ -260,7 +260,7 @@ unsafe extern "C" {
     pub fn JS_GCObjectDigest(rt: *mut JSRuntime) -> u64;
 }
 unsafe extern "C" {
-    pub fn JS_NullErrorCount(rt: *mut JSRuntime) -> u64;
+    pub fn JS_IsOOMError(ctx: *mut JSContext, val: JSValue) -> bool;
 }
 unsafe extern "C" {
     pub fn JS_SetDumpFlags(rt: *mut JSRuntime, flags: u64);

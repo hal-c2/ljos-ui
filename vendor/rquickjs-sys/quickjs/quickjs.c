@@ -364,9 +364,6 @@ struct JSRuntime {
     /* Ljós: the most malloc_size held since JS_MarkMallocPeak, in the units
        malloc_limit is checked in. */
     size_t malloc_peak;
-    /* Ljós: how many times JS_ThrowError2 threw `null` for want of heap to
-       make its error, so that `null` is told from a script's own. */
-    uint64_t null_errors;
 #ifdef ENABLE_DUMPS // JS_DUMP_LEAKS
     struct list_head string_list; /* list of JSString.link */
 #endif
@@ -591,6 +588,11 @@ struct JSContext {
     JSValue promise_ctor;
     JSValue native_error_proto[JS_NATIVE_ERROR_COUNT];
     JSValue error_ctor;
+    /* Ljós: a frozen InternalError "out of memory", made while there is
+       room, thrown when there is no room left to make the error QuickJS
+       meant to throw. Upstream throws `null` there, which a script's own
+       `throw null` cannot be told from once caught and thrown again. */
+    JSValue oom_error;
     JSValue error_back_trace;
     JSValue error_prepare_stack;
     JSValue error_stack_trace_limit;
@@ -2512,12 +2514,13 @@ uint64_t JS_GCObjectDigest(JSRuntime *rt)
     return d;
 }
 
-/* Ljós: how many times QuickJS has thrown `null` because the heap had no
-   room for the error it meant to throw. A script's `throw null` is not
-   counted. */
-uint64_t JS_NullErrorCount(JSRuntime *rt)
+/* Ljós: whether val is the context's out-of-memory error. Compares
+   pointers only: reading the error's properties can run a script. */
+bool JS_IsOOMError(JSContext *ctx, JSValueConst val)
 {
-    return rt->null_errors;
+    return JS_VALUE_GET_TAG(val) == JS_TAG_OBJECT
+        && JS_VALUE_GET_TAG(ctx->oom_error) == JS_TAG_OBJECT
+        && JS_VALUE_GET_OBJ(val) == JS_VALUE_GET_OBJ(ctx->oom_error);
 }
 
 void JS_SetDumpFlags(JSRuntime *rt, uint64_t flags)
@@ -2953,6 +2956,7 @@ JSContext *JS_NewContextRaw(JSRuntime *rt)
     ctx->regexp_ctor = JS_NULL;
     ctx->promise_ctor = JS_NULL;
     ctx->error_ctor = JS_NULL;
+    ctx->oom_error = JS_UNDEFINED; /* Ljós */
     ctx->error_back_trace = JS_UNDEFINED;
     ctx->error_prepare_stack = JS_UNDEFINED;
     ctx->error_stack_trace_limit = js_int32(10);
@@ -3083,6 +3087,7 @@ static void JS_MarkContext(JSRuntime *rt, JSContext *ctx,
         JS_MarkValue(rt, ctx->native_error_proto[i], mark_func);
     }
     JS_MarkValue(rt, ctx->error_ctor, mark_func);
+    JS_MarkValue(rt, ctx->oom_error, mark_func); /* Ljós */
     JS_MarkValue(rt, ctx->error_back_trace, mark_func);
     JS_MarkValue(rt, ctx->error_prepare_stack, mark_func);
     JS_MarkValue(rt, ctx->error_stack_trace_limit, mark_func);
@@ -3165,6 +3170,7 @@ void JS_FreeContext(JSContext *ctx)
         JS_FreeValue(ctx, ctx->native_error_proto[i]);
     }
     JS_FreeValue(ctx, ctx->error_ctor);
+    JS_FreeValue(ctx, ctx->oom_error); /* Ljós */
     JS_FreeValue(ctx, ctx->error_back_trace);
     JS_FreeValue(ctx, ctx->error_prepare_stack);
     JS_FreeValue(ctx, ctx->error_stack_trace_limit);
@@ -8521,8 +8527,10 @@ JS_ThrowError2(JSContext *ctx, JSErrorEnum error_num, bool add_backtrace,
     obj = JS_MakeError(ctx, error_num, add_backtrace, fmt, ap);
     if (unlikely(JS_IsException(obj))) {
         /* out of memory: throw JS_NULL to avoid recursing */
-        obj = JS_NULL;
-        ctx->rt->null_errors++; /* Ljós */
+        /* Ljós: the out-of-memory error made in advance, where there is one */
+        obj = js_dup(ctx->oom_error);
+        if (JS_IsUndefined(obj))
+            obj = JS_NULL;
     }
     return JS_Throw(ctx, obj);
 }
@@ -58788,6 +58796,21 @@ static int JS_AddIntrinsicBasicObjects(JSContext *ctx)
                                JS_PROP_WRITABLE | JS_PROP_CONFIGURABLE);
         ctx->native_error_proto[i] = proto;
     }
+
+    /* Ljós: the error to throw when the heap has no room for one. Its
+       stack is set now, empty, so a throw never builds one: a backtrace of
+       the first throw would be told of every later one. */
+    ctx->oom_error = JS_MakeError2(ctx, JS_INTERNAL_ERROR, false,
+                                   "out of memory");
+    if (JS_IsException(ctx->oom_error))
+        return -1;
+    {
+        JSObject *p = JS_VALUE_GET_OBJ(ctx->oom_error);
+        JS_FreeValue(ctx, p->u.object_data);
+        p->u.object_data = js_empty_string(ctx->rt);
+    }
+    if (JS_FreezeObject(ctx, ctx->oom_error) < 0)
+        return -1;
 
     /* the array prototype is an array */
     ctx->class_proto[JS_CLASS_ARRAY] =

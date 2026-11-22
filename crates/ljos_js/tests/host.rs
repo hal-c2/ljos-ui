@@ -60,8 +60,6 @@ fn a_debug_build_does_not_interrupt_what_an_optimised_build_finishes() {
     assert_eq!(out.unwrap(), 1.0);
 }
 
-/// QuickJS throws `null` when the heap has no room left for the error it
-/// meant to throw. Such a `null` is the heap running out; a script's own
 /// The limit read back is the one in force, also once it was changed.
 #[test]
 fn the_memory_limit_read_is_the_one_put_last() {
@@ -78,8 +76,8 @@ fn the_memory_limit_read_is_the_one_put_last() {
 }
 
 /// `throw null` with room to spare stays an exception. With no room at all,
-/// the run fails before the script throws anything, and the `null` QuickJS
-/// throws for it is running out of memory.
+/// the run fails before the script throws anything, and that is running
+/// out of memory.
 #[test]
 fn a_null_thrown_on_a_full_heap_is_running_out_of_memory() {
     let host = JsHost::new(JsConfig {
@@ -704,10 +702,11 @@ fn a_null_a_script_throws_on_a_nearly_full_heap_is_its_own() {
     assert_eq!(eval_num(&host, "40 + 2").unwrap(), 42.0);
 }
 
-/// The `null` QuickJS throws for want of heap is out of memory however it
-/// reaches the host: caught and thrown again by the script, too.
+/// What QuickJS throws for want of heap is out of memory however it reaches
+/// the host: caught and thrown again by the script, too, and a script
+/// cannot make it read as anything else.
 #[test]
-fn a_null_thrown_for_want_of_heap_and_thrown_again_is_running_out_of_memory() {
+fn the_error_thrown_for_want_of_heap_and_thrown_again_is_running_out_of_memory() {
     let host = JsHost::new(JsConfig {
         memory_limit: Some(16 * 1024 * 1024),
         ..JsConfig::default()
@@ -719,7 +718,11 @@ fn a_null_thrown_for_want_of_heap_and_thrown_again_is_running_out_of_memory() {
     let err = eval_num(
         &host,
         "function fill() { let h = null; for (;;) h = { n: h } }\n\
-         try { fill() } catch (e) { if (e !== null) throw new Error('not null: ' + e); throw e }",
+         try { fill() } catch (e) {\n\
+           if (e.message !== 'out of memory') throw new Error('not out of memory: ' + e);\n\
+           try { e.message = 'mine' } catch (_) {}\n\
+           throw e\n\
+         }",
     )
     .unwrap_err();
     assert!(matches!(err, JsFault::JsOutOfMemory { .. }), "{err:?}");
@@ -750,9 +753,35 @@ fn a_null_thrown_after_running_out_was_swallowed_in_the_same_run_is_its_own() {
     assert!(matches!(err, JsFault::JsException { .. }), "{err:?}");
 }
 
-/// Each job in a pump counts QuickJS's `null`s from its own start: a job
-/// that ran out and caught the `null` leaves the next job's own `throw
-/// null` its exception.
+/// Telling that the heap ran out runs no script: an accessor on the error's
+/// prototype would be given a heap with no room, and what it made would
+/// read as garbage to collect.
+#[test]
+fn telling_that_the_heap_ran_out_runs_no_script() {
+    let host = JsHost::new(JsConfig {
+        memory_limit: Some(16 * 1024 * 1024),
+        ..JsConfig::default()
+    })
+    .unwrap();
+    host.enter("setup", host.config().slice, |s| {
+        s.eval::<(), _>(
+            "globalThis.read = 0;\n\
+             Object.defineProperty(Error.prototype, 'fileName', { get() { read++; return '' } });\n\
+             globalThis.fill = function () { let h = null; for (;;) h = { n: h } }",
+        )
+    })
+    .unwrap();
+    host.collect_now();
+    let held = host.memory_stats().unwrap().malloc_size;
+    assert!(host.set_memory_limit(Some(held + 4 * 1024 * 1024)));
+    let err = eval_num(&host, "fill()").unwrap_err();
+    assert!(matches!(err, JsFault::JsOutOfMemory { .. }), "{err:?}");
+    host.collect_now();
+    assert_eq!(eval_num(&host, "read").unwrap(), 0.0);
+}
+
+/// A job that ran out and caught it leaves the next job's own `throw null`
+/// its exception.
 #[test]
 fn a_null_a_job_throws_after_another_caught_running_out_is_its_own() {
     let host = JsHost::new(JsConfig {
@@ -766,7 +795,7 @@ fn a_null_a_job_throws_after_another_caught_running_out_is_its_own() {
     host.enter("setup", host.config().slice, |s| {
         s.eval::<(), _>(
             "function fill() { let h = null; for (;;) h = { n: h } }\n\
-             queueMicrotask(() => { try { fill() } catch (e) { if (e !== null) throw new Error('not null: ' + e) } });\n\
+             queueMicrotask(() => { try { fill() } catch (e) { if (e.message !== 'out of memory') throw new Error('not out of memory: ' + e) } });\n\
              queueMicrotask(() => { throw null })",
         )
     })
@@ -781,10 +810,10 @@ fn a_null_a_job_throws_after_another_caught_running_out_is_its_own() {
 }
 
 /// A nested run counts from its own start, and the run around it from its
-/// own again once the nested one is done: a `null` QuickJS threw in the
+/// own again once the nested one is done: the error QuickJS threw in the
 /// outer run before it, caught and thrown again after, is out of memory.
 #[test]
-fn a_null_thrown_for_want_of_heap_before_a_nested_run_is_still_out_of_memory_after() {
+fn the_error_thrown_for_want_of_heap_before_a_nested_run_is_still_out_of_memory_after() {
     let host = JsHost::new(JsConfig {
         memory_limit: Some(16 * 1024 * 1024),
         ..JsConfig::default()
@@ -798,7 +827,7 @@ fn a_null_thrown_for_want_of_heap_before_a_nested_run_is_still_out_of_memory_aft
         .enter("outer", slice, |s| {
             s.eval::<(), _>(
                 "function fill() { let h = null; for (;;) h = { n: h } }\n\
-                 try { fill() } catch (e) { if (e !== null) throw new Error('not null: ' + e); globalThis.caught = e }",
+                 try { fill() } catch (e) { if (e.message !== 'out of memory') throw new Error('not out of memory: ' + e); globalThis.caught = e }",
             )?;
             let inner = host.enter("inner", slice, |s| s.eval::<f64, _>("40 + 2"));
             assert_eq!(inner, Ok(42.0));

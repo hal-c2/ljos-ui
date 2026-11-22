@@ -41,83 +41,51 @@ unsafe extern "C" {
     fn JS_MarkMallocPeak(rt: *mut rquickjs::qjs::JSRuntime) -> usize;
     fn JS_ResumeMallocPeak(rt: *mut rquickjs::qjs::JSRuntime, outer: usize) -> usize;
     fn JS_GCObjectDigest(rt: *mut rquickjs::qjs::JSRuntime) -> u64;
-    fn JS_NullErrorCount(rt: *mut rquickjs::qjs::JSRuntime) -> u64;
+    fn JS_IsOOMError(ctx: *mut rquickjs::qjs::JSContext, val: rquickjs::qjs::JSValue) -> bool;
 }
 
-/// What the runtime went through in a run: the most it held, in the
-/// units QuickJS checks its limit in (`malloc_size`, block by block), and
-/// whether QuickJS threw `null` for want of room to make an error. A
-/// script can throw `null` itself, on a heap as full as it likes: only the
-/// second tells the two apart.
-pub(crate) struct MallocPeak {
-    rt: *mut rquickjs::qjs::JSRuntime,
-    /// `JS_NullErrorCount` as the run began.
-    nulls_from: Cell<u64>,
+/// Whether `thrown` is the error QuickJS throws when the heap has no room
+/// for one. Allocates nothing and runs no script.
+pub(crate) fn is_oom_error(thrown: &rquickjs::Value<'_>) -> bool {
+    // SAFETY: the value and its context are live while `thrown` is
+    // borrowed; the call compares pointers only.
+    unsafe { JS_IsOOMError(thrown.ctx().as_raw().as_ptr(), thrown.as_raw()) }
 }
 
-/// Where a run began, for the run it interrupted to go back to.
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct Mark {
-    peak: usize,
-    nulls_from: u64,
-}
-
-impl Mark {
-    /// A mark that covers both runs: the higher peak and the earlier start.
-    pub(crate) fn join(self, other: Self) -> Self {
-        Self {
-            peak: self.peak.max(other.peak),
-            nulls_from: self.nulls_from.min(other.nulls_from),
-        }
-    }
-}
+/// The most the runtime held in a run, in the units QuickJS checks its
+/// limit in (`malloc_size`, block by block). A function that ran out frees
+/// its locals as its exception unwinds it, so an unworded `InternalError`
+/// is judged against this, not against what is held after.
+pub(crate) struct MallocPeak(*mut rquickjs::qjs::JSRuntime);
 
 impl MallocPeak {
     /// # Safety
     ///
     /// `rt` is a live runtime, and outlives what this is handed to.
     pub(crate) unsafe fn of(rt: *mut rquickjs::qjs::JSRuntime) -> Self {
-        // SAFETY: a live runtime (the caller's promise).
-        let nulls_from = Cell::new(unsafe { JS_NullErrorCount(rt) });
-        Self { rt, nulls_from }
+        Self(rt)
     }
 
-    /// Starts the run again from now: the high-water mark from what is
-    /// held, and no `null` of QuickJS's. A host does this as a run begins.
-    /// Returns the mark it replaces, for a nested run to hand back with
-    /// [`MallocPeak::resume`].
-    pub(crate) fn mark(&self) -> Mark {
+    /// Starts the high-water mark again from what is held now; a host
+    /// does this as a run begins. Returns the mark it replaces, for a
+    /// nested run to hand back with [`MallocPeak::resume`].
+    pub(crate) fn mark(&self) -> usize {
         // SAFETY: a live runtime (`of`).
-        let peak = unsafe { JS_MarkMallocPeak(self.rt) };
-        // SAFETY: as above.
-        let nulls_from = self
-            .nulls_from
-            .replace(unsafe { JS_NullErrorCount(self.rt) });
-        Mark { peak, nulls_from }
+        unsafe { JS_MarkMallocPeak(self.0) }
     }
 
     /// Goes back to the run a nested one interrupted: its mark `outer`,
-    /// or the nested run's peak if that went higher, since the outer run
-    /// held the heap then too. What ran out in the nested run ran out in
-    /// the outer one as well, so the outer one counts from its own start.
-    pub(crate) fn resume(&self, outer: Mark) {
+    /// or the nested run's if that went higher, since the outer run held
+    /// the heap then too.
+    pub(crate) fn resume(&self, outer: usize) {
         // SAFETY: a live runtime (`of`).
-        unsafe { JS_ResumeMallocPeak(self.rt, outer.peak) };
-        self.nulls_from.set(outer.nulls_from);
+        unsafe { JS_ResumeMallocPeak(self.0, outer) };
     }
 
     /// The most held since the last [`MallocPeak::mark`].
     pub(crate) fn get(&self) -> usize {
         // SAFETY: a live runtime (`of`); 0 is never above a mark.
-        unsafe { JS_ResumeMallocPeak(self.rt, 0) }
-    }
-
-    /// Whether QuickJS threw `null` since the last [`MallocPeak::mark`]
-    /// because it had no room to make the error it meant to throw.
-    pub(crate) fn ran_out(&self) -> bool {
-        // SAFETY: a live runtime (`of`).
-        let now = unsafe { JS_NullErrorCount(self.rt) };
-        now != self.nulls_from.get()
+        unsafe { JS_ResumeMallocPeak(self.0, 0) }
     }
 }
 
