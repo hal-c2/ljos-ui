@@ -302,6 +302,53 @@ fn a_file_whose_module_has_an_error_is_refused_with_the_modules_place() {
     assert!(why.starts_with("bad.ts:1:30: "), "{why}");
 }
 
+/// The build that keeps a module's files may be above the directory an
+/// import finds its types in: it is no stand-in for that module.
+#[test]
+fn a_build_above_a_modules_directory_keeps_the_modules_files() {
+    for (dir_of_build, build, address) in [
+        (
+            "",
+            "qt_add_qml_module(app URI App RESOURCES icons/logo.png)\n",
+            "qrc:/qt/qml/App/icons/logo.png",
+        ),
+        (
+            "",
+            "qt_add_qml_module(app URI App RESOURCE_PREFIX / QML_FILES Main.qml \
+             RESOURCES icons/logo.png)\n",
+            "qrc:/App/icons/logo.png",
+        ),
+        (
+            "Company/",
+            "qt_add_qml_module(app URI Company.App RESOURCES icons/logo.png)\n",
+            "qrc:/qt/qml/Company/App/icons/logo.png",
+        ),
+    ] {
+        let dir = tempfile::tempdir().expect("a temporary directory");
+        let root = dir.path();
+        let uri = format!("{}App", dir_of_build.replace('/', "."));
+        let at = |name: &str| format!("{dir_of_build}{name}");
+        write_tree(
+            root,
+            &[
+                (&at("CMakeLists.txt"), build),
+                (&at("Main.qml"), "import QtQuick\nItem {}\n"),
+                (&at("icons/logo.png"), "png\n"),
+                (
+                    &at("App/qmldir"),
+                    &format!("module {uri}\nRing 1.0 Ring.qml\n"),
+                ),
+                (&at("App/Ring.qml"), "import QtQuick\nItem {}\n"),
+            ],
+        );
+        let named = vec![(address.to_owned(), root.join(at("icons/logo.png")))];
+
+        assert_eq!(ljos_compiler::resources(root).expect("readable"), named);
+        let project = ljos_compiler::Project::open(root, Runtime::new()).expect("readable");
+        assert_eq!(project.resources(), named.as_slice());
+    }
+}
+
 /// A stand-in of a module kept beside the real one (`old/` here) is not
 /// what an import finds, so its files are not at the module's address.
 #[test]
