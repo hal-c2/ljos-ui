@@ -2498,7 +2498,7 @@ mod tests {
         assert!(bad.is_empty(), "{bad:?}");
         let basic = libraries[BASIC].type_names();
         assert_eq!(basic.len(), 61);
-        for directory in [MATERIAL, FUSION, UNIVERSAL] {
+        for directory in [MATERIAL, FUSION, UNIVERSAL, MACOS] {
             for name in libraries[directory].type_names() {
                 assert!(
                     basic.contains(&name),
@@ -2512,7 +2512,7 @@ mod tests {
     fn every_style_control_can_be_created() {
         let (libraries, bad) = StyleLibrary::embedded();
         assert!(bad.is_empty(), "{bad:?}");
-        for directory in [MATERIAL, FUSION, UNIVERSAL] {
+        for directory in [MATERIAL, FUSION, UNIVERSAL, MACOS] {
             for name in libraries[directory].type_names() {
                 let engine = Engine::new();
                 ljos_quick::register(&engine);
