@@ -619,10 +619,10 @@ yet driven on the phone, so their steps are pending there.
 | `Then the application reads the secret "s" as "k" of "svc"` / `Then the application reads no secret as "k" of "svc"` | what the application reads back from that store |
 | `Then the property "p" of "o" is a directory of the application's own` | the property is the path of a directory the system keeps for the application alone (on Android, below its data directory) |
 | `Then no file of the application holds "s"` | no file in the application's own directories holds the text as it is: a secret is kept encrypted |
-| `Given the phone's Downloads hold the file "name" with the text "t"` / `Then the phone's Downloads hold the file "name"` | a file in the phone's shared Downloads, which the system's document picker offers (`adb push` to `/sdcard/Download`), put there, or found there |
+| `Given the phone's Downloads hold the file "name" with the text "t"` / `Then the phone's Downloads hold the file "name"` | a file in the phone's shared Downloads, which the system's document picker offers (`adb push` to `/sdcard/Download`), put there, or found there; the runner replaces no file of the phone's and removes what the scenario put or saved there |
 | `Given the inspector of the application on the phone is connected over adb` | the application on the phone serves its inspector (`ljos android run --mcp`), and the computer reaches it as `ljos android connect` does: a port forwarded over adb and the token read with `run-as`; the inspector steps then ask it |
 
-On a phone the dialog steps (`the system shows a "kind" dialog titled "title"`, `the user chooses "path" in the system dialog`, `the user dismisses the system dialog`) are the system's document picker, read from the screen and tapped: a file or folder is chosen by the name the picker shows, and the picker shows no title.
+On a phone the dialog steps (`the system shows a "kind" dialog titled "title"`, `the user chooses "path" in the system dialog`, `the user dismisses the system dialog`) are the system's document picker, read from the screen and tapped: a file or folder is chosen by the name the picker shows in the Downloads, a save keeps the name the application suggested, and the picker shows no title. The phone's language is English: the picker's roots are found by its words.
 
 The system's Back, as the application's `Back` handlers get it. These are Ljós's own (no Qt
 type takes Back), so Ljós runs them anywhere; they take no phone.

@@ -26,6 +26,7 @@ use serde_json::{Value, json};
 use super::attached::{Reached, Running, SEEN};
 use super::{
     Backend, BackendError, Device, LogEntry, LogLevel, Platform, PointerStep, QmlFile, Result,
+    SystemDialogAnswer,
 };
 
 /// Names the device the scenarios run on, as `adb -s` takes it; set when
@@ -69,6 +70,90 @@ fn download_path(path: &str) -> Result<String> {
             "{path:?}: a download is named below the phone's Downloads"
         )))
     }
+}
+
+/// How long the document picker may take to show what a step wants, and
+/// the application to hear its answer: a picked document is copied first.
+const PICKER: Duration = Duration::from_secs(20);
+/// Where the screen's nodes are written to be read.
+const SCREEN: &str = "/data/local/tmp/ljos-screen.xml";
+/// The id of a row's name in the picker's lists, and of the name's field
+/// when it saves.
+const TITLE: &str = "android:id/title";
+/// The id of the picker's button that saves or takes a folder, and of the
+/// button that then allows the folder.
+const CONFIRM: &str = "android:id/button1";
+
+/// The kind of dialog the document picker is, as the steps name it, when
+/// it is in front in what `dumpsys activity activities` says.
+fn picker_shown(activities: &str) -> Option<&'static str> {
+    let front = activities.lines().any(|line| {
+        (line.contains("topResumedActivity") || line.contains("ResumedActivity:"))
+            && line.contains("documentsui/")
+    });
+    if !front {
+        return None;
+    }
+    activities
+        .lines()
+        .filter(|line| line.contains("documentsui"))
+        .find_map(|line| {
+            let action = line.split_once("act=android.intent.action.")?.1;
+            match action.split([' ', '}']).next()? {
+                "OPEN_DOCUMENT" => Some("open file"),
+                "CREATE_DOCUMENT" => Some("save file"),
+                "OPEN_DOCUMENT_TREE" => Some("folder"),
+                _ => None,
+            }
+        })
+}
+
+/// A node of the phone's screen, as `uiautomator dump` writes it.
+#[derive(Debug)]
+struct ScreenNode {
+    text: String,
+    id: String,
+    class: String,
+    desc: String,
+    enabled: bool,
+    /// Its middle, where it is tapped.
+    at: (i64, i64),
+}
+
+fn screen_nodes(xml: &str) -> Vec<ScreenNode> {
+    xml.split("<node ")
+        .skip(1)
+        .filter_map(|rest| {
+            // An attribute's own `>` is written `&gt;`.
+            let tag = format!(" {}", rest.split('>').next()?);
+            let value = |name: &str| -> Option<String> {
+                let (_, after) = tag.split_once(&format!(" {name}=\""))?;
+                let raw = after.split('"').next()?;
+                Some(
+                    raw.replace("&quot;", "\"")
+                        .replace("&apos;", "'")
+                        .replace("&lt;", "<")
+                        .replace("&gt;", ">")
+                        .replace("&amp;", "&"),
+                )
+            };
+            let bounds: Vec<i64> = value("bounds")?
+                .split(['[', ']', ','])
+                .filter_map(|n| n.parse().ok())
+                .collect();
+            let [left, top, right, bottom] = bounds[..] else {
+                return None;
+            };
+            Some(ScreenNode {
+                text: value("text").unwrap_or_default(),
+                id: value("resource-id").unwrap_or_default(),
+                class: value("class").unwrap_or_default(),
+                desc: value("content-desc").unwrap_or_default(),
+                enabled: value("enabled").as_deref() == Some("true"),
+                at: ((left + right) / 2, (top + bottom) / 2),
+            })
+        })
+        .collect()
 }
 
 /// The device the scenarios run on, when there is one.
@@ -163,6 +248,146 @@ impl Phone {
     fn has(&self, path: &str) -> Result<bool> {
         let said = self.shell(&format!("if [ -e {} ]; then echo yes; fi", quoted(path)))?;
         Ok(said.trim() == "yes")
+    }
+
+    fn picker(&self) -> Result<Option<&'static str>> {
+        Ok(picker_shown(&self.shell("dumpsys activity activities")?))
+    }
+
+    /// Waits for the document picker: its kind, or none within [`PICKER`].
+    fn wait_picker(&self) -> Result<Option<&'static str>> {
+        let until = Instant::now() + PICKER;
+        loop {
+            let shown = self.picker()?;
+            if shown.is_some() || Instant::now() > until {
+                return Ok(shown);
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    }
+
+    fn screen(&self) -> Result<Vec<ScreenNode>> {
+        // uiautomator can fail and still exit with 0: an earlier screen's
+        // file mustn't be read for this one's.
+        self.shell(&format!(
+            "rm -f {SCREEN} && uiautomator dump {SCREEN} >/dev/null && cat {SCREEN}"
+        ))
+        .map(|xml| screen_nodes(&xml))
+    }
+
+    /// Waits until the screen is as `find` wants it: where that says to tap.
+    fn wait_screen(
+        &self,
+        what: &str,
+        find: impl Fn(&[ScreenNode]) -> Option<(i64, i64)>,
+    ) -> Result<(i64, i64)> {
+        let until = Instant::now() + PICKER;
+        loop {
+            // A screen that is moving has no dump yet.
+            let seen = self.screen();
+            if let Some(at) = seen.as_deref().ok().and_then(&find) {
+                return Ok(at);
+            }
+            if Instant::now() > until {
+                return Err(BackendError::Failed(match seen {
+                    Ok(nodes) => format!(
+                        "the document picker showed no {what}; its screen has {:?}",
+                        nodes
+                            .iter()
+                            .map(|n| if n.text.is_empty() { &n.desc } else { &n.text })
+                            .filter(|shown| !shown.is_empty())
+                            .collect::<Vec<_>>()
+                    ),
+                    Err(e) => format!("looking for {what}, the screen was not read: {e}"),
+                }));
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    }
+
+    fn tap(&self, (x, y): (i64, i64)) -> Result<()> {
+        self.shell(&format!("input tap {x} {y}")).map(drop)
+    }
+
+    /// Takes the picker to the Downloads, where the steps' files are; it
+    /// opens where it was left.
+    fn picker_to_downloads(&self) -> Result<()> {
+        // The drawer's button has no id of its own, and English words.
+        self.tap(self.wait_screen("button that shows the roots", |nodes| {
+            nodes.iter().find(|n| n.desc == "Show roots").map(|n| n.at)
+        })?)?;
+        self.tap(self.wait_screen("Downloads among its roots", |nodes| {
+            nodes
+                .iter()
+                .find(|n| n.id == TITLE && n.text == "Downloads")
+                .map(|n| n.at)
+        })?)
+    }
+
+    /// Picks `name`, which is in the Downloads, in the picker of `kind`.
+    fn pick(&self, kind: &str, name: &str) -> Result<()> {
+        self.picker_to_downloads()?;
+        if kind == "save file" {
+            // The name is the one the application suggested: none is typed.
+            self.wait_screen(&format!("field with the name {name:?}"), |nodes| {
+                nodes
+                    .iter()
+                    .find(|n| n.class.ends_with("EditText") && n.text == name)
+                    .map(|n| n.at)
+            })?;
+            return self.tap(self.wait_screen("button that saves", |nodes| {
+                nodes
+                    .iter()
+                    .find(|n| n.id == CONFIRM && n.enabled)
+                    .map(|n| n.at)
+            })?);
+        }
+        let row = |n: &ScreenNode| n.id == TITLE && n.text == name;
+        self.tap(self.wait_screen(&format!("row {name:?}"), |nodes| {
+            nodes.iter().find(|n| row(n)).map(|n| n.at)
+        })?)?;
+        if kind != "folder" {
+            return Ok(());
+        }
+        // In the folder once its own row is gone: the button before that
+        // would take the folder around it.
+        self.tap(self.wait_screen("button that takes the folder", |nodes| {
+            if nodes.iter().any(row) {
+                return None;
+            }
+            nodes
+                .iter()
+                .find(|n| n.id == CONFIRM && n.enabled)
+                .map(|n| n.at)
+        })?)?;
+        // The system then asks whether the application may have it.
+        self.tap(
+            self.wait_screen("question that allows the folder", |nodes| {
+                if !nodes.iter().any(|n| n.id == "android:id/message") {
+                    return None;
+                }
+                nodes.iter().find(|n| n.id == CONFIRM).map(|n| n.at)
+            })?,
+        )
+    }
+
+    /// Leaves the picker as the user does, by Back, which first leaves
+    /// whatever is open in it.
+    fn leave_picker(&self) -> Result<()> {
+        let until = Instant::now() + PICKER;
+        while self.picker()?.is_some() {
+            if Instant::now() > until {
+                return Err(BackendError::Failed(
+                    "Back didn't leave the document picker".into(),
+                ));
+            }
+            self.shell("input keyevent KEYCODE_BACK")?;
+            // Another Back, once it is gone, would leave the application.
+            if self.wait_front(true, Duration::from_secs(2))? {
+                break;
+            }
+        }
+        Ok(())
     }
 
     /// The application's process, when it runs.
@@ -266,6 +491,9 @@ pub struct AndroidBackend {
     /// `download_dirs` the folders, outer before inner.
     downloads: Vec<String>,
     download_dirs: Vec<String>,
+    /// The object the scenario last called `open` of: the dialog the
+    /// picker answers.
+    opened: Option<String>,
 }
 
 impl Drop for AndroidBackend {
@@ -394,6 +622,34 @@ impl AndroidBackend {
     fn eval(&mut self, object: &str, source: &str) -> Result<Value> {
         self.running()?.eval(object, source)
     }
+
+    /// Waits until the dialog has heard the picker: the picker is gone
+    /// first, and a picked document is still copied then.
+    fn heard(&mut self) -> Result<()> {
+        let until = Instant::now() + PICKER;
+        if !self.phone()?.wait_front(true, PICKER)? {
+            return Err(BackendError::Failed(
+                "the application didn't come back from the document picker".into(),
+            ));
+        }
+        if let Some(dialog) = self.opened.take() {
+            loop {
+                // Counted before it is asked: an answer between the two
+                // is a turn since.
+                let turns = self.running()?.turns()?;
+                if self.eval(&dialog, "visible")? != Value::Bool(true) {
+                    break;
+                }
+                if Instant::now() > until {
+                    return Err(BackendError::Failed(format!(
+                        "the dialog {dialog:?} didn't hear the document picker's answer"
+                    )));
+                }
+                self.running()?.turned_after(turns, until)?;
+            }
+        }
+        self.settle()
+    }
 }
 
 fn not_yet(what: &'static str) -> BackendError {
@@ -464,6 +720,9 @@ impl Backend for AndroidBackend {
     }
 
     fn call(&mut self, object: &str, method: &str, args: &[Value]) -> Result<Value> {
+        if method == "open" {
+            self.opened = Some(object.to_owned());
+        }
         let args: Vec<String> = args.iter().map(Value::to_string).collect();
         self.eval(object, &format!("{method}({})", args.join(", ")))
     }
@@ -543,6 +802,59 @@ impl Platform for AndroidBackend {
         }
         self.xhr_local_read = true;
         Ok(())
+    }
+
+    fn system_dialogs(&mut self) -> Result<Vec<(String, String)>> {
+        let phone = self.phone()?.clone();
+        // A picker that was asked for takes a moment to come.
+        let shown = if self.opened.is_some() {
+            phone.wait_picker()?
+        } else {
+            phone.picker()?
+        };
+        // The picker shows no title.
+        Ok(shown
+            .map(|kind| (kind.to_owned(), String::new()))
+            .into_iter()
+            .collect())
+    }
+
+    fn answer_system_dialog(&mut self, answer: SystemDialogAnswer) -> Result<()> {
+        let phone = self.phone()?.clone();
+        let chosen = match &answer {
+            SystemDialogAnswer::Button(_) => {
+                return Err(not_yet("a button of the phone's own dialogs"));
+            }
+            SystemDialogAnswer::Dismiss => None,
+            SystemDialogAnswer::Choose(paths) => match paths.as_slice() {
+                [name] if !name.contains('/') => Some(name.as_str()),
+                _ => {
+                    return Err(not_yet(
+                        "several documents, or a path, in the phone's picker",
+                    ));
+                }
+            },
+        };
+        let kind = phone
+            .wait_picker()?
+            .ok_or_else(|| BackendError::Failed("the phone shows no document picker".into()))?;
+        match chosen {
+            None => phone.leave_picker()?,
+            Some(name) => {
+                if kind == "save file" {
+                    let to = download_path(name)?;
+                    if phone.has(&to)? {
+                        return Err(BackendError::Failed(format!(
+                            "the phone already holds {to}: the picker would save under another \
+                             name, and finding that file would prove nothing"
+                        )));
+                    }
+                    self.downloads.push(to);
+                }
+                phone.pick(kind, name)?;
+            }
+        }
+        self.heard()
     }
 }
 
