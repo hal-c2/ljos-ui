@@ -12,7 +12,8 @@ Feature: The observer's pages are chosen from the keyboard
   arrow keys move between the tabs, past the last back to the first, and
   Home and End go to the first and the last; Space, Return or Enter shows
   the page whose tab has focus and asks the application for what it
-  shows, as a click does.
+  shows, as a click does. The list stays one stop of Tab whichever of
+  its tabs has focus: Tab after an arrow leaves it.
 
   Background:
     Given the QML:
@@ -43,14 +44,37 @@ Feature: The observer's pages are chosen from the keyboard
     When the observer is given the keys "Space"
     Then the observer shows "Not run"
 
-  Scenario: Home and End go to the first and last tab, Up and Down step, and Enter shows a page
+  Scenario: End goes to the last tab and Home to the first
     When the application is observed
     And the observer is given the keys "Tab End"
     Then the observer has "role=tab[name=\"Audit\"][focused]"
     When the observer is given the keys "Home"
     Then the observer has "role=tab[name=\"Overview\"][focused]"
-    When the observer is given the keys "Down Down Down Down Up"
+
+  Scenario: Down and Up step between the tabs
+    When the application is observed
+    And the observer is given the keys "Tab Down Down Down Down Up"
     Then the observer has "role=tab[name=\"Objects\"][focused]"
     And the observer does not have "role=listitem[name=\"Scenario\"]"
+
+  Scenario Outline: Tab leaves the list forward from a tab not shown
+    When the application is observed
+    And the observer is given the keys "<keys>"
+    Then the observer has "role=button[name=\"Pause\"][focused]"
+
+    Examples:
+      | keys                    |
+      | Tab Right Tab           |
+      | Tab End Return Home Tab |
+
+  Scenario: Shift+Tab comes back into the list at the page shown
+    When the application is observed
+    And the observer is given the keys "Tab Right Tab Shift+Tab"
+    Then the observer has "role=tab[name=\"Overview\"][focused]"
+
+  Scenario: Enter shows the page whose tab has focus
+    When the application is observed
+    And the observer is given the keys "Tab Down Down Down"
+    Then the observer has "role=tab[name=\"Objects\"][focused]"
     When the observer is given the keys "Enter"
     Then the observer has "role=listitem[name=\"Scenario\"]"

@@ -112,6 +112,8 @@ ApplicationWindow {
         var next = waiting
         next[serial] = route
         waiting = next
+        if (route !== undefined && route.indexOf("inspect:") === 0)
+            status.inspectsWaiting += 1
     }
 
     function answered(route, ok, r) {
@@ -199,6 +201,8 @@ ApplicationWindow {
             var edit = route !== undefined && route.indexOf("edited:") === 0
             var picture = route !== undefined && route.indexOf("picture:") === 0
             var values = route !== undefined && route.indexOf("inspect:") === 0
+            if (values)
+                status.inspectsWaiting -= 1
             if (!ok && route !== "watch" && !edit
                     && String(result).indexOf("rate_limited") >= 0) {
                 var again = (values || picture) && objects.valuesTurnedAway(route.substring(8), picture)
@@ -7451,6 +7455,8 @@ ApplicationWindow {
             // What the last refusal or failure said.
             Text {
                 id: status
+                // How many answers about objects' values are awaited.
+                property int inspectsWaiting: 0
                 Layout.fillWidth: true
                 Layout.leftMargin: 18
                 Layout.rightMargin: 18
