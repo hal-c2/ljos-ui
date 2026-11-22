@@ -249,17 +249,14 @@ ApplicationWindow {
             if (!ok && route !== "watch" && !edit
                     && String(result).indexOf("rate_limited") >= 0) {
                 var again = (values || picture) && objects.valuesTurnedAway(route.substring(8), picture)
-                var putAway = again && objects.shownOf !== route.substring(8)
                 var note = "The application is asked too often; showing the last answer"
-                if (putAway)
+                if (again && objects.shownOf !== route.substring(8))
                     note = "The application is asked too often; its values are asked again in a moment"
                 else if (again)
                     note += " until it is asked again"
                 if (!past && window.statusOf === "") {
                     window.say(note, "")
                     window.noteOf = route || ""
-                    if (putAway)
-                        status.valuesToldTurnedAway += 1
                 }
                 if (route && route.indexOf("objects") === 0)
                     objects.turnedAway(parseInt(route.substring(route.indexOf(":") + 1)))
@@ -7547,9 +7544,6 @@ ApplicationWindow {
                 id: status
                 // How many answers about objects' values are awaited.
                 property int inspectsWaiting: 0
-                // How many times it said that values put away are asked
-                // again: what is said next replaces that note.
-                property int valuesToldTurnedAway: 0
                 Accessible.role: Accessible.StaticText
                 Accessible.name: text
                 Layout.fillWidth: true

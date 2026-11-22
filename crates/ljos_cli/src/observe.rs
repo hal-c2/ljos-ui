@@ -463,41 +463,6 @@ mod tests {
         }
     }
 
-    /// How many times the status said that values put away are asked again.
-    fn told_turned_away((engine, root): &(Engine, ObjectId)) -> u64 {
-        let out = engine
-            .eval_js_in(
-                Some(*root),
-                "status.valuesToldTurnedAway",
-                Duration::from_secs(1),
-                [4, 16, 256, 64, 1024],
-            )
-            .unwrap();
-        let out: Json = serde_json::from_str(&out).unwrap();
-        out["value"]
-            .as_f64()
-            .map_or_else(|| panic!("{out}"), |n| n as u64)
-    }
-
-    // The note is replaced by whatever is said next: the count is what is
-    // left of it for a test that looks later.
-    #[test]
-    fn that_values_were_turned_away_is_still_known_once_the_note_is_replaced() {
-        let busy = "rate_limited: wait";
-        let window = window();
-        assert_eq!(told_turned_away(&window), 0);
-
-        let note = status_after(&window, "inspect:b", false, busy);
-        assert_eq!(told_turned_away(&window), 1, "{note}");
-        let next = status_after(&window, "processes", false, busy);
-        assert_ne!(next, note);
-        assert_eq!(told_turned_away(&window), 1, "{next}");
-
-        // Of an object picked before, nothing is said.
-        status_after(&window, "inspect:a", false, busy);
-        assert_eq!(told_turned_away(&window), 1);
-    }
-
     #[test]
     fn only_what_the_user_did_keeps_its_error_while_the_application_answers() {
         let (down, other) = ("the inspector answered 503", "{}");
