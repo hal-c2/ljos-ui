@@ -747,14 +747,16 @@ fn chose_urls(engine: &Engine, obj: ObjectId, chosen: &[String]) -> Result<(), E
 /// The system answered the dialog with `ticket`.
 pub(crate) fn system_answered(engine: &Engine, ticket: u64, reply: DialogReply) {
     let dialogs = Dialogs::of(engine);
-    // Closed from QML meanwhile: the answer is not heard.
-    let Some(obj) = dialogs.tickets.borrow_mut().remove(&ticket) else {
+    let asked = dialogs.tickets.borrow_mut().remove(&ticket);
+    if let Some(obj) = asked {
+        dialogs.shown.borrow_mut().remove(&obj);
+    }
+    // Closed from QML, or destroyed, meanwhile: the answer is not heard,
+    // and only the system knows what it made for it.
+    let Some(obj) = asked.filter(|&obj| engine.is_alive(obj)) else {
+        Platform::of(engine).dialogs().unheard(&reply);
         return;
     };
-    dialogs.shown.borrow_mut().remove(&obj);
-    if !engine.is_alive(obj) {
-        return;
-    }
     match reply {
         DialogReply::Files(files) if !files.is_empty() => {
             let chosen = chose(engine, obj, &files);
