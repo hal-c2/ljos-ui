@@ -756,7 +756,10 @@ fn told_write(app: &AndroidApp) -> bool {
         )?
         .z()
     })
-    .unwrap_or(false)
+    .unwrap_or_else(|e| {
+        log::warn!("the activity didn't say whether what it told is a write: {e}");
+        false
+    })
 }
 
 /// Calls the activity on this thread, which android-activity attached to
