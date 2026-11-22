@@ -3543,8 +3543,9 @@ pub(crate) fn classify_error<'js>(
         // rquickjs words a call into QuickJS that gave nothing back, and
         // threw nothing it would show, as unknown (a string turned into
         // text, an atom, a big integer). Where that call ran out of heap,
-        // QuickJS left its "out of memory" pending, or a `null` where even
-        // that would not fit: the heap is told as having run out, so the
+        // QuickJS left its "out of memory" pending, or the one made in
+        // advance where a new one would not fit (never a `null`, which is
+        // always a script's own): the heap is told as having run out, so the
         // boundary above waits for room and tries again instead of taking
         // it for a bug. The pending exception is cleared either way, or the
         // next run would find it.
