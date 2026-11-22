@@ -153,6 +153,28 @@ fn a_document_the_system_hands_out_is_selected_by_its_url() {
 }
 
 #[test]
+fn documents_that_arrive_after_the_dialog_closed_go_back_to_the_system() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let e = engine(dir.path());
+    let fake = FakeDialogs::default();
+    let platform = Platform::of(&e);
+    platform.set_dialogs(Rc::new(fake.clone()));
+    let d = make::<FileDialog>(&e);
+    let accepted = counter(&e, d, "accepted");
+    e.invoke_by_name(d, "open", &[]).expect("opened");
+    let urls = vec!["file:///cache/documents/1/0/notes.txt".to_owned()];
+    // The system's answer is on its way when QML closes the dialog.
+    assert!(fake.choose_documents(urls.clone()));
+    e.invoke_by_name(d, "close", &[]).expect("closed");
+    platform.finish(&e);
+    assert_eq!(accepted.get(), 0);
+    assert_eq!(
+        fake.unheard(),
+        vec![crate::dialogs::DialogReply::Documents(urls)]
+    );
+}
+
+#[test]
 fn a_system_that_hands_out_no_document_rejects() {
     let dir = tempfile::tempdir().expect("temp dir");
     let e = engine(dir.path());

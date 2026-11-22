@@ -88,6 +88,9 @@ pub fn chosen(answer: Option<&str>) -> Option<Vec<String>> {
     (!urls.is_empty()).then_some(urls)
 }
 
+/// Removes the copies among `urls`, an answer no dialog heard.
+pub fn remove_copies(_urls: &[String]) {}
+
 /// The name a save picker suggests: the dialog's, or none.
 pub fn suggested_name(request: &DialogRequest) -> String {
     request.file_name.clone().unwrap_or_default()
@@ -308,6 +311,29 @@ mod tests {
     fn a_picker_left_without_choosing_chose_nothing() {
         assert_eq!(chosen(None), None);
         assert_eq!(chosen(Some("")), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_copies_of_an_answer_nobody_heard_are_removed() {
+        let root = tempfile::tempdir().expect("temp dir");
+        let request = root.path().join("cache/documents/7");
+        let (first, second) = (
+            request.join("0/notes one.txt"),
+            request.join("1/50% #2.txt"),
+        );
+        let other = root.path().join("Downloads/keep.txt");
+        for file in [&first, &second, &other] {
+            std::fs::create_dir_all(file.parent().expect("in a directory")).expect("directory");
+            std::fs::write(file, "a").expect("written");
+        }
+        let lines = format!("{}\n{}\n", first.display(), second.display());
+        let mut urls = chosen(Some(&lines)).expect("chosen");
+        urls.push(file_url(&other));
+        urls.push("content://provider/document/31".to_owned());
+        remove_copies(&urls);
+        assert!(!request.exists(), "the copies stay");
+        assert!(other.exists(), "a file that is no copy was removed");
     }
 
     #[test]

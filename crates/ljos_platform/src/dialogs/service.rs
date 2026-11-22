@@ -156,6 +156,12 @@ pub trait DialogService {
     /// QML dialog is closed and rejected either way, and the system's stays
     /// on screen until the user ends it.
     fn close(&self, ticket: u64);
+
+    /// An answer this system sent was not heard: the dialog was closed, or
+    /// gone, by the time it arrived. A system that made something for the
+    /// answer (a copy of a document) removes it here, as nothing else knows
+    /// of it.
+    fn unheard(&self, _reply: &DialogReply) {}
 }
 
 /// The dialogs of an application whose system has none: every dialog is
