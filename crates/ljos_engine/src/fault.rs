@@ -168,6 +168,7 @@ pub enum TakenBy {
 }
 
 type FaultHandler = Rc<dyn Fn(&Engine, &FaultReport)>;
+type Delivered = Box<dyn FnOnce(&Engine)>;
 
 #[derive(Default)]
 pub(crate) struct FaultState {
@@ -185,6 +186,9 @@ pub(crate) struct FaultState {
     noting: RefCell<Vec<Vec<FaultReport>>>,
     /// Faults reported so far.
     filed: Cell<u64>,
+    /// What [`Engine::after_faults_delivered`] was given, each with the
+    /// faults reported by then.
+    waiting: RefCell<Vec<(u64, Delivered)>>,
     /// The innermost nested run an interrupt stopped in the dispatch that
     /// unwinds now, with the boundaries around it as they were when it
     /// stopped (a later handler of the same signal may destroy it before
@@ -570,8 +574,11 @@ impl Engine {
         if state.delivering.get() {
             return 0;
         }
+        // What is asked during this delivery waits for a later one.
+        let waiting = state.waiting.take();
         if state.queue.borrow().is_empty() {
             self.drop_idle_run_again();
+            self.tell_delivered(waiting);
             return 0;
         }
         state.delivering.set(true);
@@ -605,6 +612,7 @@ impl Engine {
         }
         state.delivering.set(false);
         self.drop_idle_run_again();
+        self.tell_delivered(waiting);
         n
     }
 
@@ -618,7 +626,33 @@ impl Engine {
     /// of them queued, one with nothing to deliver included. Asked from
     /// inside a delivery, it waits for a later one.
     pub fn after_faults_delivered(&self, f: impl FnOnce(&Engine) + 'static) {
-        let _ = f;
+        let state = &self.inner.faults;
+        let by_now = (state.filed.get(), Box::new(f) as Delivered);
+        state.waiting.borrow_mut().push(by_now);
+    }
+
+    /// Runs those of `waiting` whose faults are all delivered; the others
+    /// wait on, ahead of what was asked meanwhile.
+    fn tell_delivered(&self, waiting: Vec<(u64, Delivered)>) {
+        if waiting.is_empty() {
+            return;
+        }
+        let state = &self.inner.faults;
+        let first_queued = state.queue.borrow().front().map(|r| r.seq);
+        let (over, mut kept): (Vec<_>, Vec<_>) = waiting
+            .into_iter()
+            .partition(|(by_then, _)| first_queued.is_none_or(|seq| *by_then < seq));
+        {
+            let mut asked = state.waiting.borrow_mut();
+            kept.append(&mut asked);
+            *asked = kept;
+        }
+        for (_, f) in over {
+            if let Err(payload) = catch_unwind(AssertUnwindSafe(|| f(self))) {
+                state.unwound.take();
+                self.report_fault(None, Fault::from_panic(payload));
+            }
+        }
     }
 
     fn set_application_fault(&self, report: FaultReport) {

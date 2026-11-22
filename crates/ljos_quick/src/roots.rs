@@ -7,7 +7,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use ljos_engine::{Engine, LogLevel, ObjectFlags, ObjectId};
+use ljos_engine::{Engine, LogLevel, ObjectFlags, ObjectId, WeakEngine};
 
 use crate::Item;
 use crate::item::{give_host_size, is_item, is_window, size_follows_implicit};
@@ -84,6 +84,11 @@ pub struct RootSwaps {
     /// let go of, and that window, which the host shows still: what the
     /// root stands for next takes its place.
     left: RefCell<Vec<(ObjectId, ObjectId)>>,
+    /// Each window a holder keeps though it stands for another, and
+    /// whether the platform window it was shown in went to that other.
+    held: RefCell<Vec<(ObjectId, bool)>>,
+    /// The engine, for [`hides`](Self::hides), which is given none.
+    engine: RefCell<Option<WeakEngine>>,
     wake: RefCell<Option<Rc<dyn Fn()>>>,
 }
 
@@ -94,6 +99,7 @@ impl std::fmt::Debug for RootSwaps {
             .field("pending", &self.pending.borrow())
             .field("presents", &self.presents.borrow())
             .field("left", &self.left.borrow())
+            .field("held", &self.held.borrow())
             .finish_non_exhaustive()
     }
 }
@@ -162,23 +168,37 @@ impl RootSwaps {
         }
     }
 
-    /// The host no longer shows `root`.
+    /// The host no longer shows `root`. A window a holder let go of that
+    /// it showed still is destroyed, unless the holder keeps it yet.
     pub fn hides(&self, root: ObjectId) {
         self.shown.borrow_mut().retain(|r| *r != root);
+        let was_left = {
+            let mut left = self.left.borrow_mut();
+            let before = left.len();
+            left.retain(|(_, w)| *w != root);
+            left.len() != before
+        };
+        if was_left && !self.keep(root) {
+            let engine = self.engine.borrow().as_ref().and_then(|w| w.upgrade());
+            if let Some(engine) = engine {
+                engine.destroy(root);
+            }
+        }
     }
 
     /// Whether `window` gave the window it was shown in to another and is
     /// kept, as a `ShellLoader` keeps the fallback it may present again: a
     /// host gives it no window of its own meanwhile.
     pub fn keeps_back(&self, window: ObjectId) -> bool {
-        let _ = window;
-        false
+        self.held.borrow().contains(&(window, true))
     }
 
     /// The host cannot show `window` in a window of its own, and will
     /// draw no frame of it: what waits for that frame waits no longer.
     pub fn refuses(&self, engine: &Engine, window: ObjectId) {
-        let _ = (engine, window);
+        crate::first_read::refuse(engine, window);
+        // The host may have no other reason for another turn.
+        self.wake();
     }
 
     /// Called when a replacement is asked for, for the host to make it
@@ -271,7 +291,7 @@ impl RootSwaps {
                     pending[at].fit = Fit::Fitted;
                 }
                 drop(pending);
-                if let_go {
+                if let_go && !self.keep(current) {
                     engine.destroy(current);
                 }
             }
@@ -304,6 +324,9 @@ impl RootSwaps {
         root: ObjectId,
         show: &mut dyn FnMut(ObjectId, ObjectId) -> bool,
     ) -> (ObjectId, Vec<ObjectId>) {
+        if self.engine.borrow().is_none() {
+            *self.engine.borrow_mut() = Some(engine.downgrade());
+        }
         let mut root = root;
         let mut gone = Vec::new();
         loop {
@@ -325,8 +348,10 @@ impl RootSwaps {
             if show(root, swap.new) {
                 self.left.borrow_mut().retain(|(_, w)| *w != root);
                 for r in swap.retire {
-                    engine.destroy(r);
-                    gone.push(r);
+                    if !self.keep(r) {
+                        engine.destroy(r);
+                        gone.push(r);
+                    }
                 }
                 root = swap.new;
                 self.present_now(engine, root, Fit::Fitted);
@@ -403,6 +428,48 @@ impl RootSwaps {
         true
     }
 
+    /// A holder keeps `window` though it stands for another from now on:
+    /// it is not destroyed as its platform window goes to that other.
+    pub(crate) fn hold(&self, window: ObjectId) {
+        let mut held = self.held.borrow_mut();
+        held.retain(|(w, _)| *w != window);
+        held.push((window, false));
+    }
+
+    /// The holder no longer keeps `window`. One it destroys itself is not
+    /// told: a host gives it no window in the time it has left.
+    pub(crate) fn release(&self, window: ObjectId) {
+        self.held.borrow_mut().retain(|(w, _)| *w != window);
+    }
+
+    /// `holder` shows `window` again, which it had let go of.
+    pub(crate) fn takes_back(&self, holder: ObjectId, window: ObjectId) {
+        self.left.borrow_mut().retain(|l| *l != (holder, window));
+    }
+
+    /// Whether `window` is held, which is not destroyed as it gives way.
+    fn keep(&self, window: ObjectId) -> bool {
+        let mut held = self.held.borrow_mut();
+        let Some(entry) = held.iter_mut().find(|(w, _)| *w == window) else {
+            return false;
+        };
+        entry.1 = true;
+        true
+    }
+
+    /// Whether `window` goes by itself, shown still: `holder` let go of it
+    /// and it waits for what is to take its place.
+    pub(crate) fn lets_go(&self, holder: ObjectId, window: ObjectId) -> bool {
+        self.left_by(holder) == Some(window)
+            || (self.pending.borrow().iter())
+                .any(|s| s.let_go_by == Some(holder) && s.retire.contains(&window))
+    }
+
+    /// Whether a replacement waits to put `root` in a window.
+    pub(crate) fn expects(&self, root: ObjectId) -> bool {
+        self.pending.borrow().iter().any(|s| s.new == root)
+    }
+
     /// The window `holder` let go of that a host shows still.
     fn left_by(&self, holder: ObjectId) -> Option<ObjectId> {
         let left = self.left.borrow();
@@ -414,6 +481,7 @@ impl RootSwaps {
             list.borrow_mut()
                 .retain(|(h, w)| engine.is_alive(*h) && engine.is_alive(*w));
         }
+        self.held.borrow_mut().retain(|(w, _)| engine.is_alive(*w));
     }
 
     fn wake(&self) {

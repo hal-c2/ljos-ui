@@ -593,6 +593,13 @@ impl Scenes {
         }
     }
 
+    /// Whether a scene there still is shows `item`.
+    pub(crate) fn shows(&self, engine: &Engine, item: ObjectId) -> bool {
+        self.roots.borrow().iter().any(|(scene, root)| {
+            scene.strong_count() > 0 && crate::live_input::is_in(engine, item, *root)
+        })
+    }
+
     /// `shared`'s scene is dropped: it shows no window from now on, and a
     /// grab of an item it showed that no scene shows now is settled empty,
     /// as no frame of it will. Its callback is queued for the engine's
@@ -775,6 +782,14 @@ pub(crate) fn destroyed(e: &Engine, gone: &[ObjectId]) {
 pub(crate) fn incubated(e: &Engine, made: ObjectId) {
     if let Some(p) = e.visual_parent(made) {
         mark_shown(e, p, |s| s.set(p, Dirty::STRUCTURE, |_| ()));
+    }
+}
+
+/// `item` is described to assistive technology now, or no longer
+/// ([`crate::first_read`]): its parent's list of children is read again.
+pub(crate) fn described(e: &Engine, item: ObjectId) {
+    if e.is_alive(item) {
+        e.untrack(|| incubated(e, item));
     }
 }
 
@@ -1934,6 +1949,7 @@ impl QuickScene {
     pub fn frame(&mut self, engine: &Engine, now: Time) -> FrameOutput {
         use crate::frame_times::{FrameTimes, Laps, lap};
         use ljos_engine::{Phase, TurnCause};
+        let reads = crate::first_read::InFrame::enter(engine);
         // Input posted since the last frame comes first, as a host's own
         // does: every host frames when woken, so each hands it the same.
         self.deliver_posted_input(engine, now);
@@ -2004,6 +2020,7 @@ impl QuickScene {
         drop(phase);
         phase = engine.enter_phase(Phase::Polish);
         crate::controller::tell_updated(engine);
+        let polishes = reads.polishes();
         self.polish(engine);
         lap(&mut laps, &mut steps.layout);
         // 7. Incubate. New items join the tree and are laid out in this
@@ -2062,6 +2079,8 @@ impl QuickScene {
         // that runs anyway; nothing ages while the scene is idle.
         self.text.borrow_mut().end_frame();
         self.cursor_again(engine);
+        // What ends here is taken away by the frame it asks for.
+        reads.framed(engine, self.root, polishes);
         lap(&mut laps, &mut steps.scene);
         if let Some(laps) = laps {
             self.add_frame_times(engine, laps, steps, animating);
