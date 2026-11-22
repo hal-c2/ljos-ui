@@ -671,7 +671,27 @@ impl Device for AndroidBackend {
 
 #[cfg(test)]
 mod tests {
-    use super::{quoted, scenario_dir};
+    use super::{download_path, quoted, scenario_dir};
+
+    #[test]
+    fn a_download_is_named_below_the_downloads() {
+        assert_eq!(
+            download_path("letters/one.txt").expect("a file in a folder"),
+            "/sdcard/Download/letters/one.txt"
+        );
+        for outside in [
+            "",
+            "/etc/hosts",
+            "../DCIM",
+            "a/../../b",
+            "a//b",
+            "a/",
+            ".",
+            "a\nb",
+        ] {
+            assert!(download_path(outside).is_err(), "{outside:?}");
+        }
+    }
 
     #[cfg(unix)]
     #[test]
