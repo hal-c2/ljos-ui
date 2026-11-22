@@ -970,3 +970,54 @@ fn a_row_an_evaluation_makes_is_kept_whatever_the_run_before_it_caught() {
     }
     assert!(wrong.is_empty(), "{wrong:#?}");
 }
+
+/// A file's script loaded outside a run begins one: nothing enters script
+/// between the exception the run before caught and the load that ran out.
+#[test]
+fn a_row_whose_content_could_not_load_its_script_is_kept_whatever_the_run_before_it_caught() {
+    let main = REPEATER
+        // Set from Rust: a binding's own run would begin a run before the load.
+        .replace("model: root.on ? 3 : 0", "model: 0")
+        .replace(
+            "    function litter(n) {",
+            "    function fail() { throw new Error(\"caught\") }\n    \
+             function caught() { try { root.fail() } catch (why) { return true } return false }\n    \
+             function litter(n) {",
+        );
+    let line = "import QtQuick\nimport Ljos\nimport Ljos.Blocks\n\
+                Item { width: 12; height: 10; ErrorBoundary { Shout {} } }\n";
+    // Its script is loaded by its first handler, and takes more than is free.
+    let shout = row().replace(
+        "    width: f0(1, 2).length; height: 10\n",
+        "    height: 10\n    \
+         Component.onCompleted: { width = f0(1, 2).length; objectName = \"back\" }\n",
+    );
+    let (e, clock) = timed();
+    compile(&e, &[("Main", &main), ("Line", line), ("Shout", &shout)]);
+    let root = e.create_from_url("Main", None, Vec::new()).unwrap();
+    let repeater = find(&e, root, "repeater");
+    // Not `fill`, whose own run would forget what this one threw through.
+    let caught = e.invoke_by_name(root, "caught", &[]).unwrap();
+    assert!(caught.to_boolean(), "nothing was thrown");
+    assert!(e.collect_garbage());
+    let held = e.script_memory().unwrap().bytes;
+    assert!(e.set_script_heap_limit(Some(held + 4 * 1024)));
+    set(&e, repeater, "model", Value::Int(1));
+    let mut s = scene(&e, root, 200.0, 200.0);
+    frame(&mut s, &e);
+    let mut m = Making {
+        e,
+        clock,
+        s,
+        root,
+        path: Path::Repeater,
+    };
+    assert!(ran_out(&m), "nothing filled the heap");
+    let first = m.object().expect("the row is shown");
+    m.make_room();
+    assert_eq!(m.object(), Some(first), "the row is made again");
+    assert!(
+        exists(&m.e, first, "back"),
+        "what is inside never came back"
+    );
+}
