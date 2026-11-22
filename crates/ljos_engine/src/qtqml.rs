@@ -253,6 +253,16 @@ impl ComponentAttached {
     fn reloaded();
 }
 
+/// When what an object still owes is worked out as it is told it goes.
+#[derive(Clone, Copy)]
+enum Settle {
+    Always,
+    /// Where anything of the engine may hear of a destruction.
+    IfHeard,
+    /// Where the object, or what it owns, hears of its own.
+    IfItHears,
+}
+
 /// One context's share of a destruction: the attached objects to tell,
 /// and the contexts made inside it.
 #[derive(Default)]
@@ -282,6 +292,19 @@ impl Engine {
         self.tell_destruction(obj, true);
     }
 
+    /// [`Engine::announce_destruction`] for an object discarded to give
+    /// its room back, whose unread bindings would need that room. Where
+    /// neither it nor anything it owns has a `Component.onDestruction` or
+    /// a `destroyed` handler, what it still owes is not worked out. With
+    /// either, all of it is, as by `announce_destruction`.
+    ///
+    /// Only for an object that nothing shows or reads again and that is
+    /// destroyed next: a binding never read keeps the value it was
+    /// installed with, and its change is never signalled.
+    pub fn announce_discarded(&self, obj: ObjectId) {
+        self.tell_destruction_of(obj, true, false, Settle::IfItHears);
+    }
+
     /// [`Engine::announce_destruction`]. `outermost` starts with the
     /// outermost component `obj` roots, as a `Loader` does. A plain
     /// deletion in Qt starts one layer above the innermost and works
@@ -294,14 +317,14 @@ impl Engine {
     /// that is already out of its view). Qt evaluates bindings as their
     /// inputs change, so what is still due is settled first.
     pub(crate) fn tell_destruction(&self, obj: ObjectId, outermost: bool) {
-        self.tell_destruction_of(obj, outermost, false, true);
+        self.tell_destruction_of(obj, outermost, false, Settle::Always);
     }
 
     /// [`Engine::tell_destruction`] for an object a reload took out of
     /// its file: the file lives on, but the object is told as if its
     /// written place went with it.
     pub(crate) fn tell_removed(&self, obj: ObjectId) {
-        self.tell_destruction_of(obj, false, true, true);
+        self.tell_destruction_of(obj, false, true, Settle::Always);
     }
 
     /// [`Engine::tell_destruction`] for an object destroyed now, which is
@@ -310,10 +333,10 @@ impl Engine {
     /// it. A board of blocks made and dropped before a frame was every
     /// binding of every block.
     pub(crate) fn tell_destruction_going(&self, obj: ObjectId) {
-        self.tell_destruction_of(obj, false, false, false);
+        self.tell_destruction_of(obj, false, false, Settle::IfHeard);
     }
 
-    fn tell_destruction_of(&self, obj: ObjectId, outermost: bool, removed: bool, settle: bool) {
+    fn tell_destruction_of(&self, obj: ObjectId, outermost: bool, removed: bool, settle: Settle) {
         let (ids, due) = {
             let store = self.inner.store.borrow();
             if store
@@ -340,9 +363,28 @@ impl Engine {
                 ids.push(id);
                 stack.extend_from_slice(&h.children);
             }
-            let settle = settle
-                || self.inner.destruction_handlers.get()
-                || self.inner.signals.borrow().any_destroyed_handler(&ids);
+            let handlers = self.inner.destruction_handlers.get();
+            let destroyed = || self.inner.signals.borrow().any_destroyed_handler(&ids);
+            let settle = match settle {
+                Settle::Always => true,
+                Settle::IfHeard => handlers || destroyed(),
+                Settle::IfItHears => {
+                    let meta = <Component as QmlType>::static_meta();
+                    let key = MetaRef::Static(meta).type_id();
+                    let on_destruction = || {
+                        meta.signal_index("destruction").is_some_and(|signal| {
+                            ids.iter().any(|id| {
+                                store
+                                    .objects
+                                    .get(*id)
+                                    .and_then(|h| h.attached.iter().find(|(k, _)| *k == key))
+                                    .is_some_and(|(_, a)| self.signal_connected(*a, signal))
+                            })
+                        })
+                    };
+                    (handlers && on_destruction()) || destroyed()
+                }
+            };
             if settle {
                 for id in &ids {
                     // An object a reload replaces by one that goes on is

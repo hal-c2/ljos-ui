@@ -253,7 +253,7 @@ pub(crate) fn retry(e: &Engine, me: ObjectId) {
                     RootSwaps::of(e).present(e, me, None);
                     present(e, me, obj);
                     set(e, me, ShellLoader::STATUS.index, shell_status::READY.into());
-                } else if drop_item(e, me) {
+                } else if drop_item(e, me, Going::Settled) {
                     show_source(e, me, obj);
                 } else {
                     discard(e, obj);
@@ -322,7 +322,7 @@ impl Boundary for Behaviour {
             }
             return;
         }
-        let goes_on = drop_item(e, me);
+        let goes_on = drop_item(e, me, Going::Settled);
         warn(e, format!("ShellLoader: {why}"));
         if !goes_on {
             return;
@@ -431,11 +431,14 @@ fn load(e: &Engine, me: ObjectId) {
     if let Some(Some(timer)) = with_run(e, me, |r| r.waiting.take()) {
         e.cancel_call(timer);
     }
-    // Asked for another shell, the loader keeps none for the last one.
+    // Asked for another shell, the loader keeps none for the last one:
+    // what a hold kept goes to give the next its room.
+    let mut going = Going::Settled;
     if let Some(held) = end_hold(e, me) {
-        let_go_of(e, me, held.fallback);
+        going = Going::ForRoom;
+        let_go_of(e, me, held.fallback, going);
     }
-    if !still(e, me, loads) || !drop_item(e, me) {
+    if !still(e, me, loads) || !drop_item(e, me, going) {
         return;
     }
     let source = url(e, me, ShellLoader::SOURCE.index);
@@ -693,7 +696,9 @@ fn judge_again(e: &Engine, me: ObjectId, obj: ObjectId, told: &[FaultReport]) {
         } else {
             format!("{first}\nfallback: {why}")
         };
-        if !drop_item(e, me) || !say_failed(e, me, loads, &both, shell_status::ERROR) {
+        if !drop_item(e, me, Going::Settled)
+            || !say_failed(e, me, loads, &both, shell_status::ERROR)
+        {
             return;
         }
         if is_resource(&report.fault) {
@@ -708,7 +713,7 @@ fn judge_again(e: &Engine, me: ObjectId, obj: ObjectId, told: &[FaultReport]) {
         }
         return;
     }
-    let goes_on = drop_item(e, me);
+    let goes_on = drop_item(e, me, Going::Settled);
     warn(e, format!("ShellLoader: {why}"));
     if !goes_on {
         return;
@@ -799,19 +804,39 @@ fn read_over(e: &Engine, me: ObjectId, n: u64) {
     }) else {
         return;
     };
-    let_go_of(e, me, held.fallback);
+    let_go_of(e, me, held.fallback, Going::Settled);
     if still(e, me, loads) {
         set(e, me, ShellLoader::ERROR.index, "".into());
     }
 }
 
+/// How what the loader lets go of is told that it goes.
+#[derive(Clone, Copy)]
+enum Going {
+    /// With what it owed worked out, as any object is.
+    Settled,
+    /// As a load ends a hold: unread bindings would take the room that is
+    /// being given back ([`Engine::announce_discarded`]).
+    ForRoom,
+}
+
+impl Going {
+    fn announce(self, e: &Engine, obj: ObjectId) {
+        match self {
+            Self::Settled => e.announce_destruction(obj),
+            Self::ForRoom => e.announce_discarded(obj),
+        }
+    }
+}
+
 /// Destroys `fallback`, which is held no longer, unless a window shows it
 /// still: that one goes once the window shows what replaces it.
-fn let_go_of(e: &Engine, me: ObjectId, fallback: ObjectId) {
+fn let_go_of(e: &Engine, me: ObjectId, fallback: ObjectId, going: Going) {
     let swaps = RootSwaps::of(e);
     if swaps.lets_go(me, fallback) {
         swaps.release(fallback);
     } else {
+        going.announce(e, fallback);
         discard(e, fallback);
     }
 }
@@ -872,7 +897,7 @@ fn show_held_again(e: &Engine, me: ObjectId, loads: u64, why: &str) -> bool {
 
 /// Shows nothing and lets go of what was shown. False where a handler of
 /// that asked for another shell, which is then not the caller's to replace.
-fn drop_item(e: &Engine, me: ObjectId) -> bool {
+fn drop_item(e: &Engine, me: ObjectId, going: Going) -> bool {
     let item = e
         .untrack(|| e.read(me, ShellLoader::ITEM.index))
         .as_object();
@@ -893,9 +918,11 @@ fn drop_item(e: &Engine, me: ObjectId) -> bool {
     with_run(e, me, |r| r.making = was);
     if let Some(item) = item {
         if let_go {
-            // The window it showed goes once no window shows it.
+            // The window it showed goes once no window shows it, so it is
+            // read until then and is never one discarded for its room.
             e.announce_destruction(item);
         } else {
+            going.announce(e, item);
             discard(e, item);
         }
     }
