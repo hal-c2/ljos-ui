@@ -59,14 +59,17 @@ Feature: An agent resizes the window of a running application
 
   # Its width follows an implicit width that follows its height: the
   # height the platform gives does not take back the width it gave.
+  # It is bound as the window is made, not declared: Qt's `Window` has
+  # no implicit size to declare, and Ljós's is an item underneath.
   Scenario: A root window whose implicit width follows its height is told both sides
     Given the QML:
       """qml
       import QtQuick
       Window {
+        id: root
         objectName: "root"
         visible: true
-        implicitWidth: height * 2
+        Component.onCompleted: root.implicitWidth = Qt.binding(() => root.height * 2)
         Rectangle { objectName: "fill"; anchors.fill: parent }
       }
       """
