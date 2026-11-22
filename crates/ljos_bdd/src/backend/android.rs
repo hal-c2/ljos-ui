@@ -54,6 +54,23 @@ const FAULT: &str = "files/scenario-fault.txt";
 /// there (`examples/android_scenarios`).
 const XHR_LOCAL_READ: &str = "files/xhr-local-read";
 
+/// The phone's shared Downloads, which its document picker offers.
+const DOWNLOADS: &str = "/sdcard/Download";
+
+/// Where `path` is in the Downloads, when it names something below them:
+/// what a scenario puts there is removed again.
+fn download_path(path: &str) -> Result<String> {
+    let below = !path.contains(char::is_control)
+        && path.split('/').all(|part| !matches!(part, "" | "." | ".."));
+    if below {
+        Ok(format!("{DOWNLOADS}/{path}"))
+    } else {
+        Err(BackendError::Failed(format!(
+            "{path:?}: a download is named below the phone's Downloads"
+        )))
+    }
+}
+
 /// The device the scenarios run on, when there is one.
 #[must_use]
 pub fn device() -> Option<String> {
@@ -140,6 +157,12 @@ impl Phone {
                 String::from_utf8_lossy(&out.stderr).trim()
             )))
         }
+    }
+
+    /// Whether the phone's shell finds something at `path`.
+    fn has(&self, path: &str) -> Result<bool> {
+        let said = self.shell(&format!("if [ -e {} ]; then echo yes; fi", quoted(path)))?;
+        Ok(said.trim() == "yes")
     }
 
     /// The application's process, when it runs.
@@ -239,6 +262,10 @@ pub struct AndroidBackend {
     dir: Option<tempfile::TempDir>,
     /// Whether the scenario's application may read local files.
     xhr_local_read: bool,
+    /// The files this scenario made in the phone's Downloads, and
+    /// `download_dirs` the folders, outer before inner.
+    downloads: Vec<String>,
+    download_dirs: Vec<String>,
 }
 
 impl Drop for AndroidBackend {
@@ -249,6 +276,13 @@ impl Drop for AndroidBackend {
             // A scenario that ended on its way through `end_screen` would
             // leave every application's screen ending as it is hidden.
             let _ = phone.shell("settings put global always_finish_activities 0");
+            // Only what the scenario made: the Downloads are the user's.
+            for file in &self.downloads {
+                let _ = phone.shell(&format!("rm -f {}", quoted(file)));
+            }
+            for dir in self.download_dirs.iter().rev() {
+                let _ = phone.shell(&format!("rmdir {}", quoted(dir)));
+            }
         }
     }
 }
@@ -666,6 +700,37 @@ impl Device for AndroidBackend {
             None,
         )?;
         Ok(!said.trim().is_empty())
+    }
+
+    fn put_download(&mut self, path: &str, text: &str) -> Result<()> {
+        let to = download_path(path)?;
+        let phone = self.phone()?.clone();
+        if !self.downloads.contains(&to) && phone.has(&to)? {
+            return Err(BackendError::Failed(format!(
+                "the phone already holds {to}, and the runner replaces no file of the phone's: \
+                 remove it to run this scenario"
+            )));
+        }
+        for (at, _) in path.match_indices('/') {
+            let dir = download_path(&path[..at])?;
+            if !phone.has(&dir)? {
+                phone.shell(&format!("mkdir {}", quoted(&dir)))?;
+                self.download_dirs.push(dir);
+            }
+        }
+        let from = self.dir()?.join("download");
+        std::fs::write(&from, text)?;
+        let mut push = phone.adb();
+        push.arg("push").arg(&from).arg(&to);
+        if !self.downloads.contains(&to) {
+            self.downloads.push(to.clone());
+        }
+        phone.output(&mut push, "push", None).map(drop)
+    }
+
+    fn download_exists(&mut self, path: &str) -> Result<bool> {
+        let at = download_path(path)?;
+        self.phone()?.has(&at)
     }
 }
 
