@@ -6,7 +6,7 @@ mod support;
 
 use std::sync::Arc;
 
-use ljos_engine::{Value, fault_kind};
+use ljos_engine::{QmlObject, QmlType, QtObject, Value, fault_kind};
 use support::engine;
 
 const PAGE: &str = r#"import QtQuick
@@ -82,10 +82,14 @@ fn a_deep_nesting_is_walked_within_the_budget() {
             let deep = nested(500_000);
             let a = h.find(root, "a");
             e.write_by_name(a, "list", deep.clone()).unwrap();
-            let held = e.script_heap_holders(1000).expect("scripts ran");
-            assert!(held.truncated, "{held:?}");
-            e.write_by_name(a, "list", Value::list(Vec::new())).unwrap();
+            let held = e.script_heap_holders(1000);
+            // Taken apart before anything can fail: unwinding through the
+            // nesting would overflow the stack and hide what failed.
+            let cleared = e.write_by_name(a, "list", Value::list(Vec::new()));
             take_apart(deep);
+            cleared.unwrap();
+            let held = held.expect("scripts ran");
+            assert!(held.truncated, "{held:?}");
         })
         .unwrap()
         .join()
@@ -95,10 +99,10 @@ fn a_deep_nesting_is_walked_within_the_budget() {
 const SHARED: &str = r#"import QtQuick
 Item {
   property var row: ({ s: "row" })
-  property var rows
-  Item { property var rows }
-  Item { property var rows }
-  Item { property var rows }
+  property list<var> rows
+  Item { property list<var> rows }
+  Item { property list<var> rows }
+  Item { property list<var> rows }
   QtObject { property var tail: ({ s: "tail" }) }
 }
 "#;
@@ -118,6 +122,13 @@ fn a_list_many_objects_share_is_charged_once() {
     for obj in std::iter::once(root).chain(e.children(root)) {
         if e.write_by_name(obj, "rows", rows.clone()).is_ok() {
             holders += 1;
+            // The one list in each, or there is nothing shared to charge once.
+            match (e.read_by_name(obj, "rows"), &rows) {
+                (Value::List(kept), Value::List(given)) => {
+                    assert!(Arc::ptr_eq(&kept, given), "a copy was stored");
+                }
+                (kept, _) => panic!("the list is stored as {}", kept.to_js_string()),
+            }
         }
     }
     assert_eq!(holders, 4);
@@ -134,6 +145,84 @@ fn a_list_many_objects_share_is_charged_once() {
     // The root and its three Items, whatever the root's type is named.
     let holding: usize = held.holders.iter().map(|t| t.objects).sum();
     assert_eq!(holding, 5, "{held:?}");
+}
+
+/// A script value that is a property's whole value costs the budget one,
+/// so objects that each hold one are not all gone through past it.
+#[test]
+fn a_value_each_object_holds_by_itself_is_charged_to_the_budget() {
+    let h = engine();
+    let objects = "  QtObject { property var v: ({}) }\n".repeat(40);
+    h.load(&format!("import QtQuick\nItem {{\n{objects}}}\n"));
+
+    let held = h.engine.script_heap_holders(10).expect("scripts ran");
+    assert!(held.truncated, "{held:?}");
+    let found: usize = held.holders.iter().map(|t| t.objects).sum();
+    assert!(found <= 10, "{found} objects found on a budget of 10");
+}
+
+/// A native type that keeps a script's value in a field of its own.
+#[derive(Debug, Default, QmlObject)]
+#[qml(module = "Test", name = "Keeper", extends = QtObject)]
+pub struct Keeper {
+    #[qml(base)]
+    pub object: QtObject,
+    #[qml(notify)]
+    pub held: Value,
+}
+
+#[test]
+fn a_script_value_in_a_native_field_is_found() {
+    let h = engine();
+    let e = &h.engine;
+    let root =
+        h.load("import QtQuick\nItem { property var made: ({ text: \"x\".repeat(100000) }) }\n");
+    let keeper = e.create(Keeper::static_meta(), Some(root)).unwrap();
+    let made = e.read_by_name(root, "made");
+    assert!(matches!(made, Value::Js(_)), "{made:?}");
+    e.write_by_name(keeper, "held", made).unwrap();
+    e.write_by_name(root, "made", Value::Null).unwrap();
+
+    let held = e.script_heap_holders(usize::MAX).expect("scripts ran");
+    let first = held.holders.first().expect("a holder");
+    assert_eq!(first.name, "Keeper", "{held:?}");
+    assert_eq!(first.objects, 1);
+    assert!(first.bytes >= 100_000, "{held:?}");
+}
+
+/// The walk makes nothing, so it needs no limit lifted: a heap over its
+/// limit is walked whole, and the limit stands.
+#[test]
+fn a_heap_over_its_limit_is_walked_whole_under_it() {
+    let h = engine();
+    let e = &h.engine;
+    h.load(PAGE);
+    let all = e.script_heap_holders(usize::MAX).expect("scripts ran");
+    let limit = e.script_heap_bytes().unwrap() / 2;
+    assert!(e.set_script_heap_limit(Some(limit)));
+
+    let held = e.script_heap_holders(usize::MAX).expect("scripts ran");
+    assert_eq!(held, all);
+    assert_eq!(e.script_memory_limit(), Some(limit));
+    assert!(e.faults().is_empty(), "{:?}", e.faults());
+}
+
+/// Entering for the walk minds the heap as any entry does, against the
+/// limit there is: a warning about a heap with room again is over.
+#[test]
+fn looking_for_holders_minds_the_heap_against_its_limit() {
+    let h = engine();
+    let e = &h.engine;
+    h.load(PAGE);
+    e.collect_garbage();
+    let bytes = e.script_heap_bytes().unwrap();
+    assert!(e.set_script_heap_limit(Some(bytes + bytes / 10)));
+    e.collect_garbage();
+    assert!(e.script_heap_pressure().unwrap().warned, "not nearly full");
+
+    assert!(e.set_script_heap_limit(Some(bytes * 4)));
+    e.script_heap_holders(usize::MAX).expect("scripts ran");
+    assert!(!e.script_heap_pressure().unwrap().warned);
 }
 
 const LEAK: &str = r#"import QtQuick
