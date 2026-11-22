@@ -123,9 +123,10 @@ struct RunAgain {
     /// always runs over its slice would otherwise be made forever.
     seen: Cell<u64>,
     /// The latest of those, each with its number in `seen` and the
-    /// boundary nearest where it was met then: a fault a boundary inside
-    /// what was made took leaves that whole (the boundary shows its
-    /// fallback). Bounded: a count past what it holds is taken as breaking.
+    /// boundary that discards all it broke, if one does
+    /// ([`Engine::discarded_by`]): when that is inside what was made, what
+    /// was made is whole. Bounded: a count past what it holds is taken as
+    /// breaking.
     recent: std::cell::RefCell<std::collections::VecDeque<(u64, Fault, Option<ObjectId>)>>,
 }
 
@@ -135,8 +136,14 @@ const RECENT_FAULTS: usize = 32;
 impl Engine {
     /// A resource fault (`fault`) cut short what runs now: the binding
     /// running, if any, is run again after a wait, as is every other one
-    /// cut short until then. Called where every fault is reported.
-    pub(crate) fn run_again_after(&self, origin: Option<ObjectId>, fault: &Fault) {
+    /// cut short until then. Called where every fault is reported, with
+    /// the objects whose code it was thrown `through` before that.
+    pub(crate) fn run_again_after(
+        &self,
+        origin: Option<ObjectId>,
+        through: &[ObjectId],
+        fault: &Fault,
+    ) {
         if matches!(fault, Fault::JsOutOfMemory) {
             self.note_heap_ran_out();
         }
@@ -156,7 +163,7 @@ impl Engine {
             r.seen.set(seq);
             // Who takes it is known now, while what met it is still where
             // it was met: it may be gone by the time anyone asks.
-            let taker = self.boundaries_around(origin).first().copied();
+            let taker = self.discarded_by(origin, through);
             let mut recent = r.recent.borrow_mut();
             if recent.len() == RECENT_FAULTS {
                 recent.pop_front();
@@ -220,10 +227,17 @@ impl Engine {
 
     /// The last full heap or panic after `seen`
     /// ([`Engine::resource_faults_seen`]) that `made` is not whole for,
-    /// though no error came back: one a boundary inside `made` (or `made`
-    /// itself) took is that boundary's, which shows its fallback, and
-    /// leaves `made` whole. With no `made`, every one counts. Interrupted
-    /// scripts are left out: [`Engine::run_again_after`] runs them again.
+    /// though no error came back. One is left out when a boundary inside
+    /// `made` (or `made` itself) discards all it cut short: where it was
+    /// reported, and every object whose function it was thrown out of
+    /// ([`Engine::discarded_by`]). With no `made`, every one counts.
+    /// Interrupted scripts are left out: [`Engine::run_again_after`] runs
+    /// them again.
+    ///
+    /// Two things are not known, and `made` is said to be whole for both:
+    /// what the code cut short wrote (content halfway through writing an
+    /// object outside it), and whose a function held as a value is (a
+    /// closure counts as the code that called it).
     pub(crate) fn resource_fault_since(
         &self,
         seen: u64,
@@ -423,7 +437,7 @@ mod tests {
                 .binding(g.root(), Value::Int(0), move |_| {
                     r.set(r.get() + 1);
                     if f.get() {
-                        me.run_again_after(None, &Fault::JsOutOfMemory);
+                        me.run_again_after(None, &[], &Fault::JsOutOfMemory);
                         Value::Int(-1)
                     } else {
                         Value::Int(1)

@@ -157,6 +157,9 @@ struct Run {
     /// are that for a load nested in it too, and for one that follows
     /// before the deletion pass.
     ended: [Option<ObjectId>; 2],
+    /// The root of the source's shell the last [`make`] placed, until it
+    /// is the `item`: a boundary discards it as it does the `item`.
+    making_root: Option<ObjectId>,
     /// Faults up to this one were dealt with while a shell was made; the
     /// boundary hears of them only afterwards.
     handled: u64,
@@ -321,6 +324,12 @@ impl Boundary for Behaviour {
             .unwrap_or(false);
         // A fallback's window that waits to give way is a fallback still.
         guarded && !RootSwaps::of(e).lets_go(me, child)
+    }
+
+    fn discards(&self, e: &Engine, me: ObjectId, child: ObjectId) -> bool {
+        self.guards(e, me, child)
+            && (e.with(me, |l: &ShellLoader| l.run.making_root) == Ok(Some(child))
+                || e.read(me, ShellLoader::ITEM.index).as_object() == Some(child))
     }
 
     fn stop(&self, e: &Engine, me: ObjectId, report: &FaultReport) {
@@ -707,16 +716,31 @@ fn show_source(e: &Engine, me: ObjectId, obj: ObjectId) {
 /// made is destroyed, and the caller neither shows nor says anything: a
 /// [`load`] inside this did.
 fn make(e: &Engine, me: ObjectId, url: &str) -> Option<Result<ObjectId, Failed>> {
-    let (was, loads) = with_run(e, me, |r| (std::mem::replace(&mut r.making, true), r.loads))?;
+    let (was, loads) = with_run(e, me, |r| {
+        r.making_root = None;
+        (std::mem::replace(&mut r.making, true), r.loads)
+    })?;
     let (made, filed) = e.noting_faults(|| {
         e.make(
             Request::url(e.resolve_url(me, url))
                 .parent(Some(me))
-                .in_scope(me),
+                .in_scope(me)
+                .placed(move |e, root| {
+                    with_run(e, me, |r| {
+                        if !r.making_fallback {
+                            r.making_root = Some(root);
+                        }
+                    });
+                }),
         )
         .map(|(shell, _)| shell)
     });
-    with_run(e, me, |r| r.making = was);
+    with_run(e, me, |r| {
+        r.making = was;
+        if made.is_err() {
+            r.making_root = None;
+        }
+    });
     if with_run(e, me, |r| r.loads) != Some(loads) {
         // `handled` stays the last make's: a fault filed since may be in
         // the shell that is shown, and one in this finds it going.

@@ -205,6 +205,11 @@ pub trait HostObjects {
         MethodFace::Call { keep: true }
     }
 
+    /// A [`MethodFace::Direct`] method of `obj` threw out to the script
+    /// that called it. The heap may be what is full, and this is called
+    /// from C: it neither runs script nor panics.
+    fn threw_out(&self, _obj: u64) {}
+
     /// `obj.signal(args)` from JS.
     fn emit<'js>(
         &self,

@@ -74,6 +74,16 @@ pub trait Boundary {
         true
     }
 
+    /// Whether `child`, an object `boundary` owns, is content that goes
+    /// when the boundary takes a fault: what it shows, or the root it is
+    /// making. Narrower than [`Boundary::guards`], which says where a
+    /// fault is delivered: a boundary's property object is guarded, and
+    /// never made again. Asked as a fault is met, to tell whether what
+    /// holds the boundary is still whole; `false`, the default, says not.
+    fn discards(&self, _engine: &Engine, _boundary: ObjectId, _child: ObjectId) -> bool {
+        false
+    }
+
     /// Stops the content after `report`'s fault: discards it and shows
     /// the fault. Called between turns, so nothing of the content is on
     /// the stack.
@@ -253,6 +263,47 @@ impl Engine {
             }
         });
         out
+    }
+
+    /// The boundary that takes a fault of `origin` and discards all it
+    /// broke: `origin` and every object of `through`, whose code the fault
+    /// cut short on its way out, are in content it discards. `None` when
+    /// there is no such boundary, or that cannot be told.
+    pub(crate) fn discarded_by(
+        &self,
+        origin: Option<ObjectId>,
+        through: &[ObjectId],
+    ) -> Option<ObjectId> {
+        if through.len() > crate::fault::THROWN_THROUGH_KEPT {
+            return None;
+        }
+        let origin = origin?;
+        // The nearest is the one the fault is delivered to.
+        let taker = self.boundaries_around(Some(origin)).first().copied()?;
+        let behaviour = self.boundary_behaviour(taker)?;
+        self.untrack(|| {
+            std::iter::once(origin)
+                .chain(through.iter().copied())
+                .all(|obj| {
+                    self.child_towards(taker, obj)
+                        .is_some_and(|child| behaviour.discards(self, taker, child))
+                })
+        })
+        .then_some(taker)
+    }
+
+    /// The child of `above` that `obj` is or is under, by the walk
+    /// [`Engine::boundaries_around`] takes.
+    fn child_towards(&self, above: ObjectId, obj: ObjectId) -> Option<ObjectId> {
+        let mut cur = obj;
+        for _ in 0..MAX_DEPTH {
+            let parent = self.owner(cur).or_else(|| self.visual_parent(cur))?;
+            if parent == above {
+                return Some(cur);
+            }
+            cur = parent;
+        }
+        None
     }
 
     /// The boundary around `obj`, when there is one.
