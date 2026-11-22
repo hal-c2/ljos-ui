@@ -453,6 +453,42 @@ mod tests {
     }
 
     #[test]
+    fn only_what_the_user_did_keeps_its_error_while_the_application_answers() {
+        let (down, other) = ("the inspector answered 503", "{}");
+
+        let background = window();
+        assert_ne!(status_after(&background, "trace", false, down), "");
+        assert_eq!(status_after(&background, "", true, other), "");
+
+        let refreshed = window();
+        // The second as well: the first put the values shown away.
+        for _ in 0..2 {
+            assert_ne!(status_after(&refreshed, "inspect:b", false, down), "");
+            assert_eq!(status_after(&refreshed, "", true, other), "");
+        }
+
+        let picked = window();
+        let (engine, root) = &picked;
+        engine
+            .eval_js_in(
+                Some(*root),
+                "objects.pick('b', 'b')",
+                Duration::from_secs(1),
+                [4, 16, 256, 64, 1024],
+            )
+            .unwrap();
+        let said = status_after(&picked, "inspect:b", false, down);
+        assert_ne!(said, "");
+        assert_eq!(status_after(&picked, "", true, other), said);
+
+        let edit = window();
+        let said = status_after(&edit, "edited:b", false, "denied");
+        assert_eq!(status_after(&edit, "trace", false, down), said);
+        assert_eq!(status_after(&edit, "", true, other), said);
+        assert_eq!(status_after(&edit, "edited:b", true, other), "");
+    }
+
+    #[test]
     fn an_answer_is_read_plain_or_streamed() {
         let response = |body: &str| Answer {
             status: 200,
