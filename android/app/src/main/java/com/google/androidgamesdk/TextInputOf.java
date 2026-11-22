@@ -1,6 +1,8 @@
 package com.google.androidgamesdk;
 
 import android.content.Context;
+import android.os.Handler;
+import android.os.Looper;
 import android.view.View;
 import android.view.inputmethod.EditorInfo;
 import com.google.androidgamesdk.gametextinput.InputConnection;
@@ -50,8 +52,8 @@ public final class TextInputOf {
     }
 
     private static final class Connection extends InputConnection {
-        private final View view;
         private final CursorUpdates updates;
+        private final Handler main = new Handler(Looper.getMainLooper());
 
         /**
          * The selection or composing region moved and the listener is yet
@@ -60,9 +62,11 @@ public final class TextInputOf {
          */
         private boolean moved;
 
+        /** Inside BaseInputConnection's batch that sets a composing region. */
+        private boolean composing;
+
         Connection(Context context, View view, Settings settings, CursorUpdates updates) {
             super(context, view, settings);
-            this.view = view;
             this.updates = updates;
         }
 
@@ -86,7 +90,9 @@ public final class TextInputOf {
 
         @Override
         public boolean setComposingRegion(int start, int end) {
+            composing = true;
             boolean set = super.setComposingRegion(start, end);
+            composing = false;
             tell();
             return set;
         }
@@ -99,11 +105,12 @@ public final class TextInputOf {
         // side's own state comes in through GameTextInput's final setState,
         // which sets the cursor through these same two calls and then
         // restarts the input, and that state told back late would undo a
-        // newer edit.
+        // newer edit. Done ahead of what is queued, so a key the input
+        // method sends next finds the native side's cursor already moved.
         private void tell() {
             if (!moved) {
                 moved = true;
-                view.post(this::told);
+                main.postAtFrontOfQueue(this::told);
             }
         }
 
@@ -113,16 +120,22 @@ public final class TextInputOf {
             }
         }
 
-        // A restart hands the input method the state as it stands, which
-        // the native side has, so what moved before it is not told.
+        // GameTextInput restarts at the end of setState, whose state is the
+        // native side's, and at the end of a key it handled, which it has
+        // reported itself: neither is told again.
         @Override
         public void restartInput() {
             moved = false;
             super.restartInput();
         }
 
+        // BaseInputConnection's own, setting a composing region, is told
+        // by tell(), or not at all inside setState.
         @Override
         public boolean endBatchEdit() {
+            if (composing) {
+                return false;
+            }
             moved = false;
             return super.endBatchEdit();
         }
