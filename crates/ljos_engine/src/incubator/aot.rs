@@ -769,7 +769,7 @@ impl Engine {
                         let faults = &self.inner.faults;
                         faults.thrown.set(true);
                         faults.thrown_message.replace(Some(msg));
-                        self.note_thrown_through(self.inner.faults.origin.get());
+                        self.note_thrown_through(self.running_origin());
                     } else {
                         self.warn(msg);
                     }
