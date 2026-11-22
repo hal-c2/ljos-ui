@@ -1718,7 +1718,9 @@ alone, with no position or severity before it.
 - They are all the compiler's warnings on the QML files the application
   loaded, as they run now, where the errors `ljos run` prints have each
   only once. The first load's are there, and a file a `Loader` reaches
-  later adds its own.
+  later adds its own. Such a file is compiled as it is asked for, without
+  the reload lint, whose warnings on it come, here and on stderr, with
+  a reload that compiles the file again.
 - A reload that was applied replaces them, so one without any leaves an
   empty list. One that failed leaves them as they were, its error being
   in `message`; so do `unchanged` and a reload of only the theme.
