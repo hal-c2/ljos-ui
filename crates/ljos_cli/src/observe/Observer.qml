@@ -101,8 +101,10 @@ ApplicationWindow {
     // functions.
     property var waiting: ({})
 
-    // What kind of call the error shown is of; "" for a note, which any
-    // answer clears. An error waits for a success of its own kind.
+    // What kind of call the error shown is of; "" for what any answer
+    // clears: a note, or the failure of what is asked as the application
+    // runs, which may not be asked again. An error of what the user did
+    // waits for a success of its own kind.
     property string statusOf: ""
     // What the note shown was turned away of: its route, "" for none.
     property string noteOf: ""
@@ -132,6 +134,25 @@ ApplicationWindow {
         waiting = next
         if (kindOf(route) === "inspect")
             status.inspectsWaiting += 1
+    }
+
+    // The kind a failure is kept as, "" where nobody did what failed.
+    function keptAs(route) {
+        var kind = kindOf(route)
+        switch (kind) {
+        case "edited":
+        case "model-edited":
+        case "export":
+        case "mark":
+        case "since-mark":
+        case "one-wake":
+        case "audit":
+            return kind
+        case "inspect":
+            // A pick until it is answered, a refresh after.
+            return objects.pickWaits ? kind : ""
+        }
+        return ""
     }
 
     function answered(route, ok, r) {
@@ -244,11 +265,13 @@ ApplicationWindow {
             // A picture that cannot be taken is said where the picture
             // would be.
             if (route !== "watch" && !picture && route !== "audit-shot" && !past) {
-                var kind = window.kindOf(route)
-                if (!ok)
-                    window.say(tool + ": " + window.refusal(result), kind)
-                else if (window.statusOf === "" || window.statusOf === kind)
+                if (!ok) {
+                    var kept = window.keptAs(route)
+                    if (kept !== "" || window.statusOf === "")
+                        window.say(tool + ": " + window.refusal(result), kept)
+                } else if (window.statusOf === "" || window.statusOf === window.kindOf(route)) {
                     window.say("", "")
+                }
             }
             // The picture says nothing here when it comes, but the note
             // that it would be asked again is over: no other answer may come.
@@ -1772,6 +1795,8 @@ ApplicationWindow {
                     property var opened: []
                     property var toOpen: []
                     property string opening: ""
+                    // Whether a pick is still to be answered.
+                    property bool pickWaits: false
                     property int openDepth: 0
                     property int spliceAt: 0
                     property string picked: ""
@@ -1959,7 +1984,8 @@ ApplicationWindow {
                         var going = partCursor !== ""
                         partCursor = ""
                         if (!ok) {
-                            window.say(window.refusal(r), "objects")
+                            if (opening !== "" || window.statusOf === "")
+                                window.say(window.refusal(r), opening !== "" ? "objects" : "")
                             // A row that cannot be opened is not opened
                             // again.
                             if (opening !== "") {
@@ -2178,6 +2204,7 @@ ApplicationWindow {
                         }
                         picked = handle
                         pickedName = name || handle
+                        pickWaits = true
                         inspect(false)
                     }
 
@@ -2236,6 +2263,7 @@ ApplicationWindow {
                         // no use: the one picked since was asked of too.
                         if (of !== picked)
                             return
+                        pickWaits = false
                         // The rows shrink before the list does, so that
                         // no row is drawn from past its end.
                         if (!ok) {
