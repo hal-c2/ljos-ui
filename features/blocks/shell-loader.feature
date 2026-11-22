@@ -389,6 +389,12 @@ Feature: A ShellLoader shows a user's shell, or the application's own when the u
     place; and a fault after that time makes a new fallback. A change of
     `source` or `fallback` holds nothing.
 
+    What such a change discards is in the heap until it is deleted. A
+    source that fails for room then makes no fallback yet: the `status` is
+    Error for that frame, the `item` null and the `error` the reason, and
+    the deletion schedules one more try, which falls back as ever if it
+    fails. Another `source`, `fallback` or `reload()` meanwhile wins.
+
     The cost: both shells are alive through that read, so a source that
     fits in the heap only without the fallback stays on the fallback and
     is tried at the backoff. The limits: a host that neither frames nor
