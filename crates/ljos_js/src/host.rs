@@ -1985,8 +1985,8 @@ impl JsHost {
         self.peak.mark();
         let heap_before = self.heap_bytes();
         self.interrupt.fired.set(false);
-        self.heap.clear_over_share();
-        self.heap.set_cap(self.heap_cap());
+        self.peak.clear_over_share();
+        self.peak.set_cap(self.heap_cap());
         self.interrupt.stopped_in.take();
         self.state.stopped.set(false);
         let start = self.interrupt.now(Timing::Enter);
@@ -2015,8 +2015,8 @@ impl JsHost {
         let elapsed = self.interrupt.now(Timing::Leave) - start;
         let native = self.interrupt.native.get();
         self.interrupt.arm(start, None);
-        self.heap.set_cap(None);
-        self.heap.clear_over_share();
+        self.peak.set_cap(None);
+        self.peak.clear_over_share();
         self.state.stopped.set(false);
         drop(guard);
 
@@ -2143,15 +2143,15 @@ impl JsHost {
         let outer_peak = self.peak.mark();
         // And its own refusals: one the outer run met before says nothing
         // of an error thrown in here.
-        let outer_refused = self.heap.over_share();
-        self.heap.clear_over_share();
+        let outer_refused = self.peak.over_share();
+        self.peak.clear_over_share();
         let r = f(&scope);
         let took = st.now(Timing::Leave) - start;
         st.deadline.set(st.outer.borrow_mut().pop());
         st.give_back(took, before, false);
         let fault = r.map_err(|e| self.classify(&scope, e, label, took));
         self.peak.resume(outer_peak);
-        self.heap.resume_over_share(outer_refused);
+        self.peak.resume_over_share(outer_refused);
         let fault = match fault {
             Ok(v) => return Ok(v),
             Err(fault) => fault,
@@ -2196,7 +2196,7 @@ impl JsHost {
         label: &str,
         elapsed: Duration,
     ) -> JsFault {
-        if self.heap.over_share() && !self.interrupt.fired.get() && refused_room(&scope.ctx, &err) {
+        if self.peak.over_share() && !self.interrupt.fired.get() && refused_room(&scope.ctx, &err) {
             return JsFault::JsOutOfMemory {
                 label: label.to_owned(),
                 what: String::new(),
@@ -2619,8 +2619,8 @@ impl JsHost {
             // job per turn, each well under its share: a share does not
             // stop it filling the heap over many, and `script_holders`
             // is what says who holds it then.
-            self.heap.clear_over_share();
-            self.heap.set_cap(self.heap_cap());
+            self.peak.clear_over_share();
+            self.peak.set_cap(self.heap_cap());
             match self.rt.execute_pending_job() {
                 Ok(true) => pumped.ran += 1,
                 Ok(false) => break,
@@ -2633,7 +2633,7 @@ impl JsHost {
                     let after = self.interrupt.now(Timing::Leave) - now;
                     let mapper = self.state.mapper.borrow().clone();
                     let text = self.state.text.borrow().clone();
-                    let refused = self.heap.over_share();
+                    let refused = self.peak.over_share();
                     let fault = e.0.with(|ctx| {
                         if refused
                             && !self.interrupt.fired.get()
@@ -2672,8 +2672,8 @@ impl JsHost {
             self.pressure.borrow_mut().grew("promise job", grew);
         }
         self.interrupt.arm(now, None);
-        self.heap.set_cap(None);
-        self.heap.clear_over_share();
+        self.peak.set_cap(None);
+        self.peak.clear_over_share();
         self.state.stopped.set(false);
         drop(guard);
         if let Some(panic) = self.state.panicked.borrow_mut().take() {
@@ -2852,11 +2852,13 @@ impl JsHost {
     }
 
     /// The most the heap may hold before the dispatch beginning now is
-    /// stopped: what it holds plus its share of the room left.
+    /// stopped: what it holds plus its share of the room left, all in the
+    /// limit's units. Called straight after [`MallocPeak::mark`], when the
+    /// most held since the mark is what is held now, read without a walk.
     fn heap_cap(&self) -> Option<usize> {
         let limit = self.memory_limit.get().filter(|l| *l > 0)?;
         let share = self.cfg.dispatch_heap_share?.clamp(0.0, 1.0);
-        let held = self.heap_bytes();
+        let held = self.peak.get();
         let room = limit.saturating_sub(held);
         Some(held + (room as f64 * f64::from(share)) as usize)
     }

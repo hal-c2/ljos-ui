@@ -364,6 +364,13 @@ struct JSRuntime {
     /* Ljós: the most malloc_size held since JS_MarkMallocPeak, in the units
        malloc_limit is checked in. */
     size_t malloc_peak;
+    /* Ljós: the most malloc_size may grow to in the dispatch running now, 0
+       for no cap, and whether room was refused for being past it. */
+    size_t malloc_cap;
+    bool malloc_cap_refused;
+    /* Ljós: how many times JS_ThrowError2 threw `null` for want of heap to
+       make its error, so that `null` is told from a script's own. */
+    uint64_t null_errors;
 #ifdef ENABLE_DUMPS // JS_DUMP_LEAKS
     struct list_head string_list; /* list of JSString.link */
 #endif
@@ -2008,6 +2015,16 @@ static void js_arena_free_all(JSRuntime *rt)
     }
 }
 
+/* Ljós: whether growing by `more` bytes passes malloc_cap; noted if so. */
+static inline bool js_over_malloc_cap(JSRuntime *rt, size_t more)
+{
+    if (likely(rt->malloc_cap == 0 ||
+               rt->malloc_state.malloc_size + more <= rt->malloc_cap))
+        return false;
+    rt->malloc_cap_refused = true;
+    return true;
+}
+
 void *js_calloc_rt(JSRuntime *rt, size_t count, size_t size)
 {
     void *ptr;
@@ -2023,6 +2040,8 @@ void *js_calloc_rt(JSRuntime *rt, size_t count, size_t size)
     s = &rt->malloc_state;
     /* When malloc_limit is 0 (unlimited), malloc_limit - 1 will be SIZE_MAX. */
     if (unlikely(s->malloc_size + (count * size) > s->malloc_limit - 1))
+        return NULL;
+    if (js_over_malloc_cap(rt, count * size))
         return NULL;
 
     ptr = js_arena_calloc(rt, count, size);
@@ -2048,6 +2067,8 @@ void *js_malloc_rt(JSRuntime *rt, size_t size)
     s = &rt->malloc_state;
     /* When malloc_limit is 0 (unlimited), malloc_limit - 1 will be SIZE_MAX. */
     if (unlikely(s->malloc_size + size > s->malloc_limit - 1))
+        return NULL;
+    if (js_over_malloc_cap(rt, size))
         return NULL;
 
     ptr = js_arena_malloc(rt, size);
@@ -2097,6 +2118,10 @@ void *js_realloc_rt(JSRuntime *rt, void *ptr, size_t size)
     s = &rt->malloc_state;
     /* When malloc_limit is 0 (unlimited), malloc_limit - 1 will be SIZE_MAX. */
     if (s->malloc_size + size - old_size > s->malloc_limit - 1)
+        return NULL;
+    /* Ljós: giving room back is never refused, though rounding left
+       malloc_size past the cap. */
+    if (size > old_size && js_over_malloc_cap(rt, size - old_size))
         return NULL;
 
     ptr = js_arena_realloc(rt, ptr, size);
@@ -2477,6 +2502,26 @@ JSRuntime *JS_NewRuntime(void)
 void JS_SetMemoryLimit(JSRuntime *rt, size_t limit)
 {
     rt->malloc_state.malloc_limit = limit;
+}
+
+/* Ljós: caps what malloc_size may grow to, in the units malloc_limit is
+   checked in; 0 takes the cap away. Declared by ljos_js itself
+   (crates/ljos_js/src/heap.rs), as are the next two. */
+void JS_SetMallocCap(JSRuntime *rt, size_t cap)
+{
+    rt->malloc_cap = cap;
+}
+
+/* Ljós: whether room was refused for being past the cap since this was
+   last set to false. */
+bool JS_MallocCapRefused(JSRuntime *rt)
+{
+    return rt->malloc_cap_refused;
+}
+
+void JS_SetMallocCapRefused(JSRuntime *rt, bool refused)
+{
+    rt->malloc_cap_refused = refused;
 }
 
 /* Ljós: starts the high-water mark of malloc_size again from what is held
