@@ -122,8 +122,8 @@ struct RunAgain {
     /// one: the binding it cut short runs again here, and a script that
     /// always runs over its slice would otherwise be made forever.
     seen: Cell<u64>,
-    /// The latest of those, each with its number in `seen` and the
-    /// boundary that discards all it broke, if one does
+    /// The latest of those, each with its number in `seen` and, for a full
+    /// heap, the boundary that discards all it broke, if one does
     /// ([`Engine::discarded_by`]): when that is inside what was made, what
     /// was made is whole. Bounded: a count past what it holds is taken as
     /// breaking.
@@ -163,7 +163,12 @@ impl Engine {
             r.seen.set(seq);
             // Who takes it is known now, while what met it is still where
             // it was met: it may be gone by the time anyone asks.
-            let taker = self.discarded_by(origin, through);
+            // Only of a full heap: that is retried for as long as it
+            // takes. A panic is counted, and its boundary may give up with
+            // what it discarded never made again.
+            let taker = matches!(fault, Fault::JsOutOfMemory)
+                .then(|| self.discarded_by(origin, through))
+                .flatten();
             let mut recent = r.recent.borrow_mut();
             if recent.len() == RECENT_FAULTS {
                 recent.pop_front();
@@ -227,7 +232,8 @@ impl Engine {
 
     /// The last full heap or panic after `seen`
     /// ([`Engine::resource_faults_seen`]) that `made` is not whole for,
-    /// though no error came back. One is left out when a boundary inside
+    /// though no error came back. A panic always counts: the boundary that
+    /// takes one may give up. A full heap is left out when a boundary inside
     /// `made` (or `made` itself) discards all it cut short: where it was
     /// reported, and every object whose function it was thrown out of
     /// ([`Engine::discarded_by`]). With no `made`, every one counts.
