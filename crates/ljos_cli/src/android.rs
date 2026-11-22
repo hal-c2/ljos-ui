@@ -870,13 +870,28 @@ mod tests {
         // only its Editable, so a keyboard moving the cursor by itself (a
         // space-bar swipe) would never reach the field.
         let of = java("TextInputOf.java");
-        assert!(of.contains("publicbooleansetSelection(intstart,intend)"));
-        assert!(of.contains("publicbooleansetComposingRegion(intstart,intend)"));
+        assert!(of.contains(
+            "publicbooleansetSelection(intstart,intend){booleanset=super.setSelection(start,end);tell();returnset;}"
+        ));
+        assert!(of.contains(
+            "publicbooleansetComposingRegion(intstart,intend){booleanset=super.setComposingRegion(start,end);tell();returnset;}"
+        ));
+        // Told once the call is done, unless it was GameTextInput setting
+        // the native side's own state: its final setState sets the cursor
+        // through those same two calls, then restarts the input, and an
+        // echo of that state arriving late would undo a newer edit.
+        assert!(of.contains("privatevoidtell(){if(!moved){moved=true;view.post(this::told);}}"));
+        assert!(of.contains("privatevoidtold(){if(moved){endBatchEdit();}}"));
+        assert!(of.contains("publicvoidrestartInput(){moved=false;super.restartInput();}"));
+        assert!(
+            of.contains("publicbooleanendBatchEdit(){moved=false;returnsuper.endBatchEdit();}")
+        );
         let activity = java("LjosActivity.java");
         assert!(activity.contains("TextInputOf.surface(this,"));
-        // GameTextInput sets the native side's own state through the same
-        // two calls; that is not told back.
-        assert!(activity.contains("TextInputOf.quietly(mSurfaceView,()->super.setTextInputState(state));"));
+        // The native side writes through GameActivity_setTextInputState
+        // straight to the connection; GameActivity's Java one is not on
+        // that path.
+        assert!(!activity.contains("setTextInputState"));
     }
 
     #[test]
