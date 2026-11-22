@@ -1729,6 +1729,7 @@ fn an_accessor_refused_room_fails_its_registration() {
     def.plain = true;
     let most = cost(&def) * 2;
     let mut refused = 0;
+    let mut made = 0;
     for room in (0..=most).step_by(8) {
         let host = small(64);
         let store = Rc::new(Store::default());
@@ -1755,8 +1756,10 @@ fn an_accessor_refused_room_fails_its_registration() {
             .call(module.function("whole").unwrap(), &[JsValue::Object(1)])
             .unwrap();
         assert_eq!(whole, true.into(), "with {room} bytes of room");
+        made += 1;
     }
     assert!(refused > 0, "no room was too little");
+    assert!(made > 0, "no room was enough, so no accessor was looked at");
 }
 
 /// Whatever room the first registration failed for, one that has room
@@ -1841,6 +1844,33 @@ fn a_script_error_saying_out_of_memory_after_a_caught_refusal_is_the_scripts_own
             assert!(message.contains("TypeError"), "{message}")
         }
         other => panic!("told as {other:?}"),
+    }
+}
+
+/// Nor is a script's error that says nothing, under a name of its own, for
+/// all that QuickJS's says nothing where its words found no room.
+#[test]
+fn a_wordless_script_error_after_a_caught_refusal_is_the_scripts_own() {
+    for thrown in ["new TypeError('')", "new Error()"] {
+        let host = small(16);
+        let slice = Slice {
+            soft: Duration::from_secs(5),
+            hard: Duration::from_secs(10),
+        };
+        let err = host
+            .enter("caught", slice, |s| {
+                s.eval::<(), _>(format!(
+                    "let hog = []; \
+                     try {{ for (;;) hog.push(new Array(100).fill(1)) }} catch (e) {{}} \
+                     hog = null; \
+                     throw {thrown}"
+                ))
+            })
+            .unwrap_err();
+        assert!(
+            matches!(err, JsFault::JsException { .. }),
+            "{thrown}: {err:?}"
+        );
     }
 }
 
