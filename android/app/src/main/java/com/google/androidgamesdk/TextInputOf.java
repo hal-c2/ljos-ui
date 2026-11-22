@@ -61,6 +61,15 @@ public final class TextInputOf {
     }
 
     /**
+     * Whether the last state told is a write, told back for having landed
+     * on one the input method made. On any thread; waits for none.
+     */
+    public static boolean toldWrite(GameActivity.InputEnabledSurfaceView view) {
+        return connection(view) instanceof Connection
+                && ((Connection) connection(view)).toldWrite;
+    }
+
+    /**
      * GameActivity's surface, its connection one that hands an input
      * method's {@code requestCursorUpdates} to {@code updates}.
      */
@@ -104,6 +113,9 @@ public final class TextInputOf {
 
         /** A state was told with a write on its way, which will replace it. */
         private boolean overtaken;
+
+        /** The last state told is a write; read on the native side's thread. */
+        volatile boolean toldWrite;
 
         /** A write replaced a state told after it, and is yet to be told. */
         private boolean overwrote;
@@ -192,6 +204,7 @@ public final class TextInputOf {
             boolean handled = super.onKey(view, code, event);
             keyed = false;
             if (handled) {
+                toldWrite = false;
                 reported();
             }
             return handled;
@@ -261,12 +274,15 @@ public final class TextInputOf {
                 if (!overwrote) {
                     return false;
                 }
+                // Before it is told: the native side asks once it has it.
+                toldWrite = true;
                 boolean more = super.endBatchEdit();
                 reported();
                 return more;
             }
             known = now;
             holdsWrite = false;
+            toldWrite = false;
             boolean more = super.endBatchEdit();
             reported();
             return more;
