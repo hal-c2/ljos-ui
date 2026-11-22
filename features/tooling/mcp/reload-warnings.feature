@@ -136,6 +136,77 @@ Feature: An agent is told the warnings of a reload
       And the agent calls the tool "app_status"
       Then the answer's "/reload/warnings" is null
 
+  Rule: Every answer of a reload has them
+
+    Scenario: The first reload asked for has the entry's and its components'
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
+        Item {
+            Timer { }
+            Timer { }
+            Panel { }
+        }
+        """
+      And the file "Panel.qml":
+        """qml
+        import QtQuick
+        Item {
+            Timer { }
+            Timer { }
+            Timer { }
+        }
+        """
+      When the author starts "ljos run Main.qml --headless --watch --mcp=inspect,mutate"
+      And the agent calls the tool "app_reload"
+      Then the answer's "/warnings" has 2 entries
+      And the answer's "/warnings/0/file" is "Main.qml"
+      And the answer's "/warnings/0/message" matches "^2 Timer objects"
+      And the answer's "/warnings/1/file" is "Panel.qml"
+      And the answer's "/warnings/1/message" matches "^3 Timer objects"
+
+    Scenario: An alias's answer has them
+      Given the file "mocks/Media/qmldir":
+        """
+        module App.Media
+        """
+      When the author starts "ljos run Main.qml --headless --watch --mcp=inspect,mutate"
+      And the agent calls the tool "app_alias" with:
+        """json
+        {"module": "App.Media", "dir": "mocks/Media"}
+        """
+      Then the answer's "/warnings" has 1 entry
+      And the answer's "/warnings_truncated" is false
+      And the answer's "/warnings_omitted" is 0
+
+    Scenario: A file a Loader reaches later joins them without a reload
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
+        Item {
+            Loader { objectName: "loader"; active: false; source: "parts/Panel.qml" }
+        }
+        """
+      And the file "parts/Panel.qml":
+        """qml
+        import QtQuick
+        Item {
+            Timer { }
+            Timer { }
+        }
+        """
+      When the author starts "ljos run Main.qml --headless --watch --mcp=inspect,mutate"
+      And the agent calls the tool "app_status"
+      Then the answer's "/reload/warnings" has 0 entries
+      When the agent calls the tool "app_set_property" with:
+        """json
+        {"target": "#loader", "property": "active", "value": true}
+        """
+      And the agent calls the tool "app_status"
+      Then the answer's "/reload/generation" is 0
+      And the answer's "/reload/warnings" has 1 entry
+      And the answer's "/reload/warnings/0/file" is "parts/Panel.qml"
+
   Rule: The application cannot write one
 
     Scenario: A line logged in a warning's form is not a warning
@@ -189,3 +260,39 @@ Feature: An agent is told the warnings of a reload
       Then the answer's "/reload/warnings" has 20 entries
       And the answer's "/reload/warnings_truncated" is true
       And the answer's "/reload/warnings_omitted" is 1
+
+    Scenario: A warning an edit just made is listed before the cut
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
+        Item {
+            Item { Timer { } Timer { } } Item { Timer { } Timer { } } Item { Timer { } Timer { } }
+            Item { Timer { } Timer { } } Item { Timer { } Timer { } } Item { Timer { } Timer { } }
+            Item { Timer { } Timer { } } Item { Timer { } Timer { } } Item { Timer { } Timer { } }
+            Item { Timer { } Timer { } } Item { Timer { } Timer { } } Item { Timer { } Timer { } }
+            Item { Timer { } Timer { } } Item { Timer { } Timer { } } Item { Timer { } Timer { } }
+            Item { Timer { } Timer { } } Item { Timer { } Timer { } } Item { Timer { } Timer { } }
+            Item { Timer { } Timer { } } Item { Timer { } Timer { } } Item { Timer { } Timer { } }
+        }
+        """
+      When the author starts "ljos run Main.qml --headless --watch --mcp=inspect,mutate"
+      And the file "Main.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+            Item { Timer { } Timer { } } Item { Timer { } Timer { } } Item { Timer { } Timer { } }
+            Item { Timer { } Timer { } } Item { Timer { } Timer { } } Item { Timer { } Timer { } }
+            Item { Timer { } Timer { } } Item { Timer { } Timer { } } Item { Timer { } Timer { } }
+            Item { Timer { } Timer { } } Item { Timer { } Timer { } } Item { Timer { } Timer { } }
+            Item { Timer { } Timer { } } Item { Timer { } Timer { } } Item { Timer { } Timer { } }
+            Item { Timer { } Timer { } } Item { Timer { } Timer { } } Item { Timer { } Timer { } }
+            Item { Timer { } Timer { } } Item { Timer { } Timer { } } Item { Timer { } Timer { } }
+            Item { Loader { } Loader { } }
+        }
+        """
+      And the agent calls the tool "app_reload"
+      Then the answer's "/warnings" has 20 entries
+      And the answer's "/warnings/0/message" matches "^2 Loader objects"
+      And the answer's "/warnings/0/line" is 10
+      And the answer's "/warnings/1/line" is 3
+      And the answer's "/warnings_omitted" is 2
