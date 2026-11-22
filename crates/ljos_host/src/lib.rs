@@ -47,9 +47,9 @@ use std::sync::Arc;
 use std::time::Instant;
 
 pub use event::{
-    AppState, BackPhase, ButtonState, EditorKind, Event, HeldText, Insets, Key, KeyEvent,
-    Modifiers, PointerButton, PointerEvent, PointerKind, TextEvent, TextKind, TouchEvent,
-    TouchPhase, WheelDelta, WindowEvent,
+    AppState, BackPhase, ButtonState, Composing, CursorAnchor, EditorKind, Event, HeldText, Insets,
+    Key, KeyEvent, Modifiers, PointerButton, PointerEvent, PointerKind, TextEvent, TextKind,
+    TouchEvent, TouchPhase, WheelDelta, WindowEvent,
 };
 pub use schedule::{Schedule, Sleep};
 pub use window::{

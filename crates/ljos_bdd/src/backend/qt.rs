@@ -901,6 +901,13 @@ impl Input for QtBackend {
         })
     }
 
+    fn input_method_geometry(&mut self) -> Result<Option<super::InputMethodGeometry>> {
+        Err(BackendError::Unsupported {
+            backend: "qt",
+            what: "an input method: the input platform has none",
+        })
+    }
+
     fn commit(&mut self, _: &str) -> Result<()> {
         Err(BackendError::Unsupported {
             backend: "qt",

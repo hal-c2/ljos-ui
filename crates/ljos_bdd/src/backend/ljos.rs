@@ -1633,6 +1633,19 @@ impl Input for LjosBackend {
     fn commit(&mut self, text: &str) -> Result<()> {
         self.input(|b| b.live()?.drive(|d| d.commit(text).map(|_| ())))
     }
+
+    fn input_method_geometry(&mut self) -> Result<Option<super::InputMethodGeometry>> {
+        let live = self.live()?;
+        let rect = |r: kurbo::Rect| [r.x0, r.y0, r.width(), r.height()];
+        Ok(live
+            .scene
+            .ime_geometry(&live.engine)
+            .map(|g| super::InputMethodGeometry {
+                editor: rect(g.editor),
+                cursor: rect(g.cursor),
+                composing: g.composing.into_iter().map(rect).collect(),
+            }))
+    }
 }
 
 impl Assistive for LjosBackend {

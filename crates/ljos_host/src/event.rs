@@ -188,6 +188,34 @@ pub struct HeldText {
     pub compose: Option<std::ops::Range<usize>>,
 }
 
+/// Where the editor with focus, its cursor and what it composes are, in
+/// the surface's pixels, each box as left, top, right, bottom: what an
+/// input method that places its own windows by the text is told (a
+/// floating keyboard, handwriting, a candidate window; Android's
+/// `CursorAnchorInfo`). Positions count UTF-16 units of what the method
+/// holds.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct CursorAnchor {
+    pub editor: [f32; 4],
+    pub cursor: [f32; 4],
+    /// The selection: where it starts, and the cursor.
+    pub selection: [usize; 2],
+    /// What is being composed, if anything.
+    pub composing: Option<Composing>,
+}
+
+/// The part of what an input method holds that it is composing, and
+/// where each of its UTF-16 units stands.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Composing {
+    /// Where it starts in what the method holds.
+    pub start: usize,
+    pub text: String,
+    /// A box a unit; a character outside the Basic Multilingual Plane
+    /// gives both its units its box.
+    pub units: Vec<[f32; 4]>,
+}
+
 /// What kind of text an editor takes, for the on-screen keyboard to suit.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum TextKind {

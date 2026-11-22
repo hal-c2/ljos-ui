@@ -391,6 +391,7 @@ where
 
     fn resized(&mut self, px: [u32; 2], scale: f64) {
         self.px = px;
+        self.keyboard.set_scale(scale);
         #[allow(clippy::cast_possible_truncation)]
         {
             self.scale = scale as f32;

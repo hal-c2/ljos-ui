@@ -1,9 +1,11 @@
 //! What the user does with the pointer, the keyboard and an input method.
 
-use cucumber::{given, when};
+use cucumber::{given, then, when};
 use gherkin::Step;
 
-use crate::backend::{HeldText, OtherButton, PointerStep, TouchFrame, WheelBy};
+use crate::backend::{
+    BackendError, HeldText, InputMethodGeometry, OtherButton, PointerStep, TouchFrame, WheelBy,
+};
 use crate::world::LjosWorld;
 
 use super::{StepResult, docstring};
@@ -294,4 +296,164 @@ fn input_method_holds_composing(
 #[when(regex = r#"^the input method commits "([^"]*)"$"#)]
 fn input_method_commits(w: &mut LjosWorld, text: String) -> StepResult {
     w.each(|b| b.input()?.commit(&text))
+}
+
+/// What the input method is told now, or why it is told nothing.
+fn geometry(
+    w: &mut LjosWorld,
+    check: impl Fn(&InputMethodGeometry) -> Result<(), String>,
+) -> StepResult {
+    w.each(|b| {
+        let told = b.input()?.input_method_geometry()?.ok_or_else(|| {
+            BackendError::Failed("the input method is told of no editor".to_owned())
+        })?;
+        check(&told).map_err(BackendError::Failed)
+    })
+}
+
+fn same_rect(what: &str, told: [f64; 4], want: [f64; 4]) -> Result<(), String> {
+    if told.iter().zip(want).all(|(a, b)| (a - b).abs() < 1e-3) {
+        Ok(())
+    } else {
+        let [x, y, w, h] = told;
+        Err(format!(
+            "the input method is told {what} is at {x}, {y} sized {w} by {h}"
+        ))
+    }
+}
+
+#[then(
+    regex = r#"^the input method is told the (editor|cursor) is at (-?[\d.]+), (-?[\d.]+) sized ([\d.]+) by ([\d.]+)$"#
+)]
+fn input_method_told_rect(
+    w: &mut LjosWorld,
+    what: String,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+) -> StepResult {
+    geometry(w, |g| {
+        let told = if what == "editor" { g.editor } else { g.cursor };
+        same_rect(&format!("the {what}"), told, [x, y, width, height])
+    })
+}
+
+// A row a UTF-16 unit: `x`, `y`, `width` and `height` columns.
+#[then("the input method is told the composed characters are at:")]
+fn input_method_told_composing(w: &mut LjosWorld, step: &Step) -> StepResult {
+    let table = step
+        .table
+        .as_ref()
+        .ok_or_else(|| "the step needs a table of x, y, width and height".to_owned())?;
+    let want = table
+        .rows
+        .iter()
+        .skip(1)
+        .map(|r| {
+            let n = |i: usize| {
+                r[i].trim()
+                    .parse::<f64>()
+                    .map_err(|e| format!("{:?} is no number: {e}", r[i]))
+            };
+            Ok([n(0)?, n(1)?, n(2)?, n(3)?])
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    geometry(w, |g| {
+        if g.composing.len() != want.len() {
+            return Err(format!(
+                "the input method is told of {} composed units, not {}: {:?}",
+                g.composing.len(),
+                want.len(),
+                g.composing
+            ));
+        }
+        for (i, (told, want)) in g.composing.iter().zip(&want).enumerate() {
+            same_rect(&format!("composed unit {i}"), *told, *want)?;
+        }
+        Ok(())
+    })
+}
+
+#[then("the input method is told nothing is composed")]
+fn input_method_told_nothing_composed(w: &mut LjosWorld) -> StepResult {
+    geometry(w, |g| {
+        if g.composing.is_empty() {
+            Ok(())
+        } else {
+            Err(format!(
+                "the input method is told of composed units at {:?}",
+                g.composing
+            ))
+        }
+    })
+}
+
+#[then(regex = r#"^the input method is told of (\d+) composed units?$"#)]
+fn input_method_told_units(w: &mut LjosWorld, count: usize) -> StepResult {
+    geometry(w, |g| {
+        if g.composing.len() == count {
+            Ok(())
+        } else {
+            Err(format!(
+                "the input method is told of {} composed units: {:?}",
+                g.composing.len(),
+                g.composing
+            ))
+        }
+    })
+}
+
+// The two units of one character outside the Basic Multilingual Plane.
+#[then(regex = r#"^the input method is told composed units (\d+) and (\d+) share a box$"#)]
+fn input_method_told_shared(w: &mut LjosWorld, a: usize, b: usize) -> StepResult {
+    geometry(w, |g| match (g.composing.get(a), g.composing.get(b)) {
+        (Some(x), Some(y)) => same_rect(&format!("composed unit {a}"), *x, *y)
+            .map_err(|e| format!("{e}, not where unit {b} is: {y:?}")),
+        _ => Err(format!(
+            "the input method is told of {} composed units: {:?}",
+            g.composing.len(),
+            g.composing
+        )),
+    })
+}
+
+// A box of no width is one an input method cannot place a window by:
+// only a line break may have one.
+#[then("the input method is told each composed unit has a width")]
+fn input_method_told_widths(w: &mut LjosWorld) -> StepResult {
+    geometry(w, |g| match g.composing.iter().position(|r| r[2] <= 1e-3) {
+        None if !g.composing.is_empty() => Ok(()),
+        None => Err("the input method is told nothing is composed".to_owned()),
+        Some(i) => Err(format!(
+            "the input method is told composed unit {i} has no width: {:?}",
+            g.composing
+        )),
+    })
+}
+
+// Characters of both directions side by side: each box is its own
+// character's, not the stretch between two cursor positions. Each unit is
+// held apart from every other, two in one box as well: for text whose
+// characters are a unit each.
+#[then("the input method is told no two composed characters overlap")]
+fn input_method_told_apart(w: &mut LjosWorld) -> StepResult {
+    geometry(w, |g| {
+        let rects = &g.composing;
+        if rects.is_empty() {
+            return Err("the input method is told nothing is composed".to_owned());
+        }
+        for (i, a) in rects.iter().enumerate() {
+            for (j, b) in rects.iter().enumerate().skip(i + 1) {
+                let across = a[0] < b[0] + b[2] - 1e-3 && b[0] < a[0] + a[2] - 1e-3;
+                let down = a[1] < b[1] + b[3] - 1e-3 && b[1] < a[1] + a[3] - 1e-3;
+                if across && down {
+                    return Err(format!(
+                        "the input method is told composed units {i} and {j} overlap: {a:?} and {b:?}"
+                    ));
+                }
+            }
+        }
+        Ok(())
+    })
 }

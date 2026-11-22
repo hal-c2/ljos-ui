@@ -833,6 +833,27 @@ mod tests {
     }
 
     #[test]
+    fn the_activity_takes_where_the_text_is_as_the_native_side_passes_it() {
+        let java = |name: &str| {
+            TEMPLATE
+                .iter()
+                .find(|(p, _)| p.ends_with(name))
+                .map(|(_, t)| *t)
+                .unwrap()
+        };
+        // ljos_host's `cursorAnchorChanged`, `([F[FIIILjava/lang/String;[F)V`.
+        let activity: String = java("LjosActivity.java").split_whitespace().collect();
+        assert!(activity.contains(
+            "publicvoidcursorAnchorChanged(float[]editor,float[]cursor,intselStart,intselEnd,intcomposeStart,Stringcomposing,float[]chars)"
+        ));
+        // `cursorAnchorCleared`, `()V`.
+        assert!(activity.contains("publicvoidcursorAnchorCleared()"));
+        assert!(activity.contains("TextInputOf.surface(this,"));
+        // GameTextInput's own connection refuses an input method that asks.
+        assert!(java("TextInputOf.java").contains("public boolean requestCursorUpdates(int mode)"));
+    }
+
+    #[test]
     fn each_java_file_is_written_where_its_package_says() {
         let java: Vec<_> = TEMPLATE
             .iter()

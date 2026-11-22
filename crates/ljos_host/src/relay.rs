@@ -82,7 +82,7 @@ impl Answered {
 
 /// What the application asks of the platform's thread, which alone may
 /// call some of the platform (the soft keyboard, ending the activity).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
 pub enum Request {
     /// The application has ended.
@@ -109,6 +109,10 @@ pub enum Request {
         /// since, and the request is dropped (see [`held_is_stale`]).
         over: Option<crate::HeldText>,
     },
+    /// Where the editor with focus, its cursor and what it composes are
+    /// now, for an input method that asked to be told; `None` once no
+    /// editor has focus, or another took it, so nothing stale is told.
+    Anchor(Option<crate::CursorAnchor>),
 }
 
 /// Whether a [`Request::Held`] made `over` what the method held is stale

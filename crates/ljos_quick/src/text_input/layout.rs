@@ -606,6 +606,47 @@ pub(crate) fn relayout(
     Ok(())
 }
 
+/// Each UTF-16 unit of what an input method is composing, in the item's
+/// coordinates as the cursor rectangle has them: the box of its
+/// character's cluster on its line (right to left or not, before a wrap or not), as tall as
+/// the line. A character outside the Basic Multilingual Plane gives both
+/// its units its box. Nothing while nothing is composed or shown.
+pub(crate) fn preedit_rects(st: &SharedState) -> Vec<kurbo::Rect> {
+    let s = st.borrow();
+    let Some(layout) = s.layout.as_ref() else {
+        return Vec::new();
+    };
+    let bytes = s.shown.preedit_bytes();
+    let Some(composed) = s.shown.text.get(bytes.clone()) else {
+        return Vec::new();
+    };
+    let mut out = Vec::with_capacity(s.shown.preedit_units);
+    let mut at = bytes.start;
+    for c in composed.chars() {
+        let end = at + c.len_utf8();
+        let line_x = |line: usize| s.geo.line_x.get(line).copied().unwrap_or(0.0);
+        // The character's cluster, where the layout shows it: a mark on
+        // its letter, or a letter of a ligature, has the cluster it is
+        // part of. A line break has none: where the cursor stands before it.
+        let cluster = layout.lines[layout.line_of(at)]
+            .clusters
+            .iter()
+            .find(|c| c.range.contains(&at))
+            .map_or(at..end, |c| c.range.start.min(at)..c.range.end.max(end));
+        let r = match layout.range_rects(cluster).first() {
+            Some(&(line, r)) => r + kurbo::Vec2::new(line_x(line), s.geo.top),
+            None => {
+                let a = layout.caret(at);
+                let (x, top) = (line_x(a.line) + a.x, s.geo.top + a.top);
+                kurbo::Rect::new(x, top, x, top + a.height)
+            }
+        };
+        out.extend(std::iter::repeat_n(r, c.len_utf16()));
+        at += c.len_utf8();
+    }
+    out
+}
+
 /// `positionToRectangle`: where the cursor would stand at `pos`. A position
 /// the text does not have gives an empty rectangle. A `TextInput` leaves
 /// its left and top padding out, unlike its `cursorRectangle` and unlike a
