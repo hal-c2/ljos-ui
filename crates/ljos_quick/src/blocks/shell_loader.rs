@@ -153,6 +153,10 @@ struct Run {
     /// The fallback while it is held through the first read of the shell
     /// that replaces it.
     held: Option<Held>,
+    /// The shell and the fallback of the last hold a [`load`] ended. They
+    /// are that for a load nested in it too, and for one that follows
+    /// before the deletion pass.
+    ended: [Option<ObjectId>; 2],
     /// Faults up to this one were dealt with while a shell was made; the
     /// boundary hears of them only afterwards.
     handled: u64,
@@ -441,16 +445,24 @@ fn load(e: &Engine, me: ObjectId) {
     }
     // Asked for another shell, the loader keeps none for the last one:
     // what a hold kept goes to give the next its room.
-    let mut going = Going::Settled;
-    let mut discarded = [None, None];
-    if let Some(held) = end_hold(e, me) {
-        going = Going::ForRoom;
-        // The shell is destroyed after the fallback: asked of first, the
-        // try follows both.
-        let shell = e
-            .untrack(|| e.read(me, ShellLoader::ITEM.index))
-            .as_object();
-        discarded = [shell, Some(held.fallback)];
+    let held = end_hold(e, me);
+    let item = e
+        .untrack(|| e.read(me, ShellLoader::ITEM.index))
+        .as_object();
+    if let Some(held) = held {
+        // Kept before any handler hears of it: one may ask for another.
+        with_run(e, me, |r| r.ended = [item, Some(held.fallback)]);
+    }
+    let Some(discarded) = with_run(e, me, |r| r.ended) else {
+        return;
+    };
+    // A load set off as one ends a hold drops that hold's shell for it.
+    let going = if held.is_some() || (item.is_some() && item == discarded[0]) {
+        Going::ForRoom
+    } else {
+        Going::Settled
+    };
+    if let Some(held) = held {
         let_go_of(e, me, held.fallback, going);
     }
     if !still(e, me, loads) || !drop_item(e, me, going) {
@@ -490,19 +502,27 @@ fn fall_back(e: &Engine, me: ObjectId, loads: u64, why: String, resource: bool) 
 }
 
 /// Has the deletion pass schedule one try of the source, for the room of
-/// what `discarded` holds. False where none of that waits for the pass, as
-/// a window that is still shown does not.
+/// what `discarded` holds. False where none of that waits for the pass or is
+/// about to, as a window that is still shown does not.
 fn try_once_deleted(
     e: &Engine,
     me: ObjectId,
     loads: u64,
     discarded: [Option<ObjectId>; 2],
 ) -> bool {
+    // The shell is asked of first, and one that waits before one that is
+    // about to: the try is the next turn's, and follows the whole pass.
+    // About to is the fallback, when a handler of its going asked for this
+    // load. Never a window, which may be shown for as long as it likes.
     let waits = |obj: &ObjectId| e.is_alive(*obj) && e.is_going(*obj);
-    let Some(obj) = discarded.into_iter().flatten().find(waits) else {
+    let about_to = |obj: &ObjectId| e.is_alive(*obj) && !own_window(e, me, *obj);
+    let Some(obj) = (discarded.into_iter().flatten())
+        .find(waits)
+        .or_else(|| discarded[1].filter(about_to))
+    else {
         return false;
     };
-    // Connected once it was told: it is no reason to settle it.
+    // Connected once what it owed was judged: it is no reason to settle it.
     e.connect(obj, SignalIndex::DESTROYED, move |e, _| {
         if !still(e, me, loads) {
             return;
