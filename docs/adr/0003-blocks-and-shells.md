@@ -210,6 +210,10 @@ moves give the same document with a blank line or a binding order shifted
     A shell already shown that an edit breaks keeps the running generation
     and reports through the reload error (section 12.1), not through
     `error`. There is no application-wide `Runtime.lastError`.
+  - A retry from a shown fallback holds it until the new shell's first
+    read is over, since bindings are lazy and a shell that was made can
+    still fail then. `status` is `Ready` with the old `error` until then,
+    and both shells count against the heap.
   - `ShellLoader.reload()` asks the host that reads the user's files to
     read them all again, and is applied as a save its watch saw would be
     (the same reload error and fallback, state kept). When nothing
