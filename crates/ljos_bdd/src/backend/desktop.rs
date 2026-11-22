@@ -1031,6 +1031,77 @@ impl Probes for DesktopBackend {
         Ok(answer.structured)
     }
 
+    fn give_observer_keyboard(&mut self) -> Result<()> {
+        let sway = self.sway()?;
+        let observer = self
+            .observer
+            .as_mut()
+            .ok_or_else(|| BackendError::Failed("the application is not observed".into()))?;
+        let pid = observer.app.id();
+        let deadline = Instant::now() + SEEN;
+        let late = |what: String| {
+            move || {
+                BackendError::Failed(format!(
+                    "sway did not answer in {} s while {what}",
+                    SEEN.as_secs()
+                ))
+            }
+        };
+        // The observer's inspector answers before its window is mapped, and
+        // the compositor finds no window of its pid until then.
+        loop {
+            let told = in_time(
+                sway.command(&format!("[pid={pid}] focus"), Some(deadline)),
+                late(format!("the observer's window (pid {pid}) was focused")),
+            )?;
+            if told[0]["success"] == Value::Bool(true) {
+                break;
+            }
+            if Instant::now() >= deadline {
+                return Err(BackendError::Failed(format!(
+                    "sway found no window of the observer (pid {pid}) to focus in {} s: {told}",
+                    SEEN.as_secs()
+                )));
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        loop {
+            let has = in_time(
+                sway.focused(Some(deadline)),
+                late("the focused window was asked for".to_owned()),
+            )?;
+            if has == Some(pid) {
+                break;
+            }
+            if Instant::now() >= deadline {
+                return Err(BackendError::Failed(format!(
+                    "sway did not move the focus to the observer's window (pid {pid}) in {} s; \
+                     the window of pid {has:?} has it",
+                    SEEN.as_secs()
+                )));
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        // The compositor tells the window it has the keyboard, and the
+        // window takes it in the turn it hears of it. The counts are read
+        // before the status, so that a turn between the two is not missed.
+        loop {
+            let turns = observer.turns()?;
+            let status = observer.ask("app_status", json!({}))?;
+            if status["windows"][0]["active"] == Value::Bool(true) {
+                return Ok(());
+            }
+            if Instant::now() >= deadline || !observer.turned_after(turns, deadline)? {
+                return Err(BackendError::Failed(format!(
+                    "sway gave the observer's window (pid {pid}) the focus, but the window did \
+                     not take the keyboard in {} s: its status says {}",
+                    SEEN.as_secs(),
+                    status["windows"][0]
+                )));
+            }
+        }
+    }
+
     fn turn_calls_away(&mut self, kept: Duration) -> Result<Instant> {
         use crate::author::rate;
         let app = self.running()?.app.id();
