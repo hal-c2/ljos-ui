@@ -5,8 +5,10 @@ import android.content.ActivityNotFoundException;
 import android.content.ClipData;
 import android.content.Context;
 import android.content.Intent;
+import android.content.res.AssetFileDescriptor;
 import android.database.Cursor;
 import android.net.Uri;
+import android.os.CancellationSignal;
 import android.provider.OpenableColumns;
 import android.util.Log;
 import android.util.SparseIntArray;
@@ -37,8 +39,10 @@ import java.util.Set;
  * provider's URI, whose grant is kept across restarts.
  *
  * <p>A document says nothing reliable of its size, and may never end: a
- * copy stops when the dialog is closed, also in a read that waits, and
- * leaves {@link #ROOM_LEFT} of the storage free.
+ * copy stops when the dialog is closed, also in a call to the provider that
+ * waits, and leaves {@link #ROOM_LEFT} of the storage free. A provider that
+ * can't be interrupted keeps only the thread: a close waits for none, and
+ * takes the copies away itself.
  */
 public final class LjosDocuments {
     private LjosDocuments() {}
@@ -57,8 +61,18 @@ public final class LjosDocuments {
     /** The picker each request code on screen is. */
     private static final SparseIntArray showing = new SparseIntArray();
 
-    /** The request codes whose selection is being copied; under {@code showing}. */
-    private static final Set<Integer> copying = new HashSet<>();
+    /** A selection being copied: what its calls to the provider end by, and where it goes. */
+    private static final class Copying {
+        final CancellationSignal cancel = new CancellationSignal();
+        final File dir;
+
+        Copying(File dir) {
+            this.dir = dir;
+        }
+    }
+
+    /** The selections being copied, by request code; under {@code showing}. */
+    private static final Map<Integer, Copying> copying = new HashMap<>();
 
     /**
      * The request codes closed while shown or copied, whose answer the native
@@ -127,10 +141,12 @@ public final class LjosDocuments {
     /** Takes away the picker shown with {@code code}, if it is still up. */
     public static void close(int code) {
         InputStream read;
+        Copying copy;
         synchronized (showing) {
+            copy = copying.get(code);
             // A picker that has just answered, or a selection still being
             // copied, would answer no one: its copies are not left behind.
-            if (showing.indexOfKey(code) >= 0 || copying.contains(code)) {
+            if (showing.indexOfKey(code) >= 0 || copy != null) {
                 closed.add(code);
             }
             read = reading.remove(code);
@@ -139,14 +155,33 @@ public final class LjosDocuments {
         if (activity != null) {
             activity.runOnUiThread(() -> activity.finishActivity(code));
         }
+        if (copy != null) {
+            // Not on the application's thread: cancelling runs a provider's
+            // own code when it is in this process, and closing can wait.
+            new Thread(() -> end(copy, read), "ljos-documents-close").start();
+        }
+    }
+
+    /**
+     * Ends what a closed copy waits for, and first removes what it made,
+     * which a provider that doesn't return would keep it from doing. Nothing
+     * is made there after the mark ({@link #create}).
+     */
+    private static void end(Copying copy, InputStream read) {
+        remove(copy.dir);
         // A read of a provider that sends nothing sees no mark: closing its
         // stream is what ends it.
         if (read != null) {
             try {
                 read.close();
-            } catch (IOException e) {
+            } catch (IOException | RuntimeException e) {
                 Log.w("ljos", "the document being read was not closed", e);
             }
+        }
+        try {
+            copy.cancel.cancel();
+        } catch (RuntimeException e) {
+            Log.w("ljos", "the provider was not cancelled", e);
         }
     }
 
@@ -166,6 +201,13 @@ public final class LjosDocuments {
                 uris.add(data.getData());
             }
         }
+        Context context = activity.getApplicationContext();
+        File copies = new File(context.getCacheDir(), "documents");
+        // Codes start again in each process: the time keeps an earlier
+        // run's copy from being replaced. Digits alone, as remove_copies
+        // (android_documents.rs) takes a directory of copies to be.
+        Copying copy = new Copying(new File(copies,
+                String.format(java.util.Locale.ROOT, "%d%05d", System.currentTimeMillis(), code)));
         int picker;
         boolean wanted;
         // From shown to copied in one step: a close in between is marked.
@@ -177,7 +219,7 @@ public final class LjosDocuments {
             showing.delete(code);
             wanted = !closed.remove(code) && !uris.isEmpty();
             if (wanted && (picker == OPEN || picker == OPEN_MANY)) {
-                copying.add(code);
+                copying.put(code, copy);
             }
         }
         if (!wanted) {
@@ -193,33 +235,23 @@ public final class LjosDocuments {
             nativeAnswered(code, out.toString());
             return;
         }
-        Context context = activity.getApplicationContext();
-        File copies = new File(context.getCacheDir(), "documents");
-        // Codes start again in each process: the time keeps an earlier
-        // run's copy from being replaced. Digits alone, as remove_copies
-        // (android_documents.rs) takes a directory of copies to be.
-        File dir = new File(copies,
-                String.format(java.util.Locale.ROOT, "%d%05d", System.currentTimeMillis(), code));
         new Thread(() -> {
             prune(copies);
-            String chosen = copy(context, code, dir, uris);
+            String chosen = copy(context, code, copy, uris);
+            boolean unheard;
             synchronized (showing) {
                 copying.remove(code);
-                closed.remove(code);
+                unheard = closed.remove(code);
             }
-            // A close can come after the last look at the mark: whether
-            // anyone took the answer, only the native side knows.
-            if (!nativeAnswered(code, chosen)) {
-                remove(dir);
+            // No answer after a close. One can come after that last look at
+            // the mark: whether anyone took the answer, only the native side
+            // knows.
+            if (unheard || !nativeAnswered(code, chosen)) {
+                remove(copy.dir);
             }
         }, "ljos-documents").start();
     }
 
-    /**
-     * What the user chose, to ljos_platform: a line each, the path of a copy
-     * or the provider's URI; null when the user chose nothing. False when
-     * no dialog waited for it, as one closed does not.
-     */
     private static native boolean nativeAnswered(int code, String chosen);
 
     /** The picker shown with {@code code}, no longer shown; -1 if none was. */
@@ -304,26 +336,19 @@ public final class LjosDocuments {
      * fails, or is no longer wanted, leaves no copy behind: the application
      * is told of none, so nothing else would remove them.
      */
-    private static String copy(Context context, int code, File dir, List<Uri> uris) {
+    private static String copy(Context context, int code, Copying copy, List<Uri> uris) {
+        File dir = copy.dir;
         StringBuilder out = new StringBuilder();
         for (int i = 0; i < uris.size(); i++) {
             Uri uri = uris.get(i);
             File into = new File(dir, Integer.toString(i));
-            File file = new File(into, name(context, uri));
-            if (unwanted(code)) {
+            String name = name(context, uri, copy.cancel);
+            if (name == null || unwanted(code)) {
                 remove(dir);
                 return null;
             }
-            if (!into.mkdirs() && !into.isDirectory()) {
-                Log.w("ljos", "no directory for the copy of " + uri);
-                remove(dir);
-                return null;
-            }
-            try (InputStream in = context.getContentResolver().openInputStream(uri);
-                    OutputStream to = new FileOutputStream(file)) {
-                if (in == null) {
-                    throw new IOException("the provider gave nothing to read");
-                }
+            File file = new File(into, name);
+            try (InputStream in = open(context, uri, copy.cancel)) {
                 synchronized (showing) {
                     // Closed while the provider opened it: no close will
                     // find this stream to end.
@@ -332,7 +357,7 @@ public final class LjosDocuments {
                     }
                     reading.put(code, in);
                 }
-                try {
+                try (OutputStream to = create(code, into, file)) {
                     byte[] buffer = new byte[64 * 1024];
                     for (int n; (n = in.read(buffer)) > 0; ) {
                         if (context.getCacheDir().getUsableSpace() < ROOM_LEFT + n) {
@@ -361,15 +386,18 @@ public final class LjosDocuments {
     }
 
     /** The name the provider gives a document, as a file's name. */
-    private static String name(Context context, Uri uri) {
+    private static String name(Context context, Uri uri, CancellationSignal cancel) {
         String name = null;
         try (Cursor c = context.getContentResolver().query(
-                uri, new String[] {OpenableColumns.DISPLAY_NAME}, null, null, null)) {
+                uri, new String[] {OpenableColumns.DISPLAY_NAME}, null, null, null, cancel)) {
             if (c != null && c.moveToFirst() && !c.isNull(0)) {
                 name = c.getString(0);
             }
         } catch (RuntimeException e) {
             Log.w("ljos", "no name for " + uri, e);
+        }
+        if (cancel.isCanceled()) {
+            return null;
         }
         if (name == null) {
             name = uri.getLastPathSegment();
@@ -383,6 +411,41 @@ public final class LjosDocuments {
     }
 
     /** Removes an earlier picker's copies, which a code used again replaces. */
+    /**
+     * The document to read, as openInputStream gives it, which has no way to
+     * be cancelled; openFileDescriptor would refuse a part of a file.
+     */
+    private static InputStream open(Context context, Uri uri, CancellationSignal cancel)
+            throws IOException {
+        AssetFileDescriptor document =
+                context.getContentResolver().openAssetFileDescriptor(uri, "r", cancel);
+        if (document == null) {
+            throw new IOException("the provider gave nothing to read");
+        }
+        try {
+            return document.createInputStream();
+        } catch (IOException e) {
+            document.close();
+            throw e;
+        }
+    }
+
+    /**
+     * The file to copy into, made under the lock that marks a close: what
+     * exists was made before the mark, so the close removes it.
+     */
+    private static OutputStream create(int code, File into, File file) throws IOException {
+        synchronized (showing) {
+            if (closed.contains(code)) {
+                throw new IOException("the dialog was closed");
+            }
+            if (!into.mkdirs() && !into.isDirectory()) {
+                throw new IOException("no directory for the copy: " + into);
+            }
+            return new FileOutputStream(file);
+        }
+    }
+
     /** Removes the directories of copies made longer ago than they are kept. */
     private static void prune(File copies) {
         File[] made = copies.listFiles();
