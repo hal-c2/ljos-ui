@@ -736,7 +736,59 @@ impl Device for AndroidBackend {
 
 #[cfg(test)]
 mod tests {
-    use super::{download_path, quoted, scenario_dir};
+    use super::{download_path, picker_shown, quoted, scenario_dir, screen_nodes};
+
+    // Both samples are written by hand in the shapes `dumpsys activity
+    // activities` and `uiautomator dump` print; neither is a recording.
+    #[test]
+    fn the_picker_in_front_says_its_kind() {
+        let picker = "com.google.android.documentsui/com.android.documentsui.picker.PickActivity";
+        let app = "dev.ljos.app/dev.ljos.LjosActivity";
+        let screen = |action: &str, front: &str| {
+            format!(
+                "  Intent {{ act=android.intent.action.{action} cmp={picker} (has extras) }}\n  \
+                 topResumedActivity=ActivityRecord{{1f2e u0 {front} t12}}\n"
+            )
+        };
+        for (action, kind) in [
+            ("OPEN_DOCUMENT", "open file"),
+            ("CREATE_DOCUMENT", "save file"),
+            ("OPEN_DOCUMENT_TREE", "folder"),
+        ] {
+            assert_eq!(picker_shown(&screen(action, picker)), Some(kind));
+            assert_eq!(
+                picker_shown(&screen(action, app)),
+                None,
+                "the picker is behind"
+            );
+        }
+        assert_eq!(
+            picker_shown(&screen("MAIN", picker)),
+            None,
+            "the Files application"
+        );
+    }
+
+    #[test]
+    fn a_screen_s_nodes_are_found_by_what_they_show() {
+        let nodes = screen_nodes(concat!(
+            r#"<?xml version='1.0'?><hierarchy rotation="0">"#,
+            r#"<node text="" resource-id="" class="android.widget.FrameLayout" "#,
+            r#"content-desc="Show roots" enabled="true" bounds="[0,0][100,50]">"#,
+            r#"<node text="Q&amp;A &lt;1&gt;.txt" resource-id="android:id/title" "#,
+            r#"class="android.widget.TextView" content-desc="" enabled="false" "#,
+            r#"bounds="[10,200][30,260]" /></node></hierarchy>"#,
+        ));
+        assert_eq!(nodes.len(), 2);
+        assert_eq!(nodes[0].desc, "Show roots");
+        assert!(nodes[0].enabled);
+        assert_eq!(nodes[0].at, (50, 25));
+        assert_eq!(nodes[1].text, "Q&A <1>.txt");
+        assert_eq!(nodes[1].id, "android:id/title");
+        assert_eq!(nodes[1].class, "android.widget.TextView");
+        assert!(!nodes[1].enabled);
+        assert_eq!(nodes[1].at, (20, 230));
+    }
 
     #[test]
     fn a_download_is_named_below_the_downloads() {
