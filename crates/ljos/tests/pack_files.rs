@@ -236,3 +236,35 @@ fn a_file_carried_for_its_address_alone_is_registered_there_alone() {
     );
     assert_eq!(loaded(&format!("file:///{address}")), None);
 }
+
+#[test]
+fn a_file_a_build_lists_above_its_own_directory_is_carried_at_its_address() {
+    let root = tempfile::tempdir().unwrap();
+    write(
+        root.path(),
+        "App/CMakeLists.txt",
+        b"qt_add_qml_module(app URI App RESOURCES ../images/a.csv)\n",
+    );
+    write(root.path(), "images/a.csv", b"the listed one");
+
+    let pack = packed(ljos::build::Options::new(), &[root.path()]);
+
+    let carried: Vec<&str> = pack.0.iter().map(|(key, _)| key.as_str()).collect();
+    assert_eq!(carried, ["images/a.csv"]);
+    assert_eq!(
+        at(&pack, "qrc:/qt/qml/App/../images/a.csv"),
+        Some(&b"the listed one"[..]),
+        "{pack:?}"
+    );
+}
+
+#[test]
+fn a_file_carried_for_its_address_alone_has_that_for_its_url() {
+    let address = "qrc:/qt/qml/Shapes/dot.png";
+    for source in [
+        ljos::MapSource::new(),
+        ljos::MapSource::new().with_base_url("qrc:/app"),
+    ] {
+        assert_eq!(source.resource_url(address), address);
+    }
+}

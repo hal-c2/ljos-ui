@@ -457,11 +457,14 @@ impl MapSource {
     /// Carries `bytes` as the file at `path` (`fonts/Symbols.woff2`, from
     /// the root the keys are from), which a QML file names relative to
     /// itself: the program finds it at [`resource_url`](Self::resource_url).
+    /// A `path` that is a `qrc:/` address is a file carried for that
+    /// address alone, and is found there.
     pub fn insert_resource(&mut self, path: impl Into<String>, bytes: impl Into<ResourceBytes>) {
         self.resources.insert(path.into(), bytes.into());
     }
 
-    /// The files carried besides the QML, in path order.
+    /// The files carried besides the QML, in path order: each by its path
+    /// from the root, or by its `qrc:/` address where it has that alone.
     pub fn resources(&self) -> impl Iterator<Item = (&str, &ResourceBytes)> {
         self.resources
             .iter()
@@ -489,8 +492,12 @@ impl MapSource {
 
     /// Where the QML finds the carried file at `path`: beside the files
     /// as [`url`](ComponentSource::url) places them, `{base}/{path}` with
-    /// a [`base`](Self::with_base_url), else `file:///{path}`.
+    /// a [`base`](Self::with_base_url), else `file:///{path}`. A `qrc:/`
+    /// address is its own URL.
     pub fn resource_url(&self, path: &str) -> String {
+        if path.starts_with("qrc:/") {
+            return path.to_owned();
+        }
         match &self.base {
             Some(b) => format!("{}/{path}", b.trim_end_matches('/')),
             None => format!("file:///{path}"),
