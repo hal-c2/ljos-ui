@@ -11,7 +11,7 @@ use std::rc::Rc;
 use common::*;
 use ljos_engine::{Engine, ObjectId, Value};
 use ljos_quick::{PointerEvent, QuickScene};
-use ljos_runtime::{Fault, Time};
+use ljos_runtime::{Fault, Time, VirtualClock};
 
 const MAIN: &str = r#"
 import QtQuick
@@ -80,6 +80,8 @@ Rectangle { objectName: "other" }
 /// source would work now.
 struct Held {
     e: Engine,
+    /// What the engine's timers read: a frame runs them up to its time.
+    clock: VirtualClock,
     root: ObjectId,
     loader: ObjectId,
     fallback: ObjectId,
@@ -89,6 +91,8 @@ struct Held {
 impl Held {
     fn new() -> Self {
         let e = engine();
+        let clock = VirtualClock::new();
+        e.set_clock(Rc::new(clock.clone()));
         // As an application that works a binding out when it is read.
         e.set_eager_bindings(false);
         compile(
@@ -119,6 +123,7 @@ impl Held {
         .unwrap();
         Held {
             e,
+            clock,
             root,
             loader,
             fallback,
@@ -183,9 +188,46 @@ impl Held {
     }
 }
 
-fn frame_when_due(s: &mut QuickScene, e: &Engine) {
-    let due = e.next_timer_deadline().expect("a timer");
-    s.frame(e, due);
+fn frame_when_due(s: &mut QuickScene, h: &Held) {
+    let due = h.e.next_timer_deadline().expect("a timer");
+    h.clock.set(due);
+    s.frame(&h.e, due);
+}
+
+/// The items `itemChanged` told of, with a `reload()` from the first.
+fn reload_when_the_item_changes(h: &Held) -> Rc<RefCell<Vec<Option<ObjectId>>>> {
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    let (items, loader) = (seen.clone(), h.loader);
+    h.e.connect_by_name(loader, "itemChanged", move |e, _| {
+        let first = items.borrow().is_empty();
+        items.borrow_mut().push(get(e, loader, "item").as_object());
+        if first {
+            e.invoke_by_name(loader, "reload", &[]).unwrap();
+        }
+    })
+    .unwrap();
+    seen
+}
+
+#[test]
+fn a_reload_from_item_changed_as_a_hold_starts_makes_no_second_shell() {
+    let h = Held::new();
+    let seen = reload_when_the_item_changes(&h);
+    h.retry();
+    assert_eq!(*seen.borrow(), [h.item()], "one shell");
+}
+
+#[test]
+fn a_reload_from_item_changed_where_nothing_was_shown_makes_no_second_shell() {
+    let h = Held::new();
+    set(&h.e, h.root, "ready", Value::Bool(false));
+    set(&h.e, h.root, "fallback", Value::from(""));
+    assert_eq!(num(&h.e, h.loader, "status"), 3.0, "nothing to show");
+    set(&h.e, h.root, "ready", Value::Bool(true));
+    let seen = reload_when_the_item_changes(&h);
+    h.e.invoke_by_name(h.loader, "reload", &[]).unwrap();
+    assert_eq!(num(&h.e, h.loader, "status"), 1.0);
+    assert_eq!(*seen.borrow(), [h.item()], "one shell");
 }
 
 #[test]
@@ -252,7 +294,7 @@ fn a_shell_a_timer_made_inside_a_frame_is_held_through_that_frames_read() {
     h.e.call_at(h.e.now(), move |e| {
         e.invoke_by_name(loader, "reload", &[]).unwrap();
     });
-    frame_when_due(&mut s, &h.e);
+    frame_when_due(&mut s, &h);
     h.assert_held();
     h.e.deliver_faults();
     h.assert_shown_again();
@@ -271,7 +313,7 @@ fn a_shell_no_scene_reaches_made_inside_a_frame_is_held_until_that_frame_ends() 
         e.write_by_name(root, "watching", Value::Bool(true))
             .unwrap();
     });
-    frame_when_due(&mut s, &h.e);
+    frame_when_due(&mut s, &h);
     assert_ne!(
         get(&h.e, h.root, "sawFirst").to_js_string().to_string(),
         "",

@@ -133,8 +133,9 @@ struct Run {
     /// The fallback is being made or is shown: a fault in it is not the
     /// loader's to handle.
     making_fallback: bool,
-    /// A shell is being made: one asked to be tried again meanwhile reads
-    /// the source as it is already.
+    /// A shell is being made, or the one shown is being dropped for it:
+    /// one asked to be tried again meanwhile reads the source as it is
+    /// already.
     making: bool,
     fallback_item: Option<ObjectId>,
     /// The fallback while it is held through the first read of the shell
@@ -231,24 +232,22 @@ pub(crate) fn retry(e: &Engine, me: ObjectId) {
             // Made is not working: bindings are lazy. A fallback that is
             // shown is held until the shell was read once, so that it is
             // the same one, with what the user did in it, if that fails.
-            if let Some(fallback) = shown_fallback(e, me, status) {
-                hold_for(e, me, fallback, obj);
-                set(e, me, ShellLoader::ITEM.index, Value::Object(obj));
-                if with_run(e, me, |r| r.held.is_some()) != Some(true) {
-                    // A handler of `itemChanged` asked for another shell.
-                    return;
+            // One change to who hears of it: a handler of `itemChanged`
+            // that asks for another shell finds this one shown, and Ready.
+            e.batch(|| {
+                if let Some(fallback) = shown_fallback(e, me, status) {
+                    hold_for(e, me, fallback, obj);
+                    set(e, me, ShellLoader::ITEM.index, Value::Object(obj));
+                    // What it let go of is held: none of it is destroyed
+                    // here.
+                    RootSwaps::of(e).present(e, me, None);
+                    present(e, me, obj);
+                    set(e, me, ShellLoader::STATUS.index, shell_status::READY.into());
+                } else {
+                    drop_item(e, me);
+                    show_source(e, me, obj);
                 }
-                // What it let go of is held: none of it is destroyed here.
-                RootSwaps::of(e).present(e, me, None);
-                present(e, me, obj);
-                set(e, me, ShellLoader::STATUS.index, shell_status::READY.into());
-                return;
-            }
-            drop_item(e, me);
-            set(e, me, ShellLoader::ITEM.index, Value::Object(obj));
-            present(e, me, obj);
-            set(e, me, ShellLoader::STATUS.index, shell_status::READY.into());
-            set(e, me, ShellLoader::ERROR.index, "".into());
+            });
         }
         Err(Failed { why, resource }) => {
             warn(e, format!("ShellLoader: {why}"));
@@ -382,12 +381,7 @@ fn load(e: &Engine, me: ObjectId) {
         return;
     }
     match make(e, me, &source) {
-        Ok(obj) => {
-            set(e, me, ShellLoader::ITEM.index, Value::Object(obj));
-            present(e, me, obj);
-            set(e, me, ShellLoader::STATUS.index, shell_status::READY.into());
-            set(e, me, ShellLoader::ERROR.index, "".into());
-        }
+        Ok(obj) => e.batch(|| show_source(e, me, obj)),
         Err(Failed { why, resource }) => {
             warn(e, format!("ShellLoader: {why}"));
             if show_fallback(e, me, why) || resource {
@@ -464,8 +458,13 @@ fn show_fallback(e: &Engine, me: ObjectId, why: String) -> bool {
     let made = make(e, me, &fallback);
     let mut again = false;
     match made {
-        Ok(obj) => {
-            with_run(e, me, |r| r.fallback_item = Some(obj));
+        Ok(obj) => e.batch(|| {
+            with_run(e, me, |r| {
+                r.fallback_item = Some(obj);
+                // Before a handler can ask for the source's shell, which
+                // is guarded.
+                r.making_fallback = false;
+            });
             set(e, me, ShellLoader::ITEM.index, Value::Object(obj));
             present(e, me, obj);
             set(e, me, ShellLoader::ERROR.index, why.as_str().into());
@@ -475,7 +474,7 @@ fn show_fallback(e: &Engine, me: ObjectId, why: String) -> bool {
                 ShellLoader::STATUS.index,
                 shell_status::FALLBACK.into(),
             );
-        }
+        }),
         Err(Failed {
             why: also,
             resource,
@@ -495,6 +494,14 @@ fn show_fallback(e: &Engine, me: ObjectId, why: String) -> bool {
     // Nothing could be shown for want of room: the source is tried again,
     // and the fallback with it.
     again
+}
+
+/// Shows `obj`, the source's shell, with nothing held.
+fn show_source(e: &Engine, me: ObjectId, obj: ObjectId) {
+    set(e, me, ShellLoader::ITEM.index, Value::Object(obj));
+    present(e, me, obj);
+    set(e, me, ShellLoader::STATUS.index, shell_status::READY.into());
+    set(e, me, ShellLoader::ERROR.index, "".into());
 }
 
 /// Makes the shell at `url`, or says why it could not: it did not
@@ -744,8 +751,15 @@ fn drop_item(e: &Engine, me: ObjectId) {
     let item = e
         .untrack(|| e.read(me, ShellLoader::ITEM.index))
         .as_object();
-    with_run(e, me, |r| r.fallback_item = None);
+    let was = with_run(e, me, |r| {
+        r.fallback_item = None;
+        std::mem::replace(&mut r.making, true)
+    })
+    .unwrap_or(false);
+    // Who drops it shows another next: a `reload()` from a handler of this
+    // would make a second under that one.
     set(e, me, ShellLoader::ITEM.index, Value::Null);
+    with_run(e, me, |r| r.making = was);
     let let_go = RootSwaps::of(e).present(e, me, None);
     if let Some(item) = item {
         if let_go {
