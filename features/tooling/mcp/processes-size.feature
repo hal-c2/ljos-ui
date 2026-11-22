@@ -8,9 +8,11 @@ Feature: Processes that do not fit one answer
   An application with more Timers than one answer holds lists as many as
   fit and counts the rest, so an agent knows to ask for one kind. The
   application's own Timers, animations and supervisors are listed before
-  the other threads of the process, and the mailboxes always fit beside
-  them. 20480 bytes is half the default budget: the answer is sent twice,
-  as data and as text, and each copy keeps to it.
+  the other threads of the process. The mailboxes have the room these
+  leave and never less than half, and those past it are counted as well,
+  so neither list crowds the other out. 20480 bytes is half the default
+  budget: the answer is sent twice, as data and as text, and each copy
+  keeps to it.
 
   Background:
     Given the QML:

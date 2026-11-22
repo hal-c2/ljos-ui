@@ -595,8 +595,51 @@ pub(crate) fn memory(
             None => out.push_str("; nothing draws it\n"),
         }
     }
+    // Null when not asked, as `mappings` is: the key is always there.
+    value["script_holders"] = Value::Null;
+    let mut holders = String::new();
+    if args.script_holders
+        && let Some(held) = engine.script_heap_holders(MOST_SCRIPT_VALUES)
+    {
+        holders.push_str("script heap, by what holds it:\n");
+        value["script_holders"] = json!({
+            "holders": [],
+            "holders_left_out": held.holders.len(),
+            "values": held.values,
+            "truncated": held.truncated,
+            "approximate": true,
+        });
+        // They were asked for, so they are fitted first; half the room at
+        // most, for the types are in every answer.
+        let mut room = Room::new(per_copy, &value, &format!("{head}{holders}{out}")).half();
+        let shown: Vec<_> = held.holders.iter().take(max).collect();
+        let rows = room::rows(&mut room, &shown, false, |h| {
+            let row = json!({ "type": h.name, "objects": h.objects, "bytes": h.bytes });
+            let line = format!(
+                "  {:<24} {:>12} B  ({} objects)",
+                h.name, h.bytes, h.objects
+            );
+            (row, line)
+        });
+        let left_out = held.holders.len() - rows.len();
+        for (_, _, line) in &rows {
+            let _ = writeln!(holders, "{line}");
+        }
+        if left_out > 0 {
+            let _ = writeln!(holders, "  … {left_out} more types hold it");
+        }
+        if held.truncated {
+            let _ = writeln!(
+                holders,
+                "  … stopped at its budget, {} values walked: the bytes are the least held",
+                held.values
+            );
+        }
+        value["script_holders"]["holders"] = rows.into_iter().map(|(_, v, _)| v).collect();
+        value["script_holders"]["holders_left_out"] = json!(left_out);
+    }
     // The types that do not fit are counted with those `max` left out.
-    let mut room = Room::new(per_copy, &value, &format!("{head}{out}"));
+    let mut room = Room::new(per_copy, &value, &format!("{head}{holders}{out}"));
     let rows = room::rows(&mut room, &kept[..kept.len().min(max)], false, |t| {
         let row = json!({ "type": t.name, "count": t.count, "bytes": t.bytes });
         let line = format!(
@@ -617,35 +660,7 @@ pub(crate) fn memory(
     }
     value["objects"]["types"] = rows.into_iter().map(|(_, v, _)| v).collect();
     value["objects"]["types_left_out"] = json!(left_out);
-    // Null when not asked, as `mappings` is: the key is always there.
-    value["script_holders"] = Value::Null;
-    if args.script_holders
-        && let Some(held) = engine.script_heap_holders(MOST_SCRIPT_VALUES)
-    {
-        let _ = writeln!(lines, "script heap, by what holds it:");
-        for h in held.holders.iter().take(max) {
-            let _ = writeln!(
-                lines,
-                "  {:<24} {:>12} B  ({} objects)",
-                h.name, h.bytes, h.objects
-            );
-        }
-        if held.truncated {
-            let _ = writeln!(lines, "  … stopped after {} values", held.values);
-        }
-        value["script_holders"] = json!({
-            "holders": held.holders.iter().take(max).map(|h| json!({
-                "type": h.name,
-                "objects": h.objects,
-                "bytes": h.bytes,
-            })).collect::<Vec<_>>(),
-            "holders_left_out": held.holders.len().saturating_sub(max),
-            "values": held.values,
-            "truncated": held.truncated,
-            "approximate": true,
-        });
-    }
-    ToolReply::from(value).with_text(format!("{head}{lines}{out}"))
+    ToolReply::from(value).with_text(format!("{head}{lines}{holders}{out}"))
 }
 
 /// A group's label, the driver named where the painter says which.

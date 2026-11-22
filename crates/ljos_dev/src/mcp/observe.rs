@@ -143,16 +143,15 @@ fn micros(d: std::time::Duration) -> u64 {
     u64::try_from(d.as_micros()).unwrap_or(u64::MAX)
 }
 
-/// The mailboxes `args` asks for and their lines, read on the server's
-/// thread.
-fn mailbox_rows(args: &ProcessesArgs) -> (Vec<Value>, String) {
+/// The mailboxes `args` asks for, each with its line, read on the
+/// server's thread.
+fn mailbox_rows(args: &ProcessesArgs) -> Vec<(Value, String)> {
     let peek = args.peek.unwrap_or(0).min(MAX_PEEK);
     let all: Vec<MailboxSample> = observe::mailboxes(peek)
         .into_iter()
         .filter(|m| args.mailbox.as_deref().is_none_or(|n| n == m.name))
         .collect();
-    let rows: Vec<Value> = all
-        .iter()
+    all.iter()
         .map(|m| {
             let mut row = json!({
                 "name": m.name,
@@ -172,42 +171,37 @@ fn mailbox_rows(args: &ProcessesArgs) -> (Vec<Value>, String) {
             if peek > 0 {
                 row["peek"] = json!(m.peek);
             }
-            row
+            (row, mailbox_line(m))
         })
-        .collect();
-    let mut text = String::new();
-    for m in &all {
-        let _ = write!(text, "mailbox {}", m.name);
-        if m.kind == MailboxKind::Batch {
-            text.push_str(" (batch)");
-        }
-        let _ = write!(
-            text,
-            ": {}/{} queued, sent {}, refused {}, replaced {}",
-            m.depth, m.capacity, m.sent, m.refused, m.replaced
-        );
-        // Only a side stream evicts; an inbox's line stays as it was.
-        if m.kind == MailboxKind::Batch {
-            let _ = write!(text, ", evicted {}", m.evicted);
-        }
-        let _ = write!(text, ", drained {}, {} senders", m.drained, m.senders);
-        if m.waiting > 0 {
-            let _ = write!(text, " ({} waiting for room)", m.waiting);
-        }
-        if let Some(oldest) = m.oldest {
-            let _ = write!(text, ", oldest {:.1} ms", oldest.as_secs_f64() * 1000.0);
-        }
-        if !m.kinds.is_empty() {
-            let kinds: Vec<String> = m.kinds.iter().map(|(k, n)| format!("{k} {n}")).collect();
-            let _ = write!(text, " [{}]", kinds.join(", "));
-        }
-        text.push('\n');
+        .collect()
+}
+
+fn mailbox_line(m: &MailboxSample) -> String {
+    let mut text = format!("mailbox {}", m.name);
+    if m.kind == MailboxKind::Batch {
+        text.push_str(" (batch)");
     }
-    if all.is_empty() {
-        text.push_str("no mailbox by that name\n");
+    let _ = write!(
+        text,
+        ": {}/{} queued, sent {}, refused {}, replaced {}",
+        m.depth, m.capacity, m.sent, m.refused, m.replaced
+    );
+    // Only a side stream evicts; an inbox's line stays as it was.
+    if m.kind == MailboxKind::Batch {
+        let _ = write!(text, ", evicted {}", m.evicted);
     }
-    text.push_str("Mailbox counts are since the inspector attached.");
-    (rows, text)
+    let _ = write!(text, ", drained {}, {} senders", m.drained, m.senders);
+    if m.waiting > 0 {
+        let _ = write!(text, " ({} waiting for room)", m.waiting);
+    }
+    if let Some(oldest) = m.oldest {
+        let _ = write!(text, ", oldest {:.1} ms", oldest.as_secs_f64() * 1000.0);
+    }
+    if !m.kinds.is_empty() {
+        let kinds: Vec<String> = m.kinds.iter().map(|(k, n)| format!("{k} {n}")).collect();
+        let _ = write!(text, " [{}]", kinds.join(", "));
+    }
+    text
 }
 
 /// Adds the mailboxes `args` asks for to `reply`, the answer of the UI
@@ -220,19 +214,58 @@ pub(crate) fn with_mailboxes(
     if !args.wants_mailboxes() {
         return reply;
     }
-    let (rows, lines) = mailbox_rows(args);
+    let rows = mailbox_rows(args);
     if reply.structured.get("processes").is_none() {
         reply.structured["processes"] = json!([]);
     }
-    reply.structured["mailboxes"] = Value::Array(rows);
     reply.structured["counted_since"] = json!("inspector attached");
-    let mut text = match reply.text.take() {
-        Some(t) if !t.is_empty() => format!("{t}\n{lines}"),
-        _ => lines,
-    };
+    let mut text = reply.text.take().unwrap_or_default();
+    fit_mailboxes(&mut reply.structured, &mut text, rows, per_copy);
     // The UI thread fitted its rows before the mailboxes came.
     fit_rows(&mut reply.structured, &mut text, per_copy);
     reply.with_text(text)
+}
+
+/// Adds as many mailboxes as have room beside the processes: what those
+/// leave, and never less than half, so that neither list crowds the other
+/// out. The rest are counted, not sent.
+fn fit_mailboxes(value: &mut Value, text: &mut String, all: Vec<(Value, String)>, per_copy: usize) {
+    let total = all.len();
+    let processes = std::mem::replace(&mut value["processes"], json!([]));
+    value["mailboxes"] = json!([]);
+    // Measured with the count in, which is taken out when nothing is left out.
+    value["mailboxes_left_out"] = json!(total);
+    let mut room = Room::new(per_copy, value, "").share_beside(&processes, text);
+    let mut rows = Vec::new();
+    let mut lines = String::new();
+    for (row, line) in all {
+        if !room.take(&row, &line) {
+            break;
+        }
+        let _ = writeln!(lines, "{line}");
+        rows.push(row);
+    }
+    if total == 0 {
+        lines.push_str("no mailbox by that name\n");
+    }
+    lines.push_str("Mailbox counts are since the inspector attached.");
+    if !text.is_empty() {
+        text.push('\n');
+    }
+    text.push_str(&lines);
+    let left_out = total - rows.len();
+    if left_out > 0 {
+        value["mailboxes_left_out"] = json!(left_out);
+        // First, as the processes' count is.
+        text.insert_str(
+            0,
+            &format!("{left_out} more mailboxes not listed; `mailbox` lists one name\n"),
+        );
+    } else if let Some(answer) = value.as_object_mut() {
+        answer.remove("mailboxes_left_out");
+    }
+    value["mailboxes"] = Value::Array(rows);
+    value["processes"] = processes;
 }
 
 /// Brings the rows of an `app_processes` answer within `per_copy`, with

@@ -31,6 +31,25 @@ impl Room {
         }
     }
 
+    /// Half of this room, for the first of two lists that share it: the
+    /// second has what the first left.
+    pub(crate) fn half(&self) -> Room {
+        Room {
+            json: self.json / 2,
+            text: self.text / 2,
+        }
+    }
+
+    /// What a list may take beside `other` and `other_text`, which are not
+    /// in this room's base: what they leave, and never less than half.
+    pub(crate) fn share_beside(&self, other: &Value, other_text: &str) -> Room {
+        let half = self.half();
+        Room {
+            json: self.json.saturating_sub(size_of(other)).max(half.json),
+            text: self.text.saturating_sub(other_text.len()).max(half.text),
+        }
+    }
+
     /// Takes the room of `row` and its `line`, if both fit.
     pub(crate) fn take(&mut self, row: &Value, line: &str) -> bool {
         // A comma between rows and a line break after each line.
