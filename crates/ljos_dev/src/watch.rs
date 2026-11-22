@@ -890,4 +890,59 @@ mod tests {
         assert_eq!(gone, [PathBuf::from("p/a")]);
         assert_eq!(watched, dirs(&["p"]));
     }
+
+    /// A flush asked while the watcher's queue is full is taken at once,
+    /// and answered once the watcher gets to it: the thread that asks
+    /// (an application's UI thread) never waits on the watcher.
+    #[test]
+    fn a_flush_asked_while_the_queue_is_full_returns_at_once_and_is_answered() {
+        const PATIENCE: Duration = Duration::from_secs(30);
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().canonicalize().unwrap();
+        std::fs::write(dir.join("Main.qml"), "import QtQuick\nItem {}\n").unwrap();
+        let mut reloader = Reloader::open(&dir, qml_front::QtTypeOracle).unwrap();
+        reloader.start();
+        let (inside_tx, inside) = mpsc::channel();
+        let (go, go_rx) = mpsc::channel::<()>();
+        let (tx, rx) = mpsc::channel();
+        let mut held = false;
+        let watcher = Watcher::on_request_shared(Arc::new(Mutex::new(reloader)), move |m| {
+            if m == DevMsg::Idle && !held {
+                // The first answer is held up, so the queue fills.
+                held = true;
+                let _ = inside_tx.send(());
+                let _ = go_rx.recv();
+            }
+            tx.send(m).is_ok()
+        })
+        .unwrap();
+        assert!(watcher.flush());
+        inside
+            .recv_timeout(PATIENCE)
+            .expect("the first flush is answered");
+        while watcher.tx.try_send(Cmd::Ack(0)).is_ok() {}
+        // Should the flush wait, it is let go of in the end.
+        let late = go.clone();
+        let _release = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_secs(10));
+            let _ = late.send(());
+        });
+        let asked = Instant::now();
+        assert!(watcher.flush(), "a running watcher takes the flush");
+        let waited = asked.elapsed();
+        let _ = go.send(());
+        assert!(
+            waited < Duration::from_secs(5),
+            "the flush waited {waited:?}"
+        );
+        // Each flush is answered.
+        let mut answered = 0;
+        while answered < 2 {
+            match rx.recv_timeout(PATIENCE).expect("an answer") {
+                DevMsg::Idle => answered += 1,
+                DevMsg::Failed(faults) => panic!("a flush failed: {faults:?}"),
+                _ => {}
+            }
+        }
+    }
 }
