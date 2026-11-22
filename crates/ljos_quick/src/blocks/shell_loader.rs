@@ -137,8 +137,9 @@ struct Run {
     /// one asked to be tried again meanwhile reads the source as it is
     /// already.
     making: bool,
-    /// How often [`load`] was asked: what dropped a shell sees by it that
-    /// a handler of that asked for another, which is then what is shown.
+    /// How often [`load`] was asked: what made or dropped a shell sees by
+    /// it that a handler of that asked for another, which is then what is
+    /// shown.
     loads: u64,
     fallback_item: Option<ObjectId>,
     /// The fallback while it is held through the first read of the shell
@@ -225,7 +226,10 @@ pub(crate) fn retry(e: &Engine, me: ObjectId) {
     }
     // The fallback stays shown until the source's shell is made: what
     // the user sees does not go blank while it is tried.
-    match make(e, me, &source) {
+    let Some(made) = make(e, me, &source) else {
+        return;
+    };
+    match made {
         Ok(obj) => {
             // A try still waiting out a resource fault would make the
             // shell again, and lose what the user does in this one.
@@ -254,13 +258,13 @@ pub(crate) fn retry(e: &Engine, me: ObjectId) {
         }
         Err(Failed { why, resource }) => {
             warn(e, format!("ShellLoader: {why}"));
-            let fallback_failed = if status == shell_status::FALLBACK {
+            let again = if status == shell_status::FALLBACK {
                 set(e, me, ShellLoader::ERROR.index, why.as_str().into());
-                false
+                Some(false)
             } else {
                 show_fallback(e, me, why)
             };
-            if fallback_failed || resource {
+            if again.is_some_and(|again| again || resource) {
                 again_after(e, me, None);
             }
         }
@@ -308,7 +312,7 @@ impl Boundary for Behaviour {
         if !goes_on {
             return;
         }
-        if show_fallback(e, me, why) || is_resource(&report.fault) {
+        if show_fallback(e, me, why).is_some_and(|again| again || is_resource(&report.fault)) {
             again_after(e, me, Some(report));
         }
     }
@@ -371,7 +375,12 @@ fn load(e: &Engine, me: ObjectId) {
     if !e.is_alive(me) || with_run(e, me, |r| r.completed) != Some(true) {
         return;
     }
-    with_run(e, me, |r| r.loads += 1);
+    with_run(e, me, |r| {
+        r.loads += 1;
+        // Asked as a fallback is made, what is asked for is guarded: that
+        // fallback is not shown.
+        r.making_fallback = false;
+    });
     if let Some(Some(timer)) = with_run(e, me, |r| r.waiting.take()) {
         e.cancel_call(timer);
     }
@@ -384,16 +393,19 @@ fn load(e: &Engine, me: ObjectId) {
     }
     let source = url(e, me, ShellLoader::SOURCE.index);
     if source.is_empty() {
-        if show_fallback(e, me, String::new()) {
+        if show_fallback(e, me, String::new()) == Some(true) {
             again_after(e, me, None);
         }
         return;
     }
-    match make(e, me, &source) {
+    let Some(made) = make(e, me, &source) else {
+        return;
+    };
+    match made {
         Ok(obj) => e.batch(|| show_source(e, me, obj)),
         Err(Failed { why, resource }) => {
             warn(e, format!("ShellLoader: {why}"));
-            if show_fallback(e, me, why) || resource {
+            if show_fallback(e, me, why).is_some_and(|again| again || resource) {
                 again_after(e, me, None);
             }
         }
@@ -450,8 +462,10 @@ struct Failed {
 /// work for `why` (empty when there is no source). Returns whether the
 /// fallback could not be made for want of room, so the caller tries the
 /// source again: it calls [`again_after`] once per failed try, as each
-/// call raises the backoff.
-fn show_fallback(e: &Engine, me: ObjectId, why: String) -> bool {
+/// call raises the backoff. `None` where another shell was asked for as
+/// the fallback was made: that [`load`] showed what there is, and waits
+/// by itself.
+fn show_fallback(e: &Engine, me: ObjectId, why: String) -> Option<bool> {
     let fallback = url(e, me, ShellLoader::FALLBACK.index);
     if fallback.is_empty() {
         let status = if why.is_empty() {
@@ -461,10 +475,10 @@ fn show_fallback(e: &Engine, me: ObjectId, why: String) -> bool {
         };
         set(e, me, ShellLoader::ERROR.index, why.as_str().into());
         set(e, me, ShellLoader::STATUS.index, status.into());
-        return false;
+        return Some(false);
     }
     with_run(e, me, |r| r.making_fallback = true);
-    let made = make(e, me, &fallback);
+    let made = make(e, me, &fallback)?;
     let mut again = false;
     match made {
         Ok(obj) => e.batch(|| {
@@ -502,7 +516,7 @@ fn show_fallback(e: &Engine, me: ObjectId, why: String) -> bool {
     with_run(e, me, |r| r.making_fallback = false);
     // Nothing could be shown for want of room: the source is tried again,
     // and the fallback with it.
-    again
+    Some(again)
 }
 
 /// Shows `obj`, the source's shell, with nothing held.
@@ -515,8 +529,13 @@ fn show_source(e: &Engine, me: ObjectId, obj: ObjectId) {
 
 /// Makes the shell at `url`, or says why it could not: it did not
 /// compile, or something in it faulted while it was made.
-fn make(e: &Engine, me: ObjectId, url: &str) -> Result<ObjectId, Failed> {
-    let was = with_run(e, me, |r| std::mem::replace(&mut r.making, true)).unwrap_or(false);
+///
+/// `None`: another was asked for meanwhile, as by the shell's own
+/// `Component.onCompleted` setting `source`, or the loader went. What was
+/// made is destroyed, and the caller neither shows nor says anything: a
+/// [`load`] inside this did.
+fn make(e: &Engine, me: ObjectId, url: &str) -> Option<Result<ObjectId, Failed>> {
+    let (was, loads) = with_run(e, me, |r| (std::mem::replace(&mut r.making, true), r.loads))?;
     let (made, filed) = e.noting_faults(|| {
         e.make(
             Request::url(e.resolve_url(me, url))
@@ -526,22 +545,39 @@ fn make(e: &Engine, me: ObjectId, url: &str) -> Result<ObjectId, Failed> {
         .map(|(shell, _)| shell)
     });
     with_run(e, me, |r| r.making = was);
+    if with_run(e, me, |r| r.loads) != Some(loads) {
+        // `handled` stays the last make's: a fault filed since may be in
+        // the shell that is shown, and one in this finds it going.
+        if let Ok(obj) = made {
+            discard(e, obj);
+        }
+        return None;
+    }
     let after = last_fault(e);
     with_run(e, me, |r| r.handled = after);
-    let obj = made.map_err(|err| Failed {
-        resource: matches!(
-            err,
-            EngineError::JsOutOfMemory(_) | EngineError::JsInterrupted(_)
-        ),
-        why: err.to_string(),
-    })?;
+    let obj = match made {
+        Ok(obj) => obj,
+        Err(err) => {
+            return Some(Err(Failed {
+                resource: matches!(
+                    err,
+                    EngineError::JsOutOfMemory(_) | EngineError::JsInterrupted(_)
+                ),
+                why: err.to_string(),
+            }));
+        }
+    };
     if let Some(report) = fault_in(e, obj, &filed) {
         let failed = Failed {
             why: describe(report),
             resource: is_resource(&report.fault),
         };
         discard(e, obj);
-        return Err(failed);
+        // A handler of its going may have asked for another.
+        if with_run(e, me, |r| r.loads) != Some(loads) {
+            return None;
+        }
+        return Some(Err(failed));
     }
     // A binding that throws while the shell is made is a fault only if
     // it still throws once the creation around the loader is complete,
@@ -549,7 +585,7 @@ fn make(e: &Engine, me: ObjectId, url: &str) -> Result<ObjectId, Failed> {
     // faults alone. One raised after it was made, as by a handler the
     // rest of the tree sets off as it completes, is the boundary's.
     e.after_creation_told(move |e, told| judge_again(e, me, obj, told));
-    Ok(obj)
+    Some(Ok(obj))
 }
 
 /// The first of `faults` raised in `obj` or what it owns that breaks it
@@ -607,7 +643,7 @@ fn judge_again(e: &Engine, me: ObjectId, obj: ObjectId, told: &[FaultReport]) {
     if !goes_on {
         return;
     }
-    if show_fallback(e, me, why) || resource {
+    if show_fallback(e, me, why).is_some_and(|again| again || resource) {
         again_after(e, me, Some(report));
     }
 }

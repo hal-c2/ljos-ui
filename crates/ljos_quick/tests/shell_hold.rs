@@ -22,6 +22,8 @@ Rectangle {
     property bool ready: false
     property bool heavy: false
     property bool watching: false
+    property bool choose: false
+    property var chooser
     property string sawFirst
     property var looked: []
     property string source: "Shell"
@@ -52,9 +54,15 @@ Rectangle {
 const SHELL: &str = r#"
 import QtQuick
 Rectangle {
+    id: shell
     objectName: "shell"
     color: root.heavy && new ArrayBuffer(268435456).byteLength ? "red" : "blue"
-    Component.onCompleted: if (!root.ready) throw new Error("not ready")
+    Component.onCompleted: {
+        if (root.choose) root.chooser = shell
+        if (!root.ready) throw new Error("not ready")
+        if (root.choose) root.source = "Other"
+    }
+    Component.onDestruction: if (root.choose) root.source = "Other"
 }
 "#;
 
@@ -69,6 +77,19 @@ Rectangle {
     Accessible.name: "The fallback"
     MouseArea { anchors.fill: parent; onPressed: root.pressed++ }
     Item { objectName: "field"; focus: true }
+}
+"#;
+
+/// A fallback that asks for another shell as it completes.
+const CHOOSER: &str = r#"
+import QtQuick
+Rectangle {
+    id: chooser
+    objectName: "chooser"
+    Component.onCompleted: {
+        root.chooser = chooser
+        root.source = "Other"
+    }
 }
 "#;
 
@@ -105,6 +126,7 @@ impl Held {
                 ("Main", MAIN),
                 ("Shell", SHELL),
                 ("Fallback", FALLBACK),
+                ("Chooser", CHOOSER),
                 ("Other", OTHER),
             ],
         );
@@ -218,6 +240,18 @@ fn assert_other_shown(e: &Engine, root: ObjectId, loader: ObjectId, case: &str) 
     assert_eq!(num(e, root, "others"), 1.0, "{case}: one shell");
 }
 
+/// `Other` stays shown once the faults are delivered, and what asked for it
+/// goes.
+fn assert_other_replaced_the_chooser(h: &Held, case: &str) {
+    assert_other_shown(&h.e, h.root, h.loader, case);
+    let chooser = get(&h.e, h.root, "chooser")
+        .as_object()
+        .expect("the one that chose");
+    assert!(h.e.is_going(chooser), "{case}: it is not kept");
+    h.e.deliver_faults();
+    assert_other_shown(&h.e, h.root, h.loader, case);
+}
+
 fn frame_when_due(s: &mut QuickScene, h: &Held) {
     let due = h.e.next_timer_deadline().expect("a timer");
     h.clock.set(due);
@@ -324,6 +358,39 @@ Rectangle {
         let loader = find(&e, root, "loader");
         assert_other_shown(&e, root, loader, &format!("judged, from {source:?}"));
     }
+}
+
+#[test]
+fn a_source_chosen_as_a_retried_shell_completes_is_not_replaced_by_that_shell() {
+    let h = Held::new();
+    set(&h.e, h.root, "choose", Value::Bool(true));
+    h.e.invoke_by_name(h.loader, "reload", &[]).unwrap();
+    assert_other_replaced_the_chooser(&h, "completed");
+    assert!(h.e.is_going(h.fallback), "nothing holds the fallback");
+}
+
+#[test]
+fn a_source_chosen_as_a_failed_try_is_destroyed_keeps_no_error_of_it() {
+    let h = Held::new();
+    set(&h.e, h.root, "ready", Value::Bool(false));
+    set(&h.e, h.root, "choose", Value::Bool(true));
+    h.e.invoke_by_name(h.loader, "reload", &[]).unwrap();
+    assert_other_replaced_the_chooser(&h, "destroyed");
+}
+
+#[test]
+fn a_source_chosen_as_a_fallback_completes_is_shown_and_guarded() {
+    let h = Held::new();
+    set(&h.e, h.root, "ready", Value::Bool(false));
+    set(&h.e, h.root, "fallback", Value::from("Chooser"));
+    assert_other_replaced_the_chooser(&h, "fallback");
+    h.fault_in_shell();
+    h.e.deliver_faults();
+    assert_eq!(
+        num(&h.e, h.loader, "status"),
+        2.0,
+        "its fault is the loader's"
+    );
 }
 
 #[test]
