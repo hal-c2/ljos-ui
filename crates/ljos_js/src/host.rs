@@ -3604,10 +3604,11 @@ pub(crate) struct Sources<'a> {
 /// thrown after it caught the refusal, and is told as such. The pending
 /// exception is taken only when it is the heap's.
 ///
-/// A script's own `throw null`, or an `InternalError` it makes saying
-/// "out of memory", in a dispatch that caught a refusal earlier is told
-/// as the heap running out too: QuickJS's `null` carries nothing to tell
-/// it from the script's, and the refusal is the likelier cause.
+/// A thrown `null` is left to `classify_error`, which tells QuickJS's from a
+/// script's by the run's count ([`MallocPeak::ran_out`]), refusal or not.
+/// An `InternalError` a script makes saying "out of memory", in a dispatch
+/// that caught a refusal earlier, is still told as the heap running out:
+/// nothing tells it from QuickJS's, and the refusal is the likelier cause.
 fn refused_room(ctx: &Ctx<'_>, err: &rquickjs::Error) -> bool {
     match err {
         rquickjs::Error::Allocation => {
@@ -3619,7 +3620,7 @@ fn refused_room(ctx: &Ctx<'_>, err: &rquickjs::Error) -> bool {
         // `classify_error` tells it: judged by what was thrown.
         rquickjs::Error::Exception | rquickjs::Error::Unknown => {
             let thrown = ctx.catch();
-            let ran_out = thrown.is_null() || is_quickjs_out_of_memory(&thrown);
+            let ran_out = is_quickjs_out_of_memory(&thrown);
             if !ran_out {
                 // Left for `classify_error` to describe.
                 let _ = ctx.throw(thrown);
