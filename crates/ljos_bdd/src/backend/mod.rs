@@ -1080,6 +1080,11 @@ pub trait Platform: Backend {
         Err(BackendError::NotImplemented("the system's dialogs"))
     }
 
+    /// What was chosen in the answers the system was told no dialog heard.
+    fn unheard_system_answers(&mut self) -> Result<Vec<String>> {
+        Err(BackendError::NotImplemented("the system's dialogs"))
+    }
+
     /// The system cannot take away a dialog it shows, from now on.
     fn system_dialogs_stay(&mut self) -> Result<()> {
         Err(BackendError::NotImplemented("the system's dialogs"))

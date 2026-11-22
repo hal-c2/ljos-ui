@@ -227,6 +227,15 @@ Feature: The dialogs of QtQuick.Dialogs
       And the property "visible" of "d" is false
       And the system shows no dialog
 
+    # A system that copies what is chosen (a phone's document picker) has
+    # only this to learn that the copy is nobody's.
+    Scenario: The system is told of a late answer that no dialog heard
+      Given the system cannot take its dialogs away
+      When the method "open" of "d" is called
+      And the method "close" of "d" is called
+      And the user chooses "/home/user/notes.txt" in the system dialog
+      Then the system is told that its answer "/home/user/notes.txt" was not heard
+
     Scenario: Opened again, the dialog hears the system's new dialog
       Given the system cannot take its dialogs away
       When the method "open" of "d" is called

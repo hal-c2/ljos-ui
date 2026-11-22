@@ -289,6 +289,7 @@ setter tries to write `depth` and logs the error it gets.
 | `When the user chooses the files "path, path" in the system dialog` | the user picks several files, named with `", "` between them (`@ljos-only`) |
 | `When the user answers "button" in the system dialog` | the user presses the button with that text in the message the system shows (`@ljos-only`) |
 | `When the user dismisses the system dialog` | the user closes the dialog the system shows without choosing (`@ljos-only`) |
+| `Then the system is told that its answer "path" was not heard` | the system got back what the user chose in its dialog, as no dialog was open to hear it, and can remove what it made for the answer (`@ljos-only`) |
 | `When "text" is copied in another application` | another application puts the text on the clipboard while this one runs; it is not told, and finds out when it asks |
 | `When the application copies a picture 3 by 2 pixels` | the application puts a picture of that size on its platform's clipboard, as a "Copy image" command does (`@ljos-only`: QML has no call that copies a picture) |
 | `When the user grants the "name" permission` / `denies` | the user answers the system's question for a permission: `"camera"`, `"microphone"`, `"location"`, `"calendar"`, `"contacts"`, `"bluetooth"` (`@ljos-only`) |

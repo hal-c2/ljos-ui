@@ -16,8 +16,8 @@ use std::sync::Arc;
 
 use ljos_engine::Engine;
 use ljos_platform::{
-    FakeDialogs, FakePermissions, FakeSensors, HttpFetcher, Measurement, PathEnv, Platform,
-    RecordedDragOut, RecordedUrls, SensorKind,
+    DialogReply, FakeDialogs, FakePermissions, FakeSensors, HttpFetcher, Measurement, PathEnv,
+    Platform, RecordedDragOut, RecordedUrls, SensorKind,
 };
 use ljos_positioning::{FixedPosition, GeoCoordinate, PositionFix};
 
@@ -229,6 +229,22 @@ impl FakePlatform {
             .shown()
             .into_iter()
             .map(|(kind, title)| (kind.describe().to_owned(), title))
+            .collect()
+    }
+
+    /// What was chosen in the answers given back to the system as heard by
+    /// no dialog.
+    pub fn unheard(&self) -> Vec<String> {
+        self.dialogs
+            .unheard()
+            .into_iter()
+            .flat_map(|reply| match reply {
+                DialogReply::Files(paths) => {
+                    paths.iter().map(|p| p.display().to_string()).collect()
+                }
+                DialogReply::Documents(urls) => urls,
+                DialogReply::Button(_) | DialogReply::Dismissed => Vec::new(),
+            })
             .collect()
     }
 

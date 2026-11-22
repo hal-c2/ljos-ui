@@ -47,6 +47,10 @@ impl Platform for LjosBackend {
         live.settle()
     }
 
+    fn unheard_system_answers(&mut self) -> Result<Vec<String>> {
+        Ok(self.platform.unheard())
+    }
+
     fn system_back(&mut self, step: crate::backend::BackSwipe, progress: f64) -> Result<()> {
         use crate::backend::BackSwipe;
         use ljos_quick::BackStep;
