@@ -56,13 +56,23 @@ impl Picker {
 }
 
 /// The extensions the picker offers documents of, each once and in the
-/// order the filters give them; `None` when it offers every document.
+/// order the filters give them, except that a save has the selected
+/// filter's first: the document is created as the first one's type when its
+/// name says no other. `None` when it offers every document.
 pub fn extensions(request: &DialogRequest) -> Option<Vec<String>> {
     if request.filters.is_empty() || request.filters.iter().any(|f| f.takes_every_file()) {
         return None;
     }
+    let selected = request
+        .selected_filter
+        .filter(|_| request.kind == Some(DialogKind::SaveFile))
+        .and_then(|index| request.filters.get(index));
     let mut out: Vec<String> = Vec::new();
-    for ext in request.filters.iter().flat_map(|f| f.extensions()) {
+    for ext in selected
+        .into_iter()
+        .chain(&request.filters)
+        .flat_map(|f| f.extensions())
+    {
         let ext = ext.to_ascii_lowercase();
         if !out.contains(&ext) {
             out.push(ext);

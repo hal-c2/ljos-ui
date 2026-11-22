@@ -248,8 +248,8 @@ public final class LjosDocuments {
     /**
      * The type of the document a save creates, which the provider keeps:
      * the suggested name's, as the application names the format it writes
-     * there; else the first filter's, the dialog having no other choice of
-     * format to go by.
+     * there; else the first type offered, which the native side makes the
+     * selected filter's.
      */
     private static String saved(String name, String[] types) {
         int dot = name.lastIndexOf('.');

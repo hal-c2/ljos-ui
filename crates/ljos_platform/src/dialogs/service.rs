@@ -87,6 +87,8 @@ pub struct DialogRequest {
     /// The name a save dialog suggests.
     pub file_name: Option<String>,
     pub filters: Vec<NameFilter>,
+    /// Which of `filters` the application selected, if it selected one.
+    pub selected_filter: Option<usize>,
     pub accept_label: String,
     /// A message's text, informative text and details.
     pub text: String,

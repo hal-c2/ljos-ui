@@ -595,6 +595,7 @@ fn request(engine: &Engine, obj: ObjectId) -> DialogRequest {
                 .map(|f| NameFilter::parse(&f.to_js_string()))
                 .collect();
         }
+        req.selected_filter = usize::try_from(int(engine, obj, "selectedNameFilter.index")).ok();
         req.accept_label = text(engine, obj, "acceptLabel");
     } else if is_a::<FolderDialog>(engine, obj) {
         req.kind = (options & FILE_NO_NATIVE == 0).then_some(DialogKind::Folder);
