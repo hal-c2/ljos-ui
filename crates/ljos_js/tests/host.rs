@@ -204,6 +204,115 @@ fn garbage_churned_on_a_heap_at_94_percent_is_collected_as_it_goes() {
     assert_eq!(out.unwrap(), 1_000_000.0);
 }
 
+/// The collector's next run is set from what lived at its last one, so
+/// after the heap shrank it can be past what a dispatch's share lets the
+/// heap grow to. Garbage in cycles is still collected before the share
+/// refuses it room. Without a share there is the room for it, which is
+/// how a failure here says that the share is the cause.
+#[test]
+fn garbage_made_after_the_heap_shrank_is_collected_before_the_share_refuses_it() {
+    for share in [None, Some(0.75)] {
+        let host = JsHost::new(JsConfig {
+            memory_limit: Some(32 * MIB),
+            dispatch_heap_share: share,
+            ..JsConfig::default()
+        })
+        .unwrap();
+        let slice = Slice {
+            soft: Duration::from_secs(5),
+            hard: Duration::from_secs(20),
+        };
+        let churn = |arrays: usize| {
+            host.enter("churn", slice, |s| {
+                s.eval::<f64, _>(format!(
+                    "(() => {{ let n = 0; for (let i = 0; i < {arrays}; i++) {{ const a = new Array(1000).fill(i); a.self = a; n += a.length; }} return n; }})()"
+                ))
+            })
+        };
+        // The collector runs while 22 of the 32 MiB live: next at about 27.
+        keep(&host, 22);
+        assert_eq!(churn(1000).unwrap(), 1_000_000.0, "share {share:?}");
+        host.enter("drop", host.config().slice, |s| {
+            s.eval::<(), _>("globalThis.kept = null")
+        })
+        .unwrap();
+        assert!(host.collect_now());
+        let held = host.heap_bytes();
+        assert!(held < 8 * MIB, "{held}");
+
+        // About 50 MiB of garbage, with some 24 to grow to.
+        match churn(3000) {
+            Ok(n) => assert_eq!(n, 3_000_000.0),
+            Err(fault) => panic!("share {share:?}, {held} bytes held before: {fault:?}"),
+        }
+    }
+}
+
+/// How many of 20 like dispatches found a collection had run since the
+/// one before, by QuickJS or by the host. Each keeps nothing, and at its
+/// most holds `part` of the room that was left when they began.
+fn collections_over_a_steady_heap(share: Option<f32>, live: usize, part: f64, shrunk: bool) -> f64 {
+    let host = JsHost::new(JsConfig {
+        memory_limit: Some(32 * MIB),
+        dispatch_heap_share: share,
+        ..JsConfig::default()
+    })
+    .unwrap();
+    keep(&host, live);
+    if shrunk {
+        host.enter("drop", host.config().slice, |s| {
+            s.eval::<(), _>("globalThis.kept = null")
+        })
+        .unwrap();
+        host.collect_now();
+    }
+    let room = (32 * MIB).saturating_sub(host.heap_bytes());
+    let piece = (room as f64 * part / 16.0) as usize;
+    // A cycle that only a weak reference reaches lives until a collection.
+    let run = format!(
+        "(() => {{\
+           if (!globalThis.probe || probe.deref() === undefined) {{\
+             if (globalThis.probe) globalThis.seen = (globalThis.seen || 0) + 1;\
+             const c = {{}}; c.self = c; globalThis.probe = new WeakRef(c);\
+           }}\
+           const held = [];\
+           for (let i = 0; i < 16; i++) held.push({{ bytes: new ArrayBuffer({piece}) }});\
+           return globalThis.seen || 0;\
+         }})()"
+    );
+    let mut seen = 0.0;
+    for _ in 0..20 {
+        seen = host
+            .enter("steady", host.config().slice, |s| {
+                s.eval::<f64, _>(run.as_str())
+            })
+            .unwrap();
+    }
+    seen
+}
+
+/// Holding a dispatch to its share costs a heap that stays as it is no
+/// collection a dispatch: not close to the limit, not where a dispatch
+/// takes three quarters of its share, and not after the heap shrank.
+#[test]
+fn the_share_adds_no_collection_to_each_dispatch_over_a_steady_heap() {
+    for (live, part, shrunk) in [
+        (8, 0.5, false),
+        (22, 0.5625, false),
+        (30, 0.375, false),
+        (22, 0.375, true),
+    ] {
+        let free = collections_over_a_steady_heap(None, live, part, shrunk);
+        let held = collections_over_a_steady_heap(Some(0.75), live, part, shrunk);
+        let case = format!("{live} MiB live, {part} of the room, shrunk {shrunk}");
+        assert!(
+            held <= free + 1.0,
+            "{case}: {held} with the share, {free} without"
+        );
+        assert!(held <= 3.0, "{case}: {held} collections in 20 dispatches");
+    }
+}
+
 /// A run that found no room leaves its garbage collected, so the next run
 /// does not meet the same full heap, whoever it belongs to.
 #[test]
