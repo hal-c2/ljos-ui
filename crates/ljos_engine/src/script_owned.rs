@@ -25,6 +25,7 @@ use crate::fault::FaultReport;
 use crate::ids::ObjectId;
 use crate::js::{obj_to_u64, u64_to_obj};
 use crate::object::ObjectFlags;
+use crate::records::Records;
 use crate::value::Value;
 
 /// How many objects properties hold before the properties are first
@@ -187,9 +188,10 @@ impl Engine {
         held
     }
 
-    /// Runs the JS collector now and destroys the script-owned objects
-    /// no script and no property holds any more. For memory pressure and
-    /// for tests; false inside a script or before any script ran.
+    /// Runs the JS collector now, lets go of the script objects of records
+    /// nobody holds any more and destroys the script-owned objects no
+    /// script and no property holds any more. For memory pressure and for
+    /// tests; false inside a script or before any script ran.
     pub fn collect_garbage(&self) -> bool {
         if !self.js_started() {
             return false;
@@ -201,6 +203,7 @@ impl Engine {
         // owed one.
         let covered = self.faults_reported();
         self.review_held(&owned);
+        self.extension::<Records>().sweep();
         // What Rust let go of since the last script ran is still held
         // until this.
         js.host.flush_released();
@@ -249,6 +252,9 @@ impl Engine {
         let owned = self.extension::<ScriptOwned>();
         let covered = self.faults_reported();
         let let_go = self.review_held(&owned);
+        // Before the flush, which frees what it lets go of and so has
+        // `may_hold_garbage` see it.
+        self.extension::<Records>().sweep();
         js.host.flush_released();
         if js.host.collected_since_ran_out() && !let_go && !js.host.may_hold_garbage() {
             full.collected_after.set(covered);

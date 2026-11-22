@@ -10,14 +10,17 @@
 //! hands it on (`features/language/list-properties-held.feature`).
 //!
 //! The table is keyed by the value's allocation and holds it weakly, so it
-//! keeps nothing alive but the script object. It is swept whenever the
-//! script bytes it keeps have grown by an eighth of the live ones, and at
-//! least by [`SWEEP_FLOOR`]: replaced records so hold no more than that of
-//! the script heap, whatever their size and however long each was held,
-//! and filling the table stays linear. Counting entries instead let a few
-//! dead trees, each one entry, outweigh thousands of live small records.
-//! A value only one holder has (a temporary being converted) is not kept:
-//! no later read can find it.
+//! keeps nothing alive but the script object. It is swept when either the
+//! script bytes it keeps, as they were weighed when made, or its entries
+//! have grown by an eighth of what the last sweep left, and at least by
+//! [`SWEEP_BYTES`] or [`SWEEP_ENTRIES`]. The bytes are there because a
+//! replaced tree is one entry and can be megabytes; the entries because
+//! what a record holds by a handle, or a script wrote into it, has no
+//! weight here. Both gaps are shares of the table, so filling it stays
+//! linear. Between sweeps it can still hold what was live at the last one,
+//! so every collection of the engine's sweeps it as well
+//! ([`Records::sweep`]). A value only one holder has (a temporary being
+//! converted) is not kept: no later read can find it.
 //!
 //! What a script writes into the object is seen by the next script read of
 //! the same value but not by Rust, which still has the value it stored.
@@ -37,16 +40,19 @@ use crate::value::Value;
 
 type Held = Weak<Vec<(Atom, Value)>>;
 
-/// The fewest bytes the table may gain between sweeps. A sweep is the only
-/// place the script object of a record nobody holds is let go, so this and
-/// [`SWEEP_SHARE`] bound what replaced generations hold of the script heap
-/// under steady republishing.
-const SWEEP_FLOOR: usize = 256 * 1024;
+/// The fewest bytes the table may gain before the bytes have it swept. A
+/// sweep is the only place the script object of a record nobody holds is
+/// let go, so this, [`SWEEP_ENTRIES`] and [`SWEEP_SHARE`] bound what
+/// replaced generations hold of the script heap under steady republishing.
+const SWEEP_BYTES: usize = 256 * 1024;
 
-/// A sweep waits for the table to gain this fraction of its live bytes when
-/// that is more than [`SWEEP_FLOOR`]. A fixed gap made filling a table of N
-/// records cost N²/128 checks (a 50k-row `ListModel` about 20M on the UI
-/// thread).
+/// The fewest records the table may gain before their count has it swept.
+const SWEEP_ENTRIES: usize = 64;
+
+/// A sweep waits for the table to gain this fraction of what the last one
+/// left, when that is more than the fewest. A fixed gap made filling a
+/// table of N records cost N²/128 checks (a 50k-row `ListModel` about 20M
+/// on the UI thread).
 const SWEEP_SHARE: usize = 8;
 
 /// What an entry or a script object counts for, before what is in it.
@@ -55,9 +61,10 @@ const OBJECT_BYTES: usize = 64;
 /// What a value in a script object counts for, before what is in it.
 const VALUE_BYTES: usize = 16;
 
-/// The bytes at which a table keeping `live` bytes is next swept.
-fn next_sweep(live: usize) -> usize {
-    live + (live / SWEEP_SHARE).max(SWEEP_FLOOR)
+/// At how many bytes, or entries, a table left with `live` of them is
+/// next swept, `fewest` being the least it may gain before.
+fn next_sweep(live: usize, fewest: usize) -> usize {
+    live + (live / SWEEP_SHARE).max(fewest)
 }
 
 /// About what an object of `fields` takes of the script heap. A record
@@ -74,7 +81,9 @@ fn value_bytes(value: &JsValue) -> usize {
     VALUE_BYTES
         + match value {
             JsValue::String(text) => text.len(),
-            JsValue::Array(items) => OBJECT_BYTES + items.iter().map(value_bytes).sum::<usize>(),
+            JsValue::Array(items) | JsValue::Typed(_, items) => {
+                OBJECT_BYTES + items.iter().map(value_bytes).sum::<usize>()
+            }
             JsValue::Map(fields) => object_bytes(fields),
             _ => 0,
         }
@@ -91,7 +100,8 @@ pub(crate) struct Records {
     by_address: RefCell<HashMap<usize, Entry>>,
     /// The sum of the entries' bytes.
     bytes: Cell<usize>,
-    sweep_at: Cell<usize>,
+    sweep_at_bytes: Cell<usize>,
+    sweep_at_entries: Cell<usize>,
     /// Entries every sweep so far has looked at.
     #[cfg(test)]
     checked: Cell<usize>,
@@ -102,7 +112,8 @@ impl Default for Records {
         Records {
             by_address: RefCell::default(),
             bytes: Cell::new(0),
-            sweep_at: Cell::new(next_sweep(0)),
+            sweep_at_bytes: Cell::new(next_sweep(0, SWEEP_BYTES)),
+            sweep_at_entries: Cell::new(next_sweep(0, SWEEP_ENTRIES)),
             #[cfg(test)]
             checked: Cell::new(0),
         }
@@ -163,20 +174,33 @@ impl Records {
         if let Some(before) = table.insert(at, entry) {
             bytes -= before.bytes;
         }
-        if bytes >= self.sweep_at.get() {
-            #[cfg(test)]
-            self.checked.set(self.checked.get() + table.len());
-            bytes = 0;
-            table.retain(|_, entry| {
-                let live = entry.held.strong_count() > 0;
-                if live {
-                    bytes += entry.bytes;
-                }
-                live
-            });
-            self.sweep_at.set(next_sweep(bytes));
-        }
         self.bytes.set(bytes);
+        let due = bytes >= self.sweep_at_bytes.get() || table.len() >= self.sweep_at_entries.get();
+        drop(table);
+        if due {
+            self.sweep();
+        }
+    }
+
+    /// Lets go of the script objects of the records nobody holds any
+    /// more. The host frees them when it next drains what was released,
+    /// so a collection does this first.
+    pub(crate) fn sweep(&self) {
+        let mut table = self.by_address.borrow_mut();
+        #[cfg(test)]
+        self.checked.set(self.checked.get() + table.len());
+        let mut bytes = 0;
+        table.retain(|_, entry| {
+            let live = entry.held.strong_count() > 0;
+            if live {
+                bytes += entry.bytes;
+            }
+            live
+        });
+        self.bytes.set(bytes);
+        self.sweep_at_bytes.set(next_sweep(bytes, SWEEP_BYTES));
+        self.sweep_at_entries
+            .set(next_sweep(table.len(), SWEEP_ENTRIES));
     }
 }
 
@@ -255,7 +279,7 @@ mod tests {
                 let len = records.by_address.borrow().len();
                 most_dead = most_dead.max(len - live.len() - 1);
             }
-            let bound = ((n + 1) / SWEEP_SHARE).max(64) + 1;
+            let bound = ((n + 1) / SWEEP_SHARE).max(SWEEP_ENTRIES) + 1;
             assert!(
                 most_dead <= bound,
                 "{most_dead} replaced records were held at once beside {n} live \
@@ -305,7 +329,7 @@ mod tests {
             let mut current: Vec<_> = (0..keys).map(publish).collect();
             let one = object_bytes(&[("text".to_owned(), JsValue::String(text.clone()))]);
             let live = small.len() * OBJECT_BYTES + keys * one;
-            let bound = (live / SWEEP_SHARE).max(SWEEP_FLOOR) + one;
+            let bound = (live / SWEEP_SHARE).max(SWEEP_BYTES) + one;
             for n in 0..1_000 {
                 current[n % keys] = publish(n);
                 let held = records.bytes.get();
