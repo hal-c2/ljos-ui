@@ -104,6 +104,24 @@ impl MallocPeak {
         unsafe { JS_SetMallocCap(self.rt, cap.unwrap_or(0)) };
     }
 
+    /// Sees that the collector runs before the run is refused room at
+    /// `cap`; called with [`MallocPeak::set_cap`], as a run begins.
+    /// QuickJS sets its next collection from what lived at the last one,
+    /// and only then: once the heap shrank, or near the limit, that can be
+    /// past the cap, and garbage in cycles would be told as the heap running
+    /// out. It is only ever brought down, and to the last eighth of the
+    /// share: lower, a run that comes near the same height each time would
+    /// collect each time.
+    pub(crate) fn collect_before(&self, cap: usize) {
+        let last = cap - cap.saturating_sub(self.get()) / 8;
+        // SAFETY: a live runtime (`of`); both only read or write a field.
+        unsafe {
+            if rquickjs::qjs::JS_GetGCThreshold(self.rt) as usize > last {
+                rquickjs::qjs::JS_SetGCThreshold(self.rt, last as _);
+            }
+        }
+    }
+
     /// Begins what is not the dispatch's: an engine's registration of a
     /// type of its own (`TypeDef::engine_owned`). Until the guard goes,
     /// only the limit holds it. QuickJS ends that sooner when it throws,

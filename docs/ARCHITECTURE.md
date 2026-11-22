@@ -922,11 +922,13 @@ These are initial values, enforced in CI by benchmarks (04 §3.7).
 | Decoded images (LRU, at `sourceSize` or layout size × DPR) | min(64 MiB, 6 % of usable memory) | min(256 MiB, ⅛ of usable memory) |
 | GPU caches (layers, paths) | 24 MB | 64 MB |
 | Glyph atlas | 2048² A8 | up to 4096² |
-| JS heap | 1/32 of usable memory, at least 96 MiB (`ljos_js::default_memory_limit`); GC threshold 8 MiB | same, at most 512 MiB; `Engine::set_script_heap_limit` |
+| JS heap | 1/32 of usable memory, at least 96 MiB (`ljos_js::default_memory_limit`); GC threshold 8 MiB | same, at most 512 MiB; `Engine::set_script_heap_limit`; either way one dispatch may take 75 % of the room left |
 | JS time per dispatch | 4 ms soft (log), 100 ms hard (interrupt); a debug build allows 8 times both | same |
 | Process | RSS ≤ 150 MiB, GPU ≤ 64 MiB, cold start ≤ 500 ms | — |
 
 The JS heap must not run out while most of it is garbage. QuickJS collects only when an object is made past a threshold it sets to half again what lived after its last collection, so past two thirds of the limit the next collection would come after the limit; the fork caps that threshold at halfway to the limit (`vendor/QUICKJS.md`). After a run, `JsHost` also collects when the heap is past three quarters and grew a quarter of the room left, and at once after a run that ran out, so the next run, whoever's it is, does not meet the same full heap. Past three quarters after collecting it warns once, naming the runs that grew the heap most since it was last collected (QML file and line), and `app_metrics` shows the same under `script`. What lives is not attributed: that needs a heap walk.
+
+One dispatch, or one promise job, may take at most 75 % of the room left under the limit when it begins; asking more throws a catchable out-of-memory error there, and the next dispatch runs. On an empty 96 MiB heap that is about 72 MiB, on a 512 MiB one about 384 MiB, and with 80 of 96 MiB held 12 MiB. An application can't set the share, or turn it off while keeping a heap limit: every limit it sets keeps the 75 %, and the only way out is no heap limit at all, from Rust (`Engine::set_script_heap_limit(None)`). Registering a type of the engine's own is outside the share and held to the limit only. So that garbage in cycles is collected before the share refuses room, the host brings the collector's threshold down to the last eighth of the share when a dispatch begins with it above that. A single allocation past that eighth, or strings alone, ask for no collection and can be refused as at the limit.
 
 Usable memory is the machine's (`MemTotal`), or the lowest `memory.max` of the cgroup the process is in and the groups above it when that is less: an application in a container or a systemd unit with a limit sizes its caches to the limit, not to the machine.
 
