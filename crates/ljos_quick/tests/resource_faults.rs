@@ -898,3 +898,75 @@ fn a_making_is_kept_through_32_taken_faults_and_not_through_33() {
         assert_eq!(m.object().is_some(), kept, "{count} faults");
     }
 }
+
+/// What was thrown through belongs to one outermost run: an evaluation
+/// makes a row as the model's own change does, whatever the run before it
+/// threw and caught.
+#[test]
+fn a_row_an_evaluation_makes_is_kept_whatever_the_run_before_it_caught() {
+    type Eval = fn(&Engine, ObjectId);
+    let evals: [(&str, Eval); 2] = [
+        ("eval_js", |e, _| {
+            e.eval_js("Math.ljosRow.on = true; true").unwrap();
+        }),
+        ("eval_js_in", |e, root| {
+            e.eval_js_in(
+                Some(root),
+                "Math.ljosRow.on = true; true",
+                Duration::from_secs(1),
+                [4, 16, 64, 64, 1024],
+            )
+            .unwrap();
+        }),
+    ];
+    let main = REPEATER
+        .replace("root.on ? 3 : 0", "root.on ? 1 : 0")
+        .replace(
+            "    function litter(n) {",
+            "    function fail() { throw new Error(\"caught\") }\n    \
+             function caught() { try { root.fail() } catch (why) { return true } return false }\n    \
+             function share() { Math.ljosRow = root }\n    \
+             function litter(n) {",
+        );
+    let mut wrong = Vec::new();
+    for (what, eval) in evals {
+        let (e, clock) = timed();
+        let line = made_file(true, CONTENT_FAULTS[0].1, false);
+        compile(&e, &[("Main", &main), ("Line", &line)]);
+        let root = e.create_from_url("Main", None, Vec::new()).unwrap();
+        e.invoke_by_name(root, "share", &[]).unwrap();
+        // What the devtools install is not what fills the heap.
+        e.eval_js_in(
+            Some(root),
+            "1",
+            Duration::from_secs(1),
+            [4, 16, 64, 64, 1024],
+        )
+        .unwrap();
+        fill(&e, root, 64 * 1024);
+        let caught = e.invoke_by_name(root, "caught", &[]).unwrap();
+        assert!(caught.to_boolean(), "{what}: nothing was thrown");
+        eval(&e, root);
+        let mut s = scene(&e, root, 200.0, 200.0);
+        frame(&mut s, &e);
+        let mut m = Making {
+            e,
+            clock,
+            s,
+            root,
+            path: Path::Repeater,
+        };
+        assert!(ran_out(&m), "{what}: nothing filled the heap");
+        let Some(first) = m.object() else {
+            wrong.push(format!("{what}: not shown"));
+            continue;
+        };
+        m.make_room();
+        if m.object() != Some(first) {
+            wrong.push(format!("{what}: made again"));
+        } else if !exists(&m.e, first, "back") {
+            wrong.push(format!("{what}: what is inside never came back"));
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+}
