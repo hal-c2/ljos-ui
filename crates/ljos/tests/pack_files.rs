@@ -174,6 +174,45 @@ fn an_import_chooses_a_modules_directory_over_all_the_packed_ones() {
 }
 
 #[test]
+fn a_nested_modules_address_is_its_own_files_not_its_parents() {
+    let root = tempfile::tempdir().unwrap();
+    write(root.path(), "app/qmldir", b"module App\n");
+    write(root.path(), "app/Sub/x.png", b"the parent's");
+    write(root.path(), "sub/qmldir", b"module App.Sub\n");
+    write(root.path(), "sub/x.png", b"the nested module's");
+
+    let pack = packed(ljos::build::Options::new(), &[root.path()]);
+
+    assert_eq!(
+        at(&pack, "qrc:/qt/qml/App/Sub/x.png"),
+        Some(&b"the nested module's"[..]),
+        "{pack:?}"
+    );
+}
+
+#[test]
+fn a_file_a_later_directorys_module_lists_has_its_address() {
+    let (a, b) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    write(a.path(), "App/qmldir", b"module App\n");
+    write(a.path(), "App/Sub/x.png", b"the parent's");
+    write(b.path(), "App/Sub/qmldir", b"module App.Sub\n");
+    write(
+        b.path(),
+        "App/Sub/CMakeLists.txt",
+        b"qt_add_qml_module(sub URI App.Sub RESOURCES x.png)\n",
+    );
+    write(b.path(), "App/Sub/x.png", b"the nested module's");
+
+    let pack = packed(ljos::build::Options::new(), &[a.path(), b.path()]);
+
+    assert_eq!(
+        at(&pack, "qrc:/qt/qml/App/Sub/x.png"),
+        Some(&b"the nested module's"[..]),
+        "{pack:?}"
+    );
+}
+
+#[test]
 fn a_file_carried_for_its_address_alone_is_registered_there_alone() {
     let (a, b) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
     write(a.path(), "Shapes/dot.png", b"not the module's");

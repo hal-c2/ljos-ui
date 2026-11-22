@@ -246,6 +246,18 @@ pub struct Options {
     files: Vec<String>,
 }
 
+/// The file that claims an address in a pack ([`Options::pack`]).
+struct Claim {
+    /// How strongly: the length of the module's address, or the most for
+    /// a file a build lists.
+    rank: usize,
+    /// Which of the directories it was found under.
+    at: usize,
+    /// Its path from that directory's root, as a key.
+    file: String,
+    path: PathBuf,
+}
+
 impl Default for Options {
     /// Sources when the build's own `ljos` has `user-qml` on: a build
     /// script that names the feature builds for a program that has it.
@@ -313,7 +325,9 @@ impl Options {
     /// a path wins), and those a module's build keeps inside the program
     /// (`RESOURCES`) of whatever kind; a file of a module is also at its
     /// `qrc:` address, which loads that file even where an earlier
-    /// directory's file holds its path. Prints nothing for Cargo.
+    /// directory's file holds its path. Where two files have one address,
+    /// it is the one a build lists, then the one of the module with the
+    /// longest address, then the first directory's. Prints nothing for Cargo.
     pub fn pack(&self, source: &MapSource, dirs: &[&Path]) -> Result<Vec<u8>, BuildError> {
         let trailer = if self.sources {
             sources_of(dirs).encode(true)
@@ -336,9 +350,10 @@ impl Options {
         // By path from its root, where each file is and which of `dirs` it
         // was found under: the first directory's file of a path wins.
         let mut carried: BTreeMap<String, (PathBuf, usize)> = BTreeMap::new();
-        // Each `qrc:` address and the key of the file it names: the first
-        // directory's of those an import sees.
-        let mut addresses: BTreeMap<String, String> = BTreeMap::new();
+        // Each `qrc:` address and the file it names, of those an import
+        // sees, ranked as `Platform::mounted_file` ranks them: one a build
+        // lists, then the longest module address, then the first directory's.
+        let mut claims: BTreeMap<String, Claim> = BTreeMap::new();
         let kept = ljos_compiler::root_files(dirs)
             .map_err(|(path, source)| BuildError::Read { path, source })?;
         for (at, (&dir, kept)) in dirs.iter().zip(kept).enumerate() {
@@ -383,10 +398,22 @@ impl Options {
                     .entry(file.clone())
                     .or_insert_with(|| (path.clone(), at));
             }
-            let mut named = Vec::new();
+            let mut claim = |address: String, rank: usize, file: String| {
+                if claims.get(&address).is_some_and(|held| held.rank >= rank) {
+                    return;
+                }
+                let path = mine[&file].clone();
+                let claim = Claim {
+                    rank,
+                    at,
+                    file,
+                    path,
+                };
+                claims.insert(address, claim);
+            };
             for (address, path) in &kept.resources {
                 if let Some(key) = key(path) {
-                    named.push((address.clone(), key));
+                    claim(address.clone(), usize::MAX, key);
                 }
             }
             // A module's address names the files of its own directory.
@@ -401,28 +428,26 @@ impl Options {
                 };
                 for file in mine.keys() {
                     if let Some(rest) = file.strip_prefix(&under) {
-                        named.push((format!("{prefix}/{rest}"), file.clone()));
+                        claim(format!("{prefix}/{rest}"), prefix.len(), file.clone());
                     }
                 }
             }
-            // Where an earlier directory's file holds its path, this one's
-            // is carried under the first address that names it.
-            let mut shadowed: BTreeMap<String, String> = BTreeMap::new();
-            for (address, file) in named {
-                if addresses.contains_key(&address) {
-                    continue;
-                }
-                let carried_as = if carried[&file].1 == at {
-                    file
-                } else if let Some(first) = shadowed.get(&file) {
-                    first.clone()
-                } else {
-                    carried.insert(address.clone(), (mine[&file].clone(), at));
-                    shadowed.insert(file, address.clone());
-                    address.clone()
-                };
-                addresses.insert(address, carried_as);
-            }
+        }
+        let mut addresses: BTreeMap<String, String> = BTreeMap::new();
+        // Where an earlier directory's file holds its path, a file is
+        // carried under the first address that names it.
+        let mut shadowed: BTreeMap<(usize, String), String> = BTreeMap::new();
+        for (address, Claim { at, file, path, .. }) in claims {
+            let carried_as = if carried[&file].1 == at {
+                file
+            } else if let Some(first) = shadowed.get(&(at, file.clone())) {
+                first.clone()
+            } else {
+                carried.insert(address.clone(), (path, at));
+                shadowed.insert((at, file), address.clone());
+                address.clone()
+            };
+            addresses.insert(address, carried_as);
         }
         for (key, (path, _)) in carried {
             let bytes = std::fs::read(&path).map_err(unread(&path))?;
