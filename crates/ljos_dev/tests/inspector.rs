@@ -2939,6 +2939,72 @@ fn a_memory_answer_lists_the_types_that_fit_and_counts_the_rest() {
     memory_fits(&reply);
 }
 
+/// `many_types`, each object holding a script value of its own.
+fn many_holders(n: usize) -> String {
+    many_types(n).replace(": Item {}\n", ": Item { property var held: ({ n: 1 }) }\n")
+}
+
+#[test]
+fn a_memory_answer_with_holders_fits_and_counts_the_holders_left_out() {
+    let mut app = app_with(&many_holders(200), InspectorConfig::default());
+    let all = app
+        .engine
+        .script_heap_holders(1_000_000)
+        .expect("scripts ran")
+        .holders
+        .len();
+    assert!(all >= 200, "{all} types hold a script value");
+    let reply = app.call(
+        "app_metrics",
+        json!({ "memory": { "max": 1000, "script_holders": true } }),
+    );
+    memory_fits(&reply);
+    let answer = &reply.structured;
+    assert!(
+        answer.get("truncated").is_none(),
+        "the answer was cut after it was made: {answer}"
+    );
+    let held = &answer["script_holders"];
+    let listed = held["holders"].as_array().unwrap().len();
+    let left_out = held["holders_left_out"].as_u64().unwrap() as usize;
+    assert!(listed > 0, "{held}");
+    assert_eq!(listed + left_out, all, "{held}");
+    assert_eq!(held["truncated"], false);
+    assert!(
+        reply
+            .text
+            .contains(&format!("… {left_out} more types hold it")),
+        "{}",
+        reply.text
+    );
+}
+
+#[test]
+fn a_holders_walk_cut_at_its_budget_says_the_bytes_are_the_least_held() {
+    let mut app = app_with(
+        r#"import QtQuick
+Item {
+    property var held: ({ n: 1 })
+    QtObject { objectName: "crowd"; property list<var> list }
+}
+"#,
+        InspectorConfig::default(),
+    );
+    // More entries than the walk may look at.
+    let many = QmlValue::list(vec![QmlValue::Undefined; 1_000_001]);
+    app.set("crowd", "list", many);
+    let reply = app.call(
+        "app_metrics",
+        json!({ "memory": { "script_holders": true } }),
+    );
+    assert_eq!(reply.structured["script_holders"]["truncated"], true);
+    assert!(
+        reply.text.contains("the bytes are the least held"),
+        "{}",
+        reply.text
+    );
+}
+
 #[test]
 fn a_memory_answer_shows_what_a_crate_told_of_under_its_own_owner() {
     let mut app = app();
