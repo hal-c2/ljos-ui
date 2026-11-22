@@ -125,7 +125,7 @@ ljos attach .
 
 | Tool | What an agent can do | Capability |
 |---|---|---|
-| `app_status` | Read windows (`windows[0].active` says whether it has the keyboard), size, scale, appearance, focus, clock kind (`real` or `virtual`), active animations, painter backend, startup timings, reload state and granted capabilities | `inspect` |
+| `app_status` | Read windows (`windows[0].active` says whether it has the keyboard), size, scale, appearance, focus, clock kind (`real` or `virtual`), active animations, painter backend, startup timings, reload state with the compiler's warnings and granted capabilities | `inspect` |
 | `app_snapshot` | Get an indented accessibility-tree outline with short refs (`[e3]`), `id=` and `obj=` labels, virtual list windows and optional `pointer: true` lines for items with a `PointerArea` or `Tap` that have no accessible role | `inspect` |
 | `app_find` | Search for nodes by `role`, `name` (exact, substring or regex), `objectName`, `text` or state | `inspect` |
 | `app_inspect` | Inspect one object in depth: type chain, source location, properties with provenance (`assigned`, `bound` at tier `0`/`1`/`JS`, `animated`, `host`, `default`), geometry, window singletons, and binding `dependencies` or `bindings` | `inspect` |
@@ -136,7 +136,7 @@ ljos attach .
 | `app_batch` | Run a sequence of tool steps in one call, stopping at the first error and returning one combined outline delta at the end | per step |
 | `app_screenshot` | Render the window or a specific node to a PNG (up to 1280 px) using the R backend, even when the window is occluded or headless | `inspect` |
 | `app_resize` / `app_set_appearance` | Resize the window or switch between light/dark appearance, high contrast, reduced motion and font scale | `input` |
-| `app_reload` | Force a recompile and hot reload; returns the patch summary or compiler diagnostics | `mutate` |
+| `app_reload` | Force a recompile and hot reload; returns the outcome, the compiler's error when it failed and its warnings on what runs | `mutate` |
 | `app_alias` | Import a module from another directory inside the project (`{module, dir}`), or go back to its own (`dir: null`), reloading and keeping state; returns the reload `generation` | `mutate` |
 | `app_logs` / `app_metrics` | Read console logs, JS errors with QML file and line, frame and paint timings, and memory breakdowns (`memory: {}`, `owners`, `mappings`) | `inspect` |
 | `app_processes` | List threads, running `Timer`s (`kind: "timer"`), animations, supervisors (`kind: "supervisor"`), recent faults (`kind: "fault"`), scheduled UI wakers (`kind: "waker"`) and bounded mailboxes, the `UiInbox`es and side streams (`kind: "mailbox"`) | `inspect` |

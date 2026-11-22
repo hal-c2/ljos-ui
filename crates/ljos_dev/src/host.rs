@@ -479,6 +479,10 @@ pub struct DevSession {
     runs: Runs,
     failures_of: FailuresOf,
     warnings_of: WarningsOf,
+    /// The compiler's warnings on the files loaded, as they run now.
+    warnings: Vec<CompileFault>,
+    /// They changed since [`take_warnings`](Self::take_warnings).
+    warnings_changed: bool,
     /// The keys the engine loaded since the last pump.
     loaded: Arc<Mutex<Vec<String>>>,
     /// What the root is given when this session makes it.
@@ -893,6 +897,8 @@ impl DevSession {
             runs,
             failures_of,
             warnings_of,
+            warnings: Vec::new(),
+            warnings_changed: true,
             loaded,
             properties,
             root,
@@ -997,6 +1003,14 @@ impl DevSession {
     /// its result applied by `pump`.
     pub fn take_flushed(&mut self) -> bool {
         std::mem::take(&mut self.flushed)
+    }
+
+    /// The compiler's warnings on the files the program loaded, as they
+    /// run now: some the first time, and once after each change. They are
+    /// all of them, where a [`Report`] has those not told before. Only the
+    /// compiler writes them: nothing the application logs is among them.
+    pub fn take_warnings(&mut self) -> Option<&[CompileFault]> {
+        std::mem::take(&mut self.warnings_changed).then_some(self.warnings.as_slice())
     }
 
     /// How many reloads were applied.
@@ -1131,7 +1145,12 @@ impl DevSession {
         if keys.is_empty() {
             return None;
         }
-        let (new, now) = untold(&self.told, (self.warnings_of.0)(&keys));
+        let current = (self.warnings_of.0)(&keys);
+        self.warnings
+            .retain(|w| !key_of(&w.file).is_some_and(|key| keys.iter().any(|k| k == key)));
+        self.warnings.extend(current.iter().cloned());
+        self.warnings_changed = true;
+        let (new, now) = untold(&self.told, current);
         for (place, n) in now {
             let told = self.told.entry(place).or_insert(0);
             *told = (*told).max(n);
@@ -1282,16 +1301,28 @@ impl DevSession {
         if let Some((_, new)) = done.roots.first() {
             self.root = Some(*new);
         }
-        if !staying || wanted.as_deref() != Some(self.entry.as_str()) {
+        let chosen = if !staying || wanted.as_deref() != Some(self.entry.as_str()) {
             // The project compiles for the first time, its root could not
             // be made from the files before, or another entry is wanted.
-            if let Err(fault) = self.choose(engine, host, &has, staying) {
-                engine.set_last_reload_error(Some(fault.clone()));
-                return Report::Failed {
-                    fault,
-                    more: self.more_errors,
-                };
-            }
+            self.choose(engine, host, &has, staying)
+        } else {
+            Ok(())
+        };
+        // The session compiles every file of the project, so that a save
+        // to any is one patch; the developer hears of the ones the program
+        // reached, as Qt never compiles the others. The patch runs by now,
+        // so these replace the warnings before even when no root was made.
+        self.warnings = warnings
+            .into_iter()
+            .filter(|w| key_of(&w.file).is_some_and(|key| engine.has_loaded(key)))
+            .collect();
+        self.warnings_changed = true;
+        if let Err(fault) = chosen {
+            engine.set_last_reload_error(Some(fault.clone()));
+            return Report::Failed {
+                fault,
+                more: self.more_errors,
+            };
         }
         // The roots were made again, so what a fault no boundary took had
         // left half done is gone, and its overlay with it.
@@ -1301,15 +1332,7 @@ impl DevSession {
             engine.set_last_reload_error(Some(fault.clone()));
         }
         self.reloads += 1;
-        // The session compiles every file of the project, so that a save
-        // to any is one patch; the developer hears of the ones the program
-        // reached, as Qt never compiles the others.
-        let (warnings, now) = untold(
-            &self.told,
-            warnings
-                .into_iter()
-                .filter(|w| key_of(&w.file).is_some_and(|key| engine.has_loaded(key))),
-        );
+        let (warnings, now) = untold(&self.told, self.warnings.iter().cloned());
         self.told = now;
         Report::Reloaded(ReloadStats {
             generation: done.generation,

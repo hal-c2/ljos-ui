@@ -9,8 +9,65 @@
 
 use std::sync::Arc;
 
+use ljos_compiler::CompileFault;
 use serde_json::{Value, json};
 use tokio::sync::watch;
+
+use super::tools::clip;
+
+/// How many warnings are listed, in how many bytes of JSON, and how long
+/// each text may be in characters. An answer carries its value twice, so
+/// the bytes are well under half of what a reply may have.
+const MOST_WARNINGS: usize = 20;
+const MOST_WARNING_BYTES: usize = 8 * 1024;
+const MOST_MESSAGE_CHARS: usize = 1000;
+const MOST_FILE_CHARS: usize = 256;
+
+/// The compiler's warnings as clients are told them: bounded, and saying
+/// when they were cut.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Warnings {
+    listed: Vec<Value>,
+    omitted: usize,
+    truncated: bool,
+}
+
+impl Warnings {
+    /// The first of `faults` by place, each text through `mask` and then
+    /// cut, so that no cut leaves a part of a secret.
+    pub(crate) fn bounded(faults: &[CompileFault], mask: impl Fn(&mut String)) -> Self {
+        let mut sorted: Vec<&CompileFault> = faults.iter().collect();
+        sorted.sort_by(|a, b| (&a.file, a.line, a.column).cmp(&(&b.file, b.line, b.column)));
+        let mut listed = Vec::new();
+        let mut truncated = false;
+        // The array's brackets, then each entry with its comma.
+        let mut bytes = 2;
+        for fault in sorted.into_iter().take(MOST_WARNINGS) {
+            let (mut file, mut message) = (fault.file.clone(), fault.message.clone());
+            mask(&mut file);
+            mask(&mut message);
+            let entry = json!({
+                "file": clip(&file, MOST_FILE_CHARS),
+                "line": fault.line,
+                "column": fault.column,
+                "message": clip(&message, MOST_MESSAGE_CHARS),
+            });
+            bytes += entry.to_string().len() + 1;
+            if bytes > MOST_WARNING_BYTES {
+                break;
+            }
+            truncated |= file.chars().count() > MOST_FILE_CHARS
+                || message.chars().count() > MOST_MESSAGE_CHARS;
+            listed.push(entry);
+        }
+        let omitted = faults.len() - listed.len();
+        Warnings {
+            truncated: truncated || omitted > 0,
+            omitted,
+            listed,
+        }
+    }
+}
 
 /// How the last reload went.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -35,9 +92,21 @@ pub(crate) struct ReloadState {
     /// The modules imported from a directory of their own, by module, as
     /// the host compiles against them: each module and its directory.
     pub(crate) aliases: Vec<(String, String)>,
+    /// The compiler's warnings on what runs; none until a host that
+    /// compiles says them, which is not the same as there being none.
+    pub(crate) warnings: Option<Warnings>,
 }
 
 impl ReloadState {
+    /// Puts the warnings' three members in the object `to`: the `reload`
+    /// block, or the answer of a call that reloads.
+    pub(crate) fn write_warnings(&self, to: &mut Value) {
+        let known = self.warnings.as_ref();
+        to["warnings"] = json!(known.map(|w| &w.listed));
+        to["warnings_truncated"] = json!(known.is_some_and(|w| w.truncated));
+        to["warnings_omitted"] = json!(known.map_or(0, |w| w.omitted));
+    }
+
     /// The `reload` block of `app_status`. `waited` is whether the call
     /// had to wait for it.
     pub(crate) fn json(&self, waited: bool) -> Value {
@@ -51,7 +120,7 @@ impl ReloadState {
             }
             v
         });
-        json!({
+        let mut value = json!({
             "watched": self.watched,
             "generation": self.generation,
             "last": last,
@@ -61,7 +130,9 @@ impl ReloadState {
                 .map(|(module, dir)| json!({ "module": module, "dir": dir }))
                 .collect::<Vec<_>>(),
             "waited": waited,
-        })
+        });
+        self.write_warnings(&mut value);
+        value
     }
 }
 
@@ -101,6 +172,14 @@ impl ReloadFeed {
         });
     }
 
+    pub(crate) fn set_warnings(&self, warnings: Warnings) {
+        self.tx.send_if_modified(|s| {
+            let changed = s.warnings.as_ref() != Some(&warnings);
+            s.warnings = Some(warnings);
+            changed
+        });
+    }
+
     /// The generation the engine had when the inspector attached.
     pub(crate) fn baseline(&self, generation: u64) {
         self.tx.send_modify(|s| s.generation = generation);
@@ -129,5 +208,55 @@ impl ReloadFeed {
                 generation: s.generation,
             });
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fault(line: u32, file: &str, message: &str) -> CompileFault {
+        CompileFault {
+            file: file.to_owned(),
+            line,
+            column: 1,
+            message: message.to_owned(),
+        }
+    }
+
+    #[test]
+    fn a_long_text_is_cut_and_marked() {
+        let faults = [fault(1, &"f".repeat(300), &"m".repeat(1200))];
+        let told = Warnings::bounded(&faults, |_| {});
+        let one = &told.listed[0];
+        assert_eq!(one["file"], format!("{}…", "f".repeat(MOST_FILE_CHARS)));
+        assert_eq!(
+            one["message"],
+            format!("{}…", "m".repeat(MOST_MESSAGE_CHARS))
+        );
+        assert!(told.truncated);
+        assert_eq!(told.omitted, 0);
+    }
+
+    #[test]
+    fn the_list_stops_at_its_bytes() {
+        // Three bytes a character, which a count of characters would miss.
+        let text = "\u{20ac}".repeat(MOST_MESSAGE_CHARS);
+        let faults: Vec<_> = (1..=10).map(|n| fault(n, "Main.qml", &text)).collect();
+        let told = Warnings::bounded(&faults, |_| {});
+        assert!(json!(told.listed).to_string().len() <= MOST_WARNING_BYTES);
+        assert!(!told.listed.is_empty() && told.listed.len() < faults.len());
+        assert_eq!(told.omitted, faults.len() - told.listed.len());
+        assert!(told.truncated);
+    }
+
+    #[test]
+    fn a_secret_at_the_cut_is_masked_before_it() {
+        let text = format!("{}hunter2", "m".repeat(MOST_MESSAGE_CHARS - 3));
+        let told = Warnings::bounded(&[fault(1, "Main.qml", &text)], |s| {
+            *s = s.replace("hunter2", "*");
+        });
+        assert!(!told.listed[0].to_string().contains("hun"));
+        assert!(!told.truncated);
     }
 }

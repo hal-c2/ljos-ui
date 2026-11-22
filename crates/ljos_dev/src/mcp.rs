@@ -90,6 +90,7 @@ use std::rc::Rc;
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
+use ljos_compiler::CompileFault;
 use ljos_engine::{Engine, LogEntry, ObjectId, ReloadFault};
 use ljos_mcp_core::{
     ErrorCode, LineOptions, OutlineOptions, OutlineWriter, RefTable, SurfaceError, ToolReply, delta,
@@ -128,7 +129,7 @@ use capture::{Capture, Lease};
 use frames::FrameLog;
 use logs::LogRing;
 use paint::{PaintStats, Startup};
-use reload::ReloadFeed;
+use reload::{ReloadFeed, Warnings};
 use surface::{Answer, DevReq, SlotGuard};
 use tools::{Look, Target};
 use watch::ChangeFeed;
@@ -529,6 +530,20 @@ impl Inspector {
         self.feed.set_aliases(aliases);
     }
 
+    /// Says the compiler's warnings on what runs (`DevSession::take_warnings`):
+    /// all of them, none included. Tell them at the start and after every
+    /// change, before [`finish_reload`](Self::finish_reload), and give only
+    /// what the compiler said: clients take the list as the compiler's, so
+    /// no text of the application's log may be in it. `app_status` and the
+    /// answers of `app_reload` and `app_alias` have them, masked and bounded.
+    pub fn set_warnings(&mut self, warnings: &[CompileFault]) {
+        let bounded = {
+            let logs = self.logs.borrow();
+            Warnings::bounded(warnings, |text| logs.book().mask_text(text))
+        };
+        self.feed.set_warnings(bounded);
+    }
+
     /// Says that the host has a platform window and gives it the size
     /// `app_resize` asks for ([`take_resize_request`](Self::take_resize_request)),
     /// laying the scene out at the size the platform then gives. Without
@@ -777,7 +792,7 @@ impl Inspector {
             return;
         };
         let now = self.feed.state();
-        let value = match &now.last {
+        let mut value = match &now.last {
             Some(o) if now.seq != self.reload_answered => {
                 if o.applied {
                     json!({ "outcome": "applied", "generation": now.generation })
@@ -800,6 +815,7 @@ impl Inspector {
                 None => json!({ "outcome": "unchanged", "generation": now.generation }),
             },
         };
+        now.write_warnings(&mut value);
         let text = match value["outcome"].as_str() {
             Some("applied") => format!("reloaded; generation {}", now.generation),
             Some("failed") => format!(
