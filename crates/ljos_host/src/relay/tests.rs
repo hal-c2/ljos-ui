@@ -751,3 +751,60 @@ fn a_report_of_the_state_before_the_writes_is_the_platform_behind_until_the_meth
     writes.clear();
     assert_eq!(writes.holds(a.clone()), a);
 }
+
+#[test]
+fn a_write_made_before_the_application_saw_a_report_is_told_after_that_report() {
+    let log = Log::default();
+    let asked: Arc<Mutex<Vec<(Request, u64)>>> = Arc::default();
+    let pushed = Arc::clone(&asked);
+    let (host, relay): (RelayHost<u32, Msg>, Relay<u32, Msg>) =
+        RelayHost::stamped(Capabilities::default(), move |request, seen| {
+            pushed.lock().unwrap().push((request, seen));
+        });
+    relay
+        .send(Arrival::SurfaceCreated {
+            surface: 1,
+            px: [100, 100],
+            scale: 1.0,
+        })
+        .unwrap();
+    let report = holds("ab", [2, 2], None);
+    let write = holds("xy", [2, 2], None);
+    let mut app = App::new(&log);
+    app.on_first = Some(Box::new({
+        let relay = relay.clone();
+        let asked = Arc::clone(&asked);
+        let (report, write) = (report.clone(), write.clone());
+        move |host: &mut RelayControl<'_, u32>| {
+            // Queued to the application, which writes before it takes it.
+            let text = crate::TextEvent::Held(report.clone());
+            relay
+                .send(Arrival::Window(WindowEvent::Text(text)))
+                .unwrap();
+            host.request(Request::Held {
+                now: write.clone(),
+                over: None,
+            });
+            // The platform accepted the write.
+            let seen = asked.lock().unwrap().last().unwrap().1;
+            relay.tell_again(seen, &write).unwrap();
+            relay.post(Msg::Stop).unwrap();
+        }
+    }));
+    host.run(app).unwrap();
+
+    let held: Vec<String> = lines(&log)
+        .into_iter()
+        .filter(|line| line.contains("Held("))
+        .collect();
+    let told = |state: &crate::HeldText| {
+        let event = WindowEvent::Text(crate::TextEvent::Held(state.clone()));
+        format!("{event:?}")
+    };
+    assert_eq!(held, [told(&report), told(&write)]);
+    // The application had both when it left: a write made then is not told
+    // again, and so nothing is sent to the relay that closed.
+    let seen = asked.lock().unwrap().last().unwrap().1;
+    assert_eq!(seen, 2);
+    relay.tell_again(seen, &write).unwrap();
+}
