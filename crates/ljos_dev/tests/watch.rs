@@ -996,6 +996,38 @@ fn a_watcher_whose_thread_panics_answers_the_flush_it_took_that_it_failed() {
     );
 }
 
+/// A watcher whose answer panics again while its thread already panics
+/// leaves the ask unanswered, and the process that asked runs on.
+#[test]
+fn a_watcher_whose_answer_panics_again_while_it_panics_leaves_the_process_running() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().canonicalize().unwrap();
+    write(&dir, "Main.qml", MAIN);
+    let mut reloader = ljos_dev::Reloader::open(&dir, QtTypeOracle).unwrap();
+    reloader.start();
+    let (tx, rx) = mpsc::channel();
+    let watcher =
+        ljos_dev::Watcher::on_request_shared(Arc::new(std::sync::Mutex::new(reloader)), move |m| {
+            // Every answer panics, the one sent while panicking too.
+            if m == ljos_dev::DevMsg::Idle {
+                panic!("the answer panics");
+            }
+            tx.send(m).is_ok()
+        })
+        .unwrap();
+    assert!(watcher.flush(), "a running watcher takes the flush");
+    let first = rx.recv_timeout(PATIENCE).expect("the fault is told");
+    assert!(
+        matches!(&first, ljos_dev::DevMsg::Failed(faults) if !faults.is_empty()),
+        "the fault comes first: {first:?}"
+    );
+    assert_eq!(
+        rx.recv_timeout(PATIENCE),
+        Err(mpsc::RecvTimeoutError::Disconnected),
+        "the thread ends, and this test with its process runs on"
+    );
+}
+
 /// A project in a directory whose name holds what a URL gives a meaning
 /// to (`#`, `?`, `%`) runs, and its files are named by URLs that mean
 /// that directory.
