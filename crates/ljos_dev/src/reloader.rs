@@ -770,12 +770,26 @@ pub fn classify(root: &Path, path: &Path, is_dir: bool) -> Touch {
 }
 
 /// What a picture file is, as far as telling that it changed goes: its
-/// length and when it was last written.
-type PicturePrint = (u64, Option<std::time::SystemTime>);
+/// length and when it was last written, and on Unix which file it is and
+/// when that last changed. A copy that keeps its source's time (`cp -p`,
+/// `rsync -a`, an unpacked archive) cannot set those.
+type PicturePrint = (u64, Option<std::time::SystemTime>, [i64; 4]);
 
 fn picture_print(path: &Path) -> Option<PicturePrint> {
     let meta = std::fs::metadata(path).ok()?;
-    Some((meta.len(), meta.modified().ok()))
+    #[cfg(unix)]
+    let file = {
+        use std::os::unix::fs::MetadataExt as _;
+        [
+            meta.dev().cast_signed(),
+            meta.ino().cast_signed(),
+            meta.ctime(),
+            meta.ctime_nsec(),
+        ]
+    };
+    #[cfg(not(unix))]
+    let file = [0; 4];
+    Some((meta.len(), meta.modified().ok(), file))
 }
 
 /// Directories the compiler does not look into, so nothing in them is a
