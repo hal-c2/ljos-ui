@@ -3374,6 +3374,51 @@ fn an_array_no_script_has_read_is_not_made_to_be_measured() {
     assert_eq!(eval_num(&host, "made").unwrap(), 0.0, "nothing was made");
 }
 
+/// What an array or an object no script has read holds is in the heap where
+/// it is a script's value already: that is counted, through the lists and
+/// maps between, and still nothing is made.
+#[test]
+fn the_script_values_in_what_no_script_has_read_are_counted_unmade() {
+    use ljos_js::JsRef;
+    let host = plain();
+    eval_num(
+        &host,
+        "globalThis.made = 0; globalThis.__ljos_arrayMade = () => { made++ }; 0",
+    )
+    .unwrap();
+    let live = host
+        .enter("make", host.config().slice, |s| {
+            let v = s.eval::<rquickjs::Value, _>("({ text: 'x'.repeat(100000) })")?;
+            Ok(s.keep(v))
+        })
+        .unwrap();
+    let inner = JsRef::object(vec![(
+        "deep".to_owned(),
+        JsValue::Map(vec![(
+            "held".to_owned(),
+            JsValue::Array(vec![JsValue::Handle(live.clone())]),
+        )]),
+    )]);
+    let outer = JsRef::array_of_kind(vec![JsValue::Null, JsValue::Handle(inner)], "rows");
+    let held = host
+        .enter("walk", host.config().slice, |s| {
+            Ok(s.held_by([vec![&outer]], usize::MAX))
+        })
+        .unwrap();
+    assert!(held.bytes[0] >= 100_000, "{held:?}");
+    assert!(!held.truncated, "{held:?}");
+    assert_eq!(eval_num(&host, "made").unwrap(), 0.0, "nothing was made");
+
+    // Each entry gone through costs the budget one, as a slot read does.
+    let wide = JsRef::array_of_kind(vec![JsValue::Null; 1000], "rows");
+    let held = host
+        .enter("walk", host.config().slice, |s| {
+            Ok(s.held_by([vec![&wide]], 100))
+        })
+        .unwrap();
+    assert!(held.truncated, "{held:?}");
+}
+
 /// A loop whose error object fits under its share's cap where, at some
 /// sizes of heap, the error's words do not: QuickJS then throws an
 /// `InternalError` that says nothing.

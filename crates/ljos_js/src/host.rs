@@ -4531,6 +4531,37 @@ mod tests {
         hard: Duration::from_secs(20),
     };
 
+    /// A reference no longer held is left out of a walk by looking it up,
+    /// not by making the error for it: on a full heap there is no room for
+    /// one, and a walk that only measures has no limit lifted for it.
+    #[test]
+    fn a_walk_past_a_stale_reference_makes_nothing() {
+        let other = JsHost::new(JsConfig::default()).unwrap();
+        // The last of many: a key this host's few are short of.
+        let stale = other
+            .enter("keep", LONG, |s| {
+                let mut last = None;
+                for _ in 0..1000 {
+                    let v = s.eval::<rquickjs::Value, _>("({})")?;
+                    last = Some(s.keep(v));
+                }
+                Ok(last)
+            })
+            .unwrap()
+            .unwrap();
+        let host = JsHost::new(JsConfig::default()).unwrap();
+        let (before, most, held) = host
+            .enter("walk", LONG, |s| {
+                host.peak.mark();
+                let before = host.peak.get();
+                let held = s.held_by([vec![&stale]], usize::MAX);
+                Ok((before, host.peak.get(), held))
+            })
+            .unwrap();
+        assert_eq!(held.bytes, [0], "{held:?}");
+        assert_eq!(most, before, "the walk made {} bytes", most - before);
+    }
+
     /// A host of a 64 MiB limit with all but about `room` bytes of it live,
     /// and how much room that left in the limit's units.
     fn filled(room: usize) -> (JsHost, usize) {
