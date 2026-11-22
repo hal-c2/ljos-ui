@@ -13,9 +13,11 @@ use std::sync::Arc;
 use smallvec::SmallVec;
 
 use crate::atom::Atom;
-use crate::engine::Engine;
+use crate::engine::{Engine, read_access};
 use crate::ids::ObjectId;
+use crate::meta::{PropertyAccess, PropertyInfo};
 use crate::object::{ObjectExt, ObjectHeader};
+use crate::types::TypeTag;
 use crate::value::Value;
 
 /// The compiled form of the files loaded, the application's and its
@@ -68,27 +70,28 @@ pub struct ScriptHolders {
     pub holders: Vec<ScriptHolder>,
     /// The script values walked.
     pub values: usize,
-    /// The walk reached its budget, or a read failed; the rest was not
-    /// counted.
+    /// The walk reached its budget and the rest was not counted: the bytes
+    /// are then the least held.
     pub truncated: bool,
 }
 
 /// Whether `v` holds a script value, pushing to `out` the ones it reaches
 /// through lists and maps no earlier call went through. Gone through with a
 /// stack of its own, so a nesting deeper than the thread's stack is no
-/// danger, and at most `left` list and map entries in all; `None` when
-/// that ran out. `seen` remembers, by where it lives, each list or map gone
+/// danger, and at most `left` in all of list and map entries and of script
+/// values that are the whole of `v`; `None` when that ran out. `seen`
+/// remembers, by where it lives, each list or map gone
 /// through and whether it holds a script value, across every call: a list
 /// many objects share is charged to `left` and copied out once, and each of
 /// them is still told it holds one. Its values are counted for the first
 /// object to reach it either way (`held_by` counts each once). A value
 /// that holds the same list twice at each level is gone through once too,
 /// not exponentially often.
-fn push_js<'v>(
-    v: &'v Value,
+fn push_js(
+    v: &Value,
     seen: &mut HashMap<usize, bool>,
     left: &mut usize,
-    out: &mut Vec<&'v ljos_js::JsRef>,
+    out: &mut Vec<ljos_js::JsRef>,
 ) -> Option<bool> {
     /// A list or map being gone through.
     struct Open<'v> {
@@ -108,8 +111,13 @@ fn push_js<'v>(
     loop {
         if let Some(v) = next.take() {
             let done = match v {
+                // An entry was paid for with its list; a value by itself
+                // pays here, so every reference copied out is paid for.
                 Value::Js(h) => {
-                    out.push(&h.0);
+                    if open.is_empty() && !take(left, 1) {
+                        return None;
+                    }
+                    out.push(h.0.clone());
                     Some(true)
                 }
                 Value::List(items) => {
@@ -167,6 +175,17 @@ fn push_js<'v>(
             None => holds = done.holds,
         }
     }
+}
+
+/// Whether `p` is a native field that can keep a script's own value: a
+/// `var` or a list of them. A `QmlList` holds objects only, and what is
+/// read as data ([`TypeTag::Data`]) is a copy.
+fn native_may_hold_js(p: &PropertyInfo) -> bool {
+    matches!(
+        p.access,
+        PropertyAccess::Field { .. } | PropertyAccess::Group { .. }
+    ) && p.list_field.is_none()
+        && matches!(p.ty, TypeTag::Var | TypeTag::Copied | TypeTag::List(None))
 }
 
 /// The objects of one type.
@@ -288,13 +307,16 @@ impl Engine {
     }
 
     /// What holds the script heap: the script values each type's objects
-    /// keep in their properties, walked for what they reach
+    /// keep in their properties, the ones declared in QML and the native
+    /// `var` and list fields, walked for what they reach
     /// ([`ljos_js::Scope::held_by`]) and counted for the first type to
-    /// reach them. What only a running function's closure or a script's
-    /// globals hold is not reached from any object, so the holders may add
-    /// up to less than [`Engine::script_heap_bytes`]. Walks up to `budget`
-    /// values and property reads, and as many list and map entries in the
-    /// objects' properties, when asked, never on its own. `None` before any script ran.
+    /// reach them. What only a running function's closure, a script's
+    /// globals or Rust outside those properties holds is not reached from
+    /// any object, so the holders may add up to less than
+    /// [`Engine::script_heap_bytes`]. Walks up to `budget` values and
+    /// property reads, and as many entries and values in the objects'
+    /// properties, when asked, never on its own. `None` before any script
+    /// ran.
     pub fn script_heap_holders(&self, budget: usize) -> Option<ScriptHolders> {
         if !self.js_started() {
             return None;
@@ -306,6 +328,9 @@ impl Engine {
             let mut at: HashMap<Atom, usize> = HashMap::new();
             let mut refs = Vec::new();
             let mut seen = HashMap::new();
+            // What native fields' getters gave, some made for the read: kept
+            // to the end, as `seen` knows a list by where it lives.
+            let mut read = Vec::new();
             let mut left = budget;
             for header in store.objects.values() {
                 refs.clear();
@@ -322,13 +347,29 @@ impl Engine {
                         }
                     }
                 }
+                for p in header.meta.properties.iter() {
+                    if !whole {
+                        break;
+                    }
+                    if !native_may_hold_js(p) {
+                        continue;
+                    }
+                    let v = read_access(&*header.native, &[], &p.access);
+                    match push_js(&v, &mut seen, &mut left, &mut refs) {
+                        Some(h) => holds |= h,
+                        None => whole = false,
+                    }
+                    if matches!(v, Value::List(_) | Value::Map(_)) {
+                        read.push(v);
+                    }
+                }
                 if holds || !refs.is_empty() {
                     let i = *at.entry(header.meta.name.clone()).or_insert_with(|| {
                         groups.push((header.meta.name.clone(), 0, Vec::new()));
                         groups.len() - 1
                     });
                     groups[i].1 += 1;
-                    groups[i].2.extend(refs.iter().map(|r| (*r).clone()));
+                    groups[i].2.append(&mut refs);
                 }
                 if !whole {
                     cut = true;
@@ -338,20 +379,12 @@ impl Engine {
         }
         // Entering and leaving the script context may reach the store (a
         // fault report, the jobs it runs after), so its borrow ends first.
-        // Entering and restoring what is held can allocate, so a heap at its
-        // limit, as it is after running out of memory, could refuse it and
-        // cut the walk short where it is asked for most. The walk itself
-        // only reads, in place and within its budget, so lifting the limit
-        // for it gives a wide value no room to take.
-        let limit = self.script_memory_limit();
-        let lifted = limit.is_some() && self.set_script_heap_limit(None);
+        // The walk makes nothing in the heap, so a heap at its limit, as it
+        // is after running out of memory, needs no limit lifted to be
+        // walked.
         let held = self.run_js("heap holders", |s| {
             Ok(s.held_by(groups.iter().map(|g| g.2.iter()), budget))
-        });
-        if lifted {
-            self.set_script_heap_limit(limit);
-        }
-        let held = held?;
+        })?;
         let mut holders: Vec<ScriptHolder> = groups
             .into_iter()
             .zip(held.bytes)

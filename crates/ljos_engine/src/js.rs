@@ -1309,15 +1309,29 @@ fn holds_js_within(v: &Value, depth: u32) -> bool {
     }
 }
 
+/// In the order recursion looks, an entry at a time: what is kept is a
+/// place in each level open, never a level's entries.
 fn holds_js_deep(v: &Value) -> bool {
-    let mut stack = vec![v];
-    while let Some(v) = stack.pop() {
+    enum Rest<'v> {
+        Items(std::slice::Iter<'v, Value>),
+        Fields(std::slice::Iter<'v, (Atom, Value)>),
+    }
+    let mut open = vec![Rest::Items(std::slice::from_ref(v).iter())];
+    while let Some(top) = open.last_mut() {
+        let next = match top {
+            Rest::Items(rest) => rest.next(),
+            Rest::Fields(rest) => rest.next().map(|(_, v)| v),
+        };
+        let Some(v) = next else {
+            open.pop();
+            continue;
+        };
         #[cfg(test)]
         holds_js_tests::LOOKED_AT.with(|n| n.set(n.get() + 1));
         match v {
             Value::Js(_) => return true,
-            Value::List(items) => stack.extend(items.iter()),
-            Value::Map(fields) => stack.extend(fields.iter().map(|(_, v)| v)),
+            Value::List(items) => open.push(Rest::Items(items.iter())),
+            Value::Map(fields) => open.push(Rest::Fields(fields.iter())),
             _ => {}
         }
     }
