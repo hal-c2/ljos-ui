@@ -104,8 +104,11 @@ ApplicationWindow {
     // What kind of call the error shown is of; "" for a note, which any
     // answer clears. An error waits for a success of its own kind.
     property string statusOf: ""
+    // What the note shown was turned away of: its route, "" for none.
+    property string noteOf: ""
 
     function say(text, kind) {
+        noteOf = ""
         status.text = text
         statusOf = text === "" ? "" : kind
     }
@@ -220,7 +223,8 @@ ApplicationWindow {
                 status.inspectsWaiting -= 1
             // An answer about an object picked before says nothing of
             // the one picked since.
-            var past = (values || picture) && route.substring(8) !== objects.picked
+            var past = ((values || picture) && route.substring(8) !== objects.picked)
+                    || (edit && route.substring(7) !== objects.picked)
             if (!ok && route !== "watch" && !edit
                     && String(result).indexOf("rate_limited") >= 0) {
                 var again = (values || picture) && objects.valuesTurnedAway(route.substring(8), picture)
@@ -229,8 +233,10 @@ ApplicationWindow {
                     note = "The application is asked too often; its values are asked again in a moment"
                 else if (again)
                     note += " until it is asked again"
-                if (!past && window.statusOf === "")
+                if (!past && window.statusOf === "") {
                     window.say(note, "")
+                    window.noteOf = route || ""
+                }
                 if (route && route.indexOf("objects") === 0)
                     objects.turnedAway(parseInt(route.substring(route.indexOf(":") + 1)))
                 return
@@ -244,6 +250,10 @@ ApplicationWindow {
                 else if (window.statusOf === "" || window.statusOf === kind)
                     window.say("", "")
             }
+            // The picture says nothing here when it comes, but the note
+            // that it would be asked again is over: no other answer may come.
+            if (ok && picture && window.noteOf === route)
+                window.say("", "")
             window.answered(route || "", ok, ok ? JSON.parse(result) : result)
         }
     }
