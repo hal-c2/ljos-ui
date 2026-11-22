@@ -3609,16 +3609,17 @@ pub(crate) struct Sources<'a> {
 
 /// Whether `err`, from a run that was refused room past its share
 /// ([`HeapCount`]), is how QuickJS fails for want of room: a call that gave
-/// nothing back, its "out of memory" error, or the `null` it throws where
-/// even that error does not fit. Anything else is the script's own error,
-/// thrown after it caught the refusal, and is told as such. The pending
-/// exception is taken only when it is the heap's.
+/// nothing back, its "out of memory" error with or without the words, or
+/// the `null` it throws where even that error does not fit. Anything else
+/// is the script's own error, thrown after it caught the refusal, and is
+/// told as such. The pending exception is taken only when it is the heap's.
 ///
 /// A thrown `null` is left to `classify_error`, which tells QuickJS's from a
 /// script's by the run's count ([`MallocPeak::ran_out`]), refusal or not.
-/// An `InternalError` a script makes saying "out of memory", in a dispatch
-/// that caught a refusal earlier, is still told as the heap running out:
-/// nothing tells it from QuickJS's, and the refusal is the likelier cause.
+/// An `InternalError` a script makes saying "out of memory" or nothing, in
+/// a dispatch that caught a refusal earlier, is still told as the heap
+/// running out: nothing tells it from QuickJS's, and the refusal is the
+/// likelier cause.
 fn refused_room(ctx: &Ctx<'_>, err: &rquickjs::Error) -> bool {
     match err {
         rquickjs::Error::Allocation => {
@@ -3642,8 +3643,11 @@ fn refused_room(ctx: &Ctx<'_>, err: &rquickjs::Error) -> bool {
 }
 
 /// QuickJS's own error for want of room (`JS_ThrowOutOfMemory`): an
-/// `InternalError` saying "out of memory". A `TypeError` saying the same
-/// is a script's.
+/// `InternalError` saying "out of memory", or saying nothing where the
+/// error fit and its words did not (`JS_MakeError2` gives it back all the
+/// same). The limit, with room left past a share, does not tell that one,
+/// so `describe_exception`'s rule for a full heap cannot. A `TypeError`
+/// saying either is a script's.
 fn is_quickjs_out_of_memory(v: &rquickjs::Value<'_>) -> bool {
     v.as_object().is_some_and(|o| {
         let says = |key: &str, want: &str| {
@@ -3652,7 +3656,7 @@ fn is_quickjs_out_of_memory(v: &rquickjs::Value<'_>) -> bool {
                 .flatten()
                 .is_some_and(|s| s == want)
         };
-        says("name", "InternalError") && says("message", "out of memory")
+        says("name", "InternalError") && (says("message", "out of memory") || says("message", ""))
     })
 }
 
