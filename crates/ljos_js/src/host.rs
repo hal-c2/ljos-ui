@@ -1567,10 +1567,10 @@ impl<'js> Scope<'js> {
 const COPY_DEPTH: u32 = 32;
 
 /// The own keys `JS_GetOwnPropertyNames` gave, freed with it.
-pub(crate) struct OwnNames {
-    pub(crate) ctx: *mut rquickjs::qjs::JSContext,
-    pub(crate) tab: *mut rquickjs::qjs::JSPropertyEnum,
-    pub(crate) len: u32,
+struct OwnNames {
+    ctx: *mut rquickjs::qjs::JSContext,
+    tab: *mut rquickjs::qjs::JSPropertyEnum,
+    len: u32,
 }
 
 impl Drop for OwnNames {

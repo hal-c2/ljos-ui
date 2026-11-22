@@ -10019,24 +10019,71 @@ int JS_GetOwnProperty(JSContext *ctx, JSPropertyDescriptor *desc,
     return JS_GetOwnPropertyInternal(ctx, desc, JS_VALUE_GET_OBJ(obj), prop);
 }
 
-/* Ljós: JS_GetOwnProperty for a walk that only measures. A property
-   QuickJS makes when it is first read (JS_PROP_AUTOINIT, a built-in's
-   methods) is left unmade and 2 returned with `desc` untouched: making it
-   would grow the heap being measured, and a failure part way leaves the
-   slot undefined. Declared by ljos_js itself (crates/ljos_js/src/held.rs),
-   so the bundled bindings stay what bindgen makes of quickjs.h. */
-int JS_GetOwnPropertyIfMade(JSContext *ctx, JSPropertyDescriptor *desc,
-                            JSValueConst obj, JSAtom prop)
+/* Ljós: an ordinary object's or array's own slots, for a walk that only
+   measures and stops at a budget: each is read in place by its index, an
+   array's elements first, so no table of the keys is made and no key past
+   the budget is looked at. Returns how many indexes there are, and in
+   `held` how many of them hold a property (a deleted one's index is left
+   empty). Declared by ljos_js itself (crates/ljos_js/src/held.rs), so the
+   bundled bindings stay what bindgen makes of quickjs.h. */
+uint32_t JS_GetOwnSlotCount(JSValueConst obj, uint32_t *held)
 {
-    JSProperty *pr;
-    JSShapeProperty *prs;
+    JSObject *p;
+    uint32_t elements;
 
-    if (JS_VALUE_GET_TAG(obj) == JS_TAG_OBJECT) {
-        prs = find_own_property(&pr, JS_VALUE_GET_OBJ(obj), prop);
-        if (prs && (prs->flags & JS_PROP_TMASK) == JS_PROP_AUTOINIT)
-            return 2;
+    *held = 0;
+    if (JS_VALUE_GET_TAG(obj) != JS_TAG_OBJECT)
+        return 0;
+    p = JS_VALUE_GET_OBJ(obj);
+    elements = p->class_id == JS_CLASS_ARRAY && p->fast_array ?
+        p->u.array.count : 0;
+    *held = elements + p->shape->prop_count - p->shape->deleted_prop_count;
+    return elements + p->shape->prop_count;
+}
+
+/* Ljós: what slot `i` of those refers to, each duplicated: its value
+   (returns 1, in `a`) or its getter and setter (returns 2). An empty slot,
+   and a property QuickJS makes when it is first read (JS_PROP_AUTOINIT, a
+   built-in's methods), returns 0: making it would grow the heap being
+   measured, and a failure part way leaves the slot undefined. */
+int JS_GetOwnSlot(JSValueConst obj, uint32_t i, JSValue *a, JSValue *b)
+{
+    JSObject *p;
+    JSShapeProperty *prs;
+    JSProperty *pr;
+
+    if (JS_VALUE_GET_TAG(obj) != JS_TAG_OBJECT)
+        return 0;
+    p = JS_VALUE_GET_OBJ(obj);
+    if (p->class_id == JS_CLASS_ARRAY && p->fast_array) {
+        if (i < p->u.array.count) {
+            *a = js_dup(p->u.array.u.values[i]);
+            return 1;
+        }
+        i -= p->u.array.count;
     }
-    return JS_GetOwnProperty(ctx, desc, obj, prop);
+    if (i >= (uint32_t)p->shape->prop_count)
+        return 0;
+    prs = get_shape_prop(p->shape) + i;
+    if (prs->atom == JS_ATOM_NULL)
+        return 0;
+    pr = &p->prop[i];
+    switch (prs->flags & JS_PROP_TMASK) {
+    case JS_PROP_NORMAL:
+        *a = js_dup(pr->u.value);
+        return 1;
+    case JS_PROP_GETSET:
+        *a = pr->u.getset.getter ?
+            js_dup(JS_MKPTR(JS_TAG_OBJECT, pr->u.getset.getter)) : JS_UNDEFINED;
+        *b = pr->u.getset.setter ?
+            js_dup(JS_MKPTR(JS_TAG_OBJECT, pr->u.getset.setter)) : JS_UNDEFINED;
+        return 2;
+    case JS_PROP_VARREF:
+        *a = js_dup(*pr->u.var_ref->pvalue);
+        return 1;
+    default:
+        return 0;
+    }
 }
 
 /* Ljós: what a string's storage refers to, for a walk that measures it
