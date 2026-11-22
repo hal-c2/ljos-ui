@@ -499,7 +499,24 @@ impl Hands<'_> {
         Ok(obj)
     }
 
+    /// Refuses keys while another window has the keyboard. A window in the
+    /// background hears no key, as a person's keys do not reach it:
+    /// answering as if they had would tell the agent of keys that went
+    /// nowhere. Asked before any click on a `target`, which does not bring
+    /// the window to the front either: that is the window system's to do.
+    fn window_hears_keys(&self) -> Result<(), SurfaceError> {
+        if self.scene.root().is_some() && !self.scene.is_window_active(self.engine) {
+            return Err(not_actionable(
+                "the window is not active: another window has the keyboard, so keys pressed now \
+                 reach nothing. Bring the window to the front first; `app_status` says when it \
+                 has the keyboard (`windows[0].active`)",
+            ));
+        }
+        Ok(())
+    }
+
     fn type_text(&mut self, a: &TypeArgs) -> Result<Done, SurfaceError> {
+        self.window_hears_keys()?;
         if let Some(target) = &a.target {
             let at = self.aim(target, "app_type")?;
             self.click_at(at, MouseButtons::LEFT, 1)?;
@@ -522,17 +539,7 @@ impl Hands<'_> {
 
     fn press(&mut self, a: &PressArgs) -> Result<Done, SurfaceError> {
         let chords = Chords::parse(&a.keys).map_err(SurfaceError::invalid_argument)?;
-        // A window in the background hears no key, as a person's keys do
-        // not reach it: answering "pressed" would tell the agent of keys
-        // that went nowhere. A click on the window does not bring it to
-        // the front either; that is the window system's to do.
-        if self.scene.root().is_some() && !self.scene.is_window_active(self.engine) {
-            return Err(not_actionable(
-                "the window is not active: another window has the keyboard, so keys pressed now \
-                 reach nothing. Bring the window to the front first; `app_status` says when it \
-                 has the keyboard (`windows[0].active`)",
-            ));
-        }
+        self.window_hears_keys()?;
         if let Some(target) = &a.target {
             let at = self.aim(target, "app_press")?;
             self.click_at(at, MouseButtons::LEFT, 1)?;

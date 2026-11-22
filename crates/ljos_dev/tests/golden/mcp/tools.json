@@ -1080,7 +1080,7 @@
     "read_only": false
   },
   {
-    "description": "Type `text` into the item that has keyboard focus, as key presses with text, like a keyboard. With `target` the item is clicked first. Refused when nothing has focus. Text typed into a field that hides its text is not echoed back. Answers with what changed.",
+    "description": "Type `text` into the item that has keyboard focus, as key presses with text, like a keyboard. With `target` the item is clicked first. Refused when nothing has focus or its window is inactive. Text typed into a field that hides its text is not echoed back. Answers with what changed.",
     "input_schema": {
       "additionalProperties": false,
       "properties": {

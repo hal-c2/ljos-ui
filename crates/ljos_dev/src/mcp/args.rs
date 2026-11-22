@@ -96,8 +96,9 @@ middle; `count` 2 is a double click. Answers once the frame settled, with what c
 
 pub const TYPE: &str = "\
 Type `text` into the item that has keyboard focus, as key presses with text, like a keyboard. \
-With `target` the item is clicked first. Refused when nothing has focus. Text typed into a field \
-that hides its text is not echoed back. Answers with what changed.";
+With `target` the item is clicked first. Refused when nothing has focus or its window is \
+inactive. Text typed into a field that hides its text is not echoed back. Answers with what \
+changed.";
 
 pub const PRESS: &str = "\
 Press keys: `Enter`, `Tab`, `Escape`, `F5`, a chord such as `Ctrl+A` or `Shift+Tab`; several \
