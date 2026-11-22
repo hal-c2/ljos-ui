@@ -12,6 +12,11 @@ Feature: An agent is told the warnings of a reload
   log is never one of them, whatever it looks like. A file is named from
   the project's root, as in the errors of a reload.
 
+  # The inspector is announced before the files are read, so a scenario
+  # that changes one calls it first: that answer means the first load is
+  # over. A file compiled when a Loader asks has not had the reload lint,
+  # so those have a warning the compiler itself gives.
+
   Background:
     Given the file "Main.qml":
       """qml
@@ -48,17 +53,18 @@ Feature: An agent is told the warnings of a reload
         """qml
         import QtQuick
         Item {
-            Timer { }
-            Timer { }
+            property var shown: panelUnknown
         }
         """
       When the author starts "ljos run Main.qml --headless --watch --mcp=inspect"
       And the agent calls the tool "app_status"
       Then the answer's "/reload/warnings" has 1 entry
       And the answer's "/reload/warnings/0/file" is "parts/Panel.qml"
+      And the answer's "/reload/warnings/0/message" matches "^`panelUnknown` is not a name in sight"
 
     Scenario: A reload answers with its warnings
       When the author starts "ljos run Main.qml --headless --watch --mcp=inspect,mutate"
+      And the agent calls the tool "app_status"
       And the file "Main.qml" is changed to:
         """qml
         import QtQuick
@@ -78,6 +84,7 @@ Feature: An agent is told the warnings of a reload
 
     Scenario: The status and the resource tell a reload's warnings
       When the author starts "ljos run Main.qml --headless --watch --mcp=inspect"
+      And the agent calls the tool "app_status"
       And the file "Main.qml" is changed to:
         """qml
         import QtQuick
@@ -98,6 +105,7 @@ Feature: An agent is told the warnings of a reload
 
     Scenario: A reload with no warning clears them
       When the author starts "ljos run Main.qml --headless --watch --mcp=inspect,mutate"
+      And the agent calls the tool "app_status"
       And the file "Main.qml" is changed to:
         """qml
         import QtQuick
@@ -114,6 +122,7 @@ Feature: An agent is told the warnings of a reload
 
     Scenario: A reload that failed leaves the warnings of what runs
       When the author starts "ljos run Main.qml --headless --watch --mcp=inspect,mutate"
+      And the agent calls the tool "app_status"
       And the file "Main.qml" is changed to:
         """qml
         import QtQuick
@@ -191,8 +200,7 @@ Feature: An agent is told the warnings of a reload
         """qml
         import QtQuick
         Item {
-            Timer { }
-            Timer { }
+            property var shown: panelUnknown
         }
         """
       When the author starts "ljos run Main.qml --headless --watch --mcp=inspect,mutate"
@@ -206,6 +214,7 @@ Feature: An agent is told the warnings of a reload
       Then the answer's "/reload/generation" is 0
       And the answer's "/reload/warnings" has 1 entry
       And the answer's "/reload/warnings/0/file" is "parts/Panel.qml"
+      And the answer's "/reload/warnings/0/message" matches "^`panelUnknown` is not a name in sight"
 
   Rule: The application cannot write one
 
@@ -276,6 +285,7 @@ Feature: An agent is told the warnings of a reload
         }
         """
       When the author starts "ljos run Main.qml --headless --watch --mcp=inspect,mutate"
+      And the agent calls the tool "app_status"
       And the file "Main.qml" is changed to:
         """qml
         import QtQuick

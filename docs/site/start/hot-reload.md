@@ -23,7 +23,7 @@ The old roots are destroyed only after all new roots have been created, so a rel
 
 When you also pass `--mcp=inspect,mutate`, a coding agent can trigger a reload explicitly with the `app_reload` tool or inspect the reload status in `app_status` (`/reload/watched`, `/reload/generation`, `/reload/last/outcome` and `/reload/warnings`).
 
-The warnings are the compiler's on the files that are loaded, each with `file` (from the project's root, as in a reload's error), `line`, `column` and `message`. They come from the compiler alone, so a `console.log` can't add one. A reload that was applied replaces them and one that failed leaves them. Those the last reload made come first. At most 20 are listed in 8 KiB, and a `file` is never cut: `warnings_truncated` says when the list was cut and `warnings_omitted` how many are not in it.
+The warnings are the compiler's on the files that are loaded, each with `file` (from the project's root, as in a reload's error), `line`, `column` and `message`. They come from the compiler alone, so a `console.log` can't add one. A reload that was applied replaces them and one that failed leaves them. Those the last reload made come first. A file compiled when a `Loader` asks for it has the compiler's own at once, and the reload's advice on `id`s once a reload compiles it again. At most 20 are listed in 8 KiB, and a `file` is never cut: `warnings_truncated` says when the list was cut and `warnings_omitted` how many are not in it.
 
 ## Running against another module directory
 
