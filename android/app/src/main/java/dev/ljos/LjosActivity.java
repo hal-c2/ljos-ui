@@ -24,7 +24,6 @@ import androidx.core.view.WindowInsetsCompat;
 import com.google.androidgamesdk.GameActivity;
 import com.google.androidgamesdk.TextInputOf;
 import com.google.androidgamesdk.gametextinput.InputConnection;
-import com.google.androidgamesdk.gametextinput.State;
 
 /**
  * The activity a Ljós application runs in. The application itself lives on
@@ -126,12 +125,6 @@ public class LjosActivity extends GameActivity {
     @Override
     protected InputEnabledSurfaceView createSurfaceView() {
         return TextInputOf.surface(this, this::cursorUpdatesRequested);
-    }
-
-    /** The native side's own state is not told back to it. */
-    @Override
-    public void setTextInputState(State state) {
-        TextInputOf.quietly(mSurfaceView, () -> super.setTextInputState(state));
     }
 
     @Override
