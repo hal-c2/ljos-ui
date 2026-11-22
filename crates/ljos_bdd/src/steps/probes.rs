@@ -4,6 +4,7 @@
 use std::time::{Duration, Instant};
 
 use cucumber::{given, then, when};
+use serde_json::Value;
 
 use crate::backend::BackendError;
 use crate::world::LjosWorld;
@@ -184,6 +185,7 @@ fn turned_away(w: &mut LjosWorld, locator: &str, gone: Option<&str>) -> StepResu
                 "nothing to click",
             ));
         }
+        let told = told_turned_away(&observer_status(probes)?)?;
         let filling = probes.turn_calls_away(KEPT)?;
         let filled = Instant::now();
         let room = filling + Duration::from_secs(1);
@@ -209,9 +211,9 @@ fn turned_away(w: &mut LjosWorld, locator: &str, gone: Option<&str>) -> StepResu
                 // Put away before an answer can come, and no answer came:
                 // one that was let in puts it away as well.
                 observer_put_away(probes, gone, filling + Duration::from_secs(1))
-                    .and_then(|()| observer_told_turned_away(probes, filling + KEPT))
+                    .and_then(|()| observer_told_turned_away(probes, told, filling + KEPT))
             }
-            (Ok(_), None) => observer_told_turned_away(probes, filling + KEPT),
+            (Ok(_), None) => observer_told_turned_away(probes, told, filling + KEPT),
         };
         // Also after a click that failed: the next step is not to be turned
         // away in this one's place.
@@ -233,28 +235,69 @@ fn turned_away(w: &mut LjosWorld, locator: &str, gone: Option<&str>) -> StepResu
 }
 
 // The observer says so only once both refusals came, the wire's second
-// try's being the one handed to it. A look that waits for its window to
-// rest would come after the application answers again and the text went.
+// try's being the one handed to it. The note is gone as soon as anything
+// else is said, so the count of it is read: one that came late still
+// counts, and a call that got through leaves none awaited.
 fn observer_told_turned_away(
     probes: &mut dyn crate::backend::Probes,
-    by: Instant,
+    before: u64,
+    kept_until: Instant,
 ) -> Result<(), BackendError> {
-    const TOLD: &str =
-        "text=The application is asked too often; its values are asked again in a moment";
+    let by = kept_until + OBSERVER_ANSWERS;
     loop {
-        let found = probes.observer_call_now("app_find", serde_json::json!({ "locator": TOLD }))?;
-        if found["total"].as_u64().unwrap_or(0) > 0 {
+        let status = observer_status(probes)?;
+        if told_turned_away(&status)? > before {
             return Ok(());
         }
-        if Instant::now() >= by {
-            return Err(BackendError::Failed(
-                "the observer did not say it was turned away while the application's second \
-                 was full: its call and the one asked again were not both refused"
-                    .into(),
-            ));
-        }
-        std::thread::sleep(Duration::from_millis(100));
+        let now = Instant::now();
+        let waiting = status_property(&status, "inspectsWaiting")?;
+        let cause = if waiting == "0" && now >= kept_until {
+            "it awaits no answer about values any more: a call got through, or was not \
+             refused for asking too often"
+                .to_owned()
+        } else if now >= by {
+            format!(
+                "it still awaited {waiting} answers about values {} s after the application \
+                 stopped turning calls away",
+                OBSERVER_ANSWERS.as_secs()
+            )
+        } else {
+            std::thread::sleep(Duration::from_millis(100));
+            continue;
+        };
+        return Err(BackendError::Failed(format!(
+            "the observer did not say it was turned away while the application's second \
+             was full: {cause}; its status says {:?}",
+            status_property(&status, "text").unwrap_or_default()
+        )));
     }
+}
+
+fn observer_status(probes: &mut dyn crate::backend::Probes) -> Result<Value, BackendError> {
+    probes.observer_call_now("app_inspect", serde_json::json!({ "target": "id=status" }))
+}
+
+fn status_property(status: &Value, name: &str) -> Result<String, BackendError> {
+    status["properties"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|p| p["name"] == name)
+        .map(|p| p["value"].to_string().trim_matches('"').to_owned())
+        .ok_or_else(|| {
+            BackendError::Failed(format!(
+                "the observer's status does not tell its {name}: {status}"
+            ))
+        })
+}
+
+fn told_turned_away(status: &Value) -> Result<u64, BackendError> {
+    let told = status_property(status, "valuesToldTurnedAway")?;
+    told.parse().map_err(|_| {
+        BackendError::Failed(format!(
+            "the observer's count of values turned away is no number: {told:?}"
+        ))
+    })
 }
 
 // The object clicked first is asked of while the application's second is
@@ -342,19 +385,7 @@ fn observer_put_away(
 fn observer_inspects_answered(probes: &mut dyn crate::backend::Probes) -> Result<(), BackendError> {
     let by = Instant::now() + OBSERVER_ANSWERS;
     loop {
-        let told = probes
-            .observer_call_now("app_inspect", serde_json::json!({ "target": "id=status" }))?;
-        let waiting = told["properties"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .find(|p| p["name"] == "inspectsWaiting")
-            .map(|p| p["value"].to_string().trim_matches('"').to_owned())
-            .ok_or_else(|| {
-                BackendError::Failed(format!(
-                    "the observer's window does not tell how many inspects it awaits: {told}"
-                ))
-            })?;
+        let waiting = status_property(&observer_status(probes)?, "inspectsWaiting")?;
         if waiting == "0" {
             return Ok(());
         }
