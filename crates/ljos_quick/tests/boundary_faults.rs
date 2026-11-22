@@ -798,3 +798,82 @@ fn a_fallback_whose_child_outside_its_own_boundary_fills_the_heap_is_not_shown()
         "{warned:?}"
     );
 }
+
+/// A fallback of [`MAIN`], with `inner` in it.
+fn fallback_holding(inner: &str) -> String {
+    with_fallback(
+        &r#"fallback: Item {
+            id: d
+            objectName: "sorry"
+            property bool ok: false
+            property bool started: false
+            function init() {
+                if (started) return;
+                started = true;
+                FILL
+                ok = true
+            }
+            INNER
+        }"#
+        .replace("INNER", inner)
+        .replace(
+            "FILL",
+            r#"{ const a = []; for (let i = 0; i < 20000; i++) a.push({ i: i, s: "row " + i }) }"#,
+        ),
+    )
+}
+
+#[test]
+fn a_fallback_is_kept_when_content_inside_it_filled_the_heap() {
+    let mut wrong = Vec::new();
+    for inner in [
+        "ErrorBoundary { Item { Component.onCompleted: FILL } }",
+        "ErrorBoundary { Item { id: c; function work() FILL Component.onCompleted: c.work() } }",
+        "Loader { sourceComponent: Component { Item { Component.onCompleted: FILL } } }",
+    ] {
+        let (e, _, _, boundary) = out_of_heap(&fallback_holding(inner));
+        if shown(&e, boundary) != "sorry" {
+            wrong.push(inner);
+        }
+    }
+    assert!(wrong.is_empty(), "not shown: {wrong:#?}");
+}
+
+/// Asserts each fallback holding one of `inner` is never shown half made,
+/// and that the content is back once there is room.
+fn assert_fallback_discarded(inner: &[&str]) {
+    let mut wrong = Vec::new();
+    for inner in inner {
+        let (e, clock, _, boundary) = out_of_heap(&fallback_holding(inner));
+        assert!(get(&e, boundary, "failed").to_boolean(), "{inner}");
+        if shown(&e, boundary) == "sorry" {
+            wrong.push(*inner);
+        }
+        assert!(e.set_script_heap_limit(None));
+        for _ in 0..16 {
+            if let Some(due) = e.next_timer_deadline() {
+                clock.set(due);
+            }
+            settle(&e, &clock, boundary);
+        }
+        assert_eq!(shown(&e, boundary), "content", "{inner}");
+    }
+    assert!(wrong.is_empty(), "shown half made: {wrong:#?}");
+}
+
+#[test]
+fn a_fallback_is_discarded_when_a_boundary_s_own_child_filled_the_heap() {
+    assert_fallback_discarded(&[
+        "ErrorBoundary { property QtObject helper: QtObject { Component.onCompleted: { FILL d.ok = true } } Item {} }",
+        "Loader { property QtObject helper: QtObject { Component.onCompleted: { FILL d.ok = true } } }",
+        "Loader { Item { Component.onCompleted: { FILL d.ok = true } } }",
+    ]);
+}
+
+#[test]
+fn a_fallback_is_discarded_when_content_filled_the_heap_in_its_function() {
+    assert_fallback_discarded(&[
+        "ErrorBoundary { Item { Component.onCompleted: d.init() } }",
+        "Loader { sourceComponent: Component { Item { Component.onCompleted: d.init() } } }",
+    ]);
+}
