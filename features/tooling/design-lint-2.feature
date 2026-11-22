@@ -1,6 +1,7 @@
 # Sources:
 #   docs/design/motion.md, docs/design/accessibility.md, docs/design/content.md,
 #   docs/design/layout.md, docs/design/interaction.md
+#   docs/theme.md (which theme file is read, and Spacing.unit)
 #   crates/ljos_design (the rules, their severities and limits)
 # The design lints are Ljós's own: Qt has nothing to compare them with.
 # A file given here is written without the spaces its doc string is indented by, so the
@@ -331,3 +332,254 @@ Feature: More design rules a file's source can show
         """
       Then the answer's "/diagnostics/0/code" is "layout-nested-radius"
       And the answer's "/diagnostics/0/line" is 10
+
+  Rule: The spacing scale is counted in the theme's unit
+
+    Scenario: A step of the theme's unit is on the scale
+      Given the file "theme.json":
+        """json
+        { "Spacing": { "unit": 5 } }
+        """
+      And the file "Main.qml":
+        """qml
+        import QtQuick
+
+        Item {
+            width: 200; height: 80
+            Column { spacing: 10 }
+        }
+        """
+      When the agent calls the tool "qml_lint" with:
+        """json
+        {"paths": ["Main.qml"]}
+        """
+      Then the answer does not contain "layout-spacing-scale"
+
+    Scenario: A gap off the theme's scale is given that scale's steps
+      Given the file "theme.json":
+        """json
+        { "Spacing": { "unit": 5 } }
+        """
+      And the file "Main.qml":
+        """qml
+        import QtQuick
+
+        Item {
+            width: 200; height: 80
+            Column { spacing: 8 }
+        }
+        """
+      When the agent calls the tool "qml_lint" with:
+        """json
+        {"paths": ["Main.qml"]}
+        """
+      Then the answer's "/diagnostics/0/code" is "layout-spacing-scale"
+      And the answer's "/diagnostics/0/message" matches "multiple of 5 \(5 or 10\)"
+
+    Scenario: A component in a directory below takes the project's unit
+      Given the file "theme.json":
+        """json
+        { "Spacing": { "unit": 5 } }
+        """
+      And the file "parts/Gap.qml":
+        """qml
+        import QtQuick
+
+        Item {
+            width: 200; height: 80
+            Column { spacing: 10 }
+        }
+        """
+      When the agent calls the tool "qml_lint" with:
+        """json
+        {"paths": ["parts/Gap.qml"]}
+        """
+      Then the answer does not contain "layout-spacing-scale"
+
+    Scenario: Themes that agree on the unit leave it known
+      Given the file "theme.json":
+        """json
+        { "Spacing": { "unit": 5 } }
+        """
+      And the file "app/theme.json":
+        """json
+        { "Spacing": { "unit": 5 } }
+        """
+      And the file "app/Main.qml":
+        """qml
+        import QtQuick
+
+        Item {
+            width: 200; height: 80
+            Column { spacing: 8 }
+        }
+        """
+      When the agent calls the tool "qml_lint" with:
+        """json
+        {"paths": ["app/Main.qml"]}
+        """
+      Then the answer's "/diagnostics/0/code" is "layout-spacing-scale"
+      And the answer's "/diagnostics/0/message" matches "multiple of 5 \(5 or 10\)"
+
+    Scenario: Themes of different units leave nothing to advise
+      Given the file "theme.json":
+        """json
+        { "Spacing": { "unit": 5 } }
+        """
+      And the file "app/theme.json":
+        """json
+        { "Spacing": { "md": 20 } }
+        """
+      And the file "Main.qml":
+        """qml
+        import QtQuick
+
+        Item {
+            width: 200; height: 80
+            Column { spacing: 7 }
+        }
+        """
+      When the agent calls the tool "qml_lint" with:
+        """json
+        {"paths": ["Main.qml"]}
+        """
+      Then the answer does not contain "layout-spacing-scale"
+
+    Scenario: A unit set for a part of the project leaves nothing to advise
+      Given the file "app/theme.json":
+        """json
+        { "Spacing": { "unit": 5 } }
+        """
+      And the file "app/Main.qml":
+        """qml
+        import QtQuick
+
+        Item {
+            width: 200; height: 80
+            Column { spacing: 7 }
+        }
+        """
+      When the agent calls the tool "qml_lint" with:
+        """json
+        {"paths": ["app/Main.qml"]}
+        """
+      Then the answer does not contain "layout-spacing-scale"
+
+    Scenario: A theme that cannot be read and names a unit leaves nothing to advise
+      Given the file "theme.json":
+        """json
+        { "Spacing": { "unit": 5, } }
+        """
+      And the file "Main.qml":
+        """qml
+        import QtQuick
+
+        Item {
+            width: 200; height: 80
+            Column { spacing: 7 }
+        }
+        """
+      When the agent calls the tool "qml_lint" with:
+        """json
+        {"paths": ["Main.qml"]}
+        """
+      Then the answer does not contain "layout-spacing-scale"
+
+    Scenario: A theme that is refused and names a unit leaves nothing to advise
+      Given the file "theme.json":
+        """json
+        { "Spacing": { "unit": 5 }, "Colors": { "text": "#ffffff" } }
+        """
+      And the file "Main.qml":
+        """qml
+        import QtQuick
+
+        Item {
+            width: 200; height: 80
+            Column { spacing: 7 }
+        }
+        """
+      When the agent calls the tool "qml_lint" with:
+        """json
+        {"paths": ["Main.qml"]}
+        """
+      Then the answer does not contain "layout-spacing-scale"
+
+    Scenario: A unit of 0 has no steps to advise
+      Given the file "theme.json":
+        """json
+        { "Spacing": { "unit": 0 } }
+        """
+      And the file "Main.qml":
+        """qml
+        import QtQuick
+
+        Item {
+            width: 200; height: 80
+            Column { spacing: 7 }
+        }
+        """
+      When the agent calls the tool "qml_lint" with:
+        """json
+        {"paths": ["Main.qml"]}
+        """
+      Then the answer does not contain "layout-spacing-scale"
+
+    Scenario: No theme leaves the scale at 4
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
+
+        Item {
+            width: 200; height: 80
+            Column { spacing: 10 }
+        }
+        """
+      When the agent calls the tool "qml_lint" with:
+        """json
+        {"paths": ["Main.qml"]}
+        """
+      Then the answer's "/diagnostics/0/code" is "layout-spacing-scale"
+      And the answer's "/diagnostics/0/message" matches "multiple of 4 \(8 or 12\)"
+
+    Scenario: A theme with no unit leaves the scale at 4
+      Given the file "theme.json":
+        """json
+        { "Spacing": { "md": 20 } }
+        """
+      And the file "Main.qml":
+        """qml
+        import QtQuick
+
+        Item {
+            width: 200; height: 80
+            Column { spacing: 10 }
+        }
+        """
+      When the agent calls the tool "qml_lint" with:
+        """json
+        {"paths": ["Main.qml"]}
+        """
+      Then the answer's "/diagnostics/0/code" is "layout-spacing-scale"
+      And the answer's "/diagnostics/0/message" matches "multiple of 4 \(8 or 12\)"
+
+    Scenario: A theme that cannot be read and names no unit leaves the scale at 4
+      Given the file "theme.json":
+        """json
+        { "Spacing": { "md": 20, } }
+        """
+      And the file "Main.qml":
+        """qml
+        import QtQuick
+
+        Item {
+            width: 200; height: 80
+            Column { spacing: 10 }
+        }
+        """
+      When the agent calls the tool "qml_lint" with:
+        """json
+        {"paths": ["Main.qml"]}
+        """
+      Then the answer's "/diagnostics/0/code" is "layout-spacing-scale"
+      And the answer's "/diagnostics/0/message" matches "multiple of 4 \(8 or 12\)"
