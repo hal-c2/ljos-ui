@@ -1497,6 +1497,105 @@ fn repeated_failed_registrations_are_no_way_past_the_share() {
     assert!(eval_num(&host, "calls").unwrap() >= 1.0, "no script ran");
 }
 
+/// A type with a name too long for the room is refused, not made with a
+/// property of no name.
+#[test]
+fn a_property_whose_name_is_refused_room_fails_its_registration() {
+    let host = small(64);
+    let mut def = wide(1, false);
+    def.plain = true;
+    def.props[0].name = "n".repeat(64 * 1024);
+    assert!(host.set_memory_limit(Some(live(&host) + 32 * 1024)));
+    let registered = host.register_type(&def);
+    assert!(
+        matches!(registered, Err(JsFault::JsOutOfMemory { .. })),
+        "{registered:?}"
+    );
+}
+
+#[test]
+fn a_signal_whose_name_is_refused_room_fails_its_registration() {
+    let host = small(64);
+    let def = ljos_js::TypeDef {
+        plain: true,
+        signals: vec![ljos_js::SignalDef {
+            name: "n".repeat(64 * 1024),
+            id: 0,
+        }],
+        ..Default::default()
+    };
+    assert!(host.set_memory_limit(Some(live(&host) + 32 * 1024)));
+    let registered = host.register_type(&def);
+    assert!(
+        matches!(registered, Err(JsFault::JsOutOfMemory { .. })),
+        "{registered:?}"
+    );
+}
+
+/// At every room a registration can be given, it fails or the type has
+/// both of its accessors. A twin registered first leaves the getter and
+/// the setter as the last that need room: the name and the shape exist.
+#[test]
+fn an_accessor_refused_room_fails_its_registration() {
+    let mut def = wide(1, false);
+    def.plain = true;
+    let most = cost(&def) * 2;
+    let mut refused = 0;
+    for room in (0..=most).step_by(8) {
+        let host = small(64);
+        let store = Rc::new(Store::default());
+        host.set_host_objects(store.clone());
+        host.register_type(&def).unwrap();
+        assert!(host.set_memory_limit(Some(live(&host) + room)));
+        let Ok(ty) = host.register_type(&def) else {
+            refused += 1;
+            continue;
+        };
+        assert!(host.set_memory_limit(Some(64 * MIB)));
+        *store.ty.borrow_mut() = Some(ty);
+        store.insert(1, 1.0, 1.0);
+        let module = host
+            .load_module(
+                "a.js",
+                "export function whole(o) {
+                     const p = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(o), 'wide0');
+                     return !!p && typeof p.get === 'function' && typeof p.set === 'function';
+                 }",
+            )
+            .unwrap();
+        let whole = host
+            .call(module.function("whole").unwrap(), &[JsValue::Object(1)])
+            .unwrap();
+        assert_eq!(whole, true.into(), "with {room} bytes of room");
+    }
+    assert!(refused > 0, "no room was too little");
+}
+
+/// Whatever room the first registration failed for, one that has room
+/// gives signals their `connect` and `disconnect`.
+#[test]
+fn a_connect_install_refused_room_is_made_again() {
+    let def = ljos_js::TypeDef {
+        plain: true,
+        ..Default::default()
+    };
+    let most = cost(&def) * 2;
+    let mut refused = 0;
+    for room in (0..=most).step_by(8) {
+        let host = small(64);
+        assert!(host.set_memory_limit(Some(live(&host) + room)));
+        refused += usize::from(host.register_type(&def).is_err());
+        assert!(host.set_memory_limit(Some(64 * MIB)));
+        host.register_type(&def).unwrap();
+        let installed = eval_num(
+            &host,
+            "['connect', 'disconnect'].filter(n => typeof Function.prototype[n] === 'function').length",
+        );
+        assert_eq!(installed.unwrap(), 2.0, "after {room} bytes of room");
+    }
+    assert!(refused > 0, "no room was too little");
+}
+
 #[test]
 fn an_error_thrown_after_a_caught_refusal_is_the_scripts_own() {
     let host = JsHost::new(JsConfig {
