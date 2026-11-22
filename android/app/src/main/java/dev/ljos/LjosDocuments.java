@@ -337,7 +337,9 @@ public final class LjosDocuments {
                         reading.remove(code);
                     }
                 }
-            } catch (IOException | SecurityException e) {
+            } catch (IOException | RuntimeException e) {
+                // A provider's own exception is thrown again here, in our
+                // process: uncaught, it would end the application.
                 Log.w("ljos", "the document " + uri + " was not read", e);
                 remove(dir);
                 return null;
