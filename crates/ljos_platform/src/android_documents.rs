@@ -60,7 +60,13 @@ impl Picker {
 /// filter's first: the document is created as the first one's type when its
 /// name says no other. `None` when it offers every document.
 pub fn extensions(request: &DialogRequest) -> Option<Vec<String>> {
-    if request.filters.is_empty() || request.filters.iter().any(|f| f.takes_every_file()) {
+    let offers_every = request.filters.is_empty()
+        || request.filters.iter().any(|f| {
+            // A pattern the picker can't offer by type (`README`, `report*`)
+            // would be greyed out, and it has no chooser to pick the filter.
+            f.takes_every_file() || f.extensions().len() != f.patterns.len()
+        });
+    if offers_every {
         return None;
     }
     let selected = request
@@ -78,9 +84,24 @@ pub fn extensions(request: &DialogRequest) -> Option<Vec<String>> {
             out.push(ext);
         }
     }
-    // A filter of names alone (`README`), which the picker cannot offer
-    // by type: offer every document.
     (!out.is_empty()).then_some(out)
+}
+
+/// The extensions the Java side is handed for their types. A save offers
+/// nothing and creates one document, so it has its selected filter's first
+/// alone (the first filter's where none is selected): what the others can't
+/// say as a type takes nothing from it.
+pub fn type_extensions(request: &DialogRequest) -> Vec<String> {
+    if request.kind != Some(DialogKind::SaveFile) {
+        return extensions(request).unwrap_or_default();
+    }
+    request
+        .selected_filter
+        .and_then(|index| request.filters.get(index))
+        .or(request.filters.first())
+        .and_then(|f| f.extensions().into_iter().next())
+        .map(|ext| vec![ext.to_ascii_lowercase()])
+        .unwrap_or_default()
 }
 
 /// What the picker's answer, as the Java side hands it, chose: one line a
@@ -160,7 +181,7 @@ mod java {
     use ljos_jni::jni::{EnvUnowned, jni_sig, jni_str};
     use ljos_jni::{app_class, with_java};
 
-    use super::{Picker, chosen, extensions, remove_copies, suggested_name};
+    use super::{Picker, chosen, remove_copies, suggested_name, type_extensions};
     use crate::dialogs::{DialogAnswer, DialogReply, DialogRequest, DialogService};
 
     /// Android's document picker as the system's file and folder dialogs.
@@ -192,7 +213,7 @@ mod java {
     /// Starts the picker; false when there is no activity to start it from
     /// or the Java side refused.
     fn start(picker: Picker, request: &DialogRequest, code: i32) -> bool {
-        let types = extensions(request).unwrap_or_default().join("\n");
+        let types = type_extensions(request).join("\n");
         let name = suggested_name(request);
         with_java(|env, context| {
             let class = app_class(env, context, jni_str!("dev.ljos.LjosDocuments"))?;
@@ -346,6 +367,38 @@ mod tests {
             None
         );
         assert_eq!(extensions(&filtered(&["Readme (README)"])), None);
+        // One that can't be said as an extension, beside one that can.
+        for other in [
+            "Makefiles (Makefile)",
+            "Reports (report*)",
+            "C (*.[ch])",
+            "Docs (README *.md)",
+        ] {
+            assert_eq!(
+                extensions(&filtered(&["Text (*.txt)", other])),
+                None,
+                "{other}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_save_has_its_type_whatever_the_picker_could_offer() {
+        let save = |filters: &[&str], index| {
+            type_extensions(&DialogRequest {
+                kind: Some(DialogKind::SaveFile),
+                selected_filter: index,
+                ..filtered(filters)
+            })
+        };
+        let all = ["Text (*.txt)", "All files (*)"];
+        assert_eq!(save(&all, Some(0)), ["txt"]);
+        assert_eq!(save(&all, None), ["txt"]);
+        assert_eq!(save(&all, Some(7)), ["txt"]);
+        assert!(save(&all, Some(1)).is_empty());
+        assert_eq!(save(&["Make (Makefile)", "Text (*.TXT)"], Some(1)), ["txt"]);
+        // Another filter's unknown extension doesn't take this one's type.
+        assert_eq!(save(&["Own (*.zzq)", "PNG (*.png)"], Some(1)), ["png"]);
     }
 
     #[test]
