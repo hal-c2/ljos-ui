@@ -40,6 +40,8 @@ unsafe extern "C" {
     fn JS_SetMallocCap(rt: *mut rquickjs::qjs::JSRuntime, cap: usize);
     fn JS_MallocCapRefused(rt: *mut rquickjs::qjs::JSRuntime) -> bool;
     fn JS_SetMallocCapRefused(rt: *mut rquickjs::qjs::JSRuntime, refused: bool);
+    fn JS_PauseMallocCap(rt: *mut rquickjs::qjs::JSRuntime) -> usize;
+    fn JS_ResumeMallocCap(rt: *mut rquickjs::qjs::JSRuntime, since: usize, keep: bool);
 }
 
 /// What the runtime went through in a run: the most it held, in the
@@ -102,6 +104,21 @@ impl MallocPeak {
         unsafe { JS_SetMallocCap(self.rt, cap.unwrap_or(0)) };
     }
 
+    /// Begins what is not the dispatch's: an engine's registration of a
+    /// type of its own (`TypeDef::engine_owned`). Until the guard goes,
+    /// only the limit holds it. QuickJS ends that sooner when it throws,
+    /// before it makes the error, as making one can run the script's
+    /// `Error.prepareStackTrace`; nothing else begun here may run script.
+    pub(crate) fn outside_share(&self) -> OutsideShare<'_> {
+        // SAFETY: a live runtime (`of`).
+        let since = unsafe { JS_PauseMallocCap(self.rt) };
+        OutsideShare {
+            peak: self,
+            since,
+            keep: false,
+        }
+    }
+
     /// Whether room was refused for being past the cap since it was last
     /// cleared ([`MallocPeak::clear_over_share`]).
     pub(crate) fn over_share(&self) -> bool {
@@ -133,6 +150,30 @@ impl MallocPeak {
         // SAFETY: a live runtime (`of`).
         let now = unsafe { JS_NullErrorCount(self.rt) };
         now != self.nulls_from.get()
+    }
+}
+
+/// While it lives, what is made is not the dispatch's
+/// ([`MallocPeak::outside_share`]).
+pub(crate) struct OutsideShare<'a> {
+    peak: &'a MallocPeak,
+    since: usize,
+    keep: bool,
+}
+
+impl OutsideShare<'_> {
+    /// Ends it with what was made kept: the cap moves up by as much. One
+    /// dropped without this moves nothing, so what a failure left is the
+    /// dispatch's.
+    pub(crate) fn keep(mut self) {
+        self.keep = true;
+    }
+}
+
+impl Drop for OutsideShare<'_> {
+    fn drop(&mut self) {
+        // SAFETY: a live runtime (`of`).
+        unsafe { JS_ResumeMallocCap(self.peak.rt, self.since, self.keep) };
     }
 }
 

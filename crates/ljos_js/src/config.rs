@@ -35,6 +35,15 @@ pub struct JsConfig {
     /// fails alone instead of filling the heap for every other. Each
     /// promise job [`crate::JsHost::pump_jobs`] runs is a dispatch of its
     /// own, with its own share; a run nested in a dispatch shares its cap.
+    /// The share covers what scripts allocate and what they cause to be
+    /// made, the registrations of types declared in QML or made from names
+    /// a script gives among them. It leaves out one thing: the registration
+    /// of a type of the engine's own ([`crate::TypeDef::engine_owned`]),
+    /// which any dispatch may be the first to need and which happens once.
+    /// That is held to the heap's limit only, and the dispatch has as much
+    /// of its share left after it as before. One that fails is back under
+    /// the share from its first error, before making that error can run
+    /// script, and what it left is the dispatch's.
     /// A loop that awaits between allocations is a job per turn, so a
     /// share does not stop it growing the heap over many turns.
     /// `None` lets a dispatch take all the room there is.

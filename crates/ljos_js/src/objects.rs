@@ -52,6 +52,12 @@ pub struct TypeDef {
     /// The type whose prototype's entries this one's is given, listed
     /// before its own: only what differs is given here.
     pub base: Option<HostTypeId>,
+    /// One of a fixed set of types, each registered once and never let go,
+    /// so making it is no dispatch's share of the heap
+    /// (`JsConfig::dispatch_heap_share`). Never set for a type a script can
+    /// cause more of: one declared in QML, or made from names a script
+    /// gives.
+    pub engine_owned: bool,
 }
 
 /// Failure of a host callback.

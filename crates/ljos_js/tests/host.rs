@@ -1332,6 +1332,171 @@ fn a_fragmented_heap_shares_the_room_the_limit_leaves() {
     );
 }
 
+/// A type of `props` properties, the engine's own or one a script can
+/// have made.
+fn wide(props: u32, engine_owned: bool) -> ljos_js::TypeDef {
+    ljos_js::TypeDef {
+        props: (0..props)
+            .map(|i| ljos_js::PropDef {
+                name: format!("wide{i}"),
+                id: i,
+                writable: true,
+            })
+            .collect(),
+        engine_owned,
+        ..Default::default()
+    }
+}
+
+/// What the heap holds once collected, in the limit's units.
+fn live(host: &JsHost) -> usize {
+    host.collect_now();
+    host.memory_stats().unwrap().malloc_size
+}
+
+/// What registering `def` takes of a heap.
+fn cost(def: &ljos_js::TypeDef) -> usize {
+    let host = small(64);
+    let before = live(&host);
+    host.register_type(def).unwrap();
+    live(&host) - before
+}
+
+/// The engine registers a type of its own once, when a script first meets
+/// it, whichever dispatch that is: the type is not that dispatch's, which
+/// still gets its whole share and no more.
+#[test]
+fn the_engines_registration_in_a_dispatch_leaves_the_share_to_the_script() {
+    let def = wide(2000, true);
+    let cost = cost(&def);
+    let host = JsHost::new(JsConfig {
+        memory_limit: Some(64 * MIB),
+        dispatch_heap_share: Some(0.25),
+        ..JsConfig::default()
+    })
+    .unwrap();
+    // The share is half the type; the limit has room for two.
+    assert!(host.set_memory_limit(Some(live(&host) + cost * 2)));
+    let mut registered = None;
+    let mut named = None;
+    let run = host.enter("run", host.config().slice, |s| {
+        let ty = host.register_type(&def);
+        if let Ok(id) = &ty {
+            named = Some(host.name_type(*id, "Wide"));
+        }
+        registered = Some(ty);
+        s.eval::<(), _>(format!("globalThis.got = 'x'.repeat({}).length", cost / 4))?;
+        s.eval::<f64, _>(format!("'x'.repeat({}).length", cost / 4 * 3))
+    });
+    registered.unwrap().unwrap();
+    named.unwrap().unwrap();
+    assert!(matches!(run, Err(JsFault::JsOutOfMemory { .. })), "{run:?}");
+    assert_eq!(eval_num(&host, "got").unwrap(), (cost / 4) as f64);
+}
+
+#[test]
+fn the_engines_registration_is_held_to_the_heap_limit() {
+    let def = wide(2000, true);
+    let cost = cost(&def);
+    let host = small(64);
+    let limit = live(&host) + cost / 2;
+    assert!(host.set_memory_limit(Some(limit)));
+    let mut registered = None;
+    host.enter("run", host.config().slice, |_| {
+        registered = Some(host.register_type(&def));
+        Ok(())
+    })
+    .unwrap();
+    let registered = registered.unwrap();
+    assert!(
+        matches!(registered, Err(JsFault::JsOutOfMemory { .. })),
+        "{registered:?}"
+    );
+    assert!(live(&host) <= limit);
+}
+
+/// A script can have types made without end: one declared in QML each
+/// time it creates from source, a row type for each set of members.
+#[test]
+fn repeated_registrations_a_script_causes_are_held_to_the_share() {
+    let def = wide(100, false);
+    let cost = cost(&def);
+    let host = JsHost::new(JsConfig {
+        memory_limit: Some(64 * MIB),
+        dispatch_heap_share: Some(0.5),
+        ..JsConfig::default()
+    })
+    .unwrap();
+    let before = live(&host);
+    let room = cost * 40;
+    assert!(host.set_memory_limit(Some(before + room)));
+    let mut refused = None;
+    host.enter("run", host.config().slice, |_| {
+        refused = (0..40).find_map(|_| host.register_type(&def).err());
+        Ok(())
+    })
+    .unwrap();
+    assert!(
+        matches!(refused, Some(JsFault::JsOutOfMemory { .. })),
+        "{refused:?}"
+    );
+    let held = live(&host);
+    assert!(
+        held <= before + room / 2 + cost,
+        "{held} held, from {before} with {room} of room"
+    );
+}
+
+/// A registration can fail and run script as it does (making an error
+/// calls `prepareStackTrace`), or fail at the limit: either way, however
+/// often, the script is held to its share and no room is given back.
+#[test]
+fn repeated_failed_registrations_are_no_way_past_the_share() {
+    let host = JsHost::new(JsConfig {
+        memory_limit: Some(64 * MIB),
+        dispatch_heap_share: Some(0.25),
+        ..JsConfig::default()
+    })
+    .unwrap();
+    let gone = host.register_type(&wide(1, true)).unwrap();
+    host.unregister_type(gone);
+    let mut stale = wide(1, true);
+    stale.base = Some(gone);
+    // One name past the limit, so it fails with room left under it.
+    let mut too_big = wide(1, true);
+    too_big.props[0].name = "n".repeat(2 * MIB);
+    host.enter("setup", host.config().slice, |s| {
+        s.eval::<(), _>(
+            "globalThis.stash = []; globalThis.calls = 0; \
+             Error.prepareStackTrace = () => { \
+                 calls++; \
+                 try { stash.push('y'.repeat(32 * 1024)) } catch (e) {} \
+                 return '' \
+             }",
+        )
+    })
+    .unwrap();
+    let before = live(&host);
+    assert!(host.set_memory_limit(Some(before + MIB)));
+    let mut registered = 0;
+    let run = host.enter("run", host.config().slice, |s| {
+        for _ in 0..40 {
+            registered += usize::from(host.register_type(&too_big).is_ok());
+            registered += usize::from(host.register_type(&stale).is_ok());
+        }
+        s.eval::<(), _>("stash.push('z'.repeat(384 * 1024))")
+    });
+    assert_eq!(registered, 0);
+    assert!(matches!(run, Err(JsFault::JsOutOfMemory { .. })), "{run:?}");
+    let held = live(&host);
+    assert!(
+        held <= before + MIB / 4 + 16 * 1024,
+        "{held} held, from {before}"
+    );
+    assert!(host.set_memory_limit(Some(64 * MIB)));
+    assert!(eval_num(&host, "calls").unwrap() >= 1.0, "no script ran");
+}
+
 #[test]
 fn an_error_thrown_after_a_caught_refusal_is_the_scripts_own() {
     let host = JsHost::new(JsConfig {
