@@ -124,13 +124,15 @@ Save the three files in one directory and run `ljos run .`. The status line show
 |---|---|---|
 | `source` | `url` | The user's shell, resolved against the file that sets it. |
 | `fallback` | `url` | The app's own shell, shown when the source's does not work. |
-| `error` | `string`, readonly | Why the source's shell is not shown, as `file:line: message`. Empty while it is shown. |
+| `error` | `string`, readonly | Why the source's shell is not shown, as `file:line: message`. Empty once it is shown and, after a retry from the fallback, has been drawn without a fault. |
 | `item` | `Item`, readonly | The shell shown now. |
 | `status` | `ShellLoader.Status`, readonly | `ShellLoader.Null` (neither a source nor a fallback), `Ready` (the source's shell is shown), `Fallback` (the fallback is shown and `error` says why) or `Error` (neither works). |
 
 The loader makes the source's shell at once. It discards it and shows the fallback when the file does not compile, or when something in it faults while it is made: an exception in a binding or handler, or a panic in a native type. A fault in the user's shell later on does the same, because the loader is the boundary around its source's shell. When the fallback fails too, nothing is shown, `status` is `Error`, and `error` gives both reasons, one per line. Setting a new `source` or `fallback` tries again, and `error` clears once the source's shell is shown.
 
 Its `reload()` reads the user's files again and applies what changed, exactly as a save the watch saw is applied: the shell is made once, with the app's state kept, and a file that does not compile leaves what runs as it was, with the same fault. It is for a Reload button, an app that keeps no watch, or a save its watch missed. When the files are as they were, the shell that runs is kept and the app is told so (`Report::Unchanged`). Unless a file failed, a loader that shows its fallback then tries its source again, so a new theme the shell works with brings it back too. Where nothing reads the user's files, `reload()` only tries the source again.
+
+Such a retry keeps the fallback, unseen, until the shell has been read once, because a shell can be made and still fail as it is first drawn. In that short time `status` is `Ready` and `error` still holds the old reason, so test `status` to know which shell is in `item`. If the shell fails then, the same fallback comes back with what the user did in it. Both shells take memory meanwhile: a shell that fits only without the fallback stays on the fallback. A fault after that first frame, or a change of `source` or `fallback`, starts from a new fallback.
 
 `ShellLoader` is not a `Loader`. A `Loader` holds one URL and only logs why it could not load; a `ShellLoader` holds two and says why in a property the app can show.
 

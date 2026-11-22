@@ -376,9 +376,24 @@ Feature: A ShellLoader shows a user's shell, or the application's own when the u
     `reload()` asks whatever reads the application's files to read them
     again (see features/hot-reload/user-qml.feature). Where nothing reads
     them, or they are as they were, a loader showing its fallback tries its
-    source again, and the fallback goes only once the source's shell is
-    shown, through the tries after a resource fault too; a loader with no
+    source again, as it does after a resource fault; a loader with no
     source keeps its fallback, and one showing its source's shell keeps it.
+
+    Such a try holds the fallback until the first read of the source's
+    shell is over: its window's first frame, that of the scene showing it,
+    or, where none will show it, any frame or delivery of faults. The
+    `status` is Ready meanwhile and the `error` stays. Three outcomes: a
+    fault in that time shows the same fallback object again, with the new
+    reason; every other end destroys it, save a window a host shows still
+    because it refused the swap, which goes once something takes its
+    place; and a fault after that time makes a new fallback. A change of
+    `source` or `fallback` holds nothing.
+
+    The cost: both shells are alive through that read, so a source that
+    fits in the heap only without the fallback stays on the fallback and
+    is tried at the backoff. The limits: a host that neither frames nor
+    refuses a visible Window holds the fallback until an event, and a
+    fault in content made after the first frame gets a new fallback.
 
     Scenario: A shell whose fault went away is shown in place of the fallback once the loader is asked to load again
       Given the file "Shell.qml":

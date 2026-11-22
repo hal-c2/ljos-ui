@@ -9,6 +9,15 @@
 //! is the boundary of its source's shell. Changing `source` or `fallback`
 //! tries again, and an `error` goes once the source's shell is shown.
 //!
+//! A try from a shown fallback, after `reload()` or a resource fault,
+//! holds that fallback until the shell's first read is over
+//! ([`first_read`]): made is not working, as bindings are lazy. Meanwhile
+//! `item` is the shell, `status` is Ready and `error` still says why the
+//! fallback was shown. A fault in that time shows the same object again;
+//! otherwise it is destroyed and `error` goes. A changed `source` or
+//! `fallback` holds nothing. Both shells are in the heap through that
+//! read, so a source that fits only without the fallback is not shown.
+//!
 //! A resource fault (the script heap ran out, the shell could not be made
 //! in its time) is not the shell's own: the fallback stands in for it
 //! while the loader waits as a Loader does ([`Backoff`]: a second, twice
@@ -103,13 +112,15 @@ pub struct ShellLoader {
     #[qml(notify)]
     pub fallback: Url,
     /// Why the source's shell is not shown: `file:line: message`. Empty
-    /// while it is.
+    /// while it is, but through the first read of one tried again from
+    /// the fallback.
     #[qml(notify, readonly)]
     pub error: Atom,
     /// The shell shown.
     #[qml(notify, readonly)]
     pub item: Option<ObjectId>,
-    /// [`shell_status`].
+    /// [`shell_status`]. Ready, with the `error` there was, through the
+    /// first read of a shell tried again from the fallback.
     #[qml(notify, readonly, enumeration = "Status")]
     pub status: i32,
     #[qml(skip)]
@@ -184,7 +195,8 @@ impl ShellLoader {
 /// Tries the source again, as asked. A source's shell that is shown is
 /// kept, with what the user did in it: its files are as they were, or
 /// what changed would have made it again. One that did not work replaces
-/// the fallback once it does, and says why again when it still does not.
+/// the fallback once it was read without a fault, and says why again when
+/// it still does not work.
 pub(crate) fn retry(e: &Engine, me: ObjectId) {
     if !e.is_alive(me) || with_run(e, me, |r| r.completed) != Some(true) {
         return;
