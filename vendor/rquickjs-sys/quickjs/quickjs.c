@@ -371,6 +371,10 @@ struct JSRuntime {
     /* Ljós: malloc_cap is not checked: the host is making what is not the
        dispatch's (JS_PauseMallocCap). */
     bool malloc_cap_paused;
+    /* Ljós: the collections js_trigger_gc ran, and the bytes they freed in
+       all (JS_TriggeredGC). */
+    uint64_t triggered_gc_runs;
+    size_t triggered_gc_freed;
     /* Ljós: how many times JS_ThrowError2 threw `null` for want of heap to
        make its error, so that `null` is told from a script's own. */
     uint64_t null_errors;
@@ -1715,7 +1719,15 @@ static void js_trigger_gc(JSRuntime *rt, size_t size)
             printf("GC: size=%zd\n", rt->malloc_state.malloc_size);
         }
 #endif
-        JS_RunGC(rt);
+        {
+            /* Ljós: counted, with what it freed (JS_TriggeredGC). */
+            size_t before = rt->malloc_state.malloc_size;
+
+            JS_RunGC(rt);
+            rt->triggered_gc_runs++;
+            if (before > rt->malloc_state.malloc_size)
+                rt->triggered_gc_freed += before - rt->malloc_state.malloc_size;
+        }
         rt->malloc_gc_threshold = rt->malloc_state.malloc_size +
             (rt->malloc_state.malloc_size >> 1);
         /* ljos: once what lives is past two thirds of the limit, half again
@@ -2546,6 +2558,15 @@ void JS_ResumeMallocCap(JSRuntime *rt, size_t since, bool keep)
     rt->malloc_cap_paused = false;
     if (keep && rt->malloc_cap != 0 && held > since)
         rt->malloc_cap += held - since;
+}
+
+/* Ljós: how many collections js_trigger_gc ran, and in `freed` what they
+   freed in all: the host tells by it whether lowering the threshold paid
+   (MallocPeak::collect_before). Declared by ljos_js itself. */
+uint64_t JS_TriggeredGC(JSRuntime *rt, size_t *freed)
+{
+    *freed = rt->triggered_gc_freed;
+    return rt->triggered_gc_runs;
 }
 
 /* Ljós: starts the high-water mark of malloc_size again from what is held

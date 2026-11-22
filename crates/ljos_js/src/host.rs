@@ -4517,7 +4517,88 @@ fn in_a_cycle<'js>(o: &Object<'js>) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{called_member, calls, local_alias};
+    use std::time::Duration;
+
+    use super::{JsHost, called_member, calls, local_alias};
+    use crate::{JsConfig, JsFault, Slice};
+
+    const MIB: usize = 1024 * 1024;
+
+    const LONG: Slice = Slice {
+        soft: Duration::from_secs(5),
+        hard: Duration::from_secs(20),
+    };
+
+    /// A host of a 64 MiB limit with all but about `room` bytes of it live,
+    /// and how much room that left in the limit's units.
+    fn filled(room: usize) -> (JsHost, usize) {
+        let host = JsHost::new(JsConfig {
+            memory_limit: Some(64 * MIB),
+            ..JsConfig::default()
+        })
+        .unwrap();
+        host.enter("keep", LONG, |s| s.eval::<(), _>("globalThis.kept = []"))
+            .unwrap();
+        let live = 64 * MIB - room;
+        loop {
+            host.peak.mark();
+            let held = host.peak.get();
+            if held >= live {
+                host.collect_now();
+                host.peak.mark();
+                let left = (64 * MIB).saturating_sub(host.peak.get());
+                return (host, left);
+            }
+            let arrays = ((live - held) / (2 * 16 * 1024)).clamp(1, 64);
+            let keep =
+                format!("for (let i = 0; i < {arrays}; i++) kept.push(new Array(1000).fill(i))");
+            host.enter("keep", LONG, |s| s.eval::<(), _>(keep.as_str()))
+                .unwrap();
+        }
+    }
+
+    /// Collections in 20 dispatches like `run`, by QuickJS or by the host.
+    fn collections_in_20(host: &JsHost, run: &str, runs_out: bool) -> u64 {
+        let ran = || host.peak.triggered().runs + host.collections();
+        let before = ran();
+        for i in 0..20 {
+            let out = host.enter("again", LONG, |s| s.eval::<(), _>(run));
+            if runs_out {
+                assert!(
+                    matches!(out, Err(JsFault::JsOutOfMemory { .. })),
+                    "dispatch {i}: {out:?}"
+                );
+            } else if let Err(fault) = out {
+                panic!("dispatch {i}: {fault:?}");
+            }
+        }
+        ran() - before
+    }
+
+    /// Collecting ahead of a refusal is for garbage. Where it found none,
+    /// like dispatches after it do not each collect the whole heap again:
+    /// not those that come near their share and succeed, close to the limit
+    /// or far from it, and not those that are refused.
+    #[test]
+    fn collecting_ahead_of_the_share_stops_where_it_frees_nothing() {
+        for (room, part) in [(MIB, 0.7), (6 * MIB, 0.7), (56 * MIB, 0.7)] {
+            let (host, left) = filled(room);
+            // Objects all the way up: QuickJS only collects as it makes one.
+            let piece = (left as f64 * part / 64.0) as usize;
+            let run = format!(
+                "(() => {{ const held = []; \
+                 for (let i = 0; i < 64; i++) held.push({{ bytes: new ArrayBuffer({piece}) }}); \
+                 }})()"
+            );
+            let collected = collections_in_20(&host, &run, false);
+            assert!(collected <= 5, "{room} bytes of room: {collected} in 20");
+        }
+        let (host, _) = filled(256 * 1024);
+        let run =
+            "(() => { const held = []; for (;;) held.push({ bytes: new ArrayBuffer(4096) }); })()";
+        let collected = collections_in_20(&host, run, true);
+        assert!(collected <= 5, "refused each time: {collected} in 20");
+    }
 
     #[test]
     fn a_call_is_told_from_a_read() {
