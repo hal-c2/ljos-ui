@@ -281,6 +281,7 @@ pub(crate) fn register(engine: &Engine) {
 enum Want {
     Ready(Arc<Compiled>),
     Compile(Located),
+    CompileKept(ljos_shader::Kept),
 }
 
 /// Finds both shaders of `me` and makes its program: at once when each is
@@ -315,6 +316,22 @@ fn prepare(e: &Engine, me: ObjectId) {
         }
         let resolved = e.resolve_url(me, url.as_str());
         let platform = Platform::of(e);
+        // What a pack carries is registered, and is no file.
+        let registered = |url: &str| platform.resource(url).map(|bytes| bytes.to_vec());
+        if let Some(found) = ljos_shader::Kept::find(&resolved, registered) {
+            let want = found.and_then(|kept| {
+                if kept.is_artifact() {
+                    kept.load(*stage).map(Want::Ready)
+                } else {
+                    Ok(Want::CompileKept(kept))
+                }
+            });
+            match want {
+                Ok(w) => wants.push(w),
+                Err(err) => return fail(e, me, &resolved, &err),
+            }
+            continue;
+        }
         let located = match (platform.mounted_file(&resolved), url_path(&resolved)) {
             (Some(path), _) => ljos_shader::locate(&path),
             // A sandboxed application's `/` is a directory of its own.
@@ -359,6 +376,7 @@ fn prepare(e: &Engine, me: ObjectId) {
             .map(|(w, stage)| match w {
                 Want::Ready(c) => Ok(c),
                 Want::Compile(at) => ljos_shader::load(&at, stage),
+                Want::CompileKept(kept) => kept.load(stage),
             })
             .collect();
         reply.send(move |e| {
@@ -384,7 +402,7 @@ fn prepare(e: &Engine, me: ObjectId) {
 fn ready(wants: Vec<Want>) -> [Arc<Compiled>; 2] {
     let mut it = wants.into_iter().map(|w| match w {
         Want::Ready(c) => c,
-        Want::Compile(_) => unreachable!("every stage is had"),
+        Want::Compile(_) | Want::CompileKept(_) => unreachable!("every stage is had"),
     });
     let v = it.next().unwrap_or_else(ljos_shader::default_vertex);
     let f = it.next().unwrap_or_else(ljos_shader::default_fragment);

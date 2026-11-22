@@ -253,3 +253,49 @@ Rectangle {
     }
     assert_eq!(corners(&painted(&s, fx)), [RED, GREEN, BLUE, WHITE]);
 }
+
+/// A `ShaderEffect` of the shader at `url`, which `kept` registers as a
+/// pack's files are, once it has compiled or failed.
+fn effect_of_kept(url: &str, kept: &[(&str, &[u8])]) -> (f64, String) {
+    let e = engine();
+    let platform = ljos_platform::Platform::of(&e);
+    for (at, bytes) in kept {
+        platform.register_kept_resource(at, bytes.to_vec());
+    }
+    let root = load(
+        &e,
+        &QUADS.replace(
+            "property var source: s }",
+            &format!("property var source: s; fragmentShader: \"{url}\" }}"),
+        ),
+    );
+    let fx = find(&e, root, "fx");
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while platform.awaited() > 0 && std::time::Instant::now() < until {
+        platform.deliver(&e);
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    platform.deliver(&e);
+    (
+        num(&e, fx, "status"),
+        get(&e, fx, "log").to_js_string().to_string(),
+    )
+}
+
+#[test]
+fn a_compiled_shader_a_pack_carries_is_found_by_its_address() {
+    let artifact = include_bytes!("../../ljos_shader/defaults/default.frag.ljsh");
+    let (status, log) = effect_of_kept(
+        "qrc:/s/fx.frag.qsb",
+        &[("qrc:/s/fx.frag.ljsh", artifact.as_slice())],
+    );
+    assert_eq!(status, 0.0, "{log}");
+}
+
+#[cfg(feature = "shader-compile")]
+#[test]
+fn a_shader_source_a_pack_carries_is_found_by_its_address() {
+    let source = ljos_shader::DEFAULT_FRAGMENT_SOURCE.as_bytes();
+    let (status, log) = effect_of_kept("qrc:/s/fx.frag", &[("qrc:/s/fx.frag", source)]);
+    assert_eq!(status, 0.0, "{log}");
+}
