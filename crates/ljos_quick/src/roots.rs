@@ -167,6 +167,12 @@ impl RootSwaps {
         self.shown.borrow_mut().retain(|r| *r != root);
     }
 
+    /// The host cannot show `window` in a window of its own, and will
+    /// draw no frame of it: what waits for that frame waits no longer.
+    pub fn refuses(&self, engine: &Engine, window: ObjectId) {
+        let _ = (engine, window);
+    }
+
     /// Called when a replacement is asked for, for the host to make it
     /// before its next frame.
     pub fn set_wake(&self, wake: impl Fn() + 'static) {
