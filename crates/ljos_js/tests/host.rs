@@ -1433,7 +1433,13 @@ fn a_refusal_over_the_share_is_running_out_to_the_heap_pressure() {
     assert_eq!(p.limit, Some(limit));
     assert!(!p.warned, "{p:?}");
     assert!(p.growers.is_empty(), "the collection let them go: {p:?}");
-    assert_eq!(p.after_last_collection, held);
+    // Measured by the collection that followed the refusal, with all the
+    // hog holds still live. What the host allocates or frees between that
+    // and the reading is not the test's, and is far under a 64th of the limit.
+    assert!(
+        p.after_last_collection > limit / 4 && p.after_last_collection.abs_diff(held) < limit / 64,
+        "{p:?}, {held} held"
+    );
 }
 
 /// A dispatch's share is of the room under the limit the heap has now,
@@ -3222,6 +3228,50 @@ fn reads_across_many_objects_count_against_one_budget() {
         cut.truncated,
         "5,050 reads under a budget of 1,000: {cut:?}"
     );
+}
+
+/// The budget bounds the walk's own work and memory too: a value wider
+/// than it is measured without a table of all its keys, which would take
+/// megabytes the heap may not have.
+#[test]
+fn a_wide_value_is_walked_without_a_table_of_its_keys() {
+    let slice = Slice {
+        soft: Duration::from_secs(5),
+        hard: Duration::from_secs(10),
+    };
+    // A key's entry in such a table is 8 bytes: 8 MiB and 2 MiB of them.
+    for (width, make) in [
+        (
+            1usize << 20,
+            "(n => { const a = []; for (let i = 0; i < n; i++) a.push(i); return a })",
+        ),
+        (
+            1usize << 18,
+            "(n => { const o = {}; for (let i = 0; i < n; i++) o['k' + i] = i; return o })",
+        ),
+    ] {
+        let host = JsHost::new(JsConfig {
+            memory_limit: Some(256 * MIB),
+            dispatch_heap_share: None,
+            ..JsConfig::default()
+        })
+        .unwrap();
+        let wide = host
+            .enter("make", slice, |s| {
+                let v = s.eval::<rquickjs::Value, _>(format!("{make}({width})"))?;
+                Ok(s.keep(v))
+            })
+            .unwrap();
+        assert!(host.set_memory_limit(Some(host.heap_bytes() + MIB)));
+        let held = host
+            .enter("walk", slice, |s| Ok(s.held_by([vec![&wide]], 100)))
+            .expect("a walk of 100 reads needs no room for every key");
+        assert!(held.truncated, "{held:?}");
+        assert!(
+            held.bytes[0] >= width * 16,
+            "each of {width} slots is counted: {held:?}"
+        );
+    }
 }
 
 /// A string doubled by concatenation is a chain of halves sharing one
