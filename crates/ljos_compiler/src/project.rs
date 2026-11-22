@@ -1002,7 +1002,11 @@ impl<O: TypeOracle> Project<O> {
                     project.module_dirs.insert(dir_key.clone());
                 }
                 let (described, kept) = described(dir, names);
-                resources.extend(kept.into_iter().filter(|(_, path)| path.is_file()));
+                resources.extend(
+                    kept.into_iter()
+                        .filter(|file| file.path.is_file())
+                        .map(|file| file.after(found.len())),
+                );
                 found.extend(
                     described
                         .into_iter()
@@ -1012,6 +1016,7 @@ impl<O: TypeOracle> Project<O> {
         }
         let counted = counted(&found, aliases);
         let resource_dirs = addressed(&found, &counted);
+        let resources = named(&resources, &counted);
         let modules: Vec<(String, Module)> = found
             .into_iter()
             .map(|(dir, _, module)| (dir, module))
@@ -1248,17 +1253,101 @@ impl<O: TypeOracle> Project<O> {
     }
 }
 
+/// A file a build keeps inside the program, as its `CMakeLists.txt` says.
+struct Kept {
+    address: String,
+    path: PathBuf,
+    /// The place of the module that lists it (`RESOURCES`) among the
+    /// modules read with it; none for one kept by itself
+    /// (`qt_add_resources`).
+    module: Option<usize>,
+}
+
+impl Kept {
+    /// This file, its module counted among `before` more read ahead of it.
+    fn after(mut self, before: usize) -> Self {
+        self.module = self.module.map(|i| i + before);
+        self
+    }
+}
+
+/// The files of `kept` the program names by an address: each kept by
+/// itself, and each of a module an import sees.
+fn named(kept: &[Kept], counted: &[bool]) -> Vec<(String, PathBuf)> {
+    kept.iter()
+        .filter(|file| file.module.is_none_or(|i| counted[i]))
+        .map(|file| (file.address.clone(), file.path.clone()))
+        .collect()
+}
+
+/// What the builds under one of several roots keep inside the program
+/// ([`root_files`]).
+#[derive(Debug, Default)]
+pub struct RootFiles {
+    /// Every file they keep, whether or not it has an address: those of a
+    /// module no import sees are still beside its QML.
+    pub kept: Vec<PathBuf>,
+    /// The files the program names by an address, as [`resources`] gives
+    /// them.
+    pub resources: Vec<(String, PathBuf)>,
+    /// The modules by address, as [`resource_dirs`] gives them.
+    pub resource_dirs: Vec<(String, PathBuf)>,
+}
+
+/// What the builds under each of `roots` keep inside the program, for a
+/// program of all of them: which directory is a module's is chosen over
+/// the roots together, as [`Project::load_roots`] chooses it.
+///
+/// # Errors
+/// One of `roots` cannot be read, with its path.
+pub fn root_files(roots: &[&Path]) -> Result<Vec<RootFiles>, (PathBuf, std::io::Error)> {
+    let mut found = Vec::new();
+    let mut read = Vec::new();
+    for &root in roots {
+        let first = found.len();
+        let mut kept = Vec::new();
+        for (dir, names) in scan(root).map_err(|e| (root.to_owned(), e))? {
+            let Some(dir_key) = key_under(root, "", &dir) else {
+                continue;
+            };
+            let (modules, files) = described(&dir, &names);
+            kept.extend(
+                files
+                    .into_iter()
+                    .filter(|file| file.path.is_file())
+                    .map(|file| file.after(found.len())),
+            );
+            found.extend(
+                modules
+                    .into_iter()
+                    .map(|m| (dir_key.clone(), dir.clone(), m)),
+            );
+        }
+        read.push((first..found.len(), kept));
+    }
+    let counted = counted(&found, &Aliases::new());
+    Ok(read
+        .into_iter()
+        .map(|(modules, kept)| RootFiles {
+            resources: named(&kept, &counted),
+            resource_dirs: addressed(&found[modules.clone()], &counted[modules]),
+            kept: kept.into_iter().map(|file| file.path).collect(),
+        })
+        .collect())
+}
+
+fn files_of(root: &Path) -> std::io::Result<RootFiles> {
+    let mut files = root_files(&[root]).map_err(|(_, e)| e)?;
+    Ok(files.pop().unwrap_or_default())
+}
+
 /// The files a project's builds keep inside the program (`RESOURCES` of a
 /// module, `qt_add_resources`), by the address the program names each by
 /// (`qrc:/qt/qml/Thermostat/icons/close.svg`) and where each is on disk. A
-/// file the build names that is not there is left out.
+/// file the build names that is not there is left out, as is one of a
+/// module's directory an import does not see ([`resource_dirs`]).
 pub fn resources(root: &Path) -> std::io::Result<Vec<(String, PathBuf)>> {
-    let mut out = Vec::new();
-    for (dir, names) in scan(root)? {
-        out.extend(described(&dir, &names).1);
-    }
-    out.retain(|(_, path)| path.is_file());
-    Ok(out)
+    files_of(root).map(|files| files.resources)
 }
 
 /// Each module under `root` by the address a program names its files under
@@ -1269,19 +1358,7 @@ pub fn resources(root: &Path) -> std::io::Result<Vec<(String, PathBuf)>> {
 /// Where two directories describe one module, the one an import of it sees
 /// is the module's: the other's files are not at its address.
 pub fn resource_dirs(root: &Path) -> std::io::Result<Vec<(String, PathBuf)>> {
-    let mut found = Vec::new();
-    for (dir, names) in scan(root)? {
-        let Some(dir_key) = key_under(root, "", &dir) else {
-            continue;
-        };
-        found.extend(
-            described(&dir, &names)
-                .0
-                .into_iter()
-                .map(|m| (dir_key.clone(), dir.clone(), m)),
-        );
-    }
-    Ok(addressed(&found, &counted(&found, &Aliases::new())))
+    files_of(root).map(|files| files.resource_dirs)
 }
 
 /// Each module of `found` an import sees by its address, with its
@@ -1297,7 +1374,7 @@ fn addressed(found: &[(String, PathBuf, Module)], counted: &[bool]) -> Vec<(Stri
 
 /// The modules the `qmldir` and `CMakeLists.txt` of `dir` describe, and
 /// the files its `CMakeLists.txt` keeps inside the program.
-fn described(dir: &Path, names: &[String]) -> (Vec<Module>, Vec<(String, PathBuf)>) {
+fn described(dir: &Path, names: &[String]) -> (Vec<Module>, Vec<Kept>) {
     let read = |name: &str| {
         names
             .iter()
@@ -1315,11 +1392,7 @@ fn described(dir: &Path, names: &[String]) -> (Vec<Module>, Vec<(String, PathBuf
 /// The modules a directory's `qmldir` and `CMakeLists.txt` texts
 /// describe, and the files the latter keeps inside the program (under
 /// `dir`).
-fn described_by(
-    dir: &Path,
-    qmldir: Option<&str>,
-    cmake: Option<&str>,
-) -> (Vec<Module>, Vec<(String, PathBuf)>) {
+fn described_by(dir: &Path, qmldir: Option<&str>, cmake: Option<&str>) -> (Vec<Module>, Vec<Kept>) {
     let mut modules: Vec<Module> = Vec::new();
     let mut resources = Vec::new();
     if let Some(text) = qmldir {
@@ -1340,13 +1413,21 @@ fn described_by(
             };
             module.types.retain(|ty| !named(&ty.name));
         }
-        for module in &built {
+        for (i, module) in built.iter().enumerate() {
             for file in &module.resources {
-                resources.push((module.address(file), at(file)));
+                resources.push(Kept {
+                    address: module.address(file),
+                    path: at(file),
+                    module: Some(modules.len() + i),
+                });
             }
         }
         for kept in discover::kept(text) {
-            resources.push((kept.address, at(&kept.path)));
+            resources.push(Kept {
+                address: kept.address,
+                path: at(&kept.path),
+                module: None,
+            });
         }
         modules.extend(built);
     }

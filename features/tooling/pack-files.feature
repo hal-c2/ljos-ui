@@ -171,6 +171,47 @@ Feature: A pack carries the files its QML loads
         | address                          | file                 |
         | qrc:/qt/qml/Shapes/icons/dot.png | Shapes/icons/dot.png |
 
+    Scenario: A file kept by the build of a module no import sees is carried without its address
+      Given the file "Shapes/qmldir":
+        """
+        module Shapes
+        Ring 1.0 Ring.qml
+        """
+      And the file "Shapes/Ring.qml":
+        """qml
+        import QtQuick
+        Item {}
+        """
+      And the file "Shapes/CMakeLists.txt":
+        """
+        qt_add_qml_module(shapes URI Shapes RESOURCES data/new.csv)
+        """
+      And the file "Shapes/data/new.csv":
+        """
+        new
+        """
+      And the file "old/CMakeLists.txt":
+        """
+        qt_add_qml_module(old_shapes URI Shapes RESOURCES data/old.csv)
+        """
+      And the file "old/data/old.csv":
+        """
+        old
+        """
+      And the file "Main.qml":
+        """qml
+        import QtQuick
+        Item {}
+        """
+      When the project is packed carrying no other files
+      Then the pack carries the files:
+        | file                |
+        | Shapes/data/new.csv |
+        | old/data/old.csv    |
+      And the pack names its files at the addresses:
+        | address                         | file                |
+        | qrc:/qt/qml/Shapes/data/new.csv | Shapes/data/new.csv |
+
   Rule: The pack says which QML files did not compile
 
     Background:

@@ -323,3 +323,45 @@ fn a_modules_address_is_the_directory_an_import_sees() {
     let project = ljos_compiler::Project::open(root, Runtime::new()).expect("readable");
     assert_eq!(project.resource_dirs(), home.as_slice());
 }
+
+#[test]
+fn a_file_a_build_keeps_has_a_modules_address_only_where_an_import_sees_it() {
+    let dir = tempfile::tempdir().expect("a temporary directory");
+    let root = dir.path();
+    write_tree(
+        root,
+        &[
+            ("Shapes/qmldir", "module Shapes\nRing 1.0 Ring.qml\n"),
+            ("Shapes/Ring.qml", "import QtQuick\nItem {}\n"),
+            (
+                "Shapes/CMakeLists.txt",
+                "qt_add_qml_module(shapes URI Shapes RESOURCES new.csv)\n",
+            ),
+            ("Shapes/new.csv", "new\n"),
+            (
+                "old/CMakeLists.txt",
+                "qt_add_qml_module(old_shapes URI Shapes RESOURCES old.csv)\n\
+                 qt_add_resources(app data PREFIX /data FILES alone.csv)\n",
+            ),
+            ("old/old.csv", "old\n"),
+            ("old/alone.csv", "alone\n"),
+        ],
+    );
+    let mut named = vec![
+        (
+            "qrc:/qt/qml/Shapes/new.csv".to_owned(),
+            root.join("Shapes/new.csv"),
+        ),
+        // Kept by itself, so no module's selection touches it.
+        ("qrc:/data/alone.csv".to_owned(), root.join("old/alone.csv")),
+    ];
+    named.sort();
+
+    let mut found = ljos_compiler::resources(root).expect("readable");
+    found.sort();
+    assert_eq!(found, named);
+    let project = ljos_compiler::Project::open(root, Runtime::new()).expect("readable");
+    let mut opened = project.resources().to_vec();
+    opened.sort();
+    assert_eq!(opened, named);
+}

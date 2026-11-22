@@ -1129,7 +1129,11 @@ pub fn register_pack_files(engine: &Engine, source: &MapSource) {
         images.register_kept_resource(url, bytes.clone());
     };
     for (path, bytes) in source.resources() {
-        register(&source.resource_url(path), bytes);
+        // One the pack carries only for its address has that for its path,
+        // and is nowhere beside the QML.
+        if !path.starts_with("qrc:/") {
+            register(&source.resource_url(path), bytes);
+        }
     }
     for (address, path) in source.resource_addresses() {
         if let Some(bytes) = source.resource(path) {
