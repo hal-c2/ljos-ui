@@ -8,7 +8,7 @@ use std::collections::HashSet;
 use rquickjs::{Value, qjs};
 
 use crate::JsRef;
-use crate::host::{JS_CLASS_ARRAY, JS_CLASS_OBJECT, OwnNames, Scope};
+use crate::host::{JS_CLASS_ARRAY, JS_CLASS_OBJECT, Scope};
 
 /// [`Scope::held_by`]: about the bytes each group of values holds.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -20,8 +20,8 @@ pub struct Held {
     pub bytes: Vec<usize>,
     /// The values walked in all.
     pub values: usize,
-    /// The walk stopped at its budget, or a read failed, and what was left
-    /// was not counted: the bytes are then the least held.
+    /// The walk stopped at its budget and what was left was not counted:
+    /// the bytes are then the least held.
     pub truncated: bool,
 }
 
@@ -34,12 +34,8 @@ const STRING: usize = 16;
 
 unsafe extern "C" {
     // Ljós's patch to the vendored quickjs.c (vendor/QUICKJS.md).
-    fn JS_GetOwnPropertyIfMade(
-        ctx: *mut qjs::JSContext,
-        desc: *mut qjs::JSPropertyDescriptor,
-        obj: qjs::JSValue,
-        prop: qjs::JSAtom,
-    ) -> i32;
+    fn JS_GetOwnSlotCount(obj: qjs::JSValue, held: *mut u32) -> u32;
+    fn JS_GetOwnSlot(obj: qjs::JSValue, i: u32, a: *mut qjs::JSValue, b: *mut qjs::JSValue) -> i32;
     fn JS_GetStringParts(v: qjs::JSValue, a: *mut qjs::JSValue, b: *mut qjs::JSValue) -> i32;
 }
 
@@ -145,58 +141,34 @@ impl<'js> Scope<'js> {
             }
             return OBJECT + size as usize;
         }
-        // Only these two classes: their own properties are plain slots, and
-        // listing and reading them runs nothing a script or a host defined.
-        let flags =
-            (qjs::JS_GPN_STRING_MASK | qjs::JS_GPN_SYMBOL_MASK | qjs::JS_GPN_PRIVATE_MASK) as i32;
-        let mut names = OwnNames {
-            ctx,
-            tab: std::ptr::null_mut(),
-            len: 0,
-        };
-        // SAFETY: the context is entered and `raw` is live; `names` frees
-        // what is filled in.
-        if unsafe { qjs::JS_GetOwnPropertyNames(ctx, &mut names.tab, &mut names.len, raw, flags) }
-            < 0
-        {
-            let _ = self.ctx().catch();
-            walk.cut = true;
-            return OBJECT;
-        }
-        let len = names.len as usize;
-        // Each property read is counted against the budget, a number's too:
-        // an array of a million numbers is a million reads.
-        let reads = len.min(walk.left);
+        // Only these two classes: their own properties are plain slots,
+        // read in place, so nothing is allocated or run and the engine's
+        // work is the budget's, however wide the value.
+        let mut used = 0;
+        // SAFETY: `raw` is a live object of one of the two.
+        let slots = unsafe { JS_GetOwnSlotCount(raw, &mut used) };
+        // Each slot read is counted against the budget, a number's too: an
+        // array of a million numbers is a million reads.
+        let reads = (slots as usize).min(walk.left);
         walk.left -= reads;
-        walk.cut |= reads < len;
-        for i in 0..reads {
-            // SAFETY: `i` is within the table the engine filled in.
-            let atom = unsafe { (*names.tab.add(i)).atom };
-            let mut d = std::mem::MaybeUninit::<qjs::JSPropertyDescriptor>::uninit();
-            // SAFETY: as above. A descriptor found holds owned references
-            // to its value, getter and setter, each taken over by a Value.
-            unsafe {
-                match JS_GetOwnPropertyIfMade(ctx, d.as_mut_ptr(), raw, atom) {
-                    1 => {
-                        let d = d.assume_init();
-                        for part in [d.value, d.getter, d.setter] {
-                            let part = Value::from_raw(self.ctx().clone(), part);
-                            // Only what can hold more than its slot is walked.
-                            if part.is_object() || part.is_string() {
-                                walk.stack.push(part);
-                            }
-                        }
-                    }
-                    // Gone, or not made yet: only its slot, counted below.
-                    0 | 2 => {}
-                    _ => {
-                        let _ = self.ctx().catch();
-                        walk.cut = true;
-                    }
+        walk.cut |= reads < slots as usize;
+        for i in 0..reads as u32 {
+            let mut a = std::mem::MaybeUninit::<qjs::JSValue>::uninit();
+            let mut b = std::mem::MaybeUninit::<qjs::JSValue>::uninit();
+            // SAFETY: `i` is under the count, and nothing in this loop
+            // changes the object. What is returned is duplicated for us,
+            // `a` when 1 or 2 is returned and `b` when 2 is.
+            let parts = unsafe { JS_GetOwnSlot(raw, i, a.as_mut_ptr(), b.as_mut_ptr()) };
+            for part in [a, b].into_iter().take(parts as usize) {
+                // SAFETY: filled in and owned, as above.
+                let part = unsafe { Value::from_raw(self.ctx().clone(), part.assume_init()) };
+                // Only what can hold more than its slot is walked.
+                if part.is_object() || part.is_string() {
+                    walk.stack.push(part);
                 }
             }
         }
-        OBJECT + len * SLOT
+        OBJECT + used as usize * SLOT
     }
 
     /// A rope holds its node and its halves, a slice its header and the
