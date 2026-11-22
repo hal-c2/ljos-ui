@@ -2583,7 +2583,7 @@ impl Engine {
                         return Err(ljos_js::rquickjs::Error::Exception);
                     }
                     self.inner.faults.thrown.set(true);
-                    self.note_thrown_through(self.inner.faults.origin.get());
+                    self.note_thrown_through(self.running_origin());
                     return Ok(None);
                 }
                 Err(e) => return Err(e),

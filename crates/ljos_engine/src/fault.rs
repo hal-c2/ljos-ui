@@ -266,6 +266,11 @@ impl Engine {
         self.turn_for(crate::TurnCause::Host, origin, f)
     }
 
+    /// The object whose code is running.
+    pub(crate) fn running_origin(&self) -> Option<ObjectId> {
+        self.inner.faults.origin.get()
+    }
+
     /// Code of `obj` threw out to the script that called it.
     pub(crate) fn note_thrown_through(&self, obj: Option<ObjectId>) {
         let Some(obj) = obj else {
