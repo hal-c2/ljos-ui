@@ -548,6 +548,12 @@ impl DesktopBackend {
             .ok_or_else(|| BackendError::Failed("no application is running".into()))
     }
 
+    /// The token file the application the scenario started wrote.
+    fn token_file(&mut self) -> Result<PathBuf> {
+        let app = self.running()?.app.id();
+        Ok(self.dir()?.join(format!("target/ljos/mcp-{app}.json")))
+    }
+
     /// The scenario's files, beside which the application runs.
     fn dir(&mut self) -> Result<&Path> {
         if self.dir.is_none() {
@@ -845,6 +851,10 @@ impl DesktopBackend {
         #[allow(clippy::cast_sign_loss)]
         Ok((px(wx, x), px(wy, y), (lw as u32, lh as u32)))
     }
+}
+
+fn not_turning_away() -> BackendError {
+    BackendError::Failed("no calls of the application are turned away".into())
 }
 
 fn not_yet(what: &'static str) -> BackendError {
@@ -1417,53 +1427,31 @@ impl Probes for DesktopBackend {
         }
     }
 
-    fn turn_calls_away(&mut self) -> Result<Instant> {
-        use crate::author::rate;
-        let app = self.running()?.app.id();
-        let dir = self.dir.as_ref().expect("files are written first").path();
-        let (addr, token) = rate::target(&dir.join(format!("target/ljos/mcp-{app}.json")))
-            .map_err(BackendError::Failed)?;
-        // What the steps before asked is let pass first, so that the
-        // second is full of these calls alone and frees no room before
-        // its end.
-        std::thread::sleep(Duration::from_secs(1));
-        let started = Instant::now();
-        // The second has room again a second after the first call it
-        // counts was answered.
-        let mut first = None;
-        let mut id = 0;
-        loop {
-            id += 1;
-            let sent = Instant::now();
-            if rate::call(addr, &token, id)
-                .map_err(BackendError::Failed)?
-                .status
-                == 429
-            {
-                break;
-            }
-            first.get_or_insert(sent);
-            if started.elapsed() > SEEN {
-                return Err(BackendError::Failed(format!(
-                    "the application's inspector answered {id} calls in {} s and turned none away",
-                    SEEN.as_secs()
-                )));
-            }
-        }
-        let first = first.ok_or_else(|| {
-            BackendError::Failed(
-                "the application's inspector turned the first call away: something else \
-                 filled its second"
-                    .into(),
-            )
-        })?;
-        Ok(first)
+    fn turn_calls_away(&mut self, late: &'static str) -> Result<()> {
+        let file = self.token_file()?;
+        // The last one gives the file back before this one reads it.
+        self.turning_away = None;
+        self.turning_away = Some(
+            crate::author::rate::Refusals::start_late(&file, late).map_err(BackendError::Failed)?,
+        );
+        Ok(())
+    }
+
+    fn late_call_turned_away(&mut self) -> Result<()> {
+        let held = self.turning_away.as_mut().ok_or_else(not_turning_away)?;
+        held.refused(Instant::now() + SEEN)
+            .and_then(|()| held.release())
+            .map_err(BackendError::Failed)
+    }
+
+    fn late_call_passed_on(&mut self) -> Result<()> {
+        let held = self.turning_away.as_ref().ok_or_else(not_turning_away)?;
+        held.pass_on(Instant::now() + SEEN)
+            .map_err(BackendError::Failed)
     }
 
     fn turn_every_call_away(&mut self) -> Result<()> {
-        let app = self.running()?.app.id();
-        let dir = self.dir.as_ref().expect("files are written first").path();
-        let file = dir.join(format!("target/ljos/mcp-{app}.json"));
+        let file = self.token_file()?;
         // The last one gives the file back before this one reads it.
         self.turning_away = None;
         self.turning_away =
