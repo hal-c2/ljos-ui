@@ -219,6 +219,19 @@ public class LjosActivity extends GameActivity {
     }
 
     /**
+     * The application is about to write what the input method holds. On
+     * the application's thread, and waits for no other.
+     */
+    public void textInputWriteComing() {
+        TextInputOf.writeComing(mSurfaceView);
+    }
+
+    /** The write announced was stale, and is not made. */
+    public void textInputWriteDropped() {
+        TextInputOf.writeDropped(mSurfaceView);
+    }
+
+    /**
      * The application set what the input method holds; GameTextInput does
      * not tell the keyboard, so a cursor the user moved by touch, or text
      * the application changed, would be unknown to it until it restarts.

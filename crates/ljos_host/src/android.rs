@@ -395,6 +395,10 @@ impl<U: Send + 'static> Pump<'_, U> {
                 );
             }
             Request::Held { now: held, over } => {
+                // Announced before the reports are read: one that is not
+                // read below is one the connection knows the write
+                // overtakes, and follows with what landed (TextInputOf.java).
+                call_activity(self.app, ActivityCall::WriteComing);
                 // A report the method made by now forgets the writes before
                 // it, and the state is read after it: a request is judged
                 // against the newest text, so it never writes over text the
@@ -423,6 +427,7 @@ impl<U: Send + 'static> Pump<'_, U> {
                     self.writes.unreported()
                 };
                 if crate::relay::held_is_stale(over.as_ref(), &holds) {
+                    call_activity(self.app, ActivityCall::WriteDropped);
                     return;
                 }
                 self.writes.wrote(&reported, held.clone());
@@ -643,6 +648,11 @@ enum ActivityCall {
     Finish,
     /// `LjosActivity.setBackTaken`.
     BackTaken(bool),
+    /// `LjosActivity.textInputWriteComing`: a report the keyboard's
+    /// connection makes from now on is overtaken by the write.
+    WriteComing,
+    /// `LjosActivity.textInputWriteDropped`: that write is not made.
+    WriteDropped,
     /// `LjosActivity.inputStateChanged`: the keyboard is told where the
     /// selection and the composition are, in UTF-16 units; -1 for none;
     /// and whether the text is another.
@@ -709,6 +719,22 @@ fn call_activity(app: &AndroidApp, call: ActivityCall) -> bool {
                     jni_str!("setBackTaken"),
                     jni_sig!((jboolean) -> void),
                     &[JValue::Bool(taken)],
+                )?;
+            }
+            ActivityCall::WriteComing => {
+                env.call_method(
+                    &activity,
+                    jni_str!("textInputWriteComing"),
+                    jni_sig!(() -> void),
+                    &[],
+                )?;
+            }
+            ActivityCall::WriteDropped => {
+                env.call_method(
+                    &activity,
+                    jni_str!("textInputWriteDropped"),
+                    jni_sig!(() -> void),
+                    &[],
                 )?;
             }
             ActivityCall::InputStateChanged {
