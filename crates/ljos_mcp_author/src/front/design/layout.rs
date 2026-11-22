@@ -304,12 +304,14 @@ fn menu_ungrouped<'a>(found: &mut Found<'_, '_, '_, 'a>, frame: &Frame<'_, 'a>) 
 }
 
 fn spacing<'a>(found: &mut Found<'_, '_, '_, 'a>, object: &QmlObject<'a>) {
-    let unit = f64::from(limits::SPACING_UNIT_PX);
     for (name, b) in bindings(object) {
         if !is_spacing(&name) {
             continue;
         }
         let Some(value) = b.number() else { continue };
+        let Some(unit) = found.cx.loader.spacing_unit() else {
+            return;
+        };
         // Below the unit is a hairline adjustment, not a step of the scale.
         if value.abs() < unit || (value / unit).fract() == 0.0 {
             continue;

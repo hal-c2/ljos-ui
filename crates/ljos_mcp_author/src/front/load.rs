@@ -13,6 +13,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use ljos_design::{limits, theme};
 use qml_front::{
     discover::{self, Module},
     project::{Project, Summary, join},
@@ -37,6 +38,7 @@ pub(super) struct Loader<'r> {
     /// The capitalised words of the project's C++ files that register QML
     /// types; None when there were too many files to read.
     native: OnceCell<Option<HashSet<String>>>,
+    spacing_unit: OnceCell<Option<f64>>,
 }
 
 impl<'r> Loader<'r> {
@@ -50,6 +52,7 @@ impl<'r> Loader<'r> {
             broken: HashSet::new(),
             scan: OnceCell::new(),
             native: OnceCell::new(),
+            spacing_unit: OnceCell::new(),
         }
     }
 
@@ -213,6 +216,14 @@ impl<'r> Loader<'r> {
             .is_none_or(|words| words.contains(name))
     }
 
+    /// The pixels the project's spacing steps count in, or None where
+    /// that cannot be known.
+    pub fn spacing_unit(&self) -> Option<f64> {
+        *self
+            .spacing_unit
+            .get_or_init(|| spacing_unit(self.root, self.scan()))
+    }
+
     /// Every directory below the root worth reading, with its file names.
     fn scan(&self) -> &Vec<(PathBuf, Vec<String>)> {
         self.scan.get_or_init(|| scan(self.root))
@@ -246,6 +257,43 @@ fn scan(root: &Path) -> Vec<(PathBuf, Vec<String>)> {
     }
     out.sort();
     out
+}
+
+/// The one unit every theme of the project gives (docs/theme.md). Which
+/// entries use a component is not in the source, so any of the themes may be
+/// the one it runs under, and so may none when the root has none. None when
+/// those differ, when the unit is 0, or when a theme that sets a unit would
+/// be refused.
+fn spacing_unit(root: &Path, dirs: &[(PathBuf, Vec<String>)]) -> Option<f64> {
+    let default = f64::from(limits::SPACING_UNIT_PX);
+    let mut units = Vec::new();
+    let mut root_has_theme = false;
+    for (dir, names) in dirs {
+        if !names.iter().any(|name| name == theme::FILE) {
+            continue;
+        }
+        root_has_theme |= dir == root;
+        let file = dir.join(theme::FILE);
+        let text = std::fs::read_to_string(&file).ok()?;
+        units.push(match theme::parse(theme::FILE, &text) {
+            Ok(theme) => match theme.spacing_unit() {
+                Some(unit) => {
+                    theme.check_contrast(None).ok()?;
+                    f64::from(unit)
+                }
+                None => default,
+            },
+            // A running application keeps the theme before a refused one,
+            // which may well have had the unit this one names.
+            Err(_) if text.contains("\"Spacing\"") && text.contains("\"unit\"") => return None,
+            Err(_) => default,
+        });
+    }
+    if !root_has_theme {
+        units.push(default);
+    }
+    let &unit = units.first()?;
+    (unit > 0.0 && units.iter().all(|&other| other == unit)).then_some(unit)
 }
 
 /// Bounds for reading C++: a root that is mostly C++ is not ours to slurp.

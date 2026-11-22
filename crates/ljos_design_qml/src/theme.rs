@@ -1,7 +1,8 @@
 //! A theme ([`ljos_design::theme`]) put on the singletons of the module.
 //!
 //! Each role the theme sets is an override on the singleton's property,
-//! so what binds to `Colors.accent` follows without being made again, and
+//! as is each spacing step its unit makes too large for an `int`
+//! ([`Theme::saturated_steps`]), so what binds to `Colors.accent` follows without being made again, and
 //! taking the theme away gives back the module's own value. A colour the
 //! theme gives only some variants of is a binding: it reads the colour
 //! scheme and contrast the module reads, and for a variant the theme does
@@ -39,10 +40,11 @@ pub fn apply(engine: &Engine, theme: Option<&Theme>) -> Result<(), Vec<ThemeErro
     if let Some(theme) = theme {
         theme.check_contrast(seed)?;
     }
+    let derived = theme.map(Theme::saturated_steps).unwrap_or_default();
     let mut pushes = Vec::new();
     if let Some(theme) = theme {
         let mut errors = Vec::new();
-        for e in &theme.entries {
+        for e in theme.entries.iter().chain(&derived) {
             match target(engine, e) {
                 Ok(t) => pushes.push((t, e)),
                 Err(message) => errors.push(ThemeError {

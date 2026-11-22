@@ -472,6 +472,40 @@ impl Theme {
         })
     }
 
+    /// The unit of the spacing scale the theme sets, if it does.
+    pub fn spacing_unit(&self) -> Option<i32> {
+        self.spacing("unit").map(|(px, _)| px)
+    }
+
+    /// The steps that the theme's unit makes too large for an `int`, each
+    /// at the largest one: the module's `unit * n` would wrap there. A
+    /// step the theme sets is not among them.
+    pub fn saturated_steps(&self) -> Vec<Entry> {
+        let Some((unit, at)) = self.spacing("unit") else {
+            return Vec::new();
+        };
+        scale::SPACING_UNITS
+            .iter()
+            .filter(|&&(name, units)| {
+                i64::from(unit) * i64::from(units) > i64::from(i32::MAX)
+                    && self.spacing(name).is_none()
+            })
+            .map(|&(name, _)| Entry {
+                singleton: "Spacing",
+                name: name.to_owned(),
+                value: Setting::Int(i32::MAX),
+                at,
+            })
+            .collect()
+    }
+
+    fn spacing(&self, role: &str) -> Option<(i32, Pos)> {
+        self.entries.iter().find_map(|e| match e.value {
+            Setting::Int(px) if e.singleton == "Spacing" && e.name == role => Some((px, e.at)),
+            _ => None,
+        })
+    }
+
     fn color(&self, role: &str) -> Option<(&Variants, Pos)> {
         let name = qml_role(role);
         self.entries.iter().find_map(|e| match &e.value {

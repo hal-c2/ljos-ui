@@ -6,7 +6,8 @@
 //! As the rest of the front end, a rule reports only what it can tell from
 //! the file with confidence: where a value is not written out, or a context
 //! could mean either, it says nothing and leaves the case to the runtime
-//! audit. Each has good fixtures close to its bad ones
+//! audit. The one thing read beside the QML is the spacing unit of the
+//! project's themes. Each has good fixtures close to its bad ones
 //! (`crates/ljos_design/fixtures/<code>/`).
 
 mod color;
