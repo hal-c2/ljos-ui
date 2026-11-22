@@ -252,9 +252,12 @@ where
         } else {
             Watcher::on_request_shared(self.clone(), sink)?
         };
-        if flush {
-            // A watcher just started is there to answer.
-            let _ = watcher.flush();
+        // A watcher just started is there to answer; one whose thread
+        // ended already never will, and is no watcher.
+        if flush && !watcher.flush() {
+            return Err(WatchError::Thread(std::io::Error::other(
+                "it ended before it read the files",
+            )));
         }
         Ok(watcher)
     }
@@ -961,6 +964,10 @@ pub struct UserSession {
     /// What the reads before the one that answers found, of an ask that
     /// came while one was on its way.
     read_before: Reading,
+    /// What the last read of the theme and of the files found broken,
+    /// asked for or not: a read tells only of what changed, so one that
+    /// tells nothing of either finds it as broken as it was.
+    broken: Reading,
     rereads: Rc<Rereads>,
     /// Whether the files are read while the application runs: watched,
     /// or when it asks.
@@ -1002,12 +1009,16 @@ struct Reading {
 }
 
 impl Reading {
-    fn read(&mut self, what: Read, did: Reread) {
-        let so_far = match what {
+    fn of(&mut self, what: Read) -> &mut Option<Reread> {
+        match what {
             Read::Theme => &mut self.theme,
             Read::Files => &mut self.files,
             Read::Reading => &mut self.reading,
-        };
+        }
+    }
+
+    fn read(&mut self, what: Read, did: Reread) {
+        let so_far = self.of(what);
         if so_far.is_none_or(|s| s == Reread::Unchanged || did == Reread::Failed) {
             *so_far = Some(did);
         }
@@ -1133,6 +1144,7 @@ impl UserSession {
             pictures: Arc::default(),
             reading: None,
             read_before: Reading::default(),
+            broken: Reading::default(),
             rereads,
             reads,
             follows: false,
@@ -1367,8 +1379,9 @@ impl UserSession {
             }
             // The first file's build answers.
             State::Making => {}
-            // Why the files are not read was told once, at the start.
-            State::Off => self.answer_read(Reread::Unchanged),
+            // A fault keeps the files from being read; why was told once,
+            // when it was met.
+            State::Off => self.answer_read(Reread::Failed),
         }
     }
 
@@ -1380,6 +1393,10 @@ impl UserSession {
 
     /// What reading `what` again did, as far as it got.
     fn read(&mut self, what: Read, did: Reread) {
+        // Whether anything could read is found again by each ask.
+        if !matches!(what, Read::Reading) {
+            *self.broken.of(what) = (did == Reread::Failed).then_some(did);
+        }
         if let Some(reading) = &mut self.reading {
             reading.read(what, did);
         }
@@ -1624,7 +1641,10 @@ impl UserSession {
                 let Some(reading) = self.reading.take() else {
                     return;
                 };
-                let did = reading.over(std::mem::take(&mut self.read_before)).did();
+                let did = reading
+                    .over(std::mem::take(&mut self.read_before))
+                    .over(self.broken)
+                    .did();
                 if did == Reread::Unchanged {
                     engine.log(
                         LogLevel::Info,

@@ -375,6 +375,7 @@ impl Watcher {
             saved: None,
             in_flight: None,
             flushing: false,
+            answering: false,
         };
         let thread = std::thread::Builder::new()
             .name("ljos-dev-watcher".to_owned())
@@ -546,6 +547,29 @@ struct Run<O> {
     /// A [`Watcher::flush`] waits for the build; it waits for the patch
     /// in flight to be answered first.
     flushing: bool,
+    /// A flush was taken and its [`DevMsg::Idle`] is not sent yet.
+    answering: bool,
+}
+
+impl<O> Drop for Run<O> {
+    fn drop(&mut self) {
+        // A build that panicked never sends the answer it owes: whoever
+        // asked would wait for good. What it read is not applied.
+        if self.answering && std::thread::panicking() {
+            let fault = CompileFault {
+                file: self
+                    .roots
+                    .first()
+                    .map(|r| r.display().to_string())
+                    .unwrap_or_default(),
+                line: 0,
+                column: 0,
+                message: "reading the files again panicked: nothing of what changed is applied"
+                    .to_owned(),
+            };
+            let _ = (self.sink)(DevMsg::Failed(vec![fault])) && (self.sink)(DevMsg::Idle);
+        }
+    }
 }
 
 impl<O: TypeOracle + Clone> Run<O> {
@@ -608,6 +632,7 @@ impl<O: TypeOracle + Clone> Run<O> {
                     // Events may be late or lost; the directory is read.
                     self.touch_all();
                     self.flushing = true;
+                    self.answering = true;
                 }
                 Some(Cmd::Ack(generation)) => {
                     lock(&self.reloader).ack(generation);
@@ -669,7 +694,12 @@ impl<O: TypeOracle + Clone> Run<O> {
         if !self.build_files(flushed) {
             return false;
         }
-        !flushed || self.flushing || (self.sink)(DevMsg::Idle)
+        if !flushed || self.flushing {
+            return true;
+        }
+        let sent = (self.sink)(DevMsg::Idle);
+        self.answering = false;
+        sent
     }
 
     /// `asked`: a reload was asked for, and files are taken as they are
