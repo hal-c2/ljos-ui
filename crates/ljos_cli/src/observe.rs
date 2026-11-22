@@ -387,6 +387,71 @@ mod tests {
         compile(&engine).unwrap();
     }
 
+    /// The window with no inspector, to hand answers to.
+    fn window() -> (Engine, ObjectId) {
+        let engine = ljos::engine();
+        register(&engine);
+        engine.set_component_source(compile(&engine).unwrap());
+        let none = Value::from("no-inspector.json");
+        let root = engine
+            .create_from_url(KEY, None, vec![("tokenFile".to_owned(), none)])
+            .unwrap();
+        (engine, root)
+    }
+
+    /// The status once the call `route` was asked as is answered, with the
+    /// object `b` picked.
+    fn status_after(
+        (engine, root): &(Engine, ObjectId),
+        route: &str,
+        ok: bool,
+        result: &str,
+    ) -> String {
+        let script = format!(
+            "(function() {{ objects.picked = 'b'; var next = waiting; next[9000] = {}; \
+             waiting = next; client.answered(9000, 'tool', {ok}, {}); return status.text }})()",
+            json!(route),
+            json!(result),
+        );
+        let out = engine
+            .eval_js_in(
+                Some(*root),
+                &script,
+                Duration::from_secs(1),
+                [4, 16, 256, 64, 1024],
+            )
+            .unwrap();
+        let out: Json = serde_json::from_str(&out).unwrap();
+        let said = out["value"].as_str();
+        said.unwrap_or_else(|| panic!("{route}: {out}")).to_owned()
+    }
+
+    #[test]
+    fn a_failed_edit_of_an_object_picked_before_is_not_said() {
+        let window = window();
+        for refused in ["denied", "rate_limited: wait"] {
+            assert_eq!(status_after(&window, "edited:a", false, refused), "");
+        }
+        let said = status_after(&window, "edited:b", false, "denied");
+        assert!(said.contains("denied"), "{said}");
+    }
+
+    #[test]
+    fn a_picture_that_came_takes_its_own_note_away() {
+        let (busy, came) = ("rate_limited: wait", r#"{"content":[]}"#);
+        let alone = window();
+        assert_ne!(status_after(&alone, "picture:b", false, busy), "");
+        assert_eq!(status_after(&alone, "picture:b", true, came), "");
+
+        let others = window();
+        assert_ne!(status_after(&others, "processes", false, busy), "");
+        assert_ne!(status_after(&others, "picture:b", true, came), "");
+
+        let failed = window();
+        let said = status_after(&failed, "edited:b", false, "denied");
+        assert_eq!(status_after(&failed, "picture:b", true, came), said);
+    }
+
     #[test]
     fn an_answer_is_read_plain_or_streamed() {
         let response = |body: &str| Answer {

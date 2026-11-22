@@ -171,6 +171,11 @@ fn turned_away(w: &mut LjosWorld, locator: &str, gone: Option<&str>) -> StepResu
     // Past the wire's second try, which follows the first's refusal by
     // the second its `Retry-After` names.
     const KEPT: Duration = Duration::from_millis(2500);
+    // Each call that filled the second frees its place a second later, and
+    // is asked again a moment after that. A click made as soon as the second
+    // is full has its second try come into that moment and may be let in;
+    // one made this much later finds every place taken again.
+    const REFILLED: Duration = Duration::from_millis(200);
     let locator = unquoted(locator);
     let gone = gone.map(unquoted);
     w.each(|b| {
@@ -185,13 +190,17 @@ fn turned_away(w: &mut LjosWorld, locator: &str, gone: Option<&str>) -> StepResu
             ));
         }
         let filling = probes.turn_calls_away(KEPT)?;
+        std::thread::sleep(REFILLED);
         let clicked =
             probes.observer_call_now("app_click", serde_json::json!({ "target": locator }));
         let took = filling.elapsed();
         let refused = match (&clicked, &gone) {
             (Err(_), _) => Ok(()),
             (Ok(_), Some(gone)) => {
+                // Put away before an answer can come, and no answer came:
+                // one that was let in puts it away as well.
                 observer_put_away(probes, gone, filling + Duration::from_secs(1))
+                    .and_then(|()| observer_told_turned_away(probes, filling + KEPT))
             }
             (Ok(_), None) => observer_told_turned_away(probes, filling + KEPT),
         };
