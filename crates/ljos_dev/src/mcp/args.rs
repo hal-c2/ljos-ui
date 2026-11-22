@@ -64,9 +64,9 @@ Prefer `app_snapshot` for reading text and state: it is smaller and exact.";
 
 pub const STATUS: &str = "\
 What is running: windows (only the primary is inspected), size, scale, colour scheme, focus, \
-clock, reload generation and last reload, animations under way (wait for them after a click), \
-and this connection's capabilities. `after_reload` with `wait_ms` waits for a reload. \
-`reload.warnings` is the compiler's on what runs (null when not known).";
+clock, reload generation, last reload and compiler warnings, animations under way (wait for \
+them after a click), and this connection's capabilities. `after_reload` with `wait_ms` waits for \
+a reload.";
 
 pub const LOGS: &str = "\
 Recent log lines of the app (`console.log`, warnings, JS errors) with QML file and line when \
@@ -150,8 +150,8 @@ with the message.";
 pub const RELOAD: &str = "\
 Reload the changed files now instead of waiting for them to be quiet. Answers `applied` when one \
 was applied since the last `app_reload` answer (a save's own too), `failed` (with the message; \
-the application goes on as it was) or `unchanged`, each with the compiler's `warnings` on what \
-runs. Needs `--watch`.";
+the application goes on as it was) or `unchanged`, each with the compiler's `warnings`. Needs \
+`--watch`.";
 
 pub const ALIAS: &str = "\
 Import `module` from `dir`, a directory in the project (or one the application was started with) \
