@@ -329,3 +329,4 @@ Feature: Material, Fusion and Universal styles
       | Material  |
       | Fusion    |
       | Universal |
+      | macOS     |

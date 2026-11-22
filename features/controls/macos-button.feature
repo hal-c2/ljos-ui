@@ -91,3 +91,53 @@ Feature: A button of the macOS style
     Scenario: A control the style does not draw yet still resolves
       Then the property "text" of "box" is "On"
       And the log has no warnings
+
+  Rule: A push button
+
+    Scenario Outline: A button with text is as high as one without
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.macOS
+        Button { objectName: "labelled"; text: "OK" }
+        """
+      Then the property "<property>" of "labelled" is <value>
+
+      Examples:
+        | property       | value |
+        | implicitHeight | 21    |
+        | leftPadding    | 12    |
+
+    Scenario Outline: A button held down changes colour
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.macOS
+        Item {
+          width: 200; height: 100
+          Button { objectName: "held"; width: 100; height: 40; <state> }
+        }
+        """
+      When the user presses the pointer at 20, 20
+      Then the property "down" of "held" is true
+      And the property "background.color" of "held" is "<colour>"
+
+      Examples:
+        | state                         | colour  |
+        | text: "OK"                    | #bdbdbd |
+        | highlighted: true             | #797a7a |
+        | checked: true                 | #797a7a |
+        | flat: true; highlighted: true | #797a7a |
+
+  Rule: The style by name
+
+    Scenario: The variable names the macOS style
+      Given the application starts with "QT_QUICK_CONTROLS_STYLE" set to "macOS"
+      And the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls
+        Button { objectName: "named" }
+        """
+      When 100 milliseconds pass
+      Then the property "background.radius" of "named" is 6
