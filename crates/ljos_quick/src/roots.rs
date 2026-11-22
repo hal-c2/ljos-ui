@@ -167,6 +167,14 @@ impl RootSwaps {
         self.shown.borrow_mut().retain(|r| *r != root);
     }
 
+    /// Whether `window` gave the window it was shown in to another and is
+    /// kept, as a `ShellLoader` keeps the fallback it may present again: a
+    /// host gives it no window of its own meanwhile.
+    pub fn keeps_back(&self, window: ObjectId) -> bool {
+        let _ = window;
+        false
+    }
+
     /// The host cannot show `window` in a window of its own, and will
     /// draw no frame of it: what waits for that frame waits no longer.
     pub fn refuses(&self, engine: &Engine, window: ObjectId) {
