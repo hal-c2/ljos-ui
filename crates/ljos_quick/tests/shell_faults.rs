@@ -494,12 +494,29 @@ fn snug() -> (Engine, Arc<VirtualClock>, ObjectId, ObjectId, ObjectId) {
     snug_as("Snug")
 }
 
+/// Takes its room as it is made: it fits where `Full` was, and not beside
+/// it. What it was filling goes with the throw.
+const WIDE: &str = r#"
+import QtQuick
+Item {
+    objectName: "wide"
+    property var held: []
+    Component.onCompleted: {
+        root.made++;
+        const a = [];
+        for (let i = 0; i < 20000; i++) a.push({ i: i, s: "row " + i });
+        held = a;
+    }
+}
+"#;
+
 /// [`snug`] with another shell as the source.
 fn snug_as(source: &str) -> (Engine, Arc<VirtualClock>, ObjectId, ObjectId, ObjectId) {
     let farewell = SNUG.replace(
         "    Component.onCompleted: {",
         "    Component.onDestruction: root.made += 0\n    Component.onCompleted: {",
     );
+    let huge = WIDE.replace("20000", "400000");
     let e = engine();
     let clock = Arc::new(VirtualClock::new());
     e.set_clock(Rc::new(clock.clone()));
@@ -512,6 +529,8 @@ fn snug_as(source: &str) -> (Engine, Arc<VirtualClock>, ObjectId, ObjectId, Obje
             ("Other", SNUG),
             ("Light", LIGHT),
             ("Farewell", &farewell),
+            ("Wide", WIDE),
+            ("Huge", &huge),
         ],
     );
     let root = e
@@ -696,4 +715,90 @@ fn a_discarded_shell_that_overflows_as_it_hears_it_goes_leaves_a_loader_that_wor
     turn(&e, &clock, loader, fallback);
     assert_eq!(shown(&e, loader), "snug", "{}", error(&e, loader));
     assert_eq!(out_of_memory(&e), overflowed, "{:?}", e.faults());
+}
+
+/// `source` set as a hold stands, to one with no room until what that held
+/// has been deleted: how often a shell was made before, and why this failed.
+fn changed_without_room(e: &Engine, root: ObjectId, loader: ObjectId, to: &str) -> (f64, String) {
+    e.invoke_by_name(loader, "reload", &[]).unwrap();
+    let made = num(e, root, "made");
+    set(e, root, "source", Value::from(to));
+    assert_eq!(status(e, loader), 3, "{to}: Error until the one try");
+    assert_eq!(shown(e, loader), "", "{to}: no fallback is made yet");
+    let why = error(e, loader);
+    assert_ne!(why, "", "{to}: says why");
+    (made, why)
+}
+
+/// The frame that deletes what was discarded, and the try it scheduled.
+fn deleted_and_tried(e: &Engine, clock: &VirtualClock, loader: ObjectId, fallback: ObjectId) {
+    turn(e, clock, loader, fallback);
+    assert!(!e.is_alive(fallback));
+    let due = e
+        .next_timer_deadline()
+        .expect("an idle app still gets the try");
+    assert!(due <= clock.now(), "at the next frame");
+    turn(e, clock, loader, fallback);
+}
+
+#[test]
+fn a_source_that_fits_once_the_held_one_is_deleted_ends_ready() {
+    let (e, clock, root, loader, fallback) = snug();
+    let (made, _) = changed_without_room(&e, root, loader, "Wide");
+    deleted_and_tried(&e, &clock, loader, fallback);
+    assert_eq!(status(&e, loader), 1, "{}", error(&e, loader));
+    assert_eq!(shown(&e, loader), "wide");
+    assert_eq!(error(&e, loader), "");
+    assert_eq!(num(&e, root, "made"), made + 2.0, "one try");
+    assert_eq!(e.next_timer_deadline(), None);
+}
+
+#[test]
+fn a_source_that_never_fits_ends_on_the_fallback_after_the_one_try() {
+    let (e, clock, root, loader, fallback) = snug();
+    let (made, why) = changed_without_room(&e, root, loader, "Huge");
+    deleted_and_tried(&e, &clock, loader, fallback);
+    assert_eq!(status(&e, loader), 2, "{}", error(&e, loader));
+    assert_eq!(shown(&e, loader), "full");
+    assert_eq!(error(&e, loader), why, "the source's own reason");
+    assert_eq!(num(&e, root, "made"), made + 2.0, "one try");
+    assert!(
+        e.next_timer_deadline().is_some(),
+        "then the backoff, as ever"
+    );
+}
+
+#[test]
+fn a_source_set_while_the_try_waits_wins() {
+    for scheduled in [false, true] {
+        let (e, clock, root, loader, fallback) = snug();
+        let (made, _) = changed_without_room(&e, root, loader, "Wide");
+        if scheduled {
+            turn(&e, &clock, loader, fallback);
+            assert!(e.next_timer_deadline().is_some(), "the try is scheduled");
+        }
+        set(&e, root, "source", Value::from("Light"));
+        turn(&e, &clock, loader, fallback);
+        turn(&e, &clock, loader, fallback);
+        assert_eq!(shown(&e, loader), "light", "scheduled: {scheduled}");
+        assert_eq!(status(&e, loader), 1, "scheduled: {scheduled}");
+        assert_eq!(error(&e, loader), "", "scheduled: {scheduled}");
+        assert_eq!(
+            num(&e, root, "made"),
+            made + 1.0,
+            "no try for what was let go"
+        );
+        assert_eq!(e.next_timer_deadline(), None, "scheduled: {scheduled}");
+    }
+}
+
+#[test]
+fn a_source_with_room_as_a_hold_ends_is_still_shown_at_once() {
+    let (e, _clock, root, loader, fallback) = snug();
+    e.invoke_by_name(loader, "reload", &[]).unwrap();
+    set(&e, root, "source", Value::from("Light"));
+    assert!(e.is_alive(fallback), "before the deletion pass");
+    assert_eq!(status(&e, loader), 1, "{}", error(&e, loader));
+    assert_eq!(shown(&e, loader), "light");
+    assert_eq!(error(&e, loader), "");
 }
