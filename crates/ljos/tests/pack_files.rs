@@ -258,6 +258,97 @@ fn a_file_a_build_lists_above_its_own_directory_is_carried_at_its_address() {
     );
 }
 
+/// The bytes of the pack a build script writes of `root`.
+fn built(root: &std::path::Path) -> Vec<u8> {
+    let out = tempfile::tempdir().unwrap();
+    let pack = out.path().join("qml.pack");
+    ljos::build::compile_dirs(&[root], |_| {}, &pack).unwrap();
+    std::fs::read(&pack).unwrap()
+}
+
+#[test]
+fn a_file_listed_above_its_module_is_found_by_the_url_its_qml_names_it_by() {
+    let root = tempfile::tempdir().unwrap();
+    write(
+        root.path(),
+        "App/CMakeLists.txt",
+        b"qt_add_qml_module(app URI App QML_FILES Main.qml RESOURCES ../images/a.csv)\n",
+    );
+    write(
+        root.path(),
+        "App/Main.qml",
+        br#"import QtQml
+QtObject {
+    property string beside: Qt.resolvedUrl("../images/a.csv")
+    property string listed: Qt.resolvedUrl("qrc:/qt/qml/App/../images/a.csv")
+}
+"#,
+    );
+    write(root.path(), "images/a.csv", b"the listed one");
+    let pack = built(root.path());
+
+    for base in [None, Some("qrc:/qt/qml")] {
+        let mut source = ljos::MapSource::from_pack(&pack).unwrap();
+        if let Some(base) = base {
+            source = source.with_base_url(base);
+        }
+        let engine = ljos::engine();
+        let made = ljos::create_root(&engine, source, "App/Main").unwrap();
+        let platform = ljos_platform::Platform::of(&engine);
+        for name in ["beside", "listed"] {
+            let url = engine.read_by_name(made, name).to_js_string().to_string();
+            assert_eq!(
+                platform.resource(&url).as_deref(),
+                Some(&b"the listed one"[..]),
+                "{name} is {url}, with the base {base:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_shader_effect_compiles_the_source_its_pack_carries() {
+    let root = tempfile::tempdir().unwrap();
+    write(
+        root.path(),
+        "CMakeLists.txt",
+        b"qt_add_resources(app s PREFIX /s FILES fx.frag)\n",
+    );
+    write(
+        root.path(),
+        "fx.frag",
+        include_bytes!("../../ljos_shader/defaults/default.frag"),
+    );
+    write(
+        root.path(),
+        "Main.qml",
+        br#"import QtQuick
+ShaderEffect { width: 20; height: 20; fragmentShader: "qrc:/s/fx.frag" }
+"#,
+    );
+    let pack = built(root.path());
+    // The pack is all the program has.
+    drop(root);
+
+    let engine = ljos::engine();
+    let source = ljos::MapSource::from_pack(&pack).unwrap();
+    let effect = ljos::create_root(&engine, source, "Main").unwrap();
+    let platform = ljos_platform::Platform::of(&engine);
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while platform.awaited() > 0 && std::time::Instant::now() < until {
+        platform.deliver(&engine);
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    platform.deliver(&engine);
+
+    assert_eq!(
+        engine.read_by_name(effect, "status").to_number(),
+        0.0,
+        "{}",
+        engine.read_by_name(effect, "log").to_js_string()
+    );
+}
+
 #[test]
 fn a_file_carried_for_its_address_alone_has_that_for_its_url() {
     let address = "qrc:/qt/qml/Shapes/dot.png";
