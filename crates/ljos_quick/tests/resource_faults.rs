@@ -497,8 +497,9 @@ impl Flaky {
 }
 
 /// A boundary that has given up by the time native work inside it no
-/// longer panics, with how many panics that takes. `WORK` is the content's.
-const PANIC_FAULTS: [(&str, u32, &str); 3] = [
+/// longer panics, or cannot undo what the panic cut short outside it, with
+/// how many panics that takes. `WORK` is the content's.
+const PANIC_FAULTS: [(&str, u32, &str); 4] = [
     (
         "a Loader's item",
         1,
@@ -513,6 +514,12 @@ const PANIC_FAULTS: [(&str, u32, &str); 3] = [
         "an ErrorBoundary past its restarts",
         4,
         "ErrorBoundary { Item { WORK } }",
+    ),
+    (
+        "an outer object's function that called what panicked",
+        1,
+        r#"Item { id: h; function run(g) { if (d.started) return; d.started = true; g["work"](); d.ok = true } }
+    ErrorBoundary { Item { ButtonGroup { id: p; Component.onCompleted: h.run(p) } } }"#,
     ),
 ];
 
