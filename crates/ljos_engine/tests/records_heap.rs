@@ -3,7 +3,8 @@
 //! controller republishes under steady news (a whole state tree in a
 //! `PropertyMap`) makes a generation of script objects per publish; with
 //! a large live table the sweep that frees the replaced generations must
-//! not wait for the table to double, or they pile up to the heap's cap.
+//! not wait for the table to double, or for a count of newer records when
+//! each is large, or they pile up to the heap's cap.
 
 use std::sync::Arc;
 
@@ -24,14 +25,14 @@ QtObject {
 }
 "#;
 
-/// One generation of the churned record: a tree of a few tens of KiB as
-/// script objects, differing from the last in `n` alone.
-fn generation(n: usize) -> Value {
-    let items: Vec<Value> = (0..200)
+/// One generation of the churned record: a tree of `items` records as
+/// script objects, each with a text of about `repeats` times 22 bytes.
+fn generation(n: usize, items: usize, repeats: usize) -> Value {
+    let items: Vec<Value> = (0..items)
         .map(|i| {
             Value::Map(Arc::new(vec![(
                 Atom::intern("t"),
-                Value::from(format!("item {i} of generation {n} ").repeat(8).as_str()),
+                Value::from(format!("item {i} of generation {n} ").repeat(repeats).as_str()),
             )]))
         })
         .collect();
@@ -46,8 +47,9 @@ fn heap(engine: &Engine) -> usize {
     engine.script_memory().expect("scripts ran").bytes
 }
 
-#[test]
-fn replaced_records_are_let_go_within_a_few_newer_ones() {
+/// An engine whose script read 600 live records and the first generation
+/// of `big`, a tree of a few tens of KiB.
+fn shell() -> (Engine, PropertyMap, ObjectId) {
     let engine = Engine::new();
     engine.register_module(ljos_engine::module!("QtQml" 2.0 => [QtObject]));
     let map = PropertyMap::new(&engine, None).expect("map");
@@ -63,7 +65,7 @@ fn replaced_records_are_let_go_within_a_few_newer_ones() {
             )])),
         );
     }
-    map.insert(&engine, "big", generation(0));
+    map.insert(&engine, "big", generation(0, 200, 8));
     engine.set_context_id(engine.root_context(), "owner", map.object());
 
     let mut project = Project::new(QtTypeOracle);
@@ -82,11 +84,16 @@ fn replaced_records_are_let_go_within_a_few_newer_ones() {
         !matches!(all, Value::Undefined | Value::Null),
         "the live records were read: {all:?}"
     );
+    (engine, map, root)
+}
 
+#[test]
+fn replaced_records_are_let_go_within_a_few_newer_ones() {
+    let (engine, map, root) = shell();
     let base = heap(&engine);
     let mut at_fifty = 0;
     for n in 1..=400 {
-        map.insert(&engine, "big", generation(n));
+        map.insert(&engine, "big", generation(n, 200, 8));
         // The binding reads the new record, as a frame would.
         assert_eq!(
             engine.read_by_name(root, "bn").to_number(),
@@ -102,4 +109,27 @@ fn replaced_records_are_let_go_within_a_few_newer_ones() {
         "script heap grew from {at_fifty} (generation 50, base {base}) to {after} \
          over 350 replaced records: replaced generations pile up between sweeps"
     );
+}
+
+/// A shell's sidebar tree is one entry and megabytes of script heap: a
+/// count of newer records lets dozens of replaced ones fill the heap.
+#[test]
+fn a_few_large_replaced_records_do_not_fill_the_heap() {
+    let (engine, map, root) = shell();
+    let base = heap(&engine);
+    // Room for a few generations of about 2 MiB, not for the dozens that
+    // a step of 64 entries, or of an eighth of them, keeps.
+    let limit = base + 12 * 1024 * 1024;
+    assert!(engine.set_script_heap_limit(Some(limit)));
+    for n in 1..=40 {
+        map.insert(&engine, "big", generation(n, 1_000, 80));
+        let read = engine.read_by_name(root, "bn").to_number();
+        assert_eq!(
+            engine.faults_reported(),
+            0,
+            "the script heap ran out at generation {n}, under a limit of {limit} \
+             (base {base}): replaced trees waited for newer records"
+        );
+        assert_eq!(read, 1_000.0 + n as f64);
+    }
 }
