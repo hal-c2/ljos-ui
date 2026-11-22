@@ -8,6 +8,7 @@ use std::{
     io::{Read as _, Write as _},
     net::{SocketAddr, TcpStream},
     path::Path,
+    thread::JoinHandle,
     time::{Duration, Instant},
 };
 
@@ -22,6 +23,41 @@ pub(crate) struct Called {
     pub status: u16,
     /// The answer's header lines, lower-cased.
     pub head: String,
+}
+
+/// Calls made on a thread of their own for as long as they are to keep
+/// the inspector's second full.
+pub(crate) struct Flood {
+    calls: Option<JoinHandle<Result<(), String>>>,
+}
+
+impl Flood {
+    pub(crate) fn start(
+        until: Instant,
+        mut call: impl FnMut() -> Result<(), String> + Send + 'static,
+    ) -> Self {
+        let calls = std::thread::spawn(move || {
+            while Instant::now() < until {
+                call()?;
+                // A pause between them keeps the loopback's ports to a few
+                // thousand.
+                std::thread::sleep(Duration::from_micros(500));
+            }
+            Ok(())
+        });
+        Self { calls: Some(calls) }
+    }
+
+    /// Waits for the last of the calls.
+    pub(crate) fn finish(mut self) -> Result<(), String> {
+        match self.calls.take().map(JoinHandle::join) {
+            Some(Ok(made)) => made,
+            Some(Err(_)) => {
+                Err("the calls that kept the application's second full panicked".into())
+            }
+            None => Ok(()),
+        }
+    }
 }
 
 /// What a burst of calls came to.
@@ -152,4 +188,40 @@ pub(super) fn stated(token_file: &Path) -> Result<Value, String> {
     let body: Value =
         serde_json::from_str(&text).map_err(|e| format!("the token file is not JSON: {e}"))?;
     Ok(body["calls_per_second"].clone())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use super::*;
+
+    #[test]
+    fn a_flood_let_go_of_early_has_ended_when_it_is_gone() {
+        let held = Arc::new(());
+        let by_call = Arc::clone(&held);
+        let flood = Flood::start(Instant::now() + Duration::from_secs(20), move || {
+            let _ = &by_call;
+            Ok(())
+        });
+        let let_go = Instant::now();
+        drop(flood);
+        assert_eq!(
+            Arc::strong_count(&held),
+            1,
+            "the calls go on after what started them let go of them"
+        );
+        assert!(
+            let_go.elapsed() < Duration::from_secs(10),
+            "letting go of the calls waited for their end"
+        );
+    }
+
+    #[test]
+    fn a_flood_waited_for_says_what_its_last_call_said() {
+        let flood = Flood::start(Instant::now() + Duration::from_secs(20), || {
+            Err("refused".into())
+        });
+        assert_eq!(flood.finish(), Err("refused".to_owned()));
+    }
 }
