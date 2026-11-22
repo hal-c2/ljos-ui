@@ -79,7 +79,7 @@ fn the_memory_limit_read_is_the_one_put_last() {
 /// the run fails before the script throws anything, and that is running
 /// out of memory.
 #[test]
-fn a_null_thrown_on_a_full_heap_is_running_out_of_memory() {
+fn a_run_with_no_room_to_compile_is_running_out_of_memory() {
     let host = JsHost::new(JsConfig {
         memory_limit: Some(16 * 1024 * 1024),
         ..JsConfig::default()
@@ -644,10 +644,10 @@ fn a_string_that_cannot_be_read_out_of_a_full_heap_is_running_out_of_memory() {
 }
 
 /// What a function that ran out held in its locals is freed as the
-/// exception leaves it, before the fault is told: the heap had room by
-/// then, but it was full when the `null` was thrown.
+/// exception leaves it, before the fault is told: the heap has room by
+/// then, and the error thrown while it had none still says it ran out.
 #[test]
-fn a_null_thrown_on_a_full_heap_is_running_out_of_memory_after_its_locals_go() {
+fn running_out_of_heap_is_told_after_its_locals_go() {
     let host = JsHost::new(JsConfig {
         memory_limit: Some(16 * 1024 * 1024),
         ..JsConfig::default()
@@ -669,8 +669,8 @@ fn a_null_thrown_on_a_full_heap_is_running_out_of_memory_after_its_locals_go() {
 }
 
 /// A script may throw `null` itself on a heap within a sixteenth of its
-/// limit, held or just let go: QuickJS made no `null` of its own, so it is
-/// the script's exception, not the heap running out.
+/// limit, held or just let go: QuickJS never throws `null`, so however
+/// full the heap is, it is the script's exception.
 #[test]
 fn a_null_a_script_throws_on_a_nearly_full_heap_is_its_own() {
     let host = JsHost::new(JsConfig {
@@ -957,9 +957,10 @@ fn the_error_thrown_for_want_of_heap_before_a_nested_run_is_still_out_of_memory_
 /// QuickJS carves small objects out of arenas and lets an arena go only
 /// once all of it is free. Objects that stay among the freed ones keep
 /// their arenas held, so what the system gave back says little about
-/// what was freed: the heap is judged in the units its limit is.
+/// what was freed, and nothing about whether the run ran out: the error
+/// thrown while it had no room says that.
 #[test]
-fn a_null_thrown_on_a_full_heap_is_out_of_memory_with_arenas_still_in_use() {
+fn running_out_of_heap_is_told_with_arenas_still_in_use() {
     let host = JsHost::new(JsConfig {
         memory_limit: Some(16 * 1024 * 1024),
         ..JsConfig::default()
@@ -989,9 +990,9 @@ fn a_null_thrown_on_a_full_heap_is_out_of_memory_with_arenas_still_in_use() {
     assert!(matches!(err, JsFault::JsException { .. }), "{err:?}");
 }
 
-/// A nested run judges a `null` against what the heap held in it, not
-/// in the run around it: an outer run can last as long as a test function
-/// that waits, with the event loop nested inside it.
+/// A nested run that ran out leaves a `null` thrown by the next nested
+/// run its own: an outer run can last as long as a test function that
+/// waits, with the event loop nested inside it.
 #[test]
 fn a_null_thrown_in_a_nested_run_after_another_ran_out_is_its_own() {
     let host = JsHost::new(JsConfig {
@@ -1022,8 +1023,8 @@ fn a_null_thrown_in_a_nested_run_after_another_ran_out_is_its_own() {
     );
 }
 
-/// Each job a pump runs judges a thrown `null` by its own peak: a job
-/// before it that ran out and was freed is not its.
+/// Each job a pump runs is told by what it threw itself: a job before it
+/// that ran out does not make its `null` running out.
 #[test]
 fn a_null_thrown_by_a_job_after_another_job_ran_out_is_its_own() {
     let host = JsHost::new(JsConfig {
