@@ -847,7 +847,7 @@ fn a_null_a_script_throws_on_a_heap_filled_a_share_at_a_time_is_its_own() {
 }
 
 /// A refusal past the share that the script caught says nothing of a `null`
-/// it throws itself after: QuickJS threw none, as its count tells.
+/// it throws itself after: QuickJS never throws one.
 #[test]
 fn a_null_a_script_throws_after_a_caught_refusal_is_its_own() {
     let host = small(16);
@@ -892,8 +892,9 @@ fn a_null_a_job_throws_after_a_caught_refusal_is_its_own() {
     }
 }
 
-/// The `null` QuickJS throws for want of heap is out of memory however it
-/// reaches the host: caught and thrown again by the script, too.
+/// What QuickJS throws for want of heap is out of memory however it reaches
+/// the host: caught and thrown again by the script, too, and a script
+/// cannot make it read as anything else.
 #[test]
 fn the_error_thrown_for_want_of_heap_and_thrown_again_is_running_out_of_memory() {
     let host = JsHost::new(JsConfig {

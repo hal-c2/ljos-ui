@@ -375,9 +375,6 @@ struct JSRuntime {
        all (JS_TriggeredGC). */
     uint64_t triggered_gc_runs;
     size_t triggered_gc_freed;
-    /* Ljós: how many times JS_ThrowError2 threw `null` for want of heap to
-       make its error, so that `null` is told from a script's own. */
-    uint64_t null_errors;
 #ifdef ENABLE_DUMPS // JS_DUMP_LEAKS
     struct list_head string_list; /* list of JSString.link */
 #endif
