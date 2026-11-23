@@ -2637,8 +2637,7 @@ impl JsHost {
         while self.interrupt.now(Timing::Poll) < until {
             // Each job judges an unworded `InternalError` by its own peak, as a nested
             // run does; the pump's is the most of them.
-            let mark = self.peak.mark();
-            most = Some(most.map_or(mark, |most| most.join(mark)));
+            most = most.max(self.peak.mark());
             // Each job is a dispatch of its own, held to its share as
             // `enter` holds one, so one job that keeps allocating is
             // stopped there. A loop that awaits between allocations is a
@@ -3618,12 +3617,11 @@ pub(crate) struct Sources<'a> {
 /// Whether `err`, from a run that was refused room past its share
 /// ([`HeapCount`]), is how QuickJS fails for want of room: a call that gave
 /// nothing back, its "out of memory" error with or without the words, or
-/// the `null` it throws where even that error does not fit. Anything else
-/// is the script's own error, thrown after it caught the refusal, and is
-/// told as such. The pending exception is taken only when it is the heap's.
+/// the one made in advance that it throws where even that error does not
+/// fit ([`is_oom_error`]). Anything else, a thrown `null` among it, is the
+/// script's own error, thrown after it caught the refusal, and is told as
+/// such. The pending exception is taken only when it is the heap's.
 ///
-/// A thrown `null` is left to `classify_error`, which tells QuickJS's from a
-/// script's by the run's count ([`MallocPeak::ran_out`]), refusal or not.
 /// An `InternalError` a script makes saying "out of memory" or nothing, in
 /// a dispatch that caught a refusal earlier, is still told as the heap
 /// running out: nothing tells it from QuickJS's, and the refusal is the
@@ -3657,6 +3655,11 @@ fn refused_room(ctx: &Ctx<'_>, err: &rquickjs::Error) -> bool {
 /// so `describe_exception`'s rule for a full heap cannot. A `TypeError`
 /// saying either is a script's.
 fn is_quickjs_out_of_memory(v: &rquickjs::Value<'_>) -> bool {
+    // Told by identity first: reading its properties could run an accessor
+    // a script put on its prototype, on a heap with no room.
+    if is_oom_error(v) {
+        return true;
+    }
     v.as_object().is_some_and(|o| {
         let says = |key: &str, want: &str| {
             o.get::<_, Option<String>>(key)
