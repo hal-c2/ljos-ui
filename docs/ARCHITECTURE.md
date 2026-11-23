@@ -1747,6 +1747,12 @@ alone, with no position or severity before it.
   nothing: a warning whose file is over 256 characters is omitted.
   `warnings_omitted` counts those not listed, and `warnings_truncated`
   is true when any was left out or cut. Secrets are masked before a cut.
+- A secret is masked while the inspector's books hold it (each keeps at
+  most 1024, in 1 MiB), as in a log line. A warning once told masked is
+  told the same again, though its secret was forgotten since. Once the
+  book of secrets warnings quoted has forgotten one, a warning not told
+  before is withheld, as it may quote that secret: it is not listed, and
+  `warnings_omitted` counts it.
 - Only the compiler's typed diagnostics are in the list. The log and the
   process's errors are never read for it, so nothing the application
   prints can add one. A message may quote names from the source, so a

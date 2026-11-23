@@ -999,7 +999,7 @@ fn a_new_warning_after_the_quoted_book_forgot_a_secret_is_withheld() {
     warn_quoting_the_pin(&mut app);
     forget_the_pin_everywhere(&mut app);
     // A warning never told before may quote a secret no book holds any
-    // more: its text is not told.
+    // more: it is not listed, and counted as omitted.
     app.inspector
         .as_mut()
         .unwrap()
@@ -1014,6 +1014,41 @@ fn a_new_warning_after_the_quoted_book_forgot_a_secret_is_withheld() {
     let told = format!("{}\n{}\n{resource}", status.structured, status.text);
     assert!(!told.contains("s3cret-pin"), "{told}");
     assert!(!told.contains("another warning"), "{told}");
+    let reload = &status.structured["reload"];
+    assert_eq!(reload["warnings"], json!([]), "{reload}");
+    assert_eq!(reload["warnings_omitted"], json!(1), "{reload}");
+    assert_eq!(reload["warnings_truncated"], json!(true), "{reload}");
+}
+
+#[test]
+fn a_new_warning_is_told_after_only_the_log_forgot_a_secret() {
+    let mut app = app_with(CROWDED, InspectorConfig::default());
+    app.call("app_status", json!({}));
+    // Only the log's book learns the pin, and forgets it: no warning ever
+    // quoted it, so nothing withholds a warning that does now. The masks
+    // are bounded, as for a line logged after its secret was forgotten.
+    app.set("pin", "text", QmlValue::from(""));
+    app.set("crowd", "model", QmlValue::Int(1100));
+    app.call("app_status", json!({}));
+    app.inspector
+        .as_mut()
+        .unwrap()
+        .set_warnings(&[ljos_dev::CompileFault {
+            file: "Main.qml".into(),
+            line: 4,
+            column: 5,
+            message: "another warning quoting s3cret-pin".into(),
+        }]);
+    let status = app.call("app_status", json!({}));
+    let reload = &status.structured["reload"];
+    assert_eq!(reload["warnings_omitted"], json!(0), "{reload}");
+    assert_eq!(reload["warnings"][0]["file"], json!("Main.qml"), "{reload}");
+    assert!(
+        reload["warnings"][0]["message"]
+            .as_str()
+            .is_some_and(|m| m.starts_with("another warning quoting")),
+        "{reload}"
+    );
 }
 
 /// Tells `app`'s inspector a compiler warning that quotes the pin of

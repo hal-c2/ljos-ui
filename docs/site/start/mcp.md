@@ -157,7 +157,7 @@ Every tool that takes a `target` accepts:
 
 ### Secret redaction
 
-Fields with a hidden echo mode (such as `TextInput { echoMode: TextInput.Password }`) have their `text`, `displayText`, `selectedText` and `preeditText` masked as `<redacted>` automatically. If that secret string appears inside another property, an `objectName`, a QML `id`, a window title, a log line, a fault or a script return value, the inspector masks it there too, and paints over the item's bounds in `app_screenshot`. Starting `ljos run` with `--mcp-redact` masks all editable text fields and disables `app_eval` and script invocation completely.
+Fields with a hidden echo mode (such as `TextInput { echoMode: TextInput.Password }`) have their `text`, `displayText`, `selectedText` and `preeditText` masked as `<redacted>` automatically. If that secret string appears inside another property, an `objectName`, a QML `id`, a window title, a log line, a fault, a compiler warning or a script return value, the inspector masks it there too, and paints over the item's bounds in `app_screenshot`. The inspector remembers at most 1024 secrets, so it can forget old ones. A compiler warning it has already sent stays masked. Once it has forgotten a secret that a warning quoted, it withholds any warning it has not sent before and counts it in `warnings_omitted`. Starting `ljos run` with `--mcp-redact` masks all editable text fields and disables `app_eval` and script invocation completely.
 
 ## See also
 
