@@ -4571,8 +4571,14 @@ mod tests {
     /// A host of a 64 MiB limit with all but about `room` bytes of it live,
     /// and how much room that left in the limit's units.
     fn filled(room: usize) -> (JsHost, usize) {
+        filled_with(room, JsConfig::default().dispatch_heap_share)
+    }
+
+    /// [`filled`], with dispatches held to `share` of the room.
+    fn filled_with(room: usize, share: Option<f32>) -> (JsHost, usize) {
         let host = JsHost::new(JsConfig {
             memory_limit: Some(64 * MIB),
+            dispatch_heap_share: share,
             ..JsConfig::default()
         })
         .unwrap();
@@ -4617,7 +4623,10 @@ mod tests {
     /// Collecting ahead of a refusal is for garbage. Where it found none,
     /// like dispatches after it do not each collect the whole heap again:
     /// not those that come near their share and succeed, close to the limit
-    /// or far from it, and not those that are refused.
+    /// or far from it, and not those that are refused. Counted past the
+    /// collections the same dispatches cost with no share: far from the
+    /// limit, QuickJS's own threshold climbs from where the heap began, a
+    /// collection at each step, and that is not collecting ahead.
     #[test]
     fn collecting_ahead_of_the_share_stops_where_it_frees_nothing() {
         for (room, part) in [(MIB, 0.7), (6 * MIB, 0.7), (56 * MIB, 0.7)] {
@@ -4630,7 +4639,12 @@ mod tests {
                  }})()"
             );
             let collected = collections_in_20(&host, &run, false);
-            assert!(collected <= 5, "{room} bytes of room: {collected} in 20");
+            let (unheld, _) = filled_with(room, None);
+            let own = collections_in_20(&unheld, &run, false);
+            assert!(
+                collected.saturating_sub(own) <= 5,
+                "{room} bytes of room: {collected} in 20, {own} of them QuickJS's own with no share"
+            );
         }
         let (host, _) = filled(256 * 1024);
         let run =
