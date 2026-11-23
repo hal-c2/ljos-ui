@@ -297,7 +297,8 @@ fn spacing() -> String {
     let _ = writeln!(
         s,
         "// Gaps and padding in logical pixels, steps of the unit ({} px).\n\
-         // A theme that sets the unit moves every step with it.\nQtObject {{",
+         // A theme that sets the unit moves every step with it.\n\
+         // A step stays from 0 to the largest int, whatever sets the unit.\nQtObject {{",
         number(crate::limits::SPACING_UNIT_PX)
     );
     let _ = writeln!(
@@ -308,10 +309,13 @@ fn spacing() -> String {
     for step in scale::spacing() {
         // A binding on the unit rather than a number, so one value loosens
         // or tightens the whole rhythm; a step a theme sets still wins.
+        // It is clamped here and not by who sets the unit, which may be a
+        // theme, devtools or an edit of the exported file: past the largest
+        // int the product would wrap. The unit itself cannot be past it.
         let value = match step.units {
             0 => "0".to_owned(),
-            1 => "unit".to_owned(),
-            n => format!("unit * {n}"),
+            1 => "Math.max(0, unit)".to_owned(),
+            n => format!("Math.max(0, Math.min(unit * {n}, {}))", i32::MAX),
         };
         let _ = writeln!(s, "    readonly property int {}: {value}", step.name);
     }

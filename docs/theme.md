@@ -62,9 +62,10 @@ module's value.
 
 `Spacing`'s steps are multiples of `unit` (`xxs` 1, `xs` 2, `sm` 3, `md` 4,
 `lg` 6, `xl` 8, `xxl` 12, `xxxl` 16), so a theme that sets only `unit`
-moves the whole scale; a step the theme sets itself keeps its value. A
-step that would pass 2147483647, the largest `int`, stops there, so none
-wraps to a negative number. `Typography`'s line heights do not follow
+moves the whole scale; a step the theme sets itself keeps its value. The
+other steps stay from 0 to 2147483647, the largest `int`, whatever set the
+unit (a theme, devtools, an edit of the exported module), so none wraps or
+is negative. `Typography`'s line heights do not follow
 `unit`: they are on a baseline grid of their own, 4 px, and a theme changes
 one with its `{step}LineHeight`.
 
