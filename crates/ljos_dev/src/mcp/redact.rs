@@ -112,6 +112,8 @@ pub(crate) struct SecretBook {
     bytes: usize,
     /// `known`, longest first, as the masks want it.
     longest_first: Vec<String>,
+    /// Whether the bounds ever made it forget a secret.
+    forgot: bool,
 }
 
 impl SecretBook {
@@ -145,6 +147,7 @@ impl SecretBook {
             if let Some(old) = self.order.pop_front() {
                 self.bytes -= old.len();
                 self.known.remove(&old);
+                self.forgot = true;
             }
         }
         self.longest_first = self.order.iter().cloned().collect();
@@ -152,6 +155,12 @@ impl SecretBook {
             .sort_by_key(|s| std::cmp::Reverse(s.len()));
         new.sort_by_key(|s| std::cmp::Reverse(s.len()));
         new
+    }
+
+    /// Whether a secret it learned is no longer among
+    /// [`SecretBook::secrets`].
+    pub(crate) fn forgot(&self) -> bool {
+        self.forgot
     }
 
     pub(crate) fn secrets(&self) -> &[String] {

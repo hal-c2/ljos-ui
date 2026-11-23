@@ -954,6 +954,68 @@ fn a_warning_back_after_a_change_without_it_keeps_a_forgotten_secret_masked() {
     assert!(told.contains("a warning that quotes <redacted>"), "{told}");
 }
 
+/// Makes the inspector forget the pin of [`CROWDED`] in every book it
+/// keeps: the field lets it go, more new secrets than are kept push it out
+/// of the log's book, and warnings quoting more of them than are kept push
+/// it out of the book of quoted secrets.
+fn forget_the_pin_everywhere(app: &mut App) {
+    app.set("pin", "text", QmlValue::from(""));
+    for (crowd, from) in [(1100, 0), (2200, 1100)] {
+        app.set("crowd", "model", QmlValue::Int(crowd));
+        app.call("app_status", json!({}));
+        let quoted: Vec<String> = (from..crowd).map(|i| format!("other-{i}")).collect();
+        app.inspector
+            .as_mut()
+            .unwrap()
+            .set_warnings(&[ljos_dev::CompileFault {
+                file: "Main.qml".into(),
+                line: 9,
+                column: 5,
+                message: format!("a warning that quotes {}", quoted.join(" ")),
+            }]);
+    }
+}
+
+#[test]
+fn a_warning_back_after_the_quoted_book_forgot_its_secret_keeps_it_masked() {
+    let mut app = app_with(CROWDED, InspectorConfig::default());
+    app.call("app_status", json!({}));
+    warn_quoting_the_pin(&mut app);
+    forget_the_pin_everywhere(&mut app);
+    // A later load brings the first warning back: what was told masked
+    // stays so, though no book holds the pin any more.
+    warn_quoting_the_pin(&mut app);
+    let status = app.call("app_status", json!({}));
+    let resource = app.read("ljos://app/reload").unwrap();
+    let told = format!("{}\n{}\n{resource}", status.structured, status.text);
+    assert!(!told.contains("s3cret-pin"), "{told}");
+    assert!(told.contains("a warning that quotes <redacted>"), "{told}");
+}
+
+#[test]
+fn a_new_warning_after_the_quoted_book_forgot_a_secret_is_withheld() {
+    let mut app = app_with(CROWDED, InspectorConfig::default());
+    app.call("app_status", json!({}));
+    warn_quoting_the_pin(&mut app);
+    forget_the_pin_everywhere(&mut app);
+    // A warning never told before may quote a secret no book holds any
+    // more: its text is not told.
+    app.inspector
+        .as_mut()
+        .unwrap()
+        .set_warnings(&[ljos_dev::CompileFault {
+            file: "Main.qml".into(),
+            line: 4,
+            column: 5,
+            message: "another warning quoting s3cret-pin".into(),
+        }]);
+    let status = app.call("app_status", json!({}));
+    let resource = app.read("ljos://app/reload").unwrap();
+    let told = format!("{}\n{}\n{resource}", status.structured, status.text);
+    assert!(!told.contains("s3cret-pin"), "{told}");
+    assert!(!told.contains("another warning"), "{told}");
+}
+
 /// Tells `app`'s inspector a compiler warning that quotes the pin of
 /// [`LOGGED`] and [`CROWDED`].
 fn warn_quoting_the_pin(app: &mut App) {
