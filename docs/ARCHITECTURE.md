@@ -1730,8 +1730,10 @@ alone, with no position or severity before it.
   its message than before. Among several of one message in a file the
   new one can't be told: those where none stood come first, then the
   others of that message.
-- `warnings` is `null` when the host tells none: without `--watch`, and
-  in a host that does not compile. That is not an empty list.
+- `warnings` is `null` when the host tells none: without `--watch`, in
+  a host that does not compile, and until a first load compiles. That is
+  not an empty list. They are those of the build the application took:
+  one it has not taken yet, or refused, is not among them.
 - `file` is written as in a reload's error: with `/`, relative to the
   project's root (`--project`, else the directory of the file run), with
   `.qml`. A file a `Loader` reached is written the same

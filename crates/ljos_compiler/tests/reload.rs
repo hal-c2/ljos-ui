@@ -507,6 +507,44 @@ fn a_session_warns_with_the_lint() {
     assert_eq!((w[0].file.as_str(), w[0].line), ("Main.qml", 3));
 }
 
+/// The first line of each warning the application runs at `generation`.
+fn running(s: &ReloadSession<QtTypeOracle>, generation: u64) -> Vec<String> {
+    s.running_warnings(generation)
+        .map(|w| w.message.lines().next().unwrap_or_default().to_owned())
+        .collect()
+}
+
+#[test]
+fn the_warnings_that_run_are_those_of_the_patch_taken() {
+    let two = "import QtQuick\nItem {\n  Timer { }\n  Timer { }\n}\n";
+    let three = "import QtQuick\nItem {\n  Timer { }\n  Timer { }\n  Timer { }\n}\n";
+    let four = "import QtQuick\nItem {\n  Timer { }\n  Timer { }\n  Timer { }\n  Timer { }\n}\n";
+    let mut s = session(&[("Main", two)]);
+    let at_start = s.generation();
+    let starts = |w: &[String], n: &str| w.len() == 1 && w[0].starts_with(n);
+    assert!(
+        starts(&running(&s, at_start), "2 Timer"),
+        "{:?}",
+        running(&s, at_start)
+    );
+
+    // Built, not yet answered: the application still runs the start.
+    s.set_file("Main", three);
+    let refused = s.build().unwrap().unwrap();
+    assert!(starts(&running(&s, at_start), "2 Timer"));
+    // Applied, its answer on its way: the patch's.
+    assert!(starts(&running(&s, refused.generation), "3 Timer"));
+    // Refused: never what runs.
+    s.reject(refused.generation);
+    assert!(starts(&running(&s, at_start), "2 Timer"));
+    assert!(starts(&running(&s, refused.generation), "2 Timer"));
+
+    s.set_file("Main", four);
+    let taken = s.build().unwrap().unwrap();
+    s.ack(taken.generation);
+    assert!(starts(&running(&s, taken.generation), "4 Timer"));
+}
+
 #[test]
 fn a_session_over_a_directory_reads_it_and_reads_it_again() {
     let dir = tempfile::tempdir().unwrap();

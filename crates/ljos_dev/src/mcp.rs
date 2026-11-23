@@ -359,6 +359,10 @@ pub struct Inspector {
     /// The clock `app_advance` moves; none on the system clock.
     vclock: Option<VirtualClock>,
     feed: Arc<ReloadFeed>,
+    /// The warnings last told ([`set_warnings`](Self::set_warnings)) as
+    /// the compiler wrote them: they are masked again when a secret is
+    /// learned after them.
+    warnings: Option<Vec<CompileFault>>,
     /// What `app_watch` waits on.
     changes: Arc<ChangeFeed>,
     /// The reload generation and error as of the last [`observe`](Self::observe).
@@ -474,6 +478,7 @@ impl Inspector {
             work: None,
             vclock: None,
             feed,
+            warnings: None,
             changes,
             seen: None,
             parked: None,
@@ -538,11 +543,28 @@ impl Inspector {
     /// no text of the application's log may be in it. `app_status` and the
     /// answers of `app_reload` and `app_alias` have them, masked and bounded.
     pub fn set_warnings(&mut self, warnings: &[CompileFault]) {
+        self.warnings = Some(warnings.to_vec());
+        self.mask_warnings();
+    }
+
+    /// Tells the warnings again, masked with every secret known now.
+    fn mask_warnings(&self) {
+        let Some(warnings) = &self.warnings else {
+            return;
+        };
         let bounded = {
             let logs = self.logs.borrow();
             Warnings::bounded(warnings, |text| logs.book().mask_text(text))
         };
         self.feed.set_warnings(bounded);
+    }
+
+    /// Makes `secrets` known to the log, and masks again what was told
+    /// before one of them was: a warning may quote what a field holds.
+    fn learn<'a>(&self, secrets: impl IntoIterator<Item = &'a String>) {
+        if self.logs.borrow_mut().learn(secrets) {
+            self.mask_warnings();
+        }
     }
 
     /// Says that the host has a platform window and gives it the size
@@ -1051,13 +1073,13 @@ impl Inspector {
                 )));
             }
             if let Some(c) = &capture {
-                self.logs.borrow_mut().learn(&c.secrets);
+                self.learn(&c.secrets);
                 self.traces.borrow_mut().learn(&c.secrets);
             }
             self.answer(engine, scene, clock, &mut capture, request);
             // An act may have left a field holding another secret.
             if let Some(c) = &capture {
-                self.logs.borrow_mut().learn(&c.secrets);
+                self.learn(&c.secrets);
                 self.traces.borrow_mut().learn(&c.secrets);
             }
         }
@@ -1260,7 +1282,7 @@ impl Inspector {
             // hold what a field holds now.
             if capture.is_none() {
                 let now = capture::secrets(engine, scene, self.cfg.redact_all);
-                self.logs.borrow_mut().learn(&now);
+                self.learn(&now);
             }
             self.secret_watch.start(engine, scene, self.cfg.redact_all);
             let answer = args.options().and_then(|mut options| {
@@ -1302,10 +1324,7 @@ impl Inspector {
             // (fields made meanwhile included) and what they hold now.
             let heard = self.secret_watch.stop(engine);
             let now = capture::secrets(engine, scene, self.cfg.redact_all);
-            let mut logs = self.logs.borrow_mut();
-            logs.learn(&heard);
-            logs.learn(&now);
-            drop(logs);
+            self.learn(heard.iter().chain(&now));
             let book = self.logs.borrow();
             let book = book.book();
             let answer = match answer {
@@ -1334,7 +1353,7 @@ impl Inspector {
             // What the application logged or threw may hold what a field
             // holds now, which no look at the scene has seen yet.
             let now = capture::secrets(engine, scene, self.cfg.redact_all);
-            self.logs.borrow_mut().learn(&now);
+            self.learn(&now);
         }
         let queued = self.inbox.len();
         let capacity = self.inbox.capacity();
@@ -1432,7 +1451,7 @@ impl Inspector {
                     Some(c) => c.secrets.clone(),
                     None => capture::secrets(engine, scene, self.cfg.redact_all),
                 };
-                self.logs.borrow_mut().learn(&now);
+                self.learn(&now);
                 let secrets = self.logs.borrow().book().secrets().to_vec();
                 found.and_then(|found| {
                     objects::objects(engine, scene, args, found, &secrets, per_copy)

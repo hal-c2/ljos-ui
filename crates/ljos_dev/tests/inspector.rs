@@ -814,6 +814,35 @@ fn what_the_app_logged_or_threw_is_told_without_a_secret_it_held_then() {
 }
 
 #[test]
+fn a_warning_told_before_its_secret_was_seen_is_masked_once_it_is() {
+    let mut app = app_with(LOGGED, InspectorConfig::default());
+    // The compiler's text quotes what the field holds; nothing has looked
+    // at the scene yet, so the inspector does not know it is a secret.
+    app.inspector
+        .as_mut()
+        .unwrap()
+        .set_warnings(&[ljos_dev::CompileFault {
+            file: "Main.qml".into(),
+            line: 3,
+            column: 5,
+            message: "a warning that quotes s3cret-pin".into(),
+        }]);
+    let status = app.call("app_status", json!({}));
+    let resource = app.read("ljos://app/reload").unwrap();
+    let told = format!("{}\n{}\n{resource}", status.structured, status.text);
+    assert!(!told.contains("s3cret-pin"), "{told}");
+    assert!(told.contains("a warning that quotes <redacted>"), "{told}");
+    // The field lets the secret go: the warning stays masked.
+    app.set("pin", "text", QmlValue::from(""));
+    let status = app.call("app_status", json!({}));
+    assert!(
+        !status.structured.to_string().contains("s3cret-pin"),
+        "{}",
+        status.structured
+    );
+}
+
+#[test]
 fn an_inspector_told_to_mask_every_editable_value_masks_them_in_the_log() {
     let mut app = app_with(
         CALLS,

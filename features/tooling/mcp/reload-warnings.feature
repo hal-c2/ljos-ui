@@ -1,4 +1,6 @@
 # Sources:
+#   docs/research/10-mcp.md sections 3.4 and 3.7
+#   docs/research/03-runtime-concurrency-hot-reload.md
 #   docs/ARCHITECTURE.md sections 12.1 and 19.4
 # The inspector is a Ljós extension: Qt has nothing to compare it with.
 
@@ -142,6 +144,16 @@ Feature: An agent is told the warnings of a reload
 
     Scenario: Without watching, no warnings are known
       When the author starts "ljos run Main.qml --headless --mcp=inspect"
+      And the agent calls the tool "app_status"
+      Then the answer's "/reload/warnings" is null
+
+    Scenario: Before a first load compiles, no warnings are known
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
+        Item { property string title: }
+        """
+      When the author starts "ljos run Main.qml --headless --watch --mcp=inspect"
       And the agent calls the tool "app_status"
       Then the answer's "/reload/warnings" is null
 
