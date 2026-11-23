@@ -448,9 +448,21 @@ mod tests {
     #[test]
     fn a_failed_look_does_not_take_a_failed_edit_s_place() {
         let window = window();
+        // Picked, so that a failed look is one the user asked for and would
+        // be kept were it not for the edit's.
+        let (engine, root) = &window;
+        engine
+            .eval_js_in(
+                Some(*root),
+                "objects.pick('b', 'b')",
+                Duration::from_secs(1),
+                [4, 16, 256, 64, 1024],
+            )
+            .unwrap();
         let said = status_after(&window, "edited:b", false, "denied");
         assert_eq!(status_after(&window, "inspect:b", false, "gone"), said);
-        assert_eq!(status_after(&window, "inspect:b", true, "{}"), said);
+        let values = r#"{"structuredContent":{"properties":[]}}"#;
+        assert_eq!(status_after(&window, "inspect:b", true, values), said);
     }
 
     #[test]
