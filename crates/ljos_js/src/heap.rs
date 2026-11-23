@@ -274,7 +274,6 @@ impl MallocPeak {
         // SAFETY: a live runtime (`of`).
         unsafe { JS_SetMallocCapRefused(self.rt, refused) };
     }
-    }
 }
 
 /// While it lives, what is made is not the dispatch's
