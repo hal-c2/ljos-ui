@@ -157,3 +157,30 @@ fn the_corpus_shaders_compile() {
         assert_eq!(block.members[1].offset, 64, "{file}");
     }
 }
+
+/// A carried shader is loaded once per address and stage, until other
+/// bytes are registered at that address.
+#[test]
+fn a_carried_artifact_is_kept_by_its_address_and_bytes() {
+    let artifact = include_bytes!("../defaults/default.frag.ljsh").as_slice();
+    let url = "qrc:/kept-test/fx.frag.ljsh";
+    let found = |bytes: &'static [u8]| {
+        Kept::find(url, move |at: &str| (at == url).then_some(bytes))
+            .unwrap()
+            .unwrap()
+    };
+    let first = found(artifact);
+    assert!(first.cached(Stage::Fragment).is_none());
+    let loaded = first.load(Stage::Fragment).unwrap();
+    let again = found(artifact);
+    assert!(Arc::ptr_eq(
+        &again.cached(Stage::Fragment).unwrap(),
+        &loaded
+    ));
+    assert!(Arc::ptr_eq(&again.load(Stage::Fragment).unwrap(), &loaded));
+    // Another stage is another program.
+    assert!(again.cached(Stage::Vertex).is_none());
+    // Other bytes at the same address are not what was kept.
+    let vertex = include_bytes!("../defaults/default.vert.ljsh").as_slice();
+    assert!(found(vertex).cached(Stage::Fragment).is_none());
+}

@@ -284,19 +284,44 @@ fn program(text: &str, shown: &str, artifact: bool, stage: Stage) -> Result<Comp
 pub struct Kept {
     url: String,
     bytes: Vec<u8>,
+    /// Of `bytes`: what is kept of a URL is the program of these bytes.
+    digest: u64,
     artifact: bool,
+}
+
+/// What was loaded from a carried shader, by its URL, so the delegates of a
+/// view that share one have it at once, as [`by_path`] keeps files. The
+/// digest of its bytes tells a URL registered again with others.
+type ByUrl = HashMap<(String, Stage), (u64, Arc<Compiled>)>;
+
+fn by_url() -> &'static Mutex<ByUrl> {
+    static CACHE: OnceLock<Mutex<ByUrl>> = OnceLock::new();
+    CACHE.get_or_init(Default::default)
+}
+
+fn digest(bytes: &[u8]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    bytes.hash(&mut h);
+    h.finish()
 }
 
 impl Kept {
     /// Finds what `url` names among what `get` has, as [`locate`] does
-    /// among files. `None`: it has nothing of that name.
-    pub fn find(url: &str, get: impl Fn(&str) -> Option<Vec<u8>>) -> Option<Result<Self, Error>> {
+    /// among files. `None`: it has nothing of that name. Only what is
+    /// found is copied.
+    pub fn find<B: AsRef<[u8]>>(
+        url: &str,
+        get: impl Fn(&str) -> Option<B>,
+    ) -> Option<Result<Self, Error>> {
         let base = url.strip_suffix(".qsb").unwrap_or(url);
         let suffix = format!(".{ARTIFACT_SUFFIX}");
-        let kept = |url: String, bytes, artifact| {
+        let kept = |url: String, bytes: B, artifact| {
+            let bytes = bytes.as_ref();
             Some(Ok(Self {
                 url,
-                bytes,
+                digest: digest(bytes),
+                bytes: bytes.to_vec(),
                 artifact,
             }))
         };
@@ -313,7 +338,7 @@ impl Kept {
         if let Some(bytes) = get(&artifact) {
             return kept(artifact, bytes, true);
         }
-        if get(base).is_some() {
+        if source.is_some() {
             return Some(Err(Error::NotCompiled(base.to_owned())));
         }
         get(url).map(|_| {
@@ -329,13 +354,28 @@ impl Kept {
         self.artifact
     }
 
-    /// Loads the program, compiling it if it is source (see [`load`]).
+    /// The program loaded from these bytes at this URL before.
+    pub fn cached(&self, stage: Stage) -> Option<Arc<Compiled>> {
+        let cache = by_url().lock().ok()?;
+        let (digest, c) = cache.get(&(self.url.clone(), stage))?;
+        (*digest == self.digest).then(|| c.clone())
+    }
+
+    /// Loads the program, compiling it if it is source (see [`load`]), and
+    /// keeps it for the next that finds the same.
     pub fn load(&self, stage: Stage) -> Result<Arc<Compiled>, Error> {
+        if let Some(c) = self.cached(stage) {
+            return Ok(c);
+        }
         let text = std::str::from_utf8(&self.bytes).map_err(|e| Error::Read {
             path: self.url.clone(),
             message: e.to_string(),
         })?;
-        program(text, &self.url, self.artifact, stage).map(Arc::new)
+        let compiled = Arc::new(program(text, &self.url, self.artifact, stage)?);
+        if let Ok(mut cache) = by_url().lock() {
+            cache.insert((self.url.clone(), stage), (self.digest, compiled.clone()));
+        }
+        Ok(compiled)
     }
 }
 

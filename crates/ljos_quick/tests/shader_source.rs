@@ -299,3 +299,37 @@ fn a_shader_source_a_pack_carries_is_found_by_its_address() {
     let (status, log) = effect_of_kept("qrc:/s/fx.frag", &[("qrc:/s/fx.frag", source)]);
     assert_eq!(status, 0.0, "{log}");
 }
+
+/// As the delegates of a view that share a file's shader have it at once,
+/// a second effect of a carried source is not compiled again.
+#[cfg(feature = "shader-compile")]
+#[test]
+fn a_carried_shader_source_compiled_once_is_had_at_once_by_the_next_effect() {
+    // An address of its own: the programs kept are the process's.
+    let (url, source) = (
+        "qrc:/shared/fx.frag",
+        ljos_shader::DEFAULT_FRAGMENT_SOURCE.as_bytes(),
+    );
+    let (status, log) = effect_of_kept(url, &[(url, source)]);
+    assert_eq!(status, 0.0, "{log}");
+
+    let e = engine();
+    let platform = ljos_platform::Platform::of(&e);
+    platform.register_kept_resource(url, source.to_vec());
+    let root = load(
+        &e,
+        &QUADS.replace(
+            "property var source: s }",
+            &format!("property var source: s; fragmentShader: \"{url}\" }}"),
+        ),
+    );
+    let fx = find(&e, root, "fx");
+    // Nothing was sent to be compiled, and nothing is delivered first.
+    assert_eq!(platform.awaited(), 0);
+    assert_eq!(
+        num(&e, fx, "status"),
+        0.0,
+        "{}",
+        get(&e, fx, "log").to_js_string()
+    );
+}
