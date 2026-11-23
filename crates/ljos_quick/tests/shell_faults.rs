@@ -762,9 +762,14 @@ fn a_source_that_fits_once_the_held_one_is_deleted_ends_ready() {
     assert_eq!(e.next_timer_deadline(), None);
 }
 
+/// The fallback made again here holds little. [`FULL`]'s is all the room
+/// the one deleted gave back, which is past what one dispatch may take of
+/// it (`JsConfig::dispatch_heap_share`); that case is
+/// [`a_fallback_past_its_share_of_the_room_ends_in_error_saying_both`].
 #[test]
 fn a_source_that_never_fits_ends_on_the_fallback_after_the_one_try() {
-    let (e, clock, root, loader, fallback) = snug();
+    let light = FULL.replace("40000", "10");
+    let (e, clock, root, loader, fallback) = snug_in("Snug", SNUG_MAIN, &light);
     let (made, why) = changed_without_room(&e, root, loader, "Huge");
     deleted_and_tried(&e, &clock, loader, fallback);
     assert_eq!(status(&e, loader), 2, "{}", error(&e, loader));
@@ -774,6 +779,21 @@ fn a_source_that_never_fits_ends_on_the_fallback_after_the_one_try() {
     assert!(
         e.next_timer_deadline().is_some(),
         "then the backoff, as ever"
+    );
+}
+
+/// A dispatch may take only its share of the room left as it begins, and a
+/// fallback is made by one: one whose state is all the room there is fails
+/// as the source did, and the loader says why both did.
+#[test]
+fn a_fallback_past_its_share_of_the_room_ends_in_error_saying_both() {
+    let (e, clock, root, loader, fallback) = snug();
+    changed_without_room(&e, root, loader, "Huge");
+    deleted_and_tried(&e, &clock, loader, fallback);
+    assert_eq!(status(&e, loader), 3, "{}", error(&e, loader));
+    assert_eq!(
+        error(&e, loader),
+        "file:///Huge.qml:3: JS out of memory\nfallback: file:///Full.qml:3: JS out of memory"
     );
 }
 
