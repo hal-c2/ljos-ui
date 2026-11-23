@@ -933,6 +933,27 @@ fn a_warning_told_again_keeps_a_secret_masked_after_the_inspector_forgets_it() {
     assert!(told.contains("a warning that quotes <redacted>"), "{told}");
 }
 
+#[test]
+fn a_warning_back_after_a_change_without_it_keeps_a_forgotten_secret_masked() {
+    let mut app = app_with(CROWDED, InspectorConfig::default());
+    app.call("app_status", json!({}));
+    warn_quoting_the_pin(&mut app);
+    // A change that fixes the warning: nothing quotes the pin.
+    app.inspector.as_mut().unwrap().set_warnings(&[]);
+    // The field lets the pin go, and more new secrets than are kept make
+    // the inspector forget it.
+    app.set("pin", "text", QmlValue::from(""));
+    app.set("crowd", "model", QmlValue::Int(1100));
+    app.call("app_status", json!({}));
+    // A change that undoes the fix: the warning is back.
+    warn_quoting_the_pin(&mut app);
+    let status = app.call("app_status", json!({}));
+    let resource = app.read("ljos://app/reload").unwrap();
+    let told = format!("{}\n{}\n{resource}", status.structured, status.text);
+    assert!(!told.contains("s3cret-pin"), "{told}");
+    assert!(told.contains("a warning that quotes <redacted>"), "{told}");
+}
+
 /// Tells `app`'s inspector a compiler warning that quotes the pin of
 /// [`LOGGED`] and [`CROWDED`].
 fn warn_quoting_the_pin(app: &mut App) {

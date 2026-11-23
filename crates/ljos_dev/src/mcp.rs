@@ -364,11 +364,12 @@ pub struct Inspector {
     /// The compiler's own text is never kept: the book forgets old secrets,
     /// and masking that text anew would tell a forgotten one.
     warnings: RefCell<Option<Vec<CompileFault>>>,
-    /// The secrets [`warnings`](Self::warnings) quoted, longest first. The
-    /// compiler says a warning again on the next change, and the book may
-    /// have forgotten its secret by then: these mask it still. Only those
-    /// the warnings last told quote are kept, so the warnings bound them.
-    quoted: RefCell<Vec<String>>,
+    /// Every secret a told warning has quoted, in a book of its own. A
+    /// later change may bring a warning back, after changes that did not
+    /// quote it and after the inspector's book forgot its secret: this
+    /// masks it still. Few secrets are ever quoted; the bounds are the
+    /// book's.
+    quoted: RefCell<redact::SecretBook>,
     /// What `app_watch` waits on.
     changes: Arc<ChangeFeed>,
     /// The reload generation and error as of the last [`observe`](Self::observe).
@@ -485,7 +486,7 @@ impl Inspector {
             vclock: None,
             feed,
             warnings: RefCell::new(None),
-            quoted: RefCell::new(Vec::new()),
+            quoted: RefCell::new(redact::SecretBook::default()),
             changes,
             seen: None,
             parked: None,
@@ -553,14 +554,17 @@ impl Inspector {
         let quoted = {
             let logs = self.logs.borrow();
             let before = self.quoted.borrow();
-            quoted_by(logs.book().secrets().iter().chain(before.iter()), warnings)
+            quoted_by(
+                logs.book().secrets().iter().chain(before.secrets()),
+                warnings,
+            )
         };
         let mut masked = warnings.to_vec();
         for fault in &mut masked {
             redact::mask_text(&mut fault.file, &quoted);
             redact::mask_text(&mut fault.message, &quoted);
         }
-        *self.quoted.borrow_mut() = quoted;
+        self.quoted.borrow_mut().learn(&quoted);
         *self.warnings.borrow_mut() = Some(masked);
         self.tell_warnings();
     }
@@ -582,12 +586,7 @@ impl Inspector {
             return;
         }
         if let Some(warnings) = self.warnings.borrow_mut().as_mut() {
-            let hit = quoted_by(&new, warnings);
-            if !hit.is_empty() {
-                let mut quoted = self.quoted.borrow_mut();
-                quoted.extend(hit);
-                longest_first(&mut quoted);
-            }
+            self.quoted.borrow_mut().learn(&quoted_by(&new, warnings));
             for fault in warnings {
                 redact::mask_text(&mut fault.file, &new);
                 redact::mask_text(&mut fault.message, &new);
@@ -1928,12 +1927,7 @@ fn quoted_by<'a>(
         })
         .cloned()
         .collect();
-    longest_first(&mut quoted);
+    quoted.sort_by(|a, b| b.len().cmp(&a.len()).then_with(|| a.cmp(b)));
+    quoted.dedup();
     quoted
-}
-
-/// Orders secrets as the masks want them, and drops repeats.
-fn longest_first(secrets: &mut Vec<String>) {
-    secrets.sort_by(|a, b| b.len().cmp(&a.len()).then_with(|| a.cmp(b)));
-    secrets.dedup();
 }
