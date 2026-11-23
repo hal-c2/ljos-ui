@@ -938,6 +938,8 @@ fn a_row_an_evaluation_makes_is_kept_whatever_the_run_before_it_caught() {
     let mut wrong = Vec::new();
     for (what, eval) in evals {
         let (e, clock) = timed();
+        // `made_file` imports the module `Making::start` registers.
+        e.register_module(ljos_engine::module!("QtQuick.Templates" 2.0 => [Flaky]));
         let line = made_file(true, CONTENT_FAULTS[0].1, false);
         compile(&e, &[("Main", &main), ("Line", &line)]);
         let root = e.create_from_url("Main", None, Vec::new()).unwrap();
@@ -969,6 +971,7 @@ fn a_row_an_evaluation_makes_is_kept_whatever_the_run_before_it_caught() {
             continue;
         };
         m.make_room();
+        assert!(!m.e.has_pending_faults(), "{what}: a fault was never taken");
         if m.object() != Some(first) {
             wrong.push(format!("{what}: made again"));
         } else if !exists(&m.e, first, "back") {
