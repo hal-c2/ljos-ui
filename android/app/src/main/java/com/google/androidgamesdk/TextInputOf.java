@@ -11,8 +11,9 @@ import android.view.View;
 import android.view.inputmethod.EditorInfo;
 import com.google.androidgamesdk.gametextinput.InputConnection;
 import com.google.androidgamesdk.gametextinput.Settings;
+import java.util.ArrayDeque;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * The connection GameTextInput keeps for the surface's editor. GameActivity
@@ -63,42 +64,76 @@ public final class TextInputOf {
 
     /**
      * The listener is being told {@code state}, and has yet to hand it to
-     * the native side, which asks {@link #toldWrite} once it has it. A write
-     * told back is kept by what it holds: the native side takes the newest
-     * state told, and a report told after it took one must not change what
-     * it is told of that one.
+     * the native side. Each tell is kept by its place among them, what it
+     * holds and whether it is a write told back: the native side takes the
+     * newest state handed to it, which says nothing of which tell that was.
      */
     public static void telling(
             GameActivity.InputEnabledSurfaceView view,
             com.google.androidgamesdk.gametextinput.State state) {
         if (connection(view) instanceof Connection) {
+            ((Connection) connection(view)).telling(
+                    key(state.text, state.selectionStart, state.selectionEnd,
+                            state.composingRegionStart, state.composingRegionEnd));
+        }
+    }
+
+    /** The listener handed the native side what {@link #telling} was told. */
+    public static void handedOn(GameActivity.InputEnabledSurfaceView view) {
+        if (connection(view) instanceof Connection) {
             Connection told = (Connection) connection(view);
-            if (told.echoing) {
-                told.toldWrite.set(
-                        key(state.text, state.selectionStart, state.selectionEnd,
-                                state.composingRegionStart, state.composingRegionEnd));
-            }
+            told.handed.set(told.begun);
         }
     }
 
     /**
-     * Whether the state the native side took, as it took it, is a write
-     * told back for having landed on one the input method made; the answer
-     * is given once. On any thread; waits for none.
+     * How many tells the native side was handed in full. Read before it
+     * takes a state, the one it takes is that last one or one after it. On
+     * any thread; waits for none.
+     */
+    public static long handed(GameActivity.InputEnabledSurfaceView view) {
+        return connection(view) instanceof Connection
+                ? ((Connection) connection(view)).handed.get()
+                : 0;
+    }
+
+    /**
+     * Whether the state the native side took, as it took it, having read
+     * {@code since} from {@link #handed} before, is a write told back for
+     * having landed on one the input method made; the answer is given once.
+     * Only the tells from {@code since} on can be the one it took: a report
+     * like an earlier write told back is a report. On any thread; waits for
+     * none.
      */
     public static boolean toldWrite(
-            GameActivity.InputEnabledSurfaceView view,
+            GameActivity.InputEnabledSurfaceView view, long since,
             String text, int selectionStart, int selectionEnd,
             int composingStart, int composingEnd) {
         if (!(connection(view) instanceof Connection)) {
             return false;
         }
-        AtomicReference<String> told = ((Connection) connection(view)).toldWrite;
-        String took = key(text, selectionStart, selectionEnd, composingStart, composingEnd);
-        String echoed = told.get();
-        // By identity: an echo told since, the same or not, stays to be asked.
-        return took.equals(echoed) && told.compareAndSet(echoed, null);
+        return ((Connection) connection(view)).toldWrite(
+                since, key(text, selectionStart, selectionEnd, composingStart, composingEnd));
     }
+
+    /** A tell: its place among them, what it held, and whether it was a write told back. */
+    private static final class Tell {
+        final long at;
+        final String key;
+        final boolean write;
+
+        Tell(long at, String key, boolean write) {
+            this.at = at;
+            this.key = key;
+            this.write = write;
+        }
+    }
+
+    /**
+     * Tells kept to be asked of: the native side takes one within a turn,
+     * and those before the last it was handed are dropped as it asks.
+     */
+    private static final int TELLS = 32;
 
     /** A state as both sides read it: a region with an end below 0 is none. */
     private static String key(String text, int start, int end, int composeStart, int composeEnd) {
@@ -152,11 +187,17 @@ public final class TextInputOf {
         /** A state was told with a write on its way, which will replace it. */
         private boolean overtaken;
 
+        /** Tells begun, the first being 1. The UI thread's. */
+        long begun;
+
+        /** Of those, the last the native side was handed in full. */
+        final AtomicLong handed = new AtomicLong();
+
         /**
-         * The last write told back, as {@link #key} gives it, until the
-         * native side asked about it; read on the native side's thread.
+         * The tells the native side may yet ask of, oldest first; asked of
+         * on its thread. Guarded by itself.
          */
-        final AtomicReference<String> toldWrite = new AtomicReference<>();
+        private final ArrayDeque<Tell> tells = new ArrayDeque<>();
 
         /** Inside the tell of a write back. */
         private boolean echoing;
@@ -178,6 +219,46 @@ public final class TextInputOf {
             this.updates = updates;
             mark();
             known = state();
+        }
+
+        void telling(String key) {
+            synchronized (tells) {
+                if (tells.size() == TELLS) {
+                    tells.removeFirst();
+                }
+                tells.addLast(new Tell(++begun, key, echoing));
+            }
+        }
+
+        // The state taken is the newest handed when it was taken: the tell
+        // at `since` or one after it. Of those holding the same, a write is
+        // said only when all are: a report taken for a write would let a
+        // stale write replace what the user typed. The earliest is the one
+        // answered; a later one like it is kept for its own taking.
+        boolean toldWrite(long since, String took) {
+            synchronized (tells) {
+                while (!tells.isEmpty() && tells.peekFirst().at < since) {
+                    tells.removeFirst();
+                }
+                Tell first = null;
+                boolean write = true;
+                for (Tell tell : tells) {
+                    if (tell.key.equals(took)) {
+                        first = first == null ? tell : first;
+                        write &= tell.write;
+                    }
+                }
+                if (first == null) {
+                    return false;
+                }
+                while (tells.peekFirst().at <= first.at) {
+                    tells.removeFirst();
+                    if (tells.isEmpty()) {
+                        break;
+                    }
+                }
+                return write;
+            }
         }
 
         private void mark() {

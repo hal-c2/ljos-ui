@@ -36,12 +36,13 @@ public final class Cases {
         surface = TextInputOf.surface(activity, mode -> true);
         view = surface;
         connection = TextInputOf.connection(surface);
-        activity.telling = state -> {
-            TextInputOf.telling(surface, state);
+        activity.telling = state -> TextInputOf.telling(surface, state);
+        activity.handed = state -> {
+            TextInputOf.handedOn(surface);
             lastTold = state;
-            // The native side can ask from here on.
+            // The native side can take it and ask from here on.
             if (askAsTold) {
-                toldAsWrite = asked(state);
+                toldAsWrite = asked(take());
             }
         };
         if (shown) {
@@ -50,9 +51,26 @@ public final class Cases {
         Handler.runQueued();
     }
 
-    /** Whether the native side, having taken {@code state}, is told it is a write. */
-    private boolean asked(State state) {
-        return TextInputOf.toldWrite(surface, state.text, state.selectionStart,
+    /** A state the native side took, and how many tells it was handed before. */
+    private static final class Took {
+        final long since;
+        final State state;
+
+        Took(long since, State state) {
+            this.since = since;
+            this.state = state;
+        }
+    }
+
+    /** The native side takes the newest state handed to it. */
+    private Took take() {
+        return new Took(TextInputOf.handed(surface), lastTold);
+    }
+
+    /** Whether the native side, having taken {@code took}, is told it is a write. */
+    private boolean asked(Took took) {
+        State state = took.state;
+        return TextInputOf.toldWrite(surface, took.since, state.text, state.selectionStart,
                 state.selectionEnd, state.composingRegionStart, state.composingRegionEnd);
     }
 
@@ -178,16 +196,16 @@ public final class Cases {
         Cases it = new Cases(true, true).hello();
         TextInputOf.writeComing(it.surface);
         it.connection.commitText("!", 1);
-        same("a report says it is a write", it.asked(it.lastTold) ? 1 : 0, 0);
+        same("a report says it is a write", it.asked(it.take()) ? 1 : 0, 0);
         it.land("w1", 2, -1, -1);
         TextInputOf.writeComing(it.surface);
         Handler.runQueued();
         it.told("a write told back with the next on its way", "hello!|6,6|-1,-1", "w1|2,2|-1,-1");
-        same("a write told back says so", it.asked(it.lastTold) ? 1 : 0, 1);
+        same("a write told back says so", it.asked(it.take()) ? 1 : 0, 1);
         it.land("w3", 2, -1, -1);
         Handler.runQueued();
         it.connection.commitText("?", 1);
-        same("typing after it says it is a write", it.asked(it.lastTold) ? 1 : 0, 0);
+        same("typing after it says it is a write", it.asked(it.take()) ? 1 : 0, 0);
 
         Cases keyed = new Cases(true, true).hello();
         keyed.askAsTold = true;
@@ -297,13 +315,54 @@ public final class Cases {
         it.land("w1", 2, -1, -1);
         TextInputOf.writeComing(it.surface);
         Handler.runQueued();
-        State echoed = it.lastTold;
+        Took echoed = it.take();
         it.connection.commitText("?", 1);
-        State typed = it.lastTold;
-        same("the input method's report after the echo is told", typed != echoed ? 1 : 0, 1);
+        Took typed = it.take();
+        same("the input method's report after the echo is told",
+                typed.state != echoed.state ? 1 : 0, 1);
         same("the echo, asked after a report told behind it", it.asked(echoed) ? 1 : 0, 1);
         same("the report told behind it", it.asked(typed) ? 1 : 0, 0);
         same("the echo, asked again", it.asked(echoed) ? 1 : 0, 0);
+    }
+
+    // Two echoes told before the native side asks of the first: each is
+    // still a write when asked of.
+    private static void secondEchoDoesNotHideTheFirst() {
+        Cases it = new Cases(true, true).hello();
+        TextInputOf.writeComing(it.surface);
+        it.connection.commitText("!", 1);
+        it.land("hi", 2, -1, -1);
+        TextInputOf.writeComing(it.surface);
+        Handler.runQueued();
+        Took first = it.take();
+        it.land("ho", 2, -1, -1);
+        Handler.runQueued();
+        Took second = it.take();
+        it.told("two echoes", "hello!|6,6|-1,-1", "hi|2,2|-1,-1", "ho|2,2|-1,-1");
+        same("the first echo, asked after the second was told", it.asked(first) ? 1 : 0, 1);
+        same("the second echo", it.asked(second) ? 1 : 0, 1);
+    }
+
+    // An echo the native side never took, because a report came after it,
+    // says nothing of a later report that holds the same.
+    private static void reportLikeAnUntakenEchoIsAReport() {
+        for (boolean askedBetween : BOTH) {
+            String what = "a report like an echo not taken, asked between=" + askedBetween;
+            Cases it = new Cases(true, true).hello();
+            TextInputOf.writeComing(it.surface);
+            it.connection.commitText("!", 1);
+            it.land("w1", 2, -1, -1);
+            Handler.runQueued();
+            it.connection.setSelection(1, 1);
+            Handler.runQueued();
+            if (askedBetween) {
+                same(what + ", the move away", it.asked(it.take()) ? 1 : 0, 0);
+            }
+            it.connection.setSelection(2, 2);
+            Handler.runQueued();
+            it.told(what, "hello!|6,6|-1,-1", "w1|2,2|-1,-1", "w1|1,1|-1,-1", "w1|2,2|-1,-1");
+            same(what + ", the move back", it.asked(it.take()) ? 1 : 0, 0);
+        }
     }
 
     // An input method's newCursorPosition, as Android places it.
@@ -328,6 +387,8 @@ public final class Cases {
         overtakenReportIsFollowedByTheWrite();
         writeToldBackSaysSo();
         writeToldBackIsKnownByWhatItHolds();
+        secondEchoDoesNotHideTheFirst();
+        reportLikeAnUntakenEchoIsAReport();
         cursorLandsWhereTheMethodPutsIt();
         writesOnTheirWayAreToldOnce();
         writeAcrossTheToldWriteIsToldInItsTurn();

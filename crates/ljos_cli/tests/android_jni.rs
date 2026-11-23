@@ -117,6 +117,7 @@ fn every_method_the_host_calls_on_the_activity_is_declared_as_it_calls_it() {
         "textInputWriteComing",
         "textInputWriteDropped",
         "textInputToldWrite",
+        "textInputHanded",
         "inputStateChanged",
     ] {
         assert!(

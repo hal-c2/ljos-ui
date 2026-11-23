@@ -242,6 +242,11 @@ impl Writes {
 
 #[cfg(any(target_os = "android", test))]
 impl Writes {
+    /// Whether a write was made that the method can be told back.
+    pub(crate) fn may_be_told_back(&self) -> bool {
+        !self.written.is_empty()
+    }
+
     pub(crate) fn wrote_it(&self, state: &crate::HeldText) -> bool {
         self.written.iter().any(|w| !held_is_stale(Some(w), state))
     }
