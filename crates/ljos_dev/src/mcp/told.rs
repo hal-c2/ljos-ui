@@ -16,7 +16,7 @@ use super::redact;
 /// Warnings kept. The oldest are forgotten after this many, or once their
 /// text holds more than [`MAX_TOLD_BYTES`]: a session that runs for days
 /// must not grow the inspector without end. One forgotten is told again
-/// as a warning never told ([`ToldWarnings::get`]).
+/// as a warning never told is (`Inspector::set_warnings`).
 const MAX_TOLD: usize = 1024;
 const MAX_TOLD_BYTES: usize = 1 << 20;
 

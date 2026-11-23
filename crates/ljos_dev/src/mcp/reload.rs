@@ -73,6 +73,14 @@ impl Warnings {
             listed,
         }
     }
+
+    /// Counts `n` more as omitted: warnings the inspector withholds, as
+    /// they may quote a secret it no longer knows.
+    pub(crate) fn withheld(mut self, n: usize) -> Self {
+        self.omitted += n;
+        self.truncated |= n > 0;
+        self
+    }
 }
 
 /// How the last reload went.

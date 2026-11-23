@@ -126,7 +126,7 @@ pub use wakes::HostWake;
 pub use watch::{PointerSeen, Rest};
 
 use args::{Act, Include as Col, Kind, Resource, SnapshotArgs};
-use capture::{Capture, Lease, REDACTED};
+use capture::{Capture, Lease};
 use frames::FrameLog;
 use logs::LogRing;
 use paint::{PaintStats, Startup};
@@ -375,6 +375,9 @@ pub struct Inspector {
     /// Every warning told, as it was told: one that comes back is told
     /// from this, not masked anew from the compiler's text.
     told: RefCell<told::ToldWarnings>,
+    /// How many of the warnings last told were withheld
+    /// ([`set_warnings`](Self::set_warnings)).
+    withheld: usize,
     /// What `app_watch` waits on.
     changes: Arc<ChangeFeed>,
     /// The reload generation and error as of the last [`observe`](Self::observe).
@@ -493,6 +496,7 @@ impl Inspector {
             warnings: RefCell::new(None),
             quoted: RefCell::new(redact::SecretBook::default()),
             told: RefCell::new(told::ToldWarnings::default()),
+            withheld: 0,
             changes,
             seen: None,
             parked: None,
@@ -559,52 +563,53 @@ impl Inspector {
     pub fn set_warnings(&mut self, warnings: &[CompileFault]) {
         // A warning told before is told from what was told: the secret it
         // quoted may be in no book any more. One never told is masked from
-        // the compiler's text, which is safe while the book of quoted
-        // secrets has forgotten none; after that it may quote one the
-        // inspector no longer knows, and its text is withheld.
+        // the compiler's text with what the books hold. Once the book of
+        // quoted secrets has forgotten one, a warning never told may quote
+        // it, so it is withheld: not listed, and counted as omitted. A
+        // secret no warning quoted is masked while the log's book holds it,
+        // as a logged line is: the books are bounded.
         let forgot = self.quoted.borrow().forgot();
-        let mut masked: Vec<CompileFault> = {
+        let mut tellable: Vec<(&CompileFault, CompileFault)> = {
             let told = self.told.borrow();
             warnings
                 .iter()
-                .map(|raw| match told.get(raw) {
-                    Some(was) => was,
-                    None if forgot => CompileFault {
-                        file: REDACTED.to_string(),
-                        message: REDACTED.to_string(),
-                        ..raw.clone()
-                    },
-                    None => raw.clone(),
+                .filter_map(|raw| match told.get(raw) {
+                    Some(was) => Some((raw, was)),
+                    None if forgot => None,
+                    None => Some((raw, raw.clone())),
                 })
                 .collect()
         };
+        self.withheld = warnings.len() - tellable.len();
         let quoted = {
             let logs = self.logs.borrow();
             let before = self.quoted.borrow();
             quoted_by(
                 logs.book().secrets().iter().chain(before.secrets()),
-                &masked,
+                tellable.iter().map(|(_, fault)| fault),
             )
         };
         let mut told = self.told.borrow_mut();
-        for (raw, fault) in warnings.iter().zip(&mut masked) {
+        for (raw, fault) in &mut tellable {
             redact::mask_text(&mut fault.file, &quoted);
             redact::mask_text(&mut fault.message, &quoted);
             told.keep(raw, fault);
         }
         drop(told);
         self.quoted.borrow_mut().learn(&quoted);
-        *self.warnings.borrow_mut() = Some(masked);
+        *self.warnings.borrow_mut() = Some(tellable.into_iter().map(|(_, f)| f).collect());
         self.tell_warnings();
     }
 
-    /// Tells the warnings, which are masked already, to the reload feed.
+    /// Tells the warnings, which are masked already, to the reload feed,
+    /// those withheld counted as omitted.
     fn tell_warnings(&self) {
         let warnings = self.warnings.borrow();
         let Some(warnings) = warnings.as_deref() else {
             return;
         };
-        self.feed.set_warnings(Warnings::bounded(warnings, |_| {}));
+        self.feed
+            .set_warnings(Warnings::bounded(warnings, |_| {}).withheld(self.withheld));
     }
 
     /// Makes `secrets` known to the log, and masks the new ones in what
