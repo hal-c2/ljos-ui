@@ -280,16 +280,21 @@ impl Engine {
         let origin = origin?;
         // The nearest is the one the fault is delivered to.
         let taker = self.boundaries_around(Some(origin)).first().copied()?;
-        let behaviour = self.boundary_behaviour(taker)?;
+        (self.discards_all(taker, &[origin]) && self.discards_all(taker, through)).then_some(taker)
+    }
+
+    /// Whether every one of `objs` is in content the boundary `taker`
+    /// discards when it takes a fault.
+    pub(crate) fn discards_all(&self, taker: ObjectId, objs: &[ObjectId]) -> bool {
+        let Some(behaviour) = self.boundary_behaviour(taker) else {
+            return false;
+        };
         self.untrack(|| {
-            std::iter::once(origin)
-                .chain(through.iter().copied())
-                .all(|obj| {
-                    self.child_towards(taker, obj)
-                        .is_some_and(|child| behaviour.discards(self, taker, child))
-                })
+            objs.iter().all(|&obj| {
+                self.child_towards(taker, obj)
+                    .is_some_and(|child| behaviour.discards(self, taker, child))
+            })
         })
-        .then_some(taker)
     }
 
     /// The child of `above` that `obj` is or is under, by the walk

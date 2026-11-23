@@ -877,3 +877,11 @@ fn a_fallback_is_discarded_when_content_filled_the_heap_in_its_function() {
         "Loader { sourceComponent: Component { Item { Component.onCompleted: d.init() } } }",
     ]);
 }
+
+#[test]
+fn a_fallback_is_discarded_when_content_inside_it_wrote_to_it_before_it_filled_the_heap() {
+    assert_fallback_discarded(&[
+        "ErrorBoundary { Item { Component.onCompleted: { if (d.started) return; d.started = true; FILL d.ok = true } } }",
+        "Loader { sourceComponent: Component { Item { Component.onCompleted: { if (d.started) return; d.started = true; FILL d.ok = true } } } }",
+    ]);
+}

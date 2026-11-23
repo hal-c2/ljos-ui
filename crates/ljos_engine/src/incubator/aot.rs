@@ -359,6 +359,7 @@ impl Frame<'_> {
 
     /// `o.p = v`, made as a script's write is.
     pub fn set(&self, o: Obj, p: Prop, v: Value) -> Result<(), Stop> {
+        self.e.note_written(o.0);
         if let Some(held) = &self.held {
             held.borrow_mut().push(Effect::Write(o.0, p.0, v));
             self.effects.set(true);

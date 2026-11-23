@@ -863,6 +863,7 @@ impl Engine {
         };
         if !check {
             if let Some((o, prop, v)) = done.write {
+                self.note_written(o);
                 self.aot_spy_write(o, prop, &v);
                 let nested = self.aot_nested();
                 // Most handlers write a number to a plain property, which

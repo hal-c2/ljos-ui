@@ -571,6 +571,25 @@ const OUTER_CODE_FAULTS: [(&str, &str); 4] = [
     ),
 ];
 
+/// A root left half updated by content of a boundary inside it that wrote
+/// to the root itself, not through any function of it, before it filled
+/// the heap: the boundary discards its content, not what that wrote.
+const OUTER_WRITE_FAULTS: [(&str, &str); 3] = [
+    (
+        "written by an ErrorBoundary's content",
+        "ErrorBoundary { Item { Component.onCompleted: { if (d.started) return; d.started = true; FILL d.ok = true } } }",
+    ),
+    (
+        "written by a Loader's item",
+        "Loader { sourceComponent: Component { Item { Component.onCompleted: { if (d.started) return; d.started = true; FILL d.ok = true } } } }",
+    ),
+    (
+        "written to a sibling of the boundary",
+        r#"Item { id: h; property bool started: false }
+    ErrorBoundary { Item { Component.onCompleted: { if (h.started) return; h.started = true; FILL d.ok = true } } }"#,
+    ),
+];
+
 /// The file of what is made: `ok` says whether it is whole.
 fn made_file(ok: bool, inner: &str, singleton: bool) -> String {
     format!(
@@ -848,6 +867,11 @@ fn a_repeater_row_is_made_again_when_content_filled_the_heap_in_its_function() {
 }
 
 #[test]
+fn a_repeater_row_is_made_again_when_content_wrote_to_it_before_it_filled_the_heap() {
+    assert_made_again(Path::Repeater, &OUTER_WRITE_FAULTS);
+}
+
+#[test]
 fn a_list_view_delegate_is_kept_when_content_inside_it_filled_the_heap() {
     assert_kept(Path::ListView, &CONTENT_FAULTS);
 }
@@ -860,6 +884,11 @@ fn a_list_view_delegate_is_made_again_when_a_boundary_s_own_child_filled_the_hea
 #[test]
 fn a_list_view_delegate_is_made_again_when_content_filled_the_heap_in_its_function() {
     assert_made_again(Path::ListView, &OUTER_CODE_FAULTS);
+}
+
+#[test]
+fn a_list_view_delegate_is_made_again_when_content_wrote_to_it_before_it_filled_the_heap() {
+    assert_made_again(Path::ListView, &OUTER_WRITE_FAULTS);
 }
 
 #[test]
@@ -878,6 +907,11 @@ fn an_incubated_object_is_made_again_when_content_filled_the_heap_in_its_functio
 }
 
 #[test]
+fn an_incubated_object_is_made_again_when_content_wrote_to_it_before_it_filled_the_heap() {
+    assert_made_again(Path::Incubated, &OUTER_WRITE_FAULTS);
+}
+
+#[test]
 fn a_singleton_is_kept_when_content_inside_it_filled_the_heap() {
     assert_kept(Path::Singleton, &CONTENT_FAULTS);
 }
@@ -890,6 +924,11 @@ fn a_singleton_is_made_again_when_a_boundary_s_own_child_filled_the_heap() {
 #[test]
 fn a_singleton_is_made_again_when_content_filled_the_heap_in_its_function() {
     assert_made_again(Path::Singleton, &OUTER_CODE_FAULTS);
+}
+
+#[test]
+fn a_singleton_is_made_again_when_content_wrote_to_it_before_it_filled_the_heap() {
+    assert_made_again(Path::Singleton, &OUTER_WRITE_FAULTS);
 }
 
 /// The engine keeps who took the last 32 faults. Past that it cannot tell,
