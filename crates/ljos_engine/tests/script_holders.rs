@@ -99,10 +99,6 @@ fn a_deep_nesting_is_walked_within_the_budget() {
 const SHARED: &str = r#"import QtQuick
 Item {
   property var row: ({ s: "row" })
-  property list<var> rows
-  Item { property list<var> rows }
-  Item { property list<var> rows }
-  Item { property list<var> rows }
   QtObject { property var tail: ({ s: "tail" }) }
 }
 "#;
@@ -118,20 +114,24 @@ fn a_list_many_objects_share_is_charged_once() {
     let row = h.get(root, "row");
     assert!(matches!(row, Value::Js(_)), "{row:?}");
     let rows = Value::list(vec![row; 10_000]);
-    let mut holders = 0;
-    for obj in std::iter::once(root).chain(e.children(root)) {
-        if e.write_by_name(obj, "rows", rows.clone()).is_ok() {
-            holders += 1;
-            // The one list in each, or there is nothing shared to charge once.
-            match (e.read_by_name(obj, "rows"), &rows) {
-                (Value::List(kept), Value::List(given)) => {
-                    assert!(Arc::ptr_eq(&kept, given), "a copy was stored");
-                }
-                (kept, _) => panic!("the list is stored as {}", kept.to_js_string()),
+    // Put in native fields by their type's own code: every write gives a
+    // list property, or a `var` an array, a list of its own
+    // (script_arrays.rs), so only native code shares one.
+    for _ in 0..4 {
+        let keeper = e.create(Keeper::static_meta(), Some(root)).unwrap();
+        e.with_mut(keeper, |k: &mut Keeper| k.held = rows.clone())
+            .unwrap();
+        // The one list in each, or there is nothing shared to charge once.
+        match (
+            e.with_mut(keeper, |k: &mut Keeper| k.held.clone()).unwrap(),
+            &rows,
+        ) {
+            (Value::List(kept), Value::List(given)) => {
+                assert!(Arc::ptr_eq(&kept, given), "a copy was stored");
             }
+            (kept, _) => panic!("the list is stored as {}", kept.to_js_string()),
         }
     }
-    assert_eq!(holders, 4);
     // Charged once per object, the four would take 40,000.
     let held = e.script_heap_holders(20_000).expect("scripts ran");
     assert!(!held.truncated, "{held:?}");
@@ -141,10 +141,11 @@ fn a_list_many_objects_share_is_charged_once() {
             .find(|t| t.name == name)
             .map(|t| t.objects)
     };
+    assert_eq!(named("Keeper"), Some(4), "{held:?}");
     assert_eq!(named("QtObject"), Some(1), "{held:?}");
-    // The root and its three Items, whatever the root's type is named.
+    // The four, the QtObject and the root, whatever its type is named.
     let holding: usize = held.holders.iter().map(|t| t.objects).sum();
-    assert_eq!(holding, 5, "{held:?}");
+    assert_eq!(holding, 6, "{held:?}");
 }
 
 /// A script value that is a property's whole value costs the budget one,
