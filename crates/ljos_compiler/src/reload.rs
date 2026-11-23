@@ -94,6 +94,8 @@ struct Pending {
     failed: BTreeSet<String>,
     /// [`ReloadSession::unrun`] as it was when the patch was built.
     unrun: BTreeMap<String, String>,
+    /// The warnings of its files, which run once it is taken.
+    warnings: BTreeMap<String, Vec<CompileFault>>,
 }
 
 /// A project kept compiled while its files change.
@@ -149,6 +151,10 @@ pub struct ReloadSession<O> {
     /// one it is given as it is now when it asks, has none.
     unrun: BTreeMap<String, String>,
     warnings: BTreeMap<String, Vec<CompileFault>>,
+    /// The warnings of what the application runs: [`warnings`](Self::warnings)
+    /// holds a build's before the application takes it, and keeps them
+    /// when it refuses it.
+    live_warnings: BTreeMap<String, Vec<CompileFault>>,
     /// The scripts saved since the start that do not parse: no build is
     /// offered while one is.
     broken_scripts: BTreeMap<String, CompileFault>,
@@ -202,6 +208,7 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
             pending: None,
             unrun: BTreeMap::new(),
             warnings: BTreeMap::new(),
+            live_warnings: BTreeMap::new(),
             broken_scripts: BTreeMap::new(),
             reached: None,
             seeds: BTreeMap::new(),
@@ -680,6 +687,7 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
         self.failed.retain(|key, _| !reverted.contains(key));
         self.live = self.compiled.clone();
         self.live_failed = self.failed.keys().cloned().collect();
+        self.live_warnings = self.warnings.clone();
         self.pending = None;
         // A file that runs its seed runs the text the seed was built from,
         // and a broken script the application's own.
@@ -1036,15 +1044,21 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
             pending.unrun.remove(key);
         }
         let compiled = self.compile_one(key);
-        let pending = self.pending.as_mut().map(|p| (&mut p.files, &mut p.failed));
+        let pending = self
+            .pending
+            .as_mut()
+            .map(|p| (&mut p.files, &mut p.failed, &mut p.warnings));
         match compiled {
             Ok((file, warnings)) => {
                 self.live.insert(key.to_owned(), file.clone());
                 self.compiled.insert(key.to_owned(), file.clone());
-                self.warnings.insert(key.to_owned(), warnings);
-                if let Some((files, _)) = pending {
+                // It runs from now, whether or not a patch is taken.
+                self.live_warnings.insert(key.to_owned(), warnings.clone());
+                if let Some((files, _, pending_warnings)) = pending {
                     files.insert(key.to_owned(), file.clone());
+                    pending_warnings.insert(key.to_owned(), warnings.clone());
                 }
+                self.warnings.insert(key.to_owned(), warnings);
                 Some(Ok(file))
             }
             Err(errors) => {
@@ -1053,7 +1067,7 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
                     .map_or_else(String::new, CompileFault::reason);
                 self.live_failed.insert(key.to_owned());
                 self.failed.insert(key.to_owned(), errors);
-                if let Some((_, failed)) = pending {
+                if let Some((_, failed, _)) = pending {
                     failed.insert(key.to_owned());
                 }
                 Some(Err(reason))
@@ -1190,6 +1204,19 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
         self.warnings.values().flatten()
     }
 
+    /// The warnings of what runs once the application is at `generation`:
+    /// those of the patch of that generation while its answer is on its
+    /// way, else those of what it took last. A build not yet taken, or one
+    /// refused, is never among them: [`warnings`](Self::warnings) has it.
+    pub fn running_warnings(&self, generation: u64) -> impl Iterator<Item = &CompileFault> {
+        let taken = self
+            .pending
+            .as_ref()
+            .filter(|p| p.generation == generation && generation != self.generation)
+            .map_or(&self.live_warnings, |p| &p.warnings);
+        taken.values().flatten()
+    }
+
     /// Compiles what changed. `Ok(None)` when the files say what the
     /// application already runs; `Err` with every error when a file does
     /// not compile, and then nothing of the change is offered.
@@ -1242,6 +1269,7 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
             files: self.compiled.clone(),
             failed,
             unrun,
+            warnings: self.warnings.clone(),
         });
         Ok(Some(patch))
     }
@@ -1256,6 +1284,7 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
         }
         self.live = self.compiled.clone();
         self.live_failed = self.failed.keys().cloned().collect();
+        self.live_warnings = self.warnings.clone();
         self.pending = None;
         self.unrun.clear();
         &self.live
@@ -1272,6 +1301,7 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
             files: self.live.clone(),
             failed: self.live_failed.clone(),
             unrun: BTreeMap::new(),
+            warnings: self.live_warnings.clone(),
         });
         self.last
     }
@@ -1282,6 +1312,7 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
             if pending.generation == generation {
                 self.live = pending.files;
                 self.live_failed = pending.failed;
+                self.live_warnings = pending.warnings;
                 self.generation = generation;
             } else {
                 self.pending = Some(pending);

@@ -3,6 +3,7 @@
 //! keyboard focus is), and the session that ties an engine to a watcher.
 
 use std::{
+    cell::Cell,
     collections::HashMap,
     path::{Path, PathBuf},
     rc::Rc,
@@ -479,6 +480,8 @@ pub struct DevSession {
     runs: Runs,
     failures_of: FailuresOf,
     warnings_of: WarningsOf,
+    /// The generation the application runs, as it applied it.
+    running: Rc<Cell<u64>>,
     /// The compiler's warnings on the files loaded, as they run now.
     warnings: Vec<CompileFault>,
     /// They changed since [`take_warnings`](Self::take_warnings).
@@ -851,13 +854,18 @@ impl DevSession {
                     .unwrap_or_default()
             }))
         };
+        let running = Rc::new(Cell::new(lock(&reloader).session().generation()));
         let warnings_of = {
             let reloader = reloader.clone();
+            let running = running.clone();
             WarningsOf(Rc::new(move |keys| {
                 let files: Vec<String> = keys.iter().map(|k| file_of(k)).collect();
+                // The answer to a patch reaches the session later: until
+                // it does, the session's own warnings may be a build's the
+                // application has not taken.
                 lock(&reloader)
                     .session()
-                    .warnings()
+                    .running_warnings(running.get())
                     .filter(|w| files.contains(&w.file))
                     .cloned()
                     .collect()
@@ -897,8 +905,10 @@ impl DevSession {
             runs,
             failures_of,
             warnings_of,
+            running,
             warnings: Vec::new(),
-            warnings_changed: true,
+            // Unknown until the compiler has spoken on a file that runs.
+            warnings_changed: false,
             loaded,
             properties,
             root,
@@ -1239,6 +1249,7 @@ impl DevSession {
         let started = Instant::now();
         match set_theme(engine, theme, generation) {
             Ok(()) => {
+                self.running.set(generation);
                 self.watcher.ack(generation);
                 let was = self.theme_fault.take();
                 if was.is_some() && engine.last_reload_error() == was {
@@ -1305,6 +1316,7 @@ impl DevSession {
                 return Report::Failed { fault, more: 0 };
             }
         };
+        self.running.set(patch.generation);
         self.watcher.ack(patch.generation);
         self.settling = true;
         if let Some((_, new)) = done.roots.first() {
