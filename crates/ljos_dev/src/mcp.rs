@@ -76,6 +76,7 @@ mod rust_heap;
 mod script;
 mod surface;
 mod timeline;
+mod told;
 mod tools;
 mod trace;
 mod values;
@@ -125,7 +126,7 @@ pub use wakes::HostWake;
 pub use watch::{PointerSeen, Rest};
 
 use args::{Act, Include as Col, Kind, Resource, SnapshotArgs};
-use capture::{Capture, Lease};
+use capture::{Capture, Lease, REDACTED};
 use frames::FrameLog;
 use logs::LogRing;
 use paint::{PaintStats, Startup};
@@ -368,8 +369,12 @@ pub struct Inspector {
     /// later change may bring a warning back, after changes that did not
     /// quote it and after the inspector's book forgot its secret: this
     /// masks it still. Few secrets are ever quoted; the bounds are the
-    /// book's.
+    /// book's, and once they made it forget one, [`told`](Self::told) is
+    /// what keeps a warning masked.
     quoted: RefCell<redact::SecretBook>,
+    /// Every warning told, as it was told: one that comes back is told
+    /// from this, not masked anew from the compiler's text.
+    told: RefCell<told::ToldWarnings>,
     /// What `app_watch` waits on.
     changes: Arc<ChangeFeed>,
     /// The reload generation and error as of the last [`observe`](Self::observe).
@@ -487,6 +492,7 @@ impl Inspector {
             feed,
             warnings: RefCell::new(None),
             quoted: RefCell::new(redact::SecretBook::default()),
+            told: RefCell::new(told::ToldWarnings::default()),
             changes,
             seen: None,
             parked: None,
@@ -551,19 +557,42 @@ impl Inspector {
     /// no text of the application's log may be in it. `app_status` and the
     /// answers of `app_reload` and `app_alias` have them, masked and bounded.
     pub fn set_warnings(&mut self, warnings: &[CompileFault]) {
+        // A warning told before is told from what was told: the secret it
+        // quoted may be in no book any more. One never told is masked from
+        // the compiler's text, which is safe while the book of quoted
+        // secrets has forgotten none; after that it may quote one the
+        // inspector no longer knows, and its text is withheld.
+        let forgot = self.quoted.borrow().forgot();
+        let mut masked: Vec<CompileFault> = {
+            let told = self.told.borrow();
+            warnings
+                .iter()
+                .map(|raw| match told.get(raw) {
+                    Some(was) => was,
+                    None if forgot => CompileFault {
+                        file: REDACTED.to_string(),
+                        message: REDACTED.to_string(),
+                        ..raw.clone()
+                    },
+                    None => raw.clone(),
+                })
+                .collect()
+        };
         let quoted = {
             let logs = self.logs.borrow();
             let before = self.quoted.borrow();
             quoted_by(
                 logs.book().secrets().iter().chain(before.secrets()),
-                warnings,
+                &masked,
             )
         };
-        let mut masked = warnings.to_vec();
-        for fault in &mut masked {
+        let mut told = self.told.borrow_mut();
+        for (raw, fault) in warnings.iter().zip(&mut masked) {
             redact::mask_text(&mut fault.file, &quoted);
             redact::mask_text(&mut fault.message, &quoted);
+            told.keep(raw, fault);
         }
+        drop(told);
         self.quoted.borrow_mut().learn(&quoted);
         *self.warnings.borrow_mut() = Some(masked);
         self.tell_warnings();
@@ -585,13 +614,19 @@ impl Inspector {
         if new.is_empty() {
             return;
         }
+        let mut told = self.told.borrow_mut();
         if let Some(warnings) = self.warnings.borrow_mut().as_mut() {
-            self.quoted.borrow_mut().learn(&quoted_by(&new, warnings));
+            self.quoted
+                .borrow_mut()
+                .learn(&quoted_by(&new, warnings.iter().chain(told.faults())));
             for fault in warnings {
                 redact::mask_text(&mut fault.file, &new);
                 redact::mask_text(&mut fault.message, &new);
             }
         }
+        // A warning told before and not now may come back.
+        told.mask(&new);
+        drop(told);
         self.tell_warnings();
     }
 
@@ -1914,10 +1949,11 @@ fn forget_dead_starts(token_file: &Path) {
 }
 
 /// Those of `secrets` that `warnings` quote, longest first, each once.
-fn quoted_by<'a>(
+fn quoted_by<'a, 'w>(
     secrets: impl IntoIterator<Item = &'a String>,
-    warnings: &[CompileFault],
+    warnings: impl IntoIterator<Item = &'w CompileFault>,
 ) -> Vec<String> {
+    let warnings: Vec<&CompileFault> = warnings.into_iter().collect();
     let mut quoted: Vec<String> = secrets
         .into_iter()
         .filter(|s| {
