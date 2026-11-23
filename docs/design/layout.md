@@ -174,7 +174,7 @@ Sources: https://doc.qt.io/qt-6/qtquicklayouts-overview.html
 <a id="layout-spacing-scale"></a>
 ### `layout-spacing-scale`
 
-**Hint, static.** A spacing, margin or padding is not a multiple of the unit: the `Spacing.unit` of the project's themes, `limits::SPACING_UNIT_PX` by default. Off-scale gaps (7, 13, 19 at the default) make rhythm uneven. The rule says nothing where the source cannot tell the unit: the project's `theme.json` files differ in it, only a directory below the root sets another, a theme that sets it would be refused, or it is 0. A theme named with `--theme` is not seen.
+**Hint, static.** A spacing, margin or padding is not a multiple of the unit: the `Spacing.unit` of the project's themes, `limits::SPACING_UNIT_PX` by default. Off-scale gaps (7, 13, 19 at the default) make rhythm uneven. The rule says nothing where the source cannot tell the unit: the project's `theme.json` files differ in it, only a directory below the root sets another, a theme that sets it would be refused, a `theme.json` is a link, which the lint does not follow, the project has more directories than the lint reads (20,000), or it is 0. A theme named with `--theme` is not seen.
 
 ```qml
 // Bad
