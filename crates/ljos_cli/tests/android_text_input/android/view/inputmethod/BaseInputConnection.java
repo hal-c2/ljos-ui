@@ -58,11 +58,11 @@ public class BaseInputConnection {
     }
 
     public boolean setComposingText(CharSequence with, int newCursorPosition) {
-        return replace(with, true);
+        return replace(with, newCursorPosition, true);
     }
 
     public boolean commitText(CharSequence with, int newCursorPosition) {
-        return replace(with, false);
+        return replace(with, newCursorPosition, false);
     }
 
     public boolean finishComposingText() {
@@ -81,7 +81,9 @@ public class BaseInputConnection {
                 Spanned.SPAN_EXCLUSIVE_EXCLUSIVE | Spanned.SPAN_COMPOSING);
     }
 
-    private boolean replace(CharSequence with, boolean composing) {
+    // Android's newCursorPosition: above 0 from the end of what was put
+    // in, less one; else from its start.
+    private boolean replace(CharSequence with, int newCursorPosition, boolean composing) {
         Editable text = getEditable();
         beginBatchEdit();
         int from = getComposingSpanStart(text);
@@ -93,10 +95,12 @@ public class BaseInputConnection {
         int start = Math.min(from, to);
         text.removeSpan(COMPOSING);
         text.replace(start, Math.max(from, to), with);
-        int cursor = start + with.length();
+        int end = start + with.length();
         if (composing && with.length() > 0) {
-            compose(text, start, cursor);
+            compose(text, start, end);
         }
+        int cursor = newCursorPosition > 0 ? end + newCursorPosition - 1 : start + newCursorPosition;
+        cursor = Math.max(0, Math.min(cursor, text.length()));
         Selection.setSelection(text, cursor, cursor);
         endBatchEdit();
         return true;
