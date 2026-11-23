@@ -16,11 +16,14 @@ public final class GameActivity extends Context implements Listener {
     final List<String> told = new ArrayList<>();
     /** What LjosActivity's override does before it hands a state on. */
     Consumer<State> telling = state -> { };
+    /** What it does once the native side has it. */
+    Consumer<State> handed = state -> { };
 
     @Override
     public void stateChanged(State state, boolean dismissed) {
         telling.accept(state);
         told.add(state.toString());
+        handed.accept(state);
     }
 
     public class InputEnabledSurfaceView extends View {

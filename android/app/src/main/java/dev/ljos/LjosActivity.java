@@ -232,18 +232,30 @@ public class LjosActivity extends GameActivity {
             com.google.androidgamesdk.gametextinput.State state, boolean dismissed) {
         TextInputOf.telling(mSurfaceView, state);
         super.stateChanged(state, dismissed);
+        TextInputOf.handedOn(mSurfaceView);
+    }
+
+    /**
+     * How many states the native side was handed; read before it takes
+     * one, for {@link #textInputToldWrite}. On the native side's thread,
+     * and waits for no other.
+     */
+    public long textInputHanded() {
+        return TextInputOf.handed(mSurfaceView);
     }
 
     /**
      * Whether the state the native side took from the keyboard's
      * connection is a write, told back. A read on the native side's
-     * thread, which waits for no other.
+     * thread, which waits for no other. {@code since} is what
+     * {@link #textInputHanded} said before it took the state.
      */
     public boolean textInputToldWrite(
-            String text, int selectionStart, int selectionEnd,
+            long since, String text, int selectionStart, int selectionEnd,
             int composingStart, int composingEnd) {
         return TextInputOf.toldWrite(
-                mSurfaceView, text, selectionStart, selectionEnd, composingStart, composingEnd);
+                mSurfaceView, since, text, selectionStart, selectionEnd,
+                composingStart, composingEnd);
     }
 
     /** The write announced was stale, and is not made. */

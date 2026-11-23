@@ -365,7 +365,17 @@ impl<U: Send + 'static> Pump<'_, U> {
         let dead_key = &mut self.dead_key;
         let writes = &mut self.writes;
         let mut back = None;
-        while events.next(|event| translate(self.app, dead_key, writes, &mut back, event, &mut out))
+        // Read before the state is taken, which is the tell this names or
+        // one after it (TextInputOf.java); only a write can be told back.
+        let since = writes
+            .may_be_told_back()
+            .then(|| handed(self.app))
+            .flatten();
+        let mut told = Told {
+            back: &mut back,
+            since,
+        };
+        while events.next(|event| translate(self.app, dead_key, writes, &mut told, event, &mut out))
         {
         }
         if let Some(mut now) = back {
@@ -512,7 +522,7 @@ fn translate(
     app: &AndroidApp,
     dead_key: &mut DeadKey,
     writes: &mut crate::relay::Writes,
-    back: &mut Option<HeldText>,
+    told: &mut Told<'_>,
     event: &InputEvent<'_>,
     out: &mut Vec<WindowEvent>,
 ) -> InputStatus {
@@ -599,8 +609,10 @@ fn translate(
             // a report, and says so. Else what is compared from here on is
             // the method's report: a write still on its way replaces it
             // when it lands, and is then told.
-            if let Some(write) = writes.told_back(&now, || told_write(app, state)) {
-                *back = Some(write);
+            let since = told.since;
+            let says = || since.is_some_and(|since| told_write(app, since, state));
+            if let Some(write) = writes.told_back(&now, says) {
+                *told.back = Some(write);
             } else {
                 writes.reported(&now);
                 out.push(WindowEvent::Text(TextEvent::Held(now)));
@@ -734,9 +746,40 @@ fn floats<'local>(
     Ok(array)
 }
 
-/// `LjosActivity.textInputToldWrite`: whether the connection's last tell
-/// was a write told back. An unanswered call takes it for a report.
-fn told_write(app: &AndroidApp, state: &TextInputState) -> bool {
+/// What [`translate`] knows of the connection's tells.
+struct Told<'a> {
+    /// The write told back, if the state taken was one.
+    back: &'a mut Option<HeldText>,
+    /// `LjosActivity.textInputHanded`, read before the state was taken;
+    /// none when it was not read, or could not be.
+    since: Option<i64>,
+}
+
+/// `LjosActivity.textInputHanded`: how many tells the connection handed
+/// the native side. None when the call is not answered: then no state is
+/// taken for a write told back.
+fn handed(app: &AndroidApp) -> Option<i64> {
+    use jni::objects::JObject;
+    use jni::{jni_sig, jni_str};
+    // SAFETY: android-activity keeps the VM and the activity alive while
+    // `app` is.
+    let vm = unsafe { jni::JavaVM::from_raw(app.vm_as_ptr().cast()) };
+    let activity = app.activity_as_ptr() as jni::sys::jobject;
+    vm.attach_current_thread(|env| -> jni::errors::Result<i64> {
+        // SAFETY: the activity outlives this call, and a cast does not
+        // delete the reference.
+        let activity = unsafe { env.as_cast_raw::<JObject>(&activity)? };
+        env.call_method(&activity, jni_str!("textInputHanded"), jni_sig!("()J"), &[])?
+            .j()
+    })
+    .inspect_err(|e| log::warn!("the activity didn't say how many states it handed on: {e}"))
+    .ok()
+}
+
+/// `LjosActivity.textInputToldWrite`: whether the state taken, `since`
+/// read before it was, is a write told back. An unanswered call takes it
+/// for a report.
+fn told_write(app: &AndroidApp, since: i64, state: &TextInputState) -> bool {
     use jni::objects::{JObject, JValue};
     use jni::{jni_sig, jni_str};
     // As GameTextInput holds them: Java's ints, -1 for no region.
@@ -758,8 +801,9 @@ fn told_write(app: &AndroidApp, state: &TextInputState) -> bool {
         env.call_method(
             &activity,
             jni_str!("textInputToldWrite"),
-            jni_sig!("(Ljava/lang/String;IIII)Z"),
+            jni_sig!("(JLjava/lang/String;IIII)Z"),
             &[
+                JValue::Long(since),
                 JValue::from(&text),
                 JValue::Int(int(state.selection.start)),
                 JValue::Int(int(state.selection.end)),
