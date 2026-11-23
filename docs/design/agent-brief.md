@@ -55,7 +55,7 @@ Follow every line. `[code]` is the rule that finds the mistake; its section is `
 - Never give a popup with changing content a literal width and height. [layout-fixed-size]
 - Align a column's controls in one layout; give fields of a kind one width. [layout-misaligned]
 - Never set anchors on a layout's direct children; use `Layout.*`. [layout-anchors-in-layout]
-- Use multiples of 4 px for spacing, margins and padding. [layout-spacing-scale]
+- Use multiples of the theme's spacing unit (4 px by default) for spacing, margins and padding; the steps follow it. [layout-spacing-scale]
 - Reserve space for late content; never push what is under the pointer. [layout-shift]
 - Let only one overlay dim the window. [layout-stacked-scrims]
 - Never start or end a wrapped line with a separator. [layout-wrap-separator]
