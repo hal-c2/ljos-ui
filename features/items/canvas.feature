@@ -191,6 +191,55 @@ Feature: Canvas
     And the pixel at 45, 15 of the window is "#000000"
     And the pixel at 75, 75 of the window is "#000000"
 
+  @api-QtQuick.Item.smooth
+  Scenario: A scaled canvas that is not smooth keeps its pixels hard
+    Given the QML:
+      """qml
+      import QtQuick
+      Rectangle {
+        width: 64; height: 64; color: "#0000ff"
+        Canvas {
+          width: 2; height: 2
+          smooth: false
+          scale: 32; transformOrigin: Item.TopLeft
+          onPaint: {
+            var ctx = getContext("2d")
+            ctx.fillStyle = "#000000"
+            ctx.fillRect(0, 0, 1, 2)
+            ctx.fillStyle = "#ffffff"
+            ctx.fillRect(1, 0, 1, 2)
+          }
+        }
+      }
+      """
+    When 200 milliseconds pass
+    Then the pixel at 31, 32 of the window is "#000000"
+    And the pixel at 32, 32 of the window is "#ffffff"
+
+  @api-QtQuick.Item.smooth
+  Scenario: A scaled canvas that is smooth blends its pixels
+    Given the QML:
+      """qml
+      import QtQuick
+      Rectangle {
+        width: 64; height: 64; color: "#0000ff"
+        Canvas {
+          width: 2; height: 2
+          scale: 32; transformOrigin: Item.TopLeft
+          onPaint: {
+            var ctx = getContext("2d")
+            ctx.fillStyle = "#000000"
+            ctx.fillRect(0, 0, 1, 2)
+            ctx.fillStyle = "#ffffff"
+            ctx.fillRect(1, 0, 1, 2)
+          }
+        }
+      }
+      """
+    When 200 milliseconds pass
+    Then the pixel at 31, 32 of the window is not "#000000"
+    And the pixel at 32, 32 of the window is not "#ffffff"
+
   Scenario: Drawing again changes the window's picture
     Given the QML:
       """qml

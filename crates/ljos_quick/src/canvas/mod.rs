@@ -35,7 +35,7 @@ use ljos_engine::{
 };
 use ljos_reactive::NodeId;
 use ljos_render::kurbo;
-use ljos_render::{CanvasPainter, DisplayListBuilder, ImageHandle};
+use ljos_render::{CanvasPainter, DisplayListBuilder, DrawOp, ImageHandle};
 use ljos_runtime::Time;
 
 pub(crate) use context::Context2D;
@@ -712,30 +712,45 @@ pub fn trim(e: &Engine, canvases: impl IntoIterator<Item = ObjectId>) {
     }
 }
 
-/// What the scene draws for a canvas: its picture at its own size.
+/// What the scene draws for a canvas: its picture at its own size, sampled
+/// as the item's `smooth` says when the canvas is scaled.
 #[derive(Clone, Debug)]
 pub(crate) struct CanvasPicture {
     image: Option<ImageHandle>,
+    smooth: bool,
 }
 
 impl CanvasPicture {
     /// Reads the picture; tracked, so the content effect follows it.
     pub(crate) fn read(e: &Engine, me: ObjectId) -> Self {
+        let smooth = e.read(me, Item::SMOOTH.index).to_boolean();
         let Some(run) = run_of(e, me) else {
-            return Self { image: None };
+            return Self {
+                image: None,
+                smooth,
+            };
         };
         let node = run.borrow().picture_node;
         if let Some(node) = node {
             let _ = e.graph().get(node);
         }
         let image = run.borrow().shown.clone();
-        Self { image }
+        Self { image, smooth }
     }
 
     pub(crate) fn paint(&self, _size: kurbo::Size, out: &mut DisplayListBuilder) {
         if let Some(image) = &self.image {
-            let dst = image.rect();
-            out.image(image.clone(), dst);
+            let rect = image.rect();
+            out.push(DrawOp::Image {
+                image: image.clone(),
+                src: rect,
+                dst: rect,
+                tile: None,
+                mirror: [false, false],
+                smooth: self.smooth,
+                opacity: 1.0,
+                tint: None,
+            });
         }
     }
 }
