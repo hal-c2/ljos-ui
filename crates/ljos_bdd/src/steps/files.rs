@@ -43,7 +43,8 @@ fn the_design_module(w: &mut LjosWorld) -> StepResult {
 }
 
 // The exported module with its one knob turned by hand, as an application
-// that owns the files may do.
+// that owns the files may do. It goes in `edited/`: at `Ljos/Design` the
+// built-in module's own files, which have those names, would be loaded.
 #[given(regex = r"^the files of the module Ljos.Design with Spacing.unit edited to (-?\d+)$")]
 fn the_design_module_edited(w: &mut LjosWorld, unit: i32) -> StepResult {
     use ljos_design::module::{DIRECTORY, Seeds, files};
@@ -57,7 +58,7 @@ fn the_design_module_edited(w: &mut LjosWorld, unit: i32) -> StepResult {
             }
             text = text.replace(written, &edited);
         }
-        w.stage(&format!("{DIRECTORY}/{}", f.name), &text);
+        w.stage(&format!("edited/{DIRECTORY}/{}", f.name), &text);
     }
     Ok(())
 }

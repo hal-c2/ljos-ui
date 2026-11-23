@@ -305,7 +305,7 @@ Feature: A theme file sets the roles of Ljos.Design
     And the QML:
       """qml
       import QtQuick
-      import "Ljos/Design" as Edited
+      import "edited/Ljos/Design" as Edited
       Item {
         objectName: "root"
         readonly property var scale: [Edited.Spacing.none, Edited.Spacing.xxs,
