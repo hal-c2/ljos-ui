@@ -34,7 +34,7 @@ pub(super) struct Loader<'r> {
     /// Type names of files that exist but did not parse. A type is not
     /// "unknown" because its file has a syntax error.
     pub broken: HashSet<String>,
-    scan: OnceCell<Vec<(PathBuf, Vec<String>)>>,
+    scan: OnceCell<Scan>,
     /// The capitalised words of the project's C++ files that register QML
     /// types; None when there were too many files to read.
     native: OnceCell<Option<HashSet<String>>>,
@@ -161,7 +161,7 @@ impl<'r> Loader<'r> {
     /// modules they describe known.
     pub fn discover_modules(&mut self) {
         let mut found: Vec<(PathBuf, Module)> = Vec::new();
-        for (dir, names) in self.scan() {
+        for (dir, names) in &self.scan().dirs {
             if names.iter().any(|n| n == "qmldir")
                 && let Ok(text) = std::fs::read_to_string(dir.join("qmldir"))
                 && let Some(module) = discover::qmldir(&text)
@@ -199,7 +199,7 @@ impl<'r> Loader<'r> {
     /// one component may be what another one provides to it at run time, and
     /// that is only knowable with all of them.
     pub fn add_everything(&mut self) {
-        let dirs: Vec<PathBuf> = self.scan().iter().map(|(d, _)| d.clone()).collect();
+        let dirs: Vec<PathBuf> = self.scan().dirs.iter().map(|(d, _)| d.clone()).collect();
         for dir in dirs {
             self.add_dir(&dir);
         }
@@ -211,7 +211,7 @@ impl<'r> Loader<'r> {
     /// file of the same name to be what is meant.
     pub fn native(&self, name: &str) -> bool {
         self.native
-            .get_or_init(|| native_words(self.scan()))
+            .get_or_init(|| native_words(&self.scan().dirs))
             .as_ref()
             .is_none_or(|words| words.contains(name))
     }
@@ -224,17 +224,29 @@ impl<'r> Loader<'r> {
             .get_or_init(|| spacing_unit(self.root, self.scan()))
     }
 
-    /// Every directory below the root worth reading, with its file names.
-    fn scan(&self) -> &Vec<(PathBuf, Vec<String>)> {
+    fn scan(&self) -> &Scan {
         self.scan.get_or_init(|| scan(self.root))
     }
 }
 
-fn scan(root: &Path) -> Vec<(PathBuf, Vec<String>)> {
+/// The walk of the project tree, and what it knows it did not read.
+struct Scan {
+    /// Every directory below the root worth reading, with its file names.
+    dirs: Vec<(PathBuf, Vec<String>)>,
+    /// The walk stopped at [`MAX_DIRS`] with directories left.
+    truncated: bool,
+    /// A theme file is a link, which the walk does not follow.
+    linked_theme: bool,
+}
+
+fn scan(root: &Path) -> Scan {
     let mut out = Vec::new();
+    let mut truncated = false;
+    let mut linked_theme = false;
     let mut stack = vec![root.to_owned()];
     while let Some(dir) = stack.pop() {
         if out.len() >= MAX_DIRS {
+            truncated = true;
             break;
         }
         let Ok(read) = std::fs::read_dir(&dir) else {
@@ -250,25 +262,34 @@ fn scan(root: &Path) -> Vec<(PathBuf, Vec<String>)> {
                     stack.push(entry.path())
                 }
                 Ok(t) if t.is_file() => names.push(name),
+                Ok(t) if t.is_symlink() && name == theme::FILE => linked_theme = true,
                 _ => {}
             }
         }
         out.push((dir, names));
     }
     out.sort();
-    out
+    Scan {
+        dirs: out,
+        truncated,
+        linked_theme,
+    }
 }
 
 /// The one unit every theme of the project gives (docs/theme.md). Which
 /// entries use a component is not in the source, so any of the themes may be
 /// the one it runs under, and so may none when the root has none. None when
-/// those differ, when the unit is 0, or when a theme that sets a unit would
-/// be refused.
-fn spacing_unit(root: &Path, dirs: &[(PathBuf, Vec<String>)]) -> Option<f64> {
+/// those differ, when the unit is 0, when a theme that sets a unit would
+/// be refused, or when the walk may have missed one: it stopped at its
+/// limit, or a theme is a link.
+fn spacing_unit(root: &Path, scan: &Scan) -> Option<f64> {
+    if scan.truncated || scan.linked_theme {
+        return None;
+    }
     let default = f64::from(limits::SPACING_UNIT_PX);
     let mut units = Vec::new();
     let mut root_has_theme = false;
-    for (dir, names) in dirs {
+    for (dir, names) in &scan.dirs {
         if !names.iter().any(|name| name == theme::FILE) {
             continue;
         }
