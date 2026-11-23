@@ -8463,6 +8463,11 @@ static void build_backtrace(JSContext *ctx, JSValueConst error_val,
             stack = JS_NULL;
         else
             stack = JS_NewStringLen(ctx, (char *)dbuf.buf, dbuf.size);
+        /* Ljós: a trace string with no room is none, as on the paths above:
+           the exception is dropped at the end, so kept as the stack it
+           would be read back as a throw with nothing pending. */
+        if (JS_IsException(stack))
+            stack = JS_NULL;
         dbuf_free(&dbuf);
     }
 
