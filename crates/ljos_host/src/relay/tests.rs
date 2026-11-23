@@ -719,6 +719,17 @@ fn a_method_that_reports_nothing_holds_the_newest_write() {
 }
 
 #[test]
+fn only_a_field_written_to_asks_whether_a_report_was_told_back() {
+    // Each pass over the input asks the activity first, which costs a call.
+    let mut writes = Writes::default();
+    assert!(!writes.may_be_told_back());
+    writes.reported(&holds("a", [1, 1], None));
+    assert!(!writes.may_be_told_back(), "a report alone");
+    writes.wrote(&holds("a", [1, 1], None), holds("b", [1, 1], None));
+    assert!(writes.may_be_told_back());
+}
+
+#[test]
 fn a_report_the_same_as_two_writes_lets_go_only_of_the_oldest() {
     let mut writes = Writes::default();
     let empty = holds("", [0, 0], None);

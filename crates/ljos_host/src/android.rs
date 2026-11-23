@@ -755,25 +755,56 @@ struct Told<'a> {
     since: Option<i64>,
 }
 
+/// `LjosActivity.textInputHanded`, looked up once, as it is read on every
+/// pass over the input once a write was made; none if the activity lacks it.
+static HANDED: std::sync::OnceLock<Option<jni::ids::JMethodID>> = std::sync::OnceLock::new();
+
 /// `LjosActivity.textInputHanded`: how many tells the connection handed
 /// the native side. None when the call is not answered: then no state is
 /// taken for a write told back.
 fn handed(app: &AndroidApp) -> Option<i64> {
+    use jni::ids::JMethodID;
     use jni::objects::JObject;
+    use jni::signature::{Primitive, ReturnType};
     use jni::{jni_sig, jni_str};
     // SAFETY: android-activity keeps the VM and the activity alive while
     // `app` is.
     let vm = unsafe { jni::JavaVM::from_raw(app.vm_as_ptr().cast()) };
     let activity = app.activity_as_ptr() as jni::sys::jobject;
-    vm.attach_current_thread(|env| -> jni::errors::Result<i64> {
+    vm.attach_current_thread(|env| -> jni::errors::Result<Option<i64>> {
         // SAFETY: the activity outlives this call, and a cast does not
         // delete the reference.
         let activity = unsafe { env.as_cast_raw::<JObject>(&activity)? };
-        env.call_method(&activity, jni_str!("textInputHanded"), jni_sig!("()J"), &[])?
-            .j()
+        let method = if let Some(method) = HANDED.get() {
+            *method
+        } else {
+            let class = env.get_object_class(&activity)?;
+            let found: jni::errors::Result<JMethodID> =
+                env.get_method_id(&class, jni_str!("textInputHanded"), jni_sig!("()J"));
+            // Said once: the activity's class is the same for the app's life.
+            if let Err(e) = &found {
+                log::warn!("the activity can't say how many states it handed on: {e}");
+            }
+            *HANDED.get_or_init(|| found.ok())
+        };
+        let Some(method) = method else {
+            return Ok(None);
+        };
+        // SAFETY: `method` is the activity class's `()J` method, looked up above.
+        let handed = unsafe {
+            env.call_method_unchecked(
+                &activity,
+                method,
+                ReturnType::Primitive(Primitive::Long),
+                &[],
+            )
+        }?;
+        handed.j().map(Some)
     })
-    .inspect_err(|e| log::warn!("the activity didn't say how many states it handed on: {e}"))
-    .ok()
+    .unwrap_or_else(|e| {
+        log::warn!("the activity didn't say how many states it handed on: {e}");
+        None
+    })
 }
 
 /// `LjosActivity.textInputToldWrite`: whether the state taken, `since`

@@ -46,12 +46,23 @@ fn inside(text: &str) -> &str {
 
 /// The name and signature of every JNI call in `rust`, all made on the activity.
 fn called(rust: &str) -> Vec<(String, String)> {
+    // A method called often is looked up once, on the activity's class,
+    // and called by its ID.
+    let looked_up = rust.split("env.get_method_id(").skip(1).map(|rest| {
+        let call = inside(rest);
+        assert!(call.trim_start().starts_with("&class,"), "{call}");
+        call
+    });
     let calls: Vec<_> = rust
         .split("env.call_method(")
         .skip(1)
         .map(|rest| {
             let call = inside(rest);
             assert!(call.trim_start().starts_with("&activity,"), "{call}");
+            call
+        })
+        .chain(looked_up)
+        .map(|call| {
             let (_, name) = call.split_once("jni_str!(\"").unwrap();
             let (name, _) = name.split_once('"').unwrap();
             let (_, sig) = call.split_once("jni_sig!(").unwrap();
