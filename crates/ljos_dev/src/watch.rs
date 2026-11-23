@@ -46,7 +46,8 @@ pub enum DevMsg {
     /// Apply this, then [`Watcher::ack`] or [`Watcher::reject`].
     Reload {
         patch: Box<ReloadPatch>,
-        warnings: Vec<CompileFault>,
+        /// Keyed as [`Build::Patch`](crate::Build::Patch)'s are.
+        warnings: Vec<(String, CompileFault)>,
         /// How long reading and compiling took.
         build: Duration,
         /// When the first file event of the saves it brings came.

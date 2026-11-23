@@ -142,6 +142,36 @@ Feature: An agent is told the warnings of a reload
       Then the answer's "/outcome" is "unchanged"
       And the answer's "/warnings" has 1 entry
 
+    Scenario: A module's warnings are named by the module
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
+        import "greet.ts" as Greet
+        Item {
+            property string hello: Greet.greet("Ada")
+        }
+        """
+      And the file "greet.ts":
+        """ts
+        export function greet(name: string): string { return t`Hello ` + name }
+        """
+      When the author starts "ljos run Main.qml --headless --watch --mcp=inspect,mutate"
+      And the agent calls the tool "app_status"
+      Then the answer's "/reload/warnings" has 1 entry
+      And the answer's "/reload/warnings/0/file" is "greet.ts"
+      And the answer's "/reload/warnings/0/line" is 1
+      And the answer's "/reload/warnings/0/message" matches "^a translated text joined to another value"
+      When the file "greet.ts" is changed to:
+        """ts
+        // Greets someone by name.
+        export function greet(name: string): string { return t`Hi ` + name }
+        """
+      And the agent calls the tool "app_reload"
+      Then the answer's "/outcome" is "applied"
+      And the answer's "/warnings" has 1 entry
+      And the answer's "/warnings/0/file" is "greet.ts"
+      And the answer's "/warnings/0/line" is 2
+
     Scenario: Without watching, no warnings are known
       When the author starts "ljos run Main.qml --headless --mcp=inspect"
       And the agent calls the tool "app_status"

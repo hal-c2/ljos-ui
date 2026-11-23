@@ -85,6 +85,15 @@ impl CompileFault {
     }
 }
 
+/// Each warning of `warnings` with the key of the file it is listed under.
+fn keyed(
+    warnings: &BTreeMap<String, Vec<CompileFault>>,
+) -> impl Iterator<Item = (&str, &CompileFault)> {
+    warnings
+        .iter()
+        .flat_map(|(key, faults)| faults.iter().map(move |f| (key.as_str(), f)))
+}
+
 /// A patch offered and not yet answered.
 #[derive(Debug)]
 struct Pending {
@@ -1199,22 +1208,25 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
     }
 
     /// Warnings of the files as they now are: what the compiler could not
-    /// settle, and the reload lint.
-    pub fn warnings(&self) -> impl Iterator<Item = &CompileFault> {
-        self.warnings.values().flatten()
+    /// settle, and the reload lint. Each comes with the key of the file
+    /// whose build found it: a module's are found by every file that
+    /// reaches the module, which only the key tells.
+    pub fn warnings(&self) -> impl Iterator<Item = (&str, &CompileFault)> {
+        keyed(&self.warnings)
     }
 
     /// The warnings of what runs once the application is at `generation`:
     /// those of the patch of that generation while its answer is on its
     /// way, else those of what it took last. A build not yet taken, or one
     /// refused, is never among them: [`warnings`](Self::warnings) has it.
-    pub fn running_warnings(&self, generation: u64) -> impl Iterator<Item = &CompileFault> {
+    /// Keyed as [`warnings`](Self::warnings) are.
+    pub fn running_warnings(&self, generation: u64) -> impl Iterator<Item = (&str, &CompileFault)> {
         let taken = self
             .pending
             .as_ref()
             .filter(|p| p.generation == generation && generation != self.generation)
             .map_or(&self.live_warnings, |p| &p.warnings);
-        taken.values().flatten()
+        keyed(taken)
     }
 
     /// Compiles what changed. `Ok(None)` when the files say what the
