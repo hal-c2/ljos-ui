@@ -371,15 +371,21 @@ impl Engine {
                 Settle::IfItHears => {
                     let meta = <Component as QmlType>::static_meta();
                     let key = MetaRef::Static(meta).type_id();
+                    // The signal is the attached object's: `Component` has
+                    // none of its own.
                     let on_destruction = || {
-                        meta.signal_index("destruction").is_some_and(|signal| {
-                            ids.iter().any(|id| {
-                                store
-                                    .objects
-                                    .get(*id)
-                                    .and_then(|h| h.attached.iter().find(|(k, _)| *k == key))
-                                    .is_some_and(|(_, a)| self.signal_connected(*a, signal))
-                            })
+                        ids.iter().any(|id| {
+                            store
+                                .objects
+                                .get(*id)
+                                .and_then(|h| h.attached.iter().find(|(k, _)| *k == key))
+                                .is_some_and(|(_, a)| {
+                                    store
+                                        .objects
+                                        .get(*a)
+                                        .and_then(|h| h.meta.signal_index("destruction"))
+                                        .is_some_and(|signal| self.signal_connected(*a, signal))
+                                })
                         })
                     };
                     (handlers && on_destruction()) || destroyed()
@@ -1227,11 +1233,19 @@ impl Engine {
 
     /// Runs `f` once when the engine's clock reaches `at`, from
     /// [`Engine::advance_timers`]. For native deadlines that must not poll,
-    /// such as a media clock's next frame or the end of a stream.
+    /// such as a media clock's next frame or the end of a stream. One at
+    /// or before now is due at once ([`Engine::next_timer_deadline`]).
     pub fn call_at(&self, at: Time, f: impl FnOnce(&Engine) + 'static) -> TimerId {
         let id = {
             let mut st = self.inner.timers.borrow_mut();
-            let id = st.sched.add_timer(at, TimerKind::Timer);
+            // One due already is for the next turn: the slack that lets
+            // later timers share a wake would only make an idle host wait.
+            let kind = if at <= st.clock.now() {
+                TimerKind::Precise
+            } else {
+                TimerKind::Timer
+            };
+            let id = st.sched.add_timer(at, kind);
             st.pending.insert(id, Pending::Call(Box::new(f)));
             id
         };
