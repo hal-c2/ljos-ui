@@ -87,8 +87,8 @@ pub struct ScriptHolders {
 /// object to reach it either way (`held_by` counts each once). A value
 /// that holds the same list twice at each level is gone through once too,
 /// not exponentially often.
-fn push_js(
-    v: &Value,
+fn push_js<'v>(
+    v: &'v Value,
     seen: &mut HashMap<usize, bool>,
     left: &mut usize,
     out: &mut Vec<ljos_js::JsRef>,
