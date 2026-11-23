@@ -803,11 +803,11 @@ fn an_interrupt_on_a_full_heap_is_uncatchable_and_leaves_running_out_catchable()
     // allocates.
     host.enter("setup", slice, |s| {
         s.eval::<(), _>(
-            "globalThis.full = false; globalThis.caught = false; globalThis.h = null;\n\
+            "globalThis.full = false; globalThis.caught = null; globalThis.h = null;\n\
              globalThis.fill = function () { for (;;) h = { n: h } };\n\
              globalThis.go = function () {\n\
                try { fill() } catch (e) { full = e.stack === '' }\n\
-               try { for (;;) {} } catch (_) { caught = true }\n\
+               try { for (;;) {} } catch (e) { caught = e }\n\
              };\n\
              globalThis.chain = function () { let t = null; for (;;) t = { n: t } };\n\
              undefined",
@@ -823,13 +823,23 @@ fn an_interrupt_on_a_full_heap_is_uncatchable_and_leaves_running_out_catchable()
     };
     let out = host.enter("go", spin, |s| s.eval::<(), _>("go()"));
     assert!(host.set_memory_limit(None));
-    assert!(matches!(out, Err(JsFault::JsInterrupted { .. })), "{out:?}");
+    // What the catch took, read once there is room to read it.
+    let took = host.enter("took", slice, |s| {
+        s.eval::<String, _>(
+            "caught === null ? 'nothing' : `${caught.name}: ${caught.message} \
+             (stack ${JSON.stringify(caught.stack)}, frozen ${Object.isFrozen(caught)})`",
+        )
+    });
+    assert!(
+        matches!(out, Err(JsFault::JsInterrupted { .. })),
+        "{out:?}, and the catch took {took:?}"
+    );
     assert_eq!(
         eval_num(&host, "full ? 1 : 0"),
         Ok(1.0),
         "the heap was not full when the interrupt fired"
     );
-    assert_eq!(eval_num(&host, "caught ? 1 : 0"), Ok(0.0));
+    assert_eq!(eval_num(&host, "caught === null ? 0 : 1"), Ok(0.0));
 
     assert_eq!(eval_num(&host, "h = null; 0"), Ok(0.0));
     host.collect_now();
