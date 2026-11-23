@@ -15,8 +15,8 @@
 Feature: A pack carries the files its QML loads
   A program shipped with its QML compiled into a pack has no directory
   of files beside it. The pack carries the files under its QML's
-  directories that QML loads (pictures, fonts, models, sounds, films and
-  the data a model reads), and the program that runs the pack finds each
+  directories that QML loads (pictures, fonts, models, sounds, films,
+  shaders and the data a model reads), and the program that runs the pack finds each
   where the QML names it: relative to the file that names it, or at its
   module's `qrc:` address. Which kinds of files go in is the build's
   choice, besides those a module's build keeps (`RESOURCES`); a file whose
@@ -84,6 +84,11 @@ Feature: A pack carries the files its QML loads
         """
         Not for the program.
         """
+      And the text file "fx.frag":
+        """
+        #version 440
+        void main() {}
+        """
       And the file "Main.qml":
         """qml
         import QtQuick
@@ -95,6 +100,7 @@ Feature: A pack carries the files its QML loads
       Then the pack carries the files:
         | file                          |
         | LjosSymbolsTest-Regular.woff2 |
+        | fx.frag                       |
         | pics/dot.png                  |
 
     Scenario: A build that names the kinds gets those alone
@@ -134,6 +140,7 @@ Feature: A pack carries the files its QML loads
       Then the pack carries the files:
         | file                          |
         | LjosSymbolsTest-Regular.woff2 |
+        | fx.frag                       |
         | pics/dot.png                  |
 
   Rule: A module's address names the files of its own directory

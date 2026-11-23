@@ -349,6 +349,45 @@ ShaderEffect { width: 20; height: 20; fragmentShader: "qrc:/s/fx.frag" }
     );
 }
 
+/// A shader beside the QML that names it is carried by a default pack,
+/// with nothing listing it: it is one of the [`ljos::build::FILE_KINDS`].
+#[test]
+fn a_shader_beside_its_qml_is_carried_by_a_default_pack() {
+    let root = tempfile::tempdir().unwrap();
+    write(
+        root.path(),
+        "fx.frag",
+        include_bytes!("../../ljos_shader/defaults/default.frag"),
+    );
+    write(
+        root.path(),
+        "Main.qml",
+        br#"import QtQuick
+ShaderEffect { width: 20; height: 20; fragmentShader: "fx.frag" }
+"#,
+    );
+    let pack = built(root.path());
+    drop(root);
+
+    let engine = ljos::engine();
+    let source = ljos::MapSource::from_pack(&pack).unwrap();
+    let effect = ljos::create_root(&engine, source, "Main").unwrap();
+    let platform = ljos_platform::Platform::of(&engine);
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while platform.awaited() > 0 && std::time::Instant::now() < until {
+        platform.deliver(&engine);
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    platform.deliver(&engine);
+
+    assert_eq!(
+        engine.read_by_name(effect, "status").to_number(),
+        0.0,
+        "{}",
+        engine.read_by_name(effect, "log").to_js_string()
+    );
+}
+
 #[test]
 fn a_file_carried_for_its_address_alone_has_that_for_its_url() {
     let address = "qrc:/qt/qml/Shapes/dot.png";

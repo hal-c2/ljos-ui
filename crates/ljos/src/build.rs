@@ -207,8 +207,9 @@ pub fn compile_dirs_with_types_to_rust(
 /// ([`Options::with_files`]), by extension: those a QML type loads. A
 /// picture (`Image`, `BorderImage`, `AnimatedImage`, a texture), a font
 /// (`FontLoader`), a model or its buffers (`RuntimeLoader`, a `Model`'s
-/// mesh), a sound or a film, a document (`PdfDocument`) and the data a
-/// model reads (`XmlListModel`, `JsonListModel`, a Lottie animation).
+/// mesh), a sound or a film, a document (`PdfDocument`), the data a
+/// model reads (`XmlListModel`, `JsonListModel`, a Lottie animation) and
+/// a `ShaderEffect`'s shaders, compiled or as source.
 // One line a kind, so that each comment heads its own.
 #[rustfmt::skip]
 pub const FILE_KINDS: &[&str] = &[
@@ -223,6 +224,8 @@ pub const FILE_KINDS: &[&str] = &[
     "wav", "mp3", "ogg", "oga", "opus", "flac", "m4a", "aac", "mp4", "m4v", "webm", "mkv", "mov",
     // Documents and data.
     "pdf", "json", "xml",
+    // Shaders, compiled and as source.
+    "ljsh", "frag", "vert",
 ];
 
 /// How a pack is written: whether it carries the sources its files were
