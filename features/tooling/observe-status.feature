@@ -17,8 +17,11 @@ Feature: The observer keeps an error until what failed succeeds
       Rectangle {
         width: 200; height: 100; color: "white"
         property int count: 0
+        // Goes on answering: each tick's log is followed by a look the
+        // application answers. A second apart, so the failed refresh's
+        // error is up long enough to be seen first.
         Timer {
-          interval: 250; running: true; repeat: true
+          interval: 1000; running: true; repeat: true
           onTriggered: console.log("tick")
         }
       }
@@ -51,7 +54,7 @@ Feature: The observer keeps an error until what failed succeeds
     And the observer is given the keys "5 Return"
     Then the observer does not have "text=app_set_property: "
 
-  Scenario Outline: A refused edit's error is over once <what> is chosen
+  Scenario: A refused edit's error is over once another page is chosen
     Given the QML:
       """qml
       import QtQuick
@@ -67,13 +70,27 @@ Feature: The observer keeps an error until what failed succeeds
     And the observer's "role=button[name=\"count\"]" is clicked
     And the observer is given the keys "x Return"
     Then the observer has "text=app_set_property: "
-    When the observer's "<locator>" is clicked
+    When the observer's "role=tab[name=\"Logs\"]" is clicked
     Then the observer does not have "text=app_set_property: "
 
-    Examples:
-      | what           | locator                         |
-      | another page   | role=tab[name=\"Logs\"]         |
-      | another object | role=listitem[name~=\"#other$\"] |
+  Scenario: A refused edit's error is over once another object is chosen
+    Given the QML:
+      """qml
+      import QtQuick
+      Rectangle {
+        width: 200; height: 100; color: "white"
+        property int count: 0
+        QtObject { id: other }
+      }
+      """
+    When the application is observed
+    And the observer's "text=Objects" is clicked
+    And the observer's "role=listitem[name=\"Scenario\"]" is clicked
+    And the observer's "role=button[name=\"count\"]" is clicked
+    And the observer is given the keys "x Return"
+    Then the observer has "text=app_set_property: "
+    When the observer's "role=listitem[name~=\"#other$\"]" is clicked
+    Then the observer does not have "text=app_set_property: "
 
   Scenario: A failed refresh's error is over while the application goes on answering
     Given the QML:
@@ -81,8 +98,11 @@ Feature: The observer keeps an error until what failed succeeds
       import QtQuick
       Rectangle {
         width: 200; height: 100; color: "white"
+        // Goes on answering: each tick's log is followed by a look the
+        // application answers. A second apart, so the failed refresh's
+        // error is up long enough to be seen first.
         Timer {
-          interval: 250; running: true; repeat: true
+          interval: 1000; running: true; repeat: true
           onTriggered: console.log("tick")
         }
         Loader {
@@ -103,5 +123,6 @@ Feature: The observer keeps an error until what failed succeeds
     And the observer's "role=listitem[name~=\"#kid$\"]" is clicked
     And the observer's "role=button[name=\"turn\"]" is clicked
     And the observer is given the keys "5 Return"
-    And 3 seconds pass
+    Then the observer has "text=app_inspect: "
+    When 3 seconds pass
     Then the observer does not have "text=app_inspect: "

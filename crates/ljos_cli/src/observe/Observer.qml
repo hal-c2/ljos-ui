@@ -243,9 +243,14 @@ ApplicationWindow {
             if (values)
                 status.inspectsWaiting -= 1
             // An answer about an object picked before says nothing of
-            // the one picked since.
+            // the one picked since. An edit refused is still said, with
+            // the object it was of: it is what the user did, and they would
+            // take it to have been made.
+            var edited = edit ? route.substring(7) : ""
             var past = ((values || picture) && route.substring(8) !== objects.picked)
-                    || (edit && route.substring(7) !== objects.picked)
+                    || (edit && ok && edited !== objects.picked)
+            if (edit && edited !== objects.picked)
+                tool += " on " + edited
             if (!ok && route !== "watch" && !edit
                     && String(result).indexOf("rate_limited") >= 0) {
                 var again = (values || picture) && objects.valuesTurnedAway(route.substring(8), picture)
@@ -267,7 +272,11 @@ ApplicationWindow {
             if (route !== "watch" && !picture && route !== "audit-shot" && !past) {
                 if (!ok) {
                     var kept = window.keptAs(route)
-                    if (kept !== "" || window.statusOf === "")
+                    // A failed edit's error stays until what it was of is
+                    // left: a failed look at the same object comes after
+                    // it and does not take its place.
+                    if (window.statusOf === "" || kept === "edited"
+                            || (kept !== "" && window.statusOf !== "edited"))
                         window.say(tool + ": " + window.refusal(result), kept)
                 } else if (window.statusOf === "" || window.statusOf === window.kindOf(route)) {
                     window.say("", "")

@@ -565,13 +565,20 @@ mod tests {
         let application = std::thread::spawn(move || {
             let (mut stream, _) = app.accept().unwrap();
             let request = read_request(&mut stream).unwrap();
-            stream
-                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n{}")
-                .unwrap();
+            let body = r#"{"jsonrpc":"2.0","id":1,"result":{}}"#;
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n{body}",
+                body.len()
+            )
+            .unwrap();
             request
         });
         held.pass_on(by).unwrap();
-        assert!(answered(again).ends_with("\r\n\r\n{}"));
+        assert!(answered(again).ends_with(concat!(
+            "\r\n\r\n",
+            r#"{"jsonrpc":"2.0","id":1,"result":{}}"#
+        )));
         let request = application.join().unwrap();
         assert_eq!(request.body, asked.as_bytes());
         assert!(request.head.contains(&format!("Host: {real}")));
