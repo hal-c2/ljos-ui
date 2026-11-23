@@ -602,7 +602,7 @@ mod inspector {
 
         /// Answers the agent that waits for a reload, with how it went.
         pub(crate) fn finish_reload(&mut self, view: &QmlView) {
-            self.inspector.finish_reload(view.engine());
+            self.inspector.finish_reload(view.engine(), view.scene());
         }
 
         pub(crate) fn record_frame(&mut self, report: &FrameReport) {

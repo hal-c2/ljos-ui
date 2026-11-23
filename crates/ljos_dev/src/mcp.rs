@@ -822,11 +822,15 @@ impl Inspector {
     }
 
     /// Answers the `app_reload` that was waiting, with how the reload went.
-    pub fn finish_reload(&mut self, engine: &Engine) {
+    /// `scene` is the one that runs now: the warnings the answer gives may
+    /// quote what one of its fields holds, which no look has seen yet.
+    pub fn finish_reload(&mut self, engine: &Engine, scene: &QuickScene) {
         self.observe(engine);
         let Some(parked) = self.parked.take() else {
             return;
         };
+        let secrets = capture::secrets(engine, scene, self.cfg.redact_all);
+        self.learn(&secrets);
         let now = self.feed.state();
         let mut value = match &now.last {
             Some(o) if now.seq != self.reload_answered => {
@@ -1360,11 +1364,12 @@ impl Inspector {
         let capture = capture.as_ref();
         let repeats_the_app = matches!(
             kind,
-            Kind::Logs(_) | Kind::Resource(Resource::Logs) | Kind::Processes(_)
+            Kind::Logs(_) | Kind::Resource(Resource::Logs | Resource::Reload) | Kind::Processes(_)
         );
         if repeats_the_app && capture.is_none() {
-            // What the application logged or threw may hold what a field
-            // holds now, which no look at the scene has seen yet.
+            // What the application logged or threw, or a warning quotes, may
+            // hold what a field holds now, which no look at the scene has
+            // seen yet.
             let now = capture::secrets(engine, scene, self.cfg.redact_all);
             self.learn(&now);
         }

@@ -888,6 +888,64 @@ fn a_warning_keeps_a_secret_masked_after_the_inspector_forgets_it() {
     assert!(told.contains("a warning that quotes <redacted>"), "{told}");
 }
 
+/// Tells `app`'s inspector a compiler warning that quotes [`LOGGED`]'s pin.
+fn warn_quoting_the_pin(app: &mut App) {
+    app.inspector
+        .as_mut()
+        .unwrap()
+        .set_warnings(&[ljos_dev::CompileFault {
+            file: "Main.qml".into(),
+            line: 3,
+            column: 5,
+            message: "a warning that quotes s3cret-pin".into(),
+        }]);
+}
+
+#[test]
+fn the_reload_resource_read_first_masks_a_warning_quoting_a_field() {
+    let mut app = app_with(LOGGED, InspectorConfig::default());
+    warn_quoting_the_pin(&mut app);
+    // Nothing has looked at the scene: the resource does so itself.
+    let resource = app.read("ljos://app/reload").unwrap();
+    assert!(!resource.contains("s3cret-pin"), "{resource}");
+    assert!(
+        resource.contains("a warning that quotes <redacted>"),
+        "{resource}"
+    );
+}
+
+#[test]
+fn a_reload_answered_first_masks_a_warning_quoting_a_field() {
+    let mut app = app_granted(
+        LOGGED,
+        InspectorConfig::default(),
+        CapSet::of([Cap::Inspect, Cap::Mutate]),
+    );
+    app.inspector.as_mut().unwrap().set_watched(true);
+    warn_quoting_the_pin(&mut app);
+    // A host answers the reload once it has run, as the shell does.
+    let App {
+        client,
+        inspector,
+        scene,
+        engine,
+        clock,
+        ..
+    } = &mut app;
+    let reply = client
+        .call("app_reload", json!({}), &mut || {
+            let inspector = inspector.as_mut().unwrap();
+            inspector.pump(engine, scene, &*clock);
+            if inspector.take_reload_request() {
+                inspector.finish_reload(engine, scene);
+            }
+        })
+        .expect("the reload is answered");
+    let told = format!("{}\n{}", reply.structured, reply.text);
+    assert!(!told.contains("s3cret-pin"), "{told}");
+    assert!(told.contains("a warning that quotes <redacted>"), "{told}");
+}
+
 #[test]
 fn an_inspector_told_to_mask_every_editable_value_masks_them_in_the_log() {
     let mut app = app_with(

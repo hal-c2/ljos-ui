@@ -137,7 +137,7 @@ fn pump(inspector: &mut Inspector, live: &mut Live, fault: &mut Option<BackendEr
         if let Err(e) = live.reload_flush() {
             fault.get_or_insert(e);
         }
-        inspector.finish_reload(&live.engine);
+        inspector.finish_reload(&live.engine, &live.scene);
     }
     if let Some(alias) = inspector.take_alias_request() {
         match live.alias_on_disk(&alias.module, alias.dir.as_deref()) {
@@ -146,7 +146,7 @@ fn pump(inspector: &mut Inspector, live: &mut Live, fault: &mut Option<BackendEr
                 if let Err(e) = done {
                     fault.get_or_insert(e);
                 }
-                inspector.finish_reload(&live.engine);
+                inspector.finish_reload(&live.engine, &live.scene);
             }
         }
     }
