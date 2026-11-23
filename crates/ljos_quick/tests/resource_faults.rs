@@ -756,6 +756,10 @@ fn assert_kept(path: Path, inner: &[(&str, &str)]) {
         };
         m.make_room();
         assert!(!m.e.has_pending_faults(), "{what}: a fault was never taken");
+        assert!(
+            m.e.application_fault().is_none(),
+            "{what}: the fault went past every boundary to the application"
+        );
         if m.object() != Some(first) {
             wrong.push(format!("{what}: made again"));
         } else if !exists(&m.e, first, "back") {
@@ -972,6 +976,10 @@ fn a_row_an_evaluation_makes_is_kept_whatever_the_run_before_it_caught() {
         };
         m.make_room();
         assert!(!m.e.has_pending_faults(), "{what}: a fault was never taken");
+        assert!(
+            m.e.application_fault().is_none(),
+            "{what}: the fault went past every boundary to the application"
+        );
         if m.object() != Some(first) {
             wrong.push(format!("{what}: made again"));
         } else if !exists(&m.e, first, "back") {
