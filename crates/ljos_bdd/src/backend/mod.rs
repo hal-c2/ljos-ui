@@ -1734,8 +1734,10 @@ pub trait Probes: Backend {
     }
 
     /// Lets go of what [`Probes::turn_every_call_away`] holds, and waits
-    /// for what the observer and the application were asked meanwhile to
-    /// be done.
+    /// for the windows to settle. It does not wait for a reply still owed:
+    /// an observer waiting on an inspection may have nothing left to draw
+    /// until it comes, so this can return first. A step that needs the
+    /// answer waits for it itself, as the late answer's does.
     fn calls_answered_again(&mut self) -> Result<()> {
         Err(BackendError::Unsupported {
             backend: self.name(),

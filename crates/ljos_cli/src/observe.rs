@@ -427,13 +427,30 @@ mod tests {
     }
 
     #[test]
-    fn a_failed_edit_of_an_object_picked_before_is_not_said() {
-        let window = window();
+    fn a_failed_edit_of_an_object_picked_before_is_said_with_its_object() {
         for refused in ["denied", "rate_limited: wait"] {
-            assert_eq!(status_after(&window, "edited:a", false, refused), "");
+            let window = window();
+            assert_eq!(
+                status_after(&window, "edited:a", false, refused),
+                format!("tool on a: {refused}")
+            );
         }
+        let other = window();
+        assert_eq!(
+            status_after(&other, "edited:b", false, "denied"),
+            "tool: denied"
+        );
+        // What an edit of an object left made says nothing of the one picked.
+        let made = window();
+        assert_eq!(status_after(&made, "edited:a", true, "{}"), "");
+    }
+
+    #[test]
+    fn a_failed_look_does_not_take_a_failed_edit_s_place() {
+        let window = window();
         let said = status_after(&window, "edited:b", false, "denied");
-        assert!(said.contains("denied"), "{said}");
+        assert_eq!(status_after(&window, "inspect:b", false, "gone"), said);
+        assert_eq!(status_after(&window, "inspect:b", true, "{}"), said);
     }
 
     #[test]
