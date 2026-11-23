@@ -2985,7 +2985,8 @@ fn a_holders_walk_cut_at_its_budget_says_the_bytes_are_the_least_held() {
         r#"import QtQuick
 Item {
     property var held: ({ n: 1 })
-    QtObject { objectName: "crowd"; property list<var> list }
+    // An Item, as `named` looks among the visual children.
+    Item { objectName: "crowd"; property list<var> list }
 }
 "#,
         InspectorConfig::default(),
