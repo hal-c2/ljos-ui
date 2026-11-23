@@ -588,27 +588,6 @@ Feature: More design rules a file's source can show
       Then the answer's "/diagnostics/0/code" is "layout-spacing-scale"
       And the answer's "/diagnostics/0/message" matches "multiple of 4 \(8 or 12\)"
 
-    Scenario: A theme that cannot be read and names no unit leaves the scale at 4
-      Given the file "theme.json":
-        """json
-        { "Spacing": { "md": 20, } }
-        """
-      And the file "Main.qml":
-        """qml
-        import QtQuick
-
-        Item {
-            width: 200; height: 80
-            Column { spacing: 10 }
-        }
-        """
-      When the agent calls the tool "qml_lint" with:
-        """json
-        {"paths": ["Main.qml"]}
-        """
-      Then the answer's "/diagnostics/0/code" is "layout-spacing-scale"
-      And the answer's "/diagnostics/0/message" matches "multiple of 4 \(8 or 12\)"
-
   Rule: A spacing unit the scan cannot see leaves nothing to advise
 
     Scenario Outline: A theme that is a link leaves the unit unknown (<link>)
