@@ -43,10 +43,14 @@ From QML, scripts send requests with the built-in `fetch`, which goes through th
 import Ljos.Ui
 import Ljos.Core
 
-Item {
+Text {
     id: root
     objectName: "root"
+    color: palette.windowText
+    width: 280
+    wrap: Text.WordWrap
     property string got: ""
+    text: got === "" ? "Loading" : got
 
     function load(): void {
         const run = async (): Promise<void> => {
@@ -73,7 +77,7 @@ Item {
 }
 ```
 
-On ljos.dev, and in a browser, a relative address is read against the page, so `got` becomes "Walk to the lighthouse". On the desktop an address names a server, `https://…`: a relative one is not an address there, so `got` is the message of the `TypeError` that `fetch` rejects with.
+On ljos.dev, and in a browser, a relative address is read against the page, so `got`, and the text shown, becomes "Walk to the lighthouse". On the desktop an address names a server, `https://…`: a relative one is not an address there, so `got` is the message of the `TypeError` that `fetch` rejects with.
 
 A file written against Qt's API keeps `XMLHttpRequest`, which is sent through the same `Platform`. When an `XMLHttpRequest` reply has an XML content type, the request's `responseXML` exposes a read-only W3C DOM document (`documentElement`, `childNodes`, `xmlVersion`, `xmlEncoding`, `xmlStandalone`), parsed out of the reply only when a script reads `responseXML`.
 
