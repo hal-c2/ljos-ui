@@ -722,3 +722,45 @@ fn a_scan_that_hit_its_limit_leaves_the_spacing_unit_unknown() {
 fn a_scan_that_read_every_directory_up_to_its_limit_knows_the_spacing_unit() {
     assert_eq!(spacing_hints_in(SCANNED_DIRS), 1);
 }
+
+/// Gives a directory its permissions back when the test ends, so the temp
+/// dir can go even when an assertion failed.
+#[cfg(unix)]
+struct Unreadable(PathBuf);
+
+#[cfg(unix)]
+impl Drop for Unreadable {
+    fn drop(&mut self) {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&self.0, std::fs::Permissions::from_mode(0o755));
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_directory_the_walk_cannot_read_leaves_the_spacing_unit_unknown() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = project(&[
+        (
+            "Main.qml",
+            "import QtQuick\nItem {\n    Column { spacing: 7 }\n}\n",
+        ),
+        ("theme.json", "{ \"Spacing\": { \"unit\": 6 } }\n"),
+        ("app/theme.json", "{ \"Spacing\": { \"unit\": 4 } }\n"),
+    ]);
+    let app = dir.path().join("app");
+    std::fs::set_permissions(&app, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let _restore = Unreadable(app.clone());
+    if std::fs::read_dir(&app).is_ok() {
+        // Running as root, which reads it all the same.
+        return;
+    }
+    // The unreadable directory's theme may give another unit than the root's
+    // 6, so the lint cannot advise a multiple of 6.
+    let found = run(dir.path(), &["Main.qml"], true);
+    assert_eq!(
+        with_code(&found, "layout-spacing-scale").len(),
+        0,
+        "{found:?}"
+    );
+}
