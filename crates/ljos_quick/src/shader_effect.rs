@@ -317,13 +317,16 @@ fn prepare(e: &Engine, me: ObjectId) {
         let resolved = e.resolve_url(me, url.as_str());
         let platform = Platform::of(e);
         // What a pack carries is registered, and is no file.
-        let registered = |url: &str| platform.resource(url).map(|bytes| bytes.to_vec());
+        let registered = |url: &str| platform.resource(url);
         if let Some(found) = ljos_shader::Kept::find(&resolved, registered) {
             let want = found.and_then(|kept| {
                 if kept.is_artifact() {
                     kept.load(*stage).map(Want::Ready)
                 } else {
-                    Ok(Want::CompileKept(kept))
+                    Ok(match kept.cached(*stage) {
+                        Some(c) => Want::Ready(c),
+                        None => Want::CompileKept(kept),
+                    })
                 }
             });
             match want {
