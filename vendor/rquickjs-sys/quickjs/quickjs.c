@@ -2526,10 +2526,12 @@ bool JS_IsOOMError(JSContext *ctx, JSValueConst val)
         && JS_VALUE_GET_OBJ(val) == JS_VALUE_GET_OBJ(ctx->oom_error);
 }
 
-/* Ljós: whether a refused write to p is to be ignored. oom_error is
-   frozen because every throw for want of room shares it. A catch that
+/* Ljós: whether a refused write to p is refused without a throw. oom_error
+   is frozen because every throw for want of room shares it. A catch that
    writes on what it caught and throws it again must still throw that
-   error, and not a TypeError about the write, so refusing one is silent. */
+   error, and not a TypeError about the write, so the write fails as it
+   does where no throw is asked for: false, which Reflect.set, delete and
+   the like still tell. */
 static bool js_ignores_write(JSContext *ctx, const JSObject *p)
 {
     return JS_VALUE_GET_TAG(ctx->oom_error) == JS_TAG_OBJECT
@@ -8816,7 +8818,7 @@ static int JS_SetPrototypeInternal(JSContext *ctx, JSValueConst obj,
     }
     if (!p->extensible) {
         if (js_ignores_write(ctx, p)) /* Ljós */
-            return true;
+            return false;
         if (throw_flag) {
             JS_ThrowTypeError(ctx, "object is not extensible");
             return -1;
@@ -10841,7 +10843,7 @@ retry:
     if (p == JS_VALUE_GET_OBJ(obj)) {
         if (unlikely(!p->extensible)) {
             if (js_ignores_write(ctx, p)) /* Ljós */
-                ret = true;
+                ret = false;
             else
                 ret = JS_ThrowTypeErrorOrFalse(ctx, flags, "object is not extensible");
             goto done;
@@ -10880,7 +10882,7 @@ retry:
                    p->class_id == JS_CLASS_MODULE_NS) {
         read_only_prop:
             if (js_ignores_write(ctx, p)) /* Ljós */
-                ret = true;
+                ret = false;
             else
                 ret = JS_ThrowTypeErrorReadOnly(ctx, flags, prop);
             goto done;
@@ -10891,7 +10893,7 @@ retry:
     } else {
         if (unlikely(!p->extensible)) {
             if (js_ignores_write(ctx, p)) /* Ljós */
-                ret = true;
+                ret = false;
             else
                 ret = JS_ThrowTypeErrorOrFalse(ctx, flags, "object is not extensible");
             goto done;
@@ -11214,7 +11216,7 @@ static int JS_CreateProperty(JSContext *ctx, JSObject *p,
     if (!p->extensible) {
     not_extensible:
         if (js_ignores_write(ctx, p)) /* Ljós */
-            return true;
+            return false;
         return JS_ThrowTypeErrorOrFalse(ctx, flags, "object is not extensible");
     }
 
@@ -11364,7 +11366,7 @@ int JS_DefineProperty(JSContext *ctx, JSValueConst this_obj,
         if (!check_define_prop_flags(prs->flags, flags)) {
         not_configurable:
             if (js_ignores_write(ctx, p)) /* Ljós */
-                return true;
+                return false;
             return JS_ThrowTypeErrorOrFalse(ctx, flags, "property is not configurable");
         }
 
@@ -12048,7 +12050,7 @@ int JS_DeleteProperty(JSContext *ctx, JSValueConst obj, JSAtom prop, int flags)
     if (res != false)
         return res;
     if (JS_IsOOMError(ctx, obj)) /* Ljós: as a write to it */
-        return true;
+        return false;
     if ((flags & JS_PROP_THROW) ||
         ((flags & JS_PROP_THROW_STRICT) && is_strict_mode(ctx))) {
         JS_ThrowTypeError(ctx, "could not delete property");
@@ -42982,6 +42984,11 @@ static JSValue js_error_set_stack(JSContext *ctx, JSValueConst this_val,
 
     if (JS_VALUE_GET_TAG(this_val) != JS_TAG_OBJECT)
         return JS_ThrowTypeErrorNotAnObject(ctx);
+    /* Ljós: refused as every write to it is, whatever is written; a
+       TypeError for a stack that is no string would take running out's
+       place. */
+    if (js_ignores_write(ctx, JS_VALUE_GET_OBJ(this_val)))
+        return JS_UNDEFINED;
     if (!JS_IsString(value))
         return JS_ThrowTypeError(ctx, "Error.prototype.stack setter expects a string");
     if (js_same_value(ctx, this_val, ctx->class_proto[JS_CLASS_ERROR]))

@@ -731,7 +731,8 @@ fn the_error_thrown_for_want_of_heap_and_thrown_again_is_running_out_of_memory()
 /// A `catch` may write on what it caught before it throws it again, as
 /// error reporting does. On the error every throw for want of room shares,
 /// the write neither throws, which would put a `TypeError` in the place of
-/// running out, nor shows in the next throw.
+/// running out, nor shows in the next throw. What says whether a write
+/// took says it did not.
 #[test]
 fn writing_on_the_error_thrown_for_want_of_heap_neither_throws_nor_changes_it() {
     for write in [
@@ -740,6 +741,13 @@ fn writing_on_the_error_thrown_for_want_of_heap_neither_throws_nor_changes_it() 
         "e.name = 'Load'",
         "e['context'] = 'load'",
         "e.stack = 'load'",
+        "e.stack = undefined",
+        "e.stack = 42",
+        "if (Reflect.set(e, 'context', 'load') !== false) throw new Error('set')",
+        "if (Reflect.defineProperty(e, 'message', { value: 'load' }) !== false) throw new Error('defined')",
+        "if (Reflect.setPrototypeOf(e, null) !== false) throw new Error('prototype')",
+        "if (Reflect.deleteProperty(e, 'message') !== false) throw new Error('deleted')",
+        "if (delete e.message !== false) throw new Error('deleted')",
         "Object.assign(e, { context: 'load', message: 'load' })",
         "Object.defineProperty(e, 'context', { value: 'load' })",
         "Object.defineProperty(e, 'message', { value: 'load' })",
