@@ -859,16 +859,17 @@ impl DevSession {
             let reloader = reloader.clone();
             let running = running.clone();
             WarningsOf(Rc::new(move |keys| {
-                let files: Vec<String> = keys.iter().map(|k| file_of(k)).collect();
                 // The answer to a patch reaches the session later: until
                 // it does, the session's own warnings may be a build's the
-                // application has not taken.
-                lock(&reloader)
-                    .session()
-                    .running_warnings(running.get())
-                    .filter(|w| files.contains(&w.file))
-                    .cloned()
-                    .collect()
+                // application has not taken. A module's warning is one of
+                // each file that reaches it, so it goes by that file's key.
+                once(
+                    lock(&reloader)
+                        .session()
+                        .running_warnings(running.get())
+                        .filter(|(key, _)| keys.iter().any(|k| k == key))
+                        .map(|(_, w)| w.clone()),
+                )
             }))
         };
         let (inbox, handle) = UiInbox::channel_with_wake(INBOX, wake);
@@ -1278,7 +1279,7 @@ impl DevSession {
         engine: &Engine,
         host: &mut dyn Host,
         patch: &ReloadPatch,
-        warnings: Vec<CompileFault>,
+        warnings: Vec<(String, CompileFault)>,
         build: Duration,
         (saved, quiet): (Instant, Duration),
     ) -> Report {
@@ -1333,10 +1334,13 @@ impl DevSession {
         // to any is one patch; the developer hears of the ones the program
         // reached, as Qt never compiles the others. The patch runs by now,
         // so these replace the warnings before even when no root was made.
-        let warnings: Vec<CompileFault> = warnings
-            .into_iter()
-            .filter(|w| key_of(&w.file).is_some_and(|key| engine.has_loaded(key)))
-            .collect();
+        // A module's are those of the files that reach it.
+        let warnings = once(
+            warnings
+                .into_iter()
+                .filter(|(key, _)| engine.has_loaded(key))
+                .map(|(_, w)| w),
+        );
         self.warnings = new_first(&self.warnings, warnings.clone());
         self.warnings_changed = true;
         if let Err(fault) = chosen {
@@ -1427,6 +1431,18 @@ fn untold(
         }
     }
     (new, now)
+}
+
+/// `warnings` with each told once: a module reached by two files is
+/// warned of by both.
+pub(crate) fn once(warnings: impl IntoIterator<Item = CompileFault>) -> Vec<CompileFault> {
+    let mut out: Vec<CompileFault> = Vec::new();
+    for w in warnings {
+        if !out.contains(&w) {
+            out.push(w);
+        }
+    }
+    out
 }
 
 fn by_place(warnings: &mut [CompileFault]) {

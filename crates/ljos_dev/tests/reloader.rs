@@ -219,7 +219,7 @@ fn the_lint_for_stateful_siblings_comes_with_the_patch() {
         panic!("expected a patch");
     };
     assert!(
-        warnings.iter().any(|w| w.message.contains("id")),
+        warnings.iter().any(|(_, w)| w.message.contains("id")),
         "{warnings:?}"
     );
 }

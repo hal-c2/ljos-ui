@@ -31,8 +31,10 @@ pub enum Build {
     /// [`Reloader::reject`] comes before the next build.
     Patch {
         patch: Box<ReloadPatch>,
-        /// What the compiler could not settle, and the reload lint.
-        warnings: Vec<CompileFault>,
+        /// What the compiler could not settle, and the reload lint, each
+        /// with the key of the file whose build found it: a module's are
+        /// the warnings of each file that reaches it.
+        warnings: Vec<(String, CompileFault)>,
     },
     /// A file does not compile: nothing of the change is offered.
     Failed(Vec<CompileFault>),
@@ -651,7 +653,11 @@ impl<O: TypeOracle + Clone> Reloader<O> {
             Ok(None) => Build::UpToDate,
             Ok(Some(patch)) => Build::Patch {
                 patch: Box::new(patch),
-                warnings: self.session.warnings().cloned().collect(),
+                warnings: self
+                    .session
+                    .warnings()
+                    .map(|(key, w)| (key.to_owned(), w.clone()))
+                    .collect(),
             },
             // Once only, and not when a reload was asked for.
             Err(faults) if may_wait && held.is_none() => {

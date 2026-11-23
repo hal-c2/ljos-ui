@@ -502,7 +502,7 @@ fn a_session_warns_with_the_lint() {
         "Main",
         "import QtQuick\nItem {\n  Timer { }\n  Timer { }\n}\n",
     )]);
-    let w: Vec<&CompileFault> = s.warnings().collect();
+    let w: Vec<&CompileFault> = s.warnings().map(|(_, w)| w).collect();
     assert_eq!(w.len(), 1, "{w:?}");
     assert_eq!((w[0].file.as_str(), w[0].line), ("Main.qml", 3));
 }
@@ -510,7 +510,7 @@ fn a_session_warns_with_the_lint() {
 /// The first line of each warning the application runs at `generation`.
 fn running(s: &ReloadSession<QtTypeOracle>, generation: u64) -> Vec<String> {
     s.running_warnings(generation)
-        .map(|w| w.message.lines().next().unwrap_or_default().to_owned())
+        .map(|(_, w)| w.message.lines().next().unwrap_or_default().to_owned())
         .collect()
 }
 

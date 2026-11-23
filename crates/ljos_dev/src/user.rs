@@ -1805,7 +1805,7 @@ impl UserSession {
                             kept,
                             fresh,
                             remounted,
-                            warnings,
+                            warnings: crate::host::once(warnings.into_iter().map(|(_, w)| w)),
                             saved,
                             quiet,
                             waited: started.duration_since(saved).saturating_sub(quiet + build),
