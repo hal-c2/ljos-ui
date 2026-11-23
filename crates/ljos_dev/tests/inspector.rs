@@ -888,6 +888,32 @@ fn a_warning_keeps_a_secret_masked_after_the_inspector_forgets_it() {
     assert!(told.contains("a warning that quotes <redacted>"), "{told}");
 }
 
+#[test]
+fn a_warning_quoting_a_secret_the_same_capture_forgets_stays_masked() {
+    let mut app = app_with(CROWDED, InspectorConfig::default());
+    // Before anything looked at the scene, more secret fields than are
+    // kept: the first capture learns them all and forgets the smallest,
+    // "other-0", at once.
+    app.set("crowd", "model", QmlValue::Int(1100));
+    app.inspector
+        .as_mut()
+        .unwrap()
+        .set_warnings(&[ljos_dev::CompileFault {
+            file: "Main.qml".into(),
+            line: 3,
+            column: 5,
+            message: "a warning that quotes other-0 here".into(),
+        }]);
+    let status = app.call("app_status", json!({}));
+    let resource = app.read("ljos://app/reload").unwrap();
+    let told = format!("{}\n{}\n{resource}", status.structured, status.text);
+    assert!(!told.contains("other-0 "), "{told}");
+    assert!(
+        told.contains("a warning that quotes <redacted> here"),
+        "{told}"
+    );
+}
+
 /// Tells `app`'s inspector a compiler warning that quotes [`LOGGED`]'s pin.
 fn warn_quoting_the_pin(app: &mut App) {
     app.inspector

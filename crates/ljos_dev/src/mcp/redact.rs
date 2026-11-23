@@ -115,10 +115,11 @@ pub(crate) struct SecretBook {
 }
 
 impl SecretBook {
-    /// Adds what `secrets` holds that is not known yet, and returns those
-    /// it kept, longest first: what was written down before must be masked
-    /// with them too. One the bounds made it forget again at once is not
-    /// among them, as it is not among [`SecretBook::secrets`].
+    /// Adds what `secrets` holds that is not known yet, and returns all of
+    /// it, longest first: what was written down before must be masked with
+    /// them too. One the bounds made it forget again at once is among them,
+    /// though not among [`SecretBook::secrets`]: what was written down
+    /// keeps it masked, as it keeps the ones forgotten later.
     pub(crate) fn learn<'a>(
         &mut self,
         secrets: impl IntoIterator<Item = &'a String>,
@@ -149,7 +150,6 @@ impl SecretBook {
         self.longest_first = self.order.iter().cloned().collect();
         self.longest_first
             .sort_by_key(|s| std::cmp::Reverse(s.len()));
-        new.retain(|s| self.known.contains(s));
         new.sort_by_key(|s| std::cmp::Reverse(s.len()));
         new
     }
@@ -235,15 +235,15 @@ mod tests {
     }
 
     #[test]
-    fn what_is_learned_is_what_is_kept() {
+    fn what_is_learned_is_all_that_was_new_even_what_is_forgotten_at_once() {
         let mut book = SecretBook::default();
         let many: Vec<String> = (0..MAX_SECRETS + 5).map(|i| format!("s{i:05}")).collect();
         let new = book.learn(&many);
-        let forgotten: Vec<_> = new.iter().filter(|s| !book.secrets().contains(s)).collect();
-        assert!(
-            forgotten.is_empty(),
-            "returned as new, but forgotten: {forgotten:?}"
-        );
-        assert_eq!(new.len(), book.secrets().len());
+        assert_eq!(new.len(), many.len());
+        // The smallest are forgotten at once, and still returned.
+        assert!(!book.secrets().contains(&many[0]));
+        assert!(new.contains(&many[0]));
+        // Known ones are not new again.
+        assert!(book.learn(&many[10..20]).is_empty());
     }
 }
