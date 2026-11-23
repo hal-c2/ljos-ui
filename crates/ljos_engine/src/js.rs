@@ -1144,6 +1144,8 @@ impl HostObjects for EngineHost {
         let engine = self.engine()?;
         let (this, func) = connect_args(scope, args)?;
         let sender = u64_to_obj(obj);
+        // A handler connected by code a boundary discards outlasts it.
+        engine.note_written(sender);
         let sig = SignalIndex(signal);
         let receiver = match &this {
             JsValue::Object(o) => Some(u64_to_obj(*o)),
@@ -1180,6 +1182,7 @@ impl HostObjects for EngineHost {
         let engine = self.engine()?;
         let (_, func) = connect_args(scope, args)?;
         let sender = u64_to_obj(obj);
+        engine.note_written(sender);
         let js = engine.js().map_err(host_err)?;
         let found = {
             let conns = js.conns.borrow();

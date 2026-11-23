@@ -590,6 +590,24 @@ const OUTER_WRITE_FAULTS: [(&str, &str); 3] = [
     ),
 ];
 
+/// A root whole as it is, whose boundary's content wrote to itself, or
+/// to an object that is not the root's, before it filled the heap: the
+/// boundary discards the one, and the root holds neither.
+const WRITE_ELSEWHERE_FAULTS: [(&str, &str); 2] = [
+    (
+        "content that wrote to itself",
+        r#"ErrorBoundary { Item { id: c; Component.onCompleted: { c.objectName = "front"; FILL c.objectName = "back" } } }"#,
+    ),
+    (
+        "content that wrote to a singleton the root does not hold",
+        r#"ErrorBoundary { Item { id: c; Component.onCompleted: { Outside.touched++; FILL c.objectName = "back" } } }"#,
+    ),
+];
+
+/// Content that connects a handler to the root before it fills the heap:
+/// the connection outlasts the content the boundary discards.
+const CONNECTS: &str = "ErrorBoundary { Item { Component.onCompleted: { d.ping.connect(function () { d.hits++ }); FILL d.ok = true } } }";
+
 /// The file of what is made: `ok` says whether it is whole.
 fn made_file(ok: bool, inner: &str, singleton: bool) -> String {
     format!(
@@ -602,6 +620,9 @@ Item {{
     width: 12; height: 10
     property bool ok: {ok}
     property bool started: false
+    property int hits: 0
+    signal ping
+    function poke() {{ ping(); return hits }}
     function init() {{
         if (started) return;
         started = true;
@@ -677,7 +698,16 @@ impl Making {
         };
         let shell = "import QtQuick\nItem { id: s; Component.onCompleted: { FILL s.objectName = \"back\" } }\n"
             .replace("FILL", FILLS);
-        compile(&e, &[("Main", &main), (key, file), ("Shell", &shell)]);
+        let outside = "pragma Singleton\nimport QtQuick\nQtObject { property int touched: 0 }\n";
+        compile(
+            &e,
+            &[
+                ("Main", &main),
+                (key, file),
+                ("Shell", &shell),
+                ("Outside", outside),
+            ],
+        );
         let root = e.create_from_url("Main", None, Vec::new()).unwrap();
         fill(&e, root, room);
         set(&e, root, "on", Value::Bool(true));
@@ -929,6 +959,49 @@ fn a_singleton_is_made_again_when_content_filled_the_heap_in_its_function() {
 #[test]
 fn a_singleton_is_made_again_when_content_wrote_to_it_before_it_filled_the_heap() {
     assert_made_again(Path::Singleton, &OUTER_WRITE_FAULTS);
+}
+
+#[test]
+fn a_making_is_kept_when_content_inside_it_wrote_elsewhere_before_it_filled_the_heap() {
+    for path in [
+        Path::Repeater,
+        Path::ListView,
+        Path::Incubated,
+        Path::Singleton,
+    ] {
+        assert_kept(path, &WRITE_ELSEWHERE_FAULTS);
+    }
+}
+
+/// A root whose content connected to it and then filled the heap is made
+/// again, not kept with that connection and another one the content's
+/// next making adds: its signal reaches one handler.
+#[test]
+fn a_making_is_made_again_when_content_connected_to_it_before_it_filled_the_heap() {
+    let mut wrong = Vec::new();
+    for (what, path) in [
+        ("a Repeater row", Path::Repeater),
+        ("a ListView delegate", Path::ListView),
+        ("an incubated object", Path::Incubated),
+        ("a singleton", Path::Singleton),
+    ] {
+        let mut m = Making::start(
+            path,
+            &made_file(false, CONNECTS, matches!(path, Path::Singleton)),
+            64 * 1024,
+        );
+        assert!(ran_out(&m), "{what}: nothing filled the heap");
+        m.make_room();
+        let Some(o) = m.object().filter(|_| m.is_whole()) else {
+            wrong.push(format!("{what}: never whole"));
+            continue;
+        };
+        let hits = m.e.invoke_by_name(o, "poke", &[]).unwrap().to_number();
+        if hits != 1.0 {
+            wrong.push(format!("{what}: its signal reached {hits} handlers"));
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
 }
 
 /// The engine keeps who took the last 32 faults. Past that it cannot tell,
