@@ -252,6 +252,11 @@ public final class LjosDocuments {
         }, "ljos-documents").start();
     }
 
+    /**
+     * What the user chose, to ljos_platform: a line each, the path of a copy
+     * or the provider's URI; null when the user chose nothing. False when
+     * no dialog took the answer, as one closed does not.
+     */
     private static native boolean nativeAnswered(int code, String chosen);
 
     /** The picker shown with {@code code}, no longer shown; -1 if none was. */
@@ -410,7 +415,6 @@ public final class LjosDocuments {
         return name.isEmpty() || name.equals(".") || name.equals("..") ? "document" : name;
     }
 
-    /** Removes an earlier picker's copies, which a code used again replaces. */
     /**
      * The document to read, as openInputStream gives it, which has no way to
      * be cancelled; openFileDescriptor would refuse a part of a file.
@@ -461,6 +465,10 @@ public final class LjosDocuments {
         }
     }
 
+    /**
+     * Removes a file, or a directory with all it holds: a picker's copies,
+     * once no dialog takes them or they are older than they are kept.
+     */
     private static void remove(File file) {
         File[] inside = file.listFiles();
         if (inside != null) {

@@ -130,8 +130,8 @@ fn a_dialog_one_engine_closes_leaves_another_engines_shown() {
 #[test]
 fn a_document_to_save_is_typed_by_the_selected_name_filter() {
     let dir = tempfile::tempdir().expect("temp dir");
-    // What Android's picker is offered, whose first a save's document is
-    // created as when no name says otherwise.
+    // The types the Java side hands Android's picker: a save creates one
+    // document, of its selected filter's type; an open offers every filter's.
     let offered = |mode: i32, index: i32| {
         let e = engine(dir.path());
         let fake = FakeDialogs::default();
@@ -149,15 +149,15 @@ fn a_document_to_save_is_typed_by_the_selected_name_filter() {
             .expect("selected");
         e.invoke_by_name(d, "open", &[]).expect("opened");
         let request = fake.request().expect("shown");
-        crate::android_documents::extensions(&request).expect("offered")
+        crate::android_documents::type_extensions(&request)
     };
     let (open, save) = (0, 2);
-    assert_eq!(offered(save, 1), ["jpg", "png"]);
-    assert_eq!(offered(save, 0), ["png", "jpg"]);
+    assert_eq!(offered(save, 1), ["jpg"]);
+    assert_eq!(offered(save, 0), ["png"]);
     // None chosen, or one beyond the list, is the first.
-    assert_eq!(offered(save, -1), ["png", "jpg"]);
-    assert_eq!(offered(save, 7), ["png", "jpg"]);
-    // An open creates nothing: the filters' order stands.
+    assert_eq!(offered(save, -1), ["png"]);
+    assert_eq!(offered(save, 7), ["png"]);
+    // An open creates nothing: every filter's, in the filters' order.
     assert_eq!(offered(open, 1), ["png", "jpg"]);
 }
 
