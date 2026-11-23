@@ -842,6 +842,52 @@ fn a_warning_told_before_its_secret_was_seen_is_masked_once_it_is() {
     );
 }
 
+/// [`LOGGED`]'s secret field and, once `crowd.model` is set, more secret
+/// fields than the inspector keeps secrets for.
+const CROWDED: &str = r##"import QtQuick
+Item {
+    width: 200; height: 100
+    TextInput {
+        objectName: "pin"
+        width: 100; height: 20
+        echoMode: TextInput.Password
+        text: "s3cret-pin"
+    }
+    Repeater {
+        objectName: "crowd"
+        model: 0
+        TextInput {
+            width: 10; height: 10
+            echoMode: TextInput.Password
+            text: "other-" + index
+        }
+    }
+}
+"##;
+
+#[test]
+fn a_warning_keeps_a_secret_masked_after_the_inspector_forgets_it() {
+    let mut app = app_with(CROWDED, InspectorConfig::default());
+    app.call("app_status", json!({}));
+    app.inspector
+        .as_mut()
+        .unwrap()
+        .set_warnings(&[ljos_dev::CompileFault {
+            file: "Main.qml".into(),
+            line: 3,
+            column: 5,
+            message: "a warning that quotes s3cret-pin".into(),
+        }]);
+    // More new secrets than are kept: the oldest, the pin, is forgotten,
+    // and what the warning told masked must stay so.
+    app.set("crowd", "model", QmlValue::Int(1100));
+    let status = app.call("app_status", json!({}));
+    let resource = app.read("ljos://app/reload").unwrap();
+    let told = format!("{}\n{}\n{resource}", status.structured, status.text);
+    assert!(!told.contains("s3cret-pin"), "{told}");
+    assert!(told.contains("a warning that quotes <redacted>"), "{told}");
+}
+
 #[test]
 fn an_inspector_told_to_mask_every_editable_value_masks_them_in_the_log() {
     let mut app = app_with(
