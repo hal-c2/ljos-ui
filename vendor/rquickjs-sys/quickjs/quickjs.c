@@ -8306,7 +8306,12 @@ static void build_backtrace(JSContext *ctx, JSValueConst error_val,
     rt->in_build_stack_trace = true;
     error_obj = js_dup(error_val);
 
-    // Save exception because conversion to double may fail.
+    /* Ljós: the exception the trace is built for stays pending whatever
+       building it throws, not only the conversion below: upstream restores
+       it only around that and on the prepareStackTrace path, so on a full
+       heap the out of memory from the name lookups or the string replaced
+       it, and an uncatchable interrupt became a catchable `oom_error`.
+       Taken here and thrown again at the end, on both paths. */
     saved_exception = JS_GetException(ctx);
 
     // Extract stack trace limit.
@@ -8320,10 +8325,6 @@ static void build_backtrace(JSContext *ctx, JSValueConst error_val,
     else
         stack_trace_limit = fabs(d);
 
-    // Restore current exception.
-    JS_Throw(ctx, saved_exception);
-    saved_exception = JS_UNINITIALIZED;
-
     stack_trace_limit = min_int(stack_trace_limit, countof(csd));
     stack_trace_limit = max_int(stack_trace_limit, 0);
     has_prepare = false;
@@ -8336,7 +8337,6 @@ static void build_backtrace(JSContext *ctx, JSValueConst error_val,
     }
 
     if (has_prepare) {
-        saved_exception = JS_GetException(ctx);
         if (stack_trace_limit == 0)
             goto done;
         if (filename)
@@ -8458,7 +8458,6 @@ static void build_backtrace(JSContext *ctx, JSValueConst error_val,
         else
             stack = stack2;
         JS_FreeValue(ctx, prepare);
-        JS_Throw(ctx, saved_exception);
     } else {
         if (dbuf_error(&dbuf))
             stack = JS_NULL;
@@ -8488,6 +8487,8 @@ static void build_backtrace(JSContext *ctx, JSValueConst error_val,
     }
 
     JS_FreeValue(ctx, error_obj);
+    /* Ljós: JS_Throw drops what building the trace threw, if anything. */
+    JS_Throw(ctx, saved_exception);
     rt->in_build_stack_trace = false;
 }
 
