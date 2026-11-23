@@ -744,6 +744,8 @@ fn writing_on_the_error_thrown_for_want_of_heap_neither_throws_nor_changes_it() 
         "e.stack = undefined",
         "e.stack = 42",
         "if (Reflect.set(e, 'context', 'load') !== false) throw new Error('set')",
+        "if (Reflect.set(e, 'stack', 'load') !== false) throw new Error('stack set')",
+        "if (Reflect.set(e, 'stack', undefined) !== false) throw new Error('stack set')",
         "if (Reflect.defineProperty(e, 'message', { value: 'load' }) !== false) throw new Error('defined')",
         "if (Reflect.setPrototypeOf(e, null) !== false) throw new Error('prototype')",
         "if (Reflect.deleteProperty(e, 'message') !== false) throw new Error('deleted')",

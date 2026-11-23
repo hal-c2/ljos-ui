@@ -10432,10 +10432,25 @@ static int delete_property(JSContext *ctx, JSObject *p, JSAtom atom)
     return true;
 }
 
+static JSValue js_error_set_stack(JSContext *ctx, JSValueConst this_val,
+                                  JSValueConst value);
+
 static int call_setter(JSContext *ctx, JSObject *setter,
                        JSValueConst this_obj, JSValue val, int flags)
 {
     JSValue ret, func;
+    /* Ljós: the stack setter refuses every write to oom_error, but returns
+       as if it took it, and a setter that returns has written: say here that
+       it did not, so Reflect.set tells the refusal as it does for any other
+       write to that error. Other setters run as ever. */
+    if (setter && setter->class_id == JS_CLASS_C_FUNCTION
+        && setter->u.cfunc.cproto == JS_CFUNC_setter
+        && setter->u.cfunc.c_function.setter == js_error_set_stack
+        && JS_VALUE_GET_TAG(this_obj) == JS_TAG_OBJECT
+        && js_ignores_write(ctx, JS_VALUE_GET_OBJ(this_obj))) {
+        JS_FreeValue(ctx, val);
+        return false;
+    }
     if (likely(setter)) {
         func = JS_MKPTR(JS_TAG_OBJECT, setter);
         /* Note: the field could be removed in the setter */
