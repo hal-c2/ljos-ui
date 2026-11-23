@@ -82,13 +82,14 @@ impl LogRing {
 
     /// Makes `secrets` known, and masks the lines kept with what is new
     /// among them: a line written before its secret was seen must not
-    /// show it once the secret is forgotten. True when one was new.
-    pub(crate) fn learn<'a>(&mut self, secrets: impl IntoIterator<Item = &'a String>) -> bool {
+    /// show it once the secret is forgotten. Answers the new ones.
+    pub(crate) fn learn<'a>(
+        &mut self,
+        secrets: impl IntoIterator<Item = &'a String>,
+    ) -> Vec<String> {
         let new = self.book.learn(secrets);
-        if !new.is_empty() {
-            self.lines.iter_mut().for_each(|l| l.mask(&new));
-        }
-        !new.is_empty()
+        self.lines.iter_mut().for_each(|l| l.mask(&new));
+        new
     }
 
     pub(crate) fn push(&mut self, entry: &LogEntry, at: Option<&SourcePlace>) {

@@ -359,10 +359,11 @@ pub struct Inspector {
     /// The clock `app_advance` moves; none on the system clock.
     vclock: Option<VirtualClock>,
     feed: Arc<ReloadFeed>,
-    /// The warnings last told ([`set_warnings`](Self::set_warnings)) as
-    /// the compiler wrote them: they are masked again when a secret is
-    /// learned after them.
-    warnings: Option<Vec<CompileFault>>,
+    /// The warnings last told ([`set_warnings`](Self::set_warnings)),
+    /// masked when told and again with each secret learned after them.
+    /// The compiler's own text is never kept: the book forgets old secrets,
+    /// and masking that text anew would tell a forgotten one.
+    warnings: RefCell<Option<Vec<CompileFault>>>,
     /// What `app_watch` waits on.
     changes: Arc<ChangeFeed>,
     /// The reload generation and error as of the last [`observe`](Self::observe).
@@ -478,7 +479,7 @@ impl Inspector {
             work: None,
             vclock: None,
             feed,
-            warnings: None,
+            warnings: RefCell::new(None),
             changes,
             seen: None,
             parked: None,
@@ -543,28 +544,40 @@ impl Inspector {
     /// no text of the application's log may be in it. `app_status` and the
     /// answers of `app_reload` and `app_alias` have them, masked and bounded.
     pub fn set_warnings(&mut self, warnings: &[CompileFault]) {
-        self.warnings = Some(warnings.to_vec());
-        self.mask_warnings();
+        let mut masked = warnings.to_vec();
+        let logs = self.logs.borrow();
+        for fault in &mut masked {
+            logs.book().mask_text(&mut fault.file);
+            logs.book().mask_text(&mut fault.message);
+        }
+        drop(logs);
+        *self.warnings.borrow_mut() = Some(masked);
+        self.tell_warnings();
     }
 
-    /// Tells the warnings again, masked with every secret known now.
-    fn mask_warnings(&self) {
-        let Some(warnings) = &self.warnings else {
+    /// Tells the warnings, which are masked already, to the reload feed.
+    fn tell_warnings(&self) {
+        let warnings = self.warnings.borrow();
+        let Some(warnings) = warnings.as_deref() else {
             return;
         };
-        let bounded = {
-            let logs = self.logs.borrow();
-            Warnings::bounded(warnings, |text| logs.book().mask_text(text))
-        };
-        self.feed.set_warnings(bounded);
+        self.feed.set_warnings(Warnings::bounded(warnings, |_| {}));
     }
 
-    /// Makes `secrets` known to the log, and masks again what was told
-    /// before one of them was: a warning may quote what a field holds.
+    /// Makes `secrets` known to the log, and masks the new ones in what
+    /// was told before they were: a warning may quote what a field holds.
     fn learn<'a>(&self, secrets: impl IntoIterator<Item = &'a String>) {
-        if self.logs.borrow_mut().learn(secrets) {
-            self.mask_warnings();
+        let new = self.logs.borrow_mut().learn(secrets);
+        if new.is_empty() {
+            return;
         }
+        if let Some(warnings) = self.warnings.borrow_mut().as_mut() {
+            for fault in warnings {
+                redact::mask_text(&mut fault.file, &new);
+                redact::mask_text(&mut fault.message, &new);
+            }
+        }
+        self.tell_warnings();
     }
 
     /// Says that the host has a platform window and gives it the size
