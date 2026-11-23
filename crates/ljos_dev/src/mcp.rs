@@ -364,6 +364,11 @@ pub struct Inspector {
     /// The compiler's own text is never kept: the book forgets old secrets,
     /// and masking that text anew would tell a forgotten one.
     warnings: RefCell<Option<Vec<CompileFault>>>,
+    /// The secrets [`warnings`](Self::warnings) quoted, longest first. The
+    /// compiler says a warning again on the next change, and the book may
+    /// have forgotten its secret by then: these mask it still. Only those
+    /// the warnings last told quote are kept, so the warnings bound them.
+    quoted: RefCell<Vec<String>>,
     /// What `app_watch` waits on.
     changes: Arc<ChangeFeed>,
     /// The reload generation and error as of the last [`observe`](Self::observe).
@@ -480,6 +485,7 @@ impl Inspector {
             vclock: None,
             feed,
             warnings: RefCell::new(None),
+            quoted: RefCell::new(Vec::new()),
             changes,
             seen: None,
             parked: None,
@@ -544,13 +550,17 @@ impl Inspector {
     /// no text of the application's log may be in it. `app_status` and the
     /// answers of `app_reload` and `app_alias` have them, masked and bounded.
     pub fn set_warnings(&mut self, warnings: &[CompileFault]) {
+        let quoted = {
+            let logs = self.logs.borrow();
+            let before = self.quoted.borrow();
+            quoted_by(logs.book().secrets().iter().chain(before.iter()), warnings)
+        };
         let mut masked = warnings.to_vec();
-        let logs = self.logs.borrow();
         for fault in &mut masked {
-            logs.book().mask_text(&mut fault.file);
-            logs.book().mask_text(&mut fault.message);
+            redact::mask_text(&mut fault.file, &quoted);
+            redact::mask_text(&mut fault.message, &quoted);
         }
-        drop(logs);
+        *self.quoted.borrow_mut() = quoted;
         *self.warnings.borrow_mut() = Some(masked);
         self.tell_warnings();
     }
@@ -572,6 +582,12 @@ impl Inspector {
             return;
         }
         if let Some(warnings) = self.warnings.borrow_mut().as_mut() {
+            let hit = quoted_by(&new, warnings);
+            if !hit.is_empty() {
+                let mut quoted = self.quoted.borrow_mut();
+                quoted.extend(hit);
+                longest_first(&mut quoted);
+            }
             for fault in warnings {
                 redact::mask_text(&mut fault.file, &new);
                 redact::mask_text(&mut fault.message, &new);
@@ -1896,4 +1912,28 @@ fn forget_dead_starts(token_file: &Path) {
             let _ = std::fs::remove_file(path);
         }
     }
+}
+
+/// Those of `secrets` that `warnings` quote, longest first, each once.
+fn quoted_by<'a>(
+    secrets: impl IntoIterator<Item = &'a String>,
+    warnings: &[CompileFault],
+) -> Vec<String> {
+    let mut quoted: Vec<String> = secrets
+        .into_iter()
+        .filter(|s| {
+            warnings
+                .iter()
+                .any(|w| w.file.contains(s.as_str()) || w.message.contains(s.as_str()))
+        })
+        .cloned()
+        .collect();
+    longest_first(&mut quoted);
+    quoted
+}
+
+/// Orders secrets as the masks want them, and drops repeats.
+fn longest_first(secrets: &mut Vec<String>) {
+    secrets.sort_by(|a, b| b.len().cmp(&a.len()).then_with(|| a.cmp(b)));
+    secrets.dedup();
 }
