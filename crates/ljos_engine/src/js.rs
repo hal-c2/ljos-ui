@@ -809,6 +809,7 @@ impl HostObjects for EngineHost {
             ljos_js::PlainValue::Text => return None,
         };
         let (id, p) = (u64_to_obj(obj), PropIndex(prop));
+        engine.note_written(id);
         if engine.tier1_spying() {
             return None;
         }
@@ -840,6 +841,7 @@ impl HostObjects for EngineHost {
         };
         // A live object is no reload's to forward.
         let (id, p) = (u64_to_obj(obj), PropIndex(prop));
+        engine.note_written(id);
         if let Some(v) = plain
             && !engine.tier1_spying()
             && engine.plain_script_write(id, p, &v).map_err(host_err)?
@@ -971,6 +973,7 @@ impl HostObjects for EngineHost {
     ) -> Result<(), HostError> {
         let engine = self.engine()?;
         let (id, p) = (u64_to_obj(obj), PropIndex(prop));
+        engine.note_written(id);
         // Only an object can be in a list of objects.
         let JsValue::Object(item) = item else {
             return Ok(());
@@ -993,6 +996,7 @@ impl HostObjects for EngineHost {
     ) -> Result<(), HostError> {
         let engine = self.engine()?;
         let (id, p) = (u64_to_obj(obj), PropIndex(prop));
+        engine.note_written(id);
         engine
             .list_truncate(id, p, len as usize)
             .map_err(host_err)?;
@@ -1010,6 +1014,8 @@ impl HostObjects for EngineHost {
         args: Vec<JsValue>,
     ) -> Result<JsValue, HostError> {
         let engine = self.engine()?;
+        // A native method may change what it is called on.
+        engine.note_written(u64_to_obj(obj));
         let (id, method) = forwarded_method(&engine, u64_to_obj(obj), method);
         if method == DESTROY_ID {
             engine.destroy_later(
@@ -1083,6 +1089,8 @@ impl HostObjects for EngineHost {
     ) -> Result<(), HostError> {
         let engine = self.engine()?;
         let id = u64_to_obj(obj);
+        // Its handlers may change what holds it.
+        engine.note_written(id);
         // A signal declared in QML carries the script's array to its
         // handlers; a native one tells native code, which reads lists.
         let meta = engine.meta_of(id);

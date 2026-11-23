@@ -210,10 +210,15 @@ pub(crate) struct FaultState {
     /// cut short besides its own origin, which alone is reported. One
     /// caught on the way is in it too, which errs toward breaking.
     thrown_through: RefCell<Vec<ObjectId>>,
+    /// The objects script wrote to, or called or signalled on, since the
+    /// outermost run began: what that run's full heap may have left half
+    /// updated, wherever its code was. Bounded as `thrown_through` is.
+    written: RefCell<Vec<ObjectId>>,
     pub(crate) boundaries: crate::boundary::Boundaries,
 }
 
-/// How many objects [`FaultState::thrown_through`] tells apart. One more
+/// How many objects [`FaultState::thrown_through`], and
+/// [`FaultState::written`], tell apart. One more
 /// is kept, to say that there were more.
 pub(crate) const THROWN_THROUGH_KEPT: usize = 16;
 
@@ -283,9 +288,31 @@ impl Engine {
         }
     }
 
-    /// An outermost run of script begins: nothing was thrown out of yet.
+    /// Script wrote to `obj`, or called or signalled on it: a full heap
+    /// later in the run may leave it half updated. On every write a script
+    /// makes, so most are of the object written last and cost one compare.
+    pub(crate) fn note_written(&self, obj: ObjectId) {
+        let mut written = self.inner.faults.written.borrow_mut();
+        if written.last() != Some(&obj)
+            && written.len() <= THROWN_THROUGH_KEPT
+            && !written.contains(&obj)
+        {
+            written.push(obj);
+        }
+    }
+
+    /// What [`Engine::note_written`] noted since the outermost run began.
+    /// A copy: asking what a boundary discards may run script, which notes
+    /// its own writes.
+    pub(crate) fn written_in_run(&self) -> Vec<ObjectId> {
+        self.inner.faults.written.borrow().clone()
+    }
+
+    /// An outermost run of script begins: nothing was thrown out of or
+    /// written to yet.
     pub(crate) fn forget_thrown_through(&self) {
         self.inner.faults.thrown_through.borrow_mut().clear();
+        self.inner.faults.written.borrow_mut().clear();
     }
 
     /// [`Engine::turn`] for something other than host code: a message

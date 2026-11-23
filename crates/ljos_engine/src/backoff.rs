@@ -123,11 +123,19 @@ struct RunAgain {
     /// always runs over its slice would otherwise be made forever.
     seen: Cell<u64>,
     /// The latest of those, each with its number in `seen` and, for a full
-    /// heap, the boundary that discards all it broke, if one does
-    /// ([`Engine::discarded_by`]): when that is inside what was made, what
-    /// was made is whole. Bounded: a count past what it holds is taken as
-    /// breaking.
-    recent: std::cell::RefCell<std::collections::VecDeque<(u64, Fault, Option<ObjectId>)>>,
+    /// heap, the boundary that discards all its code cut short, if one
+    /// does ([`Engine::discarded_by`]): when that is inside what was made
+    /// and nothing else it wrote is, what was made is whole. Bounded: a
+    /// count past what it holds is taken as breaking.
+    recent: std::cell::RefCell<std::collections::VecDeque<(u64, Fault, Option<Taken>)>>,
+}
+
+/// The boundary that took a full heap, and what the run cut short wrote
+/// outside what that boundary discards. Those writes are made whatever
+/// the boundary does: an object holding one of them is not whole.
+struct Taken {
+    by: ObjectId,
+    wrote: Vec<ObjectId>,
 }
 
 /// How many of the latest breaking faults [`RunAgain`] keeps.
@@ -168,7 +176,19 @@ impl Engine {
             // what it discarded never made again.
             let taker = matches!(fault, Fault::JsOutOfMemory)
                 .then(|| self.discarded_by(origin, through))
-                .flatten();
+                .flatten()
+                .and_then(|by| {
+                    let written = self.written_in_run();
+                    // Past what is kept, what was written is not known.
+                    (written.len() <= crate::fault::THROWN_THROUGH_KEPT).then(|| Taken {
+                        by,
+                        wrote: written
+                            .iter()
+                            .copied()
+                            .filter(|w| !self.discards_all(by, &[*w]))
+                            .collect(),
+                    })
+                });
             let mut recent = r.recent.borrow_mut();
             if recent.len() == RECENT_FAULTS {
                 recent.pop_front();
@@ -236,14 +256,16 @@ impl Engine {
     /// takes one may give up. A full heap is left out when a boundary inside
     /// `made` (or `made` itself) discards all it cut short: where it was
     /// reported, and every object whose function it was thrown out of
-    /// ([`Engine::discarded_by`]). With no `made`, every one counts.
+    /// ([`Engine::discarded_by`]), and the run cut short wrote to nothing
+    /// else of `made` ([`Engine::note_written`]): content of the boundary
+    /// that wrote to what holds it left that half updated. With no `made`,
+    /// every one counts.
     /// Interrupted scripts are left out: [`Engine::run_again_after`] runs
     /// them again.
     ///
-    /// Two things are not known, and `made` is said to be whole for both:
-    /// what the code cut short wrote (content halfway through writing an
-    /// object outside it), and whose a function held as a value is (a
-    /// closure counts as the code that called it).
+    /// What is not known is whose a function held as a value is (a closure
+    /// counts as the code that called it), and `made` is said to be whole
+    /// for it.
     pub(crate) fn resource_fault_since(
         &self,
         seen: u64,
@@ -262,7 +284,9 @@ impl Engine {
             .rev()
             .take_while(|(n, ..)| *n > seen)
             .find(|(_, _, taker)| {
-                !all_kept || !matches!((made, taker), (Some(m), Some(t)) if self.is_within(*t, m))
+                !all_kept
+                    || !matches!((made, taker), (Some(m), Some(t))
+                        if self.is_within(t.by, m) && !t.wrote.iter().any(|w| self.is_within(*w, m)))
             });
         let fault = match breaking {
             Some((_, f, _)) => f,
