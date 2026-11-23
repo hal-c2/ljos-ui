@@ -182,7 +182,11 @@ impl ShellLoader {
     fn completed(cx: &Cx) -> Result<(), EngineError> {
         let (e, me) = (cx.engine, cx.this);
         for p in [ShellLoader::SOURCE.index, ShellLoader::FALLBACK.index] {
-            e.watch(me, p, move |e, _| load(e, me))?;
+            // A bound one is loaded once its binding has the value: what
+            // the load lets go of may set the binding's input again, as a
+            // fallback's `Component.onDestruction` may choose the next
+            // source, and that is another load, not a binding loop.
+            e.watch(me, p, move |e, _| e.after_binding(move |e| load(e, me)))?;
         }
         e.effect_in(me, move |e| {
             for horizontal in [true, false] {
@@ -529,7 +533,12 @@ fn try_once_deleted(
         }
         // Its memory goes as the pass goes on, so the try is the next turn's.
         let timer = e.call_at(e.now(), move |e| {
-            with_run(e, me, |r| r.waiting = None);
+            // The try at once a fault is owed: one more soon after is
+            // this one's, and waits as the backoff says.
+            with_run(e, me, |r| {
+                r.waiting = None;
+                r.backoff.trying(e.now());
+            });
             try_with_room(e, me, loads);
         });
         if let Some(Some(old)) = with_run(e, me, |r| r.waiting.replace(timer)) {
