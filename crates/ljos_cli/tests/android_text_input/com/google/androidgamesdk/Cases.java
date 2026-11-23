@@ -24,21 +24,36 @@ public final class Cases {
 
     private boolean toldAsWrite;
 
+    /** Ask whether a state is a write as it is told, as a native side quick to take it would. */
+    private boolean askAsTold;
+
+    /** The last state told. */
+    private State lastTold;
+
     private Cases(boolean shown, boolean served) {
         Handler.runQueued();
         InputMethodManager.served = served;
         surface = TextInputOf.surface(activity, mode -> true);
         view = surface;
         connection = TextInputOf.connection(surface);
-        activity.telling = () -> {
-            TextInputOf.telling(surface);
+        activity.telling = state -> {
+            TextInputOf.telling(surface, state);
+            lastTold = state;
             // The native side can ask from here on.
-            toldAsWrite = TextInputOf.toldWrite(surface);
+            if (askAsTold) {
+                toldAsWrite = asked(state);
+            }
         };
         if (shown) {
             connection.setSoftKeyboardActive(true, 0);
         }
         Handler.runQueued();
+    }
+
+    /** Whether the native side, having taken {@code state}, is told it is a write. */
+    private boolean asked(State state) {
+        return TextInputOf.toldWrite(surface, state.text, state.selectionStart,
+                state.selectionEnd, state.composingRegionStart, state.composingRegionEnd);
     }
 
     /** The native side's write, landed as it is made. */
@@ -131,6 +146,7 @@ public final class Cases {
         typed.told("a move, then a commit", "hello|1,1|-1,-1", "hXello|2,2|-1,-1");
 
         Cases keyed = new Cases(true, true).hello();
+        keyed.askAsTold = true;
         keyed.main.post(() -> keyed.connection.onKey(keyed.view, 21, new KeyEvent()));
         keyed.connection.setSelection(2, 2);
         Handler.runQueued();
@@ -162,18 +178,19 @@ public final class Cases {
         Cases it = new Cases(true, true).hello();
         TextInputOf.writeComing(it.surface);
         it.connection.commitText("!", 1);
-        same("a report says it is a write", TextInputOf.toldWrite(it.surface) ? 1 : 0, 0);
+        same("a report says it is a write", it.asked(it.lastTold) ? 1 : 0, 0);
         it.land("w1", 2, -1, -1);
         TextInputOf.writeComing(it.surface);
         Handler.runQueued();
         it.told("a write told back with the next on its way", "hello!|6,6|-1,-1", "w1|2,2|-1,-1");
-        same("a write told back says so", TextInputOf.toldWrite(it.surface) ? 1 : 0, 1);
+        same("a write told back says so", it.asked(it.lastTold) ? 1 : 0, 1);
         it.land("w3", 2, -1, -1);
         Handler.runQueued();
         it.connection.commitText("?", 1);
-        same("typing after it says it is a write", TextInputOf.toldWrite(it.surface) ? 1 : 0, 0);
+        same("typing after it says it is a write", it.asked(it.lastTold) ? 1 : 0, 0);
 
         Cases keyed = new Cases(true, true).hello();
+        keyed.askAsTold = true;
         TextInputOf.writeComing(keyed.surface);
         keyed.connection.commitText("!", 1);
         keyed.land("w1", 2, -1, -1);
@@ -209,6 +226,7 @@ public final class Cases {
         moved.told("a write over a move", "hello|1,1|-1,-1", "hello|5,5|-1,-1");
 
         Cases keyed = new Cases(true, true).hello();
+        keyed.askAsTold = true;
         TextInputOf.writeComing(keyed.surface);
         keyed.connection.onKey(keyed.view, 21, new KeyEvent());
         Handler.runQueued();
@@ -270,6 +288,36 @@ public final class Cases {
         dropped.told("a write the native side dropped", "hello!|6,6|-1,-1");
     }
 
+    // The native side takes the newest state told, then asks: a report
+    // told in between is not what it took.
+    private static void writeToldBackIsKnownByWhatItHolds() {
+        Cases it = new Cases(true, true).hello();
+        TextInputOf.writeComing(it.surface);
+        it.connection.commitText("!", 1);
+        it.land("w1", 2, -1, -1);
+        TextInputOf.writeComing(it.surface);
+        Handler.runQueued();
+        State echoed = it.lastTold;
+        it.connection.commitText("?", 1);
+        State typed = it.lastTold;
+        same("the input method's report after the echo is told", typed != echoed ? 1 : 0, 1);
+        same("the echo, asked after a report told behind it", it.asked(echoed) ? 1 : 0, 1);
+        same("the report told behind it", it.asked(typed) ? 1 : 0, 0);
+        same("the echo, asked again", it.asked(echoed) ? 1 : 0, 0);
+    }
+
+    // An input method's newCursorPosition, as Android places it.
+    private static void cursorLandsWhereTheMethodPutsIt() {
+        Cases it = new Cases(true, true).hello();
+        it.connection.commitText("!", 0);
+        Handler.runQueued();
+        it.told("a commit with its cursor before it", "hello!|5,5|-1,-1");
+        Cases after = new Cases(true, true).hello();
+        after.connection.setComposingText("ab", 1);
+        Handler.runQueued();
+        after.told("a composition with its cursor after it", "helloab|7,7|5,7");
+    }
+
     public static void main(String[] args) {
         writtenStateIsNotToldBack();
         secondWriteStays();
@@ -279,6 +327,8 @@ public final class Cases {
         endedCompositionIsTold();
         overtakenReportIsFollowedByTheWrite();
         writeToldBackSaysSo();
+        writeToldBackIsKnownByWhatItHolds();
+        cursorLandsWhereTheMethodPutsIt();
         writesOnTheirWayAreToldOnce();
         writeAcrossTheToldWriteIsToldInItsTurn();
         writeThatNeverLandsHoldsNothing();

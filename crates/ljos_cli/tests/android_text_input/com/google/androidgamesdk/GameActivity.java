@@ -9,16 +9,17 @@ import com.google.androidgamesdk.gametextinput.Settings;
 import com.google.androidgamesdk.gametextinput.State;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Consumer;
 
 /** The listener, keeping what the native side was told. */
 public final class GameActivity extends Context implements Listener {
     final List<String> told = new ArrayList<>();
     /** What LjosActivity's override does before it hands a state on. */
-    Runnable telling = () -> { };
+    Consumer<State> telling = state -> { };
 
     @Override
     public void stateChanged(State state, boolean dismissed) {
-        telling.run();
+        telling.accept(state);
         told.add(state.toString());
     }
 

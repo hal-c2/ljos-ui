@@ -38,9 +38,8 @@ pub fn capabilities() -> Capabilities {
     }
 }
 
-/// Each with how many of the method's reports the application had when
-/// it asked.
-type Requests = pump::Requests<(Request, u64), AndroidAppWaker>;
+/// Each with what the application had, and had asked, when it asked.
+type Requests = pump::Requests<(Request, crate::relay::Asked), AndroidAppWaker>;
 
 impl Wakes for AndroidAppWaker {
     fn wake(&self) {
@@ -371,7 +370,7 @@ impl<U: Send + 'static> Pump<'_, U> {
         }
         if let Some(mut now) = back {
             self.method_holds = true;
-            if let Some(held) = self.writes.to_write_again() {
+            if let Some(held) = self.writes.take_write_again() {
                 call_activity(self.app, ActivityCall::WriteComing);
                 self.writes.wrote(&now, held.clone());
                 self.write(&now, held.clone());
@@ -600,7 +599,7 @@ fn translate(
             // a report, and says so. Else what is compared from here on is
             // the method's report: a write still on its way replaces it
             // when it lands, and is then told.
-            if let Some(write) = writes.told_back(&now, || told_write(app)) {
+            if let Some(write) = writes.told_back(&now, || told_write(app, state)) {
                 *back = Some(write);
             } else {
                 writes.reported(&now);
@@ -737,9 +736,14 @@ fn floats<'local>(
 
 /// `LjosActivity.textInputToldWrite`: whether the connection's last tell
 /// was a write told back. An unanswered call takes it for a report.
-fn told_write(app: &AndroidApp) -> bool {
-    use jni::objects::JObject;
+fn told_write(app: &AndroidApp, state: &TextInputState) -> bool {
+    use jni::objects::{JObject, JValue};
     use jni::{jni_sig, jni_str};
+    // As GameTextInput holds them: Java's ints, -1 for no region.
+    let int = |at: usize| i32::try_from(at).unwrap_or(i32::MAX);
+    let compose = state
+        .compose_region
+        .map_or([-1, -1], |c| [int(c.start), int(c.end)]);
     // SAFETY: android-activity keeps the VM and the activity alive while
     // `app` is.
     let vm = unsafe { jni::JavaVM::from_raw(app.vm_as_ptr().cast()) };
@@ -748,11 +752,20 @@ fn told_write(app: &AndroidApp) -> bool {
         // SAFETY: the activity outlives this call, and a cast does not
         // delete the reference.
         let activity = unsafe { env.as_cast_raw::<JObject>(&activity)? };
+        // The state as it was taken: the connection may have told another
+        // since, and the answer is about this one.
+        let text = env.new_string(&state.text)?;
         env.call_method(
             &activity,
             jni_str!("textInputToldWrite"),
-            jni_sig!(() -> jboolean),
-            &[],
+            jni_sig!("(Ljava/lang/String;IIII)Z"),
+            &[
+                JValue::from(&text),
+                JValue::Int(int(state.selection.start)),
+                JValue::Int(int(state.selection.end)),
+                JValue::Int(compose[0]),
+                JValue::Int(compose[1]),
+            ],
         )?
         .z()
     })

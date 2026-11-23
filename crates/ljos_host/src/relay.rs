@@ -272,7 +272,7 @@ impl Writes {
 
     /// A write told back replaced the typing: what was dropped for that
     /// typing puts nothing of the method's back, and is written after all.
-    pub(crate) fn to_write_again(&mut self) -> Option<crate::HeldText> {
+    pub(crate) fn take_write_again(&mut self) -> Option<crate::HeldText> {
         self.passed.take()
     }
 
