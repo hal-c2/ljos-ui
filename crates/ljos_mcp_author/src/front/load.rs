@@ -237,12 +237,16 @@ struct Scan {
     truncated: bool,
     /// A theme file is a link, which the walk does not follow.
     linked_theme: bool,
+    /// A directory, an entry of one or an entry's type could not be read,
+    /// so what it held is unknown.
+    unreadable: bool,
 }
 
 fn scan(root: &Path) -> Scan {
     let mut out = Vec::new();
     let mut truncated = false;
     let mut linked_theme = false;
+    let mut unreadable = false;
     let mut stack = vec![root.to_owned()];
     while let Some(dir) = stack.pop() {
         if out.len() >= MAX_DIRS {
@@ -250,10 +254,15 @@ fn scan(root: &Path) -> Scan {
             break;
         }
         let Ok(read) = std::fs::read_dir(&dir) else {
+            unreadable = true;
             continue;
         };
         let mut names = Vec::new();
-        for entry in read.flatten() {
+        for entry in read {
+            let Ok(entry) = entry else {
+                unreadable = true;
+                continue;
+            };
             let name = entry.file_name().to_string_lossy().into_owned();
             // `file_type` does not follow links, so a link cannot lead the
             // walk out of the project.
@@ -263,7 +272,8 @@ fn scan(root: &Path) -> Scan {
                 }
                 Ok(t) if t.is_file() => names.push(name),
                 Ok(t) if t.is_symlink() && name == theme::FILE => linked_theme = true,
-                _ => {}
+                Ok(_) => {}
+                Err(_) => unreadable = true,
             }
         }
         out.push((dir, names));
@@ -273,6 +283,7 @@ fn scan(root: &Path) -> Scan {
         dirs: out,
         truncated,
         linked_theme,
+        unreadable,
     }
 }
 
@@ -281,9 +292,9 @@ fn scan(root: &Path) -> Scan {
 /// the one it runs under, and so may none when the root has none. None when
 /// those differ, when the unit is 0, when a theme that sets a unit would
 /// be refused, or when the walk may have missed one: it stopped at its
-/// limit, or a theme is a link.
+/// limit, a theme is a link, or something it met could not be read.
 fn spacing_unit(root: &Path, scan: &Scan) -> Option<f64> {
-    if scan.truncated || scan.linked_theme {
+    if scan.truncated || scan.linked_theme || scan.unreadable {
         return None;
     }
     let default = f64::from(limits::SPACING_UNIT_PX);
