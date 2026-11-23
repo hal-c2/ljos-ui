@@ -764,3 +764,37 @@ fn a_directory_the_walk_cannot_read_leaves_the_spacing_unit_unknown() {
         "{found:?}"
     );
 }
+
+/// What the spacing lint says about `spacing: 7` under a root theme of
+/// `theme`.
+fn spacing_hints_under(theme: &str) -> usize {
+    let dir = project(&[
+        (
+            "Main.qml",
+            "import QtQuick\nItem {\n    Column { spacing: 7 }\n}\n",
+        ),
+        ("theme.json", theme),
+    ]);
+    let found = run(dir.path(), &["Main.qml"], true);
+    with_code(&found, "layout-spacing-scale").len()
+}
+
+#[test]
+fn a_theme_that_cannot_be_read_and_names_no_unit_leaves_the_spacing_unit_unknown() {
+    // A running application keeps the theme before a refused one, and that
+    // one may have set any unit, so 4 is not known to be the unit.
+    assert_eq!(spacing_hints_under("{ \"Spacing\": { \"md\": 20, } }\n"), 0);
+}
+
+#[test]
+fn a_theme_refused_for_its_contrast_that_names_no_unit_leaves_the_spacing_unit_unknown() {
+    assert_eq!(
+        spacing_hints_under("{ \"Colors\": { \"text\": \"#ffffff\" } }\n"),
+        0
+    );
+}
+
+#[test]
+fn an_accepted_theme_that_names_no_unit_keeps_the_scale_at_4() {
+    assert_eq!(spacing_hints_under("{ \"Spacing\": { \"md\": 20 } }\n"), 1);
+}
