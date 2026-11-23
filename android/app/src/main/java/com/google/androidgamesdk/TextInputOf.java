@@ -12,6 +12,7 @@ import android.view.inputmethod.EditorInfo;
 import com.google.androidgamesdk.gametextinput.InputConnection;
 import com.google.androidgamesdk.gametextinput.Settings;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * The connection GameTextInput keeps for the surface's editor. GameActivity
@@ -61,23 +62,49 @@ public final class TextInputOf {
     }
 
     /**
-     * The listener is being told, and has yet to hand it to the native
-     * side, which asks {@link #toldWrite} once it has it.
+     * The listener is being told {@code state}, and has yet to hand it to
+     * the native side, which asks {@link #toldWrite} once it has it. A write
+     * told back is kept by what it holds: the native side takes the newest
+     * state told, and a report told after it took one must not change what
+     * it is told of that one.
      */
-    public static void telling(GameActivity.InputEnabledSurfaceView view) {
+    public static void telling(
+            GameActivity.InputEnabledSurfaceView view,
+            com.google.androidgamesdk.gametextinput.State state) {
         if (connection(view) instanceof Connection) {
             Connection told = (Connection) connection(view);
-            told.toldWrite = told.echoing;
+            if (told.echoing) {
+                told.toldWrite.set(
+                        key(state.text, state.selectionStart, state.selectionEnd,
+                                state.composingRegionStart, state.composingRegionEnd));
+            }
         }
     }
 
     /**
-     * Whether the last state told is a write, told back for having landed
-     * on one the input method made. On any thread; waits for none.
+     * Whether the state the native side took, as it took it, is a write
+     * told back for having landed on one the input method made; the answer
+     * is given once. On any thread; waits for none.
      */
-    public static boolean toldWrite(GameActivity.InputEnabledSurfaceView view) {
-        return connection(view) instanceof Connection
-                && ((Connection) connection(view)).toldWrite;
+    public static boolean toldWrite(
+            GameActivity.InputEnabledSurfaceView view,
+            String text, int selectionStart, int selectionEnd,
+            int composingStart, int composingEnd) {
+        if (!(connection(view) instanceof Connection)) {
+            return false;
+        }
+        AtomicReference<String> told = ((Connection) connection(view)).toldWrite;
+        String took = key(text, selectionStart, selectionEnd, composingStart, composingEnd);
+        String echoed = told.get();
+        // By identity: an echo told since, the same or not, stays to be asked.
+        return took.equals(echoed) && told.compareAndSet(echoed, null);
+    }
+
+    /** A state as both sides read it: a region with an end below 0 is none. */
+    private static String key(String text, int start, int end, int composeStart, int composeEnd) {
+        boolean none = composeStart < 0 || composeEnd < 0;
+        return start + "," + end + "," + (none ? -1 : composeStart) + ","
+                + (none ? -1 : composeEnd) + "," + text;
     }
 
     /**
@@ -125,8 +152,11 @@ public final class TextInputOf {
         /** A state was told with a write on its way, which will replace it. */
         private boolean overtaken;
 
-        /** The last state told is a write; read on the native side's thread. */
-        volatile boolean toldWrite;
+        /**
+         * The last write told back, as {@link #key} gives it, until the
+         * native side asked about it; read on the native side's thread.
+         */
+        final AtomicReference<String> toldWrite = new AtomicReference<>();
 
         /** Inside the tell of a write back. */
         private boolean echoing;

@@ -206,16 +206,20 @@ public class LjosActivity extends GameActivity {
     @Override
     public void stateChanged(
             com.google.androidgamesdk.gametextinput.State state, boolean dismissed) {
-        TextInputOf.telling(mSurfaceView);
+        TextInputOf.telling(mSurfaceView, state);
         super.stateChanged(state, dismissed);
     }
 
     /**
-     * Whether what the keyboard's connection told last is a write, told
-     * back. A read on the native side's thread, which waits for no other.
+     * Whether the state the native side took from the keyboard's
+     * connection is a write, told back. A read on the native side's
+     * thread, which waits for no other.
      */
-    public boolean textInputToldWrite() {
-        return TextInputOf.toldWrite(mSurfaceView);
+    public boolean textInputToldWrite(
+            String text, int selectionStart, int selectionEnd,
+            int composingStart, int composingEnd) {
+        return TextInputOf.toldWrite(
+                mSurfaceView, text, selectionStart, selectionEnd, composingStart, composingEnd);
     }
 
     /** The write announced was stale, and is not made. */
