@@ -42,9 +42,11 @@ impl Store {
 }
 
 impl HostObjects for Store {
-    fn type_of(&self, obj: u64) -> Option<HostTypeId> {
-        self.objects.borrow().get(&obj)?;
-        *self.ty.borrow()
+    fn type_of(&self, obj: u64) -> Result<Option<HostTypeId>, HostError> {
+        if self.objects.borrow().get(&obj).is_none() {
+            return Ok(None);
+        }
+        Ok(*self.ty.borrow())
     }
 
     fn get<'js>(&self, scope: &Scope<'js>, obj: u64, prop: u32) -> Result<JsValue, HostError> {

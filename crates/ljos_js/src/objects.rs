@@ -74,6 +74,10 @@ pub enum HostError {
     /// reach the outer `enter`.
     #[error("JS error: {0}")]
     Js(#[from] rquickjs::Error),
+    /// The heap had no room: QuickJS's own out-of-memory error is thrown,
+    /// so the run is judged to have run out, not to have thrown.
+    #[error("out of memory")]
+    OutOfMemory,
 }
 
 impl HostError {
@@ -90,6 +94,11 @@ impl HostError {
             Self::Message(m) => Exception::throw_message(ctx, &m),
             Self::Type(m) => Exception::throw_type(ctx, &m),
             Self::Js(e) => e,
+            Self::OutOfMemory => {
+                // SAFETY: a live context, entered for the call.
+                unsafe { rquickjs::qjs::JS_ThrowOutOfMemory(ctx.as_raw().as_ptr()) };
+                rquickjs::Error::Exception
+            }
         }
     }
 }
@@ -130,8 +139,10 @@ pub enum MethodFace<'js> {
 /// `Weak` back-reference to avoid a cycle.
 pub trait HostObjects {
     /// The type of object `obj`, used to pick a prototype when JS first sees
-    /// it. `None` for dead objects.
-    fn type_of(&self, obj: u64) -> Option<HostTypeId>;
+    /// it. `None` for dead objects; an error when its type could not be
+    /// made for scripts, [`HostError::OutOfMemory`] when the heap had no
+    /// room for it, so the run that met the object is told it ran out.
+    fn type_of(&self, obj: u64) -> Result<Option<HostTypeId>, HostError>;
 
     fn get<'js>(&self, scope: &Scope<'js>, obj: u64, prop: u32) -> Result<JsValue, HostError>;
 

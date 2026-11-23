@@ -708,11 +708,23 @@ impl HostObjects for EngineHost {
         true
     }
 
-    fn type_of(&self, obj: u64) -> Option<HostTypeId> {
-        let engine = self.engine().ok()?;
-        let meta = engine.meta_of(u64_to_obj(obj))?;
-        let js = engine.inner.js.borrow().clone()?;
-        js.type_id(&engine, &meta).ok()
+    fn type_of(&self, obj: u64) -> Result<Option<HostTypeId>, HostError> {
+        let Ok(engine) = self.engine() else {
+            return Ok(None);
+        };
+        let Some(meta) = engine.meta_of(u64_to_obj(obj)) else {
+            return Ok(None);
+        };
+        let Some(js) = engine.inner.js.borrow().clone() else {
+            return Ok(None);
+        };
+        match js.type_id(&engine, &meta) {
+            Ok(id) => Ok(Some(id)),
+            // Making the type was this run's share, and it was refused: the
+            // run ran out, and is not told the object is gone.
+            Err(JsFault::JsOutOfMemory { .. }) => Err(HostError::OutOfMemory),
+            Err(_) => Ok(None),
+        }
     }
 
     fn get<'js>(&self, scope: &Scope<'js>, obj: u64, prop: u32) -> Result<JsValue, HostError> {

@@ -15,8 +15,8 @@ impl HostObjects for ByReference {
         true
     }
 
-    fn type_of(&self, _obj: u64) -> Option<HostTypeId> {
-        None
+    fn type_of(&self, _obj: u64) -> Result<Option<HostTypeId>, HostError> {
+        Ok(None)
     }
 
     fn get<'js>(&self, _scope: &Scope<'js>, _obj: u64, _prop: u32) -> Result<JsValue, HostError> {

@@ -1089,7 +1089,7 @@ impl<'js> Scope<'js> {
         release_queue: Option<Rc<RefCell<Vec<u64>>>>,
     ) -> rquickjs::Result<Object<'js>> {
         let host = self.state.host()?;
-        let Some(ty) = host.type_of(obj) else {
+        let Some(ty) = host.type_of(obj).map_err(|e| e.into_js(&self.ctx))? else {
             return Err(Exception::throw_message(
                 &self.ctx,
                 "object no longer exists",
