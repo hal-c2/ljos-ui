@@ -290,9 +290,9 @@ fn scan(root: &Path) -> Scan {
 /// The one unit every theme of the project gives (docs/theme.md). Which
 /// entries use a component is not in the source, so any of the themes may be
 /// the one it runs under, and so may none when the root has none. None when
-/// those differ, when the unit is 0, when a theme that sets a unit would
-/// be refused, or when the walk may have missed one: it stopped at its
-/// limit, a theme is a link, or something it met could not be read.
+/// those differ, when the unit is 0, when any theme would be refused, or
+/// when the walk may have missed one: it stopped at its limit, a theme is a
+/// link, or something it met could not be read.
 fn spacing_unit(root: &Path, scan: &Scan) -> Option<f64> {
     if scan.truncated || scan.linked_theme || scan.unreadable {
         return None;
@@ -307,19 +307,11 @@ fn spacing_unit(root: &Path, scan: &Scan) -> Option<f64> {
         root_has_theme |= dir == root;
         let file = dir.join(theme::FILE);
         let text = std::fs::read_to_string(&file).ok()?;
-        units.push(match theme::parse(theme::FILE, &text) {
-            Ok(theme) => match theme.spacing_unit() {
-                Some(unit) => {
-                    theme.check_contrast(None).ok()?;
-                    f64::from(unit)
-                }
-                None => default,
-            },
-            // A running application keeps the theme before a refused one,
-            // which may well have had the unit this one names.
-            Err(_) if text.contains("\"Spacing\"") && text.contains("\"unit\"") => return None,
-            Err(_) => default,
-        });
+        // A running application keeps the theme before a refused one, and
+        // that may have had any unit, whether this one names a unit or not.
+        let theme = theme::parse(theme::FILE, &text).ok()?;
+        theme.check_contrast(None).ok()?;
+        units.push(theme.spacing_unit().map_or(default, f64::from));
     }
     if !root_has_theme {
         units.push(default);

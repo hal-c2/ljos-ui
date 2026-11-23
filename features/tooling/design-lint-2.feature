@@ -505,6 +505,31 @@ Feature: More design rules a file's source can show
         """
       Then the answer does not contain "layout-spacing-scale"
 
+    Scenario Outline: A theme that is refused and names no unit leaves nothing to advise (<why>)
+      Given the file "theme.json":
+        """json
+        <theme>
+        """
+      And the file "Main.qml":
+        """qml
+        import QtQuick
+
+        Item {
+            width: 200; height: 80
+            Column { spacing: 7 }
+        }
+        """
+      When the agent calls the tool "qml_lint" with:
+        """json
+        {"paths": ["Main.qml"]}
+        """
+      Then the answer does not contain "layout-spacing-scale"
+
+      Examples:
+        | why          | theme                                  |
+        | unreadable   | { "Spacing": { "md": 20, } }           |
+        | low contrast | { "Colors": { "text": "#ffffff" } }    |
+
     Scenario: A unit of 0 has no steps to advise
       Given the file "theme.json":
         """json
