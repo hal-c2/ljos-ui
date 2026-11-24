@@ -64,6 +64,9 @@ pub struct TestRun {
     /// With `check`: `--tree`, each directory two below the files' a
     /// project of its own.
     pub tree: bool,
+    /// `--update-pictures`: every picture a test compares is kept as its
+    /// reference instead. Ljós's runner only.
+    pub update_pictures: bool,
 }
 
 impl TestRun {
@@ -351,6 +354,9 @@ pub fn run_ljos(files: &[QmlFile], run: &TestRun) -> Result<TestReport> {
         command.arg("--filter").arg(filter);
     }
     command.arg("--json").arg(&json);
+    if run.update_pictures {
+        command.arg("--update-pictures");
+    }
     super::own_home(&mut command, &staged.root)?;
     let out = command
         .env("TZ", run.time_zone())

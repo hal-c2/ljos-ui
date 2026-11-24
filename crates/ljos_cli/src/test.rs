@@ -1,5 +1,6 @@
 //! `ljos test`: runs the `TestCase`s of `tst_*.qml` files and prints what
-//! Qt's runner for QML tests prints.
+//! Qt's runner for QML tests prints, and the tests of `*.test.ts` files
+//! (Ljos.Test, docs/adr/0005-ljos-test.md), which it reports as TAP.
 //!
 //! The runner itself is `ljos_test::qttest`, which is given compiled files
 //! and links no parser. This is the part that has one: it finds the test
@@ -10,7 +11,9 @@
 //! The report goes to standard output as it happens; what a file says
 //! while it is being loaded, and what does not compile in a file that is
 //! not a test, go to standard error. The exit status is the number of
-//! failed tests.
+//! failed tests, of both kinds.
+
+mod script;
 
 use std::{
     cell::RefCell,
@@ -27,6 +30,7 @@ use ljos_compiler::{Compiled, Diagnostic, Project, Severity, compile_file, compi
 use ljos_engine::{ComponentSource, Engine, QmlText, QmlTextCompiler, QmlTextError};
 use ljos_ir::{CompiledFile, ImportSource};
 use ljos_test::qttest::{Filter, Options, Session};
+use ljos_test::script::{SUFFIX, Tap, TestHost, TestResult};
 // `TestCase` and `SignalSpy` are in the table of types every file is read
 // against (`qt_types`), as Qt's own are.
 use qml_front::QtTypeOracle;
@@ -42,20 +46,48 @@ const MAX_IMPORT_DIRS: usize = 20_000;
 
 #[derive(Args)]
 pub struct Test {
-    /// Test files (`tst_*.qml`), or directories searched for them. The
-    /// current directory when none is given.
+    /// Test files (`tst_*.qml`, `*.test.ts`), or directories searched for
+    /// them. The current directory when none is given.
     paths: Vec<PathBuf>,
     /// A directory of modules only the tests import. May be given more
     /// than once; `-import`, as Qt's runner spells it, is read too.
     #[arg(long = "import", value_name = "DIR")]
     imports: Vec<PathBuf>,
     /// Run only what is named: `Case::function`, `Case::function:tag`, a
-    /// test case or a function. May be given more than once.
+    /// test case or a function; of a `*.test.ts`, what its full name
+    /// (`file > describe > test`) contains. May be given more than once.
     #[arg(long, value_name = "NAME")]
     filter: Vec<String>,
     /// Also write the results to this file, as JSON.
     #[arg(long, value_name = "FILE")]
     json: Option<PathBuf>,
+    /// Also write the results of the `*.test.ts` files to this file, as
+    /// JUnit XML.
+    #[arg(long, value_name = "FILE")]
+    junit: Option<PathBuf>,
+    /// Keep the picture every `toMatchPicture` takes as its reference in
+    /// `__pictures__/`, rather than compare it.
+    #[arg(long)]
+    update_pictures: bool,
+}
+
+/// The `*.test.ts` results of the run so far, reported as they come.
+struct Scripts {
+    tap: Tap,
+    results: Vec<TestResult>,
+    options: ljos_test::script::Options,
+}
+
+impl Scripts {
+    fn report(&mut self, result: &TestResult) {
+        if self.results.is_empty() {
+            outln!("{}", self.tap.header());
+        }
+        for line in self.tap.result(result) {
+            outln!("{line}");
+        }
+        self.results.push(result.clone());
+    }
 }
 
 /// The command line with Qt's spelling of the options turned into ours:
@@ -109,21 +141,50 @@ impl Test {
             Box::new(|line| outln!("{line}")),
             Box::new(|line| eprintln!("{line}")),
         );
+        let mut scripts = Scripts {
+            tap: Tap::new(),
+            results: Vec::new(),
+            options: ljos_test::script::Options {
+                filters: self.filter.clone(),
+                update_pictures: self.update_pictures,
+                ..ljos_test::script::Options::default()
+            },
+        };
         let mut found = 0;
         for suite in &suites {
-            found += suite.run(&mut session, &imports)?;
+            found += suite.run(&mut session, &mut scripts, &imports)?;
         }
         if found == 0 {
-            anyhow::bail!("no {TEST_PREFIX}*.qml file to run");
+            anyhow::bail!("no {TEST_PREFIX}*.qml or *{SUFFIX} file to run");
         }
         let report = session.finish();
+        if !scripts.results.is_empty() {
+            for line in scripts.tap.footer() {
+                outln!("{line}");
+            }
+        }
         if let Some(path) = &self.json {
-            let mut text = serde_json::to_string_pretty(&report.to_json())
-                .context("writing the report as JSON")?;
+            let json = if report.tests.is_empty() {
+                ljos_test::script::to_json(&scripts.results)
+            } else if scripts.results.is_empty() {
+                report.to_json()
+            } else {
+                merged(
+                    report.to_json(),
+                    ljos_test::script::to_json(&scripts.results),
+                )
+            };
+            let mut text =
+                serde_json::to_string_pretty(&json).context("writing the report as JSON")?;
             text.push('\n');
             std::fs::write(path, text).with_context(|| format!("writing {}", path.display()))?;
         }
-        Ok(report.exit_code())
+        if let Some(path) = &self.junit {
+            std::fs::write(path, ljos_test::script::junit(&scripts.results))
+                .with_context(|| format!("writing {}", path.display()))?;
+        }
+        let failed = usize::from(report.exit_code()) + scripts.tap.failed();
+        Ok(u8::try_from(failed.min(100)).unwrap_or(100))
     }
 
     /// What was asked for, by directory, in the order asked.
@@ -170,11 +231,28 @@ impl Test {
 impl Suite {
     /// Compiles the directory and runs its test files. Says how many
     /// there were.
-    fn run(&self, session: &mut Session, imports: &[PathBuf]) -> anyhow::Result<usize> {
+    fn run(
+        &self,
+        session: &mut Session,
+        scripts: &mut Scripts,
+        imports: &[PathBuf],
+    ) -> anyhow::Result<usize> {
         let root = &self.root;
         let project = project(root, imports)?;
+        let typescript: Vec<String> = match &self.named {
+            Some(keys) => keys
+                .iter()
+                .filter(|k| k.ends_with(SUFFIX))
+                .cloned()
+                .collect(),
+            None => script::discover(root),
+        };
         let tests: Vec<String> = match &self.named {
-            Some(keys) => keys.clone(),
+            Some(keys) => keys
+                .iter()
+                .filter(|k| !k.ends_with(SUFFIX))
+                .cloned()
+                .collect(),
             None => project
                 .files()
                 .filter(|key| name(key).starts_with(TEST_PREFIX))
@@ -263,8 +341,40 @@ impl Suite {
             engine.set_qml_text_compiler(Some(text_compiler(project.clone())));
             session.run_file(&engine, key, stem);
         }
-        Ok(tests.len())
+
+        let why: BTreeMap<String, String> = broken
+            .iter()
+            .map(|(key, (_, diagnostic))| (key.clone(), diagnostic.message.clone()))
+            .collect();
+        let host: Rc<RefCell<dyn TestHost>> = Rc::new(RefCell::new(script::Host::new(
+            root.clone(),
+            source,
+            project,
+            Rc::new(move |key: &str| why.get(key).cloned()),
+        )));
+        for key in &typescript {
+            let options = scripts.options.clone();
+            ljos_test::script::run_file(&host, key, &options, &mut |result| {
+                scripts.report(result);
+            });
+        }
+        Ok(tests.len() + typescript.len())
     }
+}
+
+/// The JSON reports of both kinds of test as one: the totals added, the
+/// tests one after the other.
+fn merged(mut qml: serde_json::Value, typescript: serde_json::Value) -> serde_json::Value {
+    for total in ["passed", "failed", "skipped"] {
+        let sum = qml["totals"][total].as_u64().unwrap_or(0)
+            + typescript["totals"][total].as_u64().unwrap_or(0);
+        qml["totals"][total] = sum.into();
+    }
+    if let (Some(tests), Some(more)) = (qml["tests"].as_array_mut(), typescript["tests"].as_array())
+    {
+        tests.extend(more.iter().cloned());
+    }
+    qml
 }
 
 /// The modules a file imports that the runtime has to have: the ones no
