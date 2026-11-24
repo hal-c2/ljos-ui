@@ -196,8 +196,6 @@ pub fn run_file(
     match File::open(host, key, options) {
         Ok(file) => file.run(options, each),
         Err(error) => {
-            // What the file started before it failed ends with it.
-            host.borrow_mut().close_all();
             let result = TestResult {
                 file: key.to_string(),
                 name: Vec::new(),
@@ -210,6 +208,10 @@ pub fn run_file(
             each(&result);
         }
     }
+    // What the file started ends with it, however it ended: a load that
+    // failed, a list that could not be made, or tests that all were
+    // skipped, none of which reach the close after each test.
+    host.borrow_mut().close_all();
 }
 
 /// A test file in its own context.
