@@ -274,6 +274,11 @@ impl TestHost for Host {
     }
 
     fn close_all(&mut self) {
-        self.apps.clear();
+        // Ended, not forgotten: ids keep counting, so an `App` a test kept
+        // from an earlier one is told its application has ended rather
+        // than driving this test's.
+        for app in &mut self.apps {
+            *app = None;
+        }
     }
 }

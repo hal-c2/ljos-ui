@@ -67,7 +67,11 @@ test("a click counts", async (app) => {
 - `expect(locator)` retries until it holds: `toHaveText`,
   `toHaveProperty`, `toHaveCount`, `toExist`, `toBeVisible`,
   `toBeEnabled`, `toBeChecked`, `toBeFocused`. `app.waitFor(fn)` and
-  `expect.poll(fn)` retry any condition.
+  `expect.poll(fn)` retry any condition, and retry when it throws.
+  DECISION: an item that is not there holds under `.not` (it has no
+  text, is not shown); any other failed look (more than one item, a
+  refused tool) is retried and fails at the timeout, `.not` or not, so a
+  negated check never passes for want of looking.
 - `expect(app)` and `expect(locator)`: `toMatchPicture(name, options)`
   (§4).
 

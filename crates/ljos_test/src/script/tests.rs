@@ -71,10 +71,21 @@ impl TestHost for Fake {
             "app_click" => return Err(format!("`{}` matches nothing", args["target"])),
             "app_advance" => *now += args["ms"].as_f64().unwrap_or(0.0),
             "app_find" => {
-                let total = u32::from(args["locator"] == "#count");
+                let total = found(&args["locator"]);
                 return Ok(json!({ "structured": { "total": total }, "text": "" }));
             }
+            // As the inspector does: one item, or a refusal that says why.
             "app_inspect" => {
+                let target = args["target"].as_str().unwrap_or_default();
+                match found(&args["target"]) {
+                    0 => return Err(format!("nothing matches `{target}`")),
+                    1 => {}
+                    n => {
+                        return Err(format!(
+                            "`{target}` matches {n} items and `app_inspect` needs exactly one"
+                        ));
+                    }
+                }
                 return Ok(json!({ "structured": {
                     "properties": [{ "name": "text", "type": "string", "value": shown.to_string() }],
                     "state": { "visible": true, "enabled": true },
@@ -124,6 +135,16 @@ impl TestHost for Fake {
 
     fn close_all(&mut self) {
         self.apps.clear();
+    }
+}
+
+/// How many items of the counter a locator finds: its count, and its
+/// two buttons.
+fn found(locator: &Json) -> u32 {
+    match locator.as_str() {
+        Some("#count") => 1,
+        Some("role=button") => 2,
+        _ => 0,
     }
 }
 
@@ -205,6 +226,60 @@ fn a_retried_expectation_gives_up_at_its_timeout() {
             "a.test.ts:4"
         )]
     );
+}
+
+#[test]
+fn a_negated_check_that_cannot_look_fails() {
+    let src = format!(
+        "{HEAD}test(\"ambiguous\", async (app) => {{\n  await expect(app.find(\"role=button\")).not.toBeEnabled({{ timeout: 100 }});\n}});\n"
+    );
+    assert_eq!(
+        outcomes(&[("a.test.ts", &src)]),
+        [fail(
+            "expected role=button not to be enabled; it could not be looked at after 100 ms: `role=button` matches 2 items and `app_inspect` needs exactly one",
+            "a.test.ts:4"
+        )]
+    );
+}
+
+#[test]
+fn an_item_that_is_not_there_holds_only_under_not() {
+    let src = format!(
+        "{HEAD}test(\"gone\", async (app) => {{\n  await expect(app.find(\"#gone\")).not.toBeVisible();\n  await expect(app.find(\"#gone\")).not.toHaveText(\"0\");\n}});\ntest(\"there\", async (app) => {{\n  await expect(app.find(\"#gone\")).toHaveText(\"0\", {{ timeout: 0 }});\n}});\n"
+    );
+    assert_eq!(
+        outcomes(&[("a.test.ts", &src)]),
+        [
+            Outcome::Pass,
+            fail(
+                "expected #gone to have text \"0\"; it was not there",
+                "a.test.ts:8"
+            )
+        ]
+    );
+}
+
+#[test]
+fn a_poll_retries_what_throws() {
+    let src = format!(
+        "{HEAD}test(\"late\", async (app) => {{\n  await expect.poll(async () => {{\n    if ((await app.now()) < 1000) throw new Error(\"not yet\");\n    return 1;\n  }}).toBe(1);\n}});\ntest(\"never\", async () => {{\n  await expect.poll(() => {{ throw new Error(\"never\"); }}, {{ timeout: 32 }}).toBe(1);\n}});\n"
+    );
+    assert_eq!(
+        outcomes(&[("a.test.ts", &src)]),
+        [
+            Outcome::Pass,
+            fail(
+                "the poll did not give what was expected after 32 ms; it last threw Error: never",
+                "a.test.ts:10"
+            )
+        ]
+    );
+}
+
+#[test]
+fn a_poll_moves_the_clock_of_an_application_the_test_launched() {
+    let src = "import { test, expect, launch } from \"ljos:test\";\ntest(\"own\", async () => {\n  const app = await launch(\"./Counter.qml\");\n  await expect.poll(() => app.now()).toBeGreaterThan(100);\n});\n";
+    assert_eq!(outcomes(&[("a.test.ts", src)]), [Outcome::Pass]);
 }
 
 #[test]
