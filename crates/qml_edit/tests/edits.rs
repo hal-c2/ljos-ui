@@ -1142,3 +1142,45 @@ fn a_moved_object_leaves_the_lines_inside_its_literals_as_given() {
         "the template's second line moved with its text as it was:\n{out}"
     );
 }
+
+#[test]
+fn in_a_crlf_file_a_moved_literal_keeps_its_own_line_breaks_and_code_takes_the_files() {
+    let source = "Item {\r\n    Item {\r\n        Text {\r\n            text: `a\r\n            b`\r\n        }\r\n    }\r\n}\r\n";
+    let out = apply(
+        source,
+        &Edit::MoveObject {
+            object: root().child(0).child(0),
+            parent: root(),
+            index: 0,
+        },
+    )
+    .expect("the edit applies")
+    .text;
+    assert!(
+        out.contains("text: `a\r\n            b`\r\n"),
+        "the template moved with its text and its break as they were:\n{out:?}"
+    );
+    assert!(
+        !out.replace("\r\n", "").contains('\n'),
+        "every break is the file's:\n{out:?}"
+    );
+}
+
+#[test]
+fn in_a_crlf_file_a_written_value_breaks_its_code_lines_as_the_file_and_its_literals_as_given() {
+    let source = "Item {\r\n    MouseArea {\r\n        onClicked: {}\r\n    }\r\n}\r\n";
+    let out = apply(
+        source,
+        &Edit::SetBinding {
+            object: root().child(0),
+            name: "onClicked".into(),
+            value: "{\n    print(`a\n  b`)\n}".into(),
+        },
+    )
+    .expect("the edit applies")
+    .text;
+    assert_eq!(
+        out,
+        "Item {\r\n    MouseArea {\r\n        onClicked: {\r\n            print(`a\n  b`)\r\n        }\r\n    }\r\n}\r\n"
+    );
+}
