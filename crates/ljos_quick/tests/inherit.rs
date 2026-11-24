@@ -174,3 +174,123 @@ fn a_pass_that_never_settles_stops_with_a_fault_that_names_the_item() {
     let want = "file:///Main.qml:7:9: internal: QML Item: Inheritance loop detected for property \"visible\"";
     assert!(said.iter().any(|w| w.ends_with(want)), "{said:?}");
 }
+
+/// Many siblings whose `enabled` and `visible` bind to one value of the
+/// page, moved by native code in a batch with other writes, as an app's
+/// model publishes: `features/items/inherited-bound-on-many-siblings.feature`
+/// holds the behaviour from QML.
+const SIBLINGS: &str = r#"
+import QtQuick
+Item {
+    id: root
+    width: 100; height: 100
+    property string chosen: "a"
+    property int tick: 0
+    readonly property string target: chosen === "" ? "" : chosen + "!"
+    property int enabledChanges: 0
+    property int visibleChanges: 0
+    Component { id: tile
+        Item {
+            enabled: root.target !== ""
+            visible: root.target !== "none!"
+            onEnabledChanged: root.enabledChanges++
+            onVisibleChanged: root.visibleChanges++
+            Item { property bool lit: enabled; Item { property bool shown: visible } }
+        }
+    }
+    Component.onCompleted: { for (let i = 0; i < 600; i++) tile.createObject(root) }
+}
+"#;
+
+#[test]
+fn siblings_bound_to_one_value_are_told_side_by_side_not_one_inside_the_last() {
+    let e = engine();
+    let root = load(&e, SIBLINGS);
+    let mut s = scene(&e, root, 100.0, 100.0);
+    frame(&mut s, &e);
+    assert_eq!(warnings(&e), Vec::<String>::new());
+    let tiles = e.visual_children(root);
+    assert_eq!(tiles.len(), 600);
+    let all = |p: &str| tiles.iter().all(|&t| get(&e, t, p).to_boolean());
+    let none = |p: &str| tiles.iter().all(|&t| !get(&e, t, p).to_boolean());
+    let mut tick = 0;
+    let mut publish = |chosen: &str| {
+        tick += 1;
+        e.batch(|| {
+            set(&e, root, "chosen", chosen.into());
+            set(&e, root, "tick", f64::from(tick).into());
+        });
+    };
+    let counts = || {
+        (
+            num(&e, root, "enabledChanges"),
+            num(&e, root, "visibleChanges"),
+        )
+    };
+
+    publish("b");
+    assert_eq!(
+        warnings(&e),
+        Vec::<String>::new(),
+        "a move that keeps them on"
+    );
+    assert_eq!(counts(), (0.0, 0.0), "no item is told a result that stayed");
+    assert!(all("enabled") && all("visible"));
+
+    publish("");
+    assert_eq!(
+        warnings(&e),
+        Vec::<String>::new(),
+        "a move that disables them"
+    );
+    assert_eq!(counts(), (600.0, 0.0));
+    assert!(none("enabled") && all("visible"));
+
+    publish("c");
+    assert_eq!(warnings(&e), Vec::<String>::new(), "enabled again");
+    assert_eq!(counts(), (1200.0, 0.0));
+    assert!(all("enabled"));
+
+    publish("none");
+    assert_eq!(warnings(&e), Vec::<String>::new(), "a move that hides them");
+    assert_eq!(counts(), (1200.0, 600.0));
+    assert!(none("visible") && all("enabled"));
+
+    publish("d");
+    assert_eq!(warnings(&e), Vec::<String>::new(), "shown again");
+    assert_eq!(counts(), (1200.0, 1200.0));
+    assert!(all("visible"));
+    frame(&mut s, &e);
+    assert_eq!(warnings(&e), Vec::<String>::new());
+}
+
+/// [`siblings_bound_to_one_value_are_told_side_by_side_not_one_inside_the_last`]
+/// with each move a write of its own, as a script makes it.
+#[test]
+fn siblings_bound_to_one_value_moved_by_a_plain_write_are_told_side_by_side() {
+    let e = engine();
+    let root = load(&e, SIBLINGS);
+    let mut s = scene(&e, root, 100.0, 100.0);
+    frame(&mut s, &e);
+    let tiles = e.visual_children(root);
+    let counts = || {
+        (
+            num(&e, root, "enabledChanges"),
+            num(&e, root, "visibleChanges"),
+        )
+    };
+    for (chosen, want, on) in [
+        ("b", (0.0, 0.0), true),
+        ("", (600.0, 0.0), false),
+        ("c", (1200.0, 0.0), true),
+    ] {
+        set(&e, root, "chosen", chosen.into());
+        assert_eq!(warnings(&e), Vec::<String>::new(), "{chosen:?}");
+        assert_eq!(counts(), want, "{chosen:?}");
+        assert!(
+            tiles
+                .iter()
+                .all(|&t| get(&e, t, "enabled").to_boolean() == on)
+        );
+    }
+}
