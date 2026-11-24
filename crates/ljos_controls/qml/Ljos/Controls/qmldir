@@ -6,10 +6,14 @@ Card 1.0 Card.qml
 CheckBox 1.0 CheckBox.qml
 ComboBox 1.0 ComboBox.qml
 Control 1.0 Control.qml
+DelayButton 1.0 DelayButton.qml
+Dialog 1.0 Dialog.qml
+DialogButtonBox 1.0 DialogButtonBox.qml
 EmptyState 1.0 EmptyState.qml
 Frame 1.0 Frame.qml
 GroupBox 1.0 GroupBox.qml
 Icon 1.0 Icon.qml
+ItemDelegate 1.0 ItemDelegate.qml
 Label 1.0 Label.qml
 Menu 1.0 Menu.qml
 MenuItem 1.0 MenuItem.qml
@@ -18,6 +22,8 @@ Page 1.0 Page.qml
 Pane 1.0 Pane.qml
 Popover 1.0 Popover.qml
 Popup 1.0 Popup.qml
+RadioButton 1.0 RadioButton.qml
+RoundButton 1.0 RoundButton.qml
 ScrollBar 1.0 ScrollBar.qml
 ScrollView 1.0 ScrollView.qml
 Slider 1.0 Slider.qml
@@ -27,5 +33,8 @@ SwipeView 1.0 SwipeView.qml
 Switch 1.0 Switch.qml
 TabBar 1.0 TabBar.qml
 TabButton 1.0 TabButton.qml
+TextArea 1.0 TextArea.qml
 TextField 1.0 TextField.qml
+ToolBar 1.0 ToolBar.qml
+ToolButton 1.0 ToolButton.qml
 ToolTip 1.0 ToolTip.qml
