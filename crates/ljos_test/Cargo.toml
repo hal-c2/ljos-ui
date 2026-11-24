@@ -1,6 +1,6 @@
 [package]
 name = "ljos_test"
-description = "Test support for Ljós: the QtTest module (TestCase runner) and the accessibility audit"
+description = "Test support for Ljós: Ljos.Test (tests in TypeScript), the QtTest module (TestCase runner) and the accessibility audit"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -16,6 +16,8 @@ ljos_audit = { path = "../ljos_audit" }
 # test fetched has come by the time its virtual time passes.
 ljos_drive = { path = "../ljos_drive" }
 ljos_engine = { path = "../ljos_engine" }
+# The context a `*.test.ts` file runs in, apart from the application's.
+ljos_js = { path = "../ljos_js" }
 ljos_quick = { path = "../ljos_quick" }
 # Frames and pictures a test reads. No egui.
 ljos_render = { path = "../ljos_render", default-features = false }
@@ -31,6 +33,8 @@ ljos_compiler = { path = "../ljos_compiler" }
 qml_front = { path = "../qml_front" }
 # The audit is run over the Basic style.
 ljos_controls = { path = "../ljos_controls" }
+# Where the runner's tests keep pictures.
+tempfile.workspace = true
 
 [lints]
 workspace = true
