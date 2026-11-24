@@ -46,8 +46,6 @@ rust/multimedia.md 3 gap:imports
 rust/native-types.md 1 gap:host-module host-types
 rust/platforms.md 1 gap:imports
 rust/singletons-and-windows.md 1 gap:host-module
-rust/testing-rust.md 1 gap:imports
-start/testing.md 1 gap:imports
 ui/layouts.md 3 gap:layout
 ui/positioning.md 4 gap:ui-types
 ui/shapes-and-effects.md 2 gap:imports
