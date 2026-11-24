@@ -702,13 +702,14 @@ impl<'s> Text<'s> {
     /// in the member that starts at `at`.
     fn value_change(&self, at: usize, span: Span, before: &str, value: &str) -> Change {
         let indent = self.indent_at(at).to_owned();
-        let value = self.reindent(
+        let value = self.reindent_lines(
             &Snippet {
                 text: value.to_owned(),
                 base: String::new(),
                 gaps: None,
             },
             &indent,
+            &literal_breaks(value, VALUE_LEAD),
         );
         Change {
             range: span.start as usize..span.end as usize,
@@ -803,8 +804,18 @@ impl<'s> Text<'s> {
                 return self.insertion(object, &members, last + 1, &snippet, false, None);
             }
             if prefers_groups(root) {
-                // The value's own lines move in with it.
-                let value = value.replace('\n', &format!("\n{}", self.unit));
+                // The value's own lines move in with it, but for those that
+                // are a literal's text.
+                let literal = literal_breaks(value, VALUE_LEAD);
+                let mut lines = value.split('\n').enumerate();
+                let mut value = lines.next().map_or("", |(_, l)| l).to_owned();
+                for (i, line) in lines {
+                    value.push('\n');
+                    if !literal[i - 1] {
+                        value.push_str(&self.unit);
+                    }
+                    value.push_str(line);
+                }
                 snippet.text = format!("{first} {{\n{}{rest}: {value}\n}}", self.unit);
             }
         }
@@ -1453,9 +1464,25 @@ impl<'s> Text<'s> {
     /// The snippet with its lines after the first at `indent` instead of
     /// `snippet.base`; the first line is placed by the caller.
     fn reindent(&self, snippet: &Snippet, indent: &str) -> String {
+        self.reindent_lines(snippet, indent, &literal_breaks(&snippet.text, ""))
+    }
+
+    /// [`Self::reindent`], with `literal` from [`literal_breaks`]: a line
+    /// that starts inside a literal is the literal's text and stays as
+    /// given, its line break included.
+    fn reindent_lines(&self, snippet: &Snippet, indent: &str, literal: &[bool]) -> String {
         let mut out = String::with_capacity(snippet.text.len() + 16);
         for (i, line) in snippet.text.split('\n').enumerate() {
-            let line = line.strip_suffix('\r').unwrap_or(line);
+            let line = if literal.get(i).copied().unwrap_or(false) {
+                line
+            } else {
+                line.strip_suffix('\r').unwrap_or(line)
+            };
+            if i > 0 && literal[i - 1] {
+                out.push('\n');
+                out.push_str(line);
+                continue;
+            }
             if i > 0 {
                 out.push_str(self.nl);
                 if !is_blank(line) {
@@ -1800,6 +1827,32 @@ fn skip_blanks(bytes: &[u8], mut at: usize) -> usize {
         at += 1;
     }
     at
+}
+
+/// What puts a binding's value where [`literal_breaks`] reads a member.
+const VALUE_LEAD: &str = "p: ";
+
+/// For each line break of `text`, whether it is inside a string or template
+/// literal (nested `${…}` included), so that the line after it is the
+/// literal's text and not code to indent. `text` is read as a member of an
+/// object after `lead` (`VALUE_LEAD` for a binding's value). What does not
+/// parse has only the literals the parser found around its errors.
+fn literal_breaks(text: &str, lead: &str) -> Vec<bool> {
+    let breaks = text.bytes().filter(|&b| b == b'\n').count();
+    if breaks == 0 || !text.contains(['"', '\'', '`']) {
+        return vec![false; breaks];
+    }
+    let head = format!("X {{\n{lead}");
+    let source = format!("{head}{text}\n}}\n");
+    let allocator = Allocator::default();
+    let parsed = qml_syntax::parse(&allocator, &source);
+    let literals = qml_syntax::multiline_literals(&source, &parsed);
+    text.match_indices('\n')
+        .map(|(i, _)| {
+            let at = (head.len() + i) as u32;
+            literals.iter().any(|s| s.start < at && at < s.end)
+        })
+        .collect()
 }
 
 fn is_blank(text: &str) -> bool {

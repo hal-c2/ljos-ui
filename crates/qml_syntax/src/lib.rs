@@ -74,8 +74,10 @@ pub use oxc_parser::qml::ast;
 use oxc_diagnostics::OxcDiagnostic;
 use oxc_parser::Parser;
 
+mod literals;
 mod sugar;
 
+pub use literals::multiline_literals;
 pub use sugar::{Desugared, Lowered, SpanMap, desugar, parse_lowered};
 
 /// What [`parse`] gives back.
