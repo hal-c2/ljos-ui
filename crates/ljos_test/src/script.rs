@@ -69,6 +69,30 @@ pub struct LoadError {
     pub message: String,
 }
 
+/// A tool's refusal: its message, and the inspector's code for it when it
+/// gave one (`not_found`, `ambiguous`, …), which a script reads as
+/// `error.code`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Refusal {
+    pub code: Option<String>,
+    pub message: String,
+}
+
+impl From<String> for Refusal {
+    fn from(message: String) -> Self {
+        Refusal {
+            code: None,
+            message,
+        }
+    }
+}
+
+impl From<&str> for Refusal {
+    fn from(message: &str) -> Self {
+        message.to_owned().into()
+    }
+}
+
 /// What a test's application is: the runner asks it to start one and to
 /// answer the inspector's tools on it.
 pub trait TestHost {
@@ -99,8 +123,8 @@ pub trait TestHost {
     ///
     /// # Errors
     ///
-    /// The tool refused; the message is its own.
-    fn call(&mut self, app: u32, tool: &str, args: Json) -> Result<Json, String>;
+    /// The tool refused; the message and the code are its own.
+    fn call(&mut self, app: u32, tool: &str, args: Json) -> Result<Json, Refusal>;
 
     /// The application's clock, in milliseconds.
     ///
@@ -602,11 +626,17 @@ fn answer(host: &Rc<RefCell<dyn TestHost>>, op: &str, arg: &str, update: bool) -
                 arg["height"].as_f64(),
             )
             .map(Json::from),
-        "call" => host.call(
-            app_of(&arg),
-            arg["tool"].as_str().unwrap_or_default(),
-            arg["args"].clone(),
-        ),
+        "call" => {
+            let tool = arg["tool"].as_str().unwrap_or_default();
+            match host.call(app_of(&arg), tool, arg["args"].clone()) {
+                Ok(value) => Ok(value),
+                Err(Refusal {
+                    code: Some(code),
+                    message,
+                }) => return json!({ "error": message, "code": code }).to_string(),
+                Err(refusal) => Err(refusal.message),
+            }
+        }
         "now" => host.now(app_of(&arg)).map(Json::from),
         "picture" => match_picture(&mut *host, &arg, update),
         other => Err(format!("the runner has no `{other}`")),

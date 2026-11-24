@@ -17,7 +17,9 @@
   function ask(op, arg) {
     const answer = JSON.parse(host(op, JSON.stringify(arg === undefined ? null : arg)));
     if (Object.prototype.hasOwnProperty.call(answer, "error")) {
-      throw new TestError(answer.error);
+      const error = new TestError(answer.error);
+      if (typeof answer.code === "string") error.code = answer.code;
+      throw error;
     }
     return answer.ok;
   }
@@ -272,9 +274,16 @@
       return Promise.resolve(this.inspectNow());
     }
     // What the inspector shows of the one item found, or null when there
-    // is none.
+    // is none. Asked of `app_inspect` itself rather than counted with
+    // `app_find`: `#name` reaches items the outline does not list, which
+    // only the inspector's own lookup finds.
     seenNow() {
-      return this.countNow() === 0 ? null : this.inspectNow();
+      try {
+        return this.inspectNow();
+      } catch (e) {
+        if (e && e.code === "not_found") return null;
+        throw e;
+      }
     }
     propertyOf(seen, name) {
       const row = rowOf(seen, name);

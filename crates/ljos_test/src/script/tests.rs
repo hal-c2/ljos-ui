@@ -14,7 +14,8 @@ use ljos_render::RgbaImage;
 use serde_json::{Value as Json, json};
 
 use super::{
-    LoadError, Module, Options, Outcome, Tap, TestHost, TestResult, junit, run_file, to_json,
+    LoadError, Module, Options, Outcome, Refusal, Tap, TestHost, TestResult, junit, run_file,
+    to_json,
 };
 
 #[derive(Default)]
@@ -64,13 +65,13 @@ impl TestHost for Fake {
         Ok(u32::try_from(self.apps.len() - 1).unwrap())
     }
 
-    fn call(&mut self, app: u32, tool: &str, args: Json) -> Result<Json, String> {
+    fn call(&mut self, app: u32, tool: &str, args: Json) -> Result<Json, Refusal> {
         let (count, now) = self.apps.get_mut(app as usize).ok_or("no app")?;
         // The count shows once a second has passed, as a timer would.
         let shown = if *now >= 1000.0 { *count } else { 0 };
         match tool {
             "app_click" if args["target"] == "Add" => *count += 1,
-            "app_click" => return Err(format!("`{}` matches nothing", args["target"])),
+            "app_click" => return Err(format!("`{}` matches nothing", args["target"]).into()),
             "app_advance" => *now += args["ms"].as_f64().unwrap_or(0.0),
             "app_find" => {
                 let total = found(&args["locator"]);
@@ -79,12 +80,26 @@ impl TestHost for Fake {
             // As the inspector does: one item, or a refusal that says why.
             "app_inspect" => {
                 let target = args["target"].as_str().unwrap_or_default();
-                match found(&args["target"]) {
-                    0 => return Err(format!("nothing matches `{target}`")),
+                // `#unlisted` is an item the outline does not list: only
+                // the inspector's own lookup reaches it, `app_find` does not.
+                let n = if target == "#unlisted" {
+                    1
+                } else {
+                    found(&args["target"])
+                };
+                let refused = |code: &str, message: String| Refusal {
+                    code: Some(code.to_owned()),
+                    message,
+                };
+                match n {
+                    0 => return Err(refused("not_found", format!("nothing matches `{target}`"))),
                     1 => {}
                     n => {
-                        return Err(format!(
-                            "`{target}` matches {n} items and `app_inspect` needs exactly one"
+                        return Err(refused(
+                            "ambiguous",
+                            format!(
+                                "`{target}` matches {n} items and `app_inspect` needs exactly one"
+                            ),
                         ));
                     }
                 }
@@ -93,7 +108,7 @@ impl TestHost for Fake {
                     "state": { "visible": true, "enabled": true },
                 }, "text": "" }));
             }
-            _ => return Err(format!("no {tool}")),
+            _ => return Err(format!("no {tool}").into()),
         }
         Ok(json!({ "structured": {}, "text": "" }))
     }
@@ -259,6 +274,14 @@ fn an_item_that_is_not_there_holds_only_under_not() {
             )
         ]
     );
+}
+
+#[test]
+fn an_item_the_outline_does_not_list_is_there() {
+    let src = format!(
+        "{HEAD}test(\"unlisted\", async (app) => {{\n  await expect(app.find(\"#unlisted\")).toHaveText(\"0\", {{ timeout: 0 }});\n  await expect(app.find(\"#unlisted\")).toBeVisible({{ timeout: 0 }});\n}});\n"
+    );
+    assert_eq!(outcomes(&[("a.test.ts", &src)]), [Outcome::Pass]);
 }
 
 #[test]
