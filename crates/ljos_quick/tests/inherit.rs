@@ -202,6 +202,23 @@ Item {
 }
 "#;
 
+/// Every tile's child reads `lit` from its own `enabled` and its grandchild
+/// `shown` from its own `visible`, so a pass that stopped at the tile would
+/// leave them at the old value.
+#[track_caller]
+fn descendants_hold(e: &Engine, tiles: &[ObjectId], lit: bool, shown: bool) {
+    for &t in tiles {
+        let [child] = e.visual_children(t)[..] else {
+            panic!("a tile has one child")
+        };
+        let [grandchild] = e.visual_children(child)[..] else {
+            panic!("a tile's child has one child")
+        };
+        assert_eq!(get(e, child, "lit").to_boolean(), lit, "lit");
+        assert_eq!(get(e, grandchild, "shown").to_boolean(), shown, "shown");
+    }
+}
+
 #[test]
 fn siblings_bound_to_one_value_are_told_side_by_side_not_one_inside_the_last() {
     let e = engine();
@@ -236,6 +253,7 @@ fn siblings_bound_to_one_value_are_told_side_by_side_not_one_inside_the_last() {
     );
     assert_eq!(counts(), (0.0, 0.0), "no item is told a result that stayed");
     assert!(all("enabled") && all("visible"));
+    descendants_hold(&e, &tiles, true, true);
 
     publish("");
     assert_eq!(
@@ -245,21 +263,25 @@ fn siblings_bound_to_one_value_are_told_side_by_side_not_one_inside_the_last() {
     );
     assert_eq!(counts(), (600.0, 0.0));
     assert!(none("enabled") && all("visible"));
+    descendants_hold(&e, &tiles, false, true);
 
     publish("c");
     assert_eq!(warnings(&e), Vec::<String>::new(), "enabled again");
     assert_eq!(counts(), (1200.0, 0.0));
     assert!(all("enabled"));
+    descendants_hold(&e, &tiles, true, true);
 
     publish("none");
     assert_eq!(warnings(&e), Vec::<String>::new(), "a move that hides them");
     assert_eq!(counts(), (1200.0, 600.0));
     assert!(none("visible") && all("enabled"));
+    descendants_hold(&e, &tiles, true, false);
 
     publish("d");
     assert_eq!(warnings(&e), Vec::<String>::new(), "shown again");
     assert_eq!(counts(), (1200.0, 1200.0));
     assert!(all("visible"));
+    descendants_hold(&e, &tiles, true, true);
     frame(&mut s, &e);
     assert_eq!(warnings(&e), Vec::<String>::new());
 }
@@ -292,5 +314,6 @@ fn siblings_bound_to_one_value_moved_by_a_plain_write_are_told_side_by_side() {
                 .iter()
                 .all(|&t| get(&e, t, "enabled").to_boolean() == on)
         );
+        descendants_hold(&e, &tiles, on, true);
     }
 }
