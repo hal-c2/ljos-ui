@@ -13,7 +13,8 @@
 #   https://www.w3.org/WAI/ARIA/apg/patterns/radio/
 # Ljós's own style is Ljós's: Qt has no Ljos.Controls to compare it with, so
 # every scenario is `@ljos-only`. The colours expected are those
-# crates/ljos_design/src/roles.rs derives from white, black and #0066cc.
+# the design's colour roles (docs/design/color.md) derive from white,
+# black and #0066cc.
 
 @ljos-only
 Feature: Ljós's own style: dialogs, text areas, rows, choices and the buttons of a tool bar
@@ -64,11 +65,13 @@ Feature: Ljós's own style: dialogs, text areas, rows, choices and the buttons o
       And the property "footer.contentChildren.1.text" of "dialog" is "Cancel"
       And the property "footer.contentChildren.1.primary" of "dialog" is false
 
-    Scenario: Escape closes it and the accept button accepts it
+    Scenario: Escape closes it
       When the user clicks the "button" "Ask"
       And 200 milliseconds pass
       And the user presses "Escape"
       Then the property "visible" of "dialog" is false
+
+    Scenario: The accept button accepts it
       When the user clicks the "button" "Ask"
       And 200 milliseconds pass
       And the user clicks the "button" "OK"
