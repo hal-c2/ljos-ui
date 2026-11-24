@@ -135,40 +135,40 @@ module Ljos.Blocks
 
 module Ljos.Controls
 	AbstractButton QtQuick.Templates.AbstractButton
-	ApplicationWindow QtQuick/Controls/Basic/ApplicationWindow.qml
+	ApplicationWindow Ljos/Controls/ApplicationWindow.qml
 	BusyIndicator QtQuick/Controls/Basic/BusyIndicator.qml
 	Button Ljos/Controls/Button.qml
 	ButtonGroup QtQuick.Templates.ButtonGroup
 	Card Ljos/Controls/Card.qml
 	CheckBox Ljos/Controls/CheckBox.qml
 	ComboBox Ljos/Controls/ComboBox.qml
-	Control QtQuick/Controls/Basic/Control.qml
+	Control Ljos/Controls/Control.qml
 	DelayButton QtQuick/Controls/Basic/DelayButton.qml
 	Dialog QtQuick/Controls/Basic/Dialog.qml
 	EmptyState Ljos/Controls/EmptyState.qml
 	FileDialog QtQuick.Dialogs.FileDialog
 	FolderDialog QtQuick.Dialogs.FolderDialog
-	Frame QtQuick/Controls/Basic/Frame.qml
-	GroupBox QtQuick/Controls/Basic/GroupBox.qml
+	Frame Ljos/Controls/Frame.qml
+	GroupBox Ljos/Controls/GroupBox.qml
 	Icon Ljos/Controls/Icon.qml
 	ItemDelegate QtQuick/Controls/Basic/ItemDelegate.qml
 	Label Ljos/Controls/Label.qml
 	Menu Ljos/Controls/Menu.qml
 	MenuItem Ljos/Controls/MenuItem.qml
 	MenuSeparator Ljos/Controls/MenuSeparator.qml
-	Page QtQuick/Controls/Basic/Page.qml
-	Pane QtQuick/Controls/Basic/Pane.qml
+	Page Ljos/Controls/Page.qml
+	Pane Ljos/Controls/Pane.qml
 	Popover Ljos/Controls/Popover.qml
 	Popup Ljos/Controls/Popup.qml
 	ProgressBar QtQuick/Controls/Basic/ProgressBar.qml
 	RadioButton QtQuick/Controls/Basic/RadioButton.qml
 	RoundButton QtQuick/Controls/Basic/RoundButton.qml
-	ScrollBar QtQuick/Controls/Basic/ScrollBar.qml
-	ScrollView QtQuick/Controls/Basic/ScrollView.qml
+	ScrollBar Ljos/Controls/ScrollBar.qml
+	ScrollView Ljos/Controls/ScrollView.qml
 	Slider Ljos/Controls/Slider.qml
 	SpinBox Ljos/Controls/SpinBox.qml
 	SplitButton Ljos/Controls/SplitButton.qml
-	SwipeView QtQuick/Controls/Basic/SwipeView.qml
+	SwipeView Ljos/Controls/SwipeView.qml
 	Switch Ljos/Controls/Switch.qml
 	TabBar Ljos/Controls/TabBar.qml
 	TabButton Ljos/Controls/TabButton.qml
@@ -178,6 +178,8 @@ module Ljos.Controls
 	ToolBar QtQuick/Controls/Basic/ToolBar.qml
 	ToolButton QtQuick/Controls/Basic/ToolButton.qml
 	ToolTip Ljos/Controls/ToolTip.qml
+	type Ljos/Controls/ApplicationWindow.qml ApplicationWindow
+		prototype QtQuick.Templates.ApplicationWindow named
 	type Ljos/Controls/Button.qml Button
 		prototype QtQuick.Templates.Button named
 		prop primary QtQml.bool named
@@ -216,6 +218,8 @@ module Ljos.Controls
 		signal iconNameChanged
 		signal startSpaceChanged
 		signal endSpaceChanged
+	type Ljos/Controls/Control.qml Control
+		prototype QtQuick.Templates.Control named
 	type Ljos/Controls/EmptyState.qml EmptyState
 		prototype QtQuick.Templates.Control named
 		prop status QtQml.string named
@@ -234,6 +238,10 @@ module Ljos.Controls
 		signal maximumTextWidthChanged
 		signal actionTriggered
 		signal secondaryActionTriggered
+	type Ljos/Controls/Frame.qml Frame
+		prototype QtQuick.Templates.Frame named
+	type Ljos/Controls/GroupBox.qml GroupBox
+		prototype QtQuick.Templates.GroupBox named
 	type Ljos/Controls/Icon.qml Icon
 		prototype QtQuick.Item named
 		prop name QtQml.string named
@@ -268,10 +276,18 @@ module Ljos.Controls
 		signal inkChanged
 	type Ljos/Controls/MenuSeparator.qml MenuSeparator
 		prototype QtQuick.Templates.MenuSeparator named
+	type Ljos/Controls/Page.qml Page
+		prototype QtQuick.Templates.Page named
+	type Ljos/Controls/Pane.qml Pane
+		prototype QtQuick.Templates.Pane named
 	type Ljos/Controls/Popover.qml Popover
 		prototype Ljos.Controls.impl.PopoverBase named
 	type Ljos/Controls/Popup.qml Popup
 		prototype QtQuick.Templates.Popup named
+	type Ljos/Controls/ScrollBar.qml ScrollBar
+		prototype QtQuick.Templates.ScrollBar named
+	type Ljos/Controls/ScrollView.qml ScrollView
+		prototype QtQuick.Templates.ScrollView named
 	type Ljos/Controls/Slider.qml Slider
 		prototype QtQuick.Templates.Slider named
 	type Ljos/Controls/SpinBox.qml SpinBox
@@ -295,6 +311,8 @@ module Ljos.Controls
 		signal clicked
 		signal menuRequested
 		method openMenu
+	type Ljos/Controls/SwipeView.qml SwipeView
+		prototype QtQuick.Templates.SwipeView named
 	type Ljos/Controls/Switch.qml Switch
 		prototype QtQuick.Templates.Switch named
 	type Ljos/Controls/TabBar.qml TabBar
@@ -6780,7 +6798,7 @@ module QtQuick.Controls.Fusion.impl
 	TextFieldBackground QtQuick/Controls/Fusion/impl/TextFieldBackground.qml
 	type QtQuick/Controls/Fusion/impl/ButtonPanel.qml ButtonPanel
 		prototype QtQuick.Rectangle named
-		prop control QtQuick.Controls.Basic.Control named pointer
+		prop control Ljos.Controls.Control named pointer
 		prop pressed QtQml.bool named
 		prop highlighted QtQml.bool named
 		prop outlinesFocus QtQml.bool named
@@ -6809,7 +6827,7 @@ module QtQuick.Controls.Fusion.impl
 		signal controlChanged
 	type QtQuick/Controls/Fusion/impl/SliderGroove.qml SliderGroove
 		prototype QtQuick.Rectangle named
-		prop control QtQuick.Controls.Basic.Control named pointer
+		prop control Ljos.Controls.Control named pointer
 		prop offset QtQml.real named
 		prop progress QtQml.real named
 		prop vertical QtQml.bool named
@@ -6830,7 +6848,7 @@ module QtQuick.Controls.Fusion.impl
 		method shade
 	type QtQuick/Controls/Fusion/impl/SliderHandle.qml SliderHandle
 		prototype QtQuick.Rectangle named
-		prop control QtQuick.Controls.Basic.Control named pointer
+		prop control Ljos.Controls.Control named pointer
 		prop visualFocus QtQml.bool named
 		prop pressed QtQml.bool named
 		prop hovered QtQml.bool named

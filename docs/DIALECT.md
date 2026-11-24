@@ -1793,9 +1793,9 @@ options; and `EmptyState` (`status` `"empty"`, `"loading"` or `"error"`,
 each of these too, drawn as the Basic style would (a card is Basic's
 frame), so the promise below holds both ways. It has every control
 `Ljos.Controls.Basic` has, so a file moves from one to the other by its
-import alone: `TextArea`, `Dialog`, `ItemDelegate`, `Popup`, `ScrollBar`,
-`ScrollView` and the K6 controls below are Basic's until the style draws
-its own, and `FileDialog`, `FolderDialog`, `AbstractButton` and
+import alone: `TextArea`, `Dialog`, `ItemDelegate`, `ToolBar`,
+`ToolButton`, `RoundButton`, `DelayButton`, `ProgressBar`, `BusyIndicator`
+and `RadioButton` are Basic's until the style draws its own, and `FileDialog`, `FolderDialog`, `AbstractButton` and
 `ButtonGroup` are the same types in both.
 
 The theme's roles are `canvas`, `surface`, `surfaceRaised`,
