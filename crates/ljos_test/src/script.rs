@@ -803,14 +803,32 @@ fn tap_description(name: &str) -> String {
     out
 }
 
-/// A YAML scalar for `text`: single-quoted when it is one line, and a
-/// double-quoted scalar (JSON's escapes are YAML's) when it is more.
+/// A YAML scalar for `text`: single-quoted when every character may stand
+/// as it is, and double-quoted, with escapes, when one may not: a line
+/// break, or a character YAML does not print (an ANSI colour's ESC).
 fn yaml_scalar(text: &str) -> String {
-    if text.contains(['\n', '\r']) {
-        Json::from(text).to_string()
-    } else {
-        format!("'{}'", text.replace('\'', "''"))
+    let printable = |c: char| {
+        matches!(c, '\t' | ' '..='~' | '\u{85}')
+            || (c >= '\u{A0}' && c != '\u{FEFF}' && c != '\u{FFFE}' && c != '\u{FFFF}')
+    };
+    if text.chars().all(printable) {
+        return format!("'{}'", text.replace('\'', "''"));
     }
+    let mut out = String::from("\"");
+    for c in text.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            c if printable(c) => out.push(c),
+            c => {
+                let _ = write!(out, "\\u{:04X}", u32::from(c));
+            }
+        }
+    }
+    out.push('"');
+    out
 }
 
 /// The results as JUnit XML, one `testsuite` per file.

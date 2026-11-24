@@ -669,6 +669,23 @@ fn a_tap_report_keeps_names_messages_and_logs_in_their_place() {
 }
 
 #[test]
+fn a_tap_message_with_a_character_yaml_does_not_print_is_escaped() {
+    let mut tap = Tap::new();
+    let lines = tap.result(&result(
+        "colour",
+        Outcome::Fail {
+            message: "\u{1b}[31mfailed\u{1b}[0m \"x\"".into(),
+            at: None,
+        },
+        &[],
+    ));
+    assert_eq!(
+        lines[2],
+        "  message: \"\\u001B[31mfailed\\u001B[0m \\\"x\\\"\""
+    );
+}
+
+#[test]
 fn a_junit_report_writes_no_character_xml_forbids() {
     let report = junit(&[result(
         "bell\u{7}",
