@@ -1077,3 +1077,68 @@ fn a_pipe_is_kept_beside_an_edit_and_written_by_one() {
     .text;
     assert!(out.contains("height: width |> % * 3 / 4"), "{out}");
 }
+
+#[test]
+fn a_written_value_leaves_the_lines_inside_its_literals_as_given() {
+    let source = "Item {\n    MouseArea {\n        onClicked: {}\n    }\n}\n";
+    // Code lines take the member's indent; a line that starts inside a
+    // string or a template (nested `${…}` included) is the literal's text,
+    // trailing spaces and empty lines too.
+    let value =
+        "{\n    let t = `a  \n\n  b ${`c\n d`} e\n`\n    let s = \"x \n  y\"\n    print(t, s)\n}";
+    let out = apply(
+        source,
+        &Edit::SetBinding {
+            object: root().child(0),
+            name: "onClicked".into(),
+            value: value.into(),
+        },
+    )
+    .expect("the edit applies")
+    .text;
+    assert_eq!(
+        out,
+        "Item {\n    MouseArea {\n        onClicked: {\n            let t = `a  \n\n  b ${`c\n d`} e\n`\n            let s = \"x \n  y\"\n            print(t, s)\n        }\n    }\n}\n"
+    );
+}
+
+#[test]
+fn a_new_value_put_in_a_group_leaves_the_lines_inside_its_literals_as_given() {
+    // The file writes groups, so `font.family` goes into a new `font { }`.
+    let source = "Text {\n    anchors { fill: parent; margins: 2 }\n}\n";
+    let out = apply(
+        source,
+        &Edit::SetBinding {
+            object: root(),
+            name: "font.family".into(),
+            value: "`a\nb`".into(),
+        },
+    )
+    .expect("the edit applies")
+    .text;
+    assert_eq!(
+        out,
+        "Text {\n    anchors { fill: parent; margins: 2 }\n    font {\n        family: `a\nb`\n    }\n}\n"
+    );
+}
+
+#[test]
+fn a_moved_object_leaves_the_lines_inside_its_literals_as_given() {
+    // The template's second line starts with the indent the object had, so
+    // only knowing it is a literal's keeps it from being moved left.
+    let source = "Item {\n    Item {\n        Text {\n            text: `a\n            b`\n        }\n    }\n}\n";
+    let out = apply(
+        source,
+        &Edit::MoveObject {
+            object: root().child(0).child(0),
+            parent: root(),
+            index: 0,
+        },
+    )
+    .expect("the edit applies")
+    .text;
+    assert!(
+        out.contains("text: `a\n            b`\n"),
+        "the template's second line moved with its text as it was:\n{out}"
+    );
+}
