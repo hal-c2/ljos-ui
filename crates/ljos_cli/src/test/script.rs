@@ -19,7 +19,7 @@ use ljos_mcp_core::{
     glue::local::{LocalClient, LocalError, LocalWake},
 };
 use ljos_runtime::Clock as _;
-use ljos_test::script::{LoadError, MODULE, Module, PICTURES, SUFFIX, TestHost};
+use ljos_test::script::{LoadError, MODULE, Module, PICTURES, Refusal, SUFFIX, TestHost};
 use qml_front::QtTypeOracle;
 use serde_json::{Value as Json, json};
 
@@ -212,7 +212,7 @@ impl TestHost for Host {
         u32::try_from(self.apps.len() - 1).map_err(|e| e.to_string())
     }
 
-    fn call(&mut self, app: u32, tool: &str, args: Json) -> Result<Json, String> {
+    fn call(&mut self, app: u32, tool: &str, args: Json) -> Result<Json, Refusal> {
         let Some(Some(App {
             agent,
             inspector,
@@ -224,12 +224,18 @@ impl TestHost for Host {
         };
         let reply = agent.call(tool, args, &mut || App::pump(inspector, stage));
         match reply {
-            Ok(reply) if reply.is_error => Err(reply
-                .error_message()
-                .map_or_else(|| reply.text.clone(), str::to_owned)),
+            Ok(reply) if reply.is_error => Err(Refusal {
+                code: reply.error_code().map(str::to_owned),
+                message: reply
+                    .error_message()
+                    .map_or_else(|| reply.text.clone(), str::to_owned),
+            }),
             Ok(reply) => Ok(json!({ "structured": reply.structured, "text": reply.text })),
-            Err(LocalError::Refused(e)) => Err(e.message),
-            Err(e) => Err(e.to_string()),
+            Err(LocalError::Refused(e)) => Err(Refusal {
+                code: Some(e.code.as_str().to_owned()),
+                message: e.message,
+            }),
+            Err(e) => Err(e.to_string().into()),
         }
     }
 

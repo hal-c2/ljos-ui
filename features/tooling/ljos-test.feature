@@ -418,6 +418,10 @@ Feature: Tests in TypeScript that drive the application
       Then the test report has the lines:
         """
         not ok 1 - counter.test.ts > the count
+          ---
+          message: 'there was no __pictures__/count.png; this run''s picture is written there: look at it, and run again'
+          at: counter.test.ts:4
+          ...
         ok 2 - counter.test.ts > the count in a larger window
         """
 
