@@ -253,7 +253,7 @@ ljos-ui/
 │   ├── ljos_blocks/            an application's functional blocks and contracts, read from its type dump and qmldir
 │   ├── ljos_drive/             scene driver: settle, advance a test clock, find, input,
 │   │                           a11y and pictures by one set of rules (no egui, no parser)
-│   ├── ljos_test/              kittest harness wrapper, a11y audit, QtTest TestCase runner
+│   ├── ljos_test/              Ljos.Test (*.test.ts), a11y audit, QtTest TestCase runner
 │   ├── ljos_bdd/               cucumber World, Backend trait, Ljós + Qt backends, steps
 │   ├── ljos_ratchet/           acceptance suites' PIN, globs and RATCHET, judged without a backend
 │   ├── ljos_fuzz/              differential, property-based testing of Ljós against Qt (`mise run fuzz:qt`)
@@ -1487,6 +1487,7 @@ Source: 09; also 02 §3.4, 05 §3.1, 06 §3.5.
 | Ljós snapshots | kittest `snapshot` (wgpu software adapter) | Ljós-internal render regressions only, used sparingly |
 | Backend parity | B0/B1 against R, with a tolerance | Drift in SDFs, gradients and tessellation |
 | Performance gates | headless benches on 10k-node scenes plus device benches | sync and encode times, bytes uploaded, draw calls, budgets in section 8.5 |
+| Application tests | Ljos.Test: `*.test.ts` on `ljos test` (`ljos_test::script`, ADR 0005) | An application's own tests, in TypeScript, driving it through the inspector's locators on a virtual clock |
 | Imported QtTest | `ljos_test` TestCase runner | Existing `tst_*.qml` suites from apps that migrate |
 
 ### 18.2 Ljós's ledger: `features/`
