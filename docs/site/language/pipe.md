@@ -19,6 +19,7 @@ A discount, kept at zero or more, as a share of the old price, rounded:
 
 ```qml
 import Ljos.Ui
+import Ljos.Core
 
 Window {
     color: palette.window
@@ -34,7 +35,7 @@ Window {
 
     Text {
         color: palette.windowText
-        text: qsTr("%1% off").arg(discountPercent)
+        text: t`${discountPercent}% off`
     }
 }
 ```
@@ -134,10 +135,10 @@ Window {
 
     function timeSinceEvent(published: string, now: number): string {
         return (now - Date.parse(published)) / 60000 |> Math.floor(%) |> match (%) {
-            when if (% < 2): qsTr("Just now");
-            when if (% < 60): qsTr("%1 minutes ago").arg(%);
-            when if (% < 120): qsTr("1 hour ago");
-            when if (% < 1440): Math.floor(% / 60) |> qsTr("%1 hours ago").arg(%);
+            when if (% < 2): t`Just now`;
+            when if (% < 60): t`${%} minutes ago`;
+            when if (% < 120): t`1 hour ago`;
+            when if (% < 1440): Math.floor(% / 60) |> t`${%} hours ago`;
             default: Locale.current.formatDate(published, "yyyy-MM-dd");
         }
     }

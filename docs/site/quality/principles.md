@@ -47,7 +47,7 @@ Anything that is not painted does no layout, paint, or GPU work. Anything that i
 
 ### Accessible and localisable from the start
 
-Every item can produce an AccessKit node for assistive technologies. Text is shaped with bidirectional layout support. Translation calls with `qsTr` work against real catalogues and support switching languages at runtime.
+Every item can produce an AccessKit node for assistive technologies. Text is shaped with bidirectional layout support. Text translated with `` t`…` `` (and Qt's `qsTr`, in QML written for Qt) works against real catalogues and follows a language switch at run time.
 
 ### Behaviour specified in Gherkin
 
@@ -100,16 +100,17 @@ Tests locate interactive elements by accessible role and name. An item that a te
 
 ```qml
 import Ljos.Ui
-import Ljos.Controls.Basic
+import Ljos.Controls
+import Ljos.Core
 
 ApplicationWindow {
     width: 320
     height: 200
     visible: true
-    title: qsTr("Player")
+    title: t`Player`
 
     ToolButton {
-        text: qsTr("Play")
+        text: t`Play`
         display: AbstractButton.IconOnly
         icon.name: "media-playback-start"
         ToolTip.text: text

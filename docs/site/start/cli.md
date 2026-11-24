@@ -179,21 +179,22 @@ ljos shaders --check .
 
 ## `ljos i18n`
 
-Extracts translatable strings (`qsTr`, `qsTranslate`, `QT_TR_NOOP` and related calls) from a QML directory tree and merges them into a Linguist `.ts` catalogue file. Existing translations are kept, new strings are added as `unfinished`, and strings no longer present in the source are marked `vanished`.
+Finds every translatable message in a directory tree and merges them into a catalogue. A `.po` (or `.pot`) catalogue gets Ljós's `` t`…` `` messages in ICU MessageFormat; a Linguist `.ts` catalogue gets Qt's `qsTr` texts. Existing translations are kept, and a translated message that left the sources is kept as obsolete.
 
 ```sh
-ljos i18n extract --out <OUT> <DIRS>...
+ljos i18n extract --output <OUTPUT> <DIR>
 ```
 
 ### Important options
 
-- `-o, --out <OUT>`: Output `.ts` file path (created if it does not exist, updated in place if it does).
-- `-l, --language <LANGUAGE>`: Target language code (such as `is_IS` or `de_DE`) written to `<TS language="...">`.
+- `-o, --output <OUTPUT>`: The catalogue to create or bring up to date: `is.po`, `app.pot` or `app_is.ts`.
+- `--language <LANGUAGE>`: The language of the translations (`is_IS`, `de`), for a new file or one that does not say. A `.po` file without one takes its name.
+- `--check`: Write nothing; fail if the file's messages differ from the sources.
 
 ### Example
 
 ```sh
-ljos i18n extract --language is_IS --out i18n/app_is.ts src/
+ljos i18n extract --output i18n/is.po src/
 ```
 
 ## `ljos mcp`

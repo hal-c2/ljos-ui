@@ -141,32 +141,34 @@ Ljós schedules frames only on demand—when state becomes dirty, or when an ani
 5. **Virtualise lists with `ListView`:** Use `ListView` rather than `Repeater` inside a `Column` so delegates, text layouts, glyph runs, and textures exist only near the viewport.
 
 ```qml
-import QtQuick
-import QtQuick.Controls
-import QtQuick.Layouts
+import Ljos.Ui
+import Ljos.Core
+import Ljos.Controls
+import Ljos.Layout
 
 ApplicationWindow {
     width: 360
     height: 220
     visible: true
-    title: qsTr("Zero idle CPU")
+    title: t`Zero idle CPU`
 
     property bool syncing: false
     property bool drawerOpen: false
 
-    ColumnLayout {
+    Column {
         anchors.fill: parent
         anchors.margins: 16
         spacing: 12
 
-        RowLayout {
+        Row {
             spacing: 8
 
             Rectangle {
+                Layout.alignment: Align.VCenter
                 width: 10
                 height: 10
                 radius: 5
-                color: palette.highlight
+                fill: palette.highlight
 
                 SequentialAnimation on opacity {
                     loops: Animation.Infinite
@@ -185,7 +187,8 @@ ApplicationWindow {
             }
 
             Label {
-                text: syncing ? qsTr("Syncing changes…") : qsTr("Up to date")
+                Layout.alignment: Align.VCenter
+                text: syncing ? t`Syncing changes…` : t`Up to date`
                 Accessible.role: Accessible.StatusBar
                 Accessible.name: text
             }
@@ -205,9 +208,13 @@ ApplicationWindow {
 
             Label {
                 width: parent.width
-                text: qsTr("Does no paint or binding work while hidden.")
+                text: t`Does no paint or binding work while hidden.`
                 wrapMode: Text.Wrap
             }
+        }
+
+        Item {
+            Layout.fillHeight: true
         }
     }
 }

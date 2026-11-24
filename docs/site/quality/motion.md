@@ -45,20 +45,21 @@ Never use a visible duration below `limits::motion::MIN_VISIBLE_MS` (`50 ms`), w
 
 ```qml
 import Ljos.Ui
-import Ljos.Controls.Basic
+import Ljos.Controls
+import Ljos.Core
 
 ApplicationWindow {
     width: 360
     height: 240
     visible: true
-    title: qsTr("Menu transition")
+    title: t`Menu transition`
 
     Button {
         id: menuButton
         anchors.left: parent.left
         anchors.top: parent.top
         anchors.margins: 16
-        text: qsTr("Options")
+        text: t`Options`
         onClicked: optionsMenu.open()
 
         Menu {
@@ -93,10 +94,10 @@ ApplicationWindow {
             }
 
             MenuItem {
-                text: qsTr("Duplicate")
+                text: t`Duplicate`
             }
             MenuItem {
-                text: qsTr("Export…")
+                text: t`Export…`
             }
         }
     }
@@ -192,13 +193,14 @@ Animating `height` triggers `motion-layout-property` and relayouts the window on
 
 ```qml
 import Ljos.Ui
-import Ljos.Controls.Basic
+import Ljos.Controls
+import Ljos.Core
 
 ApplicationWindow {
     width: 360
     height: 220
     visible: true
-    title: qsTr("Drawer reveal")
+    title: t`Drawer reveal`
 
     property bool panelOpen: true
 
@@ -223,7 +225,7 @@ ApplicationWindow {
 
             Label {
                 width: parent.width
-                text: qsTr("Slides smoothly without recalculating layout every frame.")
+                text: t`Slides smoothly without recalculating layout every frame.`
                 wrapMode: Text.Wrap
             }
         }

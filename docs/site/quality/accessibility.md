@@ -25,18 +25,19 @@ Every interactive element, meaningful image, dialog, and input field needs an un
 
 - **`a11y-unnamed-interactive` (Error, static and runtime):** Any item that reacts to a click, tap, or key press must have an accessible name. Prefer a `Button` over a bare `Rectangle` with a `TapHandler`. If you must build a custom item, set `Accessible.role`, `Accessible.name`, and `Accessible.onPressAction`.
 - **`a11y-unnamed-icon-button` (Error, static and runtime) and `a11y-icon-button-no-tooltip` (Warning, static and runtime):** For an icon-only button, set `text` to its accessible name, hide the label visually with `display: AbstractButton.IconOnly`, and show a `ToolTip` on both hover and `visualFocus`.
-- **`a11y-name-mismatch` (Warning, static and runtime):** When you override `Accessible.name` on a control that shows visible text, start the accessible name with the visible words in the same order so voice-control users can say what they see (for example, `text: qsTr("Send")` with `Accessible.name: qsTr("Send message")`).
+- **`a11y-name-mismatch` (Warning, static and runtime):** When you override `Accessible.name` on a control that shows visible text, start the accessible name with the visible words in the same order so voice-control users can say what they see (for example, `` text: t`Send` `` with `` Accessible.name: t`Send message` ``).
 
 ```qml
 import Ljos.Ui
-import Ljos.Controls.Basic
+import Ljos.Controls
 import Ljos.Layout
+import Ljos.Core
 
 ApplicationWindow {
     width: 360
     height: 120
     visible: true
-    title: qsTr("Toolbar example")
+    title: t`Toolbar example`
 
     Row {
         anchors.centerIn: parent
@@ -44,7 +45,7 @@ ApplicationWindow {
 
         ToolButton {
             Layout.alignment: Align.VCenter
-            text: qsTr("Delete selected rows")
+            text: t`Delete selected rows`
             display: AbstractButton.IconOnly
             icon.name: "edit-delete"
             ToolTip.text: text
@@ -54,8 +55,8 @@ ApplicationWindow {
 
         Button {
             Layout.alignment: Align.VCenter
-            text: qsTr("Send")
-            Accessible.name: qsTr("Send message")
+            text: t`Send`
+            Accessible.name: t`Send message`
         }
     }
 }
@@ -69,7 +70,8 @@ ApplicationWindow {
 ```qml group=invoices
 import Ljos.Ui
 import "Main.rows.ts" as Rows
-import Ljos.Controls.Basic
+import Ljos.Controls
+import Ljos.Core
 
 ListView {
     width: 320
@@ -88,7 +90,7 @@ ListView {
         ToolButton {
             anchors.right: parent.right
             anchors.verticalCenter: parent.verticalCenter
-            text: qsTr("More options for %1").arg(title)
+            text: t`More options for ${title}`
             display: AbstractButton.IconOnly
             icon.name: "overflow-menu"
             ToolTip.text: text
@@ -115,53 +117,63 @@ export interface Row {
 - **`a11y-live-status` (Hint, runtime):** Mark status lines or toasts with `Accessible.role: Accessible.StatusBar` (or `Accessible.AlertMessage` for urgent errors) so screen readers announce updates when the text changes.
 
 ```qml files=status-ok.svg,decorative-wave.svg
-import QtQuick
-import QtQuick.Controls
-import QtQuick.Layouts
+import Ljos.Ui
+import Ljos.Core
+import Ljos.Controls
+import Ljos.Layout
 
 ApplicationWindow {
     width: 360
     height: 240
     visible: true
-    title: qsTr("Account settings")
+    title: t`Account settings`
 
     property int savedCount: 3
 
-    ColumnLayout {
+    Column {
         anchors.fill: parent
         anchors.margins: 16
         spacing: 12
 
-        RowLayout {
+        Row {
             spacing: 8
             Image {
+                Layout.alignment: Align.VCenter
                 source: "status-ok.svg"
-                Accessible.name: qsTr("Connected")
+                Accessible.name: t`Connected`
             }
             Image {
+                Layout.alignment: Align.VCenter
                 source: "decorative-wave.svg"
                 Accessible.ignored: true
             }
         }
 
-        ColumnLayout {
+        Column {
+            Layout.fillWidth: true
             spacing: 4
             Label {
-                text: qsTr("Email address")
+                Layout.fillWidth: false
+                text: t`Email address`
             }
             // The label names the field: a placeholder would be drawn
             // too faint to read, and gone once the reader types.
             TextField {
                 Layout.fillWidth: true
-                Accessible.name: qsTr("Email address")
+                Accessible.name: t`Email address`
             }
         }
 
         Label {
+            Layout.fillWidth: false
             id: statusLine
-            text: qsTr("Saved %1 files").arg(savedCount)
+            text: t`Saved ${savedCount} files`
             Accessible.role: Accessible.StatusBar
             Accessible.name: text
+        }
+
+        Item {
+            Layout.fillHeight: true
         }
     }
 }
@@ -178,14 +190,15 @@ ApplicationWindow {
 ```qml group=files
 import Ljos.Ui
 import "Main.rows.ts" as Rows
-import Ljos.Controls.Basic
+import Ljos.Controls
 import Ljos.Layout
+import Ljos.Core
 
 ApplicationWindow {
     width: 360
     height: 220
     visible: true
-    title: qsTr("Files")
+    title: t`Files`
 
     ListView {
         anchors.fill: parent
@@ -211,7 +224,7 @@ ApplicationWindow {
 
             Button {
                 Layout.alignment: Align.VCenter
-                text: qsTr("Delete %1").arg(name)
+                text: t`Delete ${name}`
             }
         }
     }

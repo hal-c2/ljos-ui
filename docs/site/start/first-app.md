@@ -16,7 +16,7 @@ Create a new directory for your project and save the following file as `Main.qml
 ```qml
 import Ljos.Ui
 import Ljos.Layout
-import Ljos.Controls.Basic
+import Ljos.Controls
 
 Rectangle {
     id: root
@@ -96,7 +96,7 @@ Click **Increment** until the counter reads `Count: 3`. Leave the window open, t
 ```qml
 import Ljos.Ui
 import Ljos.Layout
-import Ljos.Controls.Basic
+import Ljos.Controls
 
 Rectangle {
     id: root

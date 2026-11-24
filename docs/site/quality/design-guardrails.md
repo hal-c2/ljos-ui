@@ -24,21 +24,22 @@ On Ljós, `import Ljos.Design` is built in and requires no extra files in your p
 
 ```qml
 import Ljos.Ui
-import Ljos.Controls.Basic
+import Ljos.Controls
 import Ljos.Design
+import Ljos.Core
 
 ApplicationWindow {
     objectName: "root"
     width: 400
     height: 240
     visible: true
-    title: qsTr("Notes")
+    title: t`Notes`
     color: Colors.canvas
 
     Pane {
         anchors.centerIn: parent
         Label {
-            text: qsTr("Synced with workspace")
+            text: t`Synced with workspace`
             color: Colors.textMuted
         }
     }
@@ -128,34 +129,42 @@ Consider a component with three common issues: a literal grey text colour that f
 ```qml
 // Bad: triggers color-text-contrast, color-literal, a11y-unnamed-icon-button,
 // a11y-icon-button-no-tooltip, and text-unbounded-dynamic
-import QtQuick
-import QtQuick.Controls
-import QtQuick.Layouts
+import Ljos.Ui
+import Ljos.Core
+import Ljos.Controls
+import Ljos.Layout
 
 ApplicationWindow {
     width: 360
     height: 120
     visible: true
-    title: qsTr("Sync status")
+    title: t`Sync status`
 
     property string folderName: "Quarterly financial statements"
 
     Rectangle {
         anchors.fill: parent
-        color: "#f4f4f4"
+        fill: "#f4f4f4"
 
-        RowLayout {
+        Row {
             anchors.fill: parent
             anchors.margins: 12
             spacing: 8
 
             Label {
+                Layout.alignment: Align.VCenter
                 Layout.preferredWidth: 120
                 text: folderName
                 color: "#a0a0a0"
             }
 
+            Item {
+                Layout.alignment: Align.VCenter
+                Layout.fillWidth: true
+            }
+
             ToolButton {
+                Layout.alignment: Align.VCenter
                 icon.name: "view-refresh"
             }
         }
@@ -168,14 +177,15 @@ To fix these findings, bind surfaces and text to `palette` roles (or `Ljos.Desig
 ```qml
 // Good: passes both ljos check and ljos audit across the full matrix
 import Ljos.Ui
-import Ljos.Controls.Basic
+import Ljos.Controls
 import Ljos.Layout
+import Ljos.Core
 
 ApplicationWindow {
     width: 360
     height: 120
     visible: true
-    title: qsTr("Sync status")
+    title: t`Sync status`
 
     property string folderName: "Quarterly financial statements"
 
@@ -205,7 +215,7 @@ ApplicationWindow {
 
             ToolButton {
                 Layout.alignment: Align.VCenter
-                text: qsTr("Refresh folder")
+                text: t`Refresh folder`
                 display: AbstractButton.IconOnly
                 icon.name: "view-refresh"
                 ToolTip.text: text

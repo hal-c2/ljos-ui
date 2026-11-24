@@ -27,6 +27,7 @@ The arms are tried in order, and the first whose pattern matches gives the value
 
 ```qml
 import Ljos.Ui
+import Ljos.Core
 
 Window {
     color: palette.window
@@ -39,9 +40,9 @@ Window {
     Text {
         color: palette.windowText
         text: match (unread) {
-            when 0: qsTr("No messages");
-            when 1: qsTr("One message");
-            default: qsTr("%1 messages").arg(unread);
+            when 0: t`No messages`;
+            when 1: t`One message`;
+            default: t`${unread} messages`;
         }
     }
 }

@@ -29,7 +29,7 @@ Write this as `Main.qml` and run `ljos check` on its directory:
 ```qml
 import Ljos.Ui
 import Ljos.Layout
-import Ljos.Controls.Basic
+import Ljos.Controls
 
 Column {
     padding: 12
@@ -57,7 +57,7 @@ Watch out for icon-only buttons: a control with no `text` has no accessible name
 ```qml
 import Ljos.Ui
 import Ljos.Layout
-import Ljos.Controls.Basic
+import Ljos.Controls
 
 Row {
     padding: 12
@@ -84,7 +84,7 @@ Value and state controls keep the accessibility tree updated as the user interac
 
 ```qml
 import Ljos.Ui
-import Ljos.Controls.Basic
+import Ljos.Controls
 
 Item {
     width: 300
