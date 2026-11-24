@@ -13,26 +13,34 @@ This page shows you how to test an application with Ljos.Test: TypeScript files 
 
 A test file is a TypeScript module whose name ends in `.test.ts`. It imports `test` and `expect` from `ljos:test`, names the QML file it tests, and acts on it through locators: the same way of naming an item that the MCP inspector, an agent and `ljos observe` use. Every test gets a fresh application, headless, on a virtual clock.
 
-Given this `Counter.qml`:
+Given this `Main.qml`:
 
-```qml
+```qml group=counter
 import QtQuick
 import QtQuick.Controls
 
 Item {
-    width: 200; height: 120
+    width: 200
+    height: 120
     property int count: 0
-    Button { text: "Add"; onClicked: count++ }
-    Text { objectName: "count"; y: 80; text: count }
+    Button {
+        text: "Add"
+        onClicked: count++
+    }
+    Text {
+        objectName: "count"
+        y: 80
+        text: count
+    }
 }
 ```
 
 write `counter.test.ts` beside it:
 
-```ts
+```ts file=counter.test.ts group=counter
 import { test, expect } from "ljos:test";
 
-test.use({ app: "./Counter.qml" });
+test.use({ app: "./Main.qml" });
 
 test("a click counts", async (app) => {
   await app.click('role=button[name="Add"]');
