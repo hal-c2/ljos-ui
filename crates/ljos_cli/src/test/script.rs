@@ -8,7 +8,6 @@ use std::{
     cell::RefCell,
     path::{Path, PathBuf},
     rc::Rc,
-    sync::Arc,
 };
 
 use ljos_compiler::Project;
@@ -55,6 +54,9 @@ pub(super) fn discover(root: &Path) -> Vec<String> {
     found
 }
 
+/// Why a file of the project does not compile, by key; `None` when it does.
+pub(super) type Broken = Rc<dyn Fn(&str) -> Option<String>>;
+
 /// An application a test started.
 struct App {
     // The client goes before the inspector it talks to.
@@ -82,8 +84,7 @@ pub(super) struct Host {
     root: PathBuf,
     source: Files,
     project: Rc<RefCell<Project<QtTypeOracle>>>,
-    /// Why a file of the project does not compile, by key.
-    broken: Rc<dyn Fn(&str) -> Option<String>>,
+    broken: Broken,
     apps: Vec<Option<App>>,
 }
 
@@ -92,7 +93,7 @@ impl Host {
         root: PathBuf,
         source: Files,
         project: Rc<RefCell<Project<QtTypeOracle>>>,
-        broken: Rc<dyn Fn(&str) -> Option<String>>,
+        broken: Broken,
     ) -> Self {
         Host {
             root,
@@ -199,7 +200,7 @@ impl TestHost for Host {
         if let Some(why) = (self.broken)(&key) {
             return Err(format!("{app} does not compile: {why}"));
         }
-        if self.source.0.files.get(&key).is_none() {
+        if !self.source.0.files.contains_key(&key) {
             return Err(format!("there is no {app} beside {from}"));
         }
         let started = self
