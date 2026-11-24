@@ -47,6 +47,37 @@ Feature: Editing QML with the authoring tools
         }
         """
 
+    Scenario: A handler's string and template literals keep their lines as written
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
+
+        MouseArea {
+            id: area
+            onClicked: {}
+        }
+        """
+      When the agent calls the tool "qml_edit_apply" with:
+        """json
+        {"path": "Main.qml", "write": true, "edit": {"op": "set_binding", "object": {"id": "area"}, "name": "onClicked", "value": "{\n    print(`first\n  second ${`in\nner`}\nlast`)\n    print(\"one\n  two\")\n}"}}
+        """
+      Then the file "Main.qml" is:
+        """qml
+        import QtQuick
+
+        MouseArea {
+            id: area
+            onClicked: {
+                print(`first
+          second ${`in
+        ner`}
+        last`)
+                print("one
+          two")
+            }
+        }
+        """
+
     Scenario: A dotted name finds the binding in its group
       Given the file "Main.qml":
         """qml
