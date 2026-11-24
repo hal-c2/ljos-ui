@@ -261,7 +261,7 @@
       return this.countNow() === 0 ? null : this.inspectNow();
     }
     propertyOf(seen, name) {
-      const row = (seen.properties || []).find((p) => p.name === name);
+      const row = rowOf(seen, name);
       if (!row) throw new TestError(`${this.text} has no property ${show(name)}`);
       return valueOf(row);
     }
@@ -274,6 +274,11 @@
     text() {
       return Promise.resolve(String(this.propertyNow("text")));
     }
+  }
+
+  // The row of a property in what the inspector shows of an item.
+  function rowOf(seen, name) {
+    return (seen.properties || []).find((p) => p.name === name);
   }
 
   // A property as the inspector shows it, read back as the value a script
@@ -373,7 +378,8 @@
 
   // How a locator matcher says what it expects, what it reads each time it
   // looks, and how it says what it saw. An item that is not there has no
-  // text, is not shown and not enabled: under `not` that holds. Anything
+  // text, is not shown and not enabled, and one without a property does
+  // not have it: under `not` that holds. Anything
   // else that stops a look (a locator that finds more than one item, a
   // tool the inspector refuses) never holds, with or without `not`.
   const NOT_THERE = "not there";
@@ -381,7 +387,9 @@
     toHaveText: [1, (want) => `to have text ${show(want)}`, (loc, want) => {
       const seen = loc.seenNow();
       if (!seen) return [false, NOT_THERE];
-      const text = String(loc.propertyOf(seen, "text"));
+      const row = rowOf(seen, "text");
+      if (!row) return [false, "an item with no text"];
+      const text = String(valueOf(row));
       return [want instanceof RegExp ? want.test(text) : text === String(want), show(text)];
     }],
     // With no value, that it has the property at all.
@@ -391,7 +399,9 @@
       (loc, name, ...want) => {
         const seen = loc.seenNow();
         if (!seen) return [false, NOT_THERE];
-        const value = loc.propertyOf(seen, name);
+        const row = rowOf(seen, name);
+        if (!row) return [false, `an item with no ${name}`];
+        const value = valueOf(row);
         return [want.length === 0 || equal(value, want[0]), show(value)];
       },
     ],
@@ -419,7 +429,9 @@
     toBeChecked: [0, () => "to be checked", (loc) => {
       const seen = loc.seenNow();
       if (!seen) return [false, NOT_THERE];
-      const checked = loc.propertyOf(seen, "checked");
+      // An item that cannot be checked is not checked.
+      const row = rowOf(seen, "checked");
+      const checked = row ? valueOf(row) : false;
       return [checked === true, checked ? "checked" : "not checked"];
     }],
     toBeFocused: [0, () => "to have the focus", (loc) => {
