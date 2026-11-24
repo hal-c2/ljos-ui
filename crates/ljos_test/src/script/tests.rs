@@ -225,7 +225,7 @@ fn a_retried_expectation_gives_up_at_its_timeout() {
         outcomes(&[("a.test.ts", &src)]),
         [fail(
             "expected #count to have text \"1\"; it was \"0\" after 500 ms",
-            "a.test.ts:4"
+            "a.test.ts:5"
         )]
     );
 }
@@ -264,7 +264,7 @@ fn an_item_that_is_not_there_holds_only_under_not() {
 #[test]
 fn a_property_an_item_does_not_have_holds_only_under_not() {
     let src = format!(
-        "{HEAD}test(\"none\", async (app) => {{\n  await expect(app.find(\"#count\")).not.toHaveProperty(\"checked\", {{ timeout: 0 }});\n  await expect(app.find(\"#count\")).not.toBeChecked({{ timeout: 0 }});\n}});\ntest(\"some\", async (app) => {{\n  await expect(app.find(\"#count\")).toHaveProperty(\"checked\", {{ timeout: 0 }});\n}});\n"
+        "{HEAD}test(\"none\", async (app) => {{\n  await expect(app.find(\"#count\")).not.toHaveProperty(\"checked\", undefined, {{ timeout: 0 }});\n  await expect(app.find(\"#count\")).not.toBeChecked({{ timeout: 0 }});\n}});\ntest(\"some\", async (app) => {{\n  await expect(app.find(\"#count\")).toHaveProperty(\"checked\", undefined, {{ timeout: 0 }});\n}});\n"
     );
     assert_eq!(
         outcomes(&[("a.test.ts", &src)]),

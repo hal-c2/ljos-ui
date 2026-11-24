@@ -102,6 +102,7 @@ declare module "ljos:test" {
   /** Each retries on the application's clock until it holds or its timeout passes. */
   export interface LocatorChecks {
     toHaveText(expected: string | RegExp, options?: Wait): Promise<void>;
+    /** With `expected` left out or `undefined`, that the item has the property at all: `toHaveProperty("checked", undefined, { timeout: 0 })`. */
     toHaveProperty(name: string, expected?: unknown, options?: Wait): Promise<void>;
     toHaveCount(expected: number, options?: Wait): Promise<void>;
     toExist(options?: Wait): Promise<void>;
