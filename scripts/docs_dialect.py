@@ -104,7 +104,13 @@ def main() -> int:
         page = path.relative_to(site).as_posix()
         if page in COMPAT_PAGES:
             continue
-        found = [b for b in blocks(page, path.read_text(encoding="utf-8")) if b.tag in CODE]
+        text = path.read_text(encoding="utf-8")
+        # tests/docs_site.rs reads backtick fences only, so a `~~~` block
+        # would be an example nothing checks or numbers.
+        for n, line in enumerate(text.splitlines(), 1):
+            if line.lstrip().startswith("~~~"):
+                problems.append(f"{shown}/{page}:{n}: a `~~~` fence; the site fences its blocks with backticks")
+        found = [b for b in blocks(page, text) if b.tag in CODE]
         if not found:
             continue
         pages += 1
@@ -122,6 +128,16 @@ def main() -> int:
             if block.tag == "qml":
                 at += f" ({key})"
             qt = QT_IMPORT.search(block.body)
+            basic = BASIC_IMPORT.search(block.body)
+            if basic:
+                if block.tag == "qml" and key in BASIC_GAPS:
+                    seen_basic.add(key)
+                else:
+                    problems.append(
+                        f"{at}: `import Ljos.Controls.Basic` draws the Basic style; "
+                        "import the styled Ljos.Controls"
+                    )
+            # A gap keeps Qt's imports and Qt's translation, not the Basic style.
             if block.tag == "qml" and key in gaps:
                 if not qt:
                     problems.append(
@@ -139,14 +155,6 @@ def main() -> int:
                 )
             if tr := QT_TR.search(block.body):
                 problems.append(f"{at}: `{tr.group(1)}` is Qt's; translate with t`…` from Ljos.Core")
-            if BASIC_IMPORT.search(block.body):
-                if block.tag == "qml" and key in BASIC_GAPS:
-                    seen_basic.add(key)
-                else:
-                    problems.append(
-                        f"{at}: `import Ljos.Controls.Basic` draws the Basic style; "
-                        "import the styled Ljos.Controls"
-                    )
     for key in sorted(set(BASIC_GAPS) - seen_basic):
         problems.append(
             f"scripts/docs_dialect.py: {key} keeps Ljos.Controls.Basic for "

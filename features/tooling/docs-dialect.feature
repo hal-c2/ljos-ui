@@ -134,6 +134,36 @@ Feature: The site's examples are written in Ljós's dialect
     Then the command exits with status 1
     And the command's output mentions "site/controls/buttons.md:1 (controls/buttons.md#1): `import Ljos.Controls.Basic` draws the Basic style; import the styled Ljos.Controls"
 
+  Scenario: An example kept in Qt's QML for a gap still draws its controls in Ljós's style
+    Given the file "site/controls/sliders.md":
+      """
+      ```qml
+      import Ljos.Ui
+      Item {}
+      ```
+
+      ```qml
+      import QtQuick
+      import Ljos.Controls.Basic
+      Dial {}
+      ```
+      """
+    When the author runs "mise-tasks/docs/dialect site --pending pending.txt"
+    Then the command exits with status 1
+    And the command's output mentions "site/controls/sliders.md:6 (controls/sliders.md#2): `import Ljos.Controls.Basic` draws the Basic style; import the styled Ljos.Controls"
+
+  Scenario: A block fenced with tildes is one nothing would check
+    Given the file "site/ui/items.md":
+      """
+      ~~~qml
+      import QtQuick
+      Rectangle {}
+      ~~~
+      """
+    When the author runs "mise-tasks/docs/dialect site --pending pending.txt"
+    Then the command exits with status 1
+    And the command's output mentions "site/ui/items.md:1: a `~~~` fence; the site fences its blocks with backticks"
+
   Scenario: The page about porting from Qt shows Qt's forms beside Ljós's
     Given the file "site/language/porting-from-qt.md":
       """
