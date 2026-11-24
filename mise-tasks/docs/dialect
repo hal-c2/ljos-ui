@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+#MISE description="Lint the code blocks of docs/site for Ljós's dialect (scripts/docs_dialect.py): no `import Qt…`, `qsTr` or `Ljos.Controls.Basic` outside the porting page, an example tests/docs_site.txt keeps in Qt's QML for a gap, or a Basic gap the script lists"
+#USAGE arg "[site]" help="The site's directory (default: docs/site)"
+#USAGE flag "--pending <file>" help="The examples kept in Qt's QML, and why (default: crates/ljos_cli/tests/docs_site.txt)"
+set -euo pipefail
+# shellcheck source-path=SCRIPTDIR source=../_lib/env.sh
+. "$(dirname "$0")/../_lib/env.sh"
+need_python3
+# Not cd'd to the checkout: a site named on the command line is where the author is.
+python3 "$ljos_root/scripts/docs_dialect.py" "$@"

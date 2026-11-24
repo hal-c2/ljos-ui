@@ -4,8 +4,8 @@
 #USAGE flag "--open" help="Open them in a browser when built"
 #USAGE arg "[args]..." var=#true help="More arguments for cargo doc: -p <crate> for only that crate's docs, --document-private-items"
 set -euo pipefail
-# shellcheck source-path=SCRIPTDIR source=_lib/env.sh
-. "$(dirname "$0")/_lib/env.sh"
+# shellcheck source-path=SCRIPTDIR source=../_lib/env.sh
+. "$(dirname "$0")/../_lib/env.sh"
 cd "$ljos_root"
 need_python3
 # Narrowed when a crate is named, as test is.
