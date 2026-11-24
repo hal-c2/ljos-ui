@@ -249,6 +249,49 @@ Feature: Ljós's own style: dialogs, text areas, rows, choices and the buttons o
       And 300 milliseconds pass
       Then the property "progress" of "wipe" is within 0.15 of 0.5
 
+  Rule: A row or a button shown under its icon has its own icon over its text, the two in its middle
+
+    # `TextUnderIcon` puts the text below the icon, with the style's own
+    # icon (`iconName`) as with a picture. The answers: the glyph ends above
+    # the text, the middles of the two are the same, the content asks for
+    # the wider of the two and for both one over the other, and beside its
+    # icon the same control is still one line.
+    @api-QtQuick.Controls.AbstractButton.display
+    Scenario Outline: <control> shown under its icon has the glyph over the text
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.impl
+        import Ljos.Controls
+        Item {
+          id: root; objectName: "root"
+          width: 400; height: 200
+          <control> { id: under; text: "Inbox"; iconName: "search"; display: IconLabel.TextUnderIcon }
+          <control> { id: beside; y: 100; text: "Inbox"; iconName: "search" }
+          function part(c, name) { for (const k of c.contentItem.children) if (k.objectName === name) return k; return null }
+          function middle(i) { return Math.round(i.mapToItem(under, 0, 0).x + i.width / 2) }
+          property var got: []
+          function measure() {
+            const glyph = part(under, "glyph"), label = part(under, "label")
+            const text = label.implicitWidth
+            got = [glyph.mapToItem(under, 0, 0).y + glyph.height <= label.mapToItem(under, 0, 0).y,
+                   middle(glyph) - middle(label),
+                   under.implicitContentWidth - Math.max(glyph.width, text),
+                   under.implicitContentHeight - (glyph.height + under.spacing + label.implicitHeight),
+                   part(beside, "glyph").mapToItem(beside, 0, 0).x + part(beside, "glyph").width
+                     <= part(beside, "label").mapToItem(beside, 0, 0).x]
+          }
+        }
+        """
+      When the method "measure" of "root" is called
+      Then the property "got" of "root" is [true, 0, 0, 0, true]
+
+      Examples:
+        | control      |
+        | ItemDelegate |
+        | ToolButton   |
+        | RoundButton  |
+
   Rule: Every one of them passes the design audit
 
     Scenario Outline: A form of them in <scheme> has nothing to report

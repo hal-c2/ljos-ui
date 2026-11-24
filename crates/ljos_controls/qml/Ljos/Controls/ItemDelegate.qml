@@ -35,16 +35,21 @@ T.ItemDelegate {
         Item {
             readonly property bool glyphShown: control.iconName.length > 0
                                                && control.display !== T.AbstractButton.TextOnly
-            readonly property real start: glyphShown ? glyph.width + control.spacing : 0
-            implicitWidth: start + label.implicitWidth
-            implicitHeight: Math.max(label.implicitHeight, glyphShown ? glyph.height : 0)
+            // The glyph over the text, both shown: one block in the middle.
+            readonly property bool under: glyphShown && control.text.length > 0
+                                          && control.display === T.AbstractButton.TextUnderIcon
+            readonly property real start: glyphShown && !under ? glyph.width + control.spacing : 0
+            readonly property real top: under ? glyph.height + control.spacing : 0
+            readonly property real stacked: top + label.implicitHeight
+            implicitWidth: under ? Math.max(glyph.width, label.implicitWidth) : start + label.implicitWidth
+            implicitHeight: under ? stacked : Math.max(label.implicitHeight, glyphShown ? glyph.height : 0)
 
             Icon {
                 id: glyph
                 objectName: "glyph"
                 visible: parent.glyphShown
-                x: control.mirrored ? parent.width - width : 0
-                y: (parent.height - height) / 2
+                x: parent.under ? (parent.width - width) / 2 : control.mirrored ? parent.width - width : 0
+                y: parent.under ? (parent.height - parent.stacked) / 2 : (parent.height - height) / 2
                 name: control.iconName
                 color: Theme.textMuted
             }
@@ -55,11 +60,12 @@ T.ItemDelegate {
                 id: label
                 objectName: "label"
                 x: control.mirrored ? 0 : parent.start
+                y: parent.under ? (parent.height - parent.stacked) / 2 + parent.top : 0
                 width: parent.width - parent.start
-                height: parent.height
+                height: parent.under ? implicitHeight : parent.height
                 spacing: control.spacing
                 mirrored: control.mirrored
-                display: parent.glyphShown && control.display === T.AbstractButton.TextBesideIcon
+                display: parent.glyphShown && (control.display === T.AbstractButton.TextBesideIcon || parent.under)
                          ? T.AbstractButton.TextOnly : control.display
                 alignment: control.display === T.AbstractButton.IconOnly
                            || control.display === T.AbstractButton.TextUnderIcon
