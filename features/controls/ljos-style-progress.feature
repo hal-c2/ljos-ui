@@ -24,11 +24,21 @@ Feature: Ljós's own style: how far a task is and that it is still working
         import Ljos.Ui
         import Ljos.Core
         import Ljos.Controls
+        import QtQuick as Q
         Item {
-          width: 240; height: 100
+          width: 240; height: 200
           Component.onCompleted: { Theme.canvas = "#ffffff"; Theme.text = "#000000"; Theme.accent = "#0066cc" }
           ProgressBar { objectName: "copy"; width: 200; value: 0.5 }
           ProgressBar { objectName: "wait"; y: 40; width: 200; indeterminate: true }
+          ProgressBar { objectName: "tall"; y: 60; width: 200; height: 20; value: 0.5 }
+          ProgressBar {
+            objectName: "back"; y: 100; width: 200; value: 0.5
+            Q.LayoutMirroring.enabled: true
+          }
+          ProgressBar {
+            objectName: "backWait"; y: 140; width: 200; indeterminate: true
+            Q.LayoutMirroring.enabled: true
+          }
         }
         """
 
@@ -46,6 +56,16 @@ Feature: Ljós's own style: how far a task is and that it is still working
       And the property "contentItem.children.1.x" of "wait" is at most 0
       When 600 milliseconds pass
       Then the property "contentItem.children.1.x" of "wait" is at least 20
+
+    Scenario: A bar laid out taller keeps its fill on the thin track
+      Then the property "contentItem.children.0.height" of "tall" is 4
+      And the property "contentItem.children.0.y" of "tall" is 8
+
+    Scenario: Mirrored, the bar fills and sweeps from the right
+      Then the property "contentItem.children.0.x" of "back" is 100
+      And the property "contentItem.children.1.x" of "backWait" is at least 150
+      When 600 milliseconds pass
+      Then the property "contentItem.children.1.x" of "backWait" is at most 130
 
     Scenario: With reduced motion the fill stays at the start and pulses
       Given the system setting "reduced motion" is true
