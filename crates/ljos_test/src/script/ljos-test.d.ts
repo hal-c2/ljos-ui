@@ -144,8 +144,11 @@ declare module "ljos:test" {
 
   export const test: Test;
   export const expect: Expect;
-  /** Groups tests under a name; `fn` adds them at once, so it is not async. */
-  export function describe(name: string, fn: () => undefined): void;
+  /**
+   * Groups tests under a name. `fn` adds them at once, so it is not async:
+   * a group whose function returns a promise fails when the file loads.
+   */
+  export function describe(name: string, fn: () => void): void;
   /** Starts another application in a test: a second window, a second app. */
   export function launch(app: string, options?: Omit<Use, "app">): Promise<App>;
 }

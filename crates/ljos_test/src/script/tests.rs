@@ -578,7 +578,9 @@ fn a_file_whose_tests_cannot_be_listed_fails() {
     let src = format!(
         "{HEAD}test(\"one\", async () => {{}});\nglobalThis.__ljos_test_list = () => {{ throw new Error(\"no list\"); }};\n"
     );
-    let results = outcomes(&[("a.test.ts", &src)]);
+    let (results, fake) = run(&[("a.test.ts", &src)], &Options::default());
+    assert!(fake.borrow().apps.is_empty());
+    let results: Vec<Outcome> = results.into_iter().map(|r| r.outcome).collect();
     let [Outcome::Fail { message, .. }] = results.as_slice() else {
         panic!("{results:?}");
     };
@@ -587,6 +589,15 @@ fn a_file_whose_tests_cannot_be_listed_fails() {
             && message.contains("no list"),
         "{message}"
     );
+}
+
+#[test]
+fn a_file_whose_tests_all_are_skipped_ends_what_it_started() {
+    let src = "import { test, launch } from \"ljos:test\";\nlaunch(\"./Counter.qml\");\ntest.skip(\"later\", async () => {});\n";
+    let (results, fake) = run(&[("a.test.ts", src)], &Options::default());
+    assert_eq!(results[0].outcome, Outcome::Skip);
+    assert_eq!(fake.borrow().launched, 1);
+    assert!(fake.borrow().apps.is_empty());
 }
 
 #[test]
