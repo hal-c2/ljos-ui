@@ -104,6 +104,74 @@ fn lower_module(path: &str, key: &str, source: &str) -> Script {
     }
 }
 
+/// A TypeScript module run by itself rather than imported by a QML file
+/// (a test file, a helper beside it): its types erased and made into a
+/// function of what it imports that gives back what it exports.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StandaloneModule {
+    /// `(function (__ljos_imports) { … })`, with the module's lines where
+    /// they were, so a line an error names is the module's own.
+    pub source: String,
+    /// What it imports, in the order `__ljos_imports` hands it over: a
+    /// file beside it by its key, or a name from `bare` as it is.
+    pub imports: Vec<ScriptImport>,
+}
+
+/// Where a module cannot run as written, 1-based, and why.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModuleFault {
+    pub line: u32,
+    pub column: u32,
+    pub message: String,
+}
+
+/// The module at `key` with the text `source`, erased to run by itself. It
+/// may import files beside it, and the modules `bare` names by name.
+///
+/// # Errors
+///
+/// What in it does not parse or does not erase (an `enum`, a default
+/// export, an import of a module that is neither beside it nor in `bare`).
+pub fn standalone_module(
+    key: &str,
+    source: &str,
+    bare: &[&str],
+) -> Result<StandaloneModule, Vec<ModuleFault>> {
+    let erased = module::erase_with(key, source, bare);
+    if !erased.faults.is_empty() {
+        return Err(erased
+            .faults
+            .iter()
+            .map(|fault| {
+                let before = &source[..(fault.span.start as usize).min(source.len())];
+                let line = before.matches('\n').count() + 1;
+                let column = before[before.rfind('\n').map_or(0, |at| at + 1)..]
+                    .chars()
+                    .count()
+                    + 1;
+                ModuleFault {
+                    line: u32::try_from(line).unwrap_or(u32::MAX),
+                    column: u32::try_from(column).unwrap_or(u32::MAX),
+                    message: fault.message.clone(),
+                }
+            })
+            .collect());
+    }
+    let members: Vec<String> = erased
+        .exports
+        .iter()
+        .map(|(name, read)| format!("get {}() {{ return {read}; }}", module_key(name)))
+        .collect();
+    Ok(StandaloneModule {
+        source: format!(
+            "(function (__ljos_imports) {{\"use strict\";{}\n;return {{ {} }};\n}})",
+            erased.text,
+            members.join(", ")
+        ),
+        imports: erased.imports,
+    })
+}
+
 /// An exported name as a getter's name: quoted unless it is an identifier.
 fn module_key(name: &str) -> String {
     if name
