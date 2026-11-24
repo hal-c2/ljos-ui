@@ -1,15 +1,12 @@
 //! The printer. It walks the QML tree and the comments together, writes
 //! the structure in its own layout and copies everything else.
 
-use oxc_ast_visit::Visit;
-use oxc_syntax::scope::ScopeFlags;
 use qml_syntax::{
     Comment, GetSpan, Parsed, Span,
     ast::{
         QmlBinding, QmlBindingValue, QmlImport, QmlImportSource, QmlInlineComponent, QmlMember,
         QmlObject, QmlPragma, QmlPropertyDeclaration,
     },
-    js::{StringLiteral, TemplateLiteral},
 };
 
 /// Spaces a level.
@@ -19,77 +16,17 @@ const INDENT: usize = 4;
 const TAB: usize = 4;
 
 pub(crate) fn print(source: &str, parsed: &Parsed<'_>) -> String {
-    let mut protected = Protected {
-        source,
-        spans: Vec::new(),
-    };
-    protected.object(&parsed.document.root);
-    protected.spans.sort_by_key(|s| s.start);
     let mut printer = Printer {
         src: source,
         comments: &parsed.comments,
-        protected: protected.spans,
+        // Text that runs over lines inside the JavaScript: its lines are not
+        // the formatter's to indent or trim.
+        protected: qml_syntax::multiline_literals(source, parsed),
         out: String::with_capacity(source.len() + source.len() / 8),
         line_has_code: false,
     };
     printer.document(parsed);
     printer.out
-}
-
-/// Text that runs over lines inside the JavaScript: its lines are not the
-/// formatter's to indent or trim.
-struct Protected<'s> {
-    source: &'s str,
-    spans: Vec<Span>,
-}
-
-impl Protected<'_> {
-    fn keep(&mut self, span: Span) {
-        if self.source[span.start as usize..span.end as usize].contains('\n') {
-            self.spans.push(span);
-        }
-    }
-
-    fn object<'a>(&mut self, object: &QmlObject<'a>) {
-        for member in &object.members {
-            match member {
-                QmlMember::Object(o) => self.object(o),
-                QmlMember::Binding(b) => self.value(&b.value),
-                QmlMember::Property(p) => {
-                    if let Some(v) = &p.value {
-                        self.value(v);
-                    }
-                }
-                QmlMember::Function(f) => self.visit_function(f, ScopeFlags::Function),
-                QmlMember::InlineComponent(c) => self.object(&c.object),
-                QmlMember::Signal(_) | QmlMember::Enum(_) => {}
-            }
-        }
-    }
-
-    fn value<'a>(&mut self, value: &QmlBindingValue<'a>) {
-        match value {
-            QmlBindingValue::Expression(e) => self.visit_expression(e),
-            QmlBindingValue::Statement(s) => self.visit_statement(s),
-            QmlBindingValue::Object(o) => self.object(o),
-            QmlBindingValue::Objects(list) => {
-                for o in list {
-                    self.object(o);
-                }
-            }
-        }
-    }
-}
-
-impl<'a> Visit<'a> for Protected<'_> {
-    // Not walked into: what is nested in a template is inside its span.
-    fn visit_template_literal(&mut self, it: &TemplateLiteral<'a>) {
-        self.keep(it.span);
-    }
-
-    fn visit_string_literal(&mut self, it: &StringLiteral<'a>) {
-        self.keep(it.span);
-    }
 }
 
 /// One thing of a sequence: of the top of the file, or of an object's body.

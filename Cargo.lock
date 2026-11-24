@@ -6837,9 +6837,7 @@ dependencies = [
 name = "qml_fmt"
 version = "0.0.0"
 dependencies = [
- "oxc_ast_visit",
  "oxc_span",
- "oxc_syntax",
  "qml_syntax",
  "thiserror 2.0.21",
 ]
