@@ -164,6 +164,18 @@ Feature: The site's examples are written in Ljós's dialect
     Then the command exits with status 1
     And the command's output mentions "site/ui/items.md:1: a `~~~` fence; the site fences its blocks with backticks"
 
+  Scenario: A tilde fence shown inside a backtick block is that block's text
+    Given the file "site/start/writing.md":
+      """
+      ````md
+      ~~~qml
+      Item {}
+      ~~~
+      ````
+      """
+    When the author runs "mise-tasks/docs/dialect site --pending pending.txt"
+    Then the command exits with status 0
+
   Scenario: The page about porting from Qt shows Qt's forms beside Ljós's
     Given the file "site/language/porting-from-qt.md":
       """

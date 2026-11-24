@@ -75,6 +75,28 @@ def blocks(page: str, text: str) -> list[Block]:
     return out
 
 
+def tilde_fences(text: str) -> list[int]:
+    """The lines, from 1, that open a `~~~` fence outside every backtick
+    one: a tilde fence shown inside a ```md block is that block's text."""
+    out, ticks, tilde = [], 0, 0
+    for n, line in enumerate(text.splitlines(), 1):
+        rest = line.lstrip()
+        if tilde:
+            run = len(rest) - len(rest.lstrip("~"))
+            if run >= tilde and not rest[run:].strip():
+                tilde = 0
+        elif ticks:
+            f = fence(line)
+            if f and f[0] >= ticks and not f[1]:
+                ticks = 0
+        elif (f := fence(line)) is not None:
+            ticks = f[0]
+        elif rest.startswith("~~~"):
+            tilde = len(rest) - len(rest.lstrip("~"))
+            out.append(n)
+    return out
+
+
 def pending(path: Path) -> dict[str, list[str]]:
     """`<page>#<n>` to its reasons, from tests/docs_site.txt."""
     out = {}
@@ -107,9 +129,8 @@ def main() -> int:
         text = path.read_text(encoding="utf-8")
         # tests/docs_site.rs reads backtick fences only, so a `~~~` block
         # would be an example nothing checks or numbers.
-        for n, line in enumerate(text.splitlines(), 1):
-            if line.lstrip().startswith("~~~"):
-                problems.append(f"{shown}/{page}:{n}: a `~~~` fence; the site fences its blocks with backticks")
+        for n in tilde_fences(text):
+            problems.append(f"{shown}/{page}:{n}: a `~~~` fence; the site fences its blocks with backticks")
         found = [b for b in blocks(page, text) if b.tag in CODE]
         if not found:
             continue
