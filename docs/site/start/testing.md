@@ -30,7 +30,7 @@ Item {
     Text {
         objectName: "count"
         y: 80
-        text: count
+        text: `${count}`
     }
 }
 ```
@@ -84,7 +84,7 @@ not ok 1 - counter.test.ts > a click counts
 Nothing in a test sleeps. The application's clock moves only when the test lets it:
 
 - `await app.advance(1000)` lets a second pass: timers fire and animations run.
-- `expect(locator)` matchers retry: they check once, then let the clock run a frame (16 ms) at a time until they hold, up to their timeout (5000 ms of the application's time, `{ timeout }` to change it). `toHaveText`, `toHaveProperty`, `toHaveCount`, `toExist`, `toBeVisible`, `toBeEnabled`, `toBeChecked` and `toBeFocused` work this way. An item that is not there has no text and is not shown or enabled, so `.not` holds for it; a locator that finds more than one item where one is needed fails, with or without `.not`.
+- `expect(locator)` matchers retry: they check once, then let the clock run a frame (16 ms) at a time until they hold, up to their timeout (5000 ms of the application's time, `{ timeout }` to change it). `toHaveText`, `toHaveProperty`, `toHaveCount`, `toExist`, `toBeVisible`, `toBeEnabled`, `toBeChecked` and `toBeFocused` work this way. An item that is not there has no text and is not shown or enabled, so `.not` holds for it; a locator that finds more than one item where one is needed fails, with or without `.not`. `#name` and `id=` also find items the outline does not list, such as the hidden copies of a list's delegate: they are counted, and several of them are more than one.
 - `app.waitFor(fn)` and `expect.poll(fn).toBe(x)` retry a condition of your own the same way, and retry when `fn` throws. `expect.poll` lets the clock of the application the test started last run.
 
 A test therefore gives the same result on every machine and runs as fast as its own work. Value matchers (`expect(x).toBe(y)`, `toEqual`, `toMatch`, `toContain`, `toBeGreaterThan`, `toBeCloseTo`, `toThrow` and the rest, each with `.not`) check once.

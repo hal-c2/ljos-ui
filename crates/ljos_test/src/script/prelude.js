@@ -19,6 +19,7 @@
     if (Object.prototype.hasOwnProperty.call(answer, "error")) {
       const error = new TestError(answer.error);
       if (typeof answer.code === "string") error.code = answer.code;
+      if (answer.details != null) error.details = answer.details;
       throw error;
     }
     return answer.ok;
@@ -258,8 +259,23 @@
       const answer = this.app.call("app_find", { locator: this.selector, limit: 1 });
       return answer.structured;
     }
+    // How many items the locator finds: those the outline lists, or else
+    // those only the inspector's own lookup reaches (`#name` and `id=`
+    // reach items the outline does not list, as a list's hidden delegate
+    // copies), so a count agrees with what the matchers of one item see.
     countNow() {
-      return this.matches().total;
+      const listed = this.matches().total;
+      if (listed > 0) return listed;
+      try {
+        this.inspectNow();
+        return 1;
+      } catch (e) {
+        if (e && e.code === "not_found") return 0;
+        if (e && e.code === "ambiguous" && e.details && typeof e.details.count === "number") {
+          return e.details.count;
+        }
+        throw e;
+      }
     }
     count() {
       return Promise.resolve(this.countNow());
@@ -404,9 +420,10 @@
   // How a locator matcher says what it expects, what it reads each time it
   // looks, and how it says what it saw. An item that is not there has no
   // text, is not shown and not enabled, and one without a property does
-  // not have it: under `not` that holds. Anything
-  // else that stops a look (a locator that finds more than one item, a
-  // tool the inspector refuses) never holds, with or without `not`.
+  // not have it: under `not` that holds. Anything else that stops a look
+  // (a locator that finds more than one item, hidden ones the outline does
+  // not list among them, a tool the inspector refuses) never holds, with
+  // or without `not`.
   const NOT_THERE = "not there";
   const locatorMatchers = {
     toHaveText: [1, (want) => `to have text ${show(want)}`, (loc, want) => {

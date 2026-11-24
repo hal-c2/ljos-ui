@@ -76,6 +76,9 @@ pub struct LoadError {
 pub struct Refusal {
     pub code: Option<String>,
     pub message: String,
+    /// What the refusal says beside its message, such as how many items an
+    /// `ambiguous` one found (`{ "count": 3 }`): a script's `error.details`.
+    pub details: Option<Json>,
 }
 
 impl From<String> for Refusal {
@@ -83,6 +86,7 @@ impl From<String> for Refusal {
         Refusal {
             code: None,
             message,
+            details: None,
         }
     }
 }
@@ -633,7 +637,11 @@ fn answer(host: &Rc<RefCell<dyn TestHost>>, op: &str, arg: &str, update: bool) -
                 Err(Refusal {
                     code: Some(code),
                     message,
-                }) => return json!({ "error": message, "code": code }).to_string(),
+                    details,
+                }) => {
+                    return json!({ "error": message, "code": code, "details": details })
+                        .to_string();
+                }
                 Err(refusal) => Err(refusal.message),
             }
         }

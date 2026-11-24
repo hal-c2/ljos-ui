@@ -80,16 +80,19 @@ impl TestHost for Fake {
             // As the inspector does: one item, or a refusal that says why.
             "app_inspect" => {
                 let target = args["target"].as_str().unwrap_or_default();
-                // `#unlisted` is an item the outline does not list: only
-                // the inspector's own lookup reaches it, `app_find` does not.
-                let n = if target == "#unlisted" {
-                    1
-                } else {
-                    found(&args["target"])
+                // `#unlisted` is an item the outline does not list, and
+                // `#rows` three such items, as a list's hidden delegate
+                // copies are: only the inspector's own lookup reaches them,
+                // `app_find` does not.
+                let n = match target {
+                    "#unlisted" => 1,
+                    "#rows" => 3,
+                    _ => found(&args["target"]),
                 };
                 let refused = |code: &str, message: String| Refusal {
                     code: Some(code.to_owned()),
                     message,
+                    details: (code == "ambiguous").then(|| json!({ "count": n })),
                 };
                 match n {
                     0 => return Err(refused("not_found", format!("nothing matches `{target}`"))),
@@ -282,6 +285,23 @@ fn an_item_the_outline_does_not_list_is_there() {
         "{HEAD}test(\"unlisted\", async (app) => {{\n  await expect(app.find(\"#unlisted\")).toHaveText(\"0\", {{ timeout: 0 }});\n  await expect(app.find(\"#unlisted\")).toBeVisible({{ timeout: 0 }});\n}});\n"
     );
     assert_eq!(outcomes(&[("a.test.ts", &src)]), [Outcome::Pass]);
+}
+
+#[test]
+fn items_the_outline_does_not_list_are_counted_and_are_more_than_one() {
+    let src = format!(
+        "{HEAD}test(\"counted\", async (app) => {{\n  await expect(app.find(\"#rows\")).toHaveCount(3, {{ timeout: 0 }});\n  await expect(app.find(\"#unlisted\")).toHaveCount(1, {{ timeout: 0 }});\n  await expect(app.find(\"#gone\")).toHaveCount(0, {{ timeout: 0 }});\n}});\ntest(\"several\", async (app) => {{\n  await expect(app.find(\"#rows\")).not.toBeVisible({{ timeout: 0 }});\n}});\n"
+    );
+    assert_eq!(
+        outcomes(&[("a.test.ts", &src)]),
+        [
+            Outcome::Pass,
+            fail(
+                "expected #rows not to be shown; it could not be looked at: `#rows` matches 3 items and `app_inspect` needs exactly one",
+                "a.test.ts:9"
+            )
+        ]
+    );
 }
 
 #[test]
