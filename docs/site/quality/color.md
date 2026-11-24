@@ -100,13 +100,14 @@ Text must stand out against its background across every colour scheme and contra
 ```qml
 // Good: palette.base and palette.text are paired to pass contrast in every scheme
 import Ljos.Ui
-import Ljos.Controls.Basic
+import Ljos.Controls
+import Ljos.Core
 
 ApplicationWindow {
     width: 320
     height: 120
     visible: true
-    title: qsTr("Sync status")
+    title: t`Sync status`
 
     Rectangle {
         anchors.fill: parent
@@ -114,7 +115,7 @@ ApplicationWindow {
 
         Label {
             anchors.centerIn: parent
-            text: qsTr("Last synced 5 min ago")
+            text: t`Last synced 5 min ago`
             color: palette.text
         }
     }
@@ -127,18 +128,19 @@ Interactive boundaries, text field frames, checkbox and switch indicators, slide
 
 ```qml
 import Ljos.Ui
-import Ljos.Controls.Basic
+import Ljos.Controls
+import Ljos.Core
 
 ApplicationWindow {
     width: 320
     height: 120
     visible: true
-    title: qsTr("Search")
+    title: t`Search`
 
     TextField {
         anchors.centerIn: parent
         width: 240
-        Accessible.name: qsTr("Search query")
+        Accessible.name: t`Search query`
         background: Rectangle {
             fill: palette.base
             border.color: palette.mid
@@ -155,14 +157,15 @@ Never distinguish control states (such as online/offline or checked/unchecked) b
 
 ```qml
 import Ljos.Ui
-import Ljos.Controls.Basic
+import Ljos.Controls
 import Ljos.Layout
+import Ljos.Core
 
 ApplicationWindow {
     width: 320
     height: 120
     visible: true
-    title: qsTr("Connection")
+    title: t`Connection`
 
     property bool online: true
 
@@ -183,7 +186,7 @@ ApplicationWindow {
 
         Label {
             Layout.alignment: Align.VCenter
-            text: online ? qsTr("Online") : qsTr("Offline")
+            text: online ? t`Online` : t`Offline`
         }
     }
 }
@@ -201,13 +204,14 @@ ApplicationWindow {
 
 ```qml
 import Ljos.Ui
-import Ljos.Controls.Basic
+import Ljos.Controls
+import Ljos.Core
 
 ApplicationWindow {
     width: 320
     height: 200
     visible: true
-    title: qsTr("Details")
+    title: t`Details`
 
     Popup {
         anchors.centerIn: parent
@@ -224,7 +228,7 @@ ApplicationWindow {
         }
 
         contentItem: Label {
-            text: qsTr("Popup surface separated by a step and border.")
+            text: t`Popup surface separated by a step and border.`
             wrapMode: Text.Wrap
         }
     }
@@ -238,14 +242,15 @@ ApplicationWindow {
 
 ```qml
 import Ljos.Ui
-import Ljos.Controls.Basic
+import Ljos.Controls
 import Ljos.Layout
+import Ljos.Core
 
 ApplicationWindow {
     width: 360
     height: 120
     visible: true
-    title: qsTr("Publish post")
+    title: t`Publish post`
 
     Row {
         anchors.centerIn: parent
@@ -253,19 +258,19 @@ ApplicationWindow {
 
         Button {
             Layout.alignment: Align.VCenter
-            text: qsTr("Delete draft")
+            text: t`Delete draft`
             palette.button: "#c01c28"
             palette.buttonText: "white"
         }
 
         Button {
             Layout.alignment: Align.VCenter
-            text: qsTr("Save draft")
+            text: t`Save draft`
         }
 
         Button {
             Layout.alignment: Align.VCenter
-            text: qsTr("Publish post")
+            text: t`Publish post`
             highlighted: true
         }
     }

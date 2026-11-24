@@ -43,11 +43,11 @@ Column {
             case "initial":
                 return ""
             case "pending":
-                return state.value ?? qsTr("Loading…")
+                return state.value ?? t`Loading…`
             case "done":
                 return state.value
             case "failed":
-                return qsTr("No forecast")
+                return t`No forecast`
         }
     }
 
@@ -126,7 +126,7 @@ Column {
     }
 
     Button {
-        text: randomActivity.status === "pending" ? qsTr("Asking…") : qsTr("Add a random task")
+        text: randomActivity.status === "pending" ? t`Asking…` : t`Add a random task`
         onClicked: randomActivity.start()
     }
     Repeater {

@@ -53,7 +53,7 @@ Every control inside an `ApplicationWindow` inherits the window's `font` and `pa
 
 ```qml
 import Ljos.Ui
-import Ljos.Controls.Basic
+import Ljos.Controls
 
 ApplicationWindow {
     width: 320

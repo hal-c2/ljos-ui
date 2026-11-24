@@ -149,8 +149,9 @@ You can create objects imperatively in three ways:
 3. Call `Qt.createQmlObject(qmlText, parent, url)` to compile and instantiate a string of QML source at run time.
 
 ```qml
-import QtQuick
-import QtQuick.Layouts
+import Ljos.Ui
+import Ljos.Core
+import Ljos.Layout
 
 Item {
     id: root
@@ -167,7 +168,7 @@ Item {
         }
     }
 
-    ColumnLayout {
+    Column {
         id: column
         anchors.fill: parent
     }
@@ -175,8 +176,7 @@ Item {
     Component.onCompleted: {
         const item = labelComp.createObject(column, {
             "font.pixelSize": 20,
-            "Layout.fillWidth": true,
-            text: Qt.binding(() => "Size " + root.baseSize)
+            text: bind(() => "Size " + root.baseSize)
         })
     }
 }

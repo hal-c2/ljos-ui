@@ -42,14 +42,15 @@ You can replace `background` or `contentItem` on a `Button` (or a component deri
 ```qml
 import Ljos.Ui
 import Ljos.Layout
-import Ljos.Controls.Basic
+import Ljos.Controls
+import Ljos.Core
 
 Column {
     spacing: 12
     padding: 12
 
     Button {
-        text: qsTr("Save")
+        text: t`Save`
         highlighted: true
         onClicked: status.text = "Saved"
     }
@@ -97,7 +98,7 @@ When you want to group buttons across different parents, or inspect the group as
 pragma Scripts: JavaScript
 import Ljos.Ui
 import Ljos.Layout
-import Ljos.Controls.Basic
+import Ljos.Controls
 
 Column {
     padding: 12
@@ -141,7 +142,7 @@ While held down, `progress` rises from `0` to `1` over `delay` ms; reaching `1` 
 ```qml
 import Ljos.Ui
 import Ljos.Layout
-import Ljos.Controls.Basic
+import Ljos.Controls
 
 Column {
     padding: 12

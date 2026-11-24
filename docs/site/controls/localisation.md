@@ -1,29 +1,31 @@
 ---
 title: Localisation
-description: Translate text and plurals with qsTr, format locale-aware numbers, switch UI languages at run time, and mirror layouts for right-to-left scripts.
+description: Translate text and plurals with t``, format locale-aware numbers, switch UI languages at run time, and mirror layouts for right-to-left scripts.
 section: controls
 order: 8
 ---
 # Localisation
 
-Use `qsTr()`, `String.arg()`, `Qt.locale()`, `Qt.uiLanguage`, and `LayoutMirroring` to translate user-interface strings, handle plural forms, format numbers with locale-specific digits and separators, and mirror layouts for right-to-left languages.
+Use `` t`…` ``, `plural`, `Locale`, `App.language` and `LayoutMirroring` to translate user-interface text, handle plural forms, format numbers with locale-specific digits and separators, and mirror layouts for right-to-left languages.
 
-## Translating text and plurals with `qsTr`
+## Translating text and plurals with `` t`…` ``
 
-Wrap user-facing strings in `qsTr(source, disambiguation, count)`. When the active catalogue has a translation for the current UI language, `qsTr` returns it; when no translation is found, it falls back to the source string as written. If a call includes a disambiguation comment that is not in the catalogue, Ljós falls back to the translation without a comment. A marker function such as `QT_TR_NOOP` marks text for extraction without translating it on the spot, so a later `qsTr` call on the marked value does the actual lookup.
+Write user-facing text as `` t`…` ``, a tagged template from `Ljos.Core`. When the active catalogue has a translation for the current UI language, `t` returns it; when it has none, the text is shown as written. A value in the template is a placeholder of the message: `` t`Hello ${name}` `` is the message `Hello {name}` in the catalogue, so a translator sees each value by name and can move it. A value that is not a bare name is numbered (`{0}`, `{1}`).
 
-For plural strings, pass the count as the third argument to `qsTr`:
+Counts and choices nest inside `t` and are ICU MessageFormat's:
 
-- `%n` is replaced with the count in the plural form chosen for that language (if you omit the count argument, `%n` remains literally in the string).
-- `%Ln` formats the count using the active locale's digit grouping.
-- Plural rules follow ICU4X `PluralRules` with a small override table for languages whose translation catalogues count their plural forms differently from CLDR—for example, Icelandic uses two forms, where the first form applies to counts ending in `1` except `11`. Strings looked up by ID also support plural forms, while a translation entry written without plural forms serves only its first form.
+- `plural(n, { one: "# file", other: "# files" })` picks the form the UI language uses for `n`; `#` is the count, grouped as the locale writes it. A number key matches exactly (`0: "No files"`), and `other` is required.
+- `select(role, { admin: "Administrator", other: "Member" })` picks by a value, and `selectOrdinal(n, { one: "#st", two: "#nd", few: "#rd", other: "#th" })` by an ordinal.
+- `t({ message: "Open", context: "menu", comment: "The File menu" })` tells two meanings of one text apart and leaves a note for the translator; `` msg`…` `` marks a message to translate later, where it is shown with `t(descriptor)`.
+- Plural rules follow ICU4X `PluralRules`, with a small override table for languages whose catalogues count their forms differently from CLDR: Icelandic uses two forms, where the first applies to counts ending in `1` except `11`.
 
 Write this as `Main.qml` and run `ljos check` on its directory:
 
 ```qml
 import Ljos.Ui
+import Ljos.Core
 import Ljos.Layout
-import Ljos.Controls.Basic
+import Ljos.Controls
 
 Column {
     id: files
@@ -32,29 +34,48 @@ Column {
     property int count: 3
 
     Label {
-        text: qsTr("%n file(s)", "", files.count)
+        text: plural(files.count, { one: "# file", other: "# files" })
     }
 
     Button {
-        text: qsTr("Add a file")
+        text: t`Add a file`
         onClicked: files.count += 1
     }
 }
 ```
 
-With no catalogue loaded, the label reads `"3 file(s)"`, and `"4 file(s)"` after a press of the button. When an Icelandic catalogue is active, `count: 3` selects the plural form provided by the translator.
+With no catalogue loaded, the label reads `"3 files"`, and `"4 files"` after a press of the button. When an Icelandic catalogue is active, `count: 3` selects the plural form provided by the translator.
 
-Translators edit `.ts` catalogue files, the XML format that translation editors such as Linguist read and write. Ljós reads and writes them while preserving comments and source locations. Catalogue entries are keyed by context (the QML file stem or a `Translator` pragma), source text, and disambiguation. During development, Ljós reads and watches `.ts` files directly so translations hot-reload; at run time, it loads memory-mapped binary `.ljl` catalogues and walks a language fallback chain such as `is-IS` → `is` → `en`.
+`ljos check` holds a message to what a catalogue can carry: a form that is not written out cannot be extracted (`i18n-literal`), forms without `other` are reported (`i18n-other`), and a translated text joined to a value with `+` is two messages (`i18n-concat`), whose fix is one message such as `` t`${minutes} minutes ago` ``.
 
-## Switching `Qt.uiLanguage` and mirroring layouts
+Translators get a PO catalogue with ICU MessageFormat in it, as Lingui writes it: `ljos i18n extract . -o i18n/is.po` writes each message once, with where it is used, its context and its note, and keeps every translation when it runs again. The catalogues of an application sit in `i18n` beside its main file, one file per language: a `.po` file, a Qt `.ts` file or a compiled, memory-mapped `.ljl`. Running the application loads every one of them, and the UI language walks a fallback chain such as `is-IS` → `is` → `en`.
 
-The UI language (`Qt.uiLanguage`) and the formatting locale (`Qt.locale()`) are separate settings, though both initialise from the system environment at startup.
+### Coming from Qt's `qsTr`
 
-Assigning a new language tag to `Qt.uiLanguage` immediately re-evaluates every translated binding and function on screen, and any components created afterwards start in the new language (if `Qt.uiLanguage` has not been set to a translated language, source strings are shown).
+QML written for Qt translates with `qsTr` and reads Linguist `.ts` catalogues. Ljós runs that QML as it is and reads `.ts` files too, keyed by context (the QML file stem or a `Translator` pragma), source text and disambiguation. A file in Ljós's API has no `qsTr` (`ljos check` reports it as `qt-tr`), and `ljos migrate --write` rewrites each call:
 
-The language tag may be written with an underscore or a hyphen, and a more specific tag finds a catalogue for a less specific one: `de_AT` and `de-CH` both use a `de` catalogue. Assigning the empty string means no language, so source strings are shown. At startup `Qt.uiLanguage` and `Qt.locale()` come from `LC_ALL`, then `LC_MESSAGES`, then `LANG`; `Qt.uiLanguage` has a change signal, `uiLanguageChanged`.
+| Qt | Ljós |
+|---|---|
+| `qsTr("Open")` | `` t`Open` `` |
+| `qsTr("%1 of %2").arg(a).arg(b)` | `` t`${a} of ${b}` `` |
+| `qsTr("%n file(s)", "", n)` | `` plural(n, { other: `${n} file(s)` }) `` |
+| `qsTr("Open", "menu")` | `t({ message: "Open", context: "menu" })` |
+| `qsTranslate("Ctx", "x")` | `t({ message: "x", context: "Ctx" })` |
+| `qsTrId("id")` | `t({ id: "id" })` |
+| `QT_TR_NOOP("x")` | `` msg`x` `` |
+| `Qt.uiLanguage` | `App.language` |
 
-`Qt.application.layoutDirection` follows `Qt.uiLanguage` automatically: switching to a right-to-left language sets `Qt.application.layoutDirection` to `Qt.RightToLeft`, and switching back restores left-to-right. However, items do not mirror their positions automatically unless you ask them to. Bind `LayoutMirroring.enabled` to `Qt.application.layoutDirection` on the container you want to mirror:
+`ljos migrate --catalogue app_is.ts` writes the `.ts` catalogue's translations as `is.po` with the same rewrite, so a migrated file keeps them; see [Bringing existing QML](../language/porting-from-qt.md).
+
+## Switching `App.language` and mirroring layouts
+
+The UI language (`App.language`) and the formatting locale (`Locale.current`) are separate settings, though both start from the system environment.
+
+Assigning a new language tag to `App.language` immediately works out again every translated binding and function on screen, and any components created afterwards start in the new language (until `App.language` names a translated language, source text is shown).
+
+The language tag may be written with an underscore or a hyphen, and a more specific tag finds a catalogue for a less specific one: `de_AT` and `de-CH` both use a `de` catalogue. Assigning the empty string means no language, so source text is shown. At startup `App.language` and `Locale.current` come from `LC_ALL`, then `LC_MESSAGES`, then `LANG`.
+
+`App.layoutDirection` follows `App.language`: switching to a right-to-left language makes it `Direction.RightToLeft`, and switching back restores left-to-right. Items do not mirror their positions unless you ask them to: bind `LayoutMirroring.enabled` to the direction on the container you want to mirror. `LayoutMirroring` is not in `Ljos.Ui` yet, so this example is still Qt's QML, where the direction is `Qt.application.layoutDirection`:
 
 ```qml
 import QtQuick
@@ -77,39 +98,35 @@ Row {
 
 ## Formatting numbers and locales
 
-You can insert values into translated strings with `String.arg()`, which replaces numbered placeholders `%1` through `%9` (up to two-digit markers, filling the lowest-numbered placeholder first using `QString::arg` semantics).
-
-To format numbers according to the locale's digit grouping and numeral system:
-
-- Use `"%L1".arg(number)` for locale-grouped numbers in placeholder strings.
-- Call `Locale.current.toString(number)` (or pass a partial or complete locale name to `Locale.named(name)`; Qt writes `Qt.locale()`) to format a number using that locale's digits and separators—for example, Arabic locales use Arabic-Indic digits, English groups `1234567` as `"1,234,567"`, and German groups it as `"1.234.567"`.
-- Controls and delegates created early (before the translation catalogue finishes loading) still resolve the active locale properly.
+A value in `` t`…` `` is shown as it is. To format a number according to the locale's digit grouping and numeral system, call `Locale.current.toString(number)` (or pass a partial or complete locale name to `Locale.named(name)`): Arabic locales use Arabic-Indic digits, English groups `1234567` as `"1,234,567"`, and German groups it as `"1.234.567"`. In a form of `plural`, `#` is the count grouped the same way. Controls and delegates created early (before the translation catalogue finishes loading) still resolve the active locale.
 
 ```qml
 pragma Scripts: JavaScript
 import Ljos.Ui
 import Ljos.Core
 import Ljos.Layout
-import Ljos.Controls.Basic
+import Ljos.Controls
 
 Column {
     padding: 12
     spacing: 8
 
     Label {
-        text: "%L1 kg".arg(1234567)
+        text: `${Locale.current.toString(1234567)} kg`
     }
 
     Label {
-        text: qsTr("Total: %1").arg(Locale.current.toString(1234567))
+        text: t`Total: ${Locale.current.toString(1234567)}`
     }
 }
 ```
 
-## Catalogue formats and the interface language
+Qt's QML writes these with `String.arg()` (`"%L1 kg".arg(n)`, with `%L1` grouped by the locale) and `Qt.locale()`; Ljós runs both in a file written for Qt.
 
-- Ljós reads `.ts` files directly in development (with hot reload) and its own binary `.ljl` catalogues at run time. Compiled `.qm` catalogues are not read.
-- `Qt.uiLanguage` is a writable string property with a `uiLanguageChanged` signal, and assigning it re-translates every translated binding.
+## Catalogue formats
+
+- Ljós reads `.po` catalogues (ICU MessageFormat, as `ljos i18n extract` writes them), Qt's `.ts` files (read and watched directly in development, so they hot-reload) and its own binary `.ljl` catalogues. Compiled `.qm` catalogues are not read.
+- `App.language` is writable and has a change signal, and assigning it translates every translated binding again.
 
 ## See also
 

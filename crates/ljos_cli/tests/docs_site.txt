@@ -19,8 +19,6 @@
 #                   work writes as `t`: it must fail there, and only with
 #                   `[qt-tr]` errors
 
-controls/buttons-and-toggles.md 1 qt-tr
-controls/localisation.md 1 qt-tr
 controls/localisation.md 2 gap:ui-types
 controls/styles.md 1 gap:imports
 controls/styles.md 2 gap:imports
@@ -35,36 +33,13 @@ data/other-views.md 3 gap:imports
 data/pointer-input.md 5 gap:ui-types
 data/pointer-input.md 6 gap:ui-types
 data/repeater-and-delegates.md 2 gap:layout
-data/tasks.md 1 qt-tr
-data/tasks.md 2 qt-tr
-language/components.md 6 gap:layout
-language/match.md 1 qt-tr
 language/modules-and-imports.md 1 gap:imports
-language/pipe.md 1 qt-tr
-language/pipe.md 5 qt-tr
 language/properties-and-bindings.md 1 gap:imports
 language/properties-and-bindings.md 6 gap:imports
 language/states-and-transitions.md 3 gap:ui-types
-quality/accessibility.md 1 qt-tr
-quality/accessibility.md 2 qt-tr
-quality/accessibility.md 3 gap:layout
-quality/accessibility.md 4 qt-tr
 quality/accessibility.md 5 gap:ui-types
-quality/color.md 2 qt-tr
-quality/color.md 3 qt-tr
-quality/color.md 4 qt-tr
-quality/color.md 5 qt-tr
-quality/color.md 6 qt-tr
-quality/design-guardrails.md 1 qt-tr
-quality/design-guardrails.md 3 gap:layout shows-findings
-quality/design-guardrails.md 4 qt-tr
-quality/layout-and-typography.md 2 gap:layout
-quality/layout-and-typography.md 3 qt-tr
-quality/motion.md 1 qt-tr
+quality/design-guardrails.md 3 shows-findings
 quality/motion.md 2 gap:ui-types
-quality/motion.md 3 qt-tr
-quality/performance.md 1 gap:layout
-quality/principles.md 1 qt-tr
 rust/multimedia.md 1 gap:imports
 rust/multimedia.md 2 gap:imports
 rust/multimedia.md 3 gap:imports

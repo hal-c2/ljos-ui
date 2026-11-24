@@ -70,7 +70,7 @@ When `editable` is true, `ComboBox` holds a text field whose `editText` starts a
 ```qml
 import Ljos.Ui
 import Ljos.Layout
-import Ljos.Controls.Basic
+import Ljos.Controls
 
 Column {
     padding: 12
@@ -100,7 +100,7 @@ Holding an up or down button on a `SpinBox` steps repeatedly. By default, number
 ```qml
 import Ljos.Ui
 import Ljos.Layout
-import Ljos.Controls.Basic
+import Ljos.Controls
 
 Column {
     padding: 12
@@ -126,7 +126,7 @@ Column {
 ```qml
 import Ljos.Ui
 import Ljos.Layout
-import Ljos.Controls.Basic
+import Ljos.Controls
 
 Column {
     width: 240

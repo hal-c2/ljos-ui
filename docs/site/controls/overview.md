@@ -6,7 +6,7 @@ order: 1
 ---
 # Controls Overview
 
-Controls are the ready-made parts of an interface: buttons, text fields, sliders, menus, panes and windows. A file imports them from `Ljos.Controls`, which draws them in Ljós's own style, or from `Ljos.Controls.Basic`, which draws them in the Basic style, as most examples on these pages do. You can build your own controls on the `Control` base type in either.
+Controls are the ready-made parts of an interface: buttons, text fields, sliders, menus, panes and windows. A file imports them from `Ljos.Controls`, which draws them in Ljós's own style, as the examples on these pages do, or from `Ljos.Controls.Basic`, which draws them in the Basic style. You can build your own controls on the `Control` base type in either.
 
 ## Ljós's own controls
 
@@ -94,7 +94,7 @@ You can build your own control by placing a `Badge.qml` file beside `Main.qml`:
 
 ```qml file=Badge.qml group=badge
 import Ljos.Ui
-import Ljos.Controls.Basic
+import Ljos.Controls
 
 Control {
     id: root
@@ -120,7 +120,7 @@ Control {
 ```qml group=badge
 import Ljos.Ui
 import Ljos.Layout
-import Ljos.Controls.Basic
+import Ljos.Controls
 
 Column {
     padding: 12
@@ -164,7 +164,7 @@ Controls inherit both `palette` colours and `font` attributes (`size`, `weight`,
 ```qml
 import Ljos.Ui
 import Ljos.Layout
-import Ljos.Controls.Basic
+import Ljos.Controls
 
 Pane {
     width: 240

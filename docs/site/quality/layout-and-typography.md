@@ -45,8 +45,9 @@ A layout works only when it holds at every window size and font scale a user cho
 ```qml
 pragma Scripts: JavaScript
 import Ljos.Ui
-import Ljos.Controls.Basic
+import Ljos.Controls
 import Ljos.Layout
+import Ljos.Core
 
 ApplicationWindow {
     width: 480
@@ -54,7 +55,7 @@ ApplicationWindow {
     minimumWidth: 320
     minimumHeight: 240
     visible: true
-    title: qsTr("Preferences")
+    title: t`Preferences`
 
     property string errorMessage: ""
 
@@ -76,22 +77,22 @@ ApplicationWindow {
 
                 Label {
                     Layout.alignment: Align.VCenter
-                    text: qsTr("Display name")
+                    text: t`Display name`
                 }
                 TextField {
                     Layout.alignment: Align.VCenter
                     Layout.fillWidth: true
-                    Accessible.name: qsTr("Display name")
+                    Accessible.name: t`Display name`
                 }
 
                 Label {
                     Layout.alignment: Align.VCenter
-                    text: qsTr("Email address")
+                    text: t`Email address`
                 }
                 TextField {
                     Layout.alignment: Align.VCenter
                     Layout.fillWidth: true
-                    Accessible.name: qsTr("Email address")
+                    Accessible.name: t`Email address`
                 }
             }
         }
@@ -115,7 +116,7 @@ ApplicationWindow {
 
             Button {
                 Layout.alignment: Align.VCenter
-                text: qsTr("Save preferences")
+                text: t`Save preferences`
                 highlighted: true
             }
         }
@@ -141,27 +142,28 @@ Never draw text smaller than `limits::TEXT_MIN_PX` (`10 px`). Keep paragraph lin
 ### Typography rules
 
 - **`text-clipped` (Error, runtime):** Text is cut off by its container, a sibling, or the window edge at some window size or font scale up to 200 %. Let containers grow with `implicitHeight` and set `wrapMode: Text.Wrap` or `elide: Text.ElideRight`.
-- **`text-unbounded-dynamic` (Warning, static) and `text-elided-hidden` (Warning, runtime):** Any dynamic binding (`text: model.title` or `qsTr(...)`) inside a width-bounded box must set `elide` or `wrapMode`. When text elides (`elide: Text.ElideRight`), expose the full string in a `ToolTip` while `truncated` is true.
+- **`text-unbounded-dynamic` (Warning, static) and `text-elided-hidden` (Warning, runtime):** Any dynamic binding (`text: model.title` or `` t`…` ``) inside a width-bounded box must set `elide` or `wrapMode`. When text elides (`elide: Text.ElideRight`), expose the full string in a `ToolTip` while `truncated` is true.
 - **`text-raw-markup` (Warning, runtime):** Plain text showing raw Markdown (`**bold**`, backticks) or HTML tags (`<b>`) looks broken. Set `textFormat: Text.MarkdownText` or strip the markup.
 - **`text-too-small` (Warning, static and runtime):** Text below `10 px` (`limits::TEXT_MIN_PX`) is unreadable. To make a caption secondary, keep `font.pixelSize: 12` and mute its colour with `palette.placeholderText` while still passing `color-text-contrast`.
 - **`text-font-literal` (Hint, static):** Leave `font.family` unset on `Label` and `Text` items so they inherit the application and platform font.
 - **`text-line-length` (Hint, runtime):** Bound multi-line reading text (`limits::LINE_LENGTH_MIN_LINES` or more lines) to `width: Math.min(parent.width, 36 * font.pixelSize)` so lines stay under 80 characters.
 
 ```qml
-import QtQuick
-import QtQuick.Controls
-import QtQuick.Layouts
+import Ljos.Ui
+import Ljos.Core
+import Ljos.Controls
+import Ljos.Layout
 
 ApplicationWindow {
     width: 420
     height: 200
     visible: true
-    title: qsTr("Document summary")
+    title: t`Document summary`
 
     property string docTitle: "Q4 Architecture Review and Migration Plan"
     property string helpText: "Review each section below before exporting the final bundle for your target devices."
 
-    ColumnLayout {
+    Column {
         anchors.fill: parent
         anchors.margins: 16
         spacing: 8
@@ -172,7 +174,7 @@ ApplicationWindow {
             text: docTitle
             elide: Text.ElideRight
 
-            HoverHandler {
+            Hover {
                 id: headingHover
             }
 
@@ -181,15 +183,21 @@ ApplicationWindow {
         }
 
         Label {
-            width: Math.min(parent.width, 36 * font.pixelSize)
+            Layout.fillWidth: true
+            Layout.maximumWidth: 36 * font.size
             text: helpText
             wrapMode: Text.Wrap
         }
 
         Label {
+            Layout.fillWidth: false
             textFormat: Text.MarkdownText
-            text: qsTr("Saved to `notes.md`")
-            font.pixelSize: 12
+            text: t`Saved to \`notes.md\``
+            font.size: 12
+        }
+
+        Item {
+            Layout.fillHeight: true
         }
     }
 }
@@ -213,14 +221,15 @@ Words are the first part of an interface a user reads.
 
 ```qml
 import Ljos.Ui
-import Ljos.Controls.Basic
+import Ljos.Controls
 import Ljos.Layout
+import Ljos.Core
 
 ApplicationWindow {
     width: 400
     height: 280
     visible: true
-    title: qsTr("Search results")
+    title: t`Search results`
 
     property bool loading: false
     property string query: "invoice"
@@ -245,7 +254,7 @@ ApplicationWindow {
             Label {
                 anchors.centerIn: parent
                 visible: !loading && resultsView.count === 0
-                text: qsTr("No results for “%1”. Try a shorter search.").arg(query)
+                text: t`No results for “${query}”. Try a shorter search.`
             }
         }
 
@@ -254,14 +263,14 @@ ApplicationWindow {
 
             Button {
                 Layout.alignment: Align.VCenter
-                text: qsTr("Publish report")
+                text: t`Publish report`
                 enabled: canPublish
             }
 
             Label {
                 Layout.alignment: Align.VCenter
                 visible: !canPublish
-                text: qsTr("Select at least one result to publish")
+                text: t`Select at least one result to publish`
                 color: palette.placeholderText
             }
         }
