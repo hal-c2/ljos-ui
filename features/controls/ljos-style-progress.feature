@@ -6,7 +6,8 @@
 #   https://www.w3.org/WAI/WCAG22/Understanding/animation-from-interactions.html
 # Ljós's own style is Ljós's: Qt has no Ljos.Controls to compare it with, so
 # every scenario is `@ljos-only`. The colours expected are those
-# crates/ljos_design/src/roles.rs derives from white, black and #0066cc.
+# the design's colour roles (docs/design/color.md) derive from white,
+# black and #0066cc.
 
 @ljos-only
 Feature: Ljós's own style: how far a task is and that it is still working
