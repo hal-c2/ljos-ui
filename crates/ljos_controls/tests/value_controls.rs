@@ -137,6 +137,39 @@ fn a_delay_button_is_still_once_its_progress_is_full() {
 }
 
 #[test]
+fn a_delay_buttons_hold_keeps_its_time_when_reduced_motion_comes_on_mid_run() {
+    // Beside it a plain animation of the same length, which reduced motion
+    // does retime: the hold keeps time, the movement does not.
+    let (e, mut s, root) = start(
+        r#"DelayButton { objectName: "b"; delay: 1000 }
+Item {
+    objectName: "moved"; y: 100
+    NumberAnimation on x { from: 0; to: 1000; duration: 1000 }
+}"#,
+    );
+    let b = find(&e, root, "b");
+    let moved = find(&e, root, "moved");
+    s.pointer_event(&e, &PointerEvent::press(20.0, 20.0, Time::ZERO));
+    run(&mut s, &e, 0, 304);
+    ljos_quick::update_system_prefs(&e, |p| p.reduced_motion = true);
+    run(&mut s, &e, 320, 608);
+
+    let progress = e.read_by_name(b, "progress").to_number();
+    assert!(
+        (progress - 0.6).abs() < 0.05,
+        "the hold is {progress} of the way at 600 ms of 1000"
+    );
+    let x = e.read_by_name(moved, "x").to_number();
+    assert!(
+        (x - 608.0).abs() > 50.0,
+        "the plain animation was not retimed: x is {x} at 608 ms"
+    );
+
+    run(&mut s, &e, 624, 1100);
+    assert_eq!(e.read_by_name(b, "progress").to_number(), 1.0);
+}
+
+#[test]
 fn a_page_indicator_is_still_once_its_dots_have_faded() {
     let (e, mut s, root) = start(r#"PageIndicator { objectName: "p"; count: 4 }"#);
     let p = find(&e, root, "p");
