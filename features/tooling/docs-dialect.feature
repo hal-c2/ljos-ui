@@ -71,6 +71,44 @@ Feature: The site's examples are written in Ljós's dialect
     Then the command exits with status 1
     And the command's output mentions "site/data/tasks.md:1: `qsTr` is Qt's; translate with t`…` from Ljos.Core"
 
+  Scenario: A script of an example kept in Qt's QML for a gap is Qt's too
+    Given the file "site/controls/sliders.md":
+      """
+      ```qml
+      import Ljos.Ui
+      Item {}
+      ```
+
+      ```qml group=volume
+      import QtQuick
+      import QtQuick.Controls
+      Dial { Accessible.name: Labels.volume() }
+      ```
+
+      ```ts file=Labels.ts group=volume
+      export function volume(): string { return qsTr("Volume") }
+      ```
+      """
+    When the author runs "mise-tasks/docs/dialect site --pending pending.txt"
+    Then the command exits with status 0
+
+  Scenario: A script of an example in Ljós's dialect translates with t
+    Given the file "site/controls/sliders.md":
+      """
+      ```qml group=volume
+      import Ljos.Ui
+      import Ljos.Controls
+      Slider { Accessible.name: Labels.volume() }
+      ```
+
+      ```ts file=Labels.ts group=volume
+      export function volume(): string { return qsTr("Volume") }
+      ```
+      """
+    When the author runs "mise-tasks/docs/dialect site --pending pending.txt"
+    Then the command exits with status 1
+    And the command's output mentions "site/controls/sliders.md:7: `qsTr` is Qt's; translate with t`…` from Ljos.Core"
+
   Scenario: An example that imports QtQuick is told to import Ljós's modules
     Given the file "site/ui/items.md":
       """
