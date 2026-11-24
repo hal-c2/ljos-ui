@@ -260,6 +260,23 @@ fn an_item_that_is_not_there_holds_only_under_not() {
 }
 
 #[test]
+fn a_property_an_item_does_not_have_holds_only_under_not() {
+    let src = format!(
+        "{HEAD}test(\"none\", async (app) => {{\n  await expect(app.find(\"#count\")).not.toHaveProperty(\"checked\", {{ timeout: 0 }});\n  await expect(app.find(\"#count\")).not.toBeChecked({{ timeout: 0 }});\n}});\ntest(\"some\", async (app) => {{\n  await expect(app.find(\"#count\")).toHaveProperty(\"checked\", {{ timeout: 0 }});\n}});\n"
+    );
+    assert_eq!(
+        outcomes(&[("a.test.ts", &src)]),
+        [
+            Outcome::Pass,
+            fail(
+                "expected #count to have checked; it was an item with no checked",
+                "a.test.ts:8"
+            )
+        ]
+    );
+}
+
+#[test]
 fn a_poll_retries_what_throws() {
     let src = format!(
         "{HEAD}test(\"late\", async (app) => {{\n  await expect.poll(async () => {{\n    if ((await app.now()) < 1000) throw new Error(\"not yet\");\n    return 1;\n  }}).toBe(1);\n}});\ntest(\"never\", async () => {{\n  await expect.poll(() => {{ throw new Error(\"never\"); }}, {{ timeout: 32 }}).toBe(1);\n}});\n"
