@@ -23,10 +23,11 @@
   }
 
   // The line of the test file a stack was taken on: the first frame that
-  // is not this module's.
+  // is not this module's. The file is matched lazily, as a frame's place is
+  // `file:line:column` and `ljos:test` has a colon of its own.
   function siteOf(stack) {
     for (const line of String(stack || "").split("\n")) {
-      const m = /\(?([^\s()]+):(\d+)(?::(\d+))?\)?\s*$/.exec(line.trim());
+      const m = /\(?([^\s()]+?):(\d+)(?::(\d+))?\)?\s*$/.exec(line.trim());
       if (!m || m[1] === "ljos:test" || m[1] === "<native>") continue;
       return m[1] + ":" + m[2];
     }
