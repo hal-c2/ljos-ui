@@ -6798,7 +6798,7 @@ module QtQuick.Controls.Fusion.impl
 	TextFieldBackground QtQuick/Controls/Fusion/impl/TextFieldBackground.qml
 	type QtQuick/Controls/Fusion/impl/ButtonPanel.qml ButtonPanel
 		prototype QtQuick.Rectangle named
-		prop control Ljos.Controls.Control named pointer
+		prop control QtQuick.Templates.Control named pointer
 		prop pressed QtQml.bool named
 		prop highlighted QtQml.bool named
 		prop outlinesFocus QtQml.bool named
@@ -6827,7 +6827,7 @@ module QtQuick.Controls.Fusion.impl
 		signal controlChanged
 	type QtQuick/Controls/Fusion/impl/SliderGroove.qml SliderGroove
 		prototype QtQuick.Rectangle named
-		prop control Ljos.Controls.Control named pointer
+		prop control QtQuick.Templates.Control named pointer
 		prop offset QtQml.real named
 		prop progress QtQml.real named
 		prop vertical QtQml.bool named
@@ -6848,7 +6848,7 @@ module QtQuick.Controls.Fusion.impl
 		method shade
 	type QtQuick/Controls/Fusion/impl/SliderHandle.qml SliderHandle
 		prototype QtQuick.Rectangle named
-		prop control Ljos.Controls.Control named pointer
+		prop control QtQuick.Templates.Control named pointer
 		prop visualFocus QtQml.bool named
 		prop pressed QtQml.bool named
 		prop hovered QtQml.bool named
