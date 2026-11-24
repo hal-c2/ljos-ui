@@ -55,6 +55,14 @@ fn tests_run_in_zone(w: &mut LjosWorld, zone: String) -> StepResult {
     })
 }
 
+#[when("the tests are run keeping their pictures")]
+fn tests_run_updating_pictures(w: &mut LjosWorld) -> StepResult {
+    w.run_tests(&TestRun {
+        update_pictures: true,
+        ..TestRun::default()
+    })
+}
+
 #[when(regex = r#"^the tests matching "([^"]+)" are run$"#)]
 fn tests_run_matching(w: &mut LjosWorld, filter: String) -> StepResult {
     w.run_tests(&TestRun {
@@ -370,6 +378,25 @@ fn test_results_value(w: &mut LjosWorld, pointer: String, want: String) -> StepR
         match json.pointer(&pointer) {
             Some(actual) if value::same(&want, actual) => Ok(()),
             Some(actual) => Err(format!("{pointer} is {actual}, expected {want}")),
+            None => Err(format!("the results have no {pointer}: {json}")),
+        }
+    })
+}
+
+// A text of the machine-readable report that holds more than a scenario
+// is about (a refusal's whole sentence, a column).
+#[then(regex = r#"^the test results' "([^"]*)" contains "(.*)"$"#)]
+fn test_results_contains(w: &mut LjosWorld, pointer: String, want: String) -> StepResult {
+    w.each_test_report(|report| {
+        let json = report
+            .json
+            .as_ref()
+            .ok_or("this runner writes no machine-readable report")?;
+        match json.pointer(&pointer) {
+            Some(serde_json::Value::String(text)) if text.contains(&want) => Ok(()),
+            Some(actual) => Err(format!(
+                "{pointer} is {actual}, which does not contain {want:?}"
+            )),
             None => Err(format!("the results have no {pointer}: {json}")),
         }
     })

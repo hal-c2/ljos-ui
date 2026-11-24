@@ -215,7 +215,10 @@ fn nothing_to_run_is_an_error() {
     let out = ljos_test(dir.path(), &[]);
     assert!(!out.status.success());
     let err = String::from_utf8_lossy(&out.stderr);
-    assert!(err.contains("no tst_*.qml file to run"), "{err}");
+    assert!(
+        err.contains("no tst_*.qml or *.test.ts file to run"),
+        "{err}"
+    );
 }
 
 /// The suite that uses every function of the module passes; the same

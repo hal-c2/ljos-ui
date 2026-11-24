@@ -15,7 +15,7 @@ path = "src/main.rs"
 [dependencies]
 # `http`: the inspector's server, which `ljos run --mcp` starts; `remote`:
 # the client of one that `ljos observe` and `ljos attach` are.
-ljos_mcp_core = { path = "../ljos_mcp_core", features = ["http", "remote"] }
+ljos_mcp_core = { path = "../ljos_mcp_core", features = ["http", "remote", "client"] }
 ljos_mcp_author = { path = "../ljos_mcp_author" }
 # `ljos i18n extract`: the compiler finds the texts, ljos_i18n writes `.ts` and `.po`.
 ljos_aot = { path = "../ljos_aot" }
@@ -68,6 +68,10 @@ ljos_runtime = { path = "../ljos_runtime" }
 # `ljos test`: the QtTest runner, the IR it is given, and the type oracle
 # that tells the compiler what `TestCase` is.
 ljos_test = { path = "../ljos_test" }
+# `ljos test` on `*.test.ts`: each application a test starts is on a stage
+# with a virtual clock, behind the inspector an agent would talk to,
+# which the test's own MCP client in this process drives.
+ljos_drive = { path = "../ljos_drive" }
 ljos_ir = { path = "../ljos_ir" }
 qml_front = { path = "../qml_front" }
 # `ljos fmt`: the layout the authoring server's `qml_format` gives too.

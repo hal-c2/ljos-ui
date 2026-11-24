@@ -279,6 +279,7 @@ setter tries to write `depth` and logs the error it gets.
 | `When a reload happens` | the quiet time ends now: what was saved is applied, or refused with a reload error (`@ljos-only`) |
 | `When the tests are run` | run every `tst_*.qml` file given with `Given the file` with the test runner (`ljos test`; `qmltestrunner` on Qt); nothing is loaded as an application |
 | `When the tests are run with the import path "dir"` | the same, with a directory of test-only modules given to the runner (`-import`) |
+| `When the tests are run keeping their pictures` | as `ljos test --update-pictures`: every picture a `*.test.ts` compares is kept as its reference (`@ljos-only`) |
 | `When the tests matching "Case::test_x" are run` | only the named test function (`Case::function`), or one of its data rows (`Case::function:tag`) |
 | `When the files are checked` | read every file given with `Given the file` as one project with `ljos check`; nothing is loaded or run (`@ljos-only`: Qt has no program of the kind) |
 | `When the files are migrated and checked` | `ljos migrate --write` over the files given with `Given the file`, then `ljos check` of what it wrote; the report is what each said, in order (`@ljos-only`) |
@@ -372,6 +373,7 @@ setter tries to write `depth` and logs the error it gets.
 | `Then the test report has the lines:` + doc string | those lines are in the report, one after the other |
 | `Then the test run exits with status N` | the runner's exit status: the number of failed tests |
 | `Then the test results' "/pointer" is V` | a value of the machine-readable report, by JSON pointer (`@ljos-only`) |
+| `Then the test results' "/pointer" contains "text"` | a text of the machine-readable report, by JSON pointer, has `text` in it (`@ljos-only`) |
 | `Then the check reports:` + doc string | everything `ljos check` said, in order: one line for each thing it found (`file:line:column: error: ...` or `warning: ...`), its count of files, errors and warnings, and `ljos: N errors` when there are errors (`@ljos-only`) |
 | `Then the check reports the lines:` + doc string | those lines are in what `ljos check` said, one after the other (`@ljos-only`) |
 | `Then TypeScript reports the lines:` + doc string | those lines are among TypeScript's in what `ljos check --tsc` said (`file:line:column: error: ... [TS2322]`), one after the other; a machine without TypeScript passes, as the check said `SKIPPED: no tsc` (`@ljos-only`) |
