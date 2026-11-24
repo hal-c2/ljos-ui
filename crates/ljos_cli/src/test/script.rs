@@ -113,6 +113,15 @@ impl Host {
         // Before the root, for its timers to start on the test's clock.
         let mut stage = Stage::new(&engine, DEFAULT_SIZE.0, DEFAULT_SIZE.1);
         let started = stage.clock.now();
+        // Before the root too, for what its `Component.onCompleted` logs
+        // to be in `app.logs()`.
+        let wake = LocalWake::new();
+        let config = InspectorConfig {
+            virtual_clock: true,
+            ..InspectorConfig::default()
+        };
+        let (mut inspector, surface) = Inspector::new(config, wake.hook());
+        inspector.watch_log(&engine, |_| {});
         let root = engine
             .create_from_url(key, None, Vec::new())
             .map_err(|e| e.to_string())?;
@@ -142,15 +151,8 @@ impl Host {
         stage.scene.set_window_active(&engine, true);
         stage.drive().settle().map_err(|e| e.to_string())?;
 
-        let wake = LocalWake::new();
-        let config = InspectorConfig {
-            virtual_clock: true,
-            ..InspectorConfig::default()
-        };
-        let (mut inspector, surface) = Inspector::new(config, wake.hook());
         let caps = CapSet::of([Cap::Inspect, Cap::Input, Cap::Mutate]);
         let agent = LocalClient::connect(surface, caps, &wake).map_err(|e| e.to_string())?;
-        inspector.watch_log(&engine, |_| {});
         inspector.observe(&engine);
         Ok(App {
             agent,

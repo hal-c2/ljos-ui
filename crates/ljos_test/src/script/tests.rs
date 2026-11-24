@@ -13,7 +13,9 @@ use ljos_render::RgbaImage;
 
 use serde_json::{Value as Json, json};
 
-use super::{LoadError, Module, Options, Outcome, Tap, TestHost, TestResult, run_file, to_json};
+use super::{
+    LoadError, Module, Options, Outcome, Tap, TestHost, TestResult, junit, run_file, to_json,
+};
 
 #[derive(Default)]
 struct Fake {
@@ -524,4 +526,148 @@ fn a_picture_is_named_by_a_png_file_name() {
         message.contains("with no directory: not \"../p.png\""),
         "{message}"
     );
+}
+
+#[test]
+fn a_picture_is_not_named_as_what_a_failure_keeps() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = clicks_then_picture(0, "\"p.actual.png\"");
+    let (results, _) = run_in(
+        &[("a.test.ts", &src)],
+        &Options::default(),
+        Some(dir.path()),
+    );
+    let (message, _) = failure(&results);
+    assert!(message.contains("not `.actual.png`"), "{message}");
+    assert!(!dir.path().join("__pictures__/p.actual.png").exists());
+}
+
+#[test]
+fn a_reference_that_cannot_be_read_is_not_replaced() {
+    let dir = tempfile::tempdir().unwrap();
+    // A directory where the reference would be: there, but not readable.
+    std::fs::create_dir_all(dir.path().join("__pictures__/p.png")).unwrap();
+    let src = clicks_then_picture(0, "\"p.png\"");
+    let (results, _) = run_in(
+        &[("a.test.ts", &src)],
+        &Options::default(),
+        Some(dir.path()),
+    );
+    let (message, _) = failure(&results);
+    assert!(
+        message.starts_with("__pictures__/p.png cannot be read: "),
+        "{message}"
+    );
+    assert!(dir.path().join("__pictures__/p.png").is_dir());
+}
+
+#[test]
+fn a_file_that_fails_to_load_ends_what_it_started() {
+    let src = "import { launch } from \"ljos:test\";\nlaunch(\"./Counter.qml\");\nthrow new Error(\"after\");\n";
+    let (results, fake) = run(&[("a.test.ts", src)], &Options::default());
+    assert!(
+        matches!(&results[..], [TestResult { outcome: Outcome::Fail { message, .. }, .. }] if message.contains("after")),
+        "{results:?}"
+    );
+    assert_eq!(fake.borrow().launched, 1);
+    assert!(fake.borrow().apps.is_empty());
+}
+
+#[test]
+fn a_file_whose_tests_cannot_be_listed_fails() {
+    let src = format!(
+        "{HEAD}test(\"one\", async () => {{}});\nglobalThis.__ljos_test_list = () => {{ throw new Error(\"no list\"); }};\n"
+    );
+    let results = outcomes(&[("a.test.ts", &src)]);
+    let [Outcome::Fail { message, .. }] = results.as_slice() else {
+        panic!("{results:?}");
+    };
+    assert!(
+        message.starts_with("the tests of a.test.ts cannot be listed: ")
+            && message.contains("no list"),
+        "{message}"
+    );
+}
+
+#[test]
+fn a_group_is_named_by_a_string_and_adds_its_tests_at_once() {
+    let unnamed =
+        format!("{HEAD}import {{ describe }} from \"ljos:test\";\ndescribe(1, () => {{}});\n");
+    let results = outcomes(&[("a.test.ts", &unnamed)]);
+    assert!(
+        matches!(&results[..], [Outcome::Fail { message, .. }] if message.contains("a group is named by a string")),
+        "{results:?}"
+    );
+    let later = format!(
+        "{HEAD}import {{ describe }} from \"ljos:test\";\ndescribe(\"g\", async () => {{\n  test(\"t\", async () => {{}});\n}});\n"
+    );
+    let results = outcomes(&[("a.test.ts", &later)]);
+    assert!(
+        matches!(&results[..], [Outcome::Fail { message, .. }] if message.contains("its function is not async")),
+        "{results:?}"
+    );
+}
+
+#[test]
+fn arrays_of_other_lengths_are_not_equal() {
+    let src = format!(
+        "{HEAD}test(\"holes\", async () => {{\n  expect(new Array(1)).not.toEqual([]);\n  expect([]).not.toEqual(new Array(1));\n}});\n"
+    );
+    assert_eq!(outcomes(&[("a.test.ts", &src)]), [Outcome::Pass]);
+}
+
+#[test]
+fn a_global_pattern_matches_every_time_it_is_used() {
+    let src = format!(
+        "{HEAD}test(\"again\", async () => {{\n  const re = /a/g;\n  expect(\"a\").toMatch(re);\n  expect(\"a\").toMatch(re);\n  expect(() => {{ throw new Error(\"a\"); }}).toThrow(re);\n  expect(() => {{ throw new Error(\"a\"); }}).toThrow(re);\n}});\n"
+    );
+    assert_eq!(outcomes(&[("a.test.ts", &src)]), [Outcome::Pass]);
+}
+
+fn result(name: &str, outcome: Outcome, log: &[&str]) -> TestResult {
+    TestResult {
+        file: "a.test.ts".into(),
+        name: vec![name.into()],
+        outcome,
+        log: log.iter().map(|l| (*l).into()).collect(),
+    }
+}
+
+#[test]
+fn a_tap_report_keeps_names_messages_and_logs_in_their_place() {
+    let mut tap = Tap::new();
+    let lines = tap.result(&result(
+        "a # b \\ c\nd",
+        Outcome::Fail {
+            message: "one\ntwo 'x'".into(),
+            at: None,
+        },
+        &["first\nsecond"],
+    ));
+    assert_eq!(
+        lines,
+        [
+            "# first",
+            "# second",
+            "not ok 1 - a.test.ts > a \\# b \\\\ c d",
+            "  ---",
+            "  message: \"one\\ntwo 'x'\"",
+            "  ...",
+        ]
+    );
+}
+
+#[test]
+fn a_junit_report_writes_no_character_xml_forbids() {
+    let report = junit(&[result(
+        "bell\u{7}",
+        Outcome::Fail {
+            message: "nul\u{0}".into(),
+            at: None,
+        },
+        &[],
+    )]);
+    assert!(!report.contains(['\u{0}', '\u{7}']), "{report}");
+    assert!(report.contains("name=\"bell\u{FFFD}\""), "{report}");
+    assert!(report.contains("message=\"nul\u{FFFD}\""), "{report}");
 }

@@ -348,6 +348,26 @@ Feature: Tests in TypeScript that drive the application
       When the tests are run
       Then the test run exits with status 0
 
+    Scenario: What the application logs as it starts is in its logs
+      Given the file "Greets.qml":
+        """qml
+        import QtQuick
+        Item {
+          Component.onCompleted: console.log("hello")
+        }
+        """
+      And the file "greets.test.ts":
+        """ts
+        import { test, expect } from "ljos:test";
+        test.use({ app: "./Greets.qml" });
+        test("greets", async (app) => {
+          const said = (await app.logs()).map((entry) => entry.message);
+          expect(said).toContain("hello");
+        });
+        """
+      When the tests are run
+      Then the test run exits with status 0
+
   Rule: A picture is compared with the one kept beside the test
 
     Scenario: A picture with none kept is written, and then held to

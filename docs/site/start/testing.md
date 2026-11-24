@@ -89,7 +89,8 @@ A test therefore gives the same result on every machine and runs as fast as its 
 
 - `describe(name, fn)` groups tests; their names read `file > group > test`.
 - `test.skip` reports a test without running it; `test.only` runs only the tests marked so in a file.
-- `test.use({ app, width, height, timeout })` sets what a file's tests start; `launch(path)` starts a second application inside a test.
+- `test.use({ app, width, height, timeout })` sets what a file's tests start; `launch(path)` starts a second application inside a test. The path is relative to the test file, and the application must be inside the directory `ljos test` was given, as the files it imports are.
+- `describe`'s function adds its tests at once, so it is not `async`.
 - A test file may import its own `.ts` helpers beside it (`import { addTimes } from "./steps.ts"`). `ljos:test` is the only other module it may import.
 - For `tsc` and your editor, the types are in `ljos-test.d.ts` (`crates/ljos_test/src/script/ljos-test.d.ts` in the Ljós repository); put it beside your tests.
 
