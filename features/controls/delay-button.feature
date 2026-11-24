@@ -108,3 +108,17 @@ Feature: DelayButton
       And 400 milliseconds pass
       Then the property "progress" of "slow" is within 0.05 of 0.4
       And the property "checked" of "slow" is false
+
+  @ljos-only
+  Rule: Reduced motion leaves the delay as long as it is
+    The progress is the time held, not an ornament: were it at its end at
+    once, a press would act as soon as it began and the delay would guard
+    nothing.
+
+    Scenario: With reduced motion a press still has to be held for the delay
+      Given the system setting "reduced motion" is true
+      When the user presses the pointer at 20, 120
+      And 500 milliseconds pass
+      Then the property "progress" of "slow" is within 0.05 of 0.5
+      When the user releases the pointer at 20, 120
+      Then the property "checked" of "slow" is false
