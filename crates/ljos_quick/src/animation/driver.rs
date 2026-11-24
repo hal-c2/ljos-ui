@@ -218,6 +218,15 @@ impl Run {
         *self.timeline.borrow_mut() = Some(timeline);
     }
 
+    /// Whether reduced motion retimes it: not a run without end, nor one
+    /// that keeps time.
+    fn follows_motion(&self, engine: &Engine, timeline: &Timed) -> bool {
+        !timeline.is_endless()
+            && !engine
+                .with::<Animation, _>(self.anim, |a| a.way.keeps_time)
+                .unwrap_or(false)
+    }
+
     fn is_done(&self) -> bool {
         self.timeline
             .borrow()
@@ -229,7 +238,7 @@ impl Run {
     /// by its own durations when it no longer does, from where it is
     /// (ARCHITECTURE §14, [`Timed::retime`]). A run without end keeps its
     /// pace: it says that something is still busy, and frozen it would
-    /// say nothing.
+    /// say nothing. So does one that keeps time ([`Way::keeps_time`](super::types::Way::keeps_time)).
     fn follow_motion(&self, engine: &Engine, calm: bool) {
         let Ok(mut timeline) = self.timeline.try_borrow_mut() else {
             return;
@@ -237,7 +246,7 @@ impl Run {
         let Some(timeline) = timeline.as_mut() else {
             return;
         };
-        if timeline.calm() != calm && !timeline.is_endless() {
+        if timeline.calm() != calm && self.follows_motion(engine, timeline) {
             let at = timeline.retime(engine, calm, self.elapsed.get());
             self.elapsed.set(at);
         }
@@ -932,7 +941,7 @@ fn wakes_at(engine: &Engine, run: &Run, now: Time, calm: bool) -> bool {
     run.timeline.borrow().as_deref().is_none_or(|timeline| {
         timeline.is_done()
             || (!timeline.is_endless() && t >= timeline.total())
-            || (!timeline.is_endless() && timeline.calm() != calm)
+            || (timeline.calm() != calm && run.follows_motion(engine, timeline))
             || !timeline.unwatched(engine)
     })
 }
