@@ -408,17 +408,18 @@
       const text = String(valueOf(row));
       return [want instanceof RegExp ? matches(want, text) : text === String(want), show(text)];
     }],
-    // With no value, that it has the property at all.
+    // With no value, or `undefined` before the options, that it has the
+    // property at all: what the inspector shows is JSON, never `undefined`.
     toHaveProperty: [
       2,
-      (name, ...want) => (want.length === 0 ? `to have ${name}` : `to have ${name} ${show(want[0])}`),
-      (loc, name, ...want) => {
+      (name, want) => (want === undefined ? `to have ${name}` : `to have ${name} ${show(want)}`),
+      (loc, name, want) => {
         const seen = loc.seenNow();
         if (!seen) return [false, NOT_THERE];
         const row = rowOf(seen, name);
         if (!row) return [false, `an item with no ${name}`];
         const value = valueOf(row);
-        return [want.length === 0 || equal(value, want[0]), show(value)];
+        return [want === undefined || equal(value, want), show(value)];
       },
     ],
     toHaveCount: [1, (want) => `to match ${want} item${want === 1 ? "" : "s"}`, (loc, want) => {
