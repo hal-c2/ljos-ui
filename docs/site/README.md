@@ -18,4 +18,6 @@ ljos.dev runs the examples beside their code, so every fence says what its block
 
 `cargo test -p ljos_cli --test docs_site` holds every page to these rules, CI runs it when `docs/site` changes, and `crates/ljos_cli/tests/docs_site.txt` lists the examples that are not there yet and why. The list only shrinks: an entry that no longer applies fails the test.
 
+The examples teach Ljós's dialect ([DIALECT.md](../DIALECT.md)): types from `Ljos.Core`, `Ljos.Ui`, `Ljos.Layout` and `Ljos.Models`, controls from the styled `Ljos.Controls`, text translated with `` t`…` ``, and TypeScript where an example has logic. Qt's forms (`import QtQuick…`, `qsTr`, `Ljos.Controls.Basic`) belong on the porting page, beside the Ljós form, and in an example `docs_site.txt` keeps in Qt's QML for a gap. `mise run docs:dialect` (`scripts/docs_dialect.py`) checks this; it lists the examples that keep `Ljos.Controls.Basic` for a control the style does not draw yet, and `tasks:smoke` runs it in CI.
+
 `<!-- check: ... -->` comments mark claims still to be verified against `features/` or the code.

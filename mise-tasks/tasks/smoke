@@ -46,6 +46,7 @@ desktop:cua:stop|run||
 desktop:drag-in|run|--check|
 dev|run|--check|
 docs|dry||CI's docs job builds the same docs; a second full cargo doc here is minutes long
+docs:dialect|run||
 features|dry||CI runs the whole ledger in its features job
 features:acceptance|dry|example|CI runs it in its acceptance job
 features:acceptance-test|dry||CI runs it in its acceptance job
