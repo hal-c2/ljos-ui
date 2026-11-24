@@ -136,7 +136,7 @@ module Ljos.Blocks
 module Ljos.Controls
 	AbstractButton QtQuick.Templates.AbstractButton
 	ApplicationWindow Ljos/Controls/ApplicationWindow.qml
-	BusyIndicator QtQuick/Controls/Basic/BusyIndicator.qml
+	BusyIndicator Ljos/Controls/BusyIndicator.qml
 	Button Ljos/Controls/Button.qml
 	ButtonGroup QtQuick.Templates.ButtonGroup
 	Card Ljos/Controls/Card.qml
@@ -161,7 +161,7 @@ module Ljos.Controls
 	Pane Ljos/Controls/Pane.qml
 	Popover Ljos/Controls/Popover.qml
 	Popup Ljos/Controls/Popup.qml
-	ProgressBar QtQuick/Controls/Basic/ProgressBar.qml
+	ProgressBar Ljos/Controls/ProgressBar.qml
 	RadioButton Ljos/Controls/RadioButton.qml
 	RoundButton Ljos/Controls/RoundButton.qml
 	ScrollBar Ljos/Controls/ScrollBar.qml
@@ -181,6 +181,8 @@ module Ljos.Controls
 	ToolTip Ljos/Controls/ToolTip.qml
 	type Ljos/Controls/ApplicationWindow.qml ApplicationWindow
 		prototype QtQuick.Templates.ApplicationWindow named
+	type Ljos/Controls/BusyIndicator.qml BusyIndicator
+		prototype QtQuick.Templates.BusyIndicator named
 	type Ljos/Controls/Button.qml Button
 		prototype QtQuick.Templates.Button named
 		prop primary QtQml.bool named
@@ -297,6 +299,8 @@ module Ljos.Controls
 		prototype Ljos.Controls.impl.PopoverBase named
 	type Ljos/Controls/Popup.qml Popup
 		prototype QtQuick.Templates.Popup named
+	type Ljos/Controls/ProgressBar.qml ProgressBar
+		prototype QtQuick.Templates.ProgressBar named
 	type Ljos/Controls/RadioButton.qml RadioButton
 		prototype QtQuick.Templates.RadioButton named
 	type Ljos/Controls/RoundButton.qml RoundButton
