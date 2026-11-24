@@ -196,6 +196,8 @@ pub fn run_file(
     match File::open(host, key, options) {
         Ok(file) => file.run(options, each),
         Err(error) => {
+            // What the file started before it failed ends with it.
+            host.borrow_mut().close_all();
             let result = TestResult {
                 file: key.to_string(),
                 name: Vec::new(),
@@ -364,14 +366,31 @@ impl File {
     }
 
     fn run(self, options: &Options, each: &mut dyn FnMut(&TestResult)) {
-        let listed: Vec<Listed> = self
-            .context
-            .with(|ctx| {
-                let list: Function = ctx.globals().get("__ljos_test_list").ok()?;
-                let text: String = list.call(()).ok()?;
-                Some(Listed::all(&text))
-            })
-            .unwrap_or_default();
+        let listed = self.context.with(|ctx| -> Result<Vec<Listed>, String> {
+            let list: Function = ctx
+                .globals()
+                .get("__ljos_test_list")
+                .map_err(|e| e.to_string())?;
+            let text: String = list.call(()).catch(&ctx).map_err(|e| e.to_string())?;
+            Listed::all(&text)
+        });
+        let listed = match listed {
+            Ok(listed) => listed,
+            Err(why) => {
+                // A file whose tests cannot be listed fails as a whole,
+                // rather than passing with none.
+                each(&TestResult {
+                    file: self.key.clone(),
+                    name: Vec::new(),
+                    outcome: Outcome::Fail {
+                        message: format!("the tests of {} cannot be listed: {why}", self.key),
+                        at: None,
+                    },
+                    log: Vec::new(),
+                });
+                return;
+            }
+        };
         for (index, test) in listed.into_iter().enumerate() {
             let mut result = TestResult {
                 file: self.key.clone(),
@@ -470,11 +489,11 @@ struct Listed {
 }
 
 impl Listed {
-    fn all(text: &str) -> Vec<Listed> {
+    fn all(text: &str) -> Result<Vec<Listed>, String> {
         let Ok(Json::Array(tests)) = serde_json::from_str::<Json>(text) else {
-            return Vec::new();
+            return Err(format!("the list is not an array of tests: {text}"));
         };
-        tests
+        Ok(tests
             .iter()
             .map(|t| Listed {
                 name: t["name"]
@@ -488,7 +507,7 @@ impl Listed {
                     .unwrap_or_default(),
                 skip: t["skip"] == json!(true),
             })
-            .collect()
+            .collect())
     }
 }
 
@@ -600,12 +619,14 @@ fn answer(host: &Rc<RefCell<dyn TestHost>>, op: &str, arg: &str, update: bool) -
 /// writes it where there is none or the run was asked to.
 fn match_picture(host: &mut dyn TestHost, arg: &Json, update: bool) -> Result<Json, String> {
     let name = arg["name"].as_str().unwrap_or_default();
+    // `x.actual.png` is where a failed match of `x.png` is written, so it
+    // names no reference: a reference by that name would be overwritten.
     let plain = Path::new(name)
         .file_name()
-        .is_some_and(|f| f == name && name.ends_with(".png"));
+        .is_some_and(|f| f == name && name.ends_with(".png") && !name.ends_with(".actual.png"));
     if !plain {
         return Err(format!(
-            "a picture is named by a file name that ends in `.png`, with no directory: not {}",
+            "a picture is named by a file name that ends in `.png` but not `.actual.png`, with no directory: not {}",
             Json::from(name)
         ));
     }
@@ -629,11 +650,16 @@ fn match_picture(host: &mut dyn TestHost, arg: &Json, update: bool) -> Result<Js
         let _ = std::fs::remove_file(&seen_path);
         return Ok(Json::Null);
     }
-    let Ok(old) = std::fs::read(&path) else {
-        write(&path)?;
-        return Err(format!(
-            "there was no {kept}; this run's picture is written there: look at it, and run again"
-        ));
+    let old = match std::fs::read(&path) {
+        Ok(old) => old,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            write(&path)?;
+            return Err(format!(
+                "there was no {kept}; this run's picture is written there: look at it, and run again"
+            ));
+        }
+        // A reference that is there but cannot be read is not replaced.
+        Err(e) => return Err(format!("{kept} cannot be read: {e}")),
     };
     let now = RgbaImage::from_png(&png).map_err(|e| format!("the picture cannot be read: {e}"))?;
     let reference = RgbaImage::from_png(&old)
@@ -711,8 +737,15 @@ impl Tap {
     /// The lines of one result.
     pub fn result(&mut self, result: &TestResult) -> Vec<String> {
         self.count += 1;
-        let mut lines: Vec<String> = result.log.iter().map(|l| format!("# {l}")).collect();
-        let name = result.full_name();
+        // Every line of a log entry is a comment, or a TAP reader would
+        // take the second line of an entry for a test point.
+        let mut lines: Vec<String> = result
+            .log
+            .iter()
+            .flat_map(|l| l.split('\n'))
+            .map(|l| format!("# {}", l.trim_end_matches('\r')))
+            .collect();
+        let name = tap_description(&result.full_name());
         match &result.outcome {
             Outcome::Pass => {
                 self.passed += 1;
@@ -726,15 +759,7 @@ impl Tap {
                 self.failed += 1;
                 lines.push(format!("not ok {} - {name}", self.count));
                 lines.push("  ---".into());
-                let mut first = true;
-                for part in message.lines() {
-                    if first {
-                        lines.push(format!("  message: {}", yaml_quoted(part)));
-                        first = false;
-                    } else {
-                        lines.push(format!("    {}", yaml_quoted(part)));
-                    }
-                }
+                lines.push(format!("  message: {}", yaml_scalar(message)));
                 if let Some(at) = at {
                     lines.push(format!("  at: {at}"));
                 }
@@ -761,8 +786,29 @@ impl Tap {
     }
 }
 
-fn yaml_quoted(text: &str) -> String {
-    format!("'{}'", text.replace('\'', "''"))
+/// A test point's description: on one line, with `#` and `\` escaped as
+/// TAP 14 asks, so a name never reads as a directive.
+fn tap_description(name: &str) -> String {
+    let mut out = String::with_capacity(name.len());
+    for c in name.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '#' => out.push_str("\\#"),
+            '\n' | '\r' => out.push(' '),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// A YAML scalar for `text`: single-quoted when it is one line, and a
+/// double-quoted scalar (JSON's escapes are YAML's) when it is more.
+fn yaml_scalar(text: &str) -> String {
+    if text.contains(['\n', '\r']) {
+        Json::from(text).to_string()
+    } else {
+        format!("'{}'", text.replace('\'', "''"))
+    }
 }
 
 /// The results as JUnit XML, one `testsuite` per file.
@@ -831,10 +877,20 @@ pub fn junit(results: &[TestResult]) -> String {
 }
 
 fn xml(text: &str) -> String {
-    text.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            // XML 1.0 has no way to write these, even escaped.
+            '\t' | '\n' | '\r' => out.push(c),
+            c if u32::from(c) < 0x20 || c == '\u{FFFE}' || c == '\u{FFFF}' => out.push('\u{FFFD}'),
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 /// The results as data:

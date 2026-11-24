@@ -100,7 +100,7 @@ declare module "ljos:test" {
   }
 
   /** Each retries on the application's clock until it holds or its timeout passes. */
-  export interface LocatorMatchers extends PictureMatchers {
+  export interface LocatorChecks {
     toHaveText(expected: string | RegExp, options?: Wait): Promise<void>;
     toHaveProperty(name: string, expected?: unknown, options?: Wait): Promise<void>;
     toHaveCount(expected: number, options?: Wait): Promise<void>;
@@ -111,13 +111,16 @@ declare module "ljos:test" {
     toBeFocused(options?: Wait): Promise<void>;
   }
 
+  /** `toMatchPicture` has no `.not`: a picture is compared with one kept. */
+  export interface LocatorMatchers extends LocatorChecks, PictureMatchers {}
+
   type Promised<M> = {
     [K in keyof M]: M[K] extends (...args: infer A) => unknown ? (...args: A) => Promise<void> : never;
   };
 
   export interface Expect {
     (actual: App): PictureMatchers;
-    (actual: Locator): LocatorMatchers & { not: LocatorMatchers };
+    (actual: Locator): LocatorMatchers & { not: LocatorChecks };
     (actual: unknown): ValueMatchers & { not: ValueMatchers };
     /**
      * Retries `fn` on the clock of the application the test started last
@@ -126,6 +129,11 @@ declare module "ljos:test" {
     poll(fn: () => unknown, options?: Wait): Promised<ValueMatchers> & { not: Promised<ValueMatchers> };
   }
 
+  /**
+   * A test's function is given the application `test.use` names. A file
+   * with no `test.use` starts its applications with `launch`, and leaves
+   * the argument unused.
+   */
   export interface Test {
     (name: string, fn: (app: App) => void | Promise<void>): void;
     skip(name: string, fn?: (app: App) => void | Promise<void>): void;
@@ -136,7 +144,8 @@ declare module "ljos:test" {
 
   export const test: Test;
   export const expect: Expect;
-  export function describe(name: string, fn: () => void): void;
+  /** Groups tests under a name; `fn` adds them at once, so it is not async. */
+  export function describe(name: string, fn: () => undefined): void;
   /** Starts another application in a test: a second window, a second app. */
   export function launch(app: string, options?: Omit<Use, "app">): Promise<App>;
 }

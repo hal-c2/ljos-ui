@@ -58,6 +58,8 @@
     if (Object.is(a, b)) return true;
     if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return false;
     if (Array.isArray(a) !== Array.isArray(b)) return false;
+    // Holes have no keys, so `[ , ]` and `[]` would have the same ones.
+    if (Array.isArray(a) && a.length !== b.length) return false;
     const ka = Object.keys(a);
     const kb = Object.keys(b);
     if (ka.length !== kb.length) return false;
@@ -88,12 +90,25 @@
   };
 
   function describe(name, fn) {
+    if (typeof name !== "string") throw new TestError("a group is named by a string");
+    if (typeof fn !== "function") throw new TestError(`the group ${show(name)} has no function`);
     path.push(name);
     try {
-      fn();
+      const made = fn();
+      // Tests a group adds after an await would land outside it.
+      if (made && typeof made.then === "function") {
+        throw new TestError(`the group ${show(name)} adds its tests at once: its function is not async`);
+      }
     } finally {
       path.pop();
     }
+  }
+
+  // A global or sticky RegExp remembers where it last matched; a check
+  // starts from the beginning every time it looks.
+  function matches(re, text) {
+    re.lastIndex = 0;
+    return re.test(text);
   }
 
   // ------------------------------------------------------------ the app
@@ -201,43 +216,43 @@
   class Locator {
     constructor(app, text) {
       this.app = app;
-      this.text = text;
+      this.selector = text;
     }
     toString() {
-      return this.text;
+      return this.selector;
     }
     find(inner) {
-      return new Locator(this.app, `${this.text} >> ${inner}`);
+      return new Locator(this.app, `${this.selector} >> ${inner}`);
     }
     nth(index) {
-      return new Locator(this.app, `${this.text} >> nth=${index}`);
+      return new Locator(this.app, `${this.selector} >> nth=${index}`);
     }
     click(options) {
-      const args = { target: this.text };
+      const args = { target: this.selector };
       if (options && options.button) args.button = options.button;
       if (options && options.count) args.count = options.count;
       this.app.call("app_click", args);
       return Promise.resolve();
     }
     type(text) {
-      this.app.call("app_type", { text: String(text), target: this.text });
+      this.app.call("app_type", { text: String(text), target: this.selector });
       return Promise.resolve();
     }
     press(keys, options) {
-      const args = { keys: String(keys), target: this.text };
+      const args = { keys: String(keys), target: this.selector };
       if (options && options.repeat) args.repeat = options.repeat;
       this.app.call("app_press", args);
       return Promise.resolve();
     }
     scroll(by) {
-      const args = { target: this.text };
+      const args = { target: this.selector };
       if (by && by.dx !== undefined) args.dx = by.dx;
       if (by && by.dy !== undefined) args.dy = by.dy;
       this.app.call("app_scroll", args);
       return Promise.resolve();
     }
     matches() {
-      const answer = this.app.call("app_find", { locator: this.text, limit: 1 });
+      const answer = this.app.call("app_find", { locator: this.selector, limit: 1 });
       return answer.structured;
     }
     countNow() {
@@ -250,7 +265,7 @@
       return Promise.resolve(this.countNow() > 0);
     }
     inspectNow() {
-      return this.app.call("app_inspect", { target: this.text, all: true }).structured;
+      return this.app.call("app_inspect", { target: this.selector, all: true }).structured;
     }
     inspect() {
       return Promise.resolve(this.inspectNow());
@@ -262,7 +277,7 @@
     }
     propertyOf(seen, name) {
       const row = rowOf(seen, name);
-      if (!row) throw new TestError(`${this.text} has no property ${show(name)}`);
+      if (!row) throw new TestError(`${this.selector} has no property ${show(name)}`);
       return valueOf(row);
     }
     propertyNow(name) {
@@ -317,7 +332,7 @@
     toBeDefined: (a) => [a !== undefined, "to be defined"],
     toContain: (a, b) => [a != null && typeof a.includes === "function" && a.includes(b), "to contain", b],
     toMatch: (a, b) => [
-      typeof a === "string" && (b instanceof RegExp ? b.test(a) : a.includes(String(b))),
+      typeof a === "string" && (b instanceof RegExp ? matches(b, a) : a.includes(String(b))),
       "to match",
       b,
     ],
@@ -360,7 +375,7 @@
       let holds = threw;
       if (threw && expected !== undefined) {
         const m = thrown instanceof Error ? thrown.message : String(thrown);
-        holds = expected instanceof RegExp ? expected.test(m) : m.includes(String(expected));
+        holds = expected instanceof RegExp ? matches(expected, m) : m.includes(String(expected));
       }
       if (holds === negated) {
         const what = expected === undefined ? "" : " " + show(expected);
@@ -390,7 +405,7 @@
       const row = rowOf(seen, "text");
       if (!row) return [false, "an item with no text"];
       const text = String(valueOf(row));
-      return [want instanceof RegExp ? want.test(text) : text === String(want), show(text)];
+      return [want instanceof RegExp ? matches(want, text) : text === String(want), show(text)];
     }],
     // With no value, that it has the property at all.
     toHaveProperty: [
@@ -466,7 +481,7 @@
           }
           if (verdict && verdict[0] !== negated) return Promise.resolve();
           if (waited >= timeout) {
-            const expected = `expected ${loc.text} ${negated ? "not " : ""}${words(...args)}`;
+            const expected = `expected ${loc.selector} ${negated ? "not " : ""}${words(...args)}`;
             const after = timeout > 0 ? ` after ${timeout} ms` : "";
             throw new TestError(
               verdict
@@ -507,7 +522,7 @@
       if (actual instanceof App) return { toMatchPicture: pictureMatcher(actual, null, negated) };
       if (!(actual instanceof Locator)) return valueExpectation(actual, negated);
       const out = locatorExpectation(actual, negated);
-      out.toMatchPicture = pictureMatcher(actual.app, actual.text, negated);
+      out.toMatchPicture = pictureMatcher(actual.app, actual.selector, negated);
       return out;
     };
     const out = make(false);
