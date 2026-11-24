@@ -934,7 +934,7 @@ Feature: Ljós's own style: the controls of Ljos.Controls
 
   Rule: Ljos.Controls has every control Ljos.Controls.Basic has
 
-    Scenario: What the style has no look of its own for yet is Basic's
+    Scenario: A file finds each control and the dialogs, drawn or borrowed
       Given the QML:
         """qml
         import Ljos.Ui
@@ -949,7 +949,7 @@ Feature: Ljós's own style: the controls of Ljos.Controls
           FolderDialog { objectName: "where"; title: "Where" }
         }
         """
-      Then the property "implicitHeight" of "row" is 40
+      Then the property "implicitHeight" of "row" is 36
       And the property "text" of "notes" is "Notes"
       And the property "visible" of "confirm" is false
       And the property "title" of "open" is "Open notes"
