@@ -138,7 +138,7 @@ Key behaviours of `Loader` and `Component`:
 - Setting `asynchronous: true` on a `Loader` defers creating its item until after the enclosing file has finished completing; while waiting, `loader.status` is `Loader.Loading` (`2`) and `loader.item` is `null`, before transitioning to `Loader.Ready` (`1`) and emitting `loaded`.
 - When a `Loader` switches from one component to another, it destroys the old item first and creates the new one, emitting `onItemChanged` once from the old item to the new item without reporting an empty intermediate item (although reading `loader.item` from inside the new item's `Component.onCompleted` sees `null`).
 - When `loader.active` is set to `false`, the loaded item is destroyed and `onItemChanged` and `onStatusChanged` fire before `onActiveChanged`.
-- `loader.setSource(url, properties)` loads a component from `url` with initial property values, which may include `Qt.binding(() => ...)` expressions.
+- `loader.setSource(url, properties)` loads a component from `url` with initial property values, which may include `bind(() => ...)` expressions (`bind` is `Ljos.Core`'s; Qt writes `Qt.binding`).
 
 ## Creating and destroying objects from JavaScript
 
@@ -182,7 +182,7 @@ Item {
 }
 ```
 
-Initial property maps passed to `createObject` and `incubateObject` accept top-level properties, dotted value-type members (`"font.pixelSize": 31`), grouped properties (`"border.width": 4`), and attached properties (`"Layout.fillWidth": true`, `"Accessible.name": "Open panel"`). Passing `Qt.binding(...)` for a top-level property installs a live binding in `setSource`, `createObject`, and `incubateObject`. For a dotted value-type member such as `"font.pixelSize"`, `createObject` evaluates the `Qt.binding` once at creation, whereas `incubateObject` keeps the member bound to the expression.
+Initial property maps passed to `createObject` and `incubateObject` accept top-level properties, dotted value-type members (`"font.pixelSize": 31`), grouped properties (`"border.width": 4`), and attached properties (`"Layout.fillWidth": true`, `"Accessible.name": "Open panel"`). Passing `bind(...)` for a top-level property installs a live binding in `setSource`, `createObject`, and `incubateObject`. For a dotted value-type member such as `"font.pixelSize"`, `createObject` evaluates the `bind` once at creation, whereas `incubateObject` keeps the member bound to the expression.
 
 To remove a dynamically created object, call `object.destroy()` (or `object.destroy(delayMs)`). Destruction runs `Component.onDestruction` handlers on child objects before their parent.
 
