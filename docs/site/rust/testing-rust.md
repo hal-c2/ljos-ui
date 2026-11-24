@@ -1,13 +1,13 @@
 ---
 title: Testing a Rust and QML App
-description: Test QML and native Rust types deterministically on a virtual clock using ljos test, App::build, TestWindow, and render_png.
+description: Test QML and native Rust types deterministically on a virtual clock using ljos test with TypeScript tests, App::build, TestWindow, and render_png.
 section: rust
 order: 6
 ---
 
 # Testing a Rust and QML App
 
-After reading this page, you will be able to verify your QML files and native type dump, run QML `TestCase` suites on a virtual clock, write headless Rust unit and integration tests against `Engine` and `App::build`, drive custom visual items and accessibility trees with `TestWindow`, and render deterministic PNG screenshots.
+After reading this page, you will be able to verify your QML files and native type dump, drive the application from TypeScript tests on a virtual clock, write headless Rust unit and integration tests against `Engine` and `App::build`, drive custom visual items and accessibility trees with `TestWindow`, and render deterministic PNG screenshots.
 
 ## Checking QML and the native type dump
 
@@ -35,31 +35,29 @@ cargo test                                   # fails, naming that command, when 
 
 If you want a Rust test to compile a directory of QML files and assert that there are zero warnings or errors without printing to standard error, enable the `dev-qml` feature in `[dev-dependencies]` and call `ljos::dev::compile_quiet(&dirs, Some(&engine))`. It returns the compiled `MapSource` along with every `Diagnostic`; `MapSource::keys()` and `MapSource::failures()` list the components that succeeded and those that failed.
 
-## Running QML `TestCase` files with `ljos test`
+## Driving the application with `ljos test`
 
-`ljos test` runs QML `TestCase` components in `tst_*.qml` files on a virtual clock without opening a platform window. Timers, animations and `wait()` calls advance virtual time immediately without wall-clock sleeps, and the exit status is the number of failed tests:
+Test what a user sees with Ljos.Test: `*.test.ts` files that start the application headless, on a virtual clock, and act on it through locators, as a user or an agent does. A native type is reached through what it shows, so the same test holds whether a value comes from QML or from Rust:
+
+```ts
+import { test, expect } from "ljos:test";
+
+test.use({ app: "./Main.qml" });
+
+test("a file is named by the end of its URL", async (app) => {
+  await app.find("#path").type("file:///v/clip.mp4");
+  await app.press("Enter");
+  await expect(app.find("#name")).toHaveText("clip.mp4");
+});
+```
 
 ```sh
 ljos test
-ljos test --filter test_increment --import tests/imports tests/
 ```
 
-Pass `--filter <NAME>` (which may be repeated) to run only a specific test case, function or data tag, and `--import <DIR>` to add a module import path used only by tests.
+Timers and animations run only when the test lets the clock pass (`app.advance(ms)`, or a retrying `expect`), so nothing sleeps and every run gives the same result. The exit status is the number of failed tests; `--junit FILE` and `--json FILE` write reports for CI. [Testing](../start/testing.md) describes the whole API.
 
-A `tst_*.qml` file uses `import QtTest`:
-
-```qml
-import QtQuick
-import QtTest
-
-TestCase {
-    name: "MathTests"
-
-    function test_addition() {
-        compare(2 + 2, 4)
-    }
-}
-```
+Existing `tst_*.qml` suites (`import QtTest`, `TestCase`) run under the same command, unchanged, and print what Qt's `qmltestrunner` prints; `--filter Case::function` and `--import DIR` work as with Qt's runner.
 
 ## Testing native types and QML headlessly in Rust
 

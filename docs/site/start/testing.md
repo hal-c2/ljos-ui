@@ -1,107 +1,111 @@
 ---
 title: Testing
-description: Test QML applications with tst_*.qml files and ljos test, render deterministic pictures with ljos render, and write Gherkin behaviour scenarios.
+description: Test applications with TypeScript files that drive them as a user or an agent does, on a virtual clock, with ljos test; render deterministic pictures with ljos render; write Gherkin behaviour scenarios.
 section: start
 order: 7
 ---
 
 # Testing
 
-This page shows you how to run `tst_*.qml` test suites with `ljos test`, capture deterministic headless screenshots with `ljos render`, and write Gherkin behaviour scenarios for your application.
+This page shows you how to test an application with Ljos.Test: TypeScript files that drive it as a user or an agent would, on a clock only the test moves. It also covers deterministic pictures with `ljos render`, Gherkin behaviour scenarios, and running existing Qt Quick Test (`tst_*.qml`) suites.
 
-## QML unit tests with `ljos test`
+## Tests in TypeScript with `ljos test`
 
-Files named `tst_*.qml` that use `import QtTest` and `TestCase` run unchanged on Ljós. `ljos test` executes them headlessly on a virtual clock and prints the output in `qmltestrunner`'s text format.
+A test file is a TypeScript module whose name ends in `.test.ts`. It imports `test` and `expect` from `ljos:test`, names the QML file it tests, and acts on it through locators: the same way of naming an item that the MCP inspector, an agent and `ljos observe` use. Every test gets a fresh application, headless, on a virtual clock.
 
-### Writing a `TestCase`
-
-Create a file named `tst_click.qml`:
+Given this `Counter.qml`:
 
 ```qml
 import QtQuick
-import QtTest
+import QtQuick.Controls
 
 Item {
-    width: 200
-    height: 200
-
-    MouseArea {
-        Accessible.role: Accessible.Button
-        Accessible.name: "Click area"
-        id: area
-        x: 20
-        y: 30
-        width: 100
-        height: 80
-        property point at
-        onClicked: (mouse) => at = Qt.point(mouse.x, mouse.y)
-    }
-
-    Item {
-        id: box
-        signal poked
-    }
-
-    SignalSpy {
-        id: spy
-        target: box
-        signalName: "poked"
-    }
-
-    TestCase {
-        name: "Click"
-        when: windowShown
-
-        function test_middle() {
-            mouseClick(area)
-            compare(area.at, Qt.point(50, 40))
-        }
-
-        function test_position() {
-            mouseClick(area, 3, 4)
-            compare(area.at, Qt.point(3, 4))
-        }
-
-        function test_spy() {
-            box.poked()
-            compare(spy.count, 1)
-            spy.clear()
-        }
-    }
+    width: 200; height: 120
+    property int count: 0
+    Button { text: "Add"; onClicked: count++ }
+    Text { objectName: "count"; y: 80; text: count }
 }
 ```
 
-Run `ljos test` in the directory (or pass specific files or directories):
+write `counter.test.ts` beside it:
+
+```ts
+import { test, expect } from "ljos:test";
+
+test.use({ app: "./Counter.qml" });
+
+test("a click counts", async (app) => {
+  await app.click('role=button[name="Add"]');
+  await expect(app.find("#count")).toHaveText("1");
+});
+```
+
+and run `ljos test` in the directory (or give it files or directories):
 
 ```sh
-ljos test tst_click.qml
+ljos test
 ```
 
 ```text
-PASS   : Click::initTestCase()
-PASS   : Click::test_middle()
-PASS   : Click::test_position()
-PASS   : Click::test_spy()
-PASS   : Click::cleanupTestCase()
-Totals: 5 passed, 0 failed, 0 skipped
+TAP version 14
+ok 1 - counter.test.ts > a click counts
+1..1
+# pass 1
+# fail 0
+# skip 0
 ```
 
-### Checks, input and options
+The report is [TAP version 14](https://testanything.org/tap-version-14-specification.html). A failure says what and where:
 
-Inside a `TestCase` function you can use:
+```text
+not ok 1 - counter.test.ts > a click counts
+  ---
+  message: 'expected #count to have text "1"; it was "0" after 5000 ms'
+  at: counter.test.ts:7
+  ...
+```
 
-- **Assertions:** `compare(actual, expected)`, `verify(condition, message)`, `fuzzyCompare(actual, expected, delta)`, `tryCompare(obj, property, expected, timeout)`, `tryVerify(function, timeout)` and `fail(message)`.
-- **Signals:** `SignalSpy` to count signal emissions and inspect signal arguments.
-- **Input synthesis:** `mouseClick`, `mousePress`, `mouseRelease`, `mouseMove`, `keyClick`, `keyPress`, `keyRelease` and `TouchEventSequence`. Input events travel through the same hit-testing and focus paths as real user input, so clicking a `MouseArea` with no coordinates clicks its centre `(width / 2, height / 2)`.
-- **Time:** `wait(ms)` and `waitForRendering(item)` advance the virtual clock without sleeping in real wall-clock time.
+### Finding and acting
 
-Use `--filter` to run a single case, function or data tag, `--import` to add module search paths, and `--json` to save a machine-readable report:
+- **Locators** are text: `#count` (an `objectName`), `role=button[name="Add"]` (a role and an accessible name), `text=Hello`, and `a >> b` for `b` inside `a`. `app.find(locator)` gives a `Locator`, which finds the item again on every use; `nth(i)` and `find(inner)` narrow it.
+- **Acts:** `click`, `type`, `press` (keys such as `"Ctrl+A"`) and `scroll`, on the app with a locator or on a locator. They go through the same hit testing and focus as a person's input, and an act the person could not do is refused: a disabled button is not clicked, and the test fails saying so.
+- **Reads:** `text()`, `property(name)`, `count()`, `exists()` and `inspect()` on a locator; `snapshot()` (the outline an agent reads) and `logs()` on the app. `app.call(tool, args)` reaches any other inspector tool.
+
+### Time
+
+Nothing in a test sleeps. The application's clock moves only when the test lets it:
+
+- `await app.advance(1000)` lets a second pass: timers fire and animations run.
+- `expect(locator)` matchers retry: they check once, then let the clock run a frame (16 ms) at a time until they hold, up to their timeout (5000 ms of the application's time, `{ timeout }` to change it). `toHaveText`, `toHaveProperty`, `toHaveCount`, `toExist`, `toBeVisible`, `toBeEnabled`, `toBeChecked` and `toBeFocused` work this way.
+- `app.waitFor(fn)` and `expect.poll(fn).toBe(x)` retry a condition of your own the same way.
+
+A test therefore gives the same result on every machine and runs as fast as its own work. Value matchers (`expect(x).toBe(y)`, `toEqual`, `toMatch`, `toContain`, `toBeGreaterThan`, `toBeCloseTo`, `toThrow` and the rest, each with `.not`) check once.
+
+### Pictures
+
+`await expect(app).toMatchPicture("counter.png")`, or `expect(locator)` for one item, compares what the window shows with `__pictures__/counter.png` beside the test. The first run writes the picture and fails, so that you look at it; later runs are held to it. A picture that differs fails and is written beside it as `counter.actual.png`. Run `ljos test --update-pictures` to keep the new pictures. `{ tolerance, maxDiffPixels }` allow for small differences.
+
+### Organising tests
+
+- `describe(name, fn)` groups tests; their names read `file > group > test`.
+- `test.skip` reports a test without running it; `test.only` runs only the tests marked so in a file.
+- `test.use({ app, width, height, timeout })` sets what a file's tests start; `launch(path)` starts a second application inside a test.
+- A test file may import its own `.ts` helpers beside it (`import { addTimes } from "./steps.ts"`). `ljos:test` is the only other module it may import.
+- For `tsc` and your editor, the types are in `ljos-test.d.ts` (`crates/ljos_test/src/script/ljos-test.d.ts` in the Ljós repository); put it beside your tests.
+
+### Options and CI
 
 ```sh
-ljos test --filter Click::test_middle --json results.json .
+ljos test --filter "a click" --junit results.xml --json results.json tests/
 ```
 
-The exit status of `ljos test` is the number of failed tests (or `0` when all pass).
+- `--filter TEXT` runs the tests whose full name contains the text.
+- `--junit FILE` writes JUnit XML for CI; `--json FILE` the machine-readable report.
+- The exit status is the number of failed tests (`0` when all pass).
+
+## Existing Qt Quick Test suites
+
+Files named `tst_*.qml` that use `import QtTest` and `TestCase` run unchanged under the same `ljos test`, on the same virtual clock, and print what Qt's `qmltestrunner` prints (`PASS   : Case::test_x()`, `Totals: …`). This keeps a migrating application's suites running; new tests are better written in TypeScript, because a `TestCase` runs inside the application and can reach what no user could. `compare`, `verify`, `tryCompare`, `SignalSpy`, `mouseClick`, `keyClick`, `wait` and the rest are supported; `--filter Case::function` and `--import DIR` work as with Qt's runner.
 
 ## Deterministic pictures with `ljos render`
 
