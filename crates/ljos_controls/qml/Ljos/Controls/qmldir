@@ -1,20 +1,29 @@
 module Ljos.Controls
 singleton Theme 1.0 Theme.qml
+ApplicationWindow 1.0 ApplicationWindow.qml
 Button 1.0 Button.qml
 Card 1.0 Card.qml
 CheckBox 1.0 CheckBox.qml
 ComboBox 1.0 ComboBox.qml
+Control 1.0 Control.qml
 EmptyState 1.0 EmptyState.qml
+Frame 1.0 Frame.qml
+GroupBox 1.0 GroupBox.qml
 Icon 1.0 Icon.qml
 Label 1.0 Label.qml
 Menu 1.0 Menu.qml
 MenuItem 1.0 MenuItem.qml
 MenuSeparator 1.0 MenuSeparator.qml
+Page 1.0 Page.qml
+Pane 1.0 Pane.qml
 Popover 1.0 Popover.qml
 Popup 1.0 Popup.qml
+ScrollBar 1.0 ScrollBar.qml
+ScrollView 1.0 ScrollView.qml
 Slider 1.0 Slider.qml
 SpinBox 1.0 SpinBox.qml
 SplitButton 1.0 SplitButton.qml
+SwipeView 1.0 SwipeView.qml
 Switch 1.0 Switch.qml
 TabBar 1.0 TabBar.qml
 TabButton 1.0 TabButton.qml
