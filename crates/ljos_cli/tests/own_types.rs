@@ -226,12 +226,23 @@ impl<'a> Types<'a> {
     }
 
     /// The type a property of a type of `module` means by `name`: the one a
-    /// file that imports the module has by that name, or else the one of
-    /// that name anywhere (a native type names the type of another module
-    /// without importing anything).
+    /// file that imports the module has by that name, or else the native
+    /// type of that name anywhere, or else any type of that name. A native
+    /// type names the type of another module without importing anything,
+    /// and a file that names a type through a qualified import (`T.Control`)
+    /// leaves only the bare name, which a style's own file of that name
+    /// must not take: it would move with every style that lands.
     fn meant(&self, module: &str, name: &str) -> Option<&Home> {
+        let anywhere = |native: bool| {
+            self.modules.values().find_map(|types| {
+                types
+                    .get(name)
+                    .filter(|registered| matches!(registered.id, Id::Native(_)) == native)
+            })
+        };
         self.visible(module, name)
-            .or_else(|| self.modules.values().find_map(|types| types.get(name)))
+            .or_else(|| anywhere(true))
+            .or_else(|| anywhere(false))
             .map(|registered| &self.homes[&registered.id])
     }
 

@@ -99,6 +99,28 @@ Feature: Ljós's own style: scroll bars, views and the containers a window is la
       When the user turns the wheel 1 notch down at 100, 50
       Then the property "contentItem.opacity" of "bar" is 1
 
+    Scenario: A bar put in place of the style's still brings the other bar
+      Given the QML:
+        """qml
+        import Ljos.Ui
+        import Ljos.Core
+        import Ljos.Controls
+        Item {
+          id: root; objectName: "root"
+          width: 300; height: 200
+          readonly property bool acrossActive: view.ScrollBar.horizontal.active
+          ScrollView {
+            id: view
+            width: 200; height: 100
+            ScrollBar.vertical: ScrollBar { objectName: "bar" }
+            Label { text: "Wide"; width: 400; height: 400 }
+          }
+        }
+        """
+      Then the property "acrossActive" of "root" is false
+      When the property "active" of "bar" is set to true
+      Then the property "acrossActive" of "root" is true
+
   Rule: A pane and a page are the canvas; a frame and a group box are a thin edge
 
     Background:
@@ -155,6 +177,29 @@ Feature: Ljós's own style: scroll bars, views and the containers a window is la
     Scenario: A group box's frame starts below its title and the content inside the frame
       Then the property "frameGap" of "root" is 8
       And the property "insetGap" of "root" is 12
+
+    Scenario Outline: A group box makes room above its frame for <what>
+      Given the QML:
+        """qml
+        import Ljos.Ui
+        import Ljos.Core
+        import Ljos.Controls
+        Item {
+          width: 300; height: 200
+          GroupBox { objectName: "plain"; Label { text: "No title" } }
+          GroupBox {
+            objectName: "custom"; y: 100
+            label: Rectangle { implicitWidth: 0; implicitHeight: 32; width: 200 }
+            Label { text: "Under a drawn label" }
+          }
+        }
+        """
+      Then the property "topPadding" of "<box>" is <top>
+
+      Examples:
+        | what                             | box    | top |
+        | nothing when it has no title     | plain  | 12  |
+        | a label of its own, however wide | custom | 52  |
 
   Rule: An application window's ground is the canvas
 

@@ -15,14 +15,15 @@ T.ScrollView {
     font.pixelSize: Theme.fontSize
 
     // Each bar shows while the other does: the pointer on one says the
-    // view is being scrolled.
+    // view is being scrolled. Each reads the bar attached now, not the
+    // style's, so a bar an app puts in place still brings the other.
     ScrollBar.vertical: ScrollBar {
         id: down
         parent: control
         x: control.mirrored ? 0 : control.width - width
         y: control.topPadding
         height: control.availableHeight
-        active: across.active
+        active: control.T.ScrollBar.horizontal ? control.T.ScrollBar.horizontal.active : false
     }
 
     ScrollBar.horizontal: ScrollBar {
@@ -31,6 +32,6 @@ T.ScrollView {
         x: control.leftPadding
         y: control.height - height
         width: control.availableWidth
-        active: down.active
+        active: control.T.ScrollBar.vertical ? control.T.ScrollBar.vertical.active : false
     }
 }
