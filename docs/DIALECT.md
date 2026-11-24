@@ -1793,10 +1793,10 @@ options; and `EmptyState` (`status` `"empty"`, `"loading"` or `"error"`,
 each of these too, drawn as the Basic style would (a card is Basic's
 frame), so the promise below holds both ways. It has every control
 `Ljos.Controls.Basic` has, so a file moves from one to the other by its
-import alone: `TextArea`, `Dialog`, `ItemDelegate`, `ToolBar`,
-`ToolButton`, `RoundButton`, `DelayButton`, `ProgressBar`, `BusyIndicator`
-and `RadioButton` are Basic's until the style draws its own, and `FileDialog`, `FolderDialog`, `AbstractButton` and
-`ButtonGroup` are the same types in both.
+import alone: `ProgressBar` and `BusyIndicator` are Basic's until the
+style draws its own, and `FileDialog`, `FolderDialog`, `AbstractButton`
+and `ButtonGroup` are the same types in both. A dialog's buttons are the
+style's own `DialogButtonBox`, whose button that accepts is filled.
 
 The theme's roles are `canvas`, `surface`, `surfaceRaised`,
 `surfaceOverlay`, `input`, `border`, `text`, `textMuted`, `placeholder`,

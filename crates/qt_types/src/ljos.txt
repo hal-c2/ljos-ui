@@ -143,15 +143,16 @@ module Ljos.Controls
 	CheckBox Ljos/Controls/CheckBox.qml
 	ComboBox Ljos/Controls/ComboBox.qml
 	Control Ljos/Controls/Control.qml
-	DelayButton QtQuick/Controls/Basic/DelayButton.qml
-	Dialog QtQuick/Controls/Basic/Dialog.qml
+	DelayButton Ljos/Controls/DelayButton.qml
+	Dialog Ljos/Controls/Dialog.qml
+	DialogButtonBox Ljos/Controls/DialogButtonBox.qml
 	EmptyState Ljos/Controls/EmptyState.qml
 	FileDialog QtQuick.Dialogs.FileDialog
 	FolderDialog QtQuick.Dialogs.FolderDialog
 	Frame Ljos/Controls/Frame.qml
 	GroupBox Ljos/Controls/GroupBox.qml
 	Icon Ljos/Controls/Icon.qml
-	ItemDelegate QtQuick/Controls/Basic/ItemDelegate.qml
+	ItemDelegate Ljos/Controls/ItemDelegate.qml
 	Label Ljos/Controls/Label.qml
 	Menu Ljos/Controls/Menu.qml
 	MenuItem Ljos/Controls/MenuItem.qml
@@ -161,8 +162,8 @@ module Ljos.Controls
 	Popover Ljos/Controls/Popover.qml
 	Popup Ljos/Controls/Popup.qml
 	ProgressBar QtQuick/Controls/Basic/ProgressBar.qml
-	RadioButton QtQuick/Controls/Basic/RadioButton.qml
-	RoundButton QtQuick/Controls/Basic/RoundButton.qml
+	RadioButton Ljos/Controls/RadioButton.qml
+	RoundButton Ljos/Controls/RoundButton.qml
 	ScrollBar Ljos/Controls/ScrollBar.qml
 	ScrollView Ljos/Controls/ScrollView.qml
 	Slider Ljos/Controls/Slider.qml
@@ -172,11 +173,11 @@ module Ljos.Controls
 	Switch Ljos/Controls/Switch.qml
 	TabBar Ljos/Controls/TabBar.qml
 	TabButton Ljos/Controls/TabButton.qml
-	TextArea QtQuick/Controls/Basic/TextArea.qml
+	TextArea Ljos/Controls/TextArea.qml
 	TextField Ljos/Controls/TextField.qml
 	Theme Ljos/Controls/Theme.qml
-	ToolBar QtQuick/Controls/Basic/ToolBar.qml
-	ToolButton QtQuick/Controls/Basic/ToolButton.qml
+	ToolBar Ljos/Controls/ToolBar.qml
+	ToolButton Ljos/Controls/ToolButton.qml
 	ToolTip Ljos/Controls/ToolTip.qml
 	type Ljos/Controls/ApplicationWindow.qml ApplicationWindow
 		prototype QtQuick.Templates.ApplicationWindow named
@@ -220,6 +221,14 @@ module Ljos.Controls
 		signal endSpaceChanged
 	type Ljos/Controls/Control.qml Control
 		prototype QtQuick.Templates.Control named
+	type Ljos/Controls/DelayButton.qml DelayButton
+		prototype QtQuick.Templates.DelayButton named
+		prop ink QtQuick.color named readonly
+		signal inkChanged
+	type Ljos/Controls/Dialog.qml Dialog
+		prototype QtQuick.Templates.Dialog named
+	type Ljos/Controls/DialogButtonBox.qml DialogButtonBox
+		prototype QtQuick.Templates.DialogButtonBox named
 	type Ljos/Controls/EmptyState.qml EmptyState
 		prototype QtQuick.Templates.Control named
 		prop status QtQml.string named
@@ -256,6 +265,10 @@ module Ljos.Controls
 		signal strokeWidthChanged
 		signal filledChanged
 		signal pathsChanged
+	type Ljos/Controls/ItemDelegate.qml ItemDelegate
+		prototype QtQuick.Templates.ItemDelegate named
+		prop iconName QtQml.string named
+		signal iconNameChanged
 	type Ljos/Controls/Label.qml Label
 		prototype QtQuick.Templates.Label named
 	type Ljos/Controls/Menu.qml Menu
@@ -284,6 +297,14 @@ module Ljos.Controls
 		prototype Ljos.Controls.impl.PopoverBase named
 	type Ljos/Controls/Popup.qml Popup
 		prototype QtQuick.Templates.Popup named
+	type Ljos/Controls/RadioButton.qml RadioButton
+		prototype QtQuick.Templates.RadioButton named
+	type Ljos/Controls/RoundButton.qml RoundButton
+		prototype QtQuick.Templates.RoundButton named
+		prop iconName QtQml.string named
+		prop ink QtQuick.color named readonly
+		signal iconNameChanged
+		signal inkChanged
 	type Ljos/Controls/ScrollBar.qml ScrollBar
 		prototype QtQuick.Templates.ScrollBar named
 	type Ljos/Controls/ScrollView.qml ScrollView
@@ -323,6 +344,10 @@ module Ljos.Controls
 		prop ink QtQuick.color named readonly
 		signal iconNameChanged
 		signal inkChanged
+	type Ljos/Controls/TextArea.qml TextArea
+		prototype QtQuick.Templates.TextArea named
+		prop scrolled QtQml.bool named readonly
+		signal scrolledChanged
 	type Ljos/Controls/TextField.qml TextField
 		prototype QtQuick.Templates.TextField named
 	type Ljos/Controls/Theme.qml Theme
@@ -410,6 +435,12 @@ module Ljos.Controls
 		method lift
 		method shade
 		method on
+	type Ljos/Controls/ToolBar.qml ToolBar
+		prototype QtQuick.Templates.ToolBar named
+	type Ljos/Controls/ToolButton.qml ToolButton
+		prototype QtQuick.Templates.ToolButton named
+		prop iconName QtQml.string named
+		signal iconNameChanged
 	type Ljos/Controls/ToolTip.qml ToolTip
 		prototype QtQuick.Templates.ToolTip named
 
