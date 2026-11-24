@@ -229,11 +229,13 @@ impl TestHost for Host {
                 message: reply
                     .error_message()
                     .map_or_else(|| reply.text.clone(), str::to_owned),
+                details: reply.structured.pointer("/error/details").cloned(),
             }),
             Ok(reply) => Ok(json!({ "structured": reply.structured, "text": reply.text })),
             Err(LocalError::Refused(e)) => Err(Refusal {
                 code: Some(e.code.as_str().to_owned()),
                 message: e.message,
+                details: e.details,
             }),
             Err(e) => Err(e.to_string().into()),
         }
