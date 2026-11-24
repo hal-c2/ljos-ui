@@ -49,6 +49,7 @@ pub use project::{
 pub use reload::{CompileFault, FileSet, ReloadSession, diff, diff_file};
 pub use roots::Roots;
 pub use script::module::is_declarations;
+pub use script::{ModuleFault, StandaloneModule, standalone_module};
 pub use style::{controls_style, controls_style_on, platform_style};
 
 /// A file's compiled form, with what was wrong with it. A file with errors

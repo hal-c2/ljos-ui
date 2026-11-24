@@ -123,6 +123,13 @@ pub(crate) fn erase(key: &str, source: &str) -> Erased {
 
 /// `source`, a module's text with no Ljós syntax left in it, erased.
 pub(crate) fn erase_text(key: &str, source: &str) -> Erased {
+    erase_with(key, source, &[])
+}
+
+/// `source` erased, where it may also import the modules named in `bare`
+/// by name (`import { test } from "ljos:test"`), which whoever runs it
+/// hands over under that name as their key.
+pub(crate) fn erase_with(key: &str, source: &str, bare: &[&str]) -> Erased {
     let allocator = Allocator::default();
     let parsed = Parser::new(&allocator, source, source_type()).parse();
     if let Some(error) = parsed.diagnostics.first() {
@@ -140,6 +147,7 @@ pub(crate) fn erase_text(key: &str, source: &str) -> Erased {
     let mut eraser = Eraser {
         source,
         directory: qml_front::project::directory(key),
+        bare,
         edits: Vec::new(),
         out: Erased::default(),
         types: HashSet::new(),
@@ -191,6 +199,7 @@ struct Edit {
 struct Eraser<'s> {
     source: &'s str,
     directory: &'s str,
+    bare: &'s [&'s str],
     edits: Vec<Edit>,
     out: Erased,
     types: HashSet<String>,
@@ -239,7 +248,11 @@ impl<'s> Eraser<'s> {
 
     /// The import at `path`, where the runtime hands it to the module.
     fn import(&mut self, path: &str) -> usize {
-        let key = qml_front::project::join(self.directory, path);
+        let key = if self.bare.contains(&path) {
+            path.to_string()
+        } else {
+            qml_front::project::join(self.directory, path)
+        };
         if let Some(at) = self.out.imports.iter().position(|i| i.key == key) {
             return at;
         }
@@ -253,6 +266,9 @@ impl<'s> Eraser<'s> {
     /// Whether `path`, which a module imports from, is one it can reach: a
     /// file beside it, as a QML file reaches a script.
     fn reachable(&mut self, span: Span, path: &str) -> bool {
+        if self.bare.contains(&path) {
+            return true;
+        }
         let relative = path.starts_with("./") || path.starts_with("../");
         let script = is_module(path) || path.ends_with(".js") || path.ends_with(".mjs");
         if relative && script {
