@@ -29,7 +29,9 @@ T.ProgressBar {
                 visible: !control.indeterminate
                 x: control.mirrored ? track.width - width : 0
                 width: control.position * track.width
-                height: track.height
+                // On the track, however tall the bar is laid out.
+                y: (track.height - height) / 2
+                height: 4
                 radius: height / 2
                 color: Theme.focus
             }
@@ -49,7 +51,8 @@ T.ProgressBar {
                 visible: control.indeterminate
                 x: control.mirrored ? track.width - width - along : along
                 width: Motion.reduced ? track.width / 3 : track.width / 4
-                height: track.height
+                y: (track.height - height) / 2
+                height: 4
                 radius: height / 2
                 color: Theme.focus
                 opacity: 1
