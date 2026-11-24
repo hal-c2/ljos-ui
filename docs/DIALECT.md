@@ -216,7 +216,7 @@ are quoted side by side below:
 |---|---|---|
 | `Ljos.Ui` | items, visuals, gestures, states, text, images; the views (`Repeater`, `ListView`) | `QtQuick` |
 | `Ljos.Layout` | `Box`, `Row`, `Column`, `Grid`, `Flow`, `Pages`; `Layout.*` | `QtQuick.Layouts`, positioners |
-| `Ljos.Controls` | the controls in Ljós's own style, drawn with the roles of its `Theme`; `FileDialog`, `FolderDialog` (§4.16) | — |
+| `Ljos.Controls` | the controls in Ljós's own style, drawn with the roles of its `Theme`; `FileDialog`, `FolderDialog` (§4.16) | `QtQuick.Controls` in a file written or ported by hand (§4.16) |
 | `Ljos.Controls.Basic` | the same controls as Qt's Basic style draws them; `FileDialog`, `FolderDialog` (§4.16) | `QtQuick.Controls`, `QtQuick.Controls.Basic`, `QtQuick.Dialogs` |
 | `Ljos.Models` | `ListModel`, `ListElement`, `Instantiator`, `XmlModel`, `FolderModel`, `TreeModel`; keyed views | `QtQml.Models`, `XmlListModel`, `FolderListModel` |
 | `Ljos.Core` | `Timer`, `Component`, `Connections`, `Binding`, `Clock`, `Instant`, `Locale`, `App`, `Random`, value types (§4.3) | `QtQml`, the `Qt` namespace |
@@ -1719,7 +1719,7 @@ renames are theirs: they follow when those types are in `Ljos.Ui`.
 | `WorkerScript` | — | DECISION: kept (0 uses); a TS worker module later |
 | `Canvas`, `Shape` | the same | none; `QtQuick.Shapes` import lowered (§4.2) |
 | `QtQuick.Controls.Basic` | `Ljos.Controls.Basic` | mechanical, for the controls the module has (§4.16) |
-| `QtQuick.Controls` | `Ljos.Controls.Basic` | mechanical where the program starts with Basic; kept with another style (§4.16) |
+| `QtQuick.Controls` | `Ljos.Controls.Basic`; `Ljos.Controls` by hand | mechanical to `Ljos.Controls.Basic` where the program starts with Basic, so the look stays; kept with another style. A port by hand (docs, examples) takes `Ljos.Controls`, which has every control Basic has (§4.16) |
 | `QtQuick.Controls.Material`, `.Fusion`, `.Universal`, `.macOS`, `.impl`, `QtQuick.Templates` | — | DECISION: kept (a style's own API, or the parts a style is built from) |
 | `QtQuick.Dialogs` | `Ljos.Controls.Basic` | mechanical for `FileDialog` and `FolderDialog`; kept for the others (§4.16) |
 
@@ -1793,9 +1793,9 @@ options; and `EmptyState` (`status` `"empty"`, `"loading"` or `"error"`,
 each of these too, drawn as the Basic style would (a card is Basic's
 frame), so the promise below holds both ways. It has every control
 `Ljos.Controls.Basic` has, so a file moves from one to the other by its
-import alone: `ProgressBar` and `BusyIndicator` are Basic's until the
-style draws its own, and `FileDialog`, `FolderDialog`, `AbstractButton`
-and `ButtonGroup` are the same types in both. A dialog's buttons are the
+import alone: it draws each of them in its own style, and `FileDialog`,
+`FolderDialog`, `AbstractButton` and `ButtonGroup` are the same types in
+both. A dialog's buttons are the
 style's own `DialogButtonBox`, whose button that accepts is filled.
 
 The theme's roles are `canvas`, `surface`, `surfaceRaised`,
@@ -1900,7 +1900,8 @@ Basic's. There is no style setting to read at start, so a file draws the
 same wherever it runs, and a tool reads the style off the file. The compat
 pass and `ljos migrate` lower Qt's Basic controls to
 `Ljos.Controls.Basic`, so a lowered file keeps the look it had; moving it
-to Ljós's style is one edit, its import.
+to Ljós's style is one edit, its import. A file written for Ljós, or
+ported by hand, imports `Ljos.Controls`: it has every control Basic has.
 
 DECISION: the roles' fills lift toward the text in both schemes (a light
 canvas darkens, a dark one lightens), so `surfaceRaised` is never nearer
