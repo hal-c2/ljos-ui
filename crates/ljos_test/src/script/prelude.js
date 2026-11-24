@@ -255,20 +255,24 @@
     inspect() {
       return Promise.resolve(this.inspectNow());
     }
-    propertyNow(name) {
-      const seen = this.inspectNow();
+    // What the inspector shows of the one item found, or null when there
+    // is none.
+    seenNow() {
+      return this.countNow() === 0 ? null : this.inspectNow();
+    }
+    propertyOf(seen, name) {
       const row = (seen.properties || []).find((p) => p.name === name);
       if (!row) throw new TestError(`${this.text} has no property ${show(name)}`);
       return valueOf(row);
+    }
+    propertyNow(name) {
+      return this.propertyOf(this.inspectNow(), name);
     }
     property(name) {
       return Promise.resolve(this.propertyNow(name));
     }
     text() {
       return Promise.resolve(String(this.propertyNow("text")));
-    }
-    stateNow() {
-      return this.inspectNow().state || {};
     }
   }
 
@@ -367,53 +371,71 @@
     return out;
   }
 
-  // What a locator matcher reads each time it looks, and how it says what
-  // it saw.
+  // How a locator matcher says what it expects, what it reads each time it
+  // looks, and how it says what it saw. An item that is not there has no
+  // text, is not shown and not enabled: under `not` that holds. Anything
+  // else that stops a look (a locator that finds more than one item, a
+  // tool the inspector refuses) never holds, with or without `not`.
+  const NOT_THERE = "not there";
   const locatorMatchers = {
-    toHaveText: [1, (loc, want) => {
-      const text = String(loc.propertyNow("text"));
-      const ok = want instanceof RegExp ? want.test(text) : text === String(want);
-      return [ok, `to have text ${show(want)}`, show(text)];
+    toHaveText: [1, (want) => `to have text ${show(want)}`, (loc, want) => {
+      const seen = loc.seenNow();
+      if (!seen) return [false, NOT_THERE];
+      const text = String(loc.propertyOf(seen, "text"));
+      return [want instanceof RegExp ? want.test(text) : text === String(want), show(text)];
     }],
     // With no value, that it has the property at all.
-    toHaveProperty: [2, (loc, name, ...want) => {
-      const value = loc.propertyNow(name);
-      const ok = want.length === 0 || equal(value, want[0]);
-      const words = want.length === 0 ? `to have ${name}` : `to have ${name} ${show(want[0])}`;
-      return [ok, words, show(value)];
-    }],
-    toHaveCount: [1, (loc, want) => {
+    toHaveProperty: [
+      2,
+      (name, ...want) => (want.length === 0 ? `to have ${name}` : `to have ${name} ${show(want[0])}`),
+      (loc, name, ...want) => {
+        const seen = loc.seenNow();
+        if (!seen) return [false, NOT_THERE];
+        const value = loc.propertyOf(seen, name);
+        return [want.length === 0 || equal(value, want[0]), show(value)];
+      },
+    ],
+    toHaveCount: [1, (want) => `to match ${want} item${want === 1 ? "" : "s"}`, (loc, want) => {
       const n = loc.countNow();
-      return [n === want, `to match ${want} item${want === 1 ? "" : "s"}`, `${n}`];
+      return [n === want, `${n}`];
     }],
-    toExist: [0, (loc) => {
+    toExist: [0, () => "to match an item", (loc) => {
       const n = loc.countNow();
-      return [n > 0, "to match an item", `${n}`];
+      return [n > 0, `${n}`];
     }],
-    toBeVisible: [0, (loc) => {
-      const s = loc.stateNow();
+    toBeVisible: [0, () => "to be shown", (loc) => {
+      const seen = loc.seenNow();
+      if (!seen) return [false, NOT_THERE];
+      const s = seen.state || {};
       const shown = s.visible === true && s.lattice !== "hidden";
-      return [shown, "to be shown", shown ? "shown" : "hidden"];
+      return [shown, shown ? "shown" : "hidden"];
     }],
-    toBeEnabled: [0, (loc) => {
-      const s = loc.stateNow();
-      return [s.enabled === true, "to be enabled", s.enabled ? "enabled" : "disabled"];
+    toBeEnabled: [0, () => "to be enabled", (loc) => {
+      const seen = loc.seenNow();
+      if (!seen) return [false, NOT_THERE];
+      const s = seen.state || {};
+      return [s.enabled === true, s.enabled ? "enabled" : "disabled"];
     }],
-    toBeChecked: [0, (loc) => {
-      const checked = loc.propertyNow("checked");
-      return [checked === true, "to be checked", checked ? "checked" : "not checked"];
+    toBeChecked: [0, () => "to be checked", (loc) => {
+      const seen = loc.seenNow();
+      if (!seen) return [false, NOT_THERE];
+      const checked = loc.propertyOf(seen, "checked");
+      return [checked === true, checked ? "checked" : "not checked"];
     }],
-    toBeFocused: [0, (loc) => {
-      const s = loc.stateNow();
-      return [s.focus === true, "to have the focus", s.focus ? "focused" : "not focused"];
+    toBeFocused: [0, () => "to have the focus", (loc) => {
+      const seen = loc.seenNow();
+      if (!seen) return [false, NOT_THERE];
+      const s = seen.state || {};
+      return [s.focus === true, s.focus ? "focused" : "not focused"];
     }],
   };
 
   // Retries a matcher on the app's clock: once at once, then a frame at a
-  // time, up to the timeout.
+  // time, up to the timeout. A look that fails is retried too, and at the
+  // timeout says why it failed.
   function locatorExpectation(loc, negated) {
     const out = {};
-    for (const [name, [arity, matcher]] of Object.entries(locatorMatchers)) {
+    for (const [name, [arity, words, look]] of Object.entries(locatorMatchers)) {
       out[name] = (...args) => {
         const last = args[args.length - 1];
         const options =
@@ -423,18 +445,21 @@
         const timeout = timeoutOf(options);
         let waited = 0;
         for (;;) {
-          let verdict;
+          let verdict = null;
+          let failed = null;
           try {
-            verdict = matcher(loc, ...args);
+            verdict = look(loc, ...args);
           } catch (e) {
-            verdict = [false, null, messageOf(e)];
+            failed = messageOf(e);
           }
-          if (verdict[0] !== negated) return Promise.resolve();
+          if (verdict && verdict[0] !== negated) return Promise.resolve();
           if (waited >= timeout) {
-            const words = verdict[1] || name;
+            const expected = `expected ${loc.text} ${negated ? "not " : ""}${words(...args)}`;
             const after = timeout > 0 ? ` after ${timeout} ms` : "";
             throw new TestError(
-              `expected ${loc.text} ${negated ? "not " : ""}${words}; it was ${verdict[2]}${after}`,
+              verdict
+                ? `${expected}; it was ${verdict[1]}${after}`
+                : `${expected}; it could not be looked at${after}: ${failed}`,
             );
           }
           const step = Math.min(STEP_MS, timeout - waited);
@@ -486,16 +511,28 @@
       for (const name of Object.keys(valueMatchers)) {
         out[name] = async (...args) => {
           const site = siteOf(new Error().stack);
-          const app = current;
-          if (!app) throw new TestError("expect.poll needs the test's application", site);
+          const app = latest;
+          if (!app) throw new TestError("expect.poll needs an application: give one with test.use or launch", site);
           const timeout = timeoutOf(options);
           let waited = 0;
           for (;;) {
-            const actual = await fn();
-            const verdict = valueMatchers[name](actual, ...args);
-            if (verdict[0] !== negated) return;
+            let actual;
+            let verdict = null;
+            let thrown = null;
+            try {
+              actual = await fn();
+              verdict = valueMatchers[name](actual, ...args);
+            } catch (e) {
+              thrown = e;
+            }
+            if (verdict && verdict[0] !== negated) return;
             if (waited >= timeout) {
-              throw new TestError(`${says(actual, negated, verdict)} after ${timeout} ms`, site);
+              throw new TestError(
+                verdict
+                  ? `${says(actual, negated, verdict)} after ${timeout} ms`
+                  : `the poll did not give what was expected after ${timeout} ms; it last threw ${messageOf(thrown)}`,
+                site,
+              );
             }
             const step = Math.min(STEP_MS, timeout - waited);
             app.step(step);
@@ -513,12 +550,16 @@
   function launch(app, options) {
     const o = Object.assign({}, config, options || {});
     const id = ask("launch", { from: testFile, app: String(app), width: o.width, height: o.height });
-    return Promise.resolve(new App(id));
+    latest = new App(id);
+    return Promise.resolve(latest);
   }
 
   // ------------------------------------------------------------ running
 
   let current = null;
+  // The application the test started last: the one `expect.poll` lets
+  // time pass in.
+  let latest = null;
   const states = [];
 
   function list() {
@@ -535,6 +576,7 @@
     const state = { done: false };
     states[index] = state;
     current = null;
+    latest = null;
     let promise;
     try {
       if (config.app !== undefined) {
@@ -545,6 +587,7 @@
           height: config.height,
         });
         current = new App(id);
+        latest = current;
       }
       promise = Promise.resolve(t.fn(current));
     } catch (e) {

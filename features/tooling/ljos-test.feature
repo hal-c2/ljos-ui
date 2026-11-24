@@ -144,6 +144,65 @@ Feature: Tests in TypeScript that drive the application
       When the tests are run
       Then the test run exits with status 0
 
+    Scenario: An application kept from an earlier test has ended
+      Given the file "counter.test.ts":
+        """ts
+        import { test } from "ljos:test";
+        import type { App } from "ljos:test";
+        let kept: App | undefined;
+        test.use({ app: "./Counter.qml" });
+        test("keeps its application", async (app) => {
+          kept = app;
+        });
+        test("uses the one it kept", async () => {
+          await kept!.click('role=button[name="Add"]');
+        });
+        """
+      When the tests are run
+      Then the test report has the lines:
+        """
+        ok 1 - counter.test.ts > keeps its application
+        not ok 2 - counter.test.ts > uses the one it kept
+          ---
+          message: 'the application has ended'
+          at: counter.test.ts:9
+          ...
+        """
+
+    Scenario: Qt Quick Test files and TypeScript tests run together
+      Given the file "tst_sums.qml":
+        """qml
+        import QtQuick
+        import QtTest
+        TestCase {
+          name: "Sums"
+          function test_sum() { compare(1 + 1, 3) }
+        }
+        """
+      And the file "counter.test.ts":
+        """ts
+        import { test, expect } from "ljos:test";
+        test.use({ app: "./Counter.qml" });
+        test("starts at one", async (app) => {
+          expect(await app.find("#count").text()).toBe("1");
+        });
+        """
+      When the tests are run
+      Then the test report has the lines:
+        """
+        FAIL!  : Sums::test_sum() Compared values are not the same
+        """
+      And the test report has the lines:
+        """
+        not ok 1 - counter.test.ts > starts at one
+        """
+      And the test results' "/totals/failed" is 2
+      And the test results' "/tests/1/function" is "test_sum"
+      And the test results' "/tests/1/outcome" is "fail"
+      And the test results' "/tests/3/file" is "counter.test.ts"
+      And the test results' "/tests/3/outcome" is "fail"
+      And the test run exits with status 2
+
   Rule: A test acts on what a user could reach
 
     Scenario: A click on a button found by its role and name

@@ -119,7 +119,10 @@ declare module "ljos:test" {
     (actual: App): PictureMatchers;
     (actual: Locator): LocatorMatchers & { not: LocatorMatchers };
     (actual: unknown): ValueMatchers & { not: ValueMatchers };
-    /** Retries `fn` on the application's clock until what it gives holds. */
+    /**
+     * Retries `fn` on the clock of the application the test started last
+     * until what it gives holds; a throw is retried too.
+     */
     poll(fn: () => unknown, options?: Wait): Promised<ValueMatchers> & { not: Promised<ValueMatchers> };
   }
 
