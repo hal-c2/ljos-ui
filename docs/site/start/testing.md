@@ -16,8 +16,8 @@ A test file is a TypeScript module whose name ends in `.test.ts`. It imports `te
 Given this `Main.qml`:
 
 ```qml group=counter
-import QtQuick
-import QtQuick.Controls
+import Ljos.Ui
+import Ljos.Controls
 
 Item {
     width: 200

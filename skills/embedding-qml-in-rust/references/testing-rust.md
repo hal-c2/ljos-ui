@@ -42,8 +42,9 @@ If you want a Rust test to compile a directory of QML files and assert that ther
 Test what a user sees with Ljos.Test: `*.test.ts` files that start the application headless, on a virtual clock, and act on it through locators, as a user or an agent does. `ljos test` starts the application with the native types the `ljos` command registers, so a type your own crate defines in Rust is reached this way only from a program that registers it; such a type is then tested through what it shows. For this `Main.qml`:
 
 ```qml group=name
-import QtQuick
-import QtQuick.Controls
+import Ljos.Ui
+import Ljos.Layout
+import Ljos.Controls
 
 Column {
     width: 300
@@ -54,7 +55,7 @@ Column {
     }
     Text {
         objectName: "name"
-        text: path.text.split("/").pop()
+        text: path.text.slice(path.text.lastIndexOf("/") + 1)
     }
 }
 ```
