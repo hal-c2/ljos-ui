@@ -82,6 +82,11 @@ pub struct Way {
     pub ended_by_itself: bool,
     /// Set in `stopped`: the `finished` after it does not come.
     pub hold_finished: bool,
+    /// What it moves is time passing, not something on the screen (how
+    /// long a delay button has been held): reduced motion leaves its pace
+    /// alone, as it does a run without end, since at its end at once it
+    /// would say nothing true.
+    pub keeps_time: bool,
 }
 
 impl Default for Animation {

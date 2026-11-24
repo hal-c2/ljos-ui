@@ -201,6 +201,9 @@ fn run_to(engine: &Engine, obj: ObjectId, to: f64) {
             let made = engine
                 .create_native_incomplete(NumberAnimation::default(), Some(obj))
                 .and_then(|a| {
+                    // The progress is the time held: with reduced motion at
+                    // its end at once, a press would act as it began.
+                    engine.with_mut(a, |x: &mut Animation| x.way.keeps_time = true)?;
                     engine.complete(a)?;
                     engine.set(a, PropertyAnimation::TARGET, Some(obj))?;
                     engine.set(a, PropertyAnimation::PROPERTY, Atom::from("progress"))?;
