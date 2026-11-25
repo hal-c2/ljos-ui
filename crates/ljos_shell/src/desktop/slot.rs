@@ -57,7 +57,8 @@ pub(super) struct Slot {
     pub(super) occluded: bool,
     /// The title bar's insets in the window's pixels, and the pixels per
     /// scene unit they were last given to the scene's safe area with
-    /// (`None` before they are): a change of scale or zoom gives them again.
+    /// (`None` before they are): a pass at another scale or zoom gives them
+    /// again.
     pub(super) safe_area: Option<([f64; 4], Option<f64>)>,
     /// When a pass that is not drawn last ran, and when the next is due.
     pub(super) undrawn_pass_at: Option<Instant>,

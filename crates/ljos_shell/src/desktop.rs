@@ -290,14 +290,12 @@ fn show_when_drawn(
 }
 
 /// Gives the root window's title bar insets to the scene's safe area in
-/// the scene's units, again when the scale or egui's zoom has changed
-/// them since (#731).
-fn note_safe_area(slot: &mut Slot, engine: &Engine) {
-    let (Some((px, given)), Some(surface)) = (slot.safe_area.as_mut(), slot.surface.as_ref())
-    else {
+/// the scene's units (`per_unit` of the window's pixels), again when the
+/// scale or egui's zoom has changed them since (#731).
+fn note_safe_area(safe_area: &mut Option<([f64; 4], Option<f64>)>, per_unit: f64, engine: &Engine) {
+    let Some((px, given)) = safe_area.as_mut() else {
         return;
     };
-    let per_unit = surface.window.scale_factor() * f64::from(slot.ctx.zoom_factor());
     if let Some([l, t, r, b]) = safe_area_in_units(*px, given, per_unit) {
         ljos_quick::set_safe_area_insets(engine, l, t, r, b);
     }
@@ -1312,7 +1310,6 @@ impl<M: Send + 'static> Desktop<M> {
             slot.undrawn_pass_at = Some(Instant::now());
         }
         note_size(slot, &engine, &sys, false);
-        note_safe_area(slot, &engine);
 
         let mut raw = match slot.surface.as_mut() {
             Some(surface) => {
@@ -1346,6 +1343,10 @@ impl<M: Send + 'static> Desktop<M> {
         IN_PASS.set(Some(slot.key));
         let output = match slot.view.as_mut() {
             None => slot.ctx.run_ui(raw, |ui| {
+                // egui applies a change of zoom as the pass begins, so the
+                // scene's units are known only now.
+                let per_unit = f64::from(ui.ctx().pixels_per_point());
+                note_safe_area(&mut slot.safe_area, per_unit, &engine);
                 app.begin_pass();
                 app.show(ui);
             }),
@@ -1803,7 +1804,8 @@ impl<M: Send + 'static> Desktop<M> {
             // units, which the zoom scales too.
             WindowEvent::Insets(insets) if slot.view.is_none() => {
                 slot.safe_area = Some((insets.safe_area(), None));
-                note_safe_area(slot, &engine);
+                let per_unit = surface.window.scale_factor() * f64::from(slot.ctx.zoom_factor());
+                note_safe_area(&mut slot.safe_area, per_unit, &engine);
             }
             _ => {}
         }
