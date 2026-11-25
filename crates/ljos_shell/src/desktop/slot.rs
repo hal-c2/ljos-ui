@@ -50,6 +50,9 @@ pub(super) struct Slot {
     pub(super) redraw_granted: bool,
     /// The platform did not let it draw in time: it is out of sight.
     pub(super) stalled: bool,
+    /// The last pass's picture reached the window: its QML window hears
+    /// `frameSwapped`.
+    pub(super) swapped: bool,
     /// The platform said that nothing of the window can be seen.
     pub(super) occluded: bool,
     /// When a pass that is not drawn last ran, and when the next is due.
@@ -140,6 +143,7 @@ impl Slot {
             redraw_asked: None,
             redraw_granted: false,
             stalled: false,
+            swapped: false,
             occluded: false,
             undrawn_pass_at: None,
             undrawn_pass_due: None,

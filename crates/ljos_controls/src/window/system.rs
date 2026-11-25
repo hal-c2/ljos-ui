@@ -91,6 +91,9 @@ pub enum WindowRequest {
     Lower,
     /// `alert(msec)`: ask for the user's attention.
     Alert,
+    /// `update()`: draw the window once more, though nothing in it
+    /// changed, so that `frameSwapped` follows when it is shown.
+    Update,
     /// `startSystemMove()`: let the user move the window with the pointer
     /// that is pressed.
     StartMove,

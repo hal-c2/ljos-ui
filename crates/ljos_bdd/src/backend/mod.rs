@@ -1758,6 +1758,17 @@ pub trait Probes: Backend {
         })
     }
 
+    /// The compositor puts the application's window where nobody can see
+    /// it (`away`), or back where it was seen. Only a compositor the
+    /// scenario runs can be told so.
+    fn window_out_of_sight(&mut self, away: bool) -> Result<()> {
+        let _ = away;
+        Err(BackendError::Unsupported {
+            backend: self.name(),
+            what: "moving the window out of sight",
+        })
+    }
+
     /// How many times the window's own thread, the UI thread, woke since
     /// [`Probes::count_wakes`].
     fn window_wakes_counted(&mut self) -> Result<u64> {

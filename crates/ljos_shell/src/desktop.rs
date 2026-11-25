@@ -1185,6 +1185,9 @@ impl<M: Send + 'static> Desktop<M> {
             }
         }
         self.run_pass(host, i, paint);
+        if std::mem::take(&mut self.slots[i].swapped) {
+            self.frame_swapped(i);
+        }
         if std::mem::take(&mut self.to_gl) {
             self.leave_processor(host);
         }
@@ -1210,6 +1213,24 @@ impl<M: Send + 'static> Desktop<M> {
         }
         let engine = self.app.engine();
         ljos_quick::ImageStore::of(engine).frame_drawn(engine);
+    }
+
+    /// Tells slot `i`'s QML window that its picture was shown. Only a
+    /// picture that reached the window counts: none comes while the
+    /// platform withholds the window's turn to draw, so a handler that
+    /// paces itself by them rests with the window.
+    fn frame_swapped(&self, i: usize) {
+        let engine = Rc::clone(self.app.engine());
+        let sys = WindowSystem::of(&engine);
+        let win = self.slots[i]
+            .window
+            .or_else(|| self.plain_root_window(&engine, &sys, i));
+        if let Some(win) = win
+            && engine.is_alive(win)
+            && let Err(e) = engine.emit_by_name(win, "frameSwapped", &[])
+        {
+            engine.log(LogLevel::Warning, CATEGORY, format!("frameSwapped: {e}"));
+        }
     }
 
     /// Whether what slot `i` shows changes frame after frame: the pointer
@@ -1558,6 +1579,7 @@ impl<M: Send + 'static> Desktop<M> {
                 }
             }
         };
+        let swapped = matches!(&shown, Shown::Drawn { steps, .. } if !steps.lost);
 
         // Every painter's pass ends here, so that the inspector is told
         // of each the same way: a paint is a picture that reached the
@@ -1606,6 +1628,7 @@ impl<M: Send + 'static> Desktop<M> {
             app.record_startup(ljos_dev::mcp::StartupStep::FirstFrame, self.began.elapsed());
         }
         show_when_drawn(host, surface, &mut slot.activate, screens_stale);
+        slot.swapped = swapped;
         slot.drawn(began, Instant::now());
         #[cfg(feature = "mcp")]
         if let Some(w) = self.wake.as_mut() {
@@ -1884,6 +1907,12 @@ impl<M: Send + 'static> Desktop<M> {
                 }
                 WindowRequest::Activate => slot.activate = true,
                 WindowRequest::Alert => host.change_window(surface.id, WindowChange::Alert),
+                // As a redraw the platform asks for: the picture is drawn
+                // whole, once, when the window may draw.
+                WindowRequest::Update => {
+                    slot.forget_shown();
+                    self.repaints.request(slot.key, Instant::now());
+                }
                 // No desktop host restacks a window.
                 WindowRequest::Raise | WindowRequest::Lower => {}
                 WindowRequest::StartMove => host.change_window(surface.id, WindowChange::StartMove),

@@ -252,6 +252,7 @@ setter tries to write `depth` and logs the error it gets.
 | `When the user holds down "chord" until it repeats N times` | one press, `N` auto-repeated presses, one release |
 | `When the user keeps "chord" down` / `the user lets go of "chord"` | the press without its release, and the release, so time can pass between (`@ljos-only`) |
 | `When the window loses focus` / `When the window gains focus` | another window takes the keyboard, or gives it back; on `@desktop`, another client's window takes the compositor's focus, and the window gets it back |
+| `When the window is put out of sight` / `When the window is brought back into sight` | the compositor moves the window to a workspace it does not show, and so stops letting it draw; then shows that workspace (`@desktop` only) |
 | `Given the seat has no keyboard` | the seat has a pointer and no keyboard, from before the application starts (`@desktop`) |
 | `When the user touches X, Y` | touch at a position |
 | `When the user presses the pointer at X, Y` / `releases the pointer at X, Y` | the two halves of a click, for what happens while the button is held |
