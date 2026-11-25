@@ -163,13 +163,14 @@ where
 /// framework's threads still run. GameTextInput's deletes its global
 /// references through the main thread's `JNIEnv`, which a debug build's
 /// CheckJNI aborts on (#724), and libhwui's destroys a mutex its render
-/// threads still wait on. What Rust and the log hold is flushed first.
+/// threads still wait on.
+///
+/// Nothing is flushed first, so nothing can hold the end up: the log is
+/// written to logcat record by record, and stdout and stderr go nowhere
+/// (see `main`). A flush of either would wait on its lock, which a thread
+/// held up in a write keeps.
 fn end_process(code: i32) -> ! {
-    use std::io::Write as _;
     log::info!("the application ended; so does its process");
-    log::logger().flush();
-    let _ = std::io::stdout().flush();
-    let _ = std::io::stderr().flush();
     // SAFETY: `_exit` takes any status and never returns; it ends every
     // thread at once, and nothing after this relies on running.
     unsafe { libc::_exit(code) }
