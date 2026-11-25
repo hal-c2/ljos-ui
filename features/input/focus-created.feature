@@ -4,8 +4,8 @@
 #   https://doc.qt.io/qt-6/qml-qtqml-component.html#createObject-method
 # Verified on Qt 6.12.0 (qmltestrunner and qml6, offscreen).
 # What a script makes with `focus: true` has active focus by the time
-# createObject gives it back, not a frame later; what a creation makes
-# while another one is running gets it when the outer one is complete.
+# createObject gives it back, not a frame later, also when it is made
+# while another creation is still running.
 
 @qt-parity
 Feature: An item made with focus has active focus when it is made
