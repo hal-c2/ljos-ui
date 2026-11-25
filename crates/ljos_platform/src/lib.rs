@@ -31,6 +31,7 @@
 #[cfg(target_os = "android")]
 pub mod android;
 pub mod android_documents;
+pub mod android_permissions;
 mod badge;
 mod clipboard;
 mod dialogs;

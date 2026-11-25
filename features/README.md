@@ -654,6 +654,8 @@ yet driven on the phone, so their steps are pending there.
 
 On a phone the dialog steps (`the system shows a "kind" dialog titled "title"`, `the user chooses "path" in the system dialog`, `the user dismisses the system dialog`) are the system's document picker, read from the screen and tapped: a file or folder is chosen by the name the picker shows in the Downloads, a save keeps the name the application suggested, and the picker shows no title. The phone's language is English: the picker's roots are found by its words.
 
+On a phone the permission steps (`the system asks the user before it grants a permission`, `the system asks the user for the "name" permission`, `the user grants the "name" permission`, `the user denies the "name" permission`) are the system's own question, read from the screen and tapped; the permission is known by the question's English words, and "no permission" means none came within 5 s. Each scenario starts with the application never asked: the runner takes back what `examples/android_scenarios` declares (the camera and the microphone), clears what the user decided for good, and forgets what the application asked.
+
 The system's Back, as the application's `Back` handlers get it. These are Ljós's own (no Qt
 type takes Back), so Ljós runs them anywhere; they take no phone.
 

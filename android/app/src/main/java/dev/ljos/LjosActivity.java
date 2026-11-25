@@ -206,6 +206,12 @@ public class LjosActivity extends GameActivity {
         LjosDocuments.answered(this, code, result, data);
     }
 
+    @Override
+    public void onRequestPermissionsResult(int code, String[] names, int[] results) {
+        super.onRequestPermissionsResult(code, names, results);
+        LjosPermissions.answered(this, code, names, results);
+    }
+
     /**
      * Whether the application takes Back, from its thread. Before Android
      * 13 a root activity's Back with no callback finishes it, and there is
