@@ -257,7 +257,12 @@ fn a_write_in_a_handler_ahead_runs_only_what_it_reached() {
     g.set(current, 1);
     assert_eq!(
         *order.borrow(),
-        ["handler starts", "count changed", "handler ends", "shown changed"]
+        [
+            "handler starts",
+            "count changed",
+            "handler ends",
+            "shown changed"
+        ]
     );
     assert_eq!(g.get(shown), 10);
 }
