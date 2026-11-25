@@ -144,6 +144,8 @@ ndk = { workspace = true, optional = true }
 log = { workspace = true, optional = true }
 raw-window-handle = { workspace = true, optional = true }
 android_logger = { workspace = true, optional = true }
+# The process ends by `_exit` (`end_process`).
+libc.workspace = true
 
 [features]
 default = ["media", "media-audio"]
