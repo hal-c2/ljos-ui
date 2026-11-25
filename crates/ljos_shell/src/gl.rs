@@ -738,14 +738,10 @@ impl GlPainter {
             None => gw.surface.swap_buffers(&self.gl.context),
         };
         // A lost frame is drawn again with the next change.
-        match &swapped {
-            Ok(()) => gw.drawn.shown(),
-            Err(e) => {
-                say_lost(e);
-                // What the buffers hold now is not known.
-                gw.drawn.clear();
-            }
+        if let Err(e) = &swapped {
+            say_lost(e);
         }
+        gw.drawn.presented(&swapped);
         Steps {
             upload,
             draw: Some(drawn - uploaded),
@@ -1180,6 +1176,16 @@ impl History {
         self.next = None;
     }
 
+    /// The frame decided on was handed to the window: shown when the
+    /// swap took it. A swap that failed leaves the buffers holding what
+    /// is not known, so every older frame is forgotten.
+    fn presented<E>(&mut self, swapped: &Result<(), E>) {
+        match swapped {
+            Ok(()) => self.shown(),
+            Err(_) => self.clear(),
+        }
+    }
+
     fn clear(&mut self) {
         self.shown.clear();
         self.next = None;
@@ -1589,6 +1595,22 @@ mod tests {
         history.shown();
         let drawn = history.since(Some(Damage::default()), 3, None);
         assert_eq!(drawn, Some(Damage::of([Px([20, 20, 40, 40]), a.0[0]])));
+    }
+
+    /// A swap that fails forgets what the buffers held: the next frame
+    /// is drawn whole, whatever their age. One that takes the frame
+    /// counts it, as `shown` does.
+    #[test]
+    fn a_failed_swap_draws_the_next_frame_whole() {
+        let a = Damage(vec![Px([0, 0, 10, 10])]);
+        let mut history = History::default();
+        history.since(Some(Damage::default()), 0, None);
+        history.presented::<()>(&Ok(()));
+        history.since(Some(a.clone()), 2, None);
+        history.presented::<()>(&Ok(()));
+        assert_eq!(history.since(Some(Damage::default()), 2, None), Some(a));
+        history.presented(&Err(()));
+        assert_eq!(history.since(Some(Damage::default()), 2, None), None);
     }
 
     #[test]
