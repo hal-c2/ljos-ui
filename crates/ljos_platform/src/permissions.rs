@@ -85,13 +85,15 @@ impl Permission {
 pub struct PermissionAnswer {
     reply: Option<Reply>,
     obj: ObjectId,
+    /// What the object asked for when it asked.
+    asked: Permission,
 }
 
 impl PermissionAnswer {
     pub fn send(mut self, status: PermissionStatus) {
         if let Some(reply) = self.reply.take() {
-            let obj = self.obj;
-            reply.send(move |e| answered(e, obj, Some(status)));
+            let (obj, asked) = (self.obj, self.asked);
+            reply.send(move |e| answered(e, obj, asked, Some(status)));
         }
     }
 }
@@ -99,8 +101,8 @@ impl PermissionAnswer {
 impl Drop for PermissionAnswer {
     fn drop(&mut self) {
         if let Some(reply) = self.reply.take() {
-            let obj = self.obj;
-            reply.send(move |e| answered(e, obj, None));
+            let (obj, asked) = (self.obj, self.asked);
+            reply.send(move |e| answered(e, obj, asked, None));
         }
     }
 }
@@ -550,14 +552,20 @@ fn request(engine: &Engine, obj: ObjectId) {
         PermissionAnswer {
             reply: Some(platform.expect_for("permission request", Some(obj))),
             obj,
+            asked: permission,
         },
     );
 }
 
-/// The user answered; without an answer the system is asked again.
-fn answered(engine: &Engine, obj: ObjectId, status: Option<PermissionStatus>) {
+/// The user answered; without an answer the system is asked again. So it
+/// is when the object asks for something else than it asked for then (a
+/// location always, say, after one in use was granted): the answer is not
+/// of what it asks for now.
+fn answered(engine: &Engine, obj: ObjectId, asked: Permission, status: Option<PermissionStatus>) {
     match status {
-        Some(status) => show_status(engine, obj, status),
-        None => check(engine, obj),
+        Some(status) if permission_of(engine, obj) == Some(asked) => {
+            show_status(engine, obj, status);
+        }
+        _ => check(engine, obj),
     }
 }

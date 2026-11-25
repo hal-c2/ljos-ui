@@ -393,6 +393,43 @@ fn a_system_that_asks_tells_the_answer_later() {
     assert_eq!(e.read_by_name(again, "status").to_number(), 2.0);
 }
 
+/// A system whose answers the test sends when it likes, and that grants
+/// nothing it is asked of.
+#[derive(Default)]
+struct Holding(std::cell::RefCell<Vec<crate::PermissionAnswer>>);
+
+impl crate::PermissionService for Holding {
+    fn status(&self, _: crate::Permission) -> crate::PermissionStatus {
+        crate::PermissionStatus::Undetermined
+    }
+
+    fn request(&self, _: crate::Permission, answer: crate::PermissionAnswer) {
+        self.0.borrow_mut().push(answer);
+    }
+}
+
+#[test]
+fn an_answer_to_what_a_permission_asked_before_it_changed_is_not_its_status() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let e = engine(dir.path());
+    let system = Rc::new(Holding::default());
+    let platform = Platform::of(&e);
+    platform.set_permissions(system.clone());
+    let p = make::<crate::LocationPermission>(&e);
+    e.invoke_by_name(p, "request", &[]).expect("requested");
+    // Asked in use, it asks for always before the user answers.
+    e.write_by_name(p, "availability", Value::Int(1))
+        .expect("always");
+    let answer = system.0.borrow_mut().pop().expect("asked");
+    answer.send(crate::PermissionStatus::Granted);
+    platform.finish(&e);
+    assert_eq!(
+        e.read_by_name(p, "status").to_number(),
+        0.0,
+        "what the system says of always"
+    );
+}
+
 #[test]
 fn a_drop_target_files_cannot_reach_is_warned_of_once_in_either_order() {
     let warnings = |e: &Engine| {
