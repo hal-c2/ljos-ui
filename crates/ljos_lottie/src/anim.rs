@@ -115,10 +115,11 @@ impl<T: Blend> Anim<T> {
     }
 }
 
-/// The in tangent of a segment: on the next key in today's files, on
-/// the key itself in older ones.
+/// The in tangent of a segment: on the key it starts from, beside its
+/// out tangent, as lottie-spec has it; on the next key when the first
+/// gives none.
 fn next_in<T>(key: &Key<T>, next: &Key<T>, c: usize) -> Option<(f64, f64)> {
-    next.in_ease.at(c).or_else(|| key.in_ease.at(c))
+    key.in_ease.at(c).or_else(|| next.in_ease.at(c))
 }
 
 impl Anim<Vec<f64>> {
@@ -253,6 +254,30 @@ mod tests {
         assert!((bezier_ease(0.0, 0.0, 1.0, 1.0, 0.5) - 0.5).abs() < 1e-6);
         let linear = bezier_ease(0.3, 0.3, 0.7, 0.7, 0.4);
         assert!((linear - 0.4).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_segment_eases_by_the_in_tangent_on_the_key_it_starts_from() {
+        // lottie-spec puts a segment's `i` beside its `o`, on the key the
+        // segment starts from; the next key's `i` belongs to the segment
+        // after it.
+        let mut first = key(0.0, 0.0);
+        first.out_ease = Ease {
+            x: vec![1.0],
+            y: vec![0.0],
+        };
+        first.in_ease = Ease {
+            x: vec![1.0],
+            y: vec![1.0],
+        };
+        let mut second = key(10.0, 100.0);
+        second.in_ease = Ease {
+            x: vec![0.0],
+            y: vec![1.0],
+        };
+        let a = Anim::Keyed(vec![first, second]);
+        let want = 100.0 * bezier_ease(1.0, 0.0, 1.0, 1.0, 0.75);
+        assert!((a.num(7.5, 0, 0.0) - want).abs() < 1e-6);
     }
 
     #[test]
