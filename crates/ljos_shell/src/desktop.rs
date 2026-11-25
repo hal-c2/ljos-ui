@@ -1751,9 +1751,10 @@ impl<M: Send + 'static> Desktop<M> {
                 self.repaints.request(slot.key, Instant::now());
             }
             // The safe area is the engine's one, so the root window's title
-            // bar is the one that sets it (#731).
+            // bar is the one that sets it (#731). It is in the scene's
+            // units, which the zoom scales too.
             WindowEvent::Insets(insets) if slot.view.is_none() => {
-                let scale = surface.window.scale_factor();
+                let scale = surface.window.scale_factor() * f64::from(slot.ctx.zoom_factor());
                 let [l, t, r, b] = insets.safe_area().map(|n| n / scale);
                 ljos_quick::set_safe_area_insets(&engine, l, t, r, b);
             }
