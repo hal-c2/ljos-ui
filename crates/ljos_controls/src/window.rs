@@ -262,6 +262,20 @@ impl Window {
     #[qml(signal)]
     fn closing(close: Option<ObjectId>);
 
+    /// A picture of the window reached the window system. None comes
+    /// while the window system does not let the window draw (it is out
+    /// of sight), nor while nothing in the window changes.
+    #[qml(signal, name = "frameSwapped")]
+    fn frame_swapped();
+
+    /// Asks for one more picture of the window, though nothing in it
+    /// changed: `frameSwapped` follows once it is shown.
+    #[qml(invokable)]
+    fn update(cx: &Cx) -> Result<(), EngineError> {
+        WindowSystem::of(cx.engine).request(cx.this, WindowRequest::Update);
+        Ok(())
+    }
+
     #[qml(invokable)]
     fn show(cx: &Cx) -> Result<(), EngineError> {
         let wanted = state_of(cx.engine, cx.this).map_or(WINDOWED, |s| s.wanted.get());

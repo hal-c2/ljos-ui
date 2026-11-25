@@ -5594,6 +5594,8 @@ module QtQuick
 		signal activeFocusItemChanged
 		signal contentItemChanged
 		signal closing close:QtObject
+		signal frameSwapped
+		method update
 		method show
 		method hide
 		method showNormal

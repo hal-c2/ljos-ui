@@ -979,6 +979,28 @@ impl Probes for DesktopBackend {
         Ok(now.saturating_sub(from).saturating_sub(reading))
     }
 
+    /// Away is a workspace of its own, which the output does not show, so
+    /// the compositor lets the window draw no more; back is a focus on it,
+    /// which shows that workspace again.
+    fn window_out_of_sight(&mut self, away: bool) -> Result<()> {
+        let pid = self.running()?.app.id();
+        let command = if away {
+            format!("[pid={pid}] move container to workspace out-of-sight")
+        } else {
+            format!("[pid={pid}] focus")
+        };
+        let told = self
+            .sway()?
+            .command(&command, Some(Instant::now() + SEEN))
+            .map_err(|e| BackendError::Failed(format!("sway did not answer `{command}`: {e}")))?;
+        if told[0]["success"] != Value::Bool(true) {
+            return Err(BackendError::Failed(format!(
+                "sway would not `{command}`: {told}"
+            )));
+        }
+        Ok(())
+    }
+
     fn count_wakes(&mut self) -> Result<()> {
         let pid = self.running()?.app.id();
         self.wakes_from = Some(thread_wakes(pid)?);
