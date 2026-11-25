@@ -94,19 +94,20 @@ fn responding(w: &mut LjosWorld) -> StepResult {
     })
 }
 
-// A debug build checks every call native code makes into Java, and ends
-// the process on the first it refuses: a quit that ends that way is a
-// crash, not a quit.
-#[then("the system refused no JNI call of the application")]
-fn jni_clean(w: &mut LjosWorld) -> StepResult {
+// A process can abort after the application is done: a debug build checks
+// every call native code makes into Java and ends the process on the first
+// it refuses, and the C library ends one that uses what was torn down. A
+// quit that ends that way is a crash, not a quit.
+#[then("the application ended without aborting")]
+fn not_aborted(w: &mut LjosWorld) -> StepResult {
     w.each(|b| {
-        let refused = b.device()?.jni_errors()?;
-        if refused.is_empty() {
+        let said = b.device()?.aborts()?;
+        if said.is_empty() {
             Ok(())
         } else {
             Err(BackendError::Failed(format!(
-                "the system refused JNI calls of the application:\n{}",
-                refused.join("\n")
+                "the application's process aborted:\n{}",
+                said.join("\n")
             )))
         }
     })

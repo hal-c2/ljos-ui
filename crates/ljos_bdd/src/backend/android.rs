@@ -858,6 +858,16 @@ impl Platform for AndroidBackend {
     }
 }
 
+/// What the system logs of a process that aborted: CheckJNI's refusal,
+/// bionic's checks (`FORTIFY: pthread_mutex_lock called on a destroyed
+/// mutex`), the signal it ended on, and the crash dump's message.
+const ABORTED: [&str; 4] = [
+    "JNI DETECTED ERROR",
+    "FORTIFY:",
+    "Fatal signal",
+    "Abort message",
+];
+
 impl Device for AndroidBackend {
     fn leave_for_home(&mut self) -> Result<()> {
         let phone = self.phone()?.clone();
@@ -966,12 +976,12 @@ impl Device for AndroidBackend {
         Ok(said.lines().any(|l| l.contains(&phone.id)))
     }
 
-    fn jni_errors(&mut self) -> Result<Vec<String>> {
+    fn aborts(&mut self) -> Result<Vec<String>> {
         let phone = self.phone()?.clone();
-        // By the application's user, not its process: a check that fails
-        // aborts the process, which is then gone. CheckJNI says what it
-        // refused in the main log, and the abort it makes again in the
-        // crash log.
+        // By the application's user, not its process: the process that
+        // aborted is gone. CheckJNI says what it refused in the main log,
+        // bionic what it caught (`FORTIFY:`) and the signal it ended on in
+        // the crash log, and the crash dump its abort message there too.
         // logcat keeps to one user's lines itself (`--uid`, Android 9).
         let uid = phone.as_app("id -u", None)?.trim().to_owned();
         if uid.is_empty() || !uid.bytes().all(|b| b.is_ascii_digit()) {
@@ -982,7 +992,7 @@ impl Device for AndroidBackend {
         let said = phone.shell(&format!("logcat -d -b main -b crash --uid={uid}"))?;
         Ok(said
             .lines()
-            .filter(|l| l.contains("JNI DETECTED ERROR"))
+            .filter(|l| ABORTED.iter().any(|said| l.contains(said)))
             .map(str::to_owned)
             .collect())
     }
