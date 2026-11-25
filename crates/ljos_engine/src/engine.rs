@@ -70,7 +70,8 @@ pub type ParentListener = Rc<dyn Fn(&Engine, ObjectId, Option<ObjectId>)>;
 /// owners after what they own.
 pub type DestroyListener = Rc<dyn Fn(&Engine, &[ObjectId])>;
 
-/// Called with the root an incubation made, once it is whole.
+/// Called with the root an incubation made, once it is whole; also the
+/// type of what hears of each object a script makes at once.
 pub type IncubatedListener = Rc<dyn Fn(&Engine, ObjectId)>;
 
 /// Called when an attached object is first made: (object, attached object).
@@ -123,6 +124,7 @@ pub(crate) struct Inner {
     pub(crate) parent_listeners: RefCell<Vec<ParentListener>>,
     pub(crate) destroy_listeners: RefCell<Vec<DestroyListener>>,
     pub(crate) incubated_listeners: RefCell<Vec<IncubatedListener>>,
+    pub(crate) script_made_listeners: RefCell<Vec<IncubatedListener>>,
     /// Each with the type of attached object it is for, if only one.
     pub(crate) attached_listeners: RefCell<Vec<(Option<&'static MetaObject>, AttachedListener)>>,
     /// Set by the first `Component.onDestruction` handler, so destroying
@@ -332,6 +334,7 @@ impl Engine {
             parent_listeners: RefCell::new(Vec::new()),
             destroy_listeners: RefCell::new(Vec::new()),
             incubated_listeners: RefCell::new(Vec::new()),
+            script_made_listeners: RefCell::new(Vec::new()),
             attached_listeners: RefCell::new(Vec::new()),
             destruction_handlers: Cell::new(false),
             list_holders: RefCell::new(None),
