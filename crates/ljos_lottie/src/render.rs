@@ -446,18 +446,21 @@ fn gradient(g: &Gradient, t: f64, m: Affine, alpha: f64) -> BrushGradient {
         .collect();
     offsets.sort_by(f64::total_cmp);
     offsets.dedup();
-    let stops = offsets
-        .into_iter()
-        .map(|offset| {
-            let [r, g, b] = piecewise(colour_stops, offset, [1.0; 3]);
-            let [a] = piecewise(opacity_stops, offset, [1.0]);
-            let a = a * alpha;
-            GradientStop {
-                offset: offset.clamp(0.0, 1.0) as f32,
-                color: Rgba::from_straight(r as f32, g as f32, b as f32, a as f32),
-            }
-        })
-        .collect();
+    // Where stops of either list share an offset the gradient changes
+    // there at once: both sides are kept, the one before and the one after.
+    let mut stops = Vec::with_capacity(offsets.len());
+    for offset in offsets {
+        let (colour_before, colour_after) = sides(colour_stops, offset, [1.0; 3]);
+        let ([opacity_before], [opacity_after]) = sides(opacity_stops, offset, [1.0]);
+        let stop = |[r, g, b]: [f64; 3], a: f64| GradientStop {
+            offset: offset.clamp(0.0, 1.0) as f32,
+            color: Rgba::from_straight(r as f32, g as f32, b as f32, (a * alpha) as f32),
+        };
+        stops.push(stop(colour_before, opacity_before));
+        if colour_after != colour_before || opacity_after != opacity_before {
+            stops.push(stop(colour_after, opacity_after));
+        }
+    }
     let start = point(&g.start, t);
     let end = point(&g.end, t);
     let geometry = if g.radial {
@@ -478,6 +481,25 @@ fn gradient(g: &Gradient, t: f64, m: Affine, alpha: f64) -> BrushGradient {
         }
     };
     BrushGradient::new(geometry, stops, Spread::Pad)
+}
+
+/// The values of `stops` just before and just after `offset`: those of
+/// the first and the last stop at it when any sit there, a hard edge
+/// when they differ; otherwise the one value `piecewise` gives.
+fn sides<const M: usize, const N: usize>(
+    stops: &[[f64; M]],
+    offset: f64,
+    none: [f64; N],
+) -> ([f64; N], [f64; N]) {
+    let values = |s: &[f64; M]| -> [f64; N] { std::array::from_fn(|k| s[k + 1]) };
+    let first = stops.partition_point(|s| s[0] < offset);
+    let past = stops.partition_point(|s| s[0] <= offset);
+    if past > first {
+        (values(&stops[first]), values(&stops[past - 1]))
+    } else {
+        let v = piecewise(stops, offset, none);
+        (v, v)
+    }
 }
 
 /// The values of `stops` (an offset, then `N` values each) at `offset`:
@@ -821,16 +843,21 @@ mod tests {
         let stops = gradient_stops("0,1,0,0, 0.5,1,0,0, 0.5,0,0,1, 1,0,0,1");
         let offsets: Vec<f32> = stops.iter().map(|s| s.offset).collect();
         assert_eq!(offsets, [0.0, 0.5, 0.5, 1.0]);
-        assert!(stops[1].color.r == 1.0 && stops[1].color.b == 0.0, "{stops:?}");
-        assert!(stops[2].color.r == 0.0 && stops[2].color.b == 1.0, "{stops:?}");
+        assert!(
+            stops[1].color.r == 1.0 && stops[1].color.b == 0.0,
+            "{stops:?}"
+        );
+        assert!(
+            stops[2].color.r == 0.0 && stops[2].color.b == 1.0,
+            "{stops:?}"
+        );
     }
 
     #[test]
     fn a_hard_edge_in_the_opacities_keeps_both() {
         // Opaque up to the middle, clear from it, over one colour.
-        let stops = gradient_stops(
-            "0,1,0,0, 0.25,1,0,0, 0.75,1,0,0, 1,1,0,0, 0,1, 0.5,1, 0.5,0, 1,0",
-        );
+        let stops =
+            gradient_stops("0,1,0,0, 0.25,1,0,0, 0.75,1,0,0, 1,1,0,0, 0,1, 0.5,1, 0.5,0, 1,0");
         let at_half: Vec<f32> = stops
             .iter()
             .filter(|s| s.offset == 0.5)
