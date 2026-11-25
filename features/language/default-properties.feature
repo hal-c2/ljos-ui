@@ -235,7 +235,6 @@ Feature: Default properties of components
           property string children
           property string given
           property string parentName
-          property real x
           function names(list) { return Array.from(list).map(o => o.objectName).join(",") }
           Holder {
             id: holder

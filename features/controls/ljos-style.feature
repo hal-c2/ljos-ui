@@ -138,14 +138,14 @@ Feature: Ljós's own style: the controls of Ljos.Controls
           readonly property color raised: Theme.surfaceRaised
           readonly property color input: Theme.input
           readonly property color muted: Theme.textMuted
-          readonly property color focus: Theme.focus
+          readonly property color focusRing: Theme.focus
           readonly property color error: Theme.errorForeground
         }
         """
       Then the property "raised" of "root" is "#2c2c3c"
       And the property "input" of "root" is "#7d7d8a"
       And the property "muted" of "root" is "#a4a4af"
-      And the property "focus" of "root" is "#9969ee"
+      And the property "focusRing" of "root" is "#9969ee"
       And the property "error" of "root" is "#e58b92"
 
     Scenario Outline: In <scheme>, the roles follow Ljos.Design's palette and meet their ratios
@@ -163,7 +163,7 @@ Feature: Ljós's own style: the controls of Ljos.Controls
           // A module's functions say nothing of what they give, so a ratio
           // is held as `unknown`.
           readonly property unknown input: Theme.contrast(Theme.input, Theme.surfaceRaised)
-          readonly property unknown focus: Theme.contrast(Theme.focus, Theme.surfaceRaised)
+          readonly property unknown focusRing: Theme.contrast(Theme.focus, Theme.surfaceRaised)
           readonly property unknown muted: Theme.contrast(Theme.textMuted, Theme.surfaceOverlay)
           readonly property unknown mutedSelected: Theme.contrast(Theme.textMuted, Theme.accentSurface)
           readonly property unknown placeholder: Theme.contrast(Theme.placeholder, Theme.surfaceRaised)
@@ -175,7 +175,7 @@ Feature: Ljós's own style: the controls of Ljos.Controls
         """
       Then the property "follows" of "root" is true
       And the property "input" of "root" is at least 3
-      And the property "focus" of "root" is at least 3
+      And the property "focusRing" of "root" is at least 3
       And the property "muted" of "root" is at least 4.5
       And the property "mutedSelected" of "root" is at least 4.5
       And the property "placeholder" of "root" is at least 4.5

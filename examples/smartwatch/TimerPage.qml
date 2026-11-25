@@ -10,10 +10,10 @@ WatchScreen {
     id: page
 
     readonly property real total: page.watch.timerMinutes * 60000
-    readonly property real left: page.watch.timerState === "set" ? page.total : page.watch.timerLeft
+    readonly property real remaining: page.watch.timerState === "set" ? page.total : page.watch.timerLeft
     readonly property bool ringing: page.watch.timerState === "ringing"
     // What the readout shows, in whole seconds, for a screen reader to say.
-    readonly property int leftSeconds: Math.floor(Math.max(0, page.left) / 1000)
+    readonly property int leftSeconds: Math.floor(Math.max(0, page.remaining) / 1000)
 
     Ring {
         anchors.centerIn: parent
@@ -22,7 +22,7 @@ WatchScreen {
         theme: page.theme
         thickness: 10
         tint: page.ringing ? page.theme.amber : page.theme.cyan
-        value: page.ringing ? 1 : page.left / Math.max(1, page.total)
+        value: page.ringing ? 1 : page.remaining / Math.max(1, page.total)
         lit: page.watch.timerState === "running" || page.ringing
     }
 
@@ -48,7 +48,7 @@ WatchScreen {
         }
         Text {
             id: readout
-            text: page.ringing ? "00:00" : W.span(page.left)
+            text: page.ringing ? "00:00" : W.span(page.remaining)
             color: page.ringing ? page.theme.amber : page.theme.text
             font.size: page.watch.timerState === "set" ? 58 : 66
             font.weight: Font.DemiBold

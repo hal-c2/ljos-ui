@@ -97,8 +97,8 @@ Feature: Messages: translated text written as a tagged template
         import Ljos.Core
         Item {
           objectName: "root"
-          property int left: 4
-          property string shown: t`${left} left`
+          property int count: 4
+          property string shown: t`${count} left`
         }
         """
       When the UI language is set to "is"

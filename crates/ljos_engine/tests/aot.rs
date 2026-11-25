@@ -22,7 +22,7 @@ Item {
     property int a: 0
     property int b: 0
     property string order: ""
-    property real z: count * 0
+    property real nought: count * 0
     property real sum: a + b * 0
     property real twice: count * 2
     signal ping(int n)
@@ -202,7 +202,7 @@ fn a_binding_that_reads_what_the_script_reads_agrees() {
     );
 }
 
-/// `z: count * 0`, giving `-0`.
+/// `nought: count * 0`, giving `-0`.
 fn negative_zero(f: &Frame<'_>) -> Result<Value, Stop> {
     let o = f.object(0, 0)?;
     let count = f.prop(o, COUNT)?;
@@ -212,7 +212,7 @@ fn negative_zero(f: &Frame<'_>) -> Result<Value, Stop> {
 #[test]
 fn minus_zero_for_zero_is_a_mismatch() {
     let (h, root) = world(&[(9, negative_zero)]);
-    assert_eq!(h.num(root, "z"), 0.0);
+    assert_eq!(h.num(root, "nought"), 0.0);
     assert_eq!(differ(&h.engine, &h.warnings()), 1);
 }
 

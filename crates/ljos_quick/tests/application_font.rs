@@ -13,7 +13,7 @@ Item {
     readonly property string family: t.font.family
     readonly property real points: t.font.pointSize
     readonly property int pixels: t.font.pixelSize
-    readonly property real height: t.implicitHeight
+    readonly property real textHeight: t.implicitHeight
     readonly property string madeFamily: made.family
     Text { id: t; text: "Hello" }
 }"#;
@@ -22,7 +22,7 @@ Item {
 fn height(e: &Engine, root: ObjectId) -> f64 {
     let mut s = scene(e, root, 200.0, 100.0);
     frame(&mut s, e);
-    num(e, root, "height")
+    num(e, root, "textHeight")
 }
 
 fn text(e: &Engine, o: ObjectId, name: &str) -> String {

@@ -186,7 +186,7 @@ Feature: Ljós's API as TypeScript declarations, and its scripts checked by Type
         import Ljos.Ui
         Item {
           component Slot: Item {}
-          property Card top
+          property Card first
           property list<Slot> slots
         }
         """
