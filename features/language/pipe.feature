@@ -278,7 +278,7 @@ Feature: Handing a value from step to step with the pipe
       When the files are checked
       Then the check reports:
         """
-        Card.qml:3:55: error: `rest` is a number; this gives it a string [ts-assign-type]
+        Card.qml:3:56: error: `rest` is a number; this gives it a string [ts-assign-type]
         Card.qml:4:43: error: `shown` is a string; this gives it a number [ts-assign-type]
         1 files, 2 errors, 0 warnings
         ljos: 2 errors
