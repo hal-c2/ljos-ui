@@ -1910,6 +1910,7 @@ impl<M: Send + 'static> Desktop<M> {
                 // As a redraw the platform asks for: the picture is drawn
                 // whole, once, when the window may draw.
                 WindowRequest::Update => {
+                    slot.asked_at_once();
                     slot.forget_shown();
                     self.repaints.request(slot.key, Instant::now());
                 }
