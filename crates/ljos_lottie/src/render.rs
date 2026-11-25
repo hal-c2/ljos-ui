@@ -801,6 +801,44 @@ mod tests {
         );
     }
 
+    fn gradient_stops(colours: &str) -> Vec<GradientStop> {
+        let c = one_layer(&format!(
+            r#"{{"ty":"rc","p":{{"a":0,"k":[50,50]}},"s":{{"a":0,"k":[100,100]}}}},
+               {{"ty":"gf","t":1,"s":{{"a":0,"k":[0,0]}},"e":{{"a":0,"k":[100,0]}},
+                "g":{{"p":4,"k":{{"a":0,"k":[{colours}]}}}}}}"#
+        ));
+        let ops = render(&c, 0.0, Affine::IDENTITY);
+        let Brush::Gradient(g) = &ops[0].brush else {
+            panic!("{:?}", ops[0].brush)
+        };
+        g.stops.to_vec()
+    }
+
+    #[test]
+    fn a_hard_edge_keeps_both_its_colours() {
+        // Two colour stops at one offset are a hard edge: red up to the
+        // middle, blue from it.
+        let stops = gradient_stops("0,1,0,0, 0.5,1,0,0, 0.5,0,0,1, 1,0,0,1");
+        let offsets: Vec<f32> = stops.iter().map(|s| s.offset).collect();
+        assert_eq!(offsets, [0.0, 0.5, 0.5, 1.0]);
+        assert!(stops[1].color.r == 1.0 && stops[1].color.b == 0.0, "{stops:?}");
+        assert!(stops[2].color.r == 0.0 && stops[2].color.b == 1.0, "{stops:?}");
+    }
+
+    #[test]
+    fn a_hard_edge_in_the_opacities_keeps_both() {
+        // Opaque up to the middle, clear from it, over one colour.
+        let stops = gradient_stops(
+            "0,1,0,0, 0.25,1,0,0, 0.75,1,0,0, 1,1,0,0, 0,1, 0.5,1, 0.5,0, 1,0",
+        );
+        let at_half: Vec<f32> = stops
+            .iter()
+            .filter(|s| s.offset == 0.5)
+            .map(|s| s.color.a)
+            .collect();
+        assert_eq!(at_half, [1.0, 0.0], "{stops:?}");
+    }
+
     #[test]
     fn precomps_that_fan_out_stop_at_the_frame_budget() {
         // Five levels of ten precomps each: a hundred thousand solids,
