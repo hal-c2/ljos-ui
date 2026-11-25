@@ -896,10 +896,16 @@ fn the_compiler_sees_every_member_the_types_declare() {
                     method.name
                 );
             }
-            // An enum the base has is the base's to say, as its members
-            // are: a window's `TransformOrigin`, from the item Ljós's
-            // window is underneath, is not in Qt's description of it.
-            for enumeration in meta.enums.iter().filter(|e| !inherits_enum(meta, e)) {
+            // An enum the type has from the base Qt's table describes is
+            // Qt's to say too: a window's `TransformOrigin`, from the item
+            // Ljós's window is underneath, is not in Qt's description of
+            // it. One from a base Ljós says is checked here.
+            let from_qt = |enumeration: &EnumInfo| {
+                meta.chain()
+                    .nth(said.len())
+                    .is_some_and(|base| base.enums.iter().any(|e| same_enum(e, enumeration)))
+            };
+            for enumeration in meta.enums.iter().filter(|e| !from_qt(e)) {
                 for (key, _) in &enumeration.keys {
                     assert!(oracle.has_enum_key(ty, None, key), "{what}.{key}");
                 }
@@ -943,7 +949,12 @@ fn inherits_enum(meta: &MetaObject, enumeration: &EnumInfo) -> bool {
     meta.prototype()
         .into_iter()
         .flat_map(|base| base.enums.iter())
-        .any(|e| e.name == enumeration.name && e.keys == enumeration.keys)
+        .any(|e| same_enum(e, enumeration))
+}
+
+/// Whether two enums are one: the same name with the same keys.
+fn same_enum(a: &EnumInfo, b: &EnumInfo) -> bool {
+    a.name == b.name && a.keys == b.keys
 }
 
 /// Whether a property takes several values: declared a list, or assigned
