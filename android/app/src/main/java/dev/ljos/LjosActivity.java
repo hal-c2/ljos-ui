@@ -197,6 +197,10 @@ public class LjosActivity extends GameActivity {
         if (current.get() == this) {
             current = new WeakReference<>(null);
         }
+        // Made again (turned, say), the activity hears the answer itself.
+        if (isFinishing()) {
+            LjosPermissions.ended(this);
+        }
         super.onDestroy();
     }
 

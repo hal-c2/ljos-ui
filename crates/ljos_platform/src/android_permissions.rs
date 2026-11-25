@@ -14,11 +14,17 @@
 //! | `LocationPermission.Always` | then `ACCESS_BACKGROUND_LOCATION` (Android 10) |
 //! | `CalendarPermission` | `READ_CALENDAR`, and `WRITE_CALENDAR` to write |
 //! | `ContactsPermission` | `READ_CONTACTS`, and `WRITE_CONTACTS` to write |
-//! | `BluetoothPermission.Access` | `BLUETOOTH_SCAN` and `BLUETOOTH_CONNECT` (Android 12) |
-//! | `BluetoothPermission.Advertise` | `BLUETOOTH_ADVERTISE` (Android 12) |
+//! | `BluetoothPermission.Access` | `BLUETOOTH_SCAN` and `BLUETOOTH_CONNECT` (Android 12); before, `BLUETOOTH`, `BLUETOOTH_ADMIN` and `ACCESS_FINE_LOCATION` |
+//! | `BluetoothPermission.Advertise` | `BLUETOOTH_ADVERTISE` (Android 12); before, `BLUETOOTH` and `BLUETOOTH_ADMIN` |
 //!
 //! A permission Android added after the phone's version is one that
-//! version grants when the application is installed, so it is granted.
+//! version grants when the application is installed, so it is granted;
+//! one it no longer has asks nothing. Before Android 12 Bluetooth was the
+//! install-time `BLUETOOTH` and `BLUETOOTH_ADMIN`, granted when the
+//! manifest declares them and denied when it does not, and a scan finds
+//! nothing without the precise location (Android 10 and 11; the
+//! approximate one did before), so the Bluetooth of those versions asks
+//! for it.
 //! Since Android 11 the background location is asked on its own, once the
 //! location in use is granted: the permissions are asked in stages, each
 //! after the one before was granted.
@@ -31,16 +37,30 @@
 
 use crate::permissions::{Permission, PermissionStatus};
 
-/// One of Android's permissions, and the API level that made it a runtime
-/// one.
+/// One of Android's permissions, the API level that made it a runtime
+/// one, and the last that asks for it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Runtime {
     pub name: &'static str,
     pub since: u32,
+    pub until: Option<u32>,
 }
 
 const fn runtime(name: &'static str) -> Runtime {
-    Runtime { name, since: 0 }
+    Runtime {
+        name,
+        since: 0,
+        until: None,
+    }
+}
+
+/// Bluetooth's permissions before Android 12.
+const fn before_android_12(name: &'static str) -> Runtime {
+    Runtime {
+        name,
+        since: 0,
+        until: Some(30),
+    }
 }
 
 /// What `permission` asks of Android, a stage at a time.
@@ -60,6 +80,7 @@ pub fn stages(permission: Permission) -> Vec<Vec<Runtime>> {
                 out.push(vec![Runtime {
                     name: "android.permission.ACCESS_BACKGROUND_LOCATION",
                     since: 29,
+                    until: None,
                 }]);
             }
             out
@@ -77,7 +98,11 @@ pub fn stages(permission: Permission) -> Vec<Vec<Runtime>> {
         Permission::Bluetooth { modes } => {
             const ACCESS: i32 = 1;
             const ADVERTISE: i32 = 2;
-            let since = |name| Runtime { name, since: 31 };
+            let since = |name| Runtime {
+                name,
+                since: 31,
+                until: None,
+            };
             let mut out = Vec::new();
             if modes & ACCESS != 0 {
                 out.push(since("android.permission.BLUETOOTH_SCAN"));
@@ -85,6 +110,13 @@ pub fn stages(permission: Permission) -> Vec<Vec<Runtime>> {
             }
             if modes & ADVERTISE != 0 {
                 out.push(since("android.permission.BLUETOOTH_ADVERTISE"));
+            }
+            if modes & (ACCESS | ADVERTISE) != 0 {
+                out.push(before_android_12("android.permission.BLUETOOTH"));
+                out.push(before_android_12("android.permission.BLUETOOTH_ADMIN"));
+            }
+            if modes & ACCESS != 0 {
+                out.push(before_android_12(FINE));
             }
             vec![out]
         }
@@ -100,14 +132,17 @@ fn read_or_write(read: &'static str, write: &'static str, read_write: bool) -> V
 }
 
 /// The stages as the Java side takes them: a line each, its permissions
-/// `name@since` apart by spaces.
+/// `name@since`, or `name@since-until`, apart by spaces.
 pub fn encode(stages: &[Vec<Runtime>]) -> String {
     stages
         .iter()
         .map(|stage| {
             stage
                 .iter()
-                .map(|p| format!("{}@{}", p.name, p.since))
+                .map(|p| match p.until {
+                    None => format!("{}@{}", p.name, p.since),
+                    Some(until) => format!("{}@{}-{until}", p.name, p.since),
+                })
                 .collect::<Vec<_>>()
                 .join(" ")
         })
@@ -321,19 +356,76 @@ mod tests {
     #[test]
     fn bluetooth_asks_for_what_its_modes_do_since_android_12() {
         let access = stages(Permission::Bluetooth { modes: 1 });
+        let since_12: Vec<_> = access[0]
+            .iter()
+            .filter(|p| p.since == 31)
+            .map(|p| p.name)
+            .collect();
         assert_eq!(
-            access[0].iter().map(|p| p.name).collect::<Vec<_>>(),
+            since_12,
             [
                 "android.permission.BLUETOOTH_SCAN",
                 "android.permission.BLUETOOTH_CONNECT"
             ]
         );
-        assert!(access[0].iter().all(|p| p.since == 31));
-        assert_eq!(
-            names(Permission::Bluetooth { modes: 2 }),
-            [["android.permission.BLUETOOTH_ADVERTISE"]]
+        assert!(
+            access[0]
+                .iter()
+                .all(|p| p.since == 31 || p.until == Some(30))
         );
-        assert_eq!(names(Permission::Bluetooth { modes: 3 })[0].len(), 3);
+        let advertise = stages(Permission::Bluetooth { modes: 2 });
+        assert_eq!(
+            advertise[0]
+                .iter()
+                .filter(|p| p.since == 31)
+                .map(|p| p.name)
+                .collect::<Vec<_>>(),
+            ["android.permission.BLUETOOTH_ADVERTISE"]
+        );
+        assert_eq!(names(Permission::Bluetooth { modes: 3 })[0].len(), 6);
+    }
+
+    /// What a phone of `api` asks for: what Java's `applies` keeps.
+    fn on(api: u32, permission: Permission) -> Vec<&'static str> {
+        stages(permission)
+            .concat()
+            .into_iter()
+            .filter(|p| p.since <= api && p.until.is_none_or(|until| api <= until))
+            .map(|p| p.name)
+            .collect()
+    }
+
+    #[test]
+    fn bluetooth_before_android_12_is_the_precise_location_and_the_manifests() {
+        let access = Permission::Bluetooth { modes: 1 };
+        // Android 11: a scan finds nothing without the precise location.
+        assert_eq!(
+            on(30, access),
+            [
+                "android.permission.BLUETOOTH",
+                "android.permission.BLUETOOTH_ADMIN",
+                "android.permission.ACCESS_FINE_LOCATION"
+            ]
+        );
+        assert_eq!(
+            on(31, access),
+            [
+                "android.permission.BLUETOOTH_SCAN",
+                "android.permission.BLUETOOTH_CONNECT"
+            ]
+        );
+        assert_eq!(
+            on(30, Permission::Bluetooth { modes: 2 }),
+            [
+                "android.permission.BLUETOOTH",
+                "android.permission.BLUETOOTH_ADMIN"
+            ]
+        );
+        assert!(
+            encode(&stages(access)).contains("android.permission.ACCESS_FINE_LOCATION@0-30"),
+            "{}",
+            encode(&stages(access))
+        );
     }
 
     #[test]
