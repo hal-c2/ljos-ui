@@ -796,10 +796,10 @@ fn a_job_that_panics_closes_its_creation_when_whoever_waits_panics_too() {
     // not held for a creation that never ends.
     h.files(&[(
         "Later",
-        "import QtQuick\nItem { property int x: nowhere.y }\n",
+        "import QtQuick\nItem { property int n: nowhere.y }\n",
     )]);
     let later = h.engine.create_from_url("Later", None, vec![]).unwrap();
-    h.get(later, "x");
+    h.get(later, "n");
     let warned = h.warnings();
     assert!(warned.iter().any(|w| w.contains("nowhere")), "{warned:?}");
 }

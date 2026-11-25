@@ -19,7 +19,7 @@ Feature: An object declares each of its members once
         """qml
         import QtQuick
         Item {
-          Item { id: other; property int y }
+          Item { id: other; property int sample }
           <first>
           <second>
         }
@@ -27,23 +27,23 @@ Feature: An object declares each of its members once
       Then loading "Twice.qml" is rejected
 
       Examples:
-        | first                     | second                    |
-        | function f() { return 1 } | function f() { return 2 } |
-        | function f(a) { }         | function f() { }          |
-        | property int p: 1         | property int p: 2         |
-        | readonly property int p   | property string p         |
-        | property int a            | property alias a: other.y |
-        | property alias a: other.y | property int a            |
-        | property alias a: other.y | property alias a: other.y |
-        | signal s()                | signal s(int a)           |
-        | signal f()                | function f() { }          |
-        | function f() { }          | signal f()                |
-        | property int p            | signal pChanged()         |
-        | signal pChanged()         | property int p            |
-        | property int p            | function pChanged() { }   |
-        | function pChanged() { }   | property int p            |
-        | property alias a: other.y | signal aChanged()         |
-        | property alias a: other.y | function aChanged() { }   |
+        | first                          | second                         |
+        | function f() { return 1 }      | function f() { return 2 }      |
+        | function f(a) { }              | function f() { }               |
+        | property int p: 1              | property int p: 2              |
+        | readonly property int p        | property string p              |
+        | property int a                 | property alias a: other.sample |
+        | property alias a: other.sample | property int a                 |
+        | property alias a: other.sample | property alias a: other.sample |
+        | signal s()                     | signal s(int a)                |
+        | signal f()                     | function f() { }               |
+        | function f() { }               | signal f()                     |
+        | property int p                 | signal pChanged()              |
+        | signal pChanged()              | property int p                 |
+        | property int p                 | function pChanged() { }        |
+        | function pChanged() { }        | property int p                 |
+        | property alias a: other.sample | signal aChanged()              |
+        | property alias a: other.sample | function aChanged() { }        |
 
   Rule: A property and a method may share a name
 
@@ -61,13 +61,13 @@ Feature: An object declares each of its members once
       Then the property "loaded" of "root" is true
 
       Examples:
-        | first             | second                  |
-        | property int q    | function q() { }        |
-        | function q() { }  | property int q          |
-        | property int q    | signal q()              |
-        | signal s()        | signal sChanged()       |
-        | property int p    | property int pChanged   |
-        | property int p    | onPChanged: { }         |
+        | first            | second                |
+        | property int q   | function q() { }      |
+        | function q() { } | property int q        |
+        | property int q   | signal q()            |
+        | signal s()       | signal sChanged()     |
+        | property int p   | property int pChanged |
+        | property int p   | onPChanged: { }       |
 
     Scenario: Two objects each declare a function of one name
       Given the QML:
@@ -105,9 +105,9 @@ Feature: An object declares each of its members once
       And the log has a warning matching "Twice\.qml:<at>: <message>"
 
       Examples:
-        | what                  | first             | second              | at   | message                 |
-        | two functions         | function f() { }  | function f() { }    | 4:20 | Duplicate method name   |
-        | two properties        | property int p    | property real p     | 4:25 | Duplicate property name |
-        | two signals           | signal s()        | signal s()          | 4:18 | Duplicate signal name   |
-        | a signal and function | function f() { }  | signal f()          | 3:20 | Duplicate method name   |
-        | a change signal       | signal pChanged() | property int p      | 3:18 | Duplicate signal name   |
+        | what                  | first             | second           | at   | message                 |
+        | two functions         | function f() { }  | function f() { } | 4:20 | Duplicate method name   |
+        | two properties        | property int p    | property real p  | 4:25 | Duplicate property name |
+        | two signals           | signal s()        | signal s()       | 4:18 | Duplicate signal name   |
+        | a signal and function | function f() { }  | signal f()       | 3:20 | Duplicate method name   |
+        | a change signal       | signal pChanged() | property int p   | 3:18 | Duplicate signal name   |

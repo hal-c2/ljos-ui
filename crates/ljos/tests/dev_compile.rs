@@ -184,7 +184,7 @@ fn checked_dir() -> tempfile::TempDir {
     write(
         dir.path(),
         "Warns.qml",
-        "import QtQuick\nItem {\n    property var x: nowhere\n}\n",
+        "import QtQuick\nItem {\n    property var shown: nowhere\n}\n",
     );
     write(
         dir.path(),
