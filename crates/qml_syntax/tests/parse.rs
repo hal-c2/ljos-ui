@@ -165,6 +165,47 @@ fn members_of_an_object() {
 }
 
 #[test]
+fn final_marks_a_declared_property_that_no_subtype_may_override() {
+    let allocator = Allocator::default();
+    let document = parse(
+        &allocator,
+        "Item {\n    final property int a: 1\n    readonly final property int b\n    final readonly property int c\n    required final property int d\n    default final property Item e\n    property int final: 2\n    final property int f\n    final: 3\n}\n",
+    );
+    let properties: Vec<_> = document
+        .root
+        .members
+        .iter()
+        .filter_map(|member| match member {
+            QmlMember::Property(p) => Some((
+                p.name.name.as_str(),
+                p.is_final,
+                p.is_readonly,
+                p.is_required,
+                p.is_default,
+            )),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        properties,
+        [
+            ("a", true, false, false, false),
+            ("b", true, true, false, false),
+            ("c", true, true, false, false),
+            ("d", true, false, true, false),
+            ("e", true, false, false, true),
+            ("final", false, false, false, false),
+            ("f", true, false, false, false),
+        ]
+    );
+    // `final: 3` is a binding of a property called final.
+    assert!(matches!(
+        document.root.members.last(),
+        Some(QmlMember::Binding(binding)) if binding.name.as_simple() == Some("final")
+    ));
+}
+
+#[test]
 fn an_enum_counts_from_where_it_is_told() {
     let allocator = Allocator::default();
     let document = parse(

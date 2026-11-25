@@ -112,7 +112,7 @@ pub enum QmlBindingValue<'a> {
     Objects(ArenaVec<'a, QmlObject<'a>>),
 }
 
-/// `[default] [required] [readonly] property Type name[: value]`, or the
+/// `[default] [required] [readonly] [final] property Type name[: value]`, or the
 /// `required name` form that marks an inherited property.
 #[derive(Debug)]
 pub struct QmlPropertyDeclaration<'a> {
@@ -120,6 +120,9 @@ pub struct QmlPropertyDeclaration<'a> {
     pub is_default: bool,
     pub is_required: bool,
     pub is_readonly: bool,
+    /// No type deriving from the declaring one may declare a member of its
+    /// name.
+    pub is_final: bool,
     /// `None` for `required name`.
     pub type_name: Option<QmlTypeName<'a>>,
     pub name: IdentifierName<'a>,

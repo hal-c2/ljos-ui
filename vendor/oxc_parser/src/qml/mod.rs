@@ -273,6 +273,7 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
             }
             if self.qml_at_word("property")
                 || self.qml_at_word("required")
+                || self.qml_at_word("final")
                 || matches!(self.cur_kind(), Kind::Default | Kind::Readonly)
             {
                 return Some(QmlMember::Property(self.parse_qml_property()));
@@ -289,7 +290,8 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
 
     fn parse_qml_property(&mut self) -> QmlPropertyDeclaration<'a> {
         let start = self.cur_start();
-        let (mut is_default, mut is_required, mut is_readonly) = (false, false, false);
+        let (mut is_default, mut is_required, mut is_readonly, mut is_final) =
+            (false, false, false, false);
         loop {
             if !self.qml_next_is_name() {
                 break;
@@ -300,6 +302,8 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
                 is_readonly = true;
             } else if self.qml_at_word("required") {
                 is_required = true;
+            } else if self.qml_at_word("final") {
+                is_final = true;
             } else {
                 break;
             }
@@ -325,6 +329,7 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
             is_default,
             is_required,
             is_readonly,
+            is_final,
             type_name,
             name,
             value,
