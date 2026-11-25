@@ -295,6 +295,23 @@ fn show_when_drawn(
 /// did not give. Until the platform says what size its window has, the
 /// window stays untold. Whether the window has another size in pixels
 /// than its painter knew, when the next pass draws all of it.
+/// Gives the root window's title bar insets to the scene's safe area in
+/// the scene's units, again when the scale or egui's zoom has changed
+/// them since (#731).
+fn note_safe_area(slot: &mut Slot, engine: &Engine) {
+    let (Some((px, given)), Some(surface)) = (slot.safe_area.as_mut(), slot.surface.as_ref())
+    else {
+        return;
+    };
+    let per_unit = surface.window.scale_factor() * f64::from(slot.ctx.zoom_factor());
+    if *given == Some(per_unit) {
+        return;
+    }
+    *given = Some(per_unit);
+    let [l, t, r, b] = px.map(|n| n / per_unit);
+    ljos_quick::set_safe_area_insets(engine, l, t, r, b);
+}
+
 fn note_size(slot: &mut Slot, engine: &Engine, sys: &WindowSystem, force: bool) -> bool {
     let (Some(surface), Some(painter)) = (slot.surface.as_mut(), slot.painter.as_mut()) else {
         return false;
@@ -1288,6 +1305,7 @@ impl<M: Send + 'static> Desktop<M> {
             slot.undrawn_pass_at = Some(Instant::now());
         }
         note_size(slot, &engine, &sys, false);
+        note_safe_area(slot, &engine);
 
         let mut raw = match slot.surface.as_mut() {
             Some(surface) => {
@@ -1777,9 +1795,8 @@ impl<M: Send + 'static> Desktop<M> {
             // bar is the one that sets it (#731). It is in the scene's
             // units, which the zoom scales too.
             WindowEvent::Insets(insets) if slot.view.is_none() => {
-                let scale = surface.window.scale_factor() * f64::from(slot.ctx.zoom_factor());
-                let [l, t, r, b] = insets.safe_area().map(|n| n / scale);
-                ljos_quick::set_safe_area_insets(&engine, l, t, r, b);
+                slot.safe_area = Some((insets.safe_area(), None));
+                note_safe_area(slot, &engine);
             }
             _ => {}
         }
