@@ -12,7 +12,7 @@
 use std::sync::Arc;
 
 use ljos::item::kurbo::{
-    self, Affine, BezPath, Cap, Ellipse, Join, ParamCurve, ParamCurveArclen, PathSeg, Point, Rect,
+    self, Affine, BezPath, Cap, Join, ParamCurve, ParamCurveArclen, PathSeg, Point, Rect,
     RoundedRect, Shape as _, Vec2,
 };
 use ljos::item::{
@@ -27,6 +27,12 @@ use crate::model::{
 /// How deep compositions may hold each other: a file whose assets hold
 /// themselves stops here instead of overflowing the stack.
 const MAX_DEPTH: usize = 16;
+
+/// How many layers one frame may visit, precomps' layers included.
+/// MAX_DEPTH bounds how deep one branch goes; this bounds how many
+/// branches there are, so precomps that each hold the next a few times
+/// over cost a bounded frame instead of one exponential in their depth.
+const LAYER_BUDGET: usize = 10_000;
 
 /// Curve flattening tolerance for the built-in shapes, in composition
 /// pixels.
@@ -51,10 +57,12 @@ pub fn render(comp: &Composition, frame: f64, view: Affine) -> Vec<Op> {
         frame
     };
     let mut out = Vec::new();
-    layers(comp, &comp.layers, t, view, 1.0, 0, &mut out);
+    let mut budget = LAYER_BUDGET;
+    layers(comp, &comp.layers, t, view, 1.0, 0, &mut budget, &mut out);
     out
 }
 
+#[allow(clippy::too_many_arguments)]
 fn layers(
     comp: &Composition,
     list: &[Layer],
@@ -62,12 +70,17 @@ fn layers(
     m: Affine,
     alpha: f64,
     depth: usize,
+    budget: &mut usize,
     out: &mut Vec<Op>,
 ) {
     if depth > MAX_DEPTH {
         return;
     }
     for layer in list.iter().rev() {
+        let Some(left) = budget.checked_sub(1) else {
+            return;
+        };
+        *budget = left;
         if layer.hidden || t < layer.in_point || t >= layer.out_point {
             continue;
         }
@@ -86,7 +99,7 @@ fn layers(
                 let inner_t = remap
                     .as_ref()
                     .map_or(local, |r| r.num(local, 0, 0.0) * comp.frame_rate);
-                layers(comp, inner, inner_t, world, a, depth + 1, out);
+                layers(comp, inner, inner_t, world, a, depth + 1, budget, out);
             }
             LayerKind::Solid {
                 color,
@@ -295,8 +308,7 @@ fn geometry(shape: &Shape, t: f64) -> Option<BezPath> {
         }
         Shape::Ellipse { position, size } => {
             let size = vec2(size, t);
-            let rect = Rect::from_center_size(point(position, t), size.to_size());
-            Some(Ellipse::from_rect(rect).to_path(TOLERANCE))
+            Some(ellipse(point(position, t), size / 2.0))
         }
         Shape::Path(bez) => Some(bez_path(&bez.at(t))),
         Shape::Star {
@@ -307,7 +319,10 @@ fn geometry(shape: &Shape, t: f64) -> Option<BezPath> {
             outer,
             inner,
         } => {
-            let n = points.num(t, 0, 5.0).round().max(2.0) as usize;
+            // A count from the file sizes the path: one too large for any
+            // drawing would otherwise allocate without bound.
+            let n = points.num(t, 0, 5.0).round();
+            let n = if n.is_finite() { n } else { 5.0 }.clamp(2.0, 1000.0) as usize;
             let centre = point(position, t);
             let (ro, ri) = (outer.num(t, 0, 0.0), inner.num(t, 0, 0.0));
             let start = (rotation.num(t, 0, 0.0) - 90.0).to_radians();
@@ -329,6 +344,28 @@ fn geometry(shape: &Shape, t: f64) -> Option<BezPath> {
         }
         _ => None,
     }
+}
+
+/// How far a cubic's control points sit along the tangent to draw a
+/// quarter circle.
+const KAPPA: f64 = 4.0 * (std::f64::consts::SQRT_2 - 1.0) / 3.0;
+
+/// An ellipse from its top, clockwise, as the format draws it, so a trim
+/// starts where it does in other players.
+fn ellipse(c: Point, r: Vec2) -> BezPath {
+    let (kx, ky) = (r.x * KAPPA, r.y * KAPPA);
+    let top = c + Vec2::new(0.0, -r.y);
+    let right = c + Vec2::new(r.x, 0.0);
+    let bottom = c + Vec2::new(0.0, r.y);
+    let left = c + Vec2::new(-r.x, 0.0);
+    let mut path = BezPath::new();
+    path.move_to(top);
+    path.curve_to(top + (kx, 0.0), right + (0.0, -ky), right);
+    path.curve_to(right + (0.0, ky), bottom + (kx, 0.0), bottom);
+    path.curve_to(bottom + (-kx, 0.0), left + (0.0, ky), left);
+    path.curve_to(left + (0.0, -ky), top + (-kx, 0.0), top);
+    path.close_path();
+    path
 }
 
 fn bez_path(b: &Bez) -> BezPath {
@@ -391,38 +428,33 @@ fn gradient(g: &Gradient, t: f64, m: Affine, alpha: f64) -> BrushGradient {
     let values = g.colors.at(t);
     let count = g.count.min(values.len() / 4);
     let (colours, opacities) = values.split_at((count * 4).min(values.len()));
+    let colour_stops = colours.as_chunks::<4>().0;
     let opacity_stops = opacities.as_chunks::<2>().0;
-    let opacity_at = |offset: f64| -> f64 {
-        match opacity_stops {
-            [] => 1.0,
-            [only] => only[1],
-            many => {
-                let i = many.partition_point(|s| s[0] <= offset);
-                if i == 0 {
-                    many[0][1]
-                } else if i == many.len() {
-                    many[i - 1][1]
-                } else {
-                    let (a, b) = (many[i - 1], many[i]);
-                    let u = if b[0] > a[0] {
-                        (offset - a[0]) / (b[0] - a[0])
-                    } else {
-                        0.0
-                    };
-                    a[1] + (b[1] - a[1]) * u
-                }
-            }
-        }
+    // A stop wherever either list has one: an opacity stop between two
+    // colour stops would otherwise be lost. Opacities alone give no
+    // colours to draw.
+    let opacity_offsets = if colour_stops.is_empty() {
+        &[][..]
+    } else {
+        opacity_stops
     };
-    let stops = colours
-        .as_chunks::<4>()
-        .0
+    let mut offsets: Vec<f64> = colour_stops
         .iter()
-        .map(|c| {
-            let a = opacity_at(c[0]) * alpha;
+        .map(|c| c[0])
+        .chain(opacity_offsets.iter().map(|o| o[0]))
+        .filter(|o| o.is_finite())
+        .collect();
+    offsets.sort_by(f64::total_cmp);
+    offsets.dedup();
+    let stops = offsets
+        .into_iter()
+        .map(|offset| {
+            let [r, g, b] = piecewise(colour_stops, offset, [1.0; 3]);
+            let [a] = piecewise(opacity_stops, offset, [1.0]);
+            let a = a * alpha;
             GradientStop {
-                offset: c[0].clamp(0.0, 1.0) as f32,
-                color: Rgba::from_straight(c[1] as f32, c[2] as f32, c[3] as f32, a as f32),
+                offset: offset.clamp(0.0, 1.0) as f32,
+                color: Rgba::from_straight(r as f32, g as f32, b as f32, a as f32),
             }
         })
         .collect();
@@ -446,6 +478,31 @@ fn gradient(g: &Gradient, t: f64, m: Affine, alpha: f64) -> BrushGradient {
         }
     };
     BrushGradient::new(geometry, stops, Spread::Pad)
+}
+
+/// The values of `stops` (an offset, then `N` values each) at `offset`:
+/// the nearest end's outside them, linear between them, `none` when
+/// there are no stops.
+fn piecewise<const M: usize, const N: usize>(
+    stops: &[[f64; M]],
+    offset: f64,
+    none: [f64; N],
+) -> [f64; N] {
+    let values = |s: &[f64; M]| std::array::from_fn(|k| s[k + 1]);
+    let i = stops.partition_point(|s| s[0] <= offset);
+    match (i.checked_sub(1).map(|j| &stops[j]), stops.get(i)) {
+        (None, None) => none,
+        (Some(a), None) => values(a),
+        (None, Some(b)) => values(b),
+        (Some(a), Some(b)) => {
+            let u = if b[0] > a[0] {
+                (offset - a[0]) / (b[0] - a[0])
+            } else {
+                0.0
+            };
+            std::array::from_fn(|k| a[k + 1] + (b[k + 1] - a[k + 1]) * u)
+        }
+    }
 }
 
 /// How much `m` scales lengths, on average over directions.
@@ -502,6 +559,9 @@ fn length(path: &BezPath) -> f64 {
 /// their length) moved on by `offset`: each path on its own, or all as
 /// one long path when `sequential`.
 fn trim(paths: &mut Vec<BezPath>, start: f64, end: f64, offset: f64, sequential: bool) {
+    // The ends are cut to the path before the offset moves them, so a
+    // start below 0 or an end past 1 never wraps round on its own.
+    let (start, end) = (start.clamp(0.0, 1.0), end.clamp(0.0, 1.0));
     let (start, end) = if start > end {
         (end, start)
     } else {
@@ -660,6 +720,114 @@ mod tests {
                 .filter(|e| matches!(e, PathEl::MoveTo(_)))
                 .count(),
             2
+        );
+    }
+
+    fn line(len: f64) -> Vec<BezPath> {
+        let mut p = BezPath::new();
+        p.move_to((0.0, 0.0));
+        p.line_to((len, 0.0));
+        vec![p]
+    }
+
+    #[test]
+    fn a_trim_outside_the_path_is_cut_to_its_ends() {
+        // A start below 0 is the path's start, not a stretch wrapped
+        // round from its end.
+        let mut paths = line(100.0);
+        trim(&mut paths, -0.2, 0.5, 0.0, false);
+        let moves = elements(&paths[0])
+            .iter()
+            .filter(|e| matches!(e, PathEl::MoveTo(_)))
+            .count();
+        assert_eq!(moves, 1);
+        let b = paths[0].bounding_box();
+        assert!(b.x0.abs() < 1e-6 && (b.x1 - 50.0).abs() < 1e-3, "{b:?}");
+        let mut over = line(100.0);
+        trim(&mut over, 0.5, 1.5, 0.0, false);
+        let b = over[0].bounding_box();
+        assert!(
+            (b.x0 - 50.0).abs() < 1e-3 && (b.x1 - 100.0).abs() < 1e-3,
+            "{b:?}"
+        );
+    }
+
+    #[test]
+    fn a_star_has_at_most_a_thousand_points() {
+        let c = one_layer(
+            r#"{"ty":"sr","sy":1,"pt":{"a":0,"k":5000},"p":{"a":0,"k":[50,50]},"r":{"a":0,"k":0},
+                "or":{"a":0,"k":40},"ir":{"a":0,"k":20}},
+               {"ty":"fl","c":{"a":0,"k":[1,0,0,1]}}"#,
+        );
+        let ops = render(&c, 0.0, Affine::IDENTITY);
+        // A move, a line to every other corner, and a close.
+        assert_eq!(ops[0].path.elements().len(), 2 * 1000 + 1);
+    }
+
+    #[test]
+    fn an_ellipse_starts_at_its_top_and_goes_clockwise() {
+        let c = one_layer(
+            r#"{"ty":"el","p":{"a":0,"k":[50,50]},"s":{"a":0,"k":[40,20]}},
+               {"ty":"fl","c":{"a":0,"k":[1,0,0,1]}}"#,
+        );
+        let ops = render(&c, 0.0, Affine::IDENTITY);
+        let els = elements(&ops[0].path);
+        assert_eq!(els[0], PathEl::MoveTo(Point::new(50.0, 40.0)));
+        let PathEl::CurveTo(_, _, end) = els[1] else {
+            panic!("{els:?}")
+        };
+        assert_eq!(end, Point::new(70.0, 50.0));
+    }
+
+    #[test]
+    fn an_opacity_stop_between_colour_stops_is_kept() {
+        let c = one_layer(
+            r#"{"ty":"rc","p":{"a":0,"k":[50,50]},"s":{"a":0,"k":[100,100]}},
+               {"ty":"gf","t":1,"s":{"a":0,"k":[0,0]},"e":{"a":0,"k":[100,0]},
+                "g":{"p":2,"k":{"a":0,"k":[0,1,0,0, 1,0,0,1, 0,1, 0.5,0, 1,1]}}}"#,
+        );
+        let ops = render(&c, 0.0, Affine::IDENTITY);
+        let Brush::Gradient(g) = &ops[0].brush else {
+            panic!("{:?}", ops[0].brush)
+        };
+        let offsets: Vec<f32> = g.stops.iter().map(|s| s.offset).collect();
+        assert_eq!(offsets, [0.0, 0.5, 1.0]);
+        let mid = g.stops[1].color;
+        assert_eq!(mid.a, 0.0);
+        let ends = (g.stops[0].color, g.stops[2].color);
+        assert!(
+            ends.0.r == 1.0 && ends.0.a == 1.0 && ends.1.b == 1.0,
+            "{ends:?}"
+        );
+    }
+
+    #[test]
+    fn precomps_that_fan_out_stop_at_the_frame_budget() {
+        // Five levels of ten precomps each: a hundred thousand solids,
+        // each level well inside MAX_DEPTH.
+        let mut assets = vec![
+            r##"{"id":"a0","layers":[{"ty":1,"sc":"#ff0000","sw":1,"sh":1,"ip":0,"op":10,"st":0,"ks":{}}]}"##
+                .to_owned(),
+        ];
+        for level in 1..=5 {
+            let layer = format!(
+                r#"{{"ty":0,"refId":"a{}","ip":0,"op":10,"st":0,"ks":{{}}}}"#,
+                level - 1
+            );
+            let layers = vec![layer; 10].join(",");
+            assets.push(format!(r#"{{"id":"a{level}","layers":[{layers}]}}"#));
+        }
+        let json = format!(
+            r#"{{"fr":10,"ip":0,"op":10,"w":10,"h":10,"assets":[{}],
+                "layers":[{{"ty":0,"refId":"a5","ip":0,"op":10,"st":0,"ks":{{}}}}]}}"#,
+            assets.join(",")
+        );
+        let c = parse(json.as_bytes()).unwrap();
+        let ops = render(&c, 0.0, Affine::IDENTITY);
+        assert!(
+            !ops.is_empty() && ops.len() <= LAYER_BUDGET,
+            "{}",
+            ops.len()
         );
     }
 
