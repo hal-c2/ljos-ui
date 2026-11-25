@@ -184,7 +184,7 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         }
         let declaration = matches!(kind, Kind::Default | Kind::Readonly)
             || (kind == Kind::Ident
-                && matches!(self.cur_src(), "property" | "required" | "signal" | "component"));
+                && matches!(self.cur_src(), "property" | "required" | "final" | "signal" | "component"));
         self.lookahead(|p| {
             p.bump_any();
             match p.cur_kind() {
