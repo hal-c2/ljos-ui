@@ -50,8 +50,9 @@ Feature: What the observer lists stays readable in a narrow window
       | 680   |
       | 390   |
 
-  # The ticker changes every 50 ms: tracing stops so that the list holds
-  # still, and the newest change, the list's last row, is the one read.
+  # The ticker changes every 50 ms: once a change is traced, tracing stops
+  # so that the list holds still, and the newest change, the list's last
+  # row, is the one read.
   # Rows scrolled out of the list are not shown, whole or not.
   Scenario Outline: A traced change shows what changed
     When the application is observed
@@ -60,7 +61,8 @@ Feature: What the observer lists stays readable in a narrow window
     And the observer's "role=listitem[name*=\"ticker\"]" is clicked
     And the observer's "role=button[name=\"Trace\"]" is clicked
     And the observer's "role=tab[name=\"Trace\"]" is clicked
-    And the observer's "role=button[name*=\"Stop tracing\"]" is clicked
+    Then the observer has "role=list[name=\"Trace\"] >> text=ticks"
+    When the observer's "role=button[name*=\"Stop tracing\"]" is clicked
     Then the observer's "role=list[name=\"Trace\"] >> text=ticks >> nth=-1" is shown whole
 
     Examples:
