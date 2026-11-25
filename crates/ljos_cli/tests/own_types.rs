@@ -456,16 +456,8 @@ impl<'a, 'c> Module<'a, 'c> {
         if meta.unsealed_base {
             let _ = writeln!(out, "\t\tis unsealed");
         }
-        // The enums are flattened: one a base has is said there, unless
-        // this type gives the name keys of its own.
-        let inherited = |own: &EnumInfo| {
-            meta.prototype()
-                .into_iter()
-                .flat_map(|base| base.enums.iter())
-                .any(|e| e.name == own.name && e.keys == own.keys)
-        };
         for enumeration in &meta.enums {
-            if inherited(enumeration) {
+            if inherits_enum(meta, enumeration) {
                 continue;
             }
             let is_flags = meta
@@ -832,14 +824,26 @@ fn the_compiler_sees_every_member_the_types_declare() {
                 meta.default_property().map(|name| name.as_str()),
                 "the default property of {what}"
             );
+            // What the type has from a base Qt's table describes is Qt's
+            // to say, as that base itself is: a style's own `TextArea` has
+            // Qt's `TextArea.flickable`, which Ljós's template does not
+            // attach yet (`NOT_YET`).
+            let (said, qt_base) = said_by_ljos(&types, &own, meta);
+            let qt_base = qt_base.map(|home| {
+                oracle
+                    .module_type(&home.module, &home.name)
+                    .unwrap_or_else(|| panic!("the compiler has no `{}`", home.named()))
+            });
             assert_eq!(
                 oracle.members_known(ty),
-                !meta.chain().any(|meta| engine.has_open_body(meta)),
+                !said.iter().any(|meta| engine.has_open_body(meta))
+                    && qt_base.is_none_or(|base| oracle.members_known(base)),
                 "whether {what} takes only its members"
             );
             assert_eq!(
                 oracle.attached(ty).is_some(),
-                meta.chain().any(|meta| meta.attached.is_some()),
+                said.iter().any(|meta| meta.attached.is_some())
+                    || qt_base.is_some_and(|base| oracle.attached(base).is_some()),
                 "what {what} attaches"
             );
             for declared in meta.own_properties() {
@@ -892,7 +896,10 @@ fn the_compiler_sees_every_member_the_types_declare() {
                     method.name
                 );
             }
-            for enumeration in &meta.enums {
+            // An enum the base has is the base's to say, as its members
+            // are: a window's `TransformOrigin`, from the item Ljós's
+            // window is underneath, is not in Qt's description of it.
+            for enumeration in meta.enums.iter().filter(|e| !inherits_enum(meta, e)) {
                 for (key, _) in &enumeration.keys {
                     assert!(oracle.has_enum_key(ty, None, key), "{what}.{key}");
                 }
@@ -908,6 +915,35 @@ fn the_compiler_sees_every_member_the_types_declare() {
             assert!(!oracle.has_method(ty, "nothing"), "{what}");
         }
     }
+}
+
+/// The types of `meta`'s chain that Ljós's description says, most derived
+/// first, and the first base past them, which Qt's table describes.
+fn said_by_ljos<'m, 't>(
+    types: &'t Types<'_>,
+    own: &[String],
+    meta: &'m MetaObject,
+) -> (Vec<&'m MetaObject>, Option<&'t Home>) {
+    let mut said = Vec::new();
+    for meta in meta.chain() {
+        match types.home_of(meta) {
+            Some(home) if !said.is_empty() && !own.contains(&home.module) => {
+                return (said, Some(home));
+            }
+            _ => said.push(meta),
+        }
+    }
+    (said, None)
+}
+
+/// Whether `enumeration` is one the type has from its base. A type's enums
+/// are flattened, so one a base has is said there, unless this type gives
+/// the name keys of its own.
+fn inherits_enum(meta: &MetaObject, enumeration: &EnumInfo) -> bool {
+    meta.prototype()
+        .into_iter()
+        .flat_map(|base| base.enums.iter())
+        .any(|e| e.name == enumeration.name && e.keys == enumeration.keys)
 }
 
 /// Whether a property takes several values: declared a list, or assigned
