@@ -643,10 +643,15 @@ fn window_top(engine: &Engine, item: ObjectId) -> Option<ObjectId> {
         match engine.visual_parent(cur) {
             Some(p) => cur = p,
             // The overlay is out of its window item's `children`; its
-            // `parent` says which item that is.
+            // `parent` says which item that is. An overlay is made only
+            // for a window's top, so an item in one is in that window
+            // even where the walk up from it no longer passes the
+            // `Window` that gave the tree its overlay: without that, an
+            // item moved into it would be moved out again, and back.
             None if is_a::<OverlayItem>(engine, cur)
                 && let Some(p) = object(engine, cur, Item::PARENT.index) =>
             {
+                in_window = true;
                 cur = p;
             }
             None => {

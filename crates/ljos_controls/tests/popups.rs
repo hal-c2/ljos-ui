@@ -888,6 +888,40 @@ Item {{
     opens_centred(&mut s, &e, made, &["loose", "outer", "inner"]);
 }
 
+/// An item moved into the overlay of a tree nothing shows yet stays
+/// there: from the overlay, its way up no longer passes the `Window` that
+/// gave the tree that overlay (hal-c2/ljos-ui#751).
+#[test]
+fn an_item_in_the_overlay_of_an_unshown_tree_stays_there() {
+    let e = engine();
+    let root = load(
+        &e,
+        r#"
+import QtQuick
+import QtQuick.Controls.Basic
+import QtQuick.Window
+Item {
+    width: 640; height: 480
+    Window {
+        Rectangle { objectName: "moved"; parent: Overlay.overlay; width: 10; height: 10 }
+    }
+}
+"#,
+    );
+    let moved = find(&e, root, "moved");
+    let overlay = e
+        .read_by_name(moved, "parent")
+        .as_object()
+        .expect("the item has no parent");
+    // The overlay is the top item's, not the window's own item.
+    assert_ne!(overlay, root);
+    assert_eq!(e.read_by_name(overlay, "parent").as_object(), Some(root));
+    assert_eq!(warnings(&e), Vec::<String>::new(), "while made");
+    let _s = window_scene(&e, root);
+    assert_eq!(e.read_by_name(moved, "parent").as_object(), Some(overlay));
+    assert_eq!(warnings(&e), Vec::<String>::new(), "once shown");
+}
+
 fn right_click(s: &mut QuickScene, e: &Engine, x: f64, y: f64) {
     let right = ljos_quick::MouseButtons::RIGHT;
     s.pointer_event(e, &PointerEvent::press(x, y, Time::ZERO).with_button(right));
