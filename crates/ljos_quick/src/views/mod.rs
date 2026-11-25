@@ -32,8 +32,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use ljos_engine::{
-    Atom, Cx, Engine, EngineError, LogLevel, MetaRef, Migrate, ObjectId, QmlObject, QmlType, Value,
-    Version, ViewDelegates, WriteKind, qml_impl,
+    Atom, Cx, Engine, EngineError, LogLevel, MetaRef, Migrate, NodeId, ObjectId, QmlObject,
+    QmlType, Value, Version, ViewDelegates, WriteKind, qml_impl,
 };
 use rustc_hash::FxHashMap;
 
@@ -596,7 +596,10 @@ pub(crate) fn place_in_view(e: &Engine, obj: ObjectId) -> Option<(usize, usize)>
     }
     let st = state_of(e, view)?;
     // Bumped whenever rows come, go or move.
-    for n in [st.trigger.get(), st.order.get()].into_iter().flatten() {
+    for n in [st.trigger.get(), order_of(e, view, &st)]
+        .into_iter()
+        .flatten()
+    {
         let _ = e.graph().get(n);
     }
     let row = st.delegates()?.index_of(obj)?;
@@ -682,6 +685,19 @@ fn headings_of(e: &Engine, view: ObjectId) -> FxHashMap<ObjectId, usize> {
         .collect()
 }
 
+/// The node bumped when the view's rows are numbered anew, made when a
+/// row's place is first read: a view nothing reads the places of (a
+/// closed popup's, say) pays nothing for it.
+fn order_of(e: &Engine, view: ObjectId, st: &ViewState) -> Option<NodeId> {
+    if let Some(n) = st.order.get() {
+        return Some(n);
+    }
+    let scope = e.object_scope(view)?;
+    let n = e.graph().property(scope, Value::Int(0)).ok()?;
+    st.order.set(Some(n));
+    Some(n)
+}
+
 /// Makes the view of `cx` lay out its rows from now on.
 fn start(cx: &Cx, grid: bool) -> Result<(), EngineError> {
     let (e, me) = (cx.engine, cx.this);
@@ -689,8 +705,6 @@ fn start(cx: &Cx, grid: bool) -> Result<(), EngineError> {
     st.grid.set(grid);
     let scope = e.object_scope(me).ok_or_else(|| EngineError::dead(me))?;
     st.trigger
-        .set(Some(e.graph().property(scope, Value::Int(0))?));
-    st.order
         .set(Some(e.graph().property(scope, Value::Int(0))?));
     let delegates = ViewDelegates::new(me, Rc::new(changes::Host(me)));
     *st.delegates.borrow_mut() = Some(delegates.clone());

@@ -253,7 +253,7 @@ pub(crate) struct ViewState {
     pub trigger: Cell<Option<NodeId>>,
     /// Bumped whenever the delegates are numbered anew (rows came, went
     /// or moved): what reads a row's place hears of it then, whatever
-    /// lays the rows out next.
+    /// lays the rows out next. Made on the first such read.
     pub order: Cell<Option<NodeId>>,
     pub in_pass: Cell<bool>,
     /// Something asked for a pass while one was running.
