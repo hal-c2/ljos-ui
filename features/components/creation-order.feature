@@ -91,7 +91,7 @@ Feature: An object's handlers run once its initial properties and bindings have 
     When the method "make" of "root" is called with false
     Then the property "log" of "root" is "eval3 evtri w3/6 dbl6 tri8 completed3/6"
 
-  Scenario: A binding a handler makes stale runs again after it
+  Scenario: A binding a handler makes stale runs again inside it
     When the method "make" of "root" is called with true
     Then the property "log" of "root" is "eval3 evtri w3/6 evtri tri2 dbl6 completed3/6"
 
