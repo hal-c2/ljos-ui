@@ -70,6 +70,9 @@ struct NativeProperty {
     list: bool,
     readonly: bool,
     required: bool,
+    /// QML's `final` (`PropertyFlags::SEALED`), not the `FINAL` every Rust
+    /// property has.
+    sealed: bool,
 }
 
 impl NativeType {
@@ -88,6 +91,7 @@ impl NativeType {
                     list: p.is_list(),
                     readonly: p.is_readonly(),
                     required: p.flags.contains(PropertyFlags::REQUIRED),
+                    sealed: p.flags.contains(PropertyFlags::SEALED),
                 })
                 .collect(),
             signals: meta
@@ -130,6 +134,7 @@ impl NativeType {
                 list: p.list,
                 readonly: p.readonly,
                 required: p.required,
+                sealed: p.sealed,
             });
         }
         // The dump leaves out the change signals the Engine makes for a
@@ -484,9 +489,7 @@ impl TypeOracle for EngineOracle {
                     takes_key: info.ty == TypeTag::Int && !info.list,
                     is_list: info.list || matches!(info.ty, TypeTag::List(_)),
                     is_readonly: info.readonly,
-                    // A description says nothing of it: its `final` is
-                    // every Rust property's, not QML's.
-                    is_final: false,
+                    is_final: info.sealed,
                     value: match &info.ty {
                         TypeTag::Group(n) | TypeTag::Object(Some(n)) | TypeTag::List(Some(n)) => {
                             self.named(n.as_str())

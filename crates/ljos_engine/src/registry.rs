@@ -400,6 +400,7 @@ fn type_entry(meta: &MetaObject, since: Version) -> TypeEntry {
                 list: p.flags.contains(PropertyFlags::LIST),
                 readonly: p.flags.contains(PropertyFlags::READONLY),
                 is_final: p.flags.contains(PropertyFlags::FINAL),
+                sealed: p.flags.contains(PropertyFlags::SEALED),
                 required: p.flags.contains(PropertyFlags::REQUIRED),
                 constant: p.flags.contains(PropertyFlags::CONSTANT),
                 group: p.flags.contains(PropertyFlags::GROUP),
@@ -659,6 +660,10 @@ pub struct PropertyEntry {
     pub readonly: bool,
     #[serde(rename = "final")]
     pub is_final: bool,
+    /// QML's `final`: no type deriving from this one may declare a member
+    /// of its name. Unlike `final`, which every Rust property has.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub sealed: bool,
     pub required: bool,
     pub constant: bool,
     pub group: bool,

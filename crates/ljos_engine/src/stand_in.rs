@@ -59,6 +59,7 @@ fn flags_of(p: &PropertyEntry) -> PropertyFlags {
     for (set, flag) in [
         (p.readonly, PropertyFlags::READONLY),
         (p.is_final, PropertyFlags::FINAL),
+        (p.sealed, PropertyFlags::SEALED),
         (p.required, PropertyFlags::REQUIRED),
         (p.constant, PropertyFlags::CONSTANT),
         (p.list, PropertyFlags::LIST),
