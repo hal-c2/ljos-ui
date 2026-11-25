@@ -67,23 +67,31 @@ const ASKED: &str = "shared_prefs/dev.ljos.permissions.xml";
 const ASKING: Duration = Duration::from_secs(5);
 
 /// What `find` sees on the screens `read` gives, read again while it sees
-/// nothing until `until`. A screen still unread then is an error: that no
-/// question was seen on it proves nothing.
+/// nothing until `until`. A screen never read by then is an error: that no
+/// question was seen proves nothing. One read that saw nothing is enough
+/// to say nothing was seen, whatever the reads after it failed on.
 fn seen_until<T>(
     until: Instant,
     mut read: impl FnMut() -> Result<Vec<ScreenNode>>,
     find: impl Fn(&[ScreenNode]) -> Option<T>,
 ) -> Result<Option<T>> {
+    let mut ever_read = false;
     loop {
         let unread = match read() {
             Ok(nodes) => match find(&nodes) {
                 Some(seen) => return Ok(Some(seen)),
-                None => None,
+                None => {
+                    ever_read = true;
+                    None
+                }
             },
             Err(e) => Some(e),
         };
         if Instant::now() > until {
-            return unread.map_or(Ok(None), Err);
+            return match unread {
+                Some(e) if !ever_read => Err(e),
+                _ => Ok(None),
+            };
         }
         std::thread::sleep(Duration::from_millis(100));
     }
@@ -982,10 +990,18 @@ impl Platform for AndroidBackend {
             },
         )?;
         phone.tap(at)?;
-        // The answer reaches the application before it is in front again.
-        if !phone.wait_front(true, PICKER)? {
+        // The answer is taken once its question is gone. The application
+        // need not be in front then: a request it queued behind this one
+        // is asked next, with no frame of the application between them.
+        let answered = seen_until(
+            Instant::now() + PICKER,
+            || phone.screen(),
+            |nodes| (permission_asked(nodes) != Some(name)).then_some(()),
+        )?;
+        if answered.is_none() {
             return Err(BackendError::Failed(format!(
-                "the application didn't come back from the question of the {name:?} permission"
+                "the question of the {name:?} permission was still asked {} s after it was answered",
+                PICKER.as_secs()
             )));
         }
         self.settle()
@@ -1294,6 +1310,24 @@ mod tests {
         );
         assert!(matches!(late, Ok(Some("camera"))), "read once it could be");
         assert_eq!(reads, 3);
+        let mut reads = 0;
+        let flaky = seen_until(
+            std::time::Instant::now() + std::time::Duration::from_millis(300),
+            || {
+                reads += 1;
+                if reads == 1 {
+                    Ok(screen_nodes(""))
+                } else {
+                    Err(BackendError::Failed("not now".into()))
+                }
+            },
+            permission_asked,
+        );
+        assert!(reads > 1, "read again after the screen that was read");
+        assert!(
+            matches!(flaky, Ok(None)),
+            "read once with nothing asked, whatever failed after"
+        );
     }
 
     // Both samples are written by hand in the shapes `dumpsys activity
