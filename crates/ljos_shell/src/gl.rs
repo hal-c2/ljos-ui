@@ -299,9 +299,8 @@ struct GlWindow {
     id: u64,
     surface: Surface<WindowSurface>,
     px: [u32; 2],
-    /// The pixels each of the last frames drew, the last first (`None`:
-    /// all of them), for a buffer that holds an older frame.
-    drawn: VecDeque<Option<Damage>>,
+    /// What the frames shown drew, for a buffer that holds an older one.
+    drawn: History,
     /// The pixels of the clip a scroll last moved, as the last frame
     /// drew them.
     kept: Option<Kept>,
@@ -422,7 +421,7 @@ impl GlPainter {
             id,
             surface,
             px,
-            drawn: VecDeque::new(),
+            drawn: History::default(),
             kept: None,
             scroll: None,
             keep: None,
@@ -538,6 +537,7 @@ impl GlPainter {
             Change::None => {
                 // What changes next may be small.
                 gw.whole_for = 0;
+                gw.drawn.not_shown();
                 return Frame::Nothing;
             }
             Change::Area(areas) => (Some(px(areas)), None),
@@ -582,28 +582,9 @@ impl GlPainter {
         // Asked before the context is current with the surface: EGL
         // answers for the surface either way.
         let age = gw.surface.buffer_age() as usize;
-        let mut drawn = now.as_ref().map(|d| d.0.clone()).unwrap_or_default();
-        // For a later frame, this one changed all of the clip it moved.
-        gw.drawn.push_front(now.map(|now| match scroll {
-            Some((rect, _)) => Damage::of(now.0.into_iter().chain([rect])),
-            None => now,
-        }));
-        gw.drawn.truncate(REMEMBERED);
-        if age == 0 || age > gw.drawn.len() || gw.drawn[0].is_none() {
+        let Some(damage) = gw.drawn.since(now, age, scroll.map(|(rect, _)| rect)) else {
             return Frame::Whole;
-        }
-        for d in gw.drawn.iter().take(age).skip(1) {
-            match (d, scroll) {
-                (None, _) => return Frame::Whole,
-                (Some(d), None) => drawn.extend_from_slice(&d.0),
-                // The clip is all moved or drawn again: what the frames
-                // since changed in it is not drawn again.
-                (Some(d), Some((rect, _))) => {
-                    drawn.extend(d.0.iter().flat_map(|px| px.minus(rect)))
-                }
-            }
-        }
-        let damage = Damage::of(drawn);
+        };
         if damage.mostly(gw.px, self.gl.software) {
             return Frame::Whole;
         }
@@ -643,6 +624,7 @@ impl GlPainter {
         };
         if !self.gl.make_current(Some((gw.id, &gw.surface))) {
             say_lost("its GL surface cannot be made current");
+            gw.drawn.not_shown();
             return Steps {
                 lost: true,
                 ..Steps::default()
@@ -687,6 +669,7 @@ impl GlPainter {
         let part = match frame {
             Frame::Nothing => {
                 // Only the pictures: nothing is shown.
+                gw.drawn.not_shown();
                 free_pending(&mut self.painter, &mut self.sizes, pending);
                 return Steps {
                     upload,
@@ -755,8 +738,13 @@ impl GlPainter {
             None => gw.surface.swap_buffers(&self.gl.context),
         };
         // A lost frame is drawn again with the next change.
-        if let Err(e) = &swapped {
-            say_lost(e);
+        match &swapped {
+            Ok(()) => gw.drawn.shown(),
+            Err(e) => {
+                say_lost(e);
+                // What the buffers hold now is not known.
+                gw.drawn.clear();
+            }
         }
         Steps {
             upload,
@@ -1141,6 +1129,63 @@ impl Px {
     }
 }
 
+/// The pixels each of the last frames shown drew, the last first (`None`:
+/// all of them), so that a buffer `age` frames old ([`History::since`]) is
+/// drawn again where it differs. Only a frame presented counts: the age is
+/// in buffers swapped, so one decided on and then not shown (nothing in it
+/// changed, or the surface was lost) would shift every older frame by one,
+/// and the next partial frame would leave a buffer's stale pixels on screen.
+#[derive(Debug, Default)]
+struct History {
+    shown: VecDeque<Option<Damage>>,
+    /// The frame decided on, until it is shown or not.
+    next: Option<Option<Damage>>,
+}
+
+impl History {
+    /// What a frame that changes `now` (`None`: all of it) draws into a
+    /// buffer `age` frames old, `None` when that is all of it. A clip
+    /// `moved` by a scroll is copied, not drawn: what the frames since
+    /// changed in it is not drawn again, and for a later frame this one
+    /// changed all of it.
+    fn since(&mut self, now: Option<Damage>, age: usize, moved: Option<Px>) -> Option<Damage> {
+        let mut drawn = now.as_ref().map(|d| d.0.clone()).unwrap_or_default();
+        self.next = Some(now.map(|now| match moved {
+            Some(rect) => Damage::of(now.0.into_iter().chain([rect])),
+            None => now,
+        }));
+        if age == 0 || age > self.shown.len() + 1 || matches!(self.next, Some(None)) {
+            return None;
+        }
+        for d in self.shown.iter().take(age - 1) {
+            match (d, moved) {
+                (None, _) => return None,
+                (Some(d), None) => drawn.extend_from_slice(&d.0),
+                (Some(d), Some(rect)) => drawn.extend(d.0.iter().flat_map(|px| px.minus(rect))),
+            }
+        }
+        Some(Damage::of(drawn))
+    }
+
+    /// The frame decided on was presented.
+    fn shown(&mut self) {
+        if let Some(next) = self.next.take() {
+            self.shown.push_front(next);
+            self.shown.truncate(REMEMBERED);
+        }
+    }
+
+    /// The frame decided on was not presented: the buffers are as they were.
+    fn not_shown(&mut self) {
+        self.next = None;
+    }
+
+    fn clear(&mut self) {
+        self.shown.clear();
+        self.next = None;
+    }
+}
+
 /// Where a frame draws: rectangles of pixels, none overlapping another
 /// (a shape drawn in two would be blended twice where they meet), at most
 /// [`AREAS`] of them.
@@ -1506,6 +1551,54 @@ mod tests {
             .iter()
             .map(|s| matches!(s.shape, Shape::Callback(_)))
             .collect()
+    }
+
+    /// Frames shown A then C, with B between them decided on and not
+    /// shown, on double buffers: C's buffer last held the frame before A,
+    /// so C draws again where A drew, not where B would have.
+    #[test]
+    fn a_frame_not_shown_leaves_the_buffers_age_as_it_was() {
+        let a = Damage(vec![Px([0, 0, 10, 10])]);
+        let c = Damage(vec![Px([50, 50, 60, 60])]);
+        for not_shown in [
+            // Nothing changed in it.
+            Some(Damage::default()),
+            // It was all to be drawn, and the surface was lost.
+            None,
+        ] {
+            let mut history = History::default();
+            history.since(Some(Damage::default()), 0, None);
+            history.shown();
+            history.since(Some(a.clone()), 2, None);
+            history.shown();
+            history.since(not_shown, 2, None);
+            history.not_shown();
+            let drawn = history.since(Some(c.clone()), 2, None);
+            assert_eq!(drawn, Some(Damage::of([c.0[0], a.0[0]])));
+        }
+    }
+
+    #[test]
+    fn a_frame_shown_with_nothing_in_it_counts_for_the_buffers_age() {
+        let a = Damage(vec![Px([0, 0, 10, 10])]);
+        let mut history = History::default();
+        history.since(Some(a.clone()), 0, None);
+        history.shown();
+        // A frame that moves a clip and draws nothing else is shown.
+        history.since(Some(Damage::default()), 2, Some(Px([20, 20, 40, 40])));
+        history.shown();
+        let drawn = history.since(Some(Damage::default()), 3, None);
+        assert_eq!(drawn, Some(Damage::of([Px([20, 20, 40, 40]), a.0[0]])));
+    }
+
+    #[test]
+    fn a_buffer_older_than_the_frames_shown_is_drawn_whole() {
+        let mut history = History::default();
+        history.since(Some(Damage(vec![Px([0, 0, 10, 10])])), 0, None);
+        history.shown();
+        assert_eq!(history.since(Some(Damage::default()), 3, None), None);
+        // A buffer EGL knows nothing of.
+        assert_eq!(history.since(Some(Damage::default()), 0, None), None);
     }
 
     #[test]
