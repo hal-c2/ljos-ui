@@ -597,6 +597,9 @@ impl<'p, O: TypeOracle> Types<'p, O> {
                             for name in rest {
                                 property = self.oracle.property(property.value?, name)?;
                             }
+                            // Qt 6.11: no alias is final, whatever it reaches
+                            // or says.
+                            property.is_final = false;
                             Some(Member::Property(property))
                         });
                         return Lookup::Found(aliased.unwrap_or(member));
