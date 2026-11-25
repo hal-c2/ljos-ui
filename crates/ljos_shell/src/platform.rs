@@ -44,7 +44,7 @@ fn install_desktop(engine: &Engine, platform: &std::rc::Rc<Platform>) {
     // A phone's clipboard and opener are the system's, reached through its
     // Java side; its files are in the directories the system keeps for the
     // application, and a file or folder dialog is the system's document
-    // picker.
+    // picker. What the system guards it asks the user for itself.
     #[cfg(target_os = "android")]
     let opener = {
         use ljos_platform::android::{AndroidClipboard, AndroidOpener, app_directories};
@@ -52,6 +52,9 @@ fn install_desktop(engine: &Engine, platform: &std::rc::Rc<Platform>) {
         platform.set_open_url(std::rc::Rc::new(AndroidOpener));
         platform.set_dialogs(std::rc::Rc::new(
             ljos_platform::android_documents::AndroidDialogs,
+        ));
+        platform.set_permissions(std::rc::Rc::new(
+            ljos_platform::android_permissions::AndroidPermissions,
         ));
         if let Some((files, cache)) = app_directories() {
             platform.set_env(ljos_platform::PathEnv::application(&files, &cache));

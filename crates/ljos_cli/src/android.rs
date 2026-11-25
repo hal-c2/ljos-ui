@@ -46,7 +46,7 @@ const MCP_EXTRA: &str = "dev.ljos.MCP";
 const TOKEN_DIR: &str = "files/target/ljos";
 
 /// The Gradle template, by the path it is written to in the project.
-const TEMPLATE: [(&str, &str); 12] = [
+const TEMPLATE: [(&str, &str); 13] = [
     (
         "settings.gradle.kts",
         include_str!("../../../android/settings.gradle.kts"),
@@ -84,6 +84,10 @@ const TEMPLATE: [(&str, &str); 12] = [
     (
         "app/src/main/java/dev/ljos/LjosDocuments.java",
         include_str!("../../../android/app/src/main/java/dev/ljos/LjosDocuments.java"),
+    ),
+    (
+        "app/src/main/java/dev/ljos/LjosPermissions.java",
+        include_str!("../../../android/app/src/main/java/dev/ljos/LjosPermissions.java"),
     ),
     (
         "app/src/debug/AndroidManifest.xml",
@@ -483,14 +487,60 @@ struct Fill {
     application_id: String,
     label: String,
     lib_name: String,
+    /// The permissions the manifest declares, by Android's whole names.
+    permissions: Vec<String>,
 }
 
 impl Fill {
     fn apply(&self, text: &str) -> String {
+        let declared: String = self
+            .permissions
+            .iter()
+            .map(|p| format!("    <uses-permission android:name=\"{}\" />\n", xml_text(p)))
+            .collect();
         text.replace("@APPLICATION_ID@", &self.application_id)
             .replace("@LABEL@", &xml_text(&self.label))
             .replace("@LIB_NAME@", &self.lib_name)
+            .replace("    @PERMISSIONS@\n", &declared)
     }
+}
+
+/// The permissions a package declares as `[package.metadata.ljos.android]
+/// permissions`, each by Android's whole name: one of the system's
+/// (`CAMERA`) may be given without its `android.permission.`. A runtime
+/// permission the manifest does not declare the system denies without
+/// asking.
+fn declared_permissions(metadata: &serde_json::Value) -> anyhow::Result<Vec<String>> {
+    let listed = &metadata["ljos"]["android"]["permissions"];
+    if listed.is_null() {
+        return Ok(Vec::new());
+    }
+    let listed = listed
+        .as_array()
+        .context("[package.metadata.ljos.android] permissions is a list of names")?;
+    let mut out: Vec<String> = Vec::new();
+    for name in listed {
+        let name = name
+            .as_str()
+            .context("[package.metadata.ljos.android] permissions is a list of names")?;
+        let named = !name.is_empty()
+            && name.split('.').all(|part| {
+                part.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_')
+                    && part.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+            });
+        if !named {
+            bail!("{name:?} is not the name of an Android permission");
+        }
+        let whole = if name.contains('.') {
+            name.to_owned()
+        } else {
+            format!("android.permission.{name}")
+        };
+        if !out.contains(&whole) {
+            out.push(whole);
+        }
+    }
+    Ok(out)
 }
 
 /// `text` as it may stand in an XML attribute.
@@ -529,6 +579,7 @@ struct Package {
     name: String,
     lib: String,
     target_dir: PathBuf,
+    permissions: Vec<String>,
 }
 
 fn package(dir: &Path) -> anyhow::Result<Package> {
@@ -578,10 +629,13 @@ fn package(dir: &Path) -> anyhow::Result<Package> {
             format!("{name} has no cdylib library for the activity to load ([lib] crate-type)")
         })?;
     let target_dir = PathBuf::from(meta["target_directory"].as_str().unwrap_or("target"));
+    let permissions = declared_permissions(&found["metadata"])
+        .with_context(|| format!("the metadata of {name}"))?;
     Ok(Package {
         name,
         lib,
         target_dir,
+        permissions,
     })
 }
 
@@ -609,6 +663,7 @@ impl Build {
                 .unwrap_or_else(|| default_application_id(&package.name)),
             label: self.label.clone().unwrap_or_else(|| package.name.clone()),
             lib_name: package.lib.clone(),
+            permissions: package.permissions.clone(),
         };
         let project = package.target_dir.join("android").join(&package.name);
         write_project(&project, &fill)?;
@@ -773,6 +828,7 @@ mod tests {
             application_id: String::from("dev.ljos.hello"),
             label: String::from("Hello & \"you\""),
             lib_name: String::from("ljos_example_android_hello"),
+            permissions: vec![String::from("android.permission.CAMERA")],
         }
     }
 
@@ -798,6 +854,7 @@ mod tests {
             assert!(!filled.contains("@APPLICATION_ID@"), "{path}");
             assert!(!filled.contains("@LABEL@"), "{path}");
             assert!(!filled.contains("@LIB_NAME@"), "{path}");
+            assert!(!filled.contains("@PERMISSIONS@"), "{path}");
         }
     }
 
@@ -820,6 +877,54 @@ mod tests {
             "locale",
         ] {
             assert!(manifest.contains(change), "{change}");
+        }
+    }
+
+    #[test]
+    fn the_manifest_declares_the_packages_permissions() {
+        let manifest = TEMPLATE
+            .iter()
+            .find(|(p, _)| p.ends_with("main/AndroidManifest.xml"))
+            .map(|(_, t)| *t)
+            .unwrap();
+        let filled = fill().apply(manifest);
+        assert!(filled.contains(
+            "\n    <uses-permission android:name=\"android.permission.CAMERA\" />\n    <application"
+        ));
+        let none = Fill {
+            permissions: Vec::new(),
+            ..fill()
+        }
+        .apply(manifest);
+        assert!(!none.contains("uses-permission"));
+        assert!(none.contains(">\n    <application"));
+    }
+
+    #[test]
+    fn a_package_names_its_permissions_in_its_metadata() {
+        let meta = serde_json::json!({"ljos": {"android": {"permissions": [
+            "CAMERA", "android.permission.RECORD_AUDIO", "com.example.OWN", "CAMERA"
+        ]}}});
+        assert_eq!(
+            declared_permissions(&meta).unwrap(),
+            [
+                "android.permission.CAMERA",
+                "android.permission.RECORD_AUDIO",
+                "com.example.OWN"
+            ]
+        );
+        assert!(
+            declared_permissions(&serde_json::Value::Null)
+                .unwrap()
+                .is_empty()
+        );
+        for bad in [
+            serde_json::json!({"ljos": {"android": {"permissions": "CAMERA"}}}),
+            serde_json::json!({"ljos": {"android": {"permissions": ["CAM ERA"]}}}),
+            serde_json::json!({"ljos": {"android": {"permissions": ["a\"/><x"]}}}),
+            serde_json::json!({"ljos": {"android": {"permissions": [""]}}}),
+        ] {
+            assert!(declared_permissions(&bad).is_err(), "{bad}");
         }
     }
 
@@ -919,6 +1024,32 @@ mod tests {
             .unwrap();
         assert!(activity.contains("LjosDocuments.answered(this, code, result, data);"));
         assert!(activity.contains("static LjosActivity current()"));
+    }
+
+    #[test]
+    fn the_permissions_answer_the_native_side() {
+        let java = TEMPLATE
+            .iter()
+            .find(|(p, _)| p.ends_with("LjosPermissions.java"))
+            .map(|(_, t)| *t)
+            .unwrap();
+        // ljos_platform's AndroidPermissions calls these by name and
+        // signature, and Java_dev_ljos_LjosPermissions_nativeAnswered hears
+        // the answer.
+        assert!(java.contains("public final class LjosPermissions"));
+        for method in [
+            "public static String states(Context context, String stages)",
+            "public static boolean request(Context context, String stages, int code)",
+            "private static native void nativeAnswered(int code, String states);",
+        ] {
+            assert!(java.contains(method), "{method}");
+        }
+        let activity = TEMPLATE
+            .iter()
+            .find(|(p, _)| p.ends_with("LjosActivity.java"))
+            .map(|(_, t)| *t)
+            .unwrap();
+        assert!(activity.contains("LjosPermissions.answered(this, code, names, results);"));
     }
 
     #[test]

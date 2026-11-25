@@ -1,5 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- What the package's [package.metadata.ljos.android] permissions
+         declares: the system denies a runtime permission the manifest
+         does not, without asking. -->
+    @PERMISSIONS@
     <application
         android:label="@LABEL@"
         android:hasCode="true"

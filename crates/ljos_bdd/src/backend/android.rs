@@ -55,6 +55,60 @@ const FAULT: &str = "files/scenario-fault.txt";
 /// there (`examples/android_scenarios`).
 const XHR_LOCAL_READ: &str = "files/xhr-local-read";
 
+/// The permissions `examples/android_scenarios` declares, which each
+/// scenario starts from never asked for.
+const DECLARED: [&str; 2] = [
+    "android.permission.CAMERA",
+    "android.permission.RECORD_AUDIO",
+];
+/// What the template's `LjosPermissions` remembers it asked for.
+const ASKED: &str = "shared_prefs/dev.ljos.permissions.xml";
+/// How long the system's question of a permission may take to come.
+const ASKING: Duration = Duration::from_secs(5);
+
+/// The permission (as the steps name it) the system's question on screen
+/// asks for, by its English words.
+fn permission_asked(nodes: &[ScreenNode]) -> Option<&'static str> {
+    let message = nodes
+        .iter()
+        .find(|n| n.id.ends_with(":id/permission_message"))?
+        .text
+        .to_lowercase();
+    [
+        ("take pictures", "camera"),
+        ("record audio", "microphone"),
+        ("location", "location"),
+        ("calendar", "calendar"),
+        ("contacts", "contacts"),
+        ("nearby devices", "bluetooth"),
+    ]
+    .into_iter()
+    .find(|(words, _)| message.contains(words))
+    .map(|(_, name)| name)
+}
+
+/// Where the system's question has the button that grants, or denies: the
+/// first of its buttons that does, as each version of it names them.
+fn permission_button(nodes: &[ScreenNode], granted: bool) -> Option<(i64, i64)> {
+    let ids: &[&str] = if granted {
+        &[
+            ":id/permission_allow_foreground_only_button",
+            ":id/permission_allow_button",
+        ]
+    } else {
+        &[
+            ":id/permission_deny_button",
+            ":id/permission_deny_and_dont_ask_again_button",
+        ]
+    };
+    ids.iter().find_map(|id| {
+        nodes
+            .iter()
+            .find(|n| n.id.ends_with(id) && n.enabled)
+            .map(|n| n.at)
+    })
+}
+
 /// The phone's shared Downloads, which its document picker offers.
 const DOWNLOADS: &str = "/sdcard/Download";
 
@@ -291,7 +345,7 @@ impl Phone {
             if Instant::now() > until {
                 return Err(BackendError::Failed(match seen {
                     Ok(nodes) => format!(
-                        "the document picker showed no {what}; its screen has {:?}",
+                        "the phone showed no {what}; its screen has {:?}",
                         nodes
                             .iter()
                             .map(|n| if n.text.is_empty() { &n.desc } else { &n.text })
@@ -669,8 +723,23 @@ impl Backend for AndroidBackend {
         self.running = None;
         let phone = self.phone()?.clone();
         phone.shell(&format!("am force-stop {}", phone.id))?;
+        // Each scenario's application has never been asked for anything:
+        // what an answer granted is taken back, and what it decided for
+        // good is forgotten. An application that declares less has less
+        // to take back.
+        let forget: Vec<String> = DECLARED
+            .iter()
+            .map(|p| {
+                format!(
+                    "{{ pm revoke {id} {p}; pm clear-permission-flags {id} {p} user-set user-fixed; }} \
+                     >/dev/null 2>&1",
+                    id = phone.id
+                )
+            })
+            .collect();
+        phone.shell(&format!("{}; true", forget.join("; ")))?;
         phone.as_app(
-            &format!("rm -rf {FILES} {FAULT} {XHR_LOCAL_READ} && mkdir -p {FILES}"),
+            &format!("rm -rf {FILES} {FAULT} {XHR_LOCAL_READ} {ASKED} && mkdir -p {FILES}"),
             None,
         )?;
         if self.xhr_local_read {
@@ -863,6 +932,49 @@ impl Platform for AndroidBackend {
             }
         }
         self.heard()
+    }
+
+    fn permissions_ask(&mut self) -> Result<()> {
+        // A phone does.
+        Ok(())
+    }
+
+    fn permission_requests(&mut self) -> Result<Vec<String>> {
+        let phone = self.phone()?.clone();
+        // The question is shown from the application's main thread, after
+        // the request: a moment later.
+        let until = Instant::now() + ASKING;
+        loop {
+            let asked = phone.screen().ok().as_deref().and_then(permission_asked);
+            if let Some(name) = asked {
+                return Ok(vec![name.to_owned()]);
+            }
+            if Instant::now() > until {
+                return Ok(Vec::new());
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    }
+
+    fn answer_permission(&mut self, name: &str, granted: bool) -> Result<()> {
+        let phone = self.phone()?.clone();
+        let how = if granted { "grants" } else { "denies" };
+        let at = phone.wait_screen(
+            &format!("question of the {name:?} permission with a button that {how} it"),
+            |nodes| {
+                (permission_asked(nodes) == Some(name))
+                    .then(|| permission_button(nodes, granted))
+                    .flatten()
+            },
+        )?;
+        phone.tap(at)?;
+        // The answer reaches the application before it is in front again.
+        if !phone.wait_front(true, PICKER)? {
+            return Err(BackendError::Failed(format!(
+                "the application didn't come back from the question of the {name:?} permission"
+            )));
+        }
+        self.settle()
     }
 }
 
@@ -1115,7 +1227,8 @@ impl Device for AndroidBackend {
 #[cfg(test)]
 mod tests {
     use super::{
-        FORGET_EVENTS, abort_query, download_path, picker_shown, quoted, scenario_dir, screen_nodes,
+        FORGET_EVENTS, abort_query, download_path, permission_asked, permission_button,
+        picker_shown, quoted, scenario_dir, screen_nodes,
     };
 
     // The main and crash logs are the whole phone's: another application's
@@ -1187,6 +1300,45 @@ mod tests {
         assert_eq!(nodes[1].class, "android.widget.TextView");
         assert!(!nodes[1].enabled);
         assert_eq!(nodes[1].at, (20, 230));
+    }
+
+    #[test]
+    fn the_systems_question_is_known_by_its_words_and_buttons() {
+        let question = |message: &str, buttons: &[&str]| {
+            let mut xml = format!(
+                r#"<node text="{message}" resource-id="com.android.permissioncontroller:id/permission_message" class="android.widget.TextView" content-desc="" enabled="true" bounds="[0,0][10,10]" />"#
+            );
+            for (i, id) in buttons.iter().enumerate() {
+                let top = 100 * (i + 1);
+                xml.push_str(&format!(
+                    r#"<node text="" resource-id="com.android.permissioncontroller:id/{id}" class="android.widget.Button" content-desc="" enabled="true" bounds="[0,{top}][100,{}]" />"#,
+                    top + 50
+                ));
+            }
+            screen_nodes(&xml)
+        };
+        let camera = question(
+            "Allow ljos_example_android_scenarios to take pictures and record video?",
+            &[
+                "permission_allow_foreground_only_button",
+                "permission_allow_one_time_button",
+                "permission_deny_button",
+            ],
+        );
+        assert_eq!(permission_asked(&camera), Some("camera"));
+        assert_eq!(permission_button(&camera, true), Some((50, 125)));
+        assert_eq!(permission_button(&camera, false), Some((50, 325)));
+        let microphone = question(
+            "Allow ljos_example_android_scenarios to record audio?",
+            &[
+                "permission_allow_button",
+                "permission_deny_and_dont_ask_again_button",
+            ],
+        );
+        assert_eq!(permission_asked(&microphone), Some("microphone"));
+        assert_eq!(permission_button(&microphone, true), Some((50, 125)));
+        assert_eq!(permission_button(&microphone, false), Some((50, 225)));
+        assert_eq!(permission_asked(&screen_nodes("")), None);
     }
 
     #[test]
