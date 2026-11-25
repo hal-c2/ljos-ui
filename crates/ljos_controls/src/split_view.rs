@@ -10,6 +10,10 @@
 //! dragging it sets the preferred size of the item on the side away from
 //! the one that fills.
 //!
+//! An item that is not visible takes no room and is left where it was, as
+//! Qt's view leaves it. The handle after it is hidden, and so is the handle
+//! after the last item shown, which has nothing after it to separate.
+//!
 //! `saveState()` gives the preferred sizes that were set, by index, and
 //! `restoreState()` puts them back. Qt's state is an `ArrayBuffer`; Ljós
 //! has no such value, so it is a string here, as opaque.
@@ -20,6 +24,7 @@
 //! them.
 
 use std::cell::{Cell, RefCell};
+use std::collections::HashSet;
 use std::rc::Rc;
 
 use ljos_engine::{
@@ -48,6 +53,10 @@ pub(crate) struct SplitState {
     drag: Cell<Option<Drag>>,
     /// The handle the pointer is over.
     over: Cell<Option<ObjectId>>,
+    /// The items that were hidden when the view was last visible. A hidden
+    /// view makes every item read `visible: false`; that is not the items
+    /// hiding, and the view keeps their room for when it is shown again.
+    hidden: RefCell<HashSet<ObjectId>>,
 }
 
 /// A drag of a handle: which item it resizes, from where.
@@ -276,6 +285,8 @@ struct Ask {
     preferred: f64,
     maximum: f64,
     fill: bool,
+    /// False: the item is hidden and takes no room.
+    shown: bool,
 }
 
 impl Default for Ask {
@@ -286,6 +297,7 @@ impl Default for Ask {
             preferred: -1.0,
             maximum: f64::INFINITY,
             fill: false,
+            shown: true,
         }
     }
 }
@@ -304,28 +316,34 @@ impl Ask {
     }
 }
 
-/// The item that takes what is left: the first that fills, or the last.
+/// The item that takes what is left: the first shown that fills, or the
+/// last shown.
 fn filler(asks: &[Ask]) -> Option<usize> {
     asks.iter()
-        .position(|a| a.fill)
-        .or_else(|| asks.len().checked_sub(1))
+        .position(|a| a.shown && a.fill)
+        .or_else(|| asks.iter().rposition(|a| a.shown))
 }
 
 /// Where each item starts along the view and how long it is, with `room`
-/// to share and handles `handle` long between them.
-fn lay_out(asks: &[Ask], room: f64, handle: f64) -> Vec<(f64, f64)> {
+/// to share and handles `handle` long between the items shown. A hidden
+/// item has no place.
+fn lay_out(asks: &[Ask], room: f64, handle: f64) -> Vec<Option<(f64, f64)>> {
     let fill = filler(asks);
-    let handles = handle * asks.len().saturating_sub(1) as f64;
+    let shown = asks.iter().filter(|a| a.shown).count();
+    let handles = handle * shown.saturating_sub(1) as f64;
     let others: f64 = asks
         .iter()
         .enumerate()
-        .filter(|(i, _)| Some(*i) != fill)
+        .filter(|(i, a)| a.shown && Some(*i) != fill)
         .map(|(_, a)| a.wanted())
         .sum();
     let mut at = 0.0;
     asks.iter()
         .enumerate()
         .map(|(i, a)| {
+            if !a.shown {
+                return None;
+            }
             let size = if Some(i) == fill {
                 a.clamp((room - others - handles).max(0.0))
             } else {
@@ -333,9 +351,29 @@ fn lay_out(asks: &[Ask], room: f64, handle: f64) -> Vec<(f64, f64)> {
             };
             let start = at;
             at += size + handle;
-            (start, size)
+            Some((start, size))
         })
         .collect()
+}
+
+/// Whether the handle after each item but the last is shown: only between
+/// an item shown and a later one shown.
+fn handles_shown(asks: &[Ask]) -> Vec<bool> {
+    let last = asks.iter().rposition(|a| a.shown);
+    (0..asks.len().saturating_sub(1))
+        .map(|i| asks[i].shown && last.is_some_and(|l| i < l))
+        .collect()
+}
+
+/// The item that dragging the handle after item `i` resizes, and +1 when
+/// it is before the handle or -1 when after: the one on the handle's side
+/// away from the item that fills, and past any hidden ones.
+fn resized(asks: &[Ask], i: usize) -> Option<(usize, f64)> {
+    if filler(asks).is_some_and(|f| i < f) {
+        return Some((i, 1.0));
+    }
+    let next = (i + 1..asks.len()).find(|j| asks[*j].shown)?;
+    Some((next, -1.0))
 }
 
 /// What `item` asks for along the view (tracked).
@@ -379,6 +417,39 @@ fn ask_of(e: &Engine, item: ObjectId, vertical: bool) -> Ask {
     ask
 }
 
+/// What each of `items` asks for (tracked), and whether it is shown.
+fn asks_of(
+    e: &Engine,
+    me: ObjectId,
+    st: &SplitState,
+    items: &[ObjectId],
+    vertical: bool,
+) -> Vec<Ask> {
+    let view_shown = flag(e, me, Item::VISIBLE.index);
+    let mut hidden = st.hidden.borrow_mut();
+    if view_shown {
+        hidden.clear();
+    }
+    items
+        .iter()
+        .map(|item| {
+            let shown = if view_shown {
+                let shown = flag(e, *item, Item::VISIBLE.index);
+                if !shown {
+                    hidden.insert(*item);
+                }
+                shown
+            } else {
+                !hidden.contains(item)
+            };
+            Ask {
+                shown,
+                ..ask_of(e, *item, vertical)
+            }
+        })
+        .collect()
+}
+
 /// How long a handle is along the view (tracked).
 fn handle_length(e: &Engine, handle: ObjectId, vertical: bool) -> f64 {
     let p = if vertical {
@@ -399,7 +470,7 @@ fn layout(e: &Engine, me: ObjectId) -> Result<(), EngineError> {
     let vertical = is_vertical(e, me);
     let items = container::items(e, me);
     let handles = st.handles.borrow().clone();
-    let asks: Vec<Ask> = items.iter().map(|i| ask_of(e, *i, vertical)).collect();
+    let asks = asks_of(e, me, &st, &items, vertical);
     let handle = handles
         .first()
         .map_or(0.0, |h| handle_length(e, *h, vertical));
@@ -413,6 +484,7 @@ fn layout(e: &Engine, me: ObjectId) -> Result<(), EngineError> {
     );
     let (room, across) = if vertical { (h, w) } else { (w, h) };
     let placed = lay_out(&asks, room, handle);
+    let shown = handles_shown(&asks);
     e.untrack(|| {
         e.batch(|| {
             let put = |obj: ObjectId, start: f64, size: f64, across: f64, at: (f64, f64)| {
@@ -426,12 +498,18 @@ fn layout(e: &Engine, me: ObjectId) -> Result<(), EngineError> {
                 set_computed(e, obj, Item::WIDTH.index, Value::Real(w))?;
                 set_computed(e, obj, Item::HEIGHT.index, Value::Real(h))
             };
-            for (item, (start, size)) in items.iter().zip(&placed) {
-                put(*item, *start, *size, across, (0.0, 0.0))?;
+            for (item, at) in items.iter().zip(&placed) {
+                if let Some((start, size)) = at {
+                    put(*item, *start, *size, across, (0.0, 0.0))?;
+                }
             }
-            // A handle is a child of the view, past the padding.
-            for (handle_item, (start, size)) in handles.iter().zip(&placed) {
-                put(*handle_item, start + size, handle, across, (left, top))?;
+            // A handle is a child of the view, past the padding. One after
+            // a hidden item stays where it was, as the item does.
+            for ((handle_item, at), shown) in handles.iter().zip(&placed).zip(&shown) {
+                if let Some((start, size)) = at {
+                    put(*handle_item, start + size, handle, across, (left, top))?;
+                }
+                set_computed(e, *handle_item, Item::VISIBLE.index, Value::Bool(*shown))?;
             }
             Ok(())
         })
@@ -532,6 +610,9 @@ fn handle_at(e: &Engine, st: &SplitState, at: kurbo::Point) -> Option<(usize, Ob
             .copied()
             .enumerate()
             .find(|(_, h)| {
+                if !flag(e, *h, Item::VISIBLE.index) {
+                    return false;
+                }
                 let x = num(e, *h, Item::X.index);
                 let y = num(e, *h, Item::Y.index);
                 let w = num(e, *h, Item::WIDTH.index);
@@ -572,12 +653,9 @@ fn press(e: &Engine, me: ObjectId, ev: &PointerEvent, at: kurbo::Point) -> bool 
     };
     let items = container::items(e, me);
     let vertical = e.untrack(|| is_vertical(e, me));
-    let asks: Vec<Ask> = e.untrack(|| items.iter().map(|it| ask_of(e, *it, vertical)).collect());
-    // The handle resizes the item on its side away from the one that fills.
-    let (index, sign) = if filler(&asks).is_some_and(|f| i < f) {
-        (i, 1.0)
-    } else {
-        (i + 1, -1.0)
+    let asks = e.untrack(|| asks_of(e, me, &st, &items, vertical));
+    let Some((index, sign)) = resized(&asks, i) else {
+        return true;
     };
     let Some(item) = items.get(index).copied() else {
         return true;
@@ -734,7 +812,7 @@ fn decode(s: &str) -> Option<Vec<Kept>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Ask, Kept, decode, encode, lay_out};
+    use super::{Ask, Kept, decode, encode, filler, handles_shown, lay_out, resized};
 
     fn ask(implicit: f64) -> Ask {
         Ask {
@@ -760,7 +838,11 @@ mod tests {
         };
         assert_eq!(
             lay_out(&[a, b, c], 400.0, 6.0),
-            vec![(0.0, 100.0), (106.0, 218.0), (330.0, 70.0)]
+            vec![
+                Some((0.0, 100.0)),
+                Some((106.0, 218.0)),
+                Some((330.0, 70.0))
+            ]
         );
     }
 
@@ -770,7 +852,7 @@ mod tests {
         let b = ask(20.0);
         assert_eq!(
             lay_out(&[a, b], 100.0, 6.0),
-            vec![(0.0, 30.0), (36.0, 64.0)]
+            vec![Some((0.0, 30.0)), Some((36.0, 64.0))]
         );
         let c = Ask {
             maximum: 120.0,
@@ -778,7 +860,7 @@ mod tests {
         };
         assert_eq!(
             lay_out(&[ask(50.0), ask(80.0), c], 400.0, 6.0),
-            vec![(0.0, 50.0), (56.0, 80.0), (142.0, 120.0)]
+            vec![Some((0.0, 50.0)), Some((56.0, 80.0)), Some((142.0, 120.0))]
         );
     }
 
@@ -796,6 +878,90 @@ mod tests {
             ..ask(0.0)
         };
         assert_eq!(c.wanted(), 120.0);
+    }
+
+    fn hidden(a: Ask) -> Ask {
+        Ask { shown: false, ..a }
+    }
+
+    /// The view of `features/controls/split-view-hidden-items.feature`.
+    fn three() -> [Ask; 3] {
+        [
+            Ask {
+                minimum: 50.0,
+                ..ask(100.0)
+            },
+            Ask {
+                fill: true,
+                ..ask(80.0)
+            },
+            Ask {
+                preferred: 70.0,
+                maximum: 120.0,
+                ..ask(0.0)
+            },
+        ]
+    }
+
+    #[test]
+    fn a_hidden_item_takes_no_room_nor_a_handle() {
+        let [a, b, c] = three();
+        assert_eq!(
+            lay_out(&[a, b, hidden(c)], 400.0, 6.0),
+            vec![Some((0.0, 100.0)), Some((106.0, 294.0)), None]
+        );
+        assert_eq!(
+            lay_out(&[hidden(a), b, c], 400.0, 6.0),
+            vec![None, Some((0.0, 324.0)), Some((330.0, 70.0))]
+        );
+    }
+
+    #[test]
+    fn when_the_item_that_fills_is_hidden_the_last_shown_fills() {
+        let [a, b, c] = three();
+        let asks = [a, hidden(b), c];
+        assert_eq!(filler(&asks), Some(2));
+        assert_eq!(
+            lay_out(&asks, 400.0, 6.0),
+            vec![Some((0.0, 100.0)), None, Some((106.0, 120.0))]
+        );
+        let asks = [a, b, hidden(c)];
+        assert_eq!(filler(&[a, hidden(b), hidden(c)]), Some(0));
+        assert_eq!(filler(&asks), Some(1));
+    }
+
+    #[test]
+    fn with_nothing_shown_nothing_is_placed() {
+        let [a, b, c] = three();
+        let asks = [hidden(a), hidden(b), hidden(c)];
+        assert_eq!(filler(&asks), None);
+        assert_eq!(lay_out(&asks, 400.0, 6.0), vec![None, None, None]);
+        assert_eq!(handles_shown(&asks), vec![false, false]);
+    }
+
+    #[test]
+    fn a_handle_is_shown_only_between_two_items_shown() {
+        let [a, b, c] = three();
+        assert_eq!(handles_shown(&[a, b, c]), vec![true, true]);
+        assert_eq!(handles_shown(&[a, b, hidden(c)]), vec![true, false]);
+        assert_eq!(handles_shown(&[a, hidden(b), c]), vec![true, false]);
+        assert_eq!(handles_shown(&[hidden(a), b, c]), vec![false, true]);
+        assert_eq!(
+            handles_shown(&[a, hidden(b), hidden(c)]),
+            vec![false, false]
+        );
+        assert_eq!(handles_shown(&[a]), Vec::<bool>::new());
+    }
+
+    #[test]
+    fn a_handle_resizes_the_next_item_shown_past_hidden_ones() {
+        let [a, b, c] = three();
+        // Before the item that fills: the item before the handle.
+        assert_eq!(resized(&[a, b, c], 0), Some((0, 1.0)));
+        // After it: the item after the handle, past one that is hidden.
+        let fills = Ask { fill: true, ..a };
+        assert_eq!(resized(&[fills, hidden(b), c], 0), Some((2, -1.0)));
+        assert_eq!(resized(&[fills, b, hidden(c)], 1), None);
     }
 
     #[test]
