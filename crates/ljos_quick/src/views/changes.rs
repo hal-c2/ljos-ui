@@ -420,9 +420,16 @@ impl ViewHost for Host {
                 | ModelChange::RowsRemoved { .. }
                 | ModelChange::RowsMoved { .. }
                 | ModelChange::ModelReset
-        ) && let Some(n) = st.order.get()
-        {
-            crate::item::bump_node(e, n);
+        ) {
+            if let Some(n) = st.order.get() {
+                crate::item::bump_node(e, n);
+            }
+            // Rows that moved without a delegate made or let go leave the
+            // content's children as they were: they are read in their new
+            // order only if read again, whatever role the rows have.
+            if let Some(content) = flickable::content_item(e, view) {
+                crate::scene::reordered(e, content);
+            }
         }
         lay_out_later(e, view, &st);
     }

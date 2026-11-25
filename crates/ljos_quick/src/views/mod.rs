@@ -608,37 +608,78 @@ pub(crate) fn place_in_view(e: &Engine, obj: ObjectId) -> Option<(usize, usize)>
 /// in the order of the rows they show, each into a place a row held: a
 /// view makes delegates from where it is scrolled to, often from its end
 /// backwards, so the order they were made in is not the order they are
-/// read in. What is not a row keeps its place. Untracked.
+/// read in. A section heading is read just before the row it heads, so a
+/// row moved to another section is read under that section's heading.
+/// What is neither keeps its place. Untracked.
 pub(crate) fn in_row_order(e: &Engine, kids: &mut [ObjectId]) {
     let mut slots = Vec::new();
-    let mut rows = Vec::new();
+    let mut parts = Vec::new();
     {
         let registry = e.extension::<Registry>();
         let items = registry.items.borrow();
         for (slot, kid) in kids.iter().enumerate() {
-            if let Some(&(view, Part::Row)) = items.get(kid) {
+            if let Some(&(view, part)) = items.get(kid) {
                 slots.push(slot);
-                rows.push((view, *kid));
+                parts.push((view, part, *kid));
             }
         }
     }
-    if rows.len() < 2 {
+    if parts.len() < 2 {
         return;
     }
-    let mut placed: Vec<(Option<usize>, ObjectId)> = rows
-        .into_iter()
-        .map(|(view, kid)| (view_index_of(e, view, kid), kid))
-        .collect();
-    if placed.is_sorted_by_key(|(at, _)| *at) {
+    // Each view's headings, by the row each is before: (the row, 0) sorts
+    // a heading ahead of its row's (the row, 1).
+    let mut heads: FxHashMap<ObjectId, FxHashMap<ObjectId, usize>> = FxHashMap::default();
+    let mut placed: Vec<(Option<(usize, u8)>, ObjectId)> = Vec::with_capacity(parts.len());
+    let mut keep = Vec::with_capacity(slots.len());
+    for (slot, (view, part, kid)) in slots.into_iter().zip(parts) {
+        let at = match part {
+            Part::Row => view_index_of(e, view, kid).map(|i| (i, 1)),
+            Part::Extra => {
+                let of_view = heads.entry(view).or_insert_with(|| headings_of(e, view));
+                match of_view.get(&kid) {
+                    Some(&row) => Some((row, 0)),
+                    // A header, footer or highlight: not moved.
+                    None => continue,
+                }
+            }
+        };
+        keep.push(slot);
+        placed.push((at, kid));
+    }
+    if placed.len() < 2 || placed.is_sorted_by_key(|(at, _)| *at) {
         return;
     }
     // A row the view no longer counts (one it is letting go) is read
     // first; the sort is stable, so those keep their order among
     // themselves.
     placed.sort_by_key(|(at, _)| *at);
-    for (slot, (_, kid)) in slots.into_iter().zip(placed) {
+    for (slot, (_, kid)) in keep.into_iter().zip(placed) {
         kids[slot] = kid;
     }
+}
+
+/// The section headings of `view` that head a row with a delegate, and
+/// that row.
+fn headings_of(e: &Engine, view: ObjectId) -> FxHashMap<ObjectId, usize> {
+    let Some(st) = state_of(e, view) else {
+        return FxHashMap::default();
+    };
+    let sections = st.sections.borrow();
+    if sections.is_empty() {
+        return FxHashMap::default();
+    }
+    let Some(delegates) = st.delegates() else {
+        return FxHashMap::default();
+    };
+    delegates
+        .live()
+        .into_iter()
+        .filter_map(|(row, _)| {
+            let key = delegates.key_at(row)?;
+            Some((sections.get(&key)?.1, row))
+        })
+        .collect()
 }
 
 /// Makes the view of `cx` lay out its rows from now on.

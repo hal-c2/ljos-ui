@@ -777,6 +777,13 @@ pub(crate) fn destroyed(e: &Engine, gone: &[ObjectId]) {
     }
 }
 
+/// The children of `item` are as they were, but in another order to
+/// read: a view's rows renumbered by a move. What shows them, and what
+/// describes them, take them again at the frame.
+pub(crate) fn reordered(e: &Engine, item: ObjectId) {
+    mark_shown(e, item, |s| s.set(item, Dirty::STRUCTURE, |_| ()));
+}
+
 /// [`Engine::on_incubated`]: the item an incubation made, left out of its
 /// parent while it was half made, is shown now.
 pub(crate) fn incubated(e: &Engine, made: ObjectId) {

@@ -1134,3 +1134,95 @@ fn a_row_moved_in_a_list_is_read_in_its_new_place() {
     assert_eq!(read.first().map(String::as_str), Some("Row 3"), "{read:?}");
     assert_eq!(read.get(1).map(String::as_str), Some("Row 1"), "{read:?}");
 }
+
+const BUTTONS: &str = r#"
+import QtQuick
+ListView {
+    objectName: "list"
+    width: 200; height: 100
+    model: ListModel {
+        objectName: "rows"
+        Component.onCompleted: { for (var i = 0; i < 3; ++i) append({ n: i + 1 }) }
+    }
+    delegate: Rectangle {
+        required property int n
+        width: 200; height: 30
+        Accessible.role: Accessible.Button
+        Accessible.name: "Row " + n
+    }
+}
+"#;
+
+/// The names of what `role` the tree reads, in its order.
+fn read_as(s: &QuickScene, roles: &[AkRole]) -> Vec<String> {
+    outline(s)
+        .into_iter()
+        .filter(|(role, ..)| roles.contains(role))
+        .map(|(_, name, _)| name)
+        .collect()
+}
+
+// A row whose role has no place in a set is moved all the same: the
+// list is read again in its new order.
+#[test]
+fn a_moved_row_that_is_not_a_list_item_is_read_in_its_new_place() {
+    let e = engine();
+    let root = load(&e, BUTTONS);
+    let mut s = active(&e, root);
+    assert_eq!(read_as(&s, &[AkRole::Button]), ["Row 1", "Row 2", "Row 3"]);
+    let model = find(&e, root, "rows");
+    e.invoke_by_name(
+        model,
+        "move",
+        &[Value::Int(2), Value::Int(0), Value::Int(1)],
+    )
+    .unwrap();
+    frame(&mut s, &e);
+    assert_eq!(read_as(&s, &[AkRole::Button]), ["Row 3", "Row 1", "Row 2"]);
+}
+
+const SECTIONS: &str = r#"
+import QtQuick
+ListView {
+    objectName: "list"
+    width: 200; height: 200
+    model: ListModel {
+        objectName: "rows"
+        ListElement { n: 1; group: "A" }
+        ListElement { n: 2; group: "B" }
+    }
+    section.property: "group"
+    section.delegate: Rectangle {
+        required property string section
+        width: 200; height: 20
+        Accessible.role: Accessible.Heading
+        Accessible.name: "Head " + section
+    }
+    delegate: Rectangle {
+        required property int n
+        width: 200; height: 30
+        Accessible.role: Accessible.ListItem
+        Accessible.name: "Row " + n
+    }
+}
+"#;
+
+// A row moved into another section is read under that section's
+// heading, and the headings follow the rows they head.
+#[test]
+fn a_row_moved_to_another_section_is_read_under_its_heading() {
+    let e = engine();
+    let root = load(&e, SECTIONS);
+    let mut s = active(&e, root);
+    let both = [AkRole::Heading, AkRole::ListItem];
+    assert_eq!(read_as(&s, &both), ["Head A", "Row 1", "Head B", "Row 2"]);
+    let model = find(&e, root, "rows");
+    e.invoke_by_name(
+        model,
+        "move",
+        &[Value::Int(1), Value::Int(0), Value::Int(1)],
+    )
+    .unwrap();
+    frame(&mut s, &e);
+    assert_eq!(read_as(&s, &both), ["Head B", "Row 2", "Head A", "Row 1"]);
+}
