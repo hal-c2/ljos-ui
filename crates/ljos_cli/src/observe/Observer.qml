@@ -1070,7 +1070,7 @@ ApplicationWindow {
                                         // made again when the scale or the size
                                         // changes, and the scale moves in steps
                                         // so that it seldom does.
-                                        property real top: 1
+                                        property real highest: 1
                                         property var line: []
                                         property var second: []
                                         readonly property real step: width / 119
@@ -1102,8 +1102,8 @@ ApplicationWindow {
                                             var vs = overview.series[chart.modelData.key]
                                             var ss = chart.modelData.second ? overview.series[chart.modelData.second] : []
                                             var t = scaleOf(vs, ss)
-                                            if (t !== top) {
-                                                top = t
+                                            if (t !== highest) {
+                                                highest = t
                                                 whole = true
                                             }
                                             var l = follow(whole ? [] : line, vs)
@@ -1146,7 +1146,7 @@ ApplicationWindow {
                                                 return had
                                             var out = had.slice(first - from)
                                             for (var n = Math.max(to, first); n < overview.version; ++n)
-                                                out.push(Qt.point(n * step, height - vs[n - first] / top * height))
+                                                out.push(Qt.point(n * step, height - vs[n - first] / highest * height))
                                             return out
                                         }
 
@@ -1195,7 +1195,7 @@ ApplicationWindow {
                                         Text {
                                             x: 2
                                             visible: chart.values.length > 0
-                                            text: String(Math.round(plot.top * 10) / 10)
+                                            text: String(Math.round(plot.highest * 10) / 10)
                                             color: theme.subtle
                                             font.pixelSize: 10
                                         }
@@ -6966,7 +6966,7 @@ ApplicationWindow {
                                 id: chart
                                 required property int index
                                 required property var modelData
-                                readonly property real top: Math.max(1, modelData.max)
+                                readonly property real highest: Math.max(1, modelData.max)
                                 width: ListView.view.width
                                 height: 64
                                 radius: 6
@@ -7027,7 +7027,7 @@ ApplicationWindow {
                                             readonly property real step: plot.width / Math.max(1, chart.modelData.series.length)
                                             x: index * step
                                             width: Math.max(1, step - 1)
-                                            height: Math.max(1, plot.height * modelData[1] / chart.top)
+                                            height: Math.max(1, plot.height * modelData[1] / chart.highest)
                                             anchors.bottom: parent.bottom
                                             color: chart.modelData.growing ? theme.bad : theme.accent
                                             opacity: 0.75
@@ -7036,7 +7036,7 @@ ApplicationWindow {
                                     Text {
                                         anchors.right: parent.right
                                         anchors.top: parent.top
-                                        text: chart.top
+                                        text: chart.highest
                                         color: theme.subtle
                                         font.pixelSize: 10
                                     }

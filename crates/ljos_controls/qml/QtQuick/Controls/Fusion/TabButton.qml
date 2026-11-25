@@ -43,12 +43,12 @@ T.TabButton {
             border.color: Qt.darker(control.palette.window, 1.27)
             // The current tab is the tab frame's shade of the button colour;
             // the others darken from a button's to a groove's.
-            readonly property color top: control.checked
+            readonly property color topColor: control.checked
                 ? Qt.lighter(Fusion.tabFrameColor(control.palette), 1.04)
                 : Qt.darker(Fusion.buttonColor(control.palette, false, false, false), 1.04)
             gradient: Gradient {
-                GradientStop { position: 0; color: frame.top }
-                GradientStop { position: control.checked ? 0 : 0.85; color: frame.top }
+                GradientStop { position: 0; color: frame.topColor }
+                GradientStop { position: control.checked ? 0 : 0.85; color: frame.topColor }
                 GradientStop {
                     position: 1
                     color: control.checked ? Fusion.tabFrameColor(control.palette)

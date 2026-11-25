@@ -2,7 +2,7 @@
 // Shape: what a shadowing property holds is what the file declares.
 import Ljos.Ui
 Item {
-    property string top: "first"
+    property string clip: "first"
     property int size: 0
-    function grow() { size = top }
+    function grow() { size = clip }
 }

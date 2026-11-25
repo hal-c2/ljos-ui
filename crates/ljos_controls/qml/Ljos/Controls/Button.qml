@@ -98,8 +98,8 @@ T.Button {
             readonly property real start: mark && !under ? mark.width + (showsText ? control.spacing : 0) : 0
             readonly property real end: control.chevron ? control.spacing + more.width : 0
             // Under, the mark and the text are one block in the middle.
-            readonly property real top: mark && under ? mark.height + (showsText ? control.spacing : 0) : 0
-            readonly property real stacked: top + textHeight
+            readonly property real textTop: mark && under ? mark.height + (showsText ? control.spacing : 0) : 0
+            readonly property real stacked: textTop + textHeight
             implicitWidth: (under ? Math.max(mark ? mark.width : 0, textWidth) : start + textWidth) + end
             // The mark as it is drawn: `iconSize` is only a limit to a
             // smaller picture.
@@ -157,7 +157,7 @@ T.Button {
                 objectName: "label"
                 visible: parent.showsText
                 x: control.mirrored ? parent.end : parent.start
-                y: parent.under ? (parent.height - parent.stacked) / 2 + parent.top : 0
+                y: parent.under ? (parent.height - parent.stacked) / 2 + parent.textTop : 0
                 width: parent.width - parent.start - parent.end
                 height: parent.under ? parent.textHeight : parent.height
                 icon.name: ""

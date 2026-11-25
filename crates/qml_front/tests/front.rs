@@ -990,7 +990,7 @@ fn a_name_one_component_has_may_be_used_by_another_as_it_runs() {
     let project = project(&[
         (
             "Main",
-            "import QtQuick\nItem { id: window; property int secret; property int width: 3; Loader {} }",
+            "import QtQuick\nItem { id: window; property int secret; Loader {} }",
         ),
         (
             "Page",

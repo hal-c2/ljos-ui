@@ -72,18 +72,18 @@ Feature: Handing a value from step to step with the pipe
         Item {
           id: root; objectName: "root"
           property int n: 7
-          readonly property int left: n |> % + 1 |> % % 3
+          readonly property int wrapped: n |> % + 1 |> % % 3
           readonly property string listed: [1, 2, 3] |> %.map(x => x * 2) |> %.join(",")
           readonly property string shown: "ljos" |> `${%}!` |> [%, %].join(" ")
           readonly property real kept: n |> (% > 5 ? % : 0)
         }
         """
-      Then the property "left" of "root" is 2
+      Then the property "wrapped" of "root" is 2
       And the property "listed" of "root" is "2,4,6"
       And the property "shown" of "root" is "ljos! ljos!"
       And the property "kept" of "root" is 7
       When the property "n" of "root" is set to 3
-      Then the property "left" of "root" is 1
+      Then the property "wrapped" of "root" is 1
       And the property "kept" of "root" is 0
 
     Scenario: The head is read once, however many times the body reads `%`
@@ -270,7 +270,7 @@ Feature: Handing a value from step to step with the pipe
         """qml
         import Ljos.Ui
         Item {
-          readonly property real top: "3" |> Math.max(%, 0)
+          readonly property real rest: "3" |> Math.max(%, 0)
           readonly property string shown: 4 |> % + 1
           readonly property real fine: "3" |> %.length |> Math.max(%, 0)
         }

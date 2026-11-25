@@ -41,8 +41,8 @@ T.RoundButton {
             readonly property bool under: glyphShown && textShown
                                           && control.display === T.AbstractButton.TextUnderIcon
             readonly property real start: glyphShown && !under ? glyph.width + (textShown ? control.spacing : 0) : 0
-            readonly property real top: under ? glyph.height + control.spacing : 0
-            readonly property real stacked: top + label.implicitHeight
+            readonly property real textTop: under ? glyph.height + control.spacing : 0
+            readonly property real stacked: textTop + label.implicitHeight
             implicitWidth: under ? Math.max(glyph.width, label.implicitWidth)
                                  : start + (textShown ? label.implicitWidth : 0)
             implicitHeight: under ? stacked
@@ -64,7 +64,7 @@ T.RoundButton {
                 objectName: "label"
                 visible: parent.textShown || !parent.glyphShown
                 x: control.mirrored ? 0 : parent.start
-                y: parent.under ? (parent.height - parent.stacked) / 2 + parent.top : 0
+                y: parent.under ? (parent.height - parent.stacked) / 2 + parent.textTop : 0
                 width: parent.width - parent.start
                 height: parent.under ? implicitHeight : parent.height
                 spacing: control.spacing

@@ -10,7 +10,7 @@ WatchScreen {
     id: list
 
     readonly property real rowHeight: 76
-    readonly property real top: list.round ? 92 : 64
+    readonly property real listTop: list.round ? 92 : 64
     // The highlighted row stays in sight as the crown moves it.
     readonly property real scroll: Math.max(0, list.watch.choice - 1) * (list.rowHeight + 8)
     property real shownScroll: list.scroll
@@ -30,9 +30,9 @@ WatchScreen {
     Item {
         id: viewport
         x: list.inset - 8
-        y: list.top
+        y: list.listTop
         width: list.width - 2 * (list.inset - 8)
-        height: list.height - list.top - (list.round ? 110 : 96)
+        height: list.height - list.listTop - (list.round ? 110 : 96)
         clip: true
 
         Column {

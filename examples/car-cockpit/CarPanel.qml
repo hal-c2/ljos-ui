@@ -18,12 +18,12 @@ Item {
     // Why the last tap did nothing, or "".
     property string refused: ""
     // The part the car last turned to show.
-    property Car.Part focus: "doorLeft"
+    property Car.Part aimed: "doorLeft"
 
     function press(part: Car.Part) {
         if (panel.car.toggle(part) === true) {
             panel.refused = ""
-            panel.focus = part
+            panel.aimed = part
             flare.restart()
         } else {
             panel.refused = panel.car.moving ? t`Stop the car first: nothing opens while it moves.`
@@ -34,17 +34,17 @@ Item {
     }
 
     // What the keyboard is on, said aloud.
-    readonly property string names: panel.focus === "doorLeft" ? t`Left door`
-        : panel.focus === "doorRight" ? t`Right door`
-        : panel.focus === "frunk" ? t`Frunk`
-        : panel.focus === "trunk" ? t`Trunk`
+    readonly property string names: panel.aimed === "doorLeft" ? t`Left door`
+        : panel.aimed === "doorRight" ? t`Right door`
+        : panel.aimed === "frunk" ? t`Frunk`
+        : panel.aimed === "trunk" ? t`Trunk`
         : t`Charge port`
 
     // Where the camera stands to show each part, in degrees round the car.
-    readonly property real view: panel.focus === "doorLeft" ? 38
-        : panel.focus === "doorRight" ? -38
-        : panel.focus === "frunk" ? -24
-        : panel.focus === "chargePort" ? 150
+    readonly property real view: panel.aimed === "doorLeft" ? 38
+        : panel.aimed === "doorRight" ? -38
+        : panel.aimed === "frunk" ? -24
+        : panel.aimed === "chargePort" ? 150
         : 200
 
     // Each part's opening, 0 to 1. Opening overshoots and settles; closing
@@ -132,13 +132,13 @@ Item {
         stripTint: panel.theme.dark ? "#00e5ff" : "#00b8cc"
 
         // Not the part's own name: that is its button's.
-        aim: Car.nodeOfPart(panel.focus)
+        aim: Car.nodeOfPart(panel.aimed)
         aimName: t`Car model: ${panel.names}`
         help: t`The car. Arrow keys choose a part; Space opens or closes it.`
         onAimed: (node: string) => {
             const part = Car.partOfNode(node)
             if (part !== undefined) {
-                panel.focus = part
+                panel.aimed = part
             }
         }
         onPicked: (node: string) => {
