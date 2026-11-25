@@ -306,6 +306,7 @@ fn what_is_no_property_reaches_the_host_as_a_request() {
     call(&e, main, "raise");
     call(&e, main, "lower");
     e.invoke_by_name(main, "alert", &[Value::Int(0)]).unwrap();
+    call(&e, main, "update");
     assert!(told.get() > before);
     assert_eq!(
         sys.take_requests(),
@@ -314,6 +315,7 @@ fn what_is_no_property_reaches_the_host_as_a_request() {
             (main, WindowRequest::Raise),
             (main, WindowRequest::Lower),
             (main, WindowRequest::Alert),
+            (main, WindowRequest::Update),
         ]
     );
     assert!(sys.take_requests().is_empty());
