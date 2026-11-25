@@ -157,9 +157,22 @@ where
 /// later would attach to an application that is gone and close at once,
 /// until the system killed the process. Ended, the next start is a new
 /// process with a new application, as after the system ended it.
+///
+/// Ended as the system ends a process, by `_exit`, and not by `exit`:
+/// `exit` runs the process's static destructors on this thread while the
+/// framework's threads still run. GameTextInput's deletes its global
+/// references through the main thread's `JNIEnv`, which a debug build's
+/// CheckJNI aborts on (#724), and libhwui's destroys a mutex its render
+/// threads still wait on. What Rust and the log hold is flushed first.
 fn end_process(code: i32) -> ! {
+    use std::io::Write as _;
     log::info!("the application ended; so does its process");
-    std::process::exit(code)
+    log::logger().flush();
+    let _ = std::io::stdout().flush();
+    let _ = std::io::stderr().flush();
+    // SAFETY: `_exit` takes any status and never returns; it ends every
+    // thread at once, and nothing after this relies on running.
+    unsafe { libc::_exit(code) }
 }
 
 /// What draws: kept from one activity to the next.
