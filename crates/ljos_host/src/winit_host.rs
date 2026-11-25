@@ -20,13 +20,13 @@ use winit::monitor::MonitorHandle;
 use winit::window::{Fullscreen, ResizeDirection, Theme, UserAttentionType, Window};
 
 use crate::event::{
-    AppState, ButtonState, Event, Key, KeyEvent, Modifiers, PointerButton, PointerEvent,
+    AppState, ButtonState, Event, Insets, Key, KeyEvent, Modifiers, PointerButton, PointerEvent,
     PointerKind, TextEvent, TouchEvent, TouchPhase, WheelDelta, WindowEvent,
 };
 use crate::schedule::{Schedule, Sleep};
 use crate::window::{
-    Backdrop, Capabilities, Icon, Screen, WindowAttributes, WindowChange, WindowId, WindowLevel,
-    WindowState,
+    Backdrop, Capabilities, ClientArea, Icon, Screen, WindowAttributes, WindowChange, WindowId,
+    WindowLevel, WindowState,
 };
 use crate::{HostApp, HostControl, HostError, PlatformHost, Wake, Waker};
 
@@ -162,7 +162,8 @@ fn capabilities(wayland: bool) -> Capabilities {
         modal_windows: false,
         ime: true,
         touch: true,
-        insets: false,
+        // AppKit's title bar over an expanded client area (#731).
+        insets: cfg!(target_os = "macos"),
         back: false,
         file_drops: !wayland,
     }
@@ -185,6 +186,13 @@ struct State {
     keyboardless: Keyboardless,
     /// The icons of windows that winit does not set.
     icons: platform::Icons,
+    /// Each window's frame as last asked: decorated, and its client area.
+    frames: HashMap<WindowId, (bool, ClientArea)>,
+    /// The safe area each window was last said to have, and the windows
+    /// whose title bar may have changed since: they are looked at once
+    /// the loop is about to wait, and told only of a change.
+    insets: HashMap<WindowId, [f64; 4]>,
+    insets_stale: BTreeSet<WindowId>,
 }
 
 /// Which window is active on a seat that has no keyboard.
@@ -341,7 +349,7 @@ impl<U: 'static> HostControl for WinitControl<'_, U> {
         if let Some([x, y]) = a.position {
             attrs = attrs.with_position(LogicalPosition::new(x, y));
         }
-        attrs = platform::with_frame(attrs, a.decorations);
+        attrs = platform::with_frame(attrs, a.decorations, a.client_area);
         attrs = platform::with_kind(attrs, a.kind);
         if let Some(id) = &a.app_id {
             attrs = platform::with_app_id(attrs, id);
@@ -368,6 +376,8 @@ impl<U: 'static> HostControl for WinitControl<'_, U> {
         }
         self.state.ids.insert(window.id(), id);
         self.state.windows.insert(id, Arc::new(window));
+        self.state.frames.insert(id, (a.decorations, a.client_area));
+        self.state.insets_stale.insert(id);
         Ok(id)
     }
 
@@ -377,6 +387,9 @@ impl<U: 'static> HostControl for WinitControl<'_, U> {
             self.state.focused.remove(&id);
             self.state.pointer.remove(&id);
             self.state.icons.forget(id);
+            self.state.frames.remove(&id);
+            self.state.insets.remove(&id);
+            self.state.insets_stale.remove(&id);
         }
     }
 
@@ -409,7 +422,26 @@ impl<U: 'static> HostControl for WinitControl<'_, U> {
                     WindowState::FullScreen => w.set_minimized(false),
                 }
             }
-            WindowChange::Decorations(on) => platform::set_frame(w, on),
+            WindowChange::Decorations(on) => {
+                let frame = self
+                    .state
+                    .frames
+                    .entry(id)
+                    .or_insert((true, ClientArea::default()));
+                frame.0 = on;
+                platform::set_frame(w, frame.0, frame.1);
+                self.state.insets_stale.insert(id);
+            }
+            WindowChange::ClientArea(area) => {
+                let frame = self
+                    .state
+                    .frames
+                    .entry(id)
+                    .or_insert((true, ClientArea::default()));
+                frame.1 = area;
+                platform::set_frame(w, frame.0, frame.1);
+                self.state.insets_stale.insert(id);
+            }
             WindowChange::Resizable(on) => w.set_resizable(on),
             WindowChange::Level(l) => w.set_window_level(level(l)),
             WindowChange::Backdrop(b, look) => platform::set_backdrop(w, b, look),
@@ -509,6 +541,39 @@ where
         }
     }
 
+    /// Tells each window whose title bar may have changed how much of it
+    /// the title bar holds, when that is not what it was last told. Only
+    /// a window whose content reaches under its title bar has any.
+    fn report_insets(&mut self, event_loop: &ActiveEventLoop) {
+        for id in std::mem::take(&mut self.state.insets_stale) {
+            let Some(window) = self.state.windows.get(&id).cloned() else {
+                continue;
+            };
+            let (decorated, area) = self
+                .state
+                .frames
+                .get(&id)
+                .copied()
+                .unwrap_or((true, ClientArea::default()));
+            let now = platform::title_bar_insets(&window, decorated, area);
+            let was = self.state.insets.insert(id, now).unwrap_or_default();
+            if was != now {
+                let insets = Insets {
+                    system_bars: now,
+                    ..Insets::default()
+                };
+                self.deliver(
+                    event_loop,
+                    Event::Window {
+                        id,
+                        event: WindowEvent::Insets(insets),
+                        raw: None,
+                    },
+                );
+            }
+        }
+    }
+
     /// Hands one platform event for window `id` to the application.
     fn handle(&mut self, event_loop: &ActiveEventLoop, id: WindowId, raw: Raw) {
         let Some(window) = self.state.windows.get(&id).cloned() else {
@@ -523,6 +588,10 @@ where
             }
             Raw::CursorMoved { position, .. } => {
                 self.state.pointer.insert(id, [position.x, position.y]);
+            }
+            // Full screen and back change the title bar's height.
+            Raw::Resized(_) | Raw::ScaleFactorChanged { .. } => {
+                self.state.insets_stale.insert(id);
             }
             _ => {}
         }
@@ -618,6 +687,7 @@ where
             };
             self.report_app_state(event_loop, state);
         }
+        self.report_insets(event_loop);
         self.deliver(event_loop, Event::AboutToWait);
     }
 
@@ -1000,21 +1070,35 @@ mod platform {
 
     /// The system's frame, or none: winit's decorations, but on macOS a
     /// title bar that does not show (see `TitleBar`).
+    /// The client area is AppKit's alone to expand here: elsewhere the
+    /// content stays below the title bar, as Qt's does on Linux.
     #[cfg(not(target_os = "macos"))]
-    pub(crate) fn with_frame(attrs: WindowAttributes, decorated: bool) -> WindowAttributes {
+    pub(crate) fn with_frame(
+        attrs: WindowAttributes,
+        decorated: bool,
+        _: crate::window::ClientArea,
+    ) -> WindowAttributes {
         attrs.with_decorations(decorated)
     }
 
     #[cfg(not(target_os = "macos"))]
-    pub(crate) fn set_frame(window: &Window, decorated: bool) {
+    pub(crate) fn set_frame(window: &Window, decorated: bool, _: crate::window::ClientArea) {
         window.set_decorations(decorated);
+    }
+
+    /// No title bar holds any of the content.
+    #[cfg(not(target_os = "macos"))]
+    pub(crate) fn title_bar_insets(_: &Window, _: bool, _: crate::window::ClientArea) -> [f64; 4] {
+        [0.0; 4]
     }
 
     #[cfg(not(target_os = "macos"))]
     pub(crate) fn made(_: &Window) {}
 
     #[cfg(target_os = "macos")]
-    pub(crate) use crate::winit_host::appkit_frame::{made, set_frame, with_frame};
+    pub(crate) use crate::winit_host::appkit_frame::{
+        made, set_frame, title_bar_insets, with_frame,
+    };
 }
 
 /// AppKit asks the application's delegate what to do when the user opens
@@ -1289,14 +1373,18 @@ struct TitleBar {
     content_under_it: bool,
 }
 
+/// A decorated window whose client area is expanded keeps its title bar
+/// and buttons over the content, as Qt's does with
+/// `NSWindowStyleMaskFullSizeContentView`; without its background the bar
+/// is transparent (#731).
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-fn title_bar(decorated: bool) -> TitleBar {
+fn title_bar(decorated: bool, area: ClientArea) -> TitleBar {
     let hidden = !decorated;
     TitleBar {
-        transparent: hidden,
+        transparent: hidden || !area.title_bar_background,
         title_hidden: hidden,
         buttons_hidden: hidden,
-        content_under_it: hidden,
+        content_under_it: hidden || area.expanded,
     }
 }
 
@@ -1318,9 +1406,14 @@ mod appkit_frame {
     use winit::window::{Window, WindowAttributes};
 
     use super::{TitleBar, title_bar};
+    use crate::window::ClientArea;
 
-    pub(crate) fn with_frame(attrs: WindowAttributes, decorated: bool) -> WindowAttributes {
-        let t = title_bar(decorated);
+    pub(crate) fn with_frame(
+        attrs: WindowAttributes,
+        decorated: bool,
+        area: ClientArea,
+    ) -> WindowAttributes {
+        let t = title_bar(decorated, area);
         attrs
             .with_decorations(true)
             .with_titlebar_transparent(t.transparent)
@@ -1329,14 +1422,32 @@ mod appkit_frame {
             .with_fullsize_content_view(t.content_under_it)
     }
 
-    pub(crate) fn set_frame(window: &Window, decorated: bool) {
+    /// How much of the window, in its pixels, its title bar holds over
+    /// content that reaches under it: what Qt gives as the top of the
+    /// window's safe area. A window without the system's frame shows none
+    /// of its title bar, and content that stays below it has none over it.
+    pub(crate) fn title_bar_insets(window: &Window, decorated: bool, area: ClientArea) -> [f64; 4] {
+        if !(decorated && area.expanded) {
+            return [0.0; 4];
+        }
+        let Some(ns) = content(window).and_then(|c| c.window()) else {
+            return [0.0; 4];
+        };
+        // Both in the window's points, from its bottom left corner.
+        let frame = ns.frame();
+        let layout = ns.contentLayoutRect();
+        let top = frame.size.height - (layout.origin.y + layout.size.height);
+        [0.0, top.max(0.0) * window.scale_factor(), 0.0, 0.0]
+    }
+
+    pub(crate) fn set_frame(window: &Window, decorated: bool, area: ClientArea) {
         let Some(content) = content(window) else {
             return;
         };
         let Some(ns) = content.window() else {
             return;
         };
-        let t: TitleBar = title_bar(decorated);
+        let t: TitleBar = title_bar(decorated, area);
         let mut mask = ns.styleMask() | NSWindowStyleMask::Titled;
         mask.set(NSWindowStyleMask::FullSizeContentView, t.content_under_it);
         ns.setStyleMask(mask);
@@ -1436,8 +1547,9 @@ mod tests {
 
     #[test]
     fn a_frameless_window_keeps_a_title_bar_on_macos_and_shows_none_of_it() {
+        let plain = ClientArea::default();
         assert_eq!(
-            title_bar(false),
+            title_bar(false, plain),
             TitleBar {
                 transparent: true,
                 title_hidden: true,
@@ -1445,9 +1557,32 @@ mod tests {
                 content_under_it: true,
             }
         );
-        let framed = title_bar(true);
+        let framed = title_bar(true, plain);
         assert!(!framed.transparent && !framed.title_hidden);
         assert!(!framed.buttons_hidden && !framed.content_under_it);
+    }
+
+    /// `Qt.ExpandedClientAreaHint`: the content goes under the title bar,
+    /// whose title and buttons stay; `Qt.NoTitleBarBackgroundHint` takes
+    /// its background away (#731).
+    #[test]
+    fn an_expanded_client_area_keeps_the_title_bar_over_the_content() {
+        let expanded = ClientArea {
+            expanded: true,
+            title_bar_background: true,
+        };
+        let t = title_bar(true, expanded);
+        assert!(t.content_under_it && !t.transparent);
+        assert!(!t.title_hidden && !t.buttons_hidden);
+        let bare = title_bar(
+            true,
+            ClientArea {
+                title_bar_background: false,
+                ..expanded
+            },
+        );
+        assert!(bare.content_under_it && bare.transparent);
+        assert!(!bare.title_hidden && !bare.buttons_hidden);
     }
 
     #[test]

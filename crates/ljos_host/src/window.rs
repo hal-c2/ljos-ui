@@ -100,6 +100,8 @@ pub struct WindowAttributes {
     pub state: WindowState,
     /// The title bar and the border.
     pub decorations: bool,
+    /// Whether what is drawn reaches under the title bar.
+    pub client_area: ClientArea,
     pub resizable: bool,
     pub level: WindowLevel,
     pub kind: WindowKind,
@@ -120,6 +122,28 @@ pub struct WindowAttributes {
     pub icon: Option<Icon>,
 }
 
+/// How far what a decorated window draws reaches: `Qt.ExpandedClientAreaHint`
+/// and `Qt.NoTitleBarBackgroundHint`. A platform that cannot put the
+/// window's content under its title bar keeps it below; one that can says
+/// how much of the window the title bar still holds as the window's safe
+/// area ([`crate::WindowEvent::Insets`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ClientArea {
+    /// The content covers the whole window, title bar included.
+    pub expanded: bool,
+    /// The title bar paints its own background.
+    pub title_bar_background: bool,
+}
+
+impl Default for ClientArea {
+    fn default() -> Self {
+        Self {
+            expanded: false,
+            title_bar_background: true,
+        }
+    }
+}
+
 impl Default for WindowAttributes {
     fn default() -> Self {
         Self {
@@ -131,6 +155,7 @@ impl Default for WindowAttributes {
             visible: true,
             state: WindowState::Normal,
             decorations: true,
+            client_area: ClientArea::default(),
             resizable: true,
             level: WindowLevel::Normal,
             kind: WindowKind::Normal,
@@ -155,6 +180,7 @@ pub enum WindowChange {
     Visible(bool),
     State(WindowState),
     Decorations(bool),
+    ClientArea(ClientArea),
     Resizable(bool),
     Level(WindowLevel),
     /// The backdrop and its appearance, told together: a platform picks

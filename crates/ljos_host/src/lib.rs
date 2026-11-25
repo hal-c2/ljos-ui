@@ -53,8 +53,8 @@ pub use event::{
 };
 pub use schedule::{Schedule, Sleep};
 pub use window::{
-    Appearance, Backdrop, Capabilities, Icon, ResizeEdge, Screen, WindowAttributes, WindowChange,
-    WindowId, WindowKind, WindowLevel, WindowState,
+    Appearance, Backdrop, Capabilities, ClientArea, Icon, ResizeEdge, Screen, WindowAttributes,
+    WindowChange, WindowId, WindowKind, WindowLevel, WindowState,
 };
 #[cfg(feature = "winit")]
 pub use winit_host::{WinitControl, WinitHost};

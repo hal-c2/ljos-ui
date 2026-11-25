@@ -9,12 +9,24 @@ use ljos_controls::{
     FRAMELESS, KIND_MASK, STAYS_ON_BOTTOM, STAYS_ON_TOP, WindowBackdrop, WindowShow, WindowSpec,
 };
 use ljos_host::{
-    Appearance, Backdrop, Capabilities, WindowAttributes, WindowChange, WindowKind, WindowLevel,
-    WindowState,
+    Appearance, Backdrop, Capabilities, ClientArea, WindowAttributes, WindowChange, WindowKind,
+    WindowLevel, WindowState,
 };
 
 /// `Qt.WindowDoesNotAcceptFocus`.
 const NO_FOCUS: u32 = 0x0020_0000;
+/// `Qt.ExpandedClientAreaHint`.
+const EXPANDED_CLIENT_AREA: u32 = 0x0040_0000;
+/// `Qt.NoTitleBarBackgroundHint`.
+const NO_TITLE_BAR_BACKGROUND: u32 = 0x0080_0000;
+
+/// What of the title bar the window's content covers.
+pub(crate) fn client_area(flags: u32) -> ClientArea {
+    ClientArea {
+        expanded: flags & EXPANDED_CLIENT_AREA != 0,
+        title_bar_background: flags & NO_TITLE_BAR_BACKGROUND == 0,
+    }
+}
 
 /// Stands for "no limit" on one axis when the other has one: a platform
 /// takes a maximum size for both axes or for neither.
@@ -164,6 +176,7 @@ pub(crate) fn attributes(spec: &WindowSpec, caps: Capabilities) -> WindowAttribu
         visible: false,
         state: state(spec.show),
         decorations: decorated(spec.flags),
+        client_area: client_area(spec.flags),
         resizable: resizable(spec),
         level: level(spec.flags),
         kind,
@@ -204,6 +217,9 @@ pub(crate) fn changes(old: &WindowSpec, new: &WindowSpec, caps: Capabilities) ->
     }
     if decorated(old.flags) != decorated(new.flags) {
         out.push(WindowChange::Decorations(decorated(new.flags)));
+    }
+    if client_area(old.flags) != client_area(new.flags) {
+        out.push(WindowChange::ClientArea(client_area(new.flags)));
     }
     if level(old.flags) != level(new.flags) {
         out.push(WindowChange::Level(level(new.flags)));
@@ -499,6 +515,26 @@ mod tests {
                 WindowChange::Level(WindowLevel::AlwaysOnTop),
                 WindowChange::State(WindowState::Maximized),
             ]
+        );
+    }
+
+    /// `Qt.ExpandedClientAreaHint | Qt.NoTitleBarBackgroundHint`, as a
+    /// shell that draws its own row of chrome in the title bar asks (#731).
+    #[test]
+    fn the_client_area_hints_reach_the_window_and_are_told_when_they_change() {
+        let mut s = spec();
+        assert_eq!(attributes(&s, desktop()).client_area, ClientArea::default());
+        s.flags = 1 | 0x0040_0000 | 0x0080_0000;
+        let asked = ClientArea {
+            expanded: true,
+            title_bar_background: false,
+        };
+        let a = attributes(&s, desktop());
+        assert!(a.decorations);
+        assert_eq!(a.client_area, asked);
+        assert_eq!(
+            changes(&spec(), &s, desktop()),
+            vec![WindowChange::ClientArea(asked)]
         );
     }
 
