@@ -642,6 +642,36 @@ impl<'p, O: TypeOracle> Types<'p, O> {
         false
     }
 
+    /// Whether a property `name` of a type in the chain is final. A function
+    /// or signal of that name a component declares on the way does not hide
+    /// it: Qt still refuses a declaration over the property beneath.
+    pub fn final_property(&self, kind: &Kind<O::Type>, name: &str) -> bool {
+        let mut kind = kind.clone();
+        for _ in 0..DEPTH {
+            match kind {
+                Kind::Builtin(ty) => {
+                    return matches!(
+                        builtin_member(self.oracle, ty, name),
+                        Some(Member::Property(property)) if property.is_final
+                    );
+                }
+                Kind::Component(key) => {
+                    let Some(shape) = self.project.shape(&key) else {
+                        return false;
+                    };
+                    if let Some(declaration) = shape.properties.get(name) {
+                        return declaration.is_final;
+                    }
+                    let Some(root) = self.root(&key, shape) else {
+                        return false;
+                    };
+                    kind = root;
+                }
+            }
+        }
+        false
+    }
+
     /// The file a path given to the property `name` of an object of the type
     /// is taken from, where that is not the file the object is written in:
     /// the one a component declares the property in, which is where it uses
