@@ -343,6 +343,7 @@ impl TypeOracle for Runtime {
             takes_key: false,
             is_list: false,
             is_readonly: false,
+            is_final: false,
             value: value.and_then(|value| self.named(value)),
         })
     }

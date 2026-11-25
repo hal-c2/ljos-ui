@@ -105,6 +105,12 @@ bitflags::bitflags! {
         /// the object creator sets with
         /// [`Engine::set_alias`](crate::Engine::set_alias).
         const ALIAS = 1 << 7;
+        /// No type deriving from the declaring one may declare a member of
+        /// its name: QML's `final`, which a QML file writes `final
+        /// property` and a native type marks `#[qml(sealed)]`. Unlike
+        /// [`FINAL`](Self::FINAL), which every Rust property has, it is
+        /// what the front end refuses an override of.
+        const SEALED = 1 << 8;
     }
 }
 

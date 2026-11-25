@@ -888,11 +888,14 @@ pub fn builtin_member<O: TypeOracle>(
 
 fn shape_member<T>(shape: &Shape, name: &str) -> Option<Member<T>> {
     if let Some(declaration) = shape.properties.get(name) {
-        return Some(Member::Property(Property::declared(
-            &declaration.type_name,
-            declaration.is_list,
-            declaration.is_readonly,
-        )));
+        return Some(Member::Property(Property {
+            is_final: declaration.is_final,
+            ..Property::declared(
+                &declaration.type_name,
+                declaration.is_list,
+                declaration.is_readonly,
+            )
+        }));
     }
     if shape.signals.contains_key(name) {
         return Some(Member::Signal);

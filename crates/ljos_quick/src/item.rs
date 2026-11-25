@@ -29,26 +29,28 @@ use crate::palette::Palette;
     default = "data",
     enums = crate::enums::item_enums
 )]
+// Qt 6.11: the members marked `sealed` are those Qt refuses a type
+// deriving from Item a member of the name of.
 pub struct Item {
     #[qml(base)]
     pub object: QtObject,
-    #[qml(notify, not_nan, change = crate::scene::moved)]
+    #[qml(notify, not_nan, change = crate::scene::moved, sealed)]
     pub x: f64,
-    #[qml(notify, not_nan, change = crate::scene::moved)]
+    #[qml(notify, not_nan, change = crate::scene::moved, sealed)]
     pub y: f64,
-    #[qml(notify, change = crate::scene::reshaped)]
+    #[qml(notify, change = crate::scene::reshaped, sealed)]
     pub z: f64,
-    #[qml(notify, not_nan, reset = SIZE_RESET, change = crate::scene::reshaped)]
+    #[qml(notify, not_nan, reset = SIZE_RESET, change = crate::scene::reshaped, sealed)]
     pub width: f64,
-    #[qml(notify, not_nan, reset = SIZE_RESET, change = crate::scene::reshaped)]
+    #[qml(notify, not_nan, reset = SIZE_RESET, change = crate::scene::reshaped, sealed)]
     pub height: f64,
     #[qml(notify)]
     pub implicit_width: f64,
     #[qml(notify)]
     pub implicit_height: f64,
-    #[qml(notify, change = crate::scene::visible_changed)]
+    #[qml(notify, change = crate::scene::visible_changed, sealed)]
     pub visible: bool,
-    #[qml(notify, write = Self::keep_opacity, change = crate::scene::reshaped)]
+    #[qml(notify, write = Self::keep_opacity, change = crate::scene::reshaped, sealed)]
     pub opacity: f64,
     #[qml(notify, change = crate::scene::reshaped)]
     pub clip: bool,
@@ -64,7 +66,7 @@ pub struct Item {
     /// The visual parent. Assigning it reparents the item (see
     /// [`crate::set_parent_item`]); it follows
     /// [`Engine::set_visual_parent`] whoever calls that.
-    #[qml(notify, change = parent_written)]
+    #[qml(notify, change = parent_written, sealed)]
     pub parent: Option<ObjectId>,
     /// Children and resources together, in the order they were added.
     /// Appending sorts: an `Item` becomes a visual child, anything else a
@@ -88,7 +90,7 @@ pub struct Item {
     pub children: QmlList,
     #[qml(list)]
     pub resources: QmlList,
-    #[qml(notify, readonly)]
+    #[qml(notify, readonly, sealed)]
     pub children_rect: Rect,
     #[qml(notify)]
     pub baseline_offset: f64,
@@ -100,34 +102,34 @@ pub struct Item {
     /// transformed (a picture; nothing else of ours changes). On, as in Qt.
     #[qml(notify)]
     pub smooth: bool,
-    #[qml(group)]
+    #[qml(group, sealed)]
     pub anchors: Anchors,
     // Anchor lines (`parent.left`). Set in `on_complete`, when the object
     // knows its own id.
-    #[qml(notify, readonly)]
+    #[qml(notify, readonly, sealed)]
     pub left: LineOf,
-    #[qml(notify, readonly)]
+    #[qml(notify, readonly, sealed)]
     pub right: LineOf,
-    #[qml(notify, readonly)]
+    #[qml(notify, readonly, sealed)]
     pub top: LineOf,
-    #[qml(notify, readonly)]
+    #[qml(notify, readonly, sealed)]
     pub bottom: LineOf,
-    #[qml(notify, readonly)]
+    #[qml(notify, readonly, sealed)]
     pub horizontal_center: LineOf,
-    #[qml(notify, readonly)]
+    #[qml(notify, readonly, sealed)]
     pub vertical_center: LineOf,
-    #[qml(rename = "baseline", notify, readonly)]
+    #[qml(rename = "baseline", notify, readonly, sealed)]
     pub baseline_line: LineOf,
     /// Whether the item is its focus scope's focus item (see
     /// [`crate::focus`]).
-    #[qml(notify, change = crate::focus::focus_written)]
+    #[qml(notify, change = crate::focus::focus_written, sealed)]
     pub focus: bool,
     /// Whether the item, or an item it is the focus scope of, gets the
     /// keys. Written by the focus tree only.
-    #[qml(notify, readonly)]
+    #[qml(notify, readonly, sealed)]
     pub active_focus: bool,
     /// Whether Tab stops at the item.
-    #[qml(notify)]
+    #[qml(notify, sealed)]
     pub active_focus_on_tab: bool,
     /// The item's states, the one it is in (`""` for none of them) and the
     /// transitions between them: see [`crate::states`].
@@ -139,9 +141,9 @@ pub struct Item {
     pub transitions: QmlList,
     /// `Rotation`, `Scale`, `Translate`, `Matrix4x4` and `Shear`, applied
     /// after `rotation` and `scale` (see [`crate::transform`]).
-    #[qml(notify, list, change = crate::scene::reshaped)]
+    #[qml(notify, list, change = crate::scene::reshaped, sealed)]
     pub transform: QmlList,
-    #[qml(group)]
+    #[qml(group, sealed)]
     pub layer: ItemLayer,
     /// Made when a colour is first set: most items never set one.
     #[qml(group, lazy, reset)]

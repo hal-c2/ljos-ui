@@ -70,7 +70,7 @@
 //!         default data                  the property that takes its children
 //!         is singleton uncreatable value namespace parser
 //!         enum TransformOrigin TopLeft Top ...        `flags` when the keys combine
-//!         prop anchors QQuickAnchors readonly pointer   also `list`, `required`, `reset`, `script`
+//!         prop anchors QQuickAnchors readonly pointer   also `list`, `required`, `reset`, `script`, `final`
 //!         signal clicked mouse:QQuickMouseEvent   the arguments by name, `_` for one
 //!                                       without, each with `:` and its type when known
 //!         method forceActiveFocus
@@ -693,6 +693,10 @@ pub struct Property {
     /// What is written there is run when its time comes and is worth nothing
     /// until then: the `script` of a `ScriptAction`.
     pub is_script: bool,
+    /// No type deriving from the one that has it may declare a member of
+    /// its name: Qt refuses to make such a type. False in a table written
+    /// before this was recorded.
+    pub is_final: bool,
     /// Of a property of a face, what the type it faces calls it: `wrap` of
     /// `Ljos.Ui`'s `Text` was `wrapMode`. Only Ljós's own table has faces.
     pub was: Option<&'static str>,
@@ -1223,6 +1227,7 @@ fn read_member(
                 // the property of that name and type.
                 is_script: flags.contains(&"script")
                     || (type_name == "QQmlScriptString" && name == "script"),
+                is_final: flags.contains(&"final"),
                 was: flags.iter().find_map(|flag| flag.strip_prefix("was=")),
             });
             return flags.contains(&"named");

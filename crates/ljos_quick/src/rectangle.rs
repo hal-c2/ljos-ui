@@ -19,13 +19,14 @@ pub struct Rectangle {
     pub color: Color,
     #[qml(notify)]
     pub radius: f64,
-    #[qml(notify, reset = ljos_engine::Reset::Follow(all_radius))]
+    // Qt 6.11: a corner's radius is final, `radius` is not.
+    #[qml(notify, sealed, reset = ljos_engine::Reset::Follow(all_radius))]
     pub top_left_radius: f64,
-    #[qml(notify, reset = ljos_engine::Reset::Follow(all_radius))]
+    #[qml(notify, sealed, reset = ljos_engine::Reset::Follow(all_radius))]
     pub top_right_radius: f64,
-    #[qml(notify, reset = ljos_engine::Reset::Follow(all_radius))]
+    #[qml(notify, sealed, reset = ljos_engine::Reset::Follow(all_radius))]
     pub bottom_left_radius: f64,
-    #[qml(notify, reset = ljos_engine::Reset::Follow(all_radius))]
+    #[qml(notify, sealed, reset = ljos_engine::Reset::Follow(all_radius))]
     pub bottom_right_radius: f64,
     #[qml(group)]
     pub border: RectangleBorder,

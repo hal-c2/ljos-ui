@@ -1652,10 +1652,10 @@ module Ljos.Ui
 		prototype QtQuick.Item named
 		prop fill QtQuick.color named was=color
 		prop radius QtQml.real named
-		prop topLeftRadius QtQml.real named reset
-		prop topRightRadius QtQml.real named reset
-		prop bottomLeftRadius QtQml.real named reset
-		prop bottomRightRadius QtQml.real named reset
+		prop topLeftRadius QtQml.real named final reset
+		prop topRightRadius QtQml.real named final reset
+		prop bottomLeftRadius QtQml.real named final reset
+		prop bottomRightRadius QtQml.real named final reset
 		prop border Ljos.Ui.RectangleBorder pointer readonly
 		prop gradient QtQml.var named reset
 		signal fillChanged
@@ -4027,44 +4027,44 @@ module QtQuick
 		prototype QtQml.QtObject named
 		default data
 		enum TransformOrigin TopLeft=0 Top=1 TopRight=2 Left=3 Center=4 Right=5 BottomLeft=6 Bottom=7 BottomRight=8
-		prop x QtQml.real named
-		prop y QtQml.real named
-		prop z QtQml.real named
-		prop width QtQml.real named reset
-		prop height QtQml.real named reset
+		prop x QtQml.real named final
+		prop y QtQml.real named final
+		prop z QtQml.real named final
+		prop width QtQml.real named final reset
+		prop height QtQml.real named final reset
 		prop implicitWidth QtQml.real named
 		prop implicitHeight QtQml.real named
-		prop visible QtQml.bool named
-		prop opacity QtQml.real named
+		prop visible QtQml.bool named final
+		prop opacity QtQml.real named final
 		prop clip QtQml.bool named
 		prop enabled QtQml.bool named
 		prop rotation QtQml.real named
 		prop scale QtQml.real named
 		prop transformOrigin TransformOrigin
-		prop parent QtQml.QtObject named pointer
+		prop parent QtQml.QtObject named pointer final
 		prop data QtQml.var named list
 		prop children QtQml.var named list
 		prop resources QtQml.var named list
-		prop childrenRect QtQml.rect named readonly
+		prop childrenRect QtQml.rect named readonly final
 		prop baselineOffset QtQml.real named
 		prop antialiasing QtQml.bool named reset
 		prop smooth QtQml.bool named
-		prop anchors QtQuick.Anchors pointer readonly
-		prop left QtQml.var named readonly
-		prop right QtQml.var named readonly
-		prop top QtQml.var named readonly
-		prop bottom QtQml.var named readonly
-		prop horizontalCenter QtQml.var named readonly
-		prop verticalCenter QtQml.var named readonly
-		prop baseline QtQml.var named readonly
-		prop focus QtQml.bool named
-		prop activeFocus QtQml.bool named readonly
-		prop activeFocusOnTab QtQml.bool named
+		prop anchors QtQuick.Anchors pointer readonly final
+		prop left QtQml.var named readonly final
+		prop right QtQml.var named readonly final
+		prop top QtQml.var named readonly final
+		prop bottom QtQml.var named readonly final
+		prop horizontalCenter QtQml.var named readonly final
+		prop verticalCenter QtQml.var named readonly final
+		prop baseline QtQml.var named readonly final
+		prop focus QtQml.bool named final
+		prop activeFocus QtQml.bool named readonly final
+		prop activeFocusOnTab QtQml.bool named final
 		prop states QtQml.var named list
 		prop state QtQml.string named
 		prop transitions QtQml.var named list
-		prop transform QtQml.var named list
-		prop layer QtQuick.ItemLayer pointer readonly
+		prop transform QtQml.var named list final
+		prop layer QtQuick.ItemLayer pointer readonly final
 		prop palette QtQuick.Palette named pointer reset
 		signal xChanged
 		signal yChanged
@@ -4729,10 +4729,10 @@ module QtQuick
 		prototype QtQuick.Item named
 		prop color QtQuick.color named
 		prop radius QtQml.real named
-		prop topLeftRadius QtQml.real named reset
-		prop topRightRadius QtQml.real named reset
-		prop bottomLeftRadius QtQml.real named reset
-		prop bottomRightRadius QtQml.real named reset
+		prop topLeftRadius QtQml.real named final reset
+		prop topRightRadius QtQml.real named final reset
+		prop bottomLeftRadius QtQml.real named final reset
+		prop bottomRightRadius QtQml.real named final reset
 		prop border QtQuick.RectangleBorder pointer readonly
 		prop gradient QtQml.var named reset
 		signal colorChanged

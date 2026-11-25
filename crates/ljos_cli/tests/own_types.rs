@@ -525,6 +525,7 @@ impl<'a, 'c> Module<'a, 'c> {
             for (flag, word) in [
                 (PropertyFlags::READONLY, " readonly"),
                 (PropertyFlags::REQUIRED, " required"),
+                (PropertyFlags::SEALED, " final"),
             ] {
                 if property.flags.contains(flag) {
                     out.push_str(word);

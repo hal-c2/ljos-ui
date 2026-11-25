@@ -64,6 +64,8 @@ pub struct Property {
     pub is_required: bool,
     /// Qt names a reset function: assigning `undefined` takes it back.
     pub has_reset: bool,
+    /// No type deriving from the class may declare a member of its name.
+    pub is_final: bool,
 }
 
 #[derive(Debug, Default, Clone)]
