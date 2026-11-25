@@ -66,35 +66,72 @@ const ASKED: &str = "shared_prefs/dev.ljos.permissions.xml";
 /// How long the system's question of a permission may take to come.
 const ASKING: Duration = Duration::from_secs(5);
 
-/// What `find` sees on the screens `read` gives, read again while it sees
-/// nothing until `until`. A screen never read by then is an error: that no
-/// question was seen proves nothing. One read that saw nothing is enough
-/// to say nothing was seen, whatever the reads after it failed on.
-fn seen_until<T>(
+/// What `find` sees in what `read` gives, read again while it sees
+/// nothing until `until`. That nothing was seen is said by a read made at
+/// `until` or after it: one before it says nothing of a question that
+/// comes later. A read that fails then is tried again for `grace` more,
+/// and is an error after that: a screen not read proves nothing.
+fn seen_until<S, T>(
     until: Instant,
-    mut read: impl FnMut() -> Result<Vec<ScreenNode>>,
-    find: impl Fn(&[ScreenNode]) -> Option<T>,
+    grace: Duration,
+    mut read: impl FnMut() -> Result<S>,
+    find: impl Fn(&S) -> Option<T>,
 ) -> Result<Option<T>> {
-    let mut ever_read = false;
     loop {
-        let unread = match read() {
-            Ok(nodes) => match find(&nodes) {
-                Some(seen) => return Ok(Some(seen)),
-                None => {
-                    ever_read = true;
-                    None
+        match read() {
+            Ok(seen) => {
+                if let Some(found) = find(&seen) {
+                    return Ok(Some(found));
                 }
-            },
-            Err(e) => Some(e),
-        };
-        if Instant::now() > until {
-            return match unread {
-                Some(e) if !ever_read => Err(e),
-                _ => Ok(None),
-            };
+                if Instant::now() > until {
+                    return Ok(None);
+                }
+            }
+            Err(e) if Instant::now() > until + grace => return Err(e),
+            Err(_) => {}
         }
         std::thread::sleep(Duration::from_millis(100));
     }
+}
+
+/// The question on screen: its words, and the activity record that shows
+/// it (`ActivityRecord{1f2e u0 …}`, from `dumpsys activity activities`).
+/// Each request starts an activity of its own, so the same words asked
+/// again, for another object or a stage after it, are another question.
+#[derive(Debug, PartialEq)]
+struct Shown {
+    message: Option<String>,
+    front: Option<String>,
+}
+
+impl Shown {
+    fn of(nodes: &[ScreenNode], activities: &str) -> Self {
+        Shown {
+            message: nodes
+                .iter()
+                .find(|n| n.id.ends_with(":id/permission_message"))
+                .map(|n| n.text.clone()),
+            front: front_record(activities).map(str::to_owned),
+        }
+    }
+
+    /// Whether the question `asked` showed has been answered: no question
+    /// is on screen now, or another one is.
+    fn answers(&self, asked: &Shown) -> bool {
+        self.message.is_none() || self.message != asked.message || self.front != asked.front
+    }
+}
+
+/// The record of the activity in front: what tells one started activity
+/// from another of the same class.
+fn front_record(activities: &str) -> Option<&str> {
+    activities
+        .lines()
+        .find(|l| l.contains("topResumedActivity") || l.contains("ResumedActivity:"))?
+        .split_once("ActivityRecord{")?
+        .1
+        .split(' ')
+        .next()
 }
 
 /// The permission (as the steps name it) the system's question on screen
@@ -974,7 +1011,12 @@ impl Platform for AndroidBackend {
         let phone = self.phone()?.clone();
         // The question is shown from the application's main thread, after
         // the request: a moment later.
-        let asked = seen_until(Instant::now() + ASKING, || phone.screen(), permission_asked)?;
+        let asked = seen_until(
+            Instant::now() + ASKING,
+            ASKING,
+            || phone.screen(),
+            |nodes| permission_asked(nodes),
+        )?;
         Ok(asked.map(|name| vec![name.to_owned()]).unwrap_or_default())
     }
 
@@ -989,14 +1031,24 @@ impl Platform for AndroidBackend {
                     .flatten()
             },
         )?;
+        let shown = |phone: &Phone| -> Result<Shown> {
+            let nodes = phone.screen()?;
+            Ok(Shown::of(
+                &nodes,
+                &phone.shell("dumpsys activity activities")?,
+            ))
+        };
+        let asked = shown(&phone)?;
         phone.tap(at)?;
         // The answer is taken once its question is gone. The application
         // need not be in front then: a request it queued behind this one
-        // is asked next, with no frame of the application between them.
+        // is asked next, with no frame of the application between them,
+        // and may ask for the same permission.
         let answered = seen_until(
             Instant::now() + PICKER,
-            || phone.screen(),
-            |nodes| (permission_asked(nodes) != Some(name)).then_some(()),
+            ASKING,
+            || shown(&phone),
+            |now| now.answers(&asked).then_some(()),
         )?;
         if answered.is_none() {
             return Err(BackendError::Failed(format!(
@@ -1257,8 +1309,9 @@ impl Device for AndroidBackend {
 #[cfg(test)]
 mod tests {
     use super::{
-        BackendError, FORGET_EVENTS, abort_query, download_path, permission_asked,
-        permission_button, picker_shown, quoted, scenario_dir, screen_nodes, seen_until,
+        BackendError, FORGET_EVENTS, Shown, abort_query, download_path, front_record,
+        permission_asked, permission_button, picker_shown, quoted, scenario_dir, screen_nodes,
+        seen_until,
     };
 
     // The main and crash logs are the whole phone's: another application's
@@ -1282,22 +1335,24 @@ mod tests {
 
     #[test]
     fn a_screen_never_read_is_not_one_that_asks_nothing() {
-        let past = std::time::Instant::now();
-        let unread = seen_until(
-            past,
-            || {
-                Err(BackendError::Failed(
-                    "uiautomator: could not get idle state".into(),
-                ))
-            },
-            permission_asked,
+        use std::time::{Duration, Instant};
+        let none = Duration::ZERO;
+        let asked = |nodes: &Vec<super::ScreenNode>| permission_asked(nodes);
+        let unread = || -> super::Result<Vec<super::ScreenNode>> {
+            Err(BackendError::Failed(
+                "uiautomator: could not get idle state".into(),
+            ))
+        };
+        assert!(
+            seen_until(Instant::now(), none, unread, asked).is_err(),
+            "an unread screen is an error"
         );
-        assert!(unread.is_err(), "an unread screen is an error");
-        let read = seen_until(past, || Ok(screen_nodes("")), permission_asked);
+        let read = seen_until(Instant::now(), none, || Ok(screen_nodes("")), asked);
         assert!(matches!(read, Ok(None)), "a read screen with no question");
         let mut reads = 0;
         let late = seen_until(
-            past + std::time::Duration::from_secs(5),
+            Instant::now() + Duration::from_secs(5),
+            none,
             || {
                 reads += 1;
                 if reads < 3 {
@@ -1310,9 +1365,12 @@ mod tests {
         );
         assert!(matches!(late, Ok(Some("camera"))), "read once it could be");
         assert_eq!(reads, 3);
+        // An empty screen before the deadline says nothing of a question
+        // that comes after it, when no screen could be read.
         let mut reads = 0;
-        let flaky = seen_until(
-            std::time::Instant::now() + std::time::Duration::from_millis(300),
+        let early = seen_until(
+            Instant::now() + Duration::from_millis(300),
+            none,
             || {
                 reads += 1;
                 if reads == 1 {
@@ -1321,17 +1379,58 @@ mod tests {
                     Err(BackendError::Failed("not now".into()))
                 }
             },
-            permission_asked,
+            asked,
         );
-        assert!(reads > 1, "read again after the screen that was read");
+        assert!(reads > 1);
         assert!(
-            matches!(flaky, Ok(None)),
-            "read once with nothing asked, whatever failed after"
+            early.is_err(),
+            "only a read before the deadline saw nothing"
         );
+        // A read that fails at the deadline is tried again for the grace.
+        let until = Instant::now() + Duration::from_millis(300);
+        let mut failed = false;
+        let again = seen_until(
+            until,
+            Duration::from_secs(5),
+            || {
+                if Instant::now() > until && !failed {
+                    failed = true;
+                    Err(BackendError::Failed("not now".into()))
+                } else {
+                    Ok(screen_nodes(""))
+                }
+            },
+            asked,
+        );
+        assert!(failed);
+        assert!(matches!(again, Ok(None)), "read again after the deadline");
     }
 
-    // Both samples are written by hand in the shapes `dumpsys activity
-    // activities` and `uiautomator dump` print; neither is a recording.
+    #[test]
+    fn a_question_asked_again_is_not_the_one_answered() {
+        let shown = |message: Option<&str>, front: &str| Shown {
+            message: message.map(str::to_owned),
+            front: Some(front.to_owned()),
+        };
+        let camera = Some("Allow Ljós to take pictures and record video?");
+        let asked = shown(camera, "1f2e");
+        assert!(!shown(camera, "1f2e").answers(&asked), "still asked");
+        assert!(shown(None, "9a0b").answers(&asked), "gone");
+        assert!(
+            shown(camera, "9a0b").answers(&asked),
+            "asked again, for another"
+        );
+        let all_the_time = Some("Allow Ljós to access this device's location all the time?");
+        assert!(
+            shown(all_the_time, "1f2e").answers(&asked),
+            "the next stage"
+        );
+        let activities = "  ResumedActivity: ActivityRecord{1f2e u0 \
+             com.google.android.permissioncontroller/.GrantPermissionsActivity t12}\n";
+        assert_eq!(front_record(activities), Some("1f2e"));
+        assert_eq!(front_record("nothing resumed\n"), None);
+    }
+
     #[test]
     fn the_picker_in_front_says_its_kind() {
         let picker = "com.google.android.documentsui/com.android.documentsui.picker.PickActivity";
