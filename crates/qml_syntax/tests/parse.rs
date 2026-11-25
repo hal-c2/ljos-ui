@@ -206,6 +206,14 @@ fn final_marks_a_declared_property_that_no_subtype_may_override() {
 }
 
 #[test]
+fn final_is_said_only_of_a_declared_property() {
+    assert!(!diagnostics("Item { final foo }").is_empty());
+    assert!(!diagnostics("Item { required final foo }").is_empty());
+    assert!(diagnostics("Item { final property int foo }").is_empty());
+    assert!(diagnostics("Item { required foo }").is_empty());
+}
+
+#[test]
 fn an_enum_counts_from_where_it_is_told() {
     let allocator = Allocator::default();
     let document = parse(
