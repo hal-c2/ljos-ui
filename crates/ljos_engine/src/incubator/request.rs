@@ -319,10 +319,17 @@ impl Engine {
             .push(Rc::new(f));
     }
 
+    /// One listener at a time, by index: every `createObject` passes here,
+    /// and a copy of the list would be an allocation each (the budget's
+    /// `ten_plain_items`). A listener may still add one while it runs.
     fn script_made(&self, obj: ObjectId) {
-        let listeners = self.inner.script_made_listeners.borrow().clone();
-        for l in listeners {
+        let mut at = 0;
+        loop {
+            let Some(l) = self.inner.script_made_listeners.borrow().get(at).cloned() else {
+                break;
+            };
             l(self, obj);
+            at += 1;
         }
     }
 
