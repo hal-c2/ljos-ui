@@ -126,7 +126,9 @@ pub struct WindowAttributes {
 /// and `Qt.NoTitleBarBackgroundHint`. A platform that cannot put the
 /// window's content under its title bar keeps it below; one that can says
 /// how much of the window the title bar still holds as the window's safe
-/// area ([`crate::WindowEvent::Insets`]).
+/// area ([`crate::WindowEvent::Insets`]). A shell with one safe area for
+/// its scene, as Ljós's is, takes it from its root window: another window
+/// whose content reaches under its title bar keeps no room for it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ClientArea {
     /// The content covers the whole window, title bar included.

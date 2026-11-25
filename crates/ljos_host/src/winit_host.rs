@@ -545,32 +545,29 @@ where
     /// the title bar holds, when that is not what it was last told. Only
     /// a window whose content reaches under its title bar has any.
     fn report_insets(&mut self, event_loop: &ActiveEventLoop) {
-        for id in std::mem::take(&mut self.state.insets_stale) {
-            let Some(window) = self.state.windows.get(&id).cloned() else {
-                continue;
-            };
-            let (decorated, area) = self
-                .state
+        let state = &mut self.state;
+        let changed = insets_to_tell(&mut state.insets_stale, &mut state.insets, |id| {
+            let window = state.windows.get(id)?;
+            let (decorated, area) = state
                 .frames
-                .get(&id)
+                .get(id)
                 .copied()
                 .unwrap_or((true, ClientArea::default()));
-            let now = platform::title_bar_insets(&window, decorated, area);
-            let was = self.state.insets.insert(id, now).unwrap_or_default();
-            if was != now {
-                let insets = Insets {
-                    system_bars: now,
-                    ..Insets::default()
-                };
-                self.deliver(
-                    event_loop,
-                    Event::Window {
-                        id,
-                        event: WindowEvent::Insets(insets),
-                        raw: None,
-                    },
-                );
-            }
+            Some(platform::title_bar_insets(window, decorated, area))
+        });
+        for (id, now) in changed {
+            let insets = Insets {
+                system_bars: now,
+                ..Insets::default()
+            };
+            self.deliver(
+                event_loop,
+                Event::Window {
+                    id,
+                    event: WindowEvent::Insets(insets),
+                    raw: None,
+                },
+            );
         }
     }
 
@@ -1373,6 +1370,25 @@ struct TitleBar {
     content_under_it: bool,
 }
 
+/// Of the windows whose title bar may have changed (`stale`, emptied), the
+/// ones that still are and whose insets, as `measure` gives them, are not
+/// what each was last `told`. A window's first insets are told even when
+/// they are none: a window made anew after one that had some (a change of
+/// transparency does that) must clear what its engine was told before.
+fn insets_to_tell<K: Ord + std::hash::Hash + Clone>(
+    stale: &mut BTreeSet<K>,
+    told: &mut HashMap<K, [f64; 4]>,
+    mut measure: impl FnMut(&K) -> Option<[f64; 4]>,
+) -> Vec<(K, [f64; 4])> {
+    std::mem::take(stale)
+        .into_iter()
+        .filter_map(|id| {
+            let now = measure(&id)?;
+            (told.insert(id.clone(), now) != Some(now)).then_some((id, now))
+        })
+        .collect()
+}
+
 /// A decorated window whose client area is expanded keeps its title bar
 /// and buttons over the content, as Qt's does with
 /// `NSWindowStyleMaskFullSizeContentView`; without its background the bar
@@ -1583,6 +1599,47 @@ mod tests {
         );
         assert!(bare.content_under_it && bare.transparent);
         assert!(!bare.title_hidden && !bare.buttons_hidden);
+    }
+
+    /// Only windows whose title bar may have changed are measured, a window
+    /// is told its insets when they are not what it was told last, the
+    /// first time included, and one that has gone is passed over (#731).
+    #[test]
+    fn a_window_is_told_its_title_bar_insets_when_they_change() {
+        let bar = [0.0, 28.0, 0.0, 0.0];
+        let mut stale = BTreeSet::from([1, 2]);
+        let mut told = HashMap::new();
+        let mut measured = Vec::new();
+        let mut tell = |stale: &mut BTreeSet<i32>, told: &mut HashMap<_, _>, of: [f64; 4]| {
+            insets_to_tell(stale, told, |id| {
+                measured.push(*id);
+                (*id != 3).then_some(of)
+            })
+        };
+        assert_eq!(
+            tell(&mut stale, &mut told, [0.0; 4]),
+            vec![(1, [0.0; 4]), (2, [0.0; 4])],
+            "a window's first insets are told, even none"
+        );
+        assert!(stale.is_empty());
+        assert!(
+            tell(&mut stale, &mut told, [0.0; 4]).is_empty(),
+            "none stale"
+        );
+        stale.insert(1);
+        assert!(
+            tell(&mut stale, &mut told, [0.0; 4]).is_empty(),
+            "unchanged"
+        );
+        stale.extend([1, 3]);
+        assert_eq!(tell(&mut stale, &mut told, bar), vec![(1, bar)]);
+        stale.insert(1);
+        assert_eq!(
+            tell(&mut stale, &mut told, [0.0; 4]),
+            vec![(1, [0.0; 4])],
+            "back to a plain window"
+        );
+        assert_eq!(measured, [1, 2, 1, 1, 3, 1]);
     }
 
     #[test]
