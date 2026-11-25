@@ -66,6 +66,29 @@ const ASKED: &str = "shared_prefs/dev.ljos.permissions.xml";
 /// How long the system's question of a permission may take to come.
 const ASKING: Duration = Duration::from_secs(5);
 
+/// What `find` sees on the screens `read` gives, read again while it sees
+/// nothing until `until`. A screen still unread then is an error: that no
+/// question was seen on it proves nothing.
+fn seen_until<T>(
+    until: Instant,
+    mut read: impl FnMut() -> Result<Vec<ScreenNode>>,
+    find: impl Fn(&[ScreenNode]) -> Option<T>,
+) -> Result<Option<T>> {
+    loop {
+        let unread = match read() {
+            Ok(nodes) => match find(&nodes) {
+                Some(seen) => return Ok(Some(seen)),
+                None => None,
+            },
+            Err(e) => Some(e),
+        };
+        if Instant::now() > until {
+            return unread.map_or(Ok(None), Err);
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
 /// The permission (as the steps name it) the system's question on screen
 /// asks for, by its English words.
 fn permission_asked(nodes: &[ScreenNode]) -> Option<&'static str> {
@@ -943,17 +966,8 @@ impl Platform for AndroidBackend {
         let phone = self.phone()?.clone();
         // The question is shown from the application's main thread, after
         // the request: a moment later.
-        let until = Instant::now() + ASKING;
-        loop {
-            let asked = phone.screen().ok().as_deref().and_then(permission_asked);
-            if let Some(name) = asked {
-                return Ok(vec![name.to_owned()]);
-            }
-            if Instant::now() > until {
-                return Ok(Vec::new());
-            }
-            std::thread::sleep(Duration::from_millis(100));
-        }
+        let asked = seen_until(Instant::now() + ASKING, || phone.screen(), permission_asked)?;
+        Ok(asked.map(|name| vec![name.to_owned()]).unwrap_or_default())
     }
 
     fn answer_permission(&mut self, name: &str, granted: bool) -> Result<()> {
@@ -1227,8 +1241,8 @@ impl Device for AndroidBackend {
 #[cfg(test)]
 mod tests {
     use super::{
-        FORGET_EVENTS, abort_query, download_path, permission_asked, permission_button,
-        picker_shown, quoted, scenario_dir, screen_nodes,
+        BackendError, FORGET_EVENTS, abort_query, download_path, permission_asked,
+        permission_button, picker_shown, quoted, scenario_dir, screen_nodes, seen_until,
     };
 
     // The main and crash logs are the whole phone's: another application's
@@ -1248,6 +1262,38 @@ mod tests {
         assert_eq!(abort_query("10123", "%s.%N"), None);
         assert_eq!(abort_query("10123", ""), None);
         assert_eq!(abort_query("10 23", "1795595685"), None);
+    }
+
+    #[test]
+    fn a_screen_never_read_is_not_one_that_asks_nothing() {
+        let past = std::time::Instant::now();
+        let unread = seen_until(
+            past,
+            || {
+                Err(BackendError::Failed(
+                    "uiautomator: could not get idle state".into(),
+                ))
+            },
+            permission_asked,
+        );
+        assert!(unread.is_err(), "an unread screen is an error");
+        let read = seen_until(past, || Ok(screen_nodes("")), permission_asked);
+        assert!(matches!(read, Ok(None)), "a read screen with no question");
+        let mut reads = 0;
+        let late = seen_until(
+            past + std::time::Duration::from_secs(5),
+            || {
+                reads += 1;
+                if reads < 3 {
+                    Err(BackendError::Failed("not yet".into()))
+                } else {
+                    Ok(screen_nodes(""))
+                }
+            },
+            |_| Some("camera"),
+        );
+        assert!(matches!(late, Ok(Some("camera"))), "read once it could be");
+        assert_eq!(reads, 3);
     }
 
     // Both samples are written by hand in the shapes `dumpsys activity
