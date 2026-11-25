@@ -69,6 +69,28 @@ Feature: A type cannot redeclare a final member of the type it derives from
         | Item      | signal width()             |
         | Item      | x: 2                       |
 
+    Scenario Outline: A base's <member> called left does not hide Item's final left
+      Given the file "Base.qml":
+        """qml
+        import QtQuick
+        Item {
+          <member>
+        }
+        """
+      And the file "Final.qml":
+        """qml
+        import QtQuick
+        Base {
+          property bool left
+        }
+        """
+      Then loading "Final.qml" is rejected
+
+      Examples:
+        | member              |
+        | function left() { } |
+        | signal left()       |
+
   Rule: `final property` declares a property no derived type may declare again
 
     Scenario Outline: `<declaration>` declares a property

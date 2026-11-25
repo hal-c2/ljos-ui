@@ -510,9 +510,9 @@ impl<'a, O: TypeOracle> Analysis<'a, '_, '_, O> {
             // `required name` marks an inherited property; it declares nothing.
             if let QmlMember::Property(declaration) = member
                 && declaration.type_name.is_some()
-                && let Some(TypeMember::Property(base)) =
-                    self.types.member(&kind, declaration.name.name.as_str())
-                && base.is_final
+                && self
+                    .types
+                    .final_property(&kind, declaration.name.name.as_str())
             {
                 self.errors.push(Error::with_code(
                     Code::FinalOverride,
