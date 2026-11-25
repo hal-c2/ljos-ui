@@ -2824,8 +2824,105 @@ const PRELUDE: &str = r##"
       default: return hostColor(v, p, q, a);
     }
   }
+  // Qt.btoa and Qt.atob take a string, whose UTF-8 they code, or bytes,
+  // which they give back as an ArrayBuffer.
+  // Qt 6.11: these are three C++ overloads (QString, QByteArray,
+  // QVariantList), so a number, a boolean or an object is no bytes, a
+  // list is bytes only when each item is one, a lone surrogate is left
+  // out of the UTF-8, and decoding skips what is not of the alphabet,
+  // `=` included, and drops the bits short of a byte at the end.
+  const b64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  const b64Value = new Map(Array.from(b64, (c, i) => [c, i]));
+  const coding = (name, n) => {
+    if (n > 1) throw new Error("Too many arguments");
+    if (n < 1) {
+      throw new Error("Unable to determine callable overload.  Candidates are:\n    "
+        + name + "(QVariantList)\n    " + name + "(QByteArray)\n    " + name + "(QString)");
+    }
+  };
+  const utf8 = (s) => {
+    const out = [];
+    for (let i = 0; i < s.length; i++) {
+      let c = s.charCodeAt(i);
+      if (c >= 0xd800 && c <= 0xdfff) {
+        const low = s.charCodeAt(i + 1);
+        if (c > 0xdbff || !(low >= 0xdc00 && low <= 0xdfff)) continue;
+        c = 0x10000 + ((c - 0xd800) << 10) + (low - 0xdc00);
+        i++;
+      }
+      if (c < 0x80) out.push(c);
+      else if (c < 0x800) out.push(0xc0 | (c >> 6), 0x80 | (c & 63));
+      else if (c < 0x10000) out.push(0xe0 | (c >> 12), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63));
+      else out.push(0xf0 | (c >> 18), 0x80 | ((c >> 12) & 63), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63));
+    }
+    return out;
+  };
+  // What the bytes say as UTF-8, with U+FFFD for each malformed run.
+  const fromUtf8 = (bytes) => {
+    let s = "";
+    for (let i = 0; i < bytes.length;) {
+      const b = bytes[i];
+      const n = b < 0x80 ? 0 : b >= 0xc2 && b < 0xe0 ? 1 : b >= 0xe0 && b < 0xf0 ? 2 : b >= 0xf0 && b < 0xf5 ? 3 : -1;
+      let c = n === 0 ? b : n === 1 ? b & 31 : n === 2 ? b & 15 : b & 7;
+      let ok = n >= 0 && i + n < bytes.length;
+      for (let k = 1; ok && k <= n; k++) {
+        const t = bytes[i + k];
+        if ((t & 0xc0) !== 0x80) ok = false;
+        else c = (c << 6) | (t & 63);
+      }
+      if (ok && ((n === 2 && (c < 0x800 || (c >= 0xd800 && c <= 0xdfff))) || (n === 3 && (c < 0x10000 || c > 0x10ffff)))) ok = false;
+      if (!ok) { s += "�"; i++; continue; }
+      s += String.fromCodePoint(c);
+      i += n + 1;
+    }
+    return s;
+  };
+  // The bytes a value that is not a string stands for.
+  const bytesOf = (v) => {
+    if (v === undefined || v === null) {
+      throw new TypeError("Passing incompatible arguments to C++ functions from JavaScript is not allowed.");
+    }
+    if (v instanceof ArrayBuffer) return Array.from(new Uint8Array(v));
+    if (!Array.isArray(v)) return [];
+    return v.map((b) => {
+      if (!Number.isInteger(b) || b < 0 || b > 255) throw new Error("Invalid character");
+      return b;
+    });
+  };
+  const toBase64 = (bytes) => {
+    let s = "";
+    for (let i = 0; i < bytes.length; i += 3) {
+      const n = (bytes[i] << 16) | ((bytes[i + 1] ?? 0) << 8) | (bytes[i + 2] ?? 0);
+      s += b64[n >> 18] + b64[(n >> 12) & 63]
+        + (i + 1 < bytes.length ? b64[(n >> 6) & 63] : "=") + (i + 2 < bytes.length ? b64[n & 63] : "=");
+    }
+    return s;
+  };
+  const fromBase64 = (text) => {
+    const out = [];
+    let acc = 0, bits = 0;
+    for (const c of text) {
+      const v = b64Value.get(c);
+      if (v === undefined) continue;
+      acc = ((acc << 6) | v) & 0xffffff;
+      bits += 6;
+      if (bits >= 8) { bits -= 8; out.push((acc >> bits) & 255); }
+    }
+    return out;
+  };
+  const charCodes = (s) => Array.from(s, (c) => c.charCodeAt(0));
+  const buffer = (bytes) => new Uint8Array(bytes).buffer;
+  function btoa(data) {
+    coding("btoa", arguments.length);
+    return typeof data === "string" ? toBase64(utf8(data)) : buffer(charCodes(toBase64(bytesOf(data))));
+  }
+  function atob(data) {
+    coding("atob", arguments.length);
+    if (typeof data === "string") return fromUtf8(fromBase64(data));
+    return buffer(fromBase64(bytesOf(data).map((b) => String.fromCharCode(b)).join("")));
+  }
   const Qt = {
-    rgba, hsla, hsva,
+    rgba, hsla, hsva, btoa, atob,
     rgb: (r, gr, b) => hostColor(to16(r), to16(gr), to16(b), 65535),
     // point, size, rect, the vectors, quaternion, font.
     ...g.__ljos_faces.qt,
