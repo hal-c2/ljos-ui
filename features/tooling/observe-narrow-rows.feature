@@ -50,6 +50,9 @@ Feature: What the observer lists stays readable in a narrow window
       | 680   |
       | 390   |
 
+  # The ticker changes every 50 ms: tracing stops so that the list holds
+  # still, and the newest change, the list's last row, is the one read.
+  # Rows scrolled out of the list are not shown, whole or not.
   Scenario Outline: A traced change shows what changed
     When the application is observed
     And the observer's window is <width> by 800 pixels
@@ -57,7 +60,8 @@ Feature: What the observer lists stays readable in a narrow window
     And the observer's "role=listitem[name*=\"ticker\"]" is clicked
     And the observer's "role=button[name=\"Trace\"]" is clicked
     And the observer's "role=tab[name=\"Trace\"]" is clicked
-    Then the observer shows "ticks" whole
+    And the observer's "role=button[name*=\"Stop tracing\"]" is clicked
+    Then the observer's "role=list[name=\"Trace\"] >> text=ticks >> nth=-1" is shown whole
 
     Examples:
       | width |
@@ -156,14 +160,17 @@ Feature: What the observer lists stays readable in a narrow window
       | 760   |
 
   # Five roles at least 90 pixels each are wider than a phone: the roles
-  # and their rows scroll sideways together, so the last is reached.
+  # and their rows scroll sideways together, so the last is reached. A
+  # model numbers an element's roles from its last (as Qt 6.11 does), so
+  # its columns run from zebra5 to ant1; the scroll starts on the column
+  # of row numbers, which is always first.
   Scenario: A model's last role is reached in a narrow window
     When the application is observed
     And the observer's window is 390 by 800 pixels
     And the observer's "role=tab[name=\"Models\"]" is clicked
     And the observer's "role=listitem[name*=\"animals\"]" is clicked
-    And the observer's "name=\"ant1\"" is scrolled 20 notches right
-    Then the observer shows "zebra5" whole
+    And the observer's "name=\"row\"" is scrolled 20 notches right
+    Then the observer shows "ant1" whole
 
   # The rows' own scroll bar stays by the part of the table in view, not
   # at the far edge of columns scrolled out of it.
@@ -194,14 +201,17 @@ Feature: What the observer lists stays readable in a narrow window
     Then the observer's "role=scrollbar[name=\"Rows\"]" ends level with its "role=list[name=\"Rows\"]"
 
   # Stacked in a short window, the list, the wake opened and why the UI
-  # thread is awake need more height than there is: the page scrolls to
-  # the last of them rather than squeeze it away.
+  # thread is awake need more height than there is: the list keeps its
+  # height (its card 120 pixels, the list 6 in from each edge), and the
+  # page scrolls to the last of them rather than squeeze it away. The
+  # wake opened starts below the window, so the wheel is turned over the
+  # list: at its end, the page takes the rest.
   Scenario: A wake opened in a short narrow window scrolls to why it is awake
     When the application is observed
     And the observer's window is 390 by 520 pixels
     And the observer's "role=tab[name=\"Wakes\"]" is clicked
     And the observer's "role=button[name=\"Record\"]" is clicked
     And the observer's "role=list[name=\"Wakes\"] >> role=listitem[name*=\"timer\"] >> nth=-1" is clicked
-    And the observer's "role=button[name=\"Close\"]" is scrolled 20 notches down
-    Then the observer's "role=list[name=\"Wakes\"]" is at least 120 pixels high
-    And the observer shows "Why awake" whole
+    Then the observer's "role=list[name=\"Wakes\"]" is at least 100 pixels high
+    When the observer's "role=list[name=\"Wakes\"]" is scrolled 20 notches down
+    Then the observer shows "Why awake" whole

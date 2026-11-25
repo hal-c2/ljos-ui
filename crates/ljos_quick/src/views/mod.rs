@@ -596,12 +596,49 @@ pub(crate) fn place_in_view(e: &Engine, obj: ObjectId) -> Option<(usize, usize)>
     }
     let st = state_of(e, view)?;
     // Bumped whenever rows come, go or move.
-    if let Some(n) = st.trigger.get() {
+    for n in [st.trigger.get(), st.order.get()].into_iter().flatten() {
         let _ = e.graph().get(n);
     }
     let row = st.delegates()?.index_of(obj)?;
     let of = e.read(view, ItemView::COUNT.index).to_number() as usize;
     Some((row + 1, of.max(row + 1)))
+}
+
+/// Puts the rows of a view among `kids`, the visual children of an item,
+/// in the order of the rows they show, each into a place a row held: a
+/// view makes delegates from where it is scrolled to, often from its end
+/// backwards, so the order they were made in is not the order they are
+/// read in. What is not a row keeps its place. Untracked.
+pub(crate) fn in_row_order(e: &Engine, kids: &mut [ObjectId]) {
+    let mut slots = Vec::new();
+    let mut rows = Vec::new();
+    {
+        let registry = e.extension::<Registry>();
+        let items = registry.items.borrow();
+        for (slot, kid) in kids.iter().enumerate() {
+            if let Some(&(view, Part::Row)) = items.get(kid) {
+                slots.push(slot);
+                rows.push((view, *kid));
+            }
+        }
+    }
+    if rows.len() < 2 {
+        return;
+    }
+    let mut placed: Vec<(Option<usize>, ObjectId)> = rows
+        .into_iter()
+        .map(|(view, kid)| (view_index_of(e, view, kid), kid))
+        .collect();
+    if placed.is_sorted_by_key(|(at, _)| *at) {
+        return;
+    }
+    // A row the view no longer counts (one it is letting go) is read
+    // first; the sort is stable, so those keep their order among
+    // themselves.
+    placed.sort_by_key(|(at, _)| *at);
+    for (slot, (_, kid)) in slots.into_iter().zip(placed) {
+        kids[slot] = kid;
+    }
 }
 
 /// Makes the view of `cx` lay out its rows from now on.
@@ -611,6 +648,8 @@ fn start(cx: &Cx, grid: bool) -> Result<(), EngineError> {
     st.grid.set(grid);
     let scope = e.object_scope(me).ok_or_else(|| EngineError::dead(me))?;
     st.trigger
+        .set(Some(e.graph().property(scope, Value::Int(0))?));
+    st.order
         .set(Some(e.graph().property(scope, Value::Int(0))?));
     let delegates = ViewDelegates::new(me, Rc::new(changes::Host(me)));
     *st.delegates.borrow_mut() = Some(delegates.clone());

@@ -1199,6 +1199,13 @@ impl A11yPass {
         match d {
             Some(mut data) => {
                 if let Some(old) = self.tree.get(key) {
+                    // A row that moved in its view is read in its new
+                    // place: its parent's children are put in order again.
+                    if old.position_in_set != data.position_in_set
+                        && let Some(parent) = engine.untrack(|| engine.visual_parent(obj))
+                    {
+                        self.restructure.insert(parent);
+                    }
                     // The description does not know where the item is.
                     data.bounds = old.bounds;
                     self.tree.upsert(key, data);
@@ -1708,5 +1715,8 @@ fn described_children(engine: &Engine, obj: ObjectId) -> Vec<ObjectId> {
     if !out.is_empty() {
         kids.retain(|c| !out.contains(c));
     }
+    // In reading order: what a list's rows are read in, and what a test
+    // means by the last of them, is the order of the rows.
+    crate::views::in_row_order(engine, &mut kids);
     kids
 }

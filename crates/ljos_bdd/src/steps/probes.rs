@@ -709,10 +709,23 @@ fn observer_size(probes: &mut dyn crate::backend::Probes) -> Result<[f64; 2], Ba
 #[then(regex = r#"^the observer shows "([^"]+)" whole$"#)]
 fn observer_shows_whole(w: &mut LjosWorld, text: String) -> StepResult {
     let locator = format!("text={text}");
+    observer_whole(w, &locator, &text)
+}
+
+// One of a list's rows, as a locator picks it (the last, say), where the
+// words are in every row and those scrolled out of the list are not
+// shown at all.
+#[then(regex = r#"^the observer's "((?:[^"\\]|\\.)+)" is shown whole$"#)]
+fn observer_shown_whole(w: &mut LjosWorld, locator: String) -> StepResult {
+    let locator = unquoted(&locator);
+    observer_whole(w, &locator, &locator)
+}
+
+fn observer_whole(w: &mut LjosWorld, locator: &str, text: &str) -> StepResult {
     w.each(|b| {
         observer_holds(b.probes()?, |probes| {
             let [width, height] = observer_size(probes)?;
-            let all = boxes(probes, &locator)?;
+            let all = boxes(probes, locator)?;
             if all.is_empty() {
                 return Ok(Some(format!("it shows nothing matching {locator}")));
             }
