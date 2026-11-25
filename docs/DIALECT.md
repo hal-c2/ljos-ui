@@ -1414,7 +1414,9 @@ and removed with `parent.remove(child)`.
 **Creation order.** An object's initial properties, aliases and bindings
 are settled together, and only then do its change handlers run, in height
 order, before `Component.onCompleted`. A handler sees every binding of the
-object with its first value. Qt runs an initial property's handler as the
+object with its first value, and what a handler writes is told inside it,
+as in Qt (#746), ahead of the handlers still waiting. Qt runs an initial
+property's handler as the
 property is written, while its bindings are still pending, and a binding
 the handler reads is run there. DECISION (#331): Ljós keeps its batched
 order. Qt's belongs to compat, as each quirk marked `// Qt 6.11:` does,
