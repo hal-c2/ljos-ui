@@ -1471,10 +1471,8 @@ impl<V: Clone + 'static> Graph<V> {
         node.flags.set(Flags::SETTLING, true);
         node.flags.set(Flags::CAME_BACK, false);
         node.flags.set(Flags::MISSED, false);
-        i.forget_pull_walks();
-        i.queues.push(Queue::new());
-        let level = LevelGuard(self, i.waiting_changes.len(), None);
-        Some(HandlerHold(self, target, Some(level)))
+        drop(g);
+        Some(HandlerHold(self, target, Some(self.handler_level())))
     }
 
     /// Ends the hold [`Graph::hold_for_handler`] took on `n`.
@@ -1541,8 +1539,22 @@ impl<V: Clone + 'static> Graph<V> {
             std::mem::replace(&mut i.ahead, change)
         };
         let _ahead = AheadGuard(self, outer);
-        let _hold = self.hold_for_handler(target);
+        let hold = self.hold_for_handler(target);
+        // Of a property nothing binds, too: what the handler writes
+        // flushes only what it queued, and the bindings and handlers the
+        // change it is told of reached run after it ends, as in Qt.
+        let _level = hold.is_none().then(|| self.handler_level());
         self.untrack(|| handler(self, &v));
+    }
+
+    /// A flush level for a handler to run on: a flush nested in it runs
+    /// only what its writes queue, and what waited from before runs after
+    /// it ends.
+    fn handler_level(&self) -> LevelGuard<'_, V> {
+        let mut i = self.inner.borrow_mut();
+        i.forget_pull_walks();
+        i.queues.push(Queue::new());
+        LevelGuard(self, i.waiting_changes.len(), None)
     }
 
     #[inline(never)]
