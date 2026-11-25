@@ -14,7 +14,10 @@
 # once. Ljós differs on purpose: the initial properties and the
 # bindings settle together and the handlers run after, so each handler
 # sees a settled object. A handler never reads a half-made one, and an
-# append in a handler is never lost to a nested one. (#331)
+# append in a handler is never lost to a nested one. (#331) What a
+# handler writes is told inside it, as in Qt, so the handler of the
+# binding it made stale (tri) runs before the handlers still waiting
+# from the settle (dbl). (#746)
 
 @qt-diverges
 Feature: An object's handlers run once its initial properties and bindings have settled
@@ -90,7 +93,7 @@ Feature: An object's handlers run once its initial properties and bindings have 
 
   Scenario: A binding a handler makes stale runs again after it
     When the method "make" of "root" is called with true
-    Then the property "log" of "root" is "eval3 evtri w3/6 dbl6 evtri tri2 completed3/6"
+    Then the property "log" of "root" is "eval3 evtri w3/6 evtri tri2 dbl6 completed3/6"
 
   Scenario Outline: An incubated object settles as a created one does, <how>
     When the method "incubate" of "root" is called with {"writes": <writes>, "how": "<how>"}
@@ -101,8 +104,8 @@ Feature: An object's handlers run once its initial properties and bindings have 
       | how   | writes | log                                           |
       | sync  | false  | eval3 evtri w3/6 dbl6 tri8 completed3/6       |
       | later | false  | eval3 evtri w3/6 dbl6 tri8 completed3/6       |
-      | sync  | true   | eval3 evtri w3/6 dbl6 evtri tri2 completed3/6 |
-      | later | true   | eval3 evtri w3/6 dbl6 evtri tri2 completed3/6 |
+      | sync  | true   | eval3 evtri w3/6 evtri tri2 dbl6 completed3/6 |
+      | later | true   | eval3 evtri w3/6 evtri tri2 dbl6 completed3/6 |
 
   Scenario Outline: A property given through an alias settles before its handler, <how>
     When the method "alias" of "root" is called with "<how>"
