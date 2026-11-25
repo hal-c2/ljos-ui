@@ -693,7 +693,7 @@ impl Backend for AndroidBackend {
             )?;
         }
         // What the system logged before is another scenario's.
-        phone.shell("logcat -b events -c")?;
+        phone.shell("logcat -b events -b main -b crash -c")?;
         self.start()
     }
 
@@ -964,6 +964,27 @@ impl Device for AndroidBackend {
         // cleared as the scenario's files were written.
         let said = phone.shell("logcat -d -b events -s am_anr")?;
         Ok(said.lines().any(|l| l.contains(&phone.id)))
+    }
+
+    fn jni_errors(&mut self) -> Result<Vec<String>> {
+        let phone = self.phone()?.clone();
+        // By the application's user, not its process: a check that fails
+        // aborts the process, which is then gone. CheckJNI says what it
+        // refused in the main log, and the abort it makes again in the
+        // crash log.
+        // logcat keeps to one user's lines itself (`--uid`, Android 9).
+        let uid = phone.as_app("id -u", None)?.trim().to_owned();
+        if uid.is_empty() || !uid.bytes().all(|b| b.is_ascii_digit()) {
+            return Err(BackendError::Failed(format!(
+                "the application's user is not a number: {uid:?}"
+            )));
+        }
+        let said = phone.shell(&format!("logcat -d -b main -b crash --uid={uid}"))?;
+        Ok(said
+            .lines()
+            .filter(|l| l.contains("JNI DETECTED ERROR"))
+            .map(str::to_owned)
+            .collect())
     }
 
     fn connect_inspector(&mut self) -> Result<()> {

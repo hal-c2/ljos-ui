@@ -94,6 +94,24 @@ fn responding(w: &mut LjosWorld) -> StepResult {
     })
 }
 
+// A debug build checks every call native code makes into Java, and ends
+// the process on the first it refuses: a quit that ends that way is a
+// crash, not a quit.
+#[then("the system refused no JNI call of the application")]
+fn jni_clean(w: &mut LjosWorld) -> StepResult {
+    w.each(|b| {
+        let refused = b.device()?.jni_errors()?;
+        if refused.is_empty() {
+            Ok(())
+        } else {
+            Err(BackendError::Failed(format!(
+                "the system refused JNI calls of the application:\n{}",
+                refused.join("\n")
+            )))
+        }
+    })
+}
+
 #[given("the inspector of the application on the phone is connected over adb")]
 fn inspector_over_adb(w: &mut LjosWorld) -> StepResult {
     w.each(|b| b.device()?.connect_inspector())

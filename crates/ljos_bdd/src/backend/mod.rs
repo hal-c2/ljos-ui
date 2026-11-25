@@ -544,6 +544,15 @@ pub trait Device: Backend {
         ))
     }
 
+    /// What the system's checks of native code calling Java (Android's
+    /// CheckJNI) refused of the application since the scenario started,
+    /// one line each.
+    fn jni_errors(&mut self) -> Result<Vec<String>> {
+        Err(BackendError::NotImplemented(
+            "the system's checks of JNI calls",
+        ))
+    }
+
     /// The developer connects to the inspector of the application on the
     /// phone from the computer (`ljos android connect`: a port forwarded
     /// over adb, the token read with `run-as`); the inspector steps then
