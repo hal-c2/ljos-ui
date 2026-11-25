@@ -228,9 +228,9 @@ fn a_host_write_ahead_of_a_change_the_binding_does_not_read_lasts() {
 }
 
 /// `current` → `shown: current * 10`, and a handler ahead on `current`
-/// that writes `count`, which nothing binds (issue #746): the write tells
-/// the handler of `count` at once, and that of `shown` waits until the
-/// handler of `current` ends, as in Qt.
+/// that writes `count` → `twice: count * 2` (issue #746): the write tells
+/// the handlers of `count` and `twice` at once, and that of `shown` waits
+/// until the handler of `current` ends, as in Qt.
 #[test]
 fn a_write_in_a_handler_ahead_runs_only_what_it_reached() {
     let g: Graph<i64> = Graph::new();
@@ -238,7 +238,9 @@ fn a_write_in_a_handler_ahead_runs_only_what_it_reached() {
     let current = g.property(r, 0).unwrap();
     let shown = g.binding(r, 0, move |g| g.get(current) * 10).unwrap();
     let count = g.property(r, 0).unwrap();
+    let twice = g.binding(r, 0, move |g| g.get(count) * 2).unwrap();
     assert_eq!(g.get(shown), 0);
+    assert_eq!(g.get(twice), 0);
     let order: Rc<RefCell<Vec<&'static str>>> = Rc::default();
     let o = order.clone();
     g.watch_ahead(r, current, move |g, _| {
@@ -254,15 +256,21 @@ fn a_write_in_a_handler_ahead_runs_only_what_it_reached() {
     let o = order.clone();
     g.watch_ahead(r, count, move |_, _| o.borrow_mut().push("count changed"))
         .unwrap();
+    let o = order.clone();
+    g.watch_ahead(r, twice, move |_, _| o.borrow_mut().push("twice changed"))
+        .unwrap();
     g.set(current, 1);
     assert_eq!(
         *order.borrow(),
         [
             "handler starts",
             "count changed",
+            "twice changed",
             "handler ends",
             "shown changed"
         ]
     );
     assert_eq!(g.get(shown), 10);
+    assert_eq!(g.get(twice), 2);
+    g.check_invariants().unwrap();
 }
