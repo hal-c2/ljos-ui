@@ -2857,7 +2857,8 @@ const PRELUDE: &str = r##"
     }
     return out;
   };
-  // What the bytes say as UTF-8, with U+FFFD for each malformed run.
+  // What the bytes say as UTF-8, with U+FFFD for each byte that does not
+  // start a well-formed sequence.
   const fromUtf8 = (bytes) => {
     let s = "";
     for (let i = 0; i < bytes.length;) {
@@ -2877,7 +2878,10 @@ const PRELUDE: &str = r##"
     }
     return s;
   };
-  // The bytes a value that is not a string stands for.
+  // The bytes a value that is not a string stands for: an ArrayBuffer's,
+  // or an array's items, each a number below 256 (cut to a whole one, NaN
+  // being 0) or a string of one character below U+0100. Qt 6.12 gives a
+  // typed array, or anything else, no bytes.
   const bytesOf = (v) => {
     if (v === undefined || v === null) {
       throw new TypeError("Passing incompatible arguments to C++ functions from JavaScript is not allowed.");
@@ -2885,8 +2889,9 @@ const PRELUDE: &str = r##"
     if (v instanceof ArrayBuffer) return Array.from(new Uint8Array(v));
     if (!Array.isArray(v)) return [];
     return v.map((b) => {
-      if (!Number.isInteger(b) || b < 0 || b > 255) throw new Error("Invalid character");
-      return b;
+      if (typeof b === "number" && !(b < 0 || b >= 256)) return Math.trunc(b) || 0;
+      if (typeof b === "string" && b.length === 1 && b.charCodeAt(0) < 256) return b.charCodeAt(0);
+      throw new Error("Invalid character");
     });
   };
   const toBase64 = (bytes) => {
@@ -2910,6 +2915,18 @@ const PRELUDE: &str = r##"
     }
     return out;
   };
+  // Bytes given as bytes decode strictly: only the alphabet, then at most
+  // the padding that completes the last group of four.
+  const fromBase64Strict = (bytes) => {
+    let data = bytes.length;
+    while (data > 0 && bytes[data - 1] === 0x3d) data--;
+    const padding = bytes.length - data;
+    for (let i = 0; i < data; i++) {
+      if (!b64Value.has(String.fromCharCode(bytes[i]))) throw new Error("Invalid character");
+    }
+    if (padding > 0 && (padding > 2 || bytes.length % 4 !== 0)) throw new Error("Invalid character");
+    return fromBase64(bytes.slice(0, data).map((b) => String.fromCharCode(b)).join(""));
+  };
   const charCodes = (s) => Array.from(s, (c) => c.charCodeAt(0));
   const buffer = (bytes) => new Uint8Array(bytes).buffer;
   function btoa(data) {
@@ -2919,7 +2936,7 @@ const PRELUDE: &str = r##"
   function atob(data) {
     coding("atob", arguments.length);
     if (typeof data === "string") return fromUtf8(fromBase64(data));
-    return buffer(fromBase64(bytesOf(data).map((b) => String.fromCharCode(b)).join("")));
+    return buffer(fromBase64Strict(bytesOf(data)));
   }
   const Qt = {
     rgba, hsla, hsva, btoa, atob,
