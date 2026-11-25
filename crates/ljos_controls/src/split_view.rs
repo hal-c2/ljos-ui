@@ -24,7 +24,6 @@
 //! them.
 
 use std::cell::{Cell, RefCell};
-use std::collections::HashSet;
 use std::rc::Rc;
 
 use ljos_engine::{
@@ -53,10 +52,6 @@ pub(crate) struct SplitState {
     drag: Cell<Option<Drag>>,
     /// The handle the pointer is over.
     over: Cell<Option<ObjectId>>,
-    /// The items that were hidden when the view was last visible. A hidden
-    /// view makes every item read `visible: false`; that is not the items
-    /// hiding, and the view keeps their room for when it is shown again.
-    hidden: RefCell<HashSet<ObjectId>>,
 }
 
 /// A drag of a handle: which item it resizes, from where.
@@ -418,34 +413,12 @@ fn ask_of(e: &Engine, item: ObjectId, vertical: bool) -> Ask {
 }
 
 /// What each of `items` asks for (tracked), and whether it is shown.
-fn asks_of(
-    e: &Engine,
-    me: ObjectId,
-    st: &SplitState,
-    items: &[ObjectId],
-    vertical: bool,
-) -> Vec<Ask> {
-    let view_shown = flag(e, me, Item::VISIBLE.index);
-    let mut hidden = st.hidden.borrow_mut();
-    if view_shown {
-        hidden.clear();
-    }
+fn asks_of(e: &Engine, items: &[ObjectId], vertical: bool) -> Vec<Ask> {
     items
         .iter()
-        .map(|item| {
-            let shown = if view_shown {
-                let shown = flag(e, *item, Item::VISIBLE.index);
-                if !shown {
-                    hidden.insert(*item);
-                }
-                shown
-            } else {
-                !hidden.contains(item)
-            };
-            Ask {
-                shown,
-                ..ask_of(e, *item, vertical)
-            }
+        .map(|item| Ask {
+            shown: flag(e, *item, Item::VISIBLE.index),
+            ..ask_of(e, *item, vertical)
         })
         .collect()
 }
@@ -466,11 +439,18 @@ fn layout(e: &Engine, me: ObjectId) -> Result<(), EngineError> {
     let Some(st) = state_of(e, me) else {
         return Ok(());
     };
+    // A hidden view makes every item read `visible: false`, which is not
+    // the items hiding: it lays nothing out until it is shown, and keeps
+    // the room each had. Qt 6.11: a hidden view does not lay out at all,
+    // not even after its size changes.
+    if !flag(e, me, Item::VISIBLE.index) {
+        return Ok(());
+    }
     let _ = e.read(me, Container::COUNT.index);
     let vertical = is_vertical(e, me);
     let items = container::items(e, me);
     let handles = st.handles.borrow().clone();
-    let asks = asks_of(e, me, &st, &items, vertical);
+    let asks = asks_of(e, &items, vertical);
     let handle = handles
         .first()
         .map_or(0.0, |h| handle_length(e, *h, vertical));
@@ -653,7 +633,7 @@ fn press(e: &Engine, me: ObjectId, ev: &PointerEvent, at: kurbo::Point) -> bool 
     };
     let items = container::items(e, me);
     let vertical = e.untrack(|| is_vertical(e, me));
-    let asks = e.untrack(|| asks_of(e, me, &st, &items, vertical));
+    let asks = e.untrack(|| asks_of(e, &items, vertical));
     let Some((index, sign)) = resized(&asks, i) else {
         return true;
     };
