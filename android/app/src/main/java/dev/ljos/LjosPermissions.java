@@ -202,7 +202,11 @@ public final class LjosPermissions {
         for (String name : names) {
             asked.putBoolean(name, true);
         }
-        asked.apply();
+        // Written now, not later on a thread of its own: a process that
+        // quits ends with _exit (ljos_shell's end_process), which waits on
+        // no write still queued, and an asked name lost would read as never
+        // asked on the next launch.
+        asked.commit();
         // The next stage only once this one is granted.
         for (int result : results) {
             if (result != PackageManager.PERMISSION_GRANTED) {
