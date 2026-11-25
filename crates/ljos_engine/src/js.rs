@@ -2828,9 +2828,11 @@ const PRELUDE: &str = r##"
   // which they give back as an ArrayBuffer.
   // Qt 6.11: these are three C++ overloads (QString, QByteArray,
   // QVariantList), so a number, a boolean or an object is no bytes, a
-  // list is bytes only when each item is one, a lone surrogate is left
-  // out of the UTF-8, and decoding skips what is not of the alphabet,
-  // `=` included, and drops the bits short of a byte at the end.
+  // list is bytes only when each item is one, and a lone surrogate is left
+  // out of the UTF-8. Decoding a string skips what is not of the alphabet,
+  // `=` included, and drops the bits short of a byte at the end; decoding
+  // bytes (a list or an ArrayBuffer) throws unless every byte is of the
+  // alphabet and the `=` padding is right (checked on Qt 6.12).
   const b64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
   const b64Value = new Map(Array.from(b64, (c, i) => [c, i]));
   const coding = (name, n) => {

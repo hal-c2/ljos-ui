@@ -67,16 +67,19 @@ Feature: Base64 with Qt.btoa and Qt.atob
       | bytes(Qt.btoa([true]))         | throws Invalid character |
 
     Examples: bytes decode only when they are all of the alphabet and padded right
-      | expression                                | text |
-      | bytes(Qt.atob(["Y", "W", "I", "="]))      | ab   |
-      | bytes(Qt.atob([89, 87, 73]))              | ab   |
-      | bytes(Qt.atob(["Y", "Q", "=", "="]))      | a    |
-      | bytes(Qt.atob(["Y"]))                     |      |
-      | bytes(Qt.atob(["Y", " ", "Q"]))           | throws Invalid character |
-      | bytes(Qt.atob(["Y", "Q", "="]))           | throws Invalid character |
-      | bytes(Qt.atob(["Y", "Q", "=", "=", "A"])) | throws Invalid character |
-      | bytes(Qt.atob(["Y", "Q", "=", "=", "="])) | throws Invalid character |
-      | bytes(Qt.atob([0]))                       | throws Invalid character |
+      | expression                                              | text                     |
+      | bytes(Qt.atob(["Y", "W", "I", "="]))                    | ab                       |
+      | bytes(Qt.atob([89, 87, 73]))                            | ab                       |
+      | bytes(Qt.atob(["Y", "Q", "=", "="]))                    | a                        |
+      | bytes(Qt.atob(["Y"]))                                   |                          |
+      | bytes(Qt.atob(["Y", " ", "Q"]))                         | throws Invalid character |
+      | bytes(Qt.atob(["Y", "Q", "="]))                         | throws Invalid character |
+      | bytes(Qt.atob(["Y", "Q", "=", "=", "A"]))               | throws Invalid character |
+      | bytes(Qt.atob(["Y", "Q", "=", "=", "="]))               | throws Invalid character |
+      | bytes(Qt.atob([0]))                                     | throws Invalid character |
+      | bytes(Qt.atob(new Uint8Array([89, 81, 61, 61]).buffer)) | a                        |
+      | bytes(Qt.atob(new Uint8Array([89, 32, 81]).buffer))     | throws Invalid character |
+      | bytes(Qt.atob(new Uint8Array([89, 81, 61]).buffer))     | throws Invalid character |
 
     Examples: the wrong number of arguments throws
       | expression                     | text |
