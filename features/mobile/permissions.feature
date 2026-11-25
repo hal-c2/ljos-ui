@@ -5,6 +5,8 @@
 #   https://developer.android.com/training/permissions/requesting
 #   https://developer.android.com/reference/android/app/Activity#requestPermissions(java.lang.String[],%20int)
 #   https://developer.android.com/reference/android/Manifest.permission
+#   https://developer.android.com/develop/connectivity/bluetooth/bt-permissions
+#   https://developer.android.com/develop/sensors-and-location/location/permissions/runtime
 #   docs/ARCHITECTURE.md (§10.1: the platform's services)
 #   https://github.com/hal-c2/ljos-ui/issues/616
 # On a phone a permission of QtCore is one or more of Android's runtime
@@ -61,6 +63,16 @@ Feature: A permission on a phone is the system's
     When the method "request" of "microphone" is called
     And the user denies the "microphone" permission
     Then the property "status" of "microphone" is 2
+
+  Scenario: A request made while another is asked waits for its answer
+    When the method "request" of "camera" is called
+    And the method "request" of "microphone" is called
+    Then the system asks the user for the "camera" permission
+    When the user grants the "camera" permission
+    Then the system asks the user for the "microphone" permission
+    When the user denies the "microphone" permission
+    Then the property "status" of "camera" is 1
+    And the property "status" of "microphone" is 2
 
   Scenario: A permission the manifest does not declare is denied without asking
     Then the property "status" of "contacts" is 2

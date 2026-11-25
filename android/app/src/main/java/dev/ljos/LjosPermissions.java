@@ -5,8 +5,12 @@ import android.content.SharedPreferences;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.os.Build;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Log;
 import android.util.SparseArray;
+import java.lang.ref.WeakReference;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
@@ -16,10 +20,16 @@ import java.util.Set;
 /**
  * The system's runtime permissions, for the application's native side
  * (ljos_platform's AndroidPermissions). What is asked comes as stages, a
- * line each, of {@code name@since} apart by spaces: the API level that made
- * the permission a runtime one, before which the system granted it at
- * install. A stage is asked once the one before it is granted (the
- * background location, since Android 11, only after the location in use).
+ * line each, of {@code name@since} or {@code name@since-until} apart by
+ * spaces: the API level that made the permission a runtime one, before
+ * which the system granted it at install, and the last that has it, after
+ * which nothing asks for it. A stage is asked once the one before it is
+ * granted (the background location, since Android 11, only after the
+ * location in use).
+ *
+ * <p>The system asks one question at a time: a request made while another
+ * is shown would be cut short. A request waits for the ones before it
+ * ({@link #waiting}).
  *
  * <p>The system says only whether a permission is granted; one it does
  * not grant is undetermined until the application has asked for it, and
@@ -36,6 +46,17 @@ public final class LjosPermissions {
     /** The whole question, by the request's code, for its answer. */
     private static final SparseArray<String> questions = new SparseArray<>();
 
+    /** The request being asked, or 0; codes start at 1. */
+    private static int asked;
+
+    /** Requests made while another was asked, in order. */
+    private static final ArrayDeque<Integer> waiting = new ArrayDeque<>();
+
+    /** The activity the system's question was shown from. */
+    private static WeakReference<LjosActivity> shownFrom = new WeakReference<>(null);
+
+    private static final Handler main = new Handler(Looper.getMainLooper());
+
     private LjosPermissions() {}
 
     private static native void nativeAnswered(int code, String states);
@@ -50,7 +71,7 @@ public final class LjosPermissions {
         SharedPreferences asked = context.getSharedPreferences(ASKED, Context.MODE_PRIVATE);
         StringBuilder out = new StringBuilder();
         for (String name : names(stages, false)) {
-            if (since(name) > Build.VERSION.SDK_INT) {
+            if (!applies(name)) {
                 out.append('g');
             } else if (!declared.contains(bare(name))) {
                 Log.w("ljos", bare(name) + " is not declared in the manifest: it is denied");
@@ -67,31 +88,40 @@ public final class LjosPermissions {
     /**
      * Asks the user for what the system does not grant yet, from the
      * activity on screen; the answer comes to the native side with
-     * {@code code}, at once when there is nothing the system would ask.
-     * False when no activity is there to ask from.
+     * {@code code}, at once when there is nothing the system would ask, and
+     * after the requests made before it are answered. False when no
+     * activity is there to ask from.
      */
     public static boolean request(Context context, String stages, int code) {
-        LjosActivity activity = LjosActivity.current();
-        if (activity == null) {
+        if (LjosActivity.current() == null) {
             return false;
         }
         List<String[]> left = new ArrayList<>();
         for (String stage : stages.split("\n")) {
             left.add(names(stage, true).toArray(new String[0]));
         }
+        boolean first;
         synchronized (asking) {
             asking.put(code, left);
             questions.put(code, stages);
+            first = asked == 0;
+            if (first) {
+                asked = code;
+            } else {
+                waiting.add(code);
+            }
         }
-        activity.runOnUiThread(() -> next(activity, code));
+        if (first) {
+            main.post(() -> next(code));
+        }
         return true;
     }
 
     /**
      * Asks the next stage of {@code code}, or answers when none is left or
-     * the stage can't be granted.
+     * the stage can't be granted. On the main thread.
      */
-    private static void next(LjosActivity activity, int code) {
+    private static void next(int code) {
         String[] stage;
         String question;
         synchronized (asking) {
@@ -102,6 +132,13 @@ public final class LjosPermissions {
         if (question == null) {
             return;
         }
+        // The activity on screen now: the one the request was made from
+        // may have been made again since, or be gone.
+        LjosActivity activity = LjosActivity.current();
+        if (activity == null) {
+            answer(code, null);
+            return;
+        }
         if (stage == null) {
             answer(code, states(activity, question));
             return;
@@ -110,21 +147,36 @@ public final class LjosPermissions {
         // system decides whether it shows its question once more. One the
         // manifest does not declare it would deny without a word.
         Set<String> declared = declared(activity);
-        List<String> ask = new ArrayList<>();
+        boolean granted = true;
         for (String name : stage) {
             if (!declared.contains(name)) {
                 answer(code, states(activity, question));
                 return;
             }
-            if (activity.checkSelfPermission(name) != PackageManager.PERMISSION_GRANTED) {
-                ask.add(name);
-            }
+            granted &= activity.checkSelfPermission(name) == PackageManager.PERMISSION_GRANTED;
         }
-        if (ask.isEmpty()) {
-            next(activity, code);
+        if (granted) {
+            next(code);
             return;
         }
-        activity.requestPermissions(ask.toArray(new String[0]), code);
+        // The whole stage, what is granted too: Android 12 upgrades the
+        // approximate location to the precise one only when both are asked.
+        shownFrom = new WeakReference<>(activity);
+        activity.requestPermissions(stage, code);
+    }
+
+    /**
+     * The activity is gone for good, not made again: the question it showed
+     * is not answered to it, and so is cut short.
+     */
+    static void ended(LjosActivity activity) {
+        int code;
+        synchronized (asking) {
+            code = shownFrom.get() == activity ? asked : 0;
+        }
+        if (code != 0) {
+            answer(code, null);
+        }
     }
 
     /**
@@ -140,6 +192,7 @@ public final class LjosPermissions {
         if (!known) {
             return;
         }
+        shownFrom = new WeakReference<>(null);
         if (names.length == 0 || results.length == 0) {
             answer(code, null);
             return;
@@ -161,15 +214,29 @@ public final class LjosPermissions {
                 return;
             }
         }
-        next(activity, code);
+        next(code);
     }
 
+    /** Answers {@code code}, and asks the request waiting after it. */
     private static void answer(int code, String states) {
+        int following = 0;
         synchronized (asking) {
             asking.remove(code);
             questions.remove(code);
+            if (asked == code) {
+                Integer queued = waiting.poll();
+                asked = queued == null ? 0 : queued;
+                following = asked;
+                shownFrom = new WeakReference<>(null);
+            } else {
+                waiting.remove(code);
+            }
         }
         nativeAnswered(code, states);
+        if (following != 0) {
+            int then = following;
+            main.post(() -> next(then));
+        }
     }
 
     /**
@@ -184,7 +251,7 @@ public final class LjosPermissions {
             }
             if (!asked) {
                 out.add(name);
-            } else if (since(name) <= Build.VERSION.SDK_INT) {
+            } else if (applies(name)) {
                 out.add(bare(name));
             }
         }
@@ -196,12 +263,24 @@ public final class LjosPermissions {
         return at < 0 ? name : name.substring(0, at);
     }
 
-    private static int since(String name) {
+    /** Whether this version of Android has the permission {@code name@since-until}. */
+    private static boolean applies(String name) {
         int at = name.indexOf('@');
+        if (at < 0) {
+            return true;
+        }
+        String levels = name.substring(at + 1);
+        int dash = levels.indexOf('-');
+        int since = level(dash < 0 ? levels : levels.substring(0, dash), 0);
+        int until = dash < 0 ? Integer.MAX_VALUE : level(levels.substring(dash + 1), Integer.MAX_VALUE);
+        return since <= Build.VERSION.SDK_INT && Build.VERSION.SDK_INT <= until;
+    }
+
+    private static int level(String text, int otherwise) {
         try {
-            return at < 0 ? 0 : Integer.parseInt(name.substring(at + 1));
+            return Integer.parseInt(text);
         } catch (NumberFormatException e) {
-            return 0;
+            return otherwise;
         }
     }
 
