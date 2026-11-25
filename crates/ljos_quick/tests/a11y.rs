@@ -1061,3 +1061,76 @@ fn attached_blocks_read_their_own_enum_numbers() {
         assert_eq!(layout(o), bottom);
     }
 }
+
+const LIST_AT_END: &str = r#"
+import QtQuick
+ListView {
+    objectName: "list"
+    width: 200; height: 100
+    model: ListModel {
+        id: rows
+        objectName: "rows"
+        Component.onCompleted: { for (var i = 0; i < 40; ++i) append({ n: i + 1 }) }
+    }
+    delegate: Rectangle {
+        required property int n
+        width: 200; height: 30
+        Accessible.role: Accessible.ListItem
+        Accessible.name: "Row " + n
+    }
+}
+"#;
+
+/// The names of the list items, in the order the tree reads them.
+fn rows_read(s: &QuickScene) -> Vec<String> {
+    outline(s)
+        .into_iter()
+        .filter(|(role, ..)| *role == AkRole::ListItem)
+        .map(|(_, name, _)| name)
+        .collect()
+}
+
+/// Whether `names` ("Row 1", "Row 17", ...) are in the order of the rows.
+fn counting_up(names: &[String]) -> bool {
+    let at: Vec<u32> = names
+        .iter()
+        .map(|n| n.trim_start_matches("Row ").parse().unwrap())
+        .collect();
+    at.windows(2).all(|w| w[0] < w[1])
+}
+
+// A view placed at its end makes its delegates from the last row back:
+// they are still read top to bottom, and the last read is the last row.
+// The current row's delegate, which the view keeps, is read first.
+#[test]
+fn a_list_placed_at_its_end_reads_its_rows_in_order() {
+    let e = engine();
+    let root = load(&e, LIST_AT_END);
+    let mut s = active(&e, root);
+    e.invoke_by_name(root, "positionViewAtEnd", &[]).unwrap();
+    frame(&mut s, &e);
+    let read = rows_read(&s);
+    assert!(read.len() > 2, "{read:?}");
+    assert!(counting_up(&read), "{read:?}");
+    assert_eq!(read.last().map(String::as_str), Some("Row 40"));
+}
+
+// A row moved among rows the view already has is read in its new place,
+// though no delegate came or went.
+#[test]
+fn a_row_moved_in_a_list_is_read_in_its_new_place() {
+    let e = engine();
+    let root = load(&e, LIST_AT_END);
+    let mut s = active(&e, root);
+    let model = find(&e, root, "rows");
+    e.invoke_by_name(
+        model,
+        "move",
+        &[Value::Int(2), Value::Int(0), Value::Int(1)],
+    )
+    .unwrap();
+    frame(&mut s, &e);
+    let read = rows_read(&s);
+    assert_eq!(read.first().map(String::as_str), Some("Row 3"), "{read:?}");
+    assert_eq!(read.get(1).map(String::as_str), Some("Row 1"), "{read:?}");
+}

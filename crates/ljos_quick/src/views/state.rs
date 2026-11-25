@@ -251,6 +251,10 @@ pub(crate) struct ViewState {
     pub delegates: RefCell<Option<ViewDelegates>>,
     /// Bumped to make the layout effect run again.
     pub trigger: Cell<Option<NodeId>>,
+    /// Bumped whenever the delegates are numbered anew (rows came, went
+    /// or moved): what reads a row's place hears of it then, whatever
+    /// lays the rows out next.
+    pub order: Cell<Option<NodeId>>,
     pub in_pass: Cell<bool>,
     /// Something asked for a pass while one was running.
     pub dirty: Cell<bool>,
@@ -410,6 +414,7 @@ impl Default for ViewState {
             grid: Cell::new(false),
             delegates: RefCell::new(None),
             trigger: Cell::new(None),
+            order: Cell::new(None),
             in_pass: Cell::new(false),
             dirty: Cell::new(false),
             passes: Cell::new(0),

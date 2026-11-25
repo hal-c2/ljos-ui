@@ -411,6 +411,19 @@ impl ViewHost for Host {
         for &(row, object) in gone {
             leave(e, view, &st, object, row as i32);
         }
+        // The delegates have their new numbers now. The pass that lays the
+        // rows out is not the one to tell it: a current row that moved
+        // with them can lay them out first, and that pass asks for none.
+        if matches!(
+            change,
+            ModelChange::RowsInserted { .. }
+                | ModelChange::RowsRemoved { .. }
+                | ModelChange::RowsMoved { .. }
+                | ModelChange::ModelReset
+        ) && let Some(n) = st.order.get()
+        {
+            crate::item::bump_node(e, n);
+        }
         lay_out_later(e, view, &st);
     }
 }

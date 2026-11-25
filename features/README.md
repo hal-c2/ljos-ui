@@ -588,6 +588,7 @@ leaves items out fails rather than check part of them.
 | `When the observer's "locator" is shown` | waits for what an answer still on its way lays out, failing if it never comes |
 | `Then the observer shows "text"` / `does not show "text"` | an item whose words contain the text, whatever the case |
 | `Then the observer shows "text" whole` | every item with those words has room for all of them inside its window, is drawn at each of its corners (no panel around it clips it), and none is elided; an inspection cut short of saying whether it is elided fails |
+| `Then the observer's "locator" is shown whole` | the same, for every item the locator finds: one row of a list (`>> nth=-1`, the last, as the rows are read in their order) where the words are in every row and rows scrolled out of the list are not shown at all |
 | `Then the observer has "locator"` / `does not have "locator"` | an item the locator finds |
 | `Then the observer's "locator" is at least N pixels wide` / `high` | every item it finds is given that much room |
 | `Then every "locator" in the observer lies within the width of its window` | across only: a list holds rows below its window's bottom on purpose; a locator that finds nothing fails |
