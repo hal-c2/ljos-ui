@@ -1079,7 +1079,29 @@ impl Device for AndroidBackend {
 
 #[cfg(test)]
 mod tests {
-    use super::{download_path, picker_shown, quoted, scenario_dir, screen_nodes};
+    use super::{
+        FORGET_EVENTS, abort_query, download_path, picker_shown, quoted, scenario_dir,
+        screen_nodes,
+    };
+
+    // The main and crash logs are the whole phone's: another application's
+    // crash, or another run's scenario on the same phone, is not ours to
+    // clear. The abort is read from the scenario's start instead.
+    #[test]
+    fn the_aborts_are_read_from_the_scenarios_start_not_cleared() {
+        assert_eq!(FORGET_EVENTS, "logcat -b events -c");
+        assert_eq!(
+            abort_query("10123", "1795595685.807349043").as_deref(),
+            Some("logcat -d -b main -b crash --uid=10123 -t 1795595685.807")
+        );
+        assert_eq!(
+            abort_query("10123", "1795595685").as_deref(),
+            Some("logcat -d -b main -b crash --uid=10123 -t 1795595685.000")
+        );
+        assert_eq!(abort_query("10123", "%s.%N"), None);
+        assert_eq!(abort_query("10123", ""), None);
+        assert_eq!(abort_query("10 23", "1795595685"), None);
+    }
 
     // Both samples are written by hand in the shapes `dumpsys activity
     // activities` and `uiautomator dump` print; neither is a recording.
