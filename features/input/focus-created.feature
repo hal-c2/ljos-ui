@@ -74,7 +74,7 @@ Feature: An item made with focus has active focus when it is made
     Then the property "seen" of "root" is "no focus, not active"
     And the property "active" of "root" is ""
 
-  Scenario: An item made while another creation runs has it when that one is complete
+  Scenario: An item made while another creation runs has it before that one is complete
     When the method "makeNested" of "root" is called
-    Then the property "seen" of "root" is "inside: not active, after: active"
+    Then the property "seen" of "root" is "inside: active, after: active"
     And the property "active" of "root" is "made"
