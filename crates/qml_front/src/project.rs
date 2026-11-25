@@ -670,7 +670,9 @@ fn shape(summary: &mut Summary, inline: Option<&str>, root: &QmlObject<'_>) {
                             type_name: type_name.name.to_string(),
                             is_list: type_name.is_list,
                             is_readonly: property.is_readonly,
-                            is_final: property.is_final,
+                            // Qt 6.11: `final property alias` is not final.
+                            is_final: property.is_final
+                                && type_name.name.as_simple() != Some("alias"),
                             alias,
                         },
                     );

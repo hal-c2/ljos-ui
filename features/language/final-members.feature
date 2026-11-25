@@ -21,28 +21,30 @@ Feature: A type cannot redeclare a final member of the type it derives from
         """qml
         import QtQuick
         <type> {
-          Item { id: other; property int y }
+          Item { id: other; property int sample }
           <declaration>
         }
         """
       Then loading "Final.qml" is rejected
 
       Examples:
-        | type      | declaration                    |
-        | Item      | property bool left: false      |
-        | Item      | property real x                |
-        | Item      | property real width            |
-        | Item      | property var anchors           |
-        | Item      | property bool focus            |
-        | Item      | property bool activeFocus      |
-        | Item      | property var parent            |
-        | Item      | property var layer             |
-        | Item      | property real opacity          |
-        | Item      | property alias left: other.y   |
-        | Item      | final property int x           |
-        | Item      | readonly property int baseline |
-        | Rectangle | property bool left             |
-        | Rectangle | property real topLeftRadius    |
+        | type      | declaration                       |
+        | Item      | property bool left: false         |
+        | Item      | property real x                   |
+        | Item      | property real width               |
+        | Item      | property var anchors              |
+        | Item      | property bool focus               |
+        | Item      | property bool activeFocus         |
+        | Item      | property var parent               |
+        | Item      | property var layer                |
+        | Item      | property real opacity             |
+        | Item      | property alias left: other.sample |
+        | Item      | final property int x              |
+        | Item      | readonly property int baseline    |
+        | Rectangle | property bool left                |
+        | Rectangle | property real topLeftRadius       |
+        | MouseArea | property real x                   |
+        | Text      | property real width               |
 
     Scenario Outline: <declaration> on <type> loads
       Given the QML:
@@ -57,15 +59,15 @@ Feature: A type cannot redeclare a final member of the type it derives from
       Then the property "loaded" of "root" is true
 
       Examples:
-        | type      | declaration                  |
-        | Item      | property string objectName   |
-        | Item      | property bool clip           |
-        | Item      | property string state        |
-        | Item      | property real rotation       |
-        | Rectangle | property real radius         |
-        | Item      | function left() { }          |
-        | Item      | signal width()               |
-        | Item      | x: 2                         |
+        | type      | declaration                |
+        | Item      | property string objectName |
+        | Item      | property bool clip         |
+        | Item      | property string state      |
+        | Item      | property real rotation     |
+        | Rectangle | property real radius       |
+        | Item      | function left() { }        |
+        | Item      | signal width()             |
+        | Item      | x: 2                       |
 
   Rule: `final property` declares a property no derived type may declare again
 
@@ -81,11 +83,11 @@ Feature: A type cannot redeclare a final member of the type it derives from
       Then the property "count" of "root" is 2
 
       Examples:
-        | declaration                         |
-        | final property int count: 2         |
+        | declaration                          |
+        | final property int count: 2          |
         | readonly final property int count: 2 |
         | final readonly property int count: 2 |
-        | default final property int count: 2 |
+        | default final property int count: 2  |
 
     Scenario: A property called final is a property like any other
       Given the QML:
@@ -112,17 +114,42 @@ Feature: A type cannot redeclare a final member of the type it derives from
         """qml
         import QtQuick
         Base {
-          Item { id: other; property int y }
+          Item { id: other; property int sample }
           <declaration>
         }
         """
       Then loading "Final.qml" is rejected
 
       Examples:
-        | what              | declaration                  |
-        | a final property  | property int count           |
-        | it as final again | final property int count     |
-        | it as an alias    | property alias count: other.y |
+        | what              | declaration                        |
+        | a final property  | property int count                 |
+        | it as final again | final property int count           |
+        | it as an alias    | property alias count: other.sample |
+
+    Scenario Outline: A file may declare again <what> of its QML base
+      Given the file "Base.qml":
+        """qml
+        import QtQuick
+        Item {
+          id: base
+          property int n: 1
+          <alias>
+        }
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        Base {
+          objectName: "root"
+          property int count: 2
+        }
+        """
+      Then the property "count" of "root" is 2
+
+      Examples:
+        | what                       | alias                              |
+        | an alias it calls final    | final property alias count: base.n |
+        | an alias of Item's final x | property alias count: base.x       |
 
     Scenario: A file may declare again a property its QML base does not make final
       Given the file "Base.qml":

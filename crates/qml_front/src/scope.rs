@@ -459,7 +459,9 @@ impl<'a, O: TypeOracle> Analysis<'a, '_, '_, O> {
                     };
                     let name = declaration.name.name.as_str();
                     let property = Property {
-                        is_final: declaration.is_final,
+                        // Qt 6.11: `final property alias` is not final.
+                        is_final: declaration.is_final
+                            && type_name.name.as_simple() != Some("alias"),
                         ..Property::declared(
                             &type_name.name.to_string(),
                             type_name.is_list,
