@@ -207,7 +207,8 @@ Feature: What the observer lists stays readable in a narrow window
   # height (its card 120 pixels, the list 6 in from each edge), and the
   # page scrolls to the last of them rather than squeeze it away. The
   # wake opened starts below the window, so the wheel is turned over the
-  # list: at its end, the page takes the rest.
+  # list. A turn the list moves for is the list's alone, but the list
+  # follows the newest wake and so is at its end: the turn is the page's.
   Scenario: A wake opened in a short narrow window scrolls to why it is awake
     When the application is observed
     And the observer's window is 390 by 520 pixels
