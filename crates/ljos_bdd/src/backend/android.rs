@@ -78,12 +78,15 @@ fn seen_until<S, T>(
     find: impl Fn(&S) -> Option<T>,
 ) -> Result<Option<T>> {
     loop {
+        // When the read began: a screen captured before `until` says
+        // nothing of what comes after it, however late the read returns.
+        let began = Instant::now();
         match read() {
             Ok(seen) => {
                 if let Some(found) = find(&seen) {
                     return Ok(Some(found));
                 }
-                if Instant::now() > until {
+                if began >= until {
                     return Ok(None);
                 }
             }
@@ -1015,7 +1018,7 @@ impl Platform for AndroidBackend {
             Instant::now() + ASKING,
             ASKING,
             || phone.screen(),
-            |nodes| permission_asked(nodes),
+            |nodes: &Vec<ScreenNode>| permission_asked(nodes),
         )?;
         Ok(asked.map(|name| vec![name.to_owned()]).unwrap_or_default())
     }
@@ -1023,22 +1026,29 @@ impl Platform for AndroidBackend {
     fn answer_permission(&mut self, name: &str, granted: bool) -> Result<()> {
         let phone = self.phone()?.clone();
         let how = if granted { "grants" } else { "denies" };
-        let at = phone.wait_screen(
-            &format!("question of the {name:?} permission with a button that {how} it"),
-            |nodes| {
+        let shown = |phone: &Phone| -> Result<(Vec<ScreenNode>, String)> {
+            let nodes = phone.screen()?;
+            Ok((nodes, phone.shell("dumpsys activity activities")?))
+        };
+        // Where to tap and what was asked, from the one screen: read again
+        // while it moves, as the answer's is after it.
+        let found = seen_until(
+            Instant::now() + PICKER,
+            ASKING,
+            || shown(&phone),
+            |(nodes, activities): &(Vec<ScreenNode>, String)| {
                 (permission_asked(nodes) == Some(name))
                     .then(|| permission_button(nodes, granted))
                     .flatten()
+                    .map(|at| (at, Shown::of(nodes, activities)))
             },
         )?;
-        let shown = |phone: &Phone| -> Result<Shown> {
-            let nodes = phone.screen()?;
-            Ok(Shown::of(
-                &nodes,
-                &phone.shell("dumpsys activity activities")?,
-            ))
+        let Some((at, asked)) = found else {
+            return Err(BackendError::Failed(format!(
+                "the phone showed no question of the {name:?} permission with a button that {how} it within {} s",
+                PICKER.as_secs()
+            )));
         };
-        let asked = shown(&phone)?;
         phone.tap(at)?;
         // The answer is taken once its question is gone. The application
         // need not be in front then: a request it queued behind this one
@@ -1048,7 +1058,9 @@ impl Platform for AndroidBackend {
             Instant::now() + PICKER,
             ASKING,
             || shown(&phone),
-            |now| now.answers(&asked).then_some(()),
+            |(nodes, activities): &(Vec<ScreenNode>, String)| {
+                Shown::of(nodes, activities).answers(&asked).then_some(())
+            },
         )?;
         if answered.is_none() {
             return Err(BackendError::Failed(format!(
@@ -1404,6 +1416,22 @@ mod tests {
         );
         assert!(failed);
         assert!(matches!(again, Ok(None)), "read again after the deadline");
+        // A screen captured before the deadline, returned after it: read
+        // once more, begun at the deadline or after it.
+        let until = Instant::now() + Duration::from_millis(100);
+        let mut reads = 0;
+        let slow = seen_until(
+            until,
+            none,
+            || {
+                reads += 1;
+                std::thread::sleep(Duration::from_millis(300));
+                Ok(screen_nodes(""))
+            },
+            asked,
+        );
+        assert!(matches!(slow, Ok(None)));
+        assert_eq!(reads, 2, "the first read began before the deadline");
     }
 
     #[test]
