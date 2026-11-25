@@ -295,7 +295,34 @@ impl Engine {
     pub fn make<A: Allocated>(&self, req: Request<A>) -> Result<(ObjectId, Settled), EngineError> {
         match req.by {
             By::Native => self.make_now(req),
-            By::Script => self.native_for_script(|| self.make_now(req)),
+            By::Script => {
+                let made = self.native_for_script(|| self.make_now(req));
+                if let Ok((obj, settled)) = &made
+                    && !settled.withheld
+                {
+                    self.script_made(*obj);
+                }
+                made
+            }
+        }
+    }
+
+    /// Calls `f` with each object a script makes at once
+    /// (`createObject`), once it is complete and before the script holds
+    /// it: what an object's completion only asked for, as active focus
+    /// for an item made with `focus: true`, is there when the script
+    /// reads it (Qt 6.12), even inside a creation still running.
+    pub fn on_script_made(&self, f: impl Fn(&Engine, ObjectId) + 'static) {
+        self.inner
+            .script_made_listeners
+            .borrow_mut()
+            .push(Rc::new(f));
+    }
+
+    fn script_made(&self, obj: ObjectId) {
+        let listeners = self.inner.script_made_listeners.borrow().clone();
+        for l in listeners {
+            l(self, obj);
         }
     }
 

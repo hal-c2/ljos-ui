@@ -79,9 +79,11 @@ pub(crate) fn init(engine: &Engine, obj: ObjectId) -> Result<(), EngineError> {
     tree::init(engine, obj)
 }
 
-/// Makes reparented items take their focus along and gives the attached
-/// `Window` its properties.
+/// Makes reparented items take their focus along, gives what a script
+/// makes the active focus it asked for before the script holds it, and
+/// gives the attached `Window` its properties.
 pub(crate) fn register(engine: &Engine) {
     engine.on_visual_parent_changed(tree::reparented);
+    engine.on_script_made(|e, _| tree::settle(e));
     window::register(engine);
 }

@@ -310,8 +310,9 @@ fn initial_claim(engine: &Engine, obj: ObjectId) {
     claim(engine, &t, obj);
     let mut st = t.state.borrow_mut();
     st.unsettled.insert(obj, late);
-    // Applied at the next frame, not now: an item completing later may
-    // still take the scope, and active focus must not visit both.
+    // Applied at the next frame, or when the script that made it gets it
+    // back (`register`), not now: an item completing later may still
+    // take the scope, and active focus must not visit both.
     if !st.pending {
         st.pending = true;
         drop(st);
@@ -320,8 +321,8 @@ fn initial_claim(engine: &Engine, obj: ObjectId) {
 }
 
 /// Applies the claims made while objects were being created. Called once
-/// per frame and before a key is delivered; costs a flag test when there
-/// is nothing to do.
+/// per frame, before a key is delivered and when a script's
+/// `createObject` returns; costs a flag test when there is nothing to do.
 pub(crate) fn settle(engine: &Engine) {
     let t = tree(engine);
     if !t.state.borrow().pending {
