@@ -402,7 +402,9 @@ impl TypeOracle for QtTypeOracle {
     }
 
     fn property(&self, ty: QtType, name: &str) -> Option<Property<QtType>> {
-        ty.0.property(name).map(qt_property)
+        let mut property = ty.0.property(name).map(qt_property)?;
+        property.is_final &= ty.0.is_final_property(name);
+        Some(property)
     }
 
     fn signal(&self, ty: QtType, name: &str) -> Option<Vec<String>> {

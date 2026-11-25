@@ -437,6 +437,9 @@ pub struct MetaObject {
     pub required_at: Vec<(PropIndex, Atom)>,
     /// Scripts see a plain object, not a QObject: it prints as one.
     pub plain_object: bool,
+    /// The base's `final` properties are not final here
+    /// ([`MetaBuilder::unseal_base`]).
+    pub unsealed_base: bool,
     /// The type is its base under other names ([`MetaBuilder::face`]).
     face: bool,
     /// A face of the faced type's base, which a description of this face
@@ -1000,6 +1003,7 @@ impl MetaBuilder {
                 enums: Vec::new(),
                 required_at: Vec::new(),
                 plain_object: false,
+                unsealed_base: false,
                 face: false,
                 face_base: None,
                 face_depth: 0,
@@ -1436,6 +1440,20 @@ impl MetaBuilder {
     #[inline(never)]
     pub fn creatable(mut self, f: fn() -> Box<dyn QmlObject>) -> Self {
         self.meta.create = Some(f);
+        self
+    }
+
+    /// Takes `final` off every property the base declared so far: a type
+    /// that is an item underneath without being one in QML (a `Window`)
+    /// lets its own subtypes declare `x` or `left`.
+    #[inline(never)]
+    pub fn unseal_base(mut self) -> Self {
+        for p in &mut self.meta.properties {
+            if p.flags.contains(PropertyFlags::SEALED) {
+                Arc::make_mut(p).flags.remove(PropertyFlags::SEALED);
+            }
+        }
+        self.meta.unsealed_base = true;
         self
     }
 

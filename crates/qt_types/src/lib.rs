@@ -69,6 +69,7 @@
 //!         attached QQuickKeysAttached   the type of `Keys.` on another object
 //!         default data                  the property that takes its children
 //!         is singleton uncreatable value namespace parser
+//!         is unsealed                   what it inherits is not `final` here
 //!         enum TransformOrigin TopLeft Top ...        `flags` when the keys combine
 //!         prop anchors QQuickAnchors readonly pointer   also `list`, `required`, `reset`, `script`, `final`
 //!         signal clicked mouse:QQuickMouseEvent   the arguments by name, `_` for one
@@ -416,6 +417,9 @@ pub struct Type {
     /// Qt reads the object's body itself, so anything may be in it:
     /// `ListElement`, `Connections`, `PropertyChanges`.
     pub has_custom_parser: bool,
+    /// What the type inherits is not `final` in it (`is unsealed`): Ljós's
+    /// `Window` is a `Rectangle` underneath, Qt's is no item.
+    pub unseals_base: bool,
     /// The type's own members; the lookups below also see inherited ones.
     pub enums: Vec<Enum>,
     pub properties: Vec<Property>,
@@ -561,6 +565,24 @@ impl Type {
         self.find(false, &|ty| {
             ty.properties.iter().find(|property| property.name == name)
         })
+    }
+
+    /// Whether the property `name` is `final` in this type: it is where it
+    /// is declared, unless a type between that one and this one unseals
+    /// what it inherits.
+    pub fn is_final_property(&'static self, name: &str) -> bool {
+        let Some(property) = self.property(name).filter(|p| p.is_final) else {
+            return false;
+        };
+        for ty in std::iter::successors(Some(self), |ty| ty.prototype()) {
+            if ty.properties.iter().any(|p| std::ptr::eq(p, property)) {
+                return true;
+            }
+            if ty.unseals_base {
+                return false;
+            }
+        }
+        true
     }
 
     /// The signal `name`, which `onName` handles. A property's change signal
@@ -987,6 +1009,10 @@ fn read(qt: &'static str, own: &'static str) -> Table {
                     "default" => ty.default_property = Some(word()),
                     "is" => {
                         for flag in words {
+                            if flag == "unsealed" {
+                                ty.unseals_base = true;
+                                continue;
+                            }
                             match flag {
                                 "singleton" => ty.is_singleton = true,
                                 "value" => ty.is_value = true,
@@ -1165,6 +1191,7 @@ fn new_type(class: &'static str, name: &'static str, is_own: bool, module: &'sta
         is_creatable: !name.is_empty(),
         is_value: false,
         has_custom_parser: false,
+        unseals_base: false,
         enums: Vec::new(),
         properties: Vec::new(),
         signals: Vec::new(),

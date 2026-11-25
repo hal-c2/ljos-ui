@@ -192,6 +192,19 @@ Feature: A type cannot redeclare a final member of the type it derives from
         """
       Then the property "count" of "root" is 2
 
+    Scenario: A Window is not an Item, so it may declare left, x and width
+      Given the QML:
+        """qml
+        import QtQuick
+        Window {
+          objectName: "root"
+          property int left: 3
+          property int x: 4
+          property real width: 5
+        }
+        """
+      Then the property "left" of "root" is 3
+
   Rule: What makes an object of the file is told where the declaration is
 
     Scenario: A Loader of a file that declares Item's left says where

@@ -24,6 +24,8 @@ pub(crate) struct ContainerAttrs {
     pub(crate) enums: Option<syn::Path>,
     /// (camelCase name, the `Reset`) for properties of the base.
     pub(crate) reset_inherited: Vec<(String, syn::Expr)>,
+    /// `unseal_base`: the base's `final` members are not final here.
+    pub(crate) unseal_base: bool,
 }
 
 #[derive(Default)]
@@ -84,6 +86,8 @@ pub(crate) fn container_attrs(attrs: &[Attribute]) -> Result<ContainerAttrs> {
                 c.attached = Some(m.value()?.parse::<Type>()?);
             } else if m.path.is_ident("uncreatable") {
                 c.uncreatable = true;
+            } else if m.path.is_ident("unseal_base") {
+                c.unseal_base = true;
             } else if m.path.is_ident("plain_object") {
                 c.plain_object = true;
             } else if m.path.is_ident("block") {
@@ -103,7 +107,7 @@ pub(crate) fn container_attrs(attrs: &[Attribute]) -> Result<ContainerAttrs> {
                 })?;
             } else {
                 return Err(m.error(
-                    "expected one of: name, module, extends, default, attached, uncreatable, plain_object, block, category, summary, enums, reset_inherited",
+                    "expected one of: name, module, extends, default, attached, uncreatable, plain_object, block, category, summary, enums, reset_inherited, unseal_base",
                 ));
             }
             Ok(())
@@ -699,6 +703,7 @@ pub(crate) fn derive(input: &DeriveInput) -> Result<TokenStream2> {
         .as_ref()
         .map(|a| quote!(.attached(|| #e::MetaRef::Static(<#a as #e::QmlType>::static_meta()))));
     let plain_call = c.plain_object.then(|| quote!(.plain_object()));
+    let unseal_call = c.unseal_base.then(|| quote!(.unseal_base()));
     let block_call = c.block.then(|| {
         let some = |v: &Option<String>| match v {
             Some(v) => quote!(#p::Option::Some(#v)),
@@ -739,6 +744,7 @@ pub(crate) fn derive(input: &DeriveInput) -> Result<TokenStream2> {
                         .native::<#ty>()
                         #module_call
                         #base_call
+                        #unseal_call
                         #(#builder)*
                         #(#inherited_resets)*
                         #default_call

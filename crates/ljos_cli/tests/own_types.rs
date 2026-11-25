@@ -453,6 +453,9 @@ impl<'a, 'c> Module<'a, 'c> {
         if engine.has_open_body(meta) {
             let _ = writeln!(out, "\t\tis parser");
         }
+        if meta.unsealed_base {
+            let _ = writeln!(out, "\t\tis unsealed");
+        }
         // The enums are flattened: one a base has is said there, unless
         // this type gives the name keys of its own.
         let inherited = |own: &EnumInfo| {
