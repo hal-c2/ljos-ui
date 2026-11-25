@@ -412,6 +412,7 @@ fn qt_property(property: FrontProperty<QtType>) -> FrontProperty<EngineType> {
         takes_key: property.takes_key,
         is_list: property.is_list,
         is_readonly: property.is_readonly,
+        is_final: property.is_final,
         value: property.value.map(EngineType::Qt),
     }
 }
@@ -483,6 +484,9 @@ impl TypeOracle for EngineOracle {
                     takes_key: info.ty == TypeTag::Int && !info.list,
                     is_list: info.list || matches!(info.ty, TypeTag::List(_)),
                     is_readonly: info.readonly,
+                    // A description says nothing of it: its `final` is
+                    // every Rust property's, not QML's.
+                    is_final: false,
                     value: match &info.ty {
                         TypeTag::Group(n) | TypeTag::Object(Some(n)) | TypeTag::List(Some(n)) => {
                             self.named(n.as_str())

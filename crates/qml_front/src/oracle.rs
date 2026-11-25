@@ -303,6 +303,9 @@ pub struct Property<T> {
     /// An object written there is a list of one.
     pub is_list: bool,
     pub is_readonly: bool,
+    /// No type deriving from the one that has it may declare a member of
+    /// its name.
+    pub is_final: bool,
     /// The type of the value, for what is under it: `font.bold`.
     pub value: Option<T>,
 }
@@ -318,6 +321,7 @@ impl<T> Property<T> {
             takes_key: type_name == "int" && !is_list,
             is_list,
             is_readonly,
+            is_final: false,
             value: None,
         }
     }
@@ -637,6 +641,7 @@ fn qt_property(property: &'static qt_types::Property) -> Property<QtType> {
                 )),
         is_list: property.is_list,
         is_readonly: property.is_readonly,
+        is_final: property.is_final,
         value: property.value_type().map(QtType),
     }
 }

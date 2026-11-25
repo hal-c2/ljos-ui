@@ -35,7 +35,8 @@
 //!   (`expr` is a `ljos_engine::Reset`, as for a field's `reset = expr`).
 //!
 //! Field attributes: `base`, `notify` (adds `nameChanged`), `readonly`,
-//! `required`, `constant`, `group` (a grouped property; the field's type
+//! `required`, `constant`, `sealed` (no subtype may declare a member of
+//! its name, QML's `final`), `group` (a grouped property; the field's type
 //! derives `QmlObject` too; with a plain `reset` it is assigned and taken
 //! back whole, `MetaBuilder::whole_group`), `lazy` (with `group`, on an `Option<Box<T>>`
 //! field: the group is made on its first write, and until then reads give

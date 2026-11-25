@@ -449,6 +449,7 @@ impl<'a, O: TypeOracle> Analysis<'a, '_, '_, O> {
         // What whoever makes the component may set.
         let is_interface = self.tree.contexts[context].root == index;
         self.errors.extend(duplicate_members(object));
+        self.final_overrides(object, index);
         let mut declared = HashMap::new();
         for member in &object.members {
             match member {
@@ -457,11 +458,14 @@ impl<'a, O: TypeOracle> Analysis<'a, '_, '_, O> {
                         continue;
                     };
                     let name = declaration.name.name.as_str();
-                    let property = Property::declared(
-                        &type_name.name.to_string(),
-                        type_name.is_list,
-                        declaration.is_readonly,
-                    );
+                    let property = Property {
+                        is_final: declaration.is_final,
+                        ..Property::declared(
+                            &type_name.name.to_string(),
+                            type_name.is_list,
+                            declaration.is_readonly,
+                        )
+                    };
                     let writable = self.assigned.has(name, id) && !declaration.is_readonly;
                     let member = if type_name.name.as_simple() == Some("alias") {
                         self.alias(declaration, index, writable)
@@ -491,6 +495,34 @@ impl<'a, O: TypeOracle> Analysis<'a, '_, '_, O> {
             }
         }
         self.tree.objects[index].declared = declared;
+    }
+
+    /// Qt refuses to make a type that declares a property of the name of a
+    /// final one of its base, whether the base is native (`Item`'s `left`)
+    /// or a QML file that writes `final property`.
+    fn final_overrides(&mut self, object: &QmlObject<'a>, index: usize) {
+        let Some(kind) = self.tree.objects[index].kind.clone() else {
+            return;
+        };
+        for member in &object.members {
+            // `required name` marks an inherited property; it declares nothing.
+            if let QmlMember::Property(declaration) = member
+                && declaration.type_name.is_some()
+                && let Some(TypeMember::Property(base)) =
+                    self.types.member(&kind, declaration.name.name.as_str())
+                && base.is_final
+            {
+                self.errors.push(Error::with_code(
+                    Code::FinalOverride,
+                    format!(
+                        "Cannot override FINAL property: `{}` of `{}` is final; use a different name",
+                        declaration.name.name,
+                        self.tree.objects[index].name,
+                    ),
+                    declaration.span,
+                ));
+            }
+        }
     }
 
     /// `property alias name: id.path`: settled once every id is known.

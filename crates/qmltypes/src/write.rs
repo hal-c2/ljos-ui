@@ -129,6 +129,7 @@ fn class(out: &mut String, class: &Class, name: &str) {
                 flag(property.is_pointer, "pointer"),
                 flag(property.is_required, "required"),
                 flag(property.has_reset, "reset"),
+                flag(property.is_final, "final"),
             ],
         );
     }

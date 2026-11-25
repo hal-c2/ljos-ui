@@ -282,6 +282,9 @@ pub struct Declaration {
     pub type_name: String,
     pub is_list: bool,
     pub is_readonly: bool,
+    /// `final property`: no type deriving from the file's may declare a
+    /// member of its name.
+    pub is_final: bool,
     /// What an alias is an alias of: the type of the object it names, as
     /// written, and the property of that object, where it names one.
     pub alias: Option<(Vec<String>, Vec<String>)>,
@@ -667,6 +670,7 @@ fn shape(summary: &mut Summary, inline: Option<&str>, root: &QmlObject<'_>) {
                             type_name: type_name.name.to_string(),
                             is_list: type_name.is_list,
                             is_readonly: property.is_readonly,
+                            is_final: property.is_final,
                             alias,
                         },
                     );

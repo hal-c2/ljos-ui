@@ -52,6 +52,9 @@ pub enum Code {
     /// One object declares two properties, two signals or two functions of
     /// one name, or a method named as one of its properties' change signals.
     DuplicateName,
+    /// An object declares a property of the name of a member its type
+    /// marks final.
+    FinalOverride,
     /// A `property alias` points at an id the component does not have.
     UnknownAliasTarget,
     /// A free name in a script that nothing in reach has.
@@ -71,6 +74,7 @@ impl Code {
             Code::UnknownSignal => "unknown-signal",
             Code::DuplicateId => "duplicate-id",
             Code::DuplicateName => "duplicate-name",
+            Code::FinalOverride => "final-override",
             Code::UnknownAliasTarget => "unknown-alias-target",
             Code::UnresolvedName => "unresolved-name",
             Code::Other => "semantic",

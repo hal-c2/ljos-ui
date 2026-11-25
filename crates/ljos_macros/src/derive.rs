@@ -33,6 +33,9 @@ pub(crate) struct FieldAttrs {
     pub(crate) readonly: bool,
     pub(crate) required: bool,
     pub(crate) constant: bool,
+    /// No subtype may declare a member of the field's name (QML's
+    /// `final`).
+    pub(crate) sealed: bool,
     pub(crate) group: bool,
     /// With `group`: an `Option<Box<T>>` made on the first write.
     pub(crate) lazy: bool,
@@ -143,6 +146,8 @@ pub(crate) fn field_attrs(attrs: &[Attribute]) -> Result<FieldAttrs> {
                 f.required = true;
             } else if p.is_ident("constant") {
                 f.constant = true;
+            } else if p.is_ident("sealed") {
+                f.sealed = true;
             } else if p.is_ident("group") {
                 f.group = true;
             } else if p.is_ident("lazy") {
@@ -188,7 +193,7 @@ pub(crate) fn field_attrs(attrs: &[Attribute]) -> Result<FieldAttrs> {
                 });
             } else {
                 return Err(m.error(
-                    "expected one of: base, notify, readonly, required, constant, group, lazy, list, append, insert, remove, skip, rename, enumeration, flags, reset, object, holds, write, not_nan, given, change",
+                    "expected one of: base, notify, readonly, required, constant, sealed, group, lazy, list, append, insert, remove, skip, rename, enumeration, flags, reset, object, holds, write, not_nan, given, change",
                 ));
             }
             Ok(())
@@ -303,6 +308,9 @@ pub(crate) fn derive(input: &DeriveInput) -> Result<TokenStream2> {
         }
         if a.constant {
             flags.push(quote!(#e::PropertyFlags::CONSTANT));
+        }
+        if a.sealed {
+            flags.push(quote!(#e::PropertyFlags::SEALED));
         }
         if a.list {
             flags.push(quote!(#e::PropertyFlags::LIST));
