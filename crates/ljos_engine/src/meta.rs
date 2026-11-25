@@ -1497,6 +1497,7 @@ impl MetaBuilder {
         m.method_offset = of.method_offset;
         m.native = of.native;
         m.plain_object = of.plain_object;
+        m.unsealed_base = of.unsealed_base;
         m.attached = of.attached;
         m.default_property = of.default_property.clone();
         m.required_at = of.required_at.clone();
