@@ -290,25 +290,25 @@ fn show_when_drawn(
 }
 
 /// Gives the root window's title bar insets to the scene's safe area in
-/// the scene's units (`per_unit` of the window's pixels), again when the
-/// scale or egui's zoom has changed them since (#731).
-fn note_safe_area(safe_area: &mut Option<([f64; 4], Option<f64>)>, per_unit: f64, engine: &Engine) {
-    let Some((px, given)) = safe_area.as_mut() else {
+/// the scene's units, again when egui's zoom has changed them since
+/// (#731).
+fn note_safe_area(safe_area: &mut Option<([f64; 4], Option<f32>)>, zoom: f32, engine: &Engine) {
+    let Some((points, given)) = safe_area.as_mut() else {
         return;
     };
-    if let Some([l, t, r, b]) = safe_area_in_units(*px, given, per_unit) {
+    if let Some([l, t, r, b]) = safe_area_in_units(*points, given, zoom) {
         ljos_quick::set_safe_area_insets(engine, l, t, r, b);
     }
 }
 
-/// Insets in a window's pixels as the scene's units at `per_unit` pixels
-/// each, when they were not `given` at that already.
-fn safe_area_in_units(px: [f64; 4], given: &mut Option<f64>, per_unit: f64) -> Option<[f64; 4]> {
-    if *given == Some(per_unit) {
+/// Insets in the window's points as the scene's units at `zoom`, when
+/// they were not `given` at that zoom already.
+fn safe_area_in_units(points: [f64; 4], given: &mut Option<f32>, zoom: f32) -> Option<[f64; 4]> {
+    if *given == Some(zoom) {
         return None;
     }
-    *given = Some(per_unit);
-    Some(px.map(|n| n / per_unit))
+    *given = Some(zoom);
+    Some(points.map(|n| n / f64::from(zoom)))
 }
 
 /// Tells the QML window the size its platform window has, when that is
@@ -1345,8 +1345,7 @@ impl<M: Send + 'static> Desktop<M> {
             None => slot.ctx.run_ui(raw, |ui| {
                 // egui applies a change of zoom as the pass begins, so the
                 // scene's units are known only now.
-                let per_unit = f64::from(ui.ctx().pixels_per_point());
-                note_safe_area(&mut slot.safe_area, per_unit, &engine);
+                note_safe_area(&mut slot.safe_area, ui.ctx().zoom_factor(), &engine);
                 app.begin_pass();
                 app.show(ui);
             }),
@@ -1800,12 +1799,13 @@ impl<M: Send + 'static> Desktop<M> {
                 self.repaints.request(slot.key, Instant::now());
             }
             // The safe area is the engine's one, so the root window's title
-            // bar is the one that sets it (#731). It is in the scene's
-            // units, which the zoom scales too.
+            // bar is the one that sets it (#731). The insets are kept in
+            // points at the scale they were measured with; the next pass
+            // gives them in the scene's units, which the zoom scales too.
             WindowEvent::Insets(insets) if slot.view.is_none() => {
-                slot.safe_area = Some((insets.safe_area(), None));
-                let per_unit = surface.window.scale_factor() * f64::from(slot.ctx.zoom_factor());
-                note_safe_area(&mut slot.safe_area, per_unit, &engine);
+                let scale = surface.window.scale_factor();
+                slot.safe_area = Some((insets.safe_area().map(|n| n / scale), None));
+                self.repaints.request(slot.key, Instant::now());
             }
             _ => {}
         }
@@ -2670,29 +2670,26 @@ mod tests {
         meta: false,
     };
 
-    /// Issue #130: the chords that paste are known before egui-winit
-    /// hears them, Shift or not, so the clipboard's text is there when
-    /// the scene's press asks for it.
-    /// The safe area is given again when the zoom or the scale changes
-    /// the scene's units, and not on a pass that changes neither (#731).
+    /// The safe area is given again when the zoom changes the scene's
+    /// units, and not on a pass that leaves it (#731).
     #[test]
     fn a_change_of_zoom_gives_the_safe_area_again() {
-        let bar = [0.0, 56.0, 0.0, 0.0];
+        let bar = [0.0, 28.0, 0.0, 0.0];
         let mut given = None;
+        assert_eq!(safe_area_in_units(bar, &mut given, 1.0), Some(bar));
+        assert_eq!(safe_area_in_units(bar, &mut given, 1.0), None, "unchanged");
+        let zoomed = safe_area_in_units(bar, &mut given, 1.5).unwrap();
+        assert!((zoomed[1] - 28.0 / 1.5).abs() < 1e-6, "{zoomed:?}");
         assert_eq!(
-            safe_area_in_units(bar, &mut given, 2.0),
-            Some([0.0, 28.0, 0.0, 0.0])
-        );
-        assert_eq!(safe_area_in_units(bar, &mut given, 2.0), None, "unchanged");
-        let zoomed = safe_area_in_units(bar, &mut given, 2.0 * 1.5).unwrap();
-        assert!((zoomed[1] - 56.0 / 3.0).abs() < 1e-9, "{zoomed:?}");
-        assert_eq!(
-            safe_area_in_units(bar, &mut given, 1.0),
-            Some(bar),
-            "another scale"
+            safe_area_in_units(bar, &mut given, 0.5),
+            Some([0.0, 56.0, 0.0, 0.0]),
+            "zoomed out"
         );
     }
 
+    /// Issue #130: the chords that paste are known before egui-winit
+    /// hears them, Shift or not, so the clipboard's text is there when
+    /// the scene's press asks for it.
     #[test]
     fn the_paste_chords_are_known_with_their_modifiers() {
         let shift = ljos_host::Modifiers {
