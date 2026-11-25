@@ -310,7 +310,7 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
             self.bump_any();
         }
         // Only `required` may name a property it does not declare.
-        if is_final && !self.qml_at_word("property") {
+        if is_final && !(self.qml_at_word("property") && self.qml_next_is_name()) {
             let span = self.cur_token().span();
             self.set_fatal_error(diagnostics::qml(
                 "`final` makes a declared property final: `final property <type> <name>`",
