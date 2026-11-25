@@ -86,7 +86,7 @@ Feature: An application on a phone outlives its screen
   Scenario: An application that quit starts anew when opened again
     When the method "quit" of "w" is called
     Then the application is no longer running
-    And the system refused no JNI call of the application
+    And the application ended without aborting
     When the user opens the application again
     Then the application is in front
     And the property "taps" of "w" is 0

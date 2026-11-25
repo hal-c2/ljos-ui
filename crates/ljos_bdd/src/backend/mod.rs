@@ -544,12 +544,13 @@ pub trait Device: Backend {
         ))
     }
 
-    /// What the system's checks of native code calling Java (Android's
-    /// CheckJNI) refused of the application since the scenario started,
-    /// one line each.
-    fn jni_errors(&mut self) -> Result<Vec<String>> {
+    /// What the system logged of the application's process aborting
+    /// since the scenario started, one line each: a call into Java its
+    /// checks refused (Android's CheckJNI), a misuse the C library caught,
+    /// the signal it ended on.
+    fn aborts(&mut self) -> Result<Vec<String>> {
         Err(BackendError::NotImplemented(
-            "the system's checks of JNI calls",
+            "what the system logs of an abort",
         ))
     }
 
