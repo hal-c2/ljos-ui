@@ -33,6 +33,8 @@
 //! - `reset_inherited(baseline_offset = expr)`: how assigning `undefined`
 //!   takes back a property the base declares and cannot take back itself
 //!   (`expr` is a `ljos_engine::Reset`, as for a field's `reset = expr`).
+//! - `unseal_base`: the base's `final` properties are not final in this
+//!   type or its subtypes (a `Window` is a `Rectangle` only underneath).
 //!
 //! Field attributes: `base`, `notify` (adds `nameChanged`), `readonly`,
 //! `required`, `constant`, `sealed` (no subtype may declare a member of

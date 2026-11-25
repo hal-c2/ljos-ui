@@ -156,7 +156,8 @@ impl WinState {
     name = "Window",
     extends = Rectangle,
     attached = WindowAttached,
-    enums = window_enums
+    enums = window_enums,
+    unseal_base
 )]
 pub struct Window {
     #[qml(base)]
