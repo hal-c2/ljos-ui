@@ -72,6 +72,19 @@ Feature: SplitView items that are hidden
     And the property "width" of "b" is 198
     And the property "seen" of "root" is "true true"
 
+  Scenario: A view hidden and shown again keeps hidden what was hidden before
+    When 100 milliseconds pass
+    And the property "visible" of "c" is set to false
+    And 100 milliseconds pass
+    And the property "visible" of "sv" is set to false
+    And 100 milliseconds pass
+    And the property "visible" of "sv" is set to true
+    And 100 milliseconds pass
+    And the method "shown" of "root" is called
+    Then the property "width" of "b" is 294
+    And the property "visible" of "c" is false
+    And the property "seen" of "root" is "true false"
+
   Scenario: A hidden item of a vertical split view leaves its height to the item that fills
     When 100 milliseconds pass
     And the method "vertical" of "root" is called
