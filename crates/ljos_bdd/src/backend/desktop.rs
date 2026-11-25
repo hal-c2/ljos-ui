@@ -984,14 +984,15 @@ impl Probes for DesktopBackend {
 
     /// Away is a workspace of its own, which the output does not show, so
     /// the compositor lets the window draw no more; back is a focus on it,
-    /// which shows that workspace again. So each away takes a new workspace:
-    /// the one before may be on the output now.
+    /// which shows that workspace again. So each away takes a new workspace,
+    /// named for the application too: the one before, this scenario's or
+    /// another's on the same compositor, may be on the output now.
     fn window_out_of_sight(&mut self, away: bool) -> Result<()> {
         let pid = self.running()?.app.id();
         let command = if away {
             self.out_of_sight += 1;
             format!(
-                "[pid={pid}] move container to workspace out-of-sight-{}",
+                "[pid={pid}] move container to workspace out-of-sight-{pid}-{}",
                 self.out_of_sight
             )
         } else {
