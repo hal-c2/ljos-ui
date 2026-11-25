@@ -639,6 +639,7 @@ yet driven on the phone, so their steps are pending there.
 | `Then the application is in front` / `Then the application is in the background` | which one the user sees |
 | `Then the application is no longer running` | its process has ended, so the next start is a new process with a new application |
 | `Then the system has not found the application unresponsive` | no "not responding" since the scenario started |
+| `Then the system refused no JNI call of the application` | the system's checks of what native code asks of Java (CheckJNI, on in a debug build) refused nothing of the application since the scenario started; one they refuse ends the process |
 | `When the system is short of memory` | as Android's `onTrimMemory` (`adb shell am send-trim-memory`) or an iOS memory warning |
 | `Then the application gave back memory it can rebuild` | the application said it freed bytes of what it draws again (glyph atlas, textures, decoded pictures); its objects and values stay |
 | `When the system ends the application's process` | as a system short of memory ends a hidden application's process; `When the user opens the application again` then starts a new one |
