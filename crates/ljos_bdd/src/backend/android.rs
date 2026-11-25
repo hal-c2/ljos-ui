@@ -494,6 +494,10 @@ pub struct AndroidBackend {
     /// The object the scenario last called `open` of: the dialog the
     /// picker answers.
     opened: Option<String>,
+    /// The phone's clock as the scenario's application was started, in
+    /// seconds: what its main and crash logs say after it is the
+    /// scenario's.
+    started_at: Option<String>,
 }
 
 impl Drop for AndroidBackend {
@@ -692,8 +696,12 @@ impl Backend for AndroidBackend {
                 Some(&f.source),
             )?;
         }
-        // What the system logged before is another scenario's.
-        phone.shell("logcat -b events -b main -b crash -c")?;
+        // What the system logged before is another scenario's. The events
+        // log is cleared, as the lifecycle steps read it whole; the main
+        // and crash logs are the whole phone's, another application's crash
+        // or another run's on the same phone, and are read from now on.
+        phone.shell(FORGET_EVENTS)?;
+        self.started_at = Some(phone.shell("date +%s.%N")?.trim().to_owned());
         self.start()
     }
 
@@ -858,6 +866,28 @@ impl Platform for AndroidBackend {
     }
 }
 
+/// What clears the system's events log as a scenario loads.
+const FORGET_EVENTS: &str = "logcat -b events -c";
+
+/// The logcat that reads what the application's user (`uid`) logged in the
+/// main and crash logs since `since`, the phone's clock in seconds: to the
+/// millisecond, as logcat takes it (`-t`, which implies `-d`). None for
+/// what is not a user or a time, so that nothing else reaches the shell.
+fn abort_query(uid: &str, since: &str) -> Option<String> {
+    let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+    if !digits(uid) {
+        return None;
+    }
+    let (seconds, fraction) = since.split_once('.').unwrap_or((since, ""));
+    if !digits(seconds) || !(fraction.is_empty() || digits(fraction)) {
+        return None;
+    }
+    let millis: String = fraction.chars().chain("000".chars()).take(3).collect();
+    Some(format!(
+        "logcat -d -b main -b crash --uid={uid} -t {seconds}.{millis}"
+    ))
+}
+
 /// What the system logs of a process that aborted: CheckJNI's refusal,
 /// bionic's checks (`FORTIFY: pthread_mutex_lock called on a destroyed
 /// mutex`), the signal it ended on, and the crash dump's message.
@@ -983,13 +1013,18 @@ impl Device for AndroidBackend {
         // bionic what it caught (`FORTIFY:`) and the signal it ended on in
         // the crash log, and the crash dump its abort message there too.
         // logcat keeps to one user's lines itself (`--uid`, Android 9).
+        // Since the scenario loaded: what is before is not the scenario's.
         let uid = phone.as_app("id -u", None)?.trim().to_owned();
-        if uid.is_empty() || !uid.bytes().all(|b| b.is_ascii_digit()) {
-            return Err(BackendError::Failed(format!(
-                "the application's user is not a number: {uid:?}"
-            )));
-        }
-        let said = phone.shell(&format!("logcat -d -b main -b crash --uid={uid}"))?;
+        let since = self
+            .started_at
+            .clone()
+            .ok_or_else(|| BackendError::Failed("no scenario's application was started".into()))?;
+        let query = abort_query(&uid, &since).ok_or_else(|| {
+            BackendError::Failed(format!(
+                "the application's user {uid:?} or the phone's clock {since:?} is not a number"
+            ))
+        })?;
+        let said = phone.shell(&query)?;
         Ok(said
             .lines()
             .filter(|l| ABORTED.iter().any(|said| l.contains(said)))
@@ -1080,8 +1115,7 @@ impl Device for AndroidBackend {
 #[cfg(test)]
 mod tests {
     use super::{
-        FORGET_EVENTS, abort_query, download_path, picker_shown, quoted, scenario_dir,
-        screen_nodes,
+        FORGET_EVENTS, abort_query, download_path, picker_shown, quoted, scenario_dir, screen_nodes,
     };
 
     // The main and crash logs are the whole phone's: another application's
