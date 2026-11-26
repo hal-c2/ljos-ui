@@ -1721,7 +1721,7 @@ renames are theirs: they follow when those types are in `Ljos.Ui`.
 | `PinchArea`, `MultiPointTouchArea` | `Pinch`, gestures | DECISION: kept until M3 |
 | attached `Drag`, `DropArea` | `DragSource`, `DropArea` | mechanical; built |
 | `Flickable` | `Flickable` | none |
-| `Image`, `Window`, `Screen`, `TextInput`, `TextEdit`, `TextMetrics`, `FontMetrics`, `Shortcut`, attached `Keys` and `Accessible` | the same | none; a `QtQuick.Window` import leaves its line empty, since its types are `QtQuick`'s |
+| `Image`, `Window`, `Screen`, `TextInput`, `TextEdit`, `TextMetrics`, `FontMetrics`, `Shortcut`, `StandardKey`, `FocusScope`, the `Application` singleton, attached `Keys` and `Accessible` | the same | none; a `QtQuick.Window` import leaves its line empty, since its types are `QtQuick`'s. `FocusScope` is Qt's explicit scope while §18's choice is open |
 | `ListModel` of constants | `list<T>` | mechanical, with a generated row type in `<File>.rows.ts` (§4.8). Built |
 | `ListModel` edited | `ListModel` | none |
 | `XmlListModel`, `FolderListModel` | `XmlModel` (decoder), `FolderModel` | mechanical |
@@ -1825,8 +1825,8 @@ each of these too, drawn as the Basic style would (a card is Basic's
 frame), so the promise below holds both ways. It has every control
 `Ljos.Controls.Basic` has, so a file moves from one to the other by its
 import alone: it draws each of them in its own style, and `FileDialog`,
-`FolderDialog`, `AbstractButton` and `ButtonGroup` are the same types in
-both. A dialog's buttons are the
+`FolderDialog`, `AbstractButton`, `ButtonGroup` and the `Overlay` a popup
+attaches to reach its window's overlay are the same types in both. A dialog's buttons are the
 style's own `DialogButtonBox`, whose button that accepts is filled.
 
 The theme's roles are `canvas`, `surface`, `surfaceRaised`,
