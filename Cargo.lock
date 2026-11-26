@@ -4347,6 +4347,7 @@ name = "ljos_example_android_scenarios"
 version = "0.0.0"
 dependencies = [
  "ljos",
+ "ljos_secrets",
 ]
 
 [[package]]

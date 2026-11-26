@@ -10,6 +10,9 @@
 
 use std::path::{Path, PathBuf};
 
+mod secrets;
+pub use secrets::{ScenarioSecrets, keep_secrets_in};
+
 /// Where the scenario's files are: `qml/` beside the inspector's token
 /// file, which the activity puts in the application's files directory
 /// (`LJOS_MCP_DIR`), or in the working directory without one.
@@ -63,10 +66,22 @@ pub fn badge_at_start(engine: &ljos::prelude::Engine, files: &Path) {
 pub fn app() -> ljos::App {
     ljos::App::new("Ljós scenarios")
         .register(|engine| {
+            secrets::register(engine);
             if let Some(files) = scenario_dir().parent() {
                 allow_local_file_read(engine, files);
                 badge_at_start(engine, files);
             }
+        })
+        // Made here and put in the root's scope: the runner reaches it by
+        // name through the inspector's scripts, and compiled QML has no
+        // compiler to make one from text.
+        .context_property(secrets::NAME, |engine| {
+            engine
+                .create_by_name("LjosScenarios", "ScenarioSecrets", None)
+                .map_or(
+                    ljos::prelude::Value::Undefined,
+                    ljos::prelude::Value::Object,
+                )
         })
         .source(ljos::include_qml!("qml.pack"))
         .user_qml(ljos::UserQml::dir(scenario_dir()).on_fault(|fault| {

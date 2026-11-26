@@ -233,6 +233,41 @@ fn download_path(path: &str) -> Result<String> {
     }
 }
 
+/// The name the scenario application (examples/android_scenarios) puts
+/// its `ScenarioSecrets` in the root's scope by: a secret goes through the
+/// store the way the application's own would. The application makes the
+/// object itself, since compiled QML has no compiler to make one from
+/// text.
+const SECRETS: &str = "scenarioSecrets";
+
+/// How long the system's store of secrets may take to answer: the Keystore
+/// makes its key the first time.
+const SECRET_WAIT: Duration = Duration::from_secs(20);
+
+/// The script, run in the scene's root, that calls `method` of the
+/// scenario application's secrets with `args`.
+fn secrets_call(method: &str, args: &[&str]) -> String {
+    let args: Vec<String> = args.iter().map(|a| Value::from(*a).to_string()).collect();
+    format!("{SECRETS}.{method}({})", args.join(", "))
+}
+
+/// What the store answered, once it has: `None` while a call is under
+/// way, and the failure it gave as an error.
+fn secrets_answer(state: &Value) -> Option<Result<(bool, String)>> {
+    if state["busy"] != Value::Bool(false) {
+        return None;
+    }
+    Some(match state["error"].as_str().filter(|e| !e.is_empty()) {
+        Some(why) => Err(BackendError::Failed(format!(
+            "the system's store of secrets: {why}"
+        ))),
+        None => Ok((
+            state["found"] == Value::Bool(true),
+            state["secret"].as_str().unwrap_or_default().to_owned(),
+        )),
+    })
+}
+
 /// How long the document picker may take to show what a step wants, and
 /// the application to hear its answer: a picked document is copied first.
 const PICKER: Duration = Duration::from_secs(20);
@@ -790,6 +825,43 @@ impl AndroidBackend {
         self.running()?.eval(object, source)
     }
 
+    /// Calls `method` of the scenario application's secrets and waits
+    /// for the store's answer: whether it found (or removed) one, and the
+    /// secret it read.
+    fn secrets(&mut self, method: &str, args: &[&str]) -> Result<(bool, String)> {
+        let running = self.running()?;
+        let roots = running.ask("app_objects", json!({"depth": 0, "max": 1}))?;
+        let root = roots["objects"][0]["handle"]
+            .as_str()
+            .ok_or_else(|| {
+                BackendError::Failed(
+                    "the scene has no root object to reach the store of secrets from".into(),
+                )
+            })?
+            .to_owned();
+        running.ask(
+            "app_eval",
+            json!({"source": secrets_call(method, args), "target": root}),
+        )?;
+        let state = format!(
+            "({{busy: {SECRETS}.busy, found: {SECRETS}.found, secret: {SECRETS}.secret, error: {SECRETS}.error}})"
+        );
+        let until = Instant::now() + SECRET_WAIT;
+        loop {
+            let said = running.ask("app_eval", json!({"source": state, "target": root}))?;
+            if let Some(answer) = secrets_answer(&said["value"]) {
+                return answer;
+            }
+            if Instant::now() > until {
+                return Err(BackendError::Failed(format!(
+                    "the system's store of secrets didn't answer {method}() in {} s",
+                    SECRET_WAIT.as_secs()
+                )));
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+
     /// Waits until the dialog has heard the picker: the picker is gone
     /// first, and a picked document is still copied then.
     fn heard(&mut self) -> Result<()> {
@@ -1311,10 +1383,15 @@ impl Device for AndroidBackend {
     fn end_process(&mut self) -> Result<()> {
         let phone = self.phone()?.clone();
         // `am kill` ends only a process the user does not see, as the
-        // system does to save memory.
-        phone.shell(&format!("am kill {}", phone.id))?;
+        // system does to save memory: the application goes behind the home
+        // screen first, and is killed again until the system has stopped
+        // counting it as seen.
+        phone.shell("input keyevent KEYCODE_HOME")?;
         let until = Instant::now() + SEEN;
-        while phone.pid()?.is_some() {
+        while {
+            phone.shell(&format!("am kill {}", phone.id))?;
+            phone.pid()?.is_some()
+        } {
             if Instant::now() > until {
                 return Err(BackendError::Failed(format!(
                     "the application's process still ran {} s after the system ended it",
@@ -1350,6 +1427,19 @@ impl Device for AndroidBackend {
             None,
         )?;
         Ok(!said.trim().is_empty())
+    }
+
+    fn keep_secret(&mut self, service: &str, key: &str, secret: &str) -> Result<()> {
+        self.secrets("keep", &[service, key, secret]).map(drop)
+    }
+
+    fn remove_secret(&mut self, service: &str, key: &str) -> Result<()> {
+        self.secrets("remove", &[service, key]).map(drop)
+    }
+
+    fn read_secret(&mut self, service: &str, key: &str) -> Result<Option<String>> {
+        let (found, secret) = self.secrets("read", &[service, key])?;
+        Ok(found.then_some(secret))
     }
 
     fn put_download(&mut self, path: &str, text: &str) -> Result<()> {
@@ -1389,7 +1479,7 @@ mod tests {
     use super::{
         BackendError, FORGET_EVENTS, Shown, abort_query, badge_in, download_path, front_record,
         permission_asked, permission_button, picker_shown, quoted, scenario_dir, screen_nodes,
-        seen_until,
+        secrets_answer, secrets_call, seen_until,
     };
 
     // Trimmed from Android 16's `dumpsys notification --noredact`.
@@ -1695,5 +1785,29 @@ mod tests {
     fn a_quoted_word_keeps_its_quotes() {
         assert_eq!(quoted("plain"), "'plain'");
         assert_eq!(quoted("it's"), r"'it'\''s'");
+    }
+
+    #[test]
+    fn a_secret_goes_through_the_scenario_applications_store() {
+        assert_eq!(
+            secrets_call("keep", &["accounts", "token", "it's \"s3cret\""]),
+            "scenarioSecrets.keep(\"accounts\", \"token\", \"it's \\\"s3cret\\\"\")"
+        );
+    }
+
+    #[test]
+    fn the_stores_answer_is_read_once_it_is_not_busy() {
+        use serde_json::json;
+        assert!(secrets_answer(&json!({"busy": true})).is_none());
+        let read = json!({"busy": false, "found": true, "secret": "s3cret", "error": ""});
+        assert_eq!(
+            secrets_answer(&read).map(|a| a.ok()),
+            Some(Some((true, "s3cret".to_owned())))
+        );
+        let failed = json!({"busy": false, "found": false, "secret": "", "error": "locked"});
+        assert!(matches!(
+            secrets_answer(&failed),
+            Some(Err(BackendError::Failed(why))) if why.contains("locked")
+        ));
     }
 }
