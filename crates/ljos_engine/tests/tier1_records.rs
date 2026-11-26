@@ -1,7 +1,8 @@
 //! A record (`Value::Map`) read through tier 1 and through tier 2: one
 //! holds the record and the other the script object made of it, and the
 //! cross-check takes them for the same value by their fields, read or
-//! written to a `var`.
+//! written to a `var`. Records in an array no script has seen yet, which
+//! is what tier 1 hands a `var` in a release build, read back as records.
 
 use std::sync::Arc;
 
@@ -59,4 +60,52 @@ fn a_record_through_a_nullish_coalescing_agrees_with_tier_two() {
     let stats = engine.tier1_stats();
     assert!(stats.checked >= 1, "{stats:?}");
     assert_eq!(stats.mismatches, 0, "{stats:?}");
+}
+
+const ROWS: &str = r#"import QtQml
+QtObject {
+  property var rows: []
+}
+"#;
+
+/// A list of records Rust put in a `var` declared in QML is an array no
+/// script has seen yet (script_arrays.rs), and Rust reads it back, as a
+/// view reads its model, with each entry its record. A tier-1 binding
+/// that gives a native list hands it on the same way in a release build,
+/// where no cross-check runs it as JavaScript too (#773).
+#[test]
+fn records_rust_put_in_a_var_read_back_as_records() {
+    let engine = Engine::new();
+    engine.register_module(ljos_engine::module!("QtQml" 2.0 => [QtObject]));
+    let mut project = Project::new(QtTypeOracle);
+    project.add("Main", ROWS);
+    let compiled = compile_file(&project, "Main").expect("compiles");
+    let mut source = MapSource::new();
+    source.insert("Main", compiled.file);
+    engine.set_component_source(source);
+    let root = engine
+        .create_from_url("Main", None, Vec::new())
+        .expect("creates");
+
+    let route = |kind: &str| Value::map([(Atom::intern("kind"), Value::from(kind))]);
+    engine
+        .write_by_name(
+            root,
+            "rows",
+            Value::List(Arc::new(vec![route("home"), route("away")])),
+        )
+        .expect("writes");
+    let rows = engine.plain(&engine.read_by_name(root, "rows"));
+    // A record equals only itself (`==` is change detection): by field.
+    let kinds: Vec<_> = rows
+        .as_list()
+        .expect("a list")
+        .iter()
+        .map(|r| r.get("kind").cloned())
+        .collect();
+    assert_eq!(
+        kinds,
+        [Some(Value::from("home")), Some(Value::from("away"))],
+        "{rows:?}"
+    );
 }
