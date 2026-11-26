@@ -1801,12 +1801,29 @@ impl Engine {
         let Some(first) = first else { return true };
         let expr_at = inst.file.ir.expr(first.expr).span;
         let r = self.bind_fallible(obj, prop, move |e| {
+            let g = e.graph();
+            // Qt binds each member alone: one that reads the value it is a
+            // member of and gives back what it read changes nothing, so its
+            // read is no loop. Here the members share one binding, whose
+            // value the others change: the read is given back only where a
+            // member's own value changed what it read.
+            let mut changes_it = false;
             let mut v = base.clone();
             for (member, code) in &bound {
                 let (i, expr) = code.get();
                 let mv = e.eval_expr(&i, expr, &TypeTag::Var, &[])?;
                 // A member reads an array a script holds as the list it is.
-                v = v.with_member(&ty, member, &e.plain(&mv))?;
+                let mv = e.plain(&mv);
+                if g.take_self_read() && !changes_it {
+                    // What it read: the value as it stands, not as this run
+                    // is making it.
+                    let was = e.untrack(|| e.read(obj, prop));
+                    changes_it = was.with_member(&ty, member, &mv).is_none_or(|w| w != was);
+                }
+                v = v.with_member(&ty, member, &mv)?;
+            }
+            if changes_it {
+                g.self_read();
             }
             Some(v)
         });

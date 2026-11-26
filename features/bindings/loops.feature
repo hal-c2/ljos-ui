@@ -221,6 +221,47 @@ Feature: Binding loops
       """
     Then the log has a warning matching "Binding loop detected for property .font.italic."
 
+  # A member that reads itself and gives back what it read changes nothing, even where the
+  # font's other members are given values: Qt reports the loop only when a member's own value
+  # changes the font it read.
+  Scenario: A font member that reads itself beside other members is not a loop
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        id: root
+        objectName: "root"
+        property bool code: false
+        Text {
+          objectName: "label"
+          text: "a"
+          font.family: root.code ? "monospace" : font.family
+          font.italic: font.italic
+          font.pixelSize: root.code ? 11 : 13
+          font.bold: true
+        }
+      }
+      """
+    When the property "code" of "root" is set to true
+    And the property "code" of "root" is set to false
+    Then the property "font.family" of "label" is "monospace"
+    And the property "font.pixelSize" of "label" is 13
+    And the log has no warning matching "Binding loop"
+
+  Scenario: A font member that reads another member beside it is a loop
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        Text {
+          text: "a"
+          font.family: "x" + font.pixelSize
+          font.bold: true
+        }
+      }
+      """
+    Then the log has a warning matching "Binding loop detected for property .font.family."
+
   @backlog
   Scenario: One member of a font that reads a size the font ignored is not a loop
     Given the QML:
