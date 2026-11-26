@@ -1015,11 +1015,15 @@ module Ljos.Layout
 		prop columnSpacing QtQml.real named reset
 		prop rowSpacing QtQml.real named reset
 		prop flow Flow
+		prop horizontalItemAlignment Qt::Alignment
+		prop verticalItemAlignment Qt::Alignment
 		signal columnsChanged
 		signal rowsChanged
 		signal columnSpacingChanged
 		signal rowSpacingChanged
 		signal flowChanged
+		signal horizontalItemAlignmentChanged
+		signal verticalItemAlignmentChanged
 	type Ljos.Layout.Pages Pages
 		prototype QtQuick.Layouts.Layout named
 		prop currentIndex QtQml.int named

@@ -534,6 +534,10 @@ struct Plan {
     vertical: bool,
     /// A box's padding: left, top, right, bottom.
     pad: [f64; 4],
+    /// A child centred or at the far end of its room sits at a whole pixel,
+    /// as in Qt's layouts; in a grid none of whose children has a `Layout`
+    /// it sits at the fraction, as in Qt's `Grid` positioner.
+    whole: bool,
 }
 
 /// X, y, width and height of a child.
@@ -985,6 +989,11 @@ fn measure(e: &Engine, obj: ObjectId, kind: Kind) -> Result<bool, EngineError> {
             .any(|c| e.existing_attached_object(*c, &attacher()).is_some());
 
     let set = settings(e, obj, kind);
+    let item_alignment = if kind == Kind::Cells {
+        arrangement::item_alignment(e, obj)
+    } else {
+        0
+    };
     let mut cells = Vec::with_capacity(shown.len());
     let mut wants = Vec::with_capacity(shown.len());
     for c in &shown {
@@ -1070,7 +1079,7 @@ fn measure(e: &Engine, obj: ObjectId, kind: Kind) -> Result<bool, EngineError> {
                 ]
             },
             margins: a.margins,
-            align: a.align,
+            align: arrangement::aligned_in_cell(a.align, item_alignment),
             layout: child_kind.is_some(),
         });
         wants.push(Want {
@@ -1211,6 +1220,7 @@ fn measure(e: &Engine, obj: ObjectId, kind: Kind) -> Result<bool, EngineError> {
         current,
         vertical,
         pad,
+        whole: round,
     });
     let changed = state(e, obj, |s| {
         if s.plan.as_deref() != Some(&*plan) {

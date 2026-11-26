@@ -126,6 +126,39 @@ pub struct LjosGrid {
     /// [`crate::positioners::flow`]: across a row first, or down a column.
     #[qml(notify, enumeration = "Flow")]
     pub flow: i32,
+    /// [`crate::enums::align`]: where a child narrower than its column sits
+    /// in it, `Align.Left` (as 0 does), `Align.HCenter` or `Align.Right`,
+    /// unless its `Layout.alignment` says so itself.
+    #[qml(notify, flags = "Qt.Alignment")]
+    pub horizontal_item_alignment: i32,
+    /// Where a child shorter than its row sits in it, `Align.Top` (as 0
+    /// does), `Align.VCenter` or `Align.Bottom`, as
+    /// `horizontalItemAlignment` says across.
+    #[qml(notify, flags = "Qt.Alignment")]
+    pub vertical_item_alignment: i32,
+}
+
+/// The alignment flags of one axis.
+const ACROSS: i32 = align::LEFT | align::RIGHT | align::H_CENTER | align::JUSTIFY;
+const DOWN: i32 = align::TOP | align::BOTTOM | align::V_CENTER;
+
+/// What a grid's `horizontalItemAlignment` and `verticalItemAlignment`
+/// say, as one set of flags.
+pub(super) fn item_alignment(e: &Engine, obj: ObjectId) -> i32 {
+    (num(e, obj, LjosGrid::HORIZONTAL_ITEM_ALIGNMENT.index) as i32 & ACROSS)
+        | (num(e, obj, LjosGrid::VERTICAL_ITEM_ALIGNMENT.index) as i32 & DOWN)
+}
+
+/// A child's own alignment, with the grid's `item` alignment along each
+/// axis the child's says nothing of.
+pub(super) fn aligned_in_cell(own: i32, item: i32) -> i32 {
+    let mut flags = own;
+    for axis in [ACROSS, DOWN] {
+        if own & axis == 0 {
+            flags |= item & axis;
+        }
+    }
+    flags
 }
 
 fn grid_enums() -> EnumTable {
@@ -143,13 +176,15 @@ fn spacing(engine: &Engine, obj: ObjectId, _gap: PropIndex) -> Value {
 }
 
 /// What a grid reads of itself, besides what every arrangement does.
-pub(super) fn grid_props() -> [PropIndex; 5] {
+pub(super) fn grid_props() -> [PropIndex; 7] {
     [
         LjosGrid::COLUMNS.index,
         LjosGrid::ROWS.index,
         LjosGrid::COLUMN_SPACING.index,
         LjosGrid::ROW_SPACING.index,
         LjosGrid::FLOW.index,
+        LjosGrid::HORIZONTAL_ITEM_ALIGNMENT.index,
+        LjosGrid::VERTICAL_ITEM_ALIGNMENT.index,
     ]
 }
 
@@ -363,16 +398,25 @@ fn align_of(flags: i32, axis: usize, rtl: bool) -> Align {
     }
 }
 
-/// A child in `start..end` with margins: its position and size.
-fn fit(start: f64, end: f64, before: f64, after: f64, hint: &Hint, align: Align) -> (f64, f64) {
+/// A child in `start..end` with margins: its position and size, at a
+/// `whole` pixel where it is not at the start.
+fn fit(
+    start: f64,
+    end: f64,
+    (before, after): (f64, f64),
+    hint: &Hint,
+    align: Align,
+    whole: bool,
+) -> (f64, f64) {
     let room = (end - start - before - after).max(0.0);
     let size = room.min(hint.max).max(hint.min);
     let free = room - size;
+    let round = |at: f64| if whole { super::round_half_up(at) } else { at };
     let at = match align {
         _ if free <= 0.0 => start + before,
         Align::Near => start + before,
-        Align::Center => super::round_half_up(start + before + free / 2.0),
-        Align::Far => super::round_half_up(end - after - size),
+        Align::Center => round(start + before + free / 2.0),
+        Align::Far => round(end - after - size),
     };
     (at, size)
 }
@@ -441,8 +485,9 @@ pub(super) fn compute_cells(plan: &Plan, width: f64, height: f64) -> Vec<(Object
                 if rtl {
                     (s0, s1) = (content(H) - s1, content(H) - s0);
                 }
-                let (b, a) = (c.margins[axis], c.margins[axis + 2]);
-                let (at, length) = fit(s0, s1, b, a, &c.hint[axis], align_of(c.align, axis, rtl));
+                let margins = (c.margins[axis], c.margins[axis + 2]);
+                let align = align_of(c.align, axis, rtl);
+                let (at, length) = fit(s0, s1, margins, &c.hint[axis], align, plan.whole);
                 g[axis] = lead[axis] + at;
                 g[2 + axis] = length;
             }
@@ -470,16 +515,15 @@ pub(super) fn compute(plan: &Plan, width: f64, height: f64) -> Vec<(ObjectId, [f
                 (s0, s1) = (content(H) - s1, content(H) - s0);
             }
             let m = |axis: usize| (c.margins[axis], c.margins[axis + 2]);
-            let (b, a) = m(main);
-            let (p_main, l_main) = fit(s0, s1, b, a, &c.hint[main], align_of(c.align, main, rtl));
-            let (b, a) = m(cross);
+            let align = |axis: usize| align_of(c.align, axis, rtl);
+            let (p_main, l_main) = fit(s0, s1, m(main), &c.hint[main], align(main), plan.whole);
             let (p_cross, l_cross) = fit(
                 0.0,
                 content(cross),
-                b,
-                a,
+                m(cross),
                 &c.hint[cross],
-                align_of(c.align, cross, rtl),
+                align(cross),
+                plan.whole,
             );
             let mut g = [0.0; 4];
             g[main] = lead[main] + p_main;
