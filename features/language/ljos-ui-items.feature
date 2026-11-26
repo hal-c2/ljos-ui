@@ -12,6 +12,11 @@
 #   https://doc.qt.io/qt-6/qml-qtquick-translate.html
 #   https://doc.qt.io/qt-6/qml-qtquick-rotation.html
 #   https://doc.qt.io/qt-6/qml-qtquick-scale.html
+#   https://doc.qt.io/qt-6/qml-qtquick-layoutmirroring.html
+#   https://doc.qt.io/qt-6/qml-qtquick-frameanimation.html
+#   https://doc.qt.io/qt-6/qml-qtquick-effects-rectangularshadow.html
+#   https://doc.qt.io/qt-6/qml-qtquick-effects-multieffect.html
+#   https://doc.qt.io/qt-6/qstylehints.html (accessibility, motionPreference: Qt 6.12)
 # Verified on Qt 6.11.2 (qml6, offscreen).
 # `Ljos.Ui` is Ljós's own module. The items here are Qt Quick's as they are, under the same names,
 # so each Ljós file below is the Qt file with its import changed, and holds the numbers the Qt file
@@ -21,8 +26,9 @@
 Feature: The items Ljós's API has as Qt Quick has them
   An image, a flickable, a text field, its keys, its shortcuts, what it
   says to assistive technology, the window and screen it is shown on, a
-  grid, a path view, a canvas, key navigation and an item's transforms
-  say the one thing they are in Qt Quick, so Ljós's API has them under
+  grid, a path view, a canvas, key navigation, an item's transforms,
+  mirroring, an animation of frames, a shadow, an effect and the motion
+  the user prefers say the one thing they are in Qt Quick, so Ljós's API has them under
   the same names. A file written for Qt Quick that uses them is lowered
   with nothing changed for them.
 
@@ -158,6 +164,129 @@ Feature: The items Ljós's API has as Qt Quick has them
       Then the property "atX" of "root" is within 0.001 of 0
       And the property "atY" of "root" is within 0.001 of 20
       And the property "active" of "root" is "b"
+
+  Rule: Mirroring, frames, shadows, effects and the motion preference are Ljos.Ui's
+
+    # The numbers are features/layouts/layout-mirroring.feature's: 200 wide, less 40, less 7.
+    @ljos-only
+    Scenario: A file in Ljós's API mirrors its children's anchors and reads that it does
+      Given the QML:
+        """qml
+        import Ljos.Ui
+        Item {
+          objectName: "root"
+          width: 200; height: 100
+          LayoutMirroring.enabled: true
+          LayoutMirroring.childrenInherit: true
+          readonly property bool mirrored: LayoutMirroring.enabled
+          Item { objectName: "child"; width: 40; height: 10; anchors.left: parent.left; anchors.leftMargin: 7 }
+        }
+        """
+      Then the property "mirrored" of "root" is true
+      And the property "x" of "child" is 153
+
+    @ljos-only
+    Scenario: A frame animation of Ljós's API counts the frames it runs
+      Given the QML:
+        """qml
+        import Ljos.Ui
+        Item {
+          id: root
+          objectName: "root"
+          property int ticks: 0
+          FrameAnimation { id: frames; running: true; onTriggered: root.ticks++ }
+          readonly property bool counted: root.ticks > 0 && root.ticks === frames.currentFrame
+        }
+        """
+      When 300 milliseconds pass
+      Then the property "counted" of "root" is true
+
+    # The defaults are features/items/rectangular-shadow.feature's.
+    @ljos-only
+    Scenario: A shadow and an effect of Ljós's API are made
+      Given the QML:
+        """qml
+        import Ljos.Ui
+        Item {
+          width: 200; height: 200
+          Rectangle { id: card; width: 100; height: 100; fill: "white" }
+          RectangularShadow { objectName: "shadow"; anchors.fill: card; offset.y: 4 }
+          MultiEffect { objectName: "effect"; source: card; anchors.fill: card; shadowEnabled: true }
+        }
+        """
+      Then the property "blur" of "shadow" is 10
+      And the property "offset.y" of "shadow" is 4
+      And the property "shadowEnabled" of "effect" is true
+
+    # Qt 6.11's description of `Qt` has no MotionPreference (6.12 documents it), so Ljós writes
+    # it by hand; its keys are named as ContrastPreference's are (docs/DIALECT.md §4.3.1).
+    @ljos-only
+    Scenario: The motion the user prefers is one of Ljos.Ui's MotionPreference
+      Given the system setting "reduced motion" is true
+      And the QML:
+        """qml
+        import Ljos.Ui
+        import Ljos.Core
+        Item {
+          objectName: "root"
+          readonly property bool calm: App.hints.accessibility.motionPreference === MotionPreference.Reduced
+          readonly property int none: MotionPreference.None
+          readonly property int reduced: MotionPreference.Reduced
+        }
+        """
+      Then the property "calm" of "root" is true
+      And the property "none" of "root" is 0
+      And the property "reduced" of "root" is 1
+
+    @ljos-only @headless
+    Scenario: A file of them has nothing for the check to report
+      Given the file "Card.qml":
+        """qml
+        import Ljos.Ui
+        import Ljos.Core
+        Item {
+          width: 200; height: 200
+          LayoutMirroring.enabled: App.layoutDirection === Direction.RightToLeft
+          LayoutMirroring.childrenInherit: true
+          property int ticks: 0
+          readonly property bool calm: App.hints.accessibility.motionPreference === MotionPreference.Reduced
+          readonly property bool high: App.hints.accessibility.contrastPreference === ContrastPreference.High
+          readonly property bool mirrored: LayoutMirroring.enabled
+          Item { id: card; width: 100; height: 100 }
+          RectangularShadow { anchors.fill: card; blur: calm ? 4 : 12 }
+          MultiEffect { source: card; anchors.fill: card; shadowEnabled: !calm }
+          FrameAnimation { running: !calm; onTriggered: ticks = ticks + 1 }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        1 files, 0 errors, 0 warnings
+        """
+
+    # `App.hints` is the engine's style hints, member by member, so what a file reads off it is
+    # checked as what it holds.
+    @ljos-only @headless
+    Scenario: What a file reads off the hints is checked
+      Given the file "Card.qml":
+        """qml
+        import Ljos.Ui
+        import Ljos.Core
+        Item {
+          readonly property string calm: App.hints.accessibility.motionPreference
+          readonly property bool missing: App.hints.nothing
+          function still() { App.hints.accessibility.motionPreference = MotionPreference.None }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        Card.qml:4:42: error: `calm` is a string; this gives it a MotionPreference [ts-assign-type]
+        Card.qml:5:53: error: `nothing` has no type: an object has no member of that name [ts-no-any]
+        Card.qml:6:54: error: `motionPreference` is readonly: build a new object with the value it should have [ts-readonly]
+        1 files, 3 errors, 0 warnings
+        ljos: 3 errors
+        """
 
   Rule: Screen.points gives the pixels of a size in points on the item's screen
 
