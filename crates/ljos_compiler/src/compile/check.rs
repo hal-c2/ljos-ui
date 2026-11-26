@@ -442,12 +442,14 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
     /// docs/DIALECT.md §4.3.1), so `scheme: ColorScheme` takes
     /// `ColorScheme.Dark` and what `App.hints.colorScheme` holds. A type a
     /// file may make stays itself: `f: Flow` is the item, though it has an
-    /// enum `Flow`.
-    fn own_enum(&mut self, kind: &QKind<O::Type>, name: &str) -> Option<Ty> {
+    /// enum `Flow`. The enum is the type's own name, however the file wrote
+    /// it (`Ui.ColorScheme` under `import Ljos.Ui as Ui`).
+    fn own_enum(&mut self, kind: &QKind<O::Type>) -> Option<Ty> {
         let QKind::Builtin(ty) = kind else {
             return None;
         };
         let oracle = self.c.types.oracle;
+        let name = oracle.name(*ty);
         if oracle.is_creatable(*ty) || !oracle.has_enum(*ty, name) {
             return None;
         }
@@ -543,7 +545,7 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
         let parts: Vec<&str> = written.split('.').collect();
         if let Some(found) = types.find(&parts) {
             return self
-                .own_enum(&found.kind, plain(written))
+                .own_enum(&found.kind)
                 .unwrap_or_else(|| self.object_ty(&found.kind));
         }
         // A value type the file's imports do not name: `font`, `point`.

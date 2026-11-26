@@ -4784,7 +4784,7 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
             && let Some(found) = self.c.types.find(&[name])
         {
             return self
-                .own_enum(&found.kind, name)
+                .own_enum(&found.kind)
                 .unwrap_or_else(|| self.object_ty(&found.kind));
         }
         match Web::named(name) {
