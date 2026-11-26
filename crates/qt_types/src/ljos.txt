@@ -1350,6 +1350,7 @@ module Ljos.Ui
 		prop activeTranslation QtQuick.vector2d named readonly
 		prop persistentTranslation QtQuick.vector2d named
 		prop snapMode SnapMode
+		prop takeOver QtQml.bool named
 		signal enabledChanged
 		signal activeChanged
 		signal targetChanged
@@ -1464,6 +1465,7 @@ module Ljos.Ui
 		prop point Ljos.Ui.HandlerPoint pointer readonly
 		prop hovered QtQml.bool named readonly
 		prop blocking QtQml.bool named
+		prop takeOver QtQml.bool named
 		signal enabledChanged
 		signal activeChanged
 		signal targetChanged
@@ -1614,6 +1616,7 @@ module Ljos.Ui
 		prop modifiers Qt::KeyboardModifiers was=acceptedModifiers
 		prop point Ljos.Ui.HandlerPoint pointer readonly
 		prop translation QtQuick.vector2d named readonly
+		prop takeOver QtQml.bool named
 		signal enabledChanged
 		signal activeChanged
 		signal targetChanged
@@ -1732,6 +1735,7 @@ module Ljos.Ui
 		prop cursorShape Qt::CursorShape reset
 		prop longPressThreshold QtQml.real named reset
 		prop timeHeld QtQml.real named readonly
+		prop takeOver QtQml.bool named
 		signal enabledChanged
 		signal pressedChanged
 		signal tapCountChanged
