@@ -337,7 +337,14 @@ pub(super) fn register(engine: &Engine) {
         );
     }
     super::screen::register(engine);
-    engine.register_singleton::<Application>("QtQuick", ljos_engine::Version::new(2, 15));
+    // Ljós's API reads the application, its font among it, as Qt Quick
+    // does; both modules name the one object.
+    for (uri, version) in [
+        ("QtQuick", ljos_engine::Version::new(2, 15)),
+        (ljos_quick::ljos_ui::MODULE, ljos_engine::Version::new(1, 0)),
+    ] {
+        engine.register_singleton::<Application>(uri, version);
+    }
     // Made here and not on first use: a native singleton has no hook that
     // runs when it is made, and what it says of the screens must be there
     // for whoever reads it first.

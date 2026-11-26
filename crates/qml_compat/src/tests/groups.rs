@@ -42,8 +42,8 @@ fn a_kept_file_keeps_the_files_it_uses() {
         ("app/Button".to_string(), alone(button)),
         (
             "app/Main".to_string(),
-            // Kept: `FocusScope` is not in Ljos.Ui.
-            alone("import QtQuick\nFocusScope { Button { color: \"blue\" } }\n"),
+            // Kept: `Flipable` is not in Ljos.Ui.
+            alone("import QtQuick\nFlipable { Button { color: \"blue\" } }\n"),
         ),
         ("other/Lone".to_string(), alone(button)),
         // Uses the kept file, which keeps nothing it does not use.
@@ -77,7 +77,7 @@ fn a_kept_file_keeps_what_the_files_it_uses_use() {
     let files = std::collections::BTreeMap::from([
         (
             "app/Main".to_string(),
-            alone("import QtQuick\nFocusScope { Panel { } }\n"),
+            alone("import QtQuick\nFlipable { Panel { } }\n"),
         ),
         (
             "app/Panel".to_string(),
@@ -106,7 +106,7 @@ fn a_kept_file_keeps_what_it_uses_through_a_file_left_as_it_is() {
     let files = std::collections::BTreeMap::from([
         (
             "app/Main".to_string(),
-            alone("import QtQuick\nFocusScope { Bridge { } }\n"),
+            alone("import QtQuick\nFlipable { Bridge { } }\n"),
         ),
         ("app/Bridge".to_string(), alone("Swatch { width: 4 }\n")),
         (
@@ -352,14 +352,14 @@ fn a_file_binding_on_an_inline_component_of_another_keeps_it() {
 #[test]
 fn a_file_reached_by_address_or_directory_is_of_the_group() {
     let lowers = "import QtQuick\nRectangle { color: \"red\" }\n";
-    // Kept: `FocusScope` is not in Ljos.Ui.
+    // Kept: `Flipable` is not in Ljos.Ui.
     for (main, other) in [
         (
-            "import QtQuick\nFocusScope { Loader { source: \"../parts/Part.qml\" } }\n",
+            "import QtQuick\nFlipable { Loader { source: \"../parts/Part.qml\" } }\n",
             "parts/Part",
         ),
         (
-            "import QtQuick\nimport \"../parts\"\nFocusScope { }\n",
+            "import QtQuick\nimport \"../parts\"\nFlipable { }\n",
             "parts/Part",
         ),
     ] {
@@ -578,8 +578,8 @@ fn a_module_the_project_does_not_have_as_files_keeps_the_file() {
 /// are of the importer's group wherever they are.
 #[test]
 fn the_files_a_module_import_brings_are_of_the_group() {
-    // Kept: `FocusScope` is not in Ljos.Ui.
-    let main = "import QtQuick\nimport Gauges\nFocusScope { Dial { } }\n";
+    // Kept: `Flipable` is not in Ljos.Ui.
+    let main = "import QtQuick\nimport Gauges\nFlipable { Dial { } }\n";
     let importer = Alone {
         outcome: lower(main, &Project),
         references: references(main),

@@ -234,14 +234,16 @@ pub(crate) fn register(engine: &Engine) {
     // `LayoutMirroring` is how a file mirrors its anchors and reads that
     // it does. Qt's `QtQuick.Effects` (`RectangularShadow`, `MultiEffect`)
     // are items and visuals, so they are this module's, not one of their
-    // own.
+    // own. A `FocusScope` is Qt's explicit scope, while whether every root
+    // is one is still open (§18); `StandardKey` names the platform's keys
+    // for a `Shortcut`.
     engine.register_module(ljos_engine::module!("Ljos.Ui" 1.0 => [
         Image, Flickable, focus::Window,
         TextInput, TextEdit, IntValidator, DoubleValidator, RegularExpressionValidator,
         TextMetrics, FontMetrics,
         keys::Keys, keys::KeyEventObject, keys::Shortcut, Accessible,
         keys::KeyNavigation, Canvas, PathView, Rotation, Scale, Translate,
-        LayoutMirroring, RectangularShadow, MultiEffect,
+        LayoutMirroring, RectangularShadow, MultiEffect, focus::FocusScope, keys::StandardKey,
     ]));
     // Qt's animations, as they are (docs/DIALECT.md §4.9, M1): a `Behavior`,
     // a `Transition` and what they run. An animation's `property` names a
@@ -552,6 +554,8 @@ mod tests {
             ("Translate", Translate::static_meta()),
             ("LayoutMirroring", LayoutMirroring::static_meta()),
             ("FrameAnimation", FrameAnimation::static_meta()),
+            ("FocusScope", focus::FocusScope::static_meta()),
+            ("StandardKey", keys::StandardKey::static_meta()),
         ] {
             let ours = engine.lookup_type(MODULE, name).expect(name);
             let qt = engine.lookup_type("QtQuick", name).expect(name);
