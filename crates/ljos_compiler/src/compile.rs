@@ -36,6 +36,7 @@ use crate::{
 mod check;
 pub(crate) use check::{is_dialect, scripts_are_javascript};
 mod expressions;
+mod statics;
 
 /// Compiles the file `key` of the project.
 ///

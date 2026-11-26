@@ -989,7 +989,11 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
             Some(_) => None,
         };
         match member {
-            Some(member) if attaches => {
+            // What the type has of its own (`Component.load`) is read off
+            // the type, as the checker types it.
+            Some(member)
+                if attaches && !super::statics::has_static(self.types.oracle, kind, member) =>
+            {
                 // Its own parameter: the type's name may also be read for an
                 // enum in the same script (`Accessible.Button`), and that is
                 // the type, not what it attached.

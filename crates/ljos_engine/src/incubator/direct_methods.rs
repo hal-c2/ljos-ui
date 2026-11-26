@@ -196,6 +196,7 @@ fn names_a_maker(text: &str) -> bool {
     [
         "createObject",
         "createQmlObject",
+        "createFromText",
         "createComponent",
         "incubateObject",
         "include",

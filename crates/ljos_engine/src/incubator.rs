@@ -2823,7 +2823,7 @@ impl Engine {
                 .arg_value_at(inst, arg, plan)
                 .map_or(JsValue::Undefined, |v| self.to_js(&v)),
             Arg::Type(t) => match self.type_meta(&inst.file, t) {
-                Ok(m) => self.type_face(s, &m),
+                Ok(m) => self.type_face(s, &m, Some(&inst.file.url)),
                 Err(_) => JsValue::Undefined,
             },
             // What stands for the object: the script asks for it where the
