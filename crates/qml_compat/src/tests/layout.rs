@@ -367,6 +367,7 @@ fn layout_files(name: &str) -> Option<Root> {
             ..valued("Rectangle", &[("implicitWidth", "40")], &[])
         }),
         "Gone" => Some(valued("Mystery", &[], &[])),
+        "Ticker" => Some(valued("Timer", &[("interval", "10")], &[])),
         "Celled" => Some(valued("Item", &[("Layout.row", "1")], &[])),
         // It would fill, if it were shown.
         "Hidden" => Some(valued(
@@ -416,6 +417,18 @@ fn a_layout_child_is_sized_by_its_files_root() {
         (
             "Item { RowLayout { Pressed { } } }",
             "Item { Row { spacing: 5; Pressed { Layout.alignment: Align.VCenter; } } }\n",
+        ),
+        // A root that is no item is not laid out, as a `Timer` written
+        // there is not.
+        (
+            "Item { RowLayout { Ticker { } Chip { } } }",
+            "Item { Row { spacing: 5; Ticker { } Chip { Layout.alignment: Align.VCenter; } } }\n",
+        ),
+        // Across a column, Qt's layout and Ljós's box put a child at the
+        // start alike, so the alignment its root says holds as it is.
+        (
+            "Item { ColumnLayout { Aligned { } } }",
+            "Item { Column { spacing: 5; Aligned { } } }\n",
         ),
         // A layout in a layout grows where its child's root fills.
         (
