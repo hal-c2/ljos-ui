@@ -1024,14 +1024,7 @@ impl<'s> Pass<'s> {
                 {
                     self.members.object_type(t);
                 }
-                // A delegate's model gives it roles, which come before
-                // anything else in sight.
-                if t.default_property() == Some("delegate")
-                    && object
-                        .members
-                        .iter()
-                        .any(|m| matches!(m, QmlMember::Object(_)))
-                {
+                if holds_a_delegate(t, object) {
                     self.members.delegate();
                 }
             }
@@ -1041,6 +1034,9 @@ impl<'s> Pass<'s> {
                 self.members.native(native);
                 if let Some(base) = self.scope.toolkit_base(native) {
                     self.members.object_type(base);
+                    if holds_a_delegate(base, object) {
+                        self.members.delegate();
+                    }
                 }
             }
             Ty::Unknown | Ty::Kept => self.members.unknown_type(&object.type_name.to_string()),
@@ -2469,6 +2465,16 @@ impl Script<'_, '_> {
             _ => false,
         }
     }
+}
+
+/// Whether `object`, of type `ty`, holds a delegate: a delegate's model
+/// gives it roles, which come before anything else in sight.
+fn holds_a_delegate(ty: &'static Type, object: &QmlObject<'_>) -> bool {
+    ty.default_property() == Some("delegate")
+        && object
+            .members
+            .iter()
+            .any(|m| matches!(m, QmlMember::Object(_)))
 }
 
 /// The type of the member `name` of something of type `on`.
