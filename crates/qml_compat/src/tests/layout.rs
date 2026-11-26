@@ -709,12 +709,30 @@ impl Locals for Homes {
                 imports: vec!["QtQuick".to_owned(), "My.Kit".to_owned()],
                 ..valued("Base", &[], &[])
             }),
+            // Its file imports a module of the project whose types the
+            // project does not know, which may have a `Chip` too.
+            "Opaque" => Some(Root {
+                imports: vec!["QtQuick".to_owned(), "Other.Files".to_owned()],
+                ..valued("Chip", &[], &[])
+            }),
+            // One whose types the project knows, without a `Chip`.
+            "Clear" => Some(Root {
+                imports: vec!["QtQuick".to_owned(), "Known.Files".to_owned()],
+                ..valued("Chip", &[], &[])
+            }),
             _ => layout_files(name),
         }
     }
 
     fn module(&self, uri: &str) -> Option<ProjectModule> {
-        (uri == "My.Kit").then_some(ProjectModule::Files)
+        matches!(uri, "My.Kit" | "Other.Files" | "Known.Files").then_some(ProjectModule::Files)
+    }
+
+    fn imports_type(&self, from: Imported<'_>, name: &str) -> Option<bool> {
+        match from {
+            Imported::Module("Known.Files") => Some(false),
+            _ => self.imported(from, name).map(|_| true),
+        }
     }
 
     fn imported(&self, from: Imported<'_>, name: &str) -> Option<Root> {
@@ -734,14 +752,16 @@ impl Locals for Homes {
 /// directory and imports, or none it can tell.
 #[test]
 fn a_roots_base_is_what_its_own_file_names() {
-    let source =
-        format!("{LAYOUTS}import \"parts\"\nItem {{ RowLayout {{ Strip {{ }} Base {{ }} }} }}\n");
+    let source = format!(
+        "{LAYOUTS}import \"parts\"\nItem {{ RowLayout {{ Strip {{ }} Base {{ }} Clear {{ }} }} }}\n"
+    );
     let Outcome::Lowered(_) = lower(&source, &Homes) else {
         panic!("{source}: kept");
     };
     for (body, child) in [
         ("Item { RowLayout { Widget { } } }", "Widget"),
         ("Item { RowLayout { Kitted { } } }", "Kitted"),
+        ("Item { RowLayout { Opaque { } } }", "Opaque"),
     ] {
         let source = format!("{LAYOUTS}import \"parts\"\n{body}\n");
         let Outcome::Kept(kept) = lower(&source, &Homes) else {
@@ -753,6 +773,25 @@ fn a_roots_base_is_what_its_own_file_names() {
         );
         assert_eq!(kept.at, source.rfind(child).unwrap(), "{body}: {kept}");
     }
+}
+
+/// The type a root is built on, as the members of an object of it go, is
+/// what the root's own file names too: `parts` has no `Base`, so what a
+/// `Widget` holds is not known, though the `Base` beside this file is a
+/// `Rectangle`.
+#[test]
+fn the_type_a_roots_base_is_is_what_its_own_file_names() {
+    let source = "import QtQuick\nimport \"parts\"\n\
+                  Item { Widget { property color c: Qt.rgba(1, 0, 0, 1) } }\n";
+    let Outcome::Kept(kept) = lower(source, &Homes) else {
+        panic!("{source}: lowered");
+    };
+    assert!(kept.to_string().contains("`Qt.rgba`"), "{kept}");
+    // Beside this file, the `Base` is this directory's.
+    let source = "import QtQuick\nItem { Base { property color c: Qt.rgba(1, 0, 0, 1) } }\n";
+    let Outcome::Lowered(_) = lower(source, &Homes) else {
+        panic!("{source}: kept");
+    };
 }
 
 /// A directory `parts` with a `GridLayout` of its own, built on the type

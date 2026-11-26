@@ -382,8 +382,8 @@ impl<'s> Scope<'s> {
                 at,
             ));
         }
-        let root = self.local_root(name, imported);
-        if let Some(root) = &root {
+        let root = self.local_root_home(name);
+        if let Some((root, _)) = &root {
             self.beside
                 .borrow_mut()
                 .extend(root.declares.iter().cloned());
@@ -391,14 +391,15 @@ impl<'s> Scope<'s> {
                 return Ok(Ty::Kept);
             }
         }
-        match root.map(|root| root.type_name) {
-            Some(root) if root != name => match self.ty(&root, at, depth + 1)? {
-                // What it declares is not in the table: its members are
-                // known by the type it is built on, as far as that goes.
-                Ty::Exact(ty) => Ok(Ty::Derived(ty)),
-                Ty::Native(ty, _) => Ok(Ty::Native(ty, false)),
-                other => Ok(other),
-            },
+        match root {
+            // An inline component's root is written with this file's
+            // names; another file's with that file's own.
+            Some((root, Home::Here)) if root.type_name != name => {
+                Ok(built_on(self.ty(&root.type_name, at, depth + 1)?))
+            }
+            Some((root, home)) if root.type_name != name => {
+                Ok(built_on(self.base_in(&home, &root, at, depth + 1)?))
+            }
             Some(_) => Ok(Ty::Unknown),
             // The file names the program's types, and this is not one the
             // program describes: what it is in the file is not known.
@@ -410,6 +411,41 @@ impl<'s> Scope<'s> {
                 at,
             )),
             None => Ok(Ty::Unknown),
+        }
+    }
+
+    /// The type `root`, the root of the file of the project at `home`, is
+    /// built on: what its base is where that file writes it
+    /// ([`Self::step_in`]), not here.
+    fn base_in(&self, home: &Home, root: &Root, at: usize, depth: usize) -> Result<Ty, Kept> {
+        if depth > 16 {
+            return Ok(Ty::Unknown);
+        }
+        let name = &root.type_name;
+        match self.step_in(home, root, name) {
+            // That file is lowered on its own, with its own imports, or
+            // kept. A type a Ljós module this file reads too has not is
+            // not one that file lowers, whatever the project says of it.
+            Base::Qt(qt, ty) => match self.lowered(qt, name) {
+                (ljos, false) if self.modules.ljos(ljos).is_some() => {
+                    Err(no(not_in(name, ljos.uri()), at))
+                }
+                _ => Ok(Ty::Exact(ty)),
+            },
+            Base::Native(ty) => Ok(Ty::Native(ty, true)),
+            Base::File(next, home) => {
+                self.beside
+                    .borrow_mut()
+                    .extend(next.declares.iter().cloned());
+                if next.kept {
+                    return Ok(Ty::Kept);
+                }
+                if next.type_name == *name {
+                    return Ok(Ty::Unknown);
+                }
+                Ok(built_on(self.base_in(&home, &next, at, depth + 1)?))
+            }
+            Base::Stop => Ok(Ty::Unknown),
         }
     }
 
@@ -632,3 +668,122 @@ impl<'s> Scope<'s> {
 
 #[cfg(test)]
 mod tests;
+
+/// What a name a root is built on is, as `file_root` follows it.
+pub(crate) enum Base {
+    /// A type of Qt's, of the module given.
+    Qt(Qt, &'static Type),
+    /// One of the program's own types.
+    Native(Native),
+    File(Root, Home),
+    /// Nothing the pass can tell.
+    Stop,
+}
+
+/// The modules of Qt's whose types say how an object is placed and sized,
+/// in the order a name is looked up in them.
+pub(crate) const PLACED: [Qt; 5] = [
+    Qt::Quick,
+    Qt::Layouts,
+    Qt::Controls,
+    Qt::Shapes,
+    Qt::Dialogs,
+];
+
+impl Scope<'_> {
+    /// The type of Qt's `name` names in a file of the project that imports
+    /// `imports`: a file a root is in need not import what this one does
+    /// (a `Button` at the root of a file of the controls, used in one that
+    /// imports only `QtQuick`).
+    fn qt_type_in(&self, imports: &[String], name: &str) -> Option<(Qt, &'static Type)> {
+        PLACED.iter().find_map(|&qt| {
+            if qt == Qt::Quick {
+                let ty = self.modules.quick().type_named(name)?;
+                let qt = if self.modules.qml().has(ty) {
+                    Qt::Qml
+                } else {
+                    Qt::Quick
+                };
+                return Some((qt, ty));
+            }
+            let ty = imports
+                .iter()
+                .filter_map(|uri| modules::row(uri))
+                .find(|row| row.qt == qt)
+                .and_then(|row| qt_types::module(row.uri))?
+                .type_named(name)?;
+            Some((qt, ty))
+        })
+    }
+
+    /// What `name` is where `root`'s file, at `home`, writes it: of the
+    /// Qt types that file's imports bring, the files of its directory and
+    /// those of the modules it imports, the one that has the name. One
+    /// that two of them have, or that what the pass cannot see may have,
+    /// is not followed.
+    pub(crate) fn step_in(&self, home: &Home, root: &Root, name: &str) -> Base {
+        let locals = self.locals;
+        if root.imports_a_dir {
+            return Base::Stop;
+        }
+        let qt = self.qt_type_in(&root.imports, name);
+        let mut native = None;
+        let mut files = Vec::new();
+        let beside = match home {
+            Home::Here | Home::Beside => locals.root(name),
+            Home::Module(uri) => locals.imported(Imported::Module(uri), name),
+            Home::Dir(path) => locals.imported(Imported::Dir(path), name),
+        };
+        files.extend(beside.map(|root| (root, home.clone())));
+        for uri in &root.imports {
+            if matches!(home, Home::Module(own) if own == uri) {
+                continue;
+            }
+            if let Some(row) = modules::row(uri) {
+                let theirs = || qt_types::module(row.uri)?.type_named(name);
+                if qt.is_none() && !PLACED.contains(&row.qt) && theirs().is_some() {
+                    return Base::Stop;
+                }
+                continue;
+            }
+            if let Some(natives) = self.natives.filter(|n| n.has_module(uri)) {
+                if let Some(ty) = natives.module_type(uri, name)
+                    && native.replace(ty).is_some()
+                {
+                    return Base::Stop;
+                }
+                continue;
+            }
+            let from = Imported::Module(uri);
+            match locals.module(uri) {
+                Some(ProjectModule::Files) => match locals.imported(from, name) {
+                    Some(root) => files.push((root, Home::Module(uri.clone()))),
+                    // One whose types the project does not know may have it.
+                    None if locals.imports_type(from, name) != Some(false) => return Base::Stop,
+                    None => {}
+                },
+                Some(ProjectModule::Native) | None => return Base::Stop,
+            }
+        }
+        match (qt, native, files.len()) {
+            (Some((qt, ty)), None, 0) => Base::Qt(qt, ty),
+            (None, Some(ty), 0) => Base::Native(ty),
+            (None, None, 1) => {
+                let (root, home) = files.remove(0);
+                Base::File(root, home)
+            }
+            _ => Base::Stop,
+        }
+    }
+}
+
+/// What an object of a file built on `base` is: what the file declares is
+/// not in the table, so its members are known by the type it is built on,
+/// as far as that goes.
+fn built_on(base: Ty) -> Ty {
+    match base {
+        Ty::Exact(ty) => Ty::Derived(ty),
+        Ty::Native(ty, _) => Ty::Native(ty, false),
+        other => other,
+    }
+}
