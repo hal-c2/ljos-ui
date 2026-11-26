@@ -53,6 +53,39 @@ pub enum YuvMatrix {
     Bt2020,
 }
 
+/// How a frame's pixels lie in its [`VideoFrame::planes`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum PixelFormat {
+    /// One plane of straight-alpha RGBA, 4 bytes a pixel.
+    Rgba8,
+    /// Three planes of 8-bit Y'CbCr 4:2:0: luma, then Cb and Cr at half
+    /// the width and height, rounded up.
+    Yuv420P8,
+    /// A decoder's picture of another subsampling or depth; it has no
+    /// planes to read, but converts with [`VideoFrame::into_rgba`].
+    Other,
+}
+
+/// One plane of a frame: `stride` bytes from the start of a row to the
+/// start of the next.
+#[derive(Clone, Copy, Debug)]
+pub struct Plane<'a> {
+    pub data: &'a [u8],
+    pub stride: usize,
+}
+
+/// A plane as a camera hands it over: rows `row_stride` bytes apart and
+/// samples `pixel_stride` bytes apart within a row, as Android's
+/// `YUV_420_888` images and V4L2's buffers lay them out (2 for the
+/// interleaved chroma of NV12 and NV21).
+#[derive(Clone, Copy, Debug)]
+pub struct StridedPlane<'a> {
+    pub data: &'a [u8],
+    pub row_stride: usize,
+    pub pixel_stride: usize,
+}
+
 /// Why a frame or an input was refused.
 #[derive(Debug, thiserror::Error)]
 pub enum FrameError {
@@ -119,6 +152,28 @@ impl VideoFrame {
         }
     }
 
+    /// A frame of 8-bit Y'CbCr 4:2:0 from planes laid out with strides
+    /// (padded rows, interleaved chroma), copied into planes of their own.
+    /// A plane too short for its rows is refused.
+    pub fn yuv420_strided(
+        width: u32,
+        height: u32,
+        planes: [StridedPlane<'_>; 3],
+        colour: YuvColour,
+    ) -> Result<Self, FrameError> {
+        let (w, h) = (width as usize, height as usize);
+        let sizes = [
+            (w, h),
+            (w.div_ceil(2), h.div_ceil(2)),
+            (w.div_ceil(2), h.div_ceil(2)),
+        ];
+        let mut packed: [Vec<u8>; 3] = Default::default();
+        for ((plane, (pw, ph)), out) in planes.iter().zip(sizes).zip(packed.iter_mut()) {
+            *out = pack(width, height, plane, pw, ph)?;
+        }
+        VideoFrame::yuv420(width, height, packed, colour)
+    }
+
     /// A decoder's picture, kept as it decoded it.
     #[cfg(feature = "decode")]
     pub(crate) fn decoded(frame: filmcraft_frame::VideoFrame) -> Self {
@@ -141,6 +196,59 @@ impl VideoFrame {
 
     pub fn height(&self) -> u32 {
         self.height
+    }
+
+    /// How the pixels lie in [`VideoFrame::planes`].
+    pub fn format(&self) -> PixelFormat {
+        match &self.pixels {
+            Pixels::Rgba(_) => PixelFormat::Rgba8,
+            #[cfg(feature = "decode")]
+            Pixels::Yuv(frame) => match &frame.data {
+                filmcraft_frame::PixelData::Yuv8 {
+                    chroma: filmcraft_frame::Chroma::C420,
+                    ..
+                } => PixelFormat::Yuv420P8,
+                _ => PixelFormat::Other,
+            },
+        }
+    }
+
+    /// The frame's planes as [`VideoFrame::format`] says, read where they
+    /// are: what a program that looks at the pixels (a QR code reader
+    /// takes the luma alone) reads without converting the frame.
+    pub fn planes(&self) -> Vec<Plane<'_>> {
+        match &self.pixels {
+            Pixels::Rgba(p) => vec![Plane {
+                data: p,
+                stride: self.width as usize * 4,
+            }],
+            #[cfg(feature = "decode")]
+            Pixels::Yuv(frame) => match &frame.data {
+                filmcraft_frame::PixelData::Yuv8 {
+                    planes,
+                    chroma: c @ filmcraft_frame::Chroma::C420,
+                    ..
+                } => {
+                    let (sx, _) = c.shifts();
+                    let chroma = (self.width as usize).div_ceil(1 << sx);
+                    vec![
+                        Plane {
+                            data: &planes[0],
+                            stride: self.width as usize,
+                        },
+                        Plane {
+                            data: &planes[1],
+                            stride: chroma,
+                        },
+                        Plane {
+                            data: &planes[2],
+                            stride: chroma,
+                        },
+                    ]
+                }
+                _ => Vec::new(),
+            },
+        }
     }
 
     /// The frame as straight-alpha RGBA, 4 bytes a pixel, row after row:
@@ -192,6 +300,40 @@ fn check(width: u32, height: u32, wanted: usize, given: usize) -> Result<(), Fra
             given,
         })
     }
+}
+
+/// `plane`'s `pw` by `ph` samples, row after row with no padding.
+fn pack(
+    width: u32,
+    height: u32,
+    plane: &StridedPlane<'_>,
+    pw: usize,
+    ph: usize,
+) -> Result<Vec<u8>, FrameError> {
+    let (rs, ps) = (plane.row_stride, plane.pixel_stride.max(1));
+    if pw == 0 || ph == 0 {
+        return Ok(Vec::new());
+    }
+    // The last row ends at its last sample, not at its stride: a camera's
+    // buffer need not pad the last row.
+    let wanted = (ph - 1) * rs + (pw - 1) * ps + 1;
+    if plane.data.len() < wanted || rs < (pw - 1) * ps + 1 {
+        return Err(FrameError::Size {
+            width,
+            height,
+            wanted,
+            given: plane.data.len(),
+        });
+    }
+    let mut out = Vec::with_capacity(pw * ph);
+    for row in plane.data.chunks(rs).take(ph) {
+        if ps == 1 {
+            out.extend_from_slice(&row[..pw]);
+        } else {
+            out.extend(row.iter().step_by(ps).take(pw));
+        }
+    }
+    Ok(out)
 }
 
 /// FilmCraft's conversion indexes the planes by the picture's size: one
@@ -383,6 +525,67 @@ mod tests {
         // 3 by 3: chroma is 2 by 2.
         let planes = [vec![0; 9], vec![0; 4], vec![0; 3]];
         assert!(VideoFrame::yuv420(3, 3, planes, YuvColour::default()).is_err());
+    }
+
+    #[cfg(feature = "decode")]
+    #[test]
+    fn strided_planes_are_packed_and_read_back() {
+        // 3 by 2 luma in rows of 4; chroma 2 by 1 interleaved as NV12.
+        let luma = [1, 2, 3, 0, 4, 5, 6];
+        let uv = [10, 20, 11, 21];
+        let planes = [
+            StridedPlane {
+                data: &luma,
+                row_stride: 4,
+                pixel_stride: 1,
+            },
+            StridedPlane {
+                data: &uv,
+                row_stride: 4,
+                pixel_stride: 2,
+            },
+            StridedPlane {
+                data: &uv[1..],
+                row_stride: 4,
+                pixel_stride: 2,
+            },
+        ];
+        let frame = VideoFrame::yuv420_strided(3, 2, planes, YuvColour::default()).unwrap();
+        assert_eq!(frame.format(), PixelFormat::Yuv420P8);
+        let got = frame.planes();
+        assert_eq!(got[0].data, &[1, 2, 3, 4, 5, 6]);
+        assert_eq!(got[0].stride, 3);
+        assert_eq!((got[1].data, got[2].data), (&[10, 11][..], &[20, 21][..]));
+        assert_eq!(got[1].stride, 2);
+
+        let short = [
+            StridedPlane {
+                data: &luma[..6],
+                row_stride: 4,
+                pixel_stride: 1,
+            },
+            planes[1],
+            planes[2],
+        ];
+        assert!(matches!(
+            VideoFrame::yuv420_strided(3, 2, short, YuvColour::default()),
+            Err(FrameError::Size {
+                wanted: 7,
+                given: 6,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn an_rgba_frame_is_one_plane() {
+        let frame = VideoFrame::rgba(2, 1, vec![9; 8]).unwrap();
+        assert_eq!(frame.format(), PixelFormat::Rgba8);
+        let planes = frame.planes();
+        assert_eq!(
+            (planes.len(), planes[0].stride, planes[0].data.len()),
+            (1, 8, 8)
+        );
     }
 
     #[cfg(feature = "decode")]
