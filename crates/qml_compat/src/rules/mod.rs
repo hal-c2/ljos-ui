@@ -138,6 +138,29 @@ pub(crate) struct Child {
     pub(crate) end: usize,
 }
 
+/// What the root of a file of the project, or of an inline component,
+/// says of the objects of its type, as [`File::file_root`] has it.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct FileRoot {
+    /// The type of Qt's the roots are built on at last, when the pass
+    /// follows them that far.
+    pub qt: Option<&'static Type>,
+    /// Each name a root binds, the nearest root's first, with its value
+    /// when that is a number or `true` or `false` (`40`, `true`); a root
+    /// nearer the type hides what one it is built on binds.
+    pub bindings: Vec<(String, Option<String>)>,
+}
+
+impl FileRoot {
+    /// Whether a root binds `name`, and what to, as far as the pass reads.
+    pub fn said(&self, name: &str) -> Option<Option<&str>> {
+        self.bindings
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, v)| v.as_deref())
+    }
+}
+
 /// What a rule may ask of the file the pass is lowering.
 pub(crate) trait File {
     /// The file's text.
@@ -155,10 +178,10 @@ pub(crate) trait File {
     /// The type of Qt's (QtQuick, QtQuick.Layouts or the controls) `name`
     /// names in the file.
     fn qt_type(&self, name: &str) -> Option<&'static Type>;
-    /// For a file of the project or an inline component, the names its
-    /// root binds, with those of the roots it is built on; `None` for a
-    /// type that is neither.
-    fn root_bindings(&self, name: &str) -> Option<Vec<String>>;
+    /// For a file of the project or an inline component, what its root
+    /// binds, with what the roots it is built on bind; `None` for a type
+    /// that is neither.
+    fn file_root(&self, name: &str) -> Option<FileRoot>;
     /// Qt's QtQuick, as the file imports it.
     fn quick(&self) -> &'static Module;
     /// Ljós's Ljos.Ui, which the lowered file imports.
