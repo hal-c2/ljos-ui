@@ -52,9 +52,11 @@
 //! the same by what its root binds.
 //!
 //! A `Grid` positioner is held to the same, but for a child's own position,
-//! which both set on both axes. It is lowered unless it sets what Ljós's
-//! `Grid` has not (`horizontalItemAlignment`, `verticalItemAlignment`,
-//! `layoutDirection`), or Qt's would count room Ljós's does not: the
+//! which both set on both axes. Its item alignments are Ljós's `Grid`'s,
+//! which take `Align` flags: `Grid.AlignHCenter` is `Align.HCenter`, and
+//! one the pass cannot read keeps the file. It is lowered unless it sets
+//! what Ljós's `Grid` has not (`layoutDirection`), or Qt's would count
+//! room Ljós's does not: the
 //! spacing after a line of children it does not fill, that of a row or
 //! column it leaves empty, and a child beyond its rows and columns, which
 //! Qt's leaves where it is. Where the pass cannot count the children (a
@@ -411,19 +413,27 @@ impl Arrange<'_, '_> {
     fn grid(&mut self, object: &QmlObject<'_>) -> Result<(), Kept> {
         let own = bindings(object);
         let find = |n: &str| own.iter().find(|(m, _)| m == n).map(|(_, b)| *b);
-        for name in [
-            "horizontalItemAlignment",
-            "verticalItemAlignment",
-            "layoutDirection",
+        if let Some(b) = find("layoutDirection") {
+            return Err(self.keep(
+                Layout::NotYet {
+                    name: "layoutDirection".to_owned(),
+                    ljos: "Grid",
+                },
+                b.span.start as usize,
+            ));
+        }
+        for (name, axis) in [
+            (
+                "horizontalItemAlignment",
+                ["AlignLeft", "AlignRight", "AlignHCenter"],
+            ),
+            (
+                "verticalItemAlignment",
+                ["AlignTop", "AlignBottom", "AlignVCenter"],
+            ),
         ] {
             if let Some(b) = find(name) {
-                return Err(self.keep(
-                    Layout::NotYet {
-                        name: name.to_owned(),
-                        ljos: "Grid",
-                    },
-                    b.span.start as usize,
-                ));
+                self.item_alignment(name, b, axis)?;
             }
         }
         let at = object.type_name.span.start as usize;
@@ -518,6 +528,50 @@ impl Arrange<'_, '_> {
             } else if let Some(at) = after_brace(self.source, object) {
                 self.insert(at, " columns: 4;");
             }
+        }
+        Ok(())
+    }
+
+    /// A `Grid`'s `name`, one of the flags of its `axis` as `Grid`'s or
+    /// `Qt`'s member, made Ljós's `Grid`'s: `Grid.AlignHCenter` is
+    /// `Align.HCenter`, and `Qt.AlignHCenter` is left to the pass that
+    /// lowers `Qt`'s members.
+    fn item_alignment(
+        &mut self,
+        name: &str,
+        b: &QmlBinding<'_>,
+        axis: [&str; 3],
+    ) -> Result<(), Kept> {
+        let unread = |kept: &Self| {
+            kept.keep(
+                Layout::GridUnread {
+                    name: name.to_owned(),
+                },
+                b.span.start as usize,
+            )
+        };
+        let QmlBindingValue::Expression(e) = &b.value else {
+            return Err(unread(self));
+        };
+        let mut e: &Expression<'_> = e;
+        while let Expression::ParenthesizedExpression(p) = e {
+            e = &p.expression;
+        }
+        let Expression::StaticMemberExpression(m) = e else {
+            return Err(unread(self));
+        };
+        let Expression::Identifier(id) = &m.object else {
+            return Err(unread(self));
+        };
+        let flag = m.property.name.as_str();
+        if !axis.contains(&flag) || !(id.name == "Grid" || id.name == "Qt") {
+            return Err(unread(self));
+        }
+        if id.name == "Grid" {
+            self.changes.push(Change {
+                range: m.span.start as usize..m.span.end as usize,
+                replacement: format!("Align.{}", &flag["Align".len()..]),
+            });
         }
         Ok(())
     }

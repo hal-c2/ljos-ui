@@ -135,6 +135,38 @@ Feature: Ljós's Grid and Flow
         | b    | 0  | 15 |
         | c    | 33 | 0  |
 
+    # grid.feature holds Qt's Grid positioner to these numbers: it centres a child at the
+    # fraction, as Ljós's Grid does when none of its children has a `Layout`.
+    @ljos-only
+    Scenario Outline: A Ljós Grid aligns its children in their cells
+      Given the QML:
+        """qml
+        import Ljos.Ui
+        import Ljos.Layout
+        Grid {
+          objectName: "grid"
+          columns: 2
+          horizontalItemAlignment: Align.HCenter
+          verticalItemAlignment: Align.Bottom
+          Item { objectName: "a"; width: 40; height: 10 }
+          Item { objectName: "b"; width: 30; height: 20 }
+          Item { objectName: "c"; width: 45; height: 25 }
+          Item { objectName: "d"; width: 55; height: 31 }
+        }
+        """
+      When 100 milliseconds pass
+      Then the property "x" of "<item>" is <x>
+      And the property "y" of "<item>" is <y>
+      And the property "width" of "grid" is 100
+      And the property "height" of "grid" is 51
+
+      Examples:
+        | item | x    | y  |
+        | a    | 2.5  | 10 |
+        | b    | 57.5 | 0  |
+        | c    | 0    | 26 |
+        | d    | 45   | 20 |
+
   Rule: A Grid's child asks for its size and its cells with its Layout
 
     # Qt's Grid positioner reads no `Layout`; its GridLayout spreads room no child fills over the
@@ -162,6 +194,36 @@ Feature: Ljós's Grid and Flow
       And the property "x" of "c" is 0
       And the property "y" of "c" is 24
       And the property "width" of "c" is 200
+
+    # A child's own alignment says where it sits along an axis it names; the Grid's says where
+    # along one it leaves unset.
+    @ljos-only
+    Scenario Outline: A child's Layout.alignment comes before its Grid's item alignment
+      Given the QML:
+        """qml
+        import Ljos.Ui
+        import Ljos.Layout
+        Grid {
+          objectName: "grid"
+          columns: 2
+          horizontalItemAlignment: Align.HCenter
+          verticalItemAlignment: Align.Bottom
+          Item { objectName: "a"; width: 41; height: 20 }
+          Item { objectName: "b"; width: 31; height: 14; Layout.alignment: Align.Right }
+          Item { objectName: "c"; width: 45; height: 25 }
+          Item { objectName: "d"; width: 55; height: 31 }
+        }
+        """
+      When 100 milliseconds pass
+      Then the property "x" of "<item>" is <x>
+      And the property "y" of "<item>" is <y>
+
+      Examples:
+        | item | x  | y  |
+        | a    | 2  | 0  |
+        | b    | 69 | 6  |
+        | c    | 0  | 26 |
+        | d    | 45 | 20 |
 
     @ljos-only
     Scenario: A Grid with no count is one line along its flow
@@ -358,6 +420,46 @@ Feature: Ljós's Grid and Flow
             Rectangle { width: 10; height: 10; fill: "#3030c0" }
             Rectangle { width: 10; height: 10; fill: "#c0c030" }
             Rectangle { width: 10; height: 10; fill: "#30c0c0" }
+          }
+        }
+        """
+
+    @ljos-only @headless
+    Scenario: A Grid that aligns its children in their cells is migrated, and draws the same
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
+        Rectangle {
+          width: 120; height: 60; color: "white"
+          Grid {
+            columns: 2
+            horizontalItemAlignment: Grid.AlignHCenter
+            verticalItemAlignment: Qt.AlignBottom
+            Rectangle { width: 40; height: 10; color: "#c03030" }
+            Rectangle { width: 30; height: 20; color: "#30c030" }
+            Rectangle { width: 45; height: 25; color: "#3030c0" }
+            Rectangle { width: 55; height: 31; color: "#c0c030" }
+          }
+        }
+        """
+      When the author runs "ljos render . --out kept.png --settle 0 --compat keep"
+      And the author runs "ljos render . --out lowered.png --settle 0 --compat lower"
+      Then the pictures "kept.png" and "lowered.png" have the same pixels
+      When the author runs "ljos migrate . --write"
+      Then the file "Main.qml" is:
+        """qml
+        import Ljos.Ui
+        import Ljos.Layout
+        Rectangle {
+          width: 120; height: 60; fill: "white"
+          Grid {
+            columns: 2
+            horizontalItemAlignment: Align.HCenter
+            verticalItemAlignment: Align.Bottom
+            Rectangle { width: 40; height: 10; fill: "#c03030" }
+            Rectangle { width: 30; height: 20; fill: "#30c030" }
+            Rectangle { width: 45; height: 25; fill: "#3030c0" }
+            Rectangle { width: 55; height: 31; fill: "#c0c030" }
           }
         }
         """

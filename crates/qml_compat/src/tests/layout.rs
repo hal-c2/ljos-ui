@@ -758,8 +758,12 @@ fn where_a_grid_positioner_and_ljos_grid_disagree_the_file_is_kept() {
             "`flow` of a `Grid` is not one the pass can read",
         ),
         (
-            "Grid { horizontalItemAlignment: Grid.AlignHCenter }".to_string(),
-            "`horizontalItemAlignment` is not in Ljós's `Grid` yet",
+            "Grid { horizontalItemAlignment: a }".to_string(),
+            "`horizontalItemAlignment` of a `Grid` is not one the pass can read",
+        ),
+        (
+            "Grid { verticalItemAlignment: Grid.AlignLeft }".to_string(),
+            "`verticalItemAlignment` of a `Grid` is not one the pass can read",
         ),
         (
             "Grid { Rectangle { anchors.centerIn: parent } }".to_string(),
@@ -1026,6 +1030,34 @@ fn a_roots_imports_come_before_its_directory() {
             panic!("{body}: kept");
         };
     }
+}
+
+/// A `Grid`'s item alignments are Ljós's `Grid`'s, as `Align` flags; one
+/// written as `Qt`'s is left to the pass that lowers `Qt`'s members.
+#[test]
+fn a_grids_item_alignments_are_ljos_grids() {
+    let text = lowered(&format!(
+        "import QtQuick\nGrid {{ columns: 2; horizontalItemAlignment: Grid.AlignHCenter\n    \
+         verticalItemAlignment: Grid.AlignBottom; {TILE} {TILE} }}\n"
+    ));
+    assert!(
+        text.ends_with(&format!(
+            "Grid {{ columns: 2; horizontalItemAlignment: Align.HCenter\n    \
+             verticalItemAlignment: Align.Bottom; {TILE} {TILE} }}\n"
+        )),
+        "{text}"
+    );
+    let text = lowered(&format!(
+        "import QtQuick\nGrid {{ columns: 1; horizontalItemAlignment: Qt.AlignRight; \
+         verticalItemAlignment: (Grid.AlignVCenter); {TILE} }}\n"
+    ));
+    assert!(
+        text.ends_with(&format!(
+            "Grid {{ columns: 1; horizontalItemAlignment: Align.Right; \
+             verticalItemAlignment: (Align.VCenter); {TILE} }}\n"
+        )),
+        "{text}"
+    );
 }
 
 /// A directory `parts` with a `GridLayout` of its own, built on the type

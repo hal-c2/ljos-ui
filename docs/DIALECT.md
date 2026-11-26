@@ -853,7 +853,13 @@ measures both with budget cases.
 child keeps its own size, `Layout.row`, `column`, `rowSpan`, `columnSpan`
 and `fill*` are honoured, and room left over stays at the end. Its
 counts are `columns` and `rows`; with only one set, the other is as many
-as the children need. With neither, it is one line along `flow`. Qt's
+as the children need. With neither, it is one line along `flow`.
+`horizontalItemAlignment` and `verticalItemAlignment` take `Align` flags
+and say where a child smaller than its cell sits in it, where the
+child's own `Layout.alignment` says nothing of that axis. A child of a
+Grid none of whose children has a `Layout` sits at the fraction, as in
+Qt's positioner; one of a Grid that is a layout sits at a whole pixel, as
+in Qt's layouts. `Grid.AlignHCenter` lowers to `Align.HCenter`. Qt's
 `Grid` positioner differs in four places, measured with qml6:
 
 | Qt's `Grid` | Lowering |
@@ -867,8 +873,8 @@ The pass counts the children a file shows: a `visible: false` child or a
 literal zero size is skipped, as Qt skips it, and a bound `visible` or a
 size it cannot read gives a range. It keeps the file if any count in the
 range differs. A `Repeater` child keeps it unless every spacing is 0 and
-only one count is set. `layoutDirection` and the item alignments keep the
-file until they are measured.
+only one count is set. `layoutDirection` keeps the file until it is
+measured, and so does an item alignment the pass cannot read.
 
 **GridLayout.** Qt's `GridLayout` sizes its cells by the same rules as its
 line layouts, which Ljós's `Grid` follows: qml6 places a two-column grid of
