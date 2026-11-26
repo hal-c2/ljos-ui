@@ -230,22 +230,45 @@ Feature: Ljós's gestures: Tap and Hover
         }
         """
 
-    # Qt's grab permissions are a gesture's `takeOver` in Ljós's API (docs/DIALECT.md §4.7), which
-    # is not one flag for one flag; until it is built a file that sets or reads them, or names
-    # their keys, runs as written.
+    # Qt's grab permissions are a gesture's `takeOver` in Ljós's API (docs/DIALECT.md §4.7): the
+    # one key `CanTakeOverFromAnything` is `takeOver: true`. Other flags say more than the one
+    # boolean, so a file that sets them, reads them or names their keys runs as written.
     @ljos-only @headless
-    Scenario: A handler's grab permissions keep its file
+    Scenario: ljos migrate writes taking over from anything as takeOver
       Given the file "Main.qml":
         """qml
         import QtQuick
         Item {
-          TapHandler { grabPermissions: PointerHandler.CanTakeOverFromAnything }
+          DragHandler { grabPermissions: PointerHandler.CanTakeOverFromAnything }
+        }
+        """
+      When the author runs "ljos migrate --write ."
+      Then the command prints:
+        """
+        lowered ./Main.qml (4 edits)
+        1 files, 1 lowered, 0 kept
+        """
+      And the file "Main.qml" is:
+        """qml
+        import Ljos.Ui
+        Item {
+          Drag { takeOver: true }
+        }
+        """
+
+    @ljos-only @headless
+    Scenario: Grab permissions that say more than taking over keep their file
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
+        Item {
+          TapHandler { grabPermissions: PointerHandler.CanTakeOverFromItems }
         }
         """
       When the author runs "ljos migrate ."
       Then the command prints:
         """
-        kept ./Main.qml:3:16: `grabPermissions` is a gesture's `takeOver` in Ljós's API, which is not built yet
+        kept ./Main.qml:3:16: `grabPermissions` is a gesture's `takeOver` in Ljós's API only as `PointerHandler.CanTakeOverFromAnything`, set on a gesture that has one
         1 files, 0 lowered, 1 kept
         """
 
@@ -261,9 +284,72 @@ Feature: Ljós's gestures: Tap and Hover
       When the author runs "ljos migrate ."
       Then the command prints:
         """
-        kept ./Main.qml:3:40: `grabPermissions` is a gesture's `takeOver` in Ljós's API, which is not built yet
+        kept ./Main.qml:3:40: `grabPermissions` is a gesture's `takeOver` in Ljós's API only as `PointerHandler.CanTakeOverFromAnything`, set on a gesture that has one
         1 files, 0 lowered, 1 kept
         """
+
+  Rule: A gesture that takes over wins over one that has started
+
+    # A DragHandler on the outer item sees the drag after the one on the inner item has taken it.
+    # The default lets it take the pointer only from an item or a handler of another kind; with
+    # `CanTakeOverFromAnything` it takes it from the inner DragHandler too, which lets it.
+    @qt-parity
+    Scenario: A DragHandler that may take over from anything takes the drag from one inside it
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          width: 300; height: 200
+          property string log: ""
+          Rectangle {
+            id: outer; objectName: "outer"
+            width: 200; height: 200
+            DragHandler {
+              grabPermissions: PointerHandler.CanTakeOverFromAnything
+              onActiveChanged: root.log += "outer.active=" + active + " "
+            }
+            Rectangle {
+              id: inner; objectName: "inner"
+              width: 80; height: 80
+              DragHandler { onActiveChanged: root.log += "inner.active=" + active + " " }
+            }
+          }
+        }
+        """
+      When the user drags from 20, 20 to 60, 20
+      Then the property "log" of "root" is "inner.active=true inner.active=false outer.active=true outer.active=false "
+      And the property "x" of "inner" is 16
+      And the property "x" of "outer" is 40
+
+    @ljos-only
+    Scenario: A Drag that takes over takes the drag from one inside it
+      Given the QML:
+        """qml
+        import Ljos.Ui
+        Item {
+          id: root; objectName: "root"
+          width: 300; height: 200
+          property string log: ""
+          Rectangle {
+            id: outer; objectName: "outer"
+            width: 200; height: 200
+            Drag {
+              takeOver: true
+              onActiveChanged: root.log += "outer.active=" + active + " "
+            }
+            Rectangle {
+              id: inner; objectName: "inner"
+              width: 80; height: 80
+              Drag { onActiveChanged: root.log += "inner.active=" + active + " " }
+            }
+          }
+        }
+        """
+      When the user drags from 20, 20 to 60, 20
+      Then the property "log" of "root" is "inner.active=true inner.active=false outer.active=true outer.active=false "
+      And the property "x" of "inner" is 16
+      And the property "x" of "outer" is 40
 
     # Once lowered, a gesture's new name is found on the gesture before the object outside it,
     # where in Qt the gesture has no member of that name.

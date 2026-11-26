@@ -225,16 +225,43 @@ fn a_name_a_script_binds_hides_a_type_and_a_member() {
     );
 }
 
-/// Qt's grab permissions are a gesture's `takeOver`, which is not built
-/// (docs/DIALECT.md §4.7): set, read or named by their keys, they keep the
-/// file.
+/// `grabPermissions: PointerHandler.CanTakeOverFromAnything` is a
+/// gesture's `takeOver: true` (docs/DIALECT.md §4.7): the gesture may take
+/// the pointer from anything, and, as with that one key in Qt, approves
+/// nothing taking it from the gesture.
+#[test]
+fn taking_over_from_anything_is_a_gestures_take_over() {
+    for (source, out) in [
+        (
+            "import QtQuick\nItem { DragHandler { grabPermissions: PointerHandler.CanTakeOverFromAnything } }\n",
+            "pragma Scripts: JavaScript; import Ljos.Ui\nItem { Drag { takeOver: true } }\n",
+        ),
+        (
+            "import QtQuick\nItem { TapHandler { grabPermissions: (TapHandler.CanTakeOverFromAnything) } }\n",
+            "pragma Scripts: JavaScript; import Ljos.Ui\nItem { Tap { takeOver: true } }\n",
+        ),
+        (
+            "import QtQuick\nItem { PointHandler { grabPermissions: DragHandler.CanTakeOverFromAnything } }\n",
+            "pragma Scripts: JavaScript; import Ljos.Ui\nItem { Pointer { takeOver: true } }\n",
+        ),
+    ] {
+        assert_eq!(lowered(source), out, "{source}");
+    }
+}
+
+/// Grab permissions that say more than taking over from anything, or are
+/// read, named by their keys or set where Ljós's type has no `takeOver`,
+/// keep the file: Qt's flags say more than the one boolean.
 #[test]
 fn grab_permissions_keep_the_file() {
-    let reason =
-        "`grabPermissions` is a gesture's `takeOver` in Ljós's API, which is not built yet";
+    let reason = "`grabPermissions` is a gesture's `takeOver` in Ljós's API only as \
+                  `PointerHandler.CanTakeOverFromAnything`, set on a gesture that has one";
     for source in [
         "import QtQuick\nItem { TapHandler { grabPermissions: 15 } }\n",
-        "import QtQuick\nItem { TapHandler { grabPermissions: TapHandler.CanTakeOverFromAnything } }\n",
+        "import QtQuick\nItem { TapHandler { grabPermissions: TapHandler.CanTakeOverFromItems } }\n",
+        "import QtQuick\nItem { DragHandler { grabPermissions: PointerHandler.CanTakeOverFromAnything | PointerHandler.ApprovesTakeOverByAnything } }\n",
+        "import QtQuick\nItem { WheelHandler { grabPermissions: PointerHandler.CanTakeOverFromAnything } }\n",
+        "import QtQuick\nItem { DragHandler { grabPermissions: dragging ? PointerHandler.CanTakeOverFromAnything : 0 } }\n",
         "import QtQuick\nItem { HoverHandler { onGrabPermissionsChanged: {} } }\n",
         "import QtQuick\nItem { TapHandler { id: tap }\n    property int g: tap.grabPermissions }\n",
         "import QtQuick\nItem { TapHandler { onTapped: console.log(grabPermissions) } }\n",
@@ -242,6 +269,17 @@ fn grab_permissions_keep_the_file() {
     ] {
         assert_eq!(kept_for(source), reason, "{source}");
     }
+}
+
+/// A file's own `PointerHandler` is not Qt's: what is read off it is no
+/// key of Qt's flags.
+#[test]
+fn a_pointer_handler_of_the_files_own_is_no_key_of_qts() {
+    let source = "import QtQuick\nItem { component PointerHandler: QtObject {}\n    DragHandler { grabPermissions: PointerHandler.CanTakeOverFromAnything } }\n";
+    assert!(
+        !matches!(lower(source, &no_locals), Outcome::Lowered(ref l) if l.text.contains("takeOver")),
+        "{source}"
+    );
 }
 
 #[test]

@@ -1435,6 +1435,15 @@ impl<'s> Pass<'s> {
                 return Ok(());
             }
             if is_grab_permissions(first) {
+                if first == "grabPermissions"
+                    && aim.is_none()
+                    && let Some(value) = self.takes_over(binding, ty)
+                {
+                    let span = name.span.start as usize..name.span.end as usize;
+                    self.change(span, "takeOver");
+                    self.change(value, "true");
+                    return Ok(());
+                }
                 return Err(self.no(Cause::GrabPermissions, at));
             }
             match aim.map(|aim| (aim.at, aim.aimed)) {
@@ -1627,6 +1636,45 @@ impl<'s> Pass<'s> {
             }
         }
         Ok(())
+    }
+
+    /// Where the value of `binding`, a `grabPermissions` set on an object of
+    /// type `on`, is, when it is Qt's `CanTakeOverFromAnything` alone and
+    /// the gesture Ljós's API has of `on` takes over: what a `takeOver:
+    /// true` says. The key is read through a Qt handler's name, as Qt's
+    /// documentation writes it, never through a type of the file's own of
+    /// that name.
+    fn takes_over(&self, binding: &QmlBinding<'_>, on: Ty) -> Option<Range<usize>> {
+        let Ty::Exact(handler) = on else {
+            return None;
+        };
+        let gesture = rules::new_name(handler.name).unwrap_or(handler.name);
+        self.scope
+            .modules
+            .ljos(Ljos::Ui)?
+            .type_named(gesture)?
+            .property("takeOver")?;
+        let QmlBindingValue::Expression(value) = &binding.value else {
+            return None;
+        };
+        let Expression::StaticMemberExpression(key) = value.without_parentheses() else {
+            return None;
+        };
+        let Expression::Identifier(owner) = &key.object else {
+            return None;
+        };
+        if key.property.name != "CanTakeOverFromAnything" {
+            return None;
+        }
+        let owner = self.scope.quick_type(&owner.name)?;
+        let key = owner.enum_value(&key.property.name)?;
+        if key.enumeration.name != "GrabPermissions"
+            && key.enumeration.alias != Some("GrabPermissions")
+        {
+            return None;
+        }
+        let span = value.span();
+        Some(span.start as usize..span.end as usize)
     }
 
     /// `onColorChanged` on a type whose `color` is `fill`: `onFillChanged`.

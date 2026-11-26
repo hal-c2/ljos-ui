@@ -626,7 +626,7 @@ impl fmt::Display for Cause {
                 "`{name}` of `{native}` is {base}'s, which {MODULE} calls `{new}`, and the program's type has it as `{name}`"
             ),
             Cause::GrabPermissions => f.write_str(
-                "`grabPermissions` is a gesture's `takeOver` in Ljós's API, which is not built yet",
+                "`grabPermissions` is a gesture's `takeOver` in Ljós's API only as `PointerHandler.CanTakeOverFromAnything`, set on a gesture that has one",
             ),
             Cause::QmlText => {
                 f.write_str("it makes objects from QML text, which is not lowered yet")
