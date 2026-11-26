@@ -433,6 +433,28 @@ fn the_badge_is_shown_again_once_notifications_are_granted() {
     }
 }
 
+/// The badge is the application's, not the asking object's: a grant that
+/// comes after the object went still shows the count again.
+#[test]
+fn the_badge_is_shown_again_when_the_asking_object_is_gone() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let e = engine(dir.path());
+    let fake = crate::FakePermissions::default();
+    let platform = Platform::of(&e);
+    platform.set_permissions(Rc::new(fake.clone()));
+    let badge = crate::RecordedBadge::default();
+    platform.set_badge(Rc::new(badge.clone()));
+    platform.set_badge_number(3);
+    let p = make::<crate::NotificationPermission>(&e);
+    e.invoke_by_name(p, "request", &[]).expect("requested");
+    assert!(e.destroy(p));
+    e.process_deferred_deletes();
+    assert!(!e.is_alive(p), "the object is gone before the answer");
+    assert!(fake.answer("notifications", true));
+    platform.finish(&e);
+    assert_eq!(badge.counts(), vec![3, 3]);
+}
+
 /// Only a permission newly granted shows the badge again: one granted
 /// from the start, asked for again, adds nothing.
 #[test]
