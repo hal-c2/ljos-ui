@@ -860,12 +860,16 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
 
     /// What a type of Ljos.Core or Ljos.Ui has of what was `Qt`'s
     /// (docs/DIALECT.md §4.3.1): `Locale.current`, `Locale.named(n)`,
-    /// `Font.of(o)`, `Font.families()`.
+    /// `Font.of(o)`, `Font.families()`, `Component.load(address)`,
+    /// `Component.createFromText(text, parent, place)`.
     pub(super) fn type_static(&mut self, kind: &QKind<O::Type>, name: &str) -> Option<Ty> {
         let QKind::Builtin(ty) = kind else {
             return None;
         };
         let oracle = self.c.types.oracle;
+        if !crate::compile::statics::has_static(oracle, kind, name) {
+            return None;
+        }
         let is = |uri: &str, type_name: &str| oracle.module_type(uri, type_name) == Some(*ty);
         let param = |name: &str, ty: Ty| Param {
             name: name.into(),
@@ -913,6 +917,41 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                 }
                 _ => None,
             };
+        }
+        // Each reads a relative address from the file whose script asks, as
+        // `Qt.createComponent` and `Qt.createQmlObject` do.
+        if is("QtQml", "Component") {
+            let object = match oracle.module_type("QtQml", "QtObject") {
+                Some(object) => self.object_ty(&QKind::Builtin(object)),
+                None => Ty::OBJECT,
+            };
+            let (params, made) = match name {
+                "load" => (
+                    vec![param("address", Ty::STRING)],
+                    self.object_ty(&QKind::Builtin(*ty)),
+                ),
+                "createFromText" => (
+                    vec![
+                        param("text", Ty::STRING),
+                        param("parent", object),
+                        Param {
+                            optional: true,
+                            ..param("place", Ty::STRING)
+                        },
+                    ],
+                    object,
+                ),
+                _ => return None,
+            };
+            // An empty address or text makes `null`, as Qt's do, so that a
+            // lowered file compares as it did; typed as what is made, as
+            // `createObject` is.
+            return Some(self.arena.function(Sig {
+                params: params.into_boxed_slice(),
+                rest: None,
+                ret: made,
+                guard: None,
+            }));
         }
         None
     }

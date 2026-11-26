@@ -124,7 +124,7 @@ and strings masked). The counts that shape the API:
 | `Component.onCompleted` | 59 | 51 | Ordering-sensitive. It stays, but bindings and states are preferred (declarative.md). |
 | `MouseArea {` / `TapHandler {` | 61 / 29 | 47 / 20 | Two input APIs. One `PointerArea` takes mouse, pen and touch. |
 | `Rectangle {` | 365 | 184 | `color` means fill here and glyph colour on `Text`. In the API it is `fill`. |
-| `createObject(` / `createQmlObject` | 19 / 9 | 6 / 5 | Objects from code. `createQmlObject` (QML as text) keeps its file (§6.3). `createObject` on a component is typed by it. |
+| `createObject(` / `createQmlObject` | 19 / 9 | 6 / 5 | Objects from code. `createQmlObject` (QML as text) is `Component.createFromText` (§4.11). `createObject` on a component is typed by it. |
 | `.connect(` | 11 | 7 | Dynamic connection. It stays in compat only. |
 | `this` / `arguments` | 2 / 2 | 2 / 2 | Rare enough to forbid. |
 
@@ -327,7 +327,7 @@ a string; neither takes a reviver, a replacer or an indent, which are
 | `Qt.resolvedUrl` | `url("…")`, resolved against the file statically | compile time | none |
 | `font.pointSize` | `Screen.points(pt)`: pixels for `pt` points on the item's screen (the screen's logical DPI, exact, over 72: a host may report a fractional DPI, as Qt allows); with no screen yet, the platform's own points (72 or 96 to the inch). Built with `Screen` (M1) | a source, reactive on the item's screen | a multiply; re-evaluated only when the item moves to another screen or that screen's DPI changes |
 | `Qt.binding` | a `Binding` object, or a state | declarative | |
-| `Qt.createComponent`, `createQmlObject` | a component type is a value (§4.11) | typed | |
+| `Qt.createComponent`, `createQmlObject` | a component type is a value (§4.11); by address or text, `Component.load(u)` and `Component.createFromText(t, p, place)` | typed | |
 | `Qt.quit`, `exit`, `application.*`, `openUrlExternally` | `App.quit()`, `App.arguments`, `App.displayName`, `App.openUrlExternally(u)` | effects, typed | |
 | `Qt.platform`, `styleHints`, `inputMethod` | `App.platform`, `Theme.motion`, `App.inputMethod` | reactive | |
 | `Math.random` for a range | `Random.between(lo, hi)`, `Random.pick(list)`; `Math.random` stays | effect | |
@@ -435,8 +435,9 @@ a home in Ljós's API, and `ljos migrate` writes it:
 | `Qt.formatDate/Time/DateTime(d, f)` | `Locale.current.formatDate(d, f)` and the others | `Ljos.Core` |
 | `Qt.styleHints.*` | `App.hints.*`, the same members | `Ljos.Core` |
 | `Qt.inputMethod.*` | `App.inputMethod.*` | `Ljos.Core` |
-| `Qt.createComponent(u)` | a component type is a value (§4.11); until that is built, the file is kept | — |
-| `Qt.createQmlObject`, `Qt.isQtObject`, `Qt.include` | compat only: the file is kept | — |
+| `Qt.createComponent(u)` | `Component.load(u)`, reading `u` from the file the script is written in (§4.11); with a mode, a parent or a module, the file is kept | `Ljos.Core` |
+| `Qt.createQmlObject(t, p, place?)` | `Component.createFromText(t, p, place)` (§4.11) | `Ljos.Core` |
+| `Qt.isQtObject`, `Qt.include` | compat only: the file is kept | — |
 | `Qt.<Key>` of an enum of `Qt` | `<Enum>.<Key>` (below) | `Ljos.Ui` |
 
 **Enums.** Qt's `Qt` namespace holds 70 enums whose keys are reached as
@@ -1381,7 +1382,8 @@ row", and rarely "make one now". The corpus:
   nothing leaks a block or touches one after it is destroyed.
 - `StackView` stays in `Ljos.Controls`, with `push(Page, { … })` typed by
   the component.
-- `createQmlObject` (a string of QML compiled at run time) is compat only.
+- `createQmlObject` (a string of QML compiled at run time) is
+  `Component.createFromText`; the text is compiled as it is written.
 
 **Cost.** A keyed Repeater creates only what is new and keeps only what is
 alive. Qt's samegame keeps a JS array of live items beside the scene, and
@@ -1421,8 +1423,26 @@ DECISION: a type named where a component goes is a component only in a
 file that imports `Ljos.Ui`. In Qt's QML the same text is an error, and a
 file written for Qt keeps it.
 `Qt.createComponent("X.qml").createObject(p, {…})` with a static string →
-`X.createObject(p, {…})`. A URL built at run time, `createQmlObject` and
-`destroy()` keep their files (R1).
+`X.createObject(p, {…})`. `destroy()` keeps its file (R1).
+
+**By address or text.** A component a script asks for by address is
+`Component.load(address)`, and an object made from QML held as text is
+`Component.createFromText(text, parent, place)`, both of `Ljos.Core`'s
+`Component`. Each reads a relative address from the file whose script is
+written, not from the file that calls it, as Qt's `Qt.createComponent` and
+`Qt.createQmlObject` do: `dyn/Maker.qml` asking for `"Part.qml"` gets
+`dyn/Part.qml`. An empty address or text makes nothing (`null`), and an
+unnamed text is called `inline` in its errors. `ljos migrate` writes
+`Qt.createComponent(u)` as `Component.load(u)` and
+`Qt.createQmlObject(t, p, place)` as `Component.createFromText(t, p, place)`;
+a mode, a parent or a module given to `createComponent`, another count of
+arguments or a spread keeps the file, as does a `createQmlObject` read off
+anything but `Qt`.
+
+DECISION: the text is compiled as it is written, without the compat pass,
+under `--compat lower` too: a text that imports Qt's modules is Qt's QML, one
+that imports `Ljos.*` is Ljós's API. A plugin's QML text therefore needs no
+lowering to run; lowering it at the call is M5.
 
 DECISION: `destroy()` is not in a Ljós file. An object a view made is
 removed by its model, and one made by `createObject` is owned by its parent
@@ -1720,7 +1740,8 @@ renames are theirs: they follow when those types are in `Ljos.Ui`.
 | `Loader { source: "X.qml" }` | `Loader { component: X }` | mechanical when the string is static and `X.qml` is beside the file; built |
 | `Loader { sourceComponent: c }` | `Loader { component: c }` | mechanical; built |
 | `Qt.createComponent(...).createObject` | `X.createObject` | mechanical when the string is static |
-| `createQmlObject`, `destroy()` | — | DECISION: kept (R1) |
+| `Qt.createComponent(u)`, `Qt.createQmlObject(t, p, place)` | `Component.load(u)`, `Component.createFromText(t, p, place)` | mechanical; built (§4.11) |
+| `destroy()` | — | DECISION: kept (R1) |
 | `Component { id }` | an inline `component X:` or an inline delegate | mechanical |
 | `palette.*` | `Theme.color.*` | mechanical where 1:1 |
 | `Material.*`, `Universal.*` | — | DECISION: kept (a style's own API) |
@@ -3603,7 +3624,7 @@ reason says which and to what.
 | A module of the project whose types are native (C++ with no QML file here) | Kept while its types are not described to the pass |
 | A module of the project imported under a name (`import Gauges as G`) | Kept until the pass follows a qualified type |
 | A file in Ljós's API binds on the file's type a name lowering renames (`color` on a `Rectangle`) | Lowered with that binding renamed to Ljós's name (`fill`) by hand, as the reason says |
-| `Qt.createQmlObject` (QML as text) | Kept. The text is lowered only if the pass runs at that call too (M5) |
+| `createQmlObject` read off something other than `Qt`, or `Qt.createComponent` with a mode, a parent or a module | Kept. `Qt.createQmlObject(t, p, place)` is `Component.createFromText`; its text runs as written, and is lowered only if the pass runs at that call too (M5) |
 | A name built at run time (`obj[name]`, `"col" + "or"`) | Kept for good. A static analysis cannot follow it |
 | `.bold` of a font read or written by a script, `font.bold` with `font.weight` (in any form), `.pointSize` read or written by a script, `font.pointSize` with `font.pixelSize`, or a font member read off a `font`, `var` or `alias` whose type is not known (§4.13) | Kept until the pass knows more types (M4) |
 | A `.qml` URL built at run time (template literal, concatenation) | Kept when the file is seen. A group tie through it is missed (risk R1) |
@@ -3687,8 +3708,8 @@ globals, decide coverage. Phase 2 starts with them (§17).
 With `Qt.*` lowered by member (§4.3) the counts are the same. One file's
 edits change: car-configurator's `CameraReset.qml` writes `vector3d(…)` for
 its two `Qt.vector3d(…)` and imports `Ljos.Core` (3 edits, was 1). The one
-`Qt` member left in a lowered file is `Qt.createComponent`, which waits for
-§4.11. No example the render sweep runs has a lowered file whose text
+`Qt` member that was left in a lowered file, `Qt.createComponent`, is
+`Component.load` (§4.11). No example the render sweep runs has a lowered file whose text
 changed.
 
 ## 7. Tiers and the web
@@ -4077,7 +4098,8 @@ bindings and states without a rule.
   how much migrates, and typing is a person's step.
 - DECISION: a file is lowered all-or-nothing, and a kept file keeps the
   files it uses. Grouping is conservative.
-- DECISION: `Qt.createQmlObject` keeps its file until M5.
+- DECISION: `Qt.createQmlObject` is `Component.createFromText`; its text is
+  compiled as written until M5 lowers it at the call.
 - DECISION: phase 1 exposes compat on `ljos render --compat keep|lower` and
   `ljos migrate`. `ljos run --compat` is M1 (built without `--watch`). The
   default is `keep`.

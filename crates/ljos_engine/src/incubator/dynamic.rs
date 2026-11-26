@@ -626,6 +626,22 @@ pub(crate) const PRELUDE: &str = r##"
   const component = g.__ljos_createComponent, resolved = g.__ljos_resolvedUrl;
   const fromText = g.__ljos_createQmlObject;
   const ofModule = g.__ljos_createModuleComponent;
+  // What a text makes, or the error Qt's QML throws for it, which
+  // `label` names.
+  const made = (label, base, text, parent, place) => {
+    text = String(text);
+    if (text === "") return null;
+    const made = fromText(base, text, parent, place === undefined ? undefined : String(place));
+    if (typeof made === "string") throw new Error(label + "(): " + made);
+    if (Array.isArray(made)) {
+      const lines = made.map((e) =>
+        "\n    " + e.fileName + ":" + e.lineNumber + ":" + e.columnNumber + ": " + e.message);
+      const error = new Error(label + "(): failed to create object: " + lines.join(""));
+      error.qmlErrors = made;
+      throw error;
+    }
+    return made;
+  };
   // `base` is the address of the file whose script asks; none for a script
   // that belongs to no file.
   const makers = (base) => ({
@@ -643,20 +659,28 @@ pub(crate) const PRELUDE: &str = r##"
       if (arguments.length < 2 || arguments.length > 3) {
         throw new Error("Qt.createQmlObject(): Invalid arguments");
       }
-      text = String(text);
-      if (text === "") return null;
-      const made = fromText(base, text, parent, place === undefined ? undefined : String(place));
-      if (typeof made === "string") throw new Error("Qt.createQmlObject(): " + made);
-      if (Array.isArray(made)) {
-        const lines = made.map((e) =>
-          "\n    " + e.fileName + ":" + e.lineNumber + ":" + e.columnNumber + ": " + e.message);
-        const error = new Error("Qt.createQmlObject(): failed to create object: " + lines.join(""));
-        error.qmlErrors = made;
-        throw error;
-      }
-      return made;
+      return made("Qt.createQmlObject", base, text, parent, place);
     },
     resolvedUrl(url) { return resolved(base, url); },
+  });
+  // The component type's makers in a file of Ljós's API, made with the
+  // file's address (incubator/types.rs): `Qt.createComponent(address)` and
+  // `Qt.createQmlObject(text, parent, place)` under the type's name.
+  Object.defineProperty(g, "__ljos_typeStaticsAt", {
+    value: Object.freeze({
+      "QtQml.Component": (base) => ({
+        load(address) {
+          if (arguments.length !== 1) throw new Error("Component.load(): Invalid arguments");
+          return component(base, String(address));
+        },
+        createFromText(text, parent, place) {
+          if (arguments.length < 2 || arguments.length > 3) {
+            throw new Error("Component.createFromText(): Invalid arguments");
+          }
+          return made("Component.createFromText", base, text, parent, place);
+        },
+      }),
+    }),
   });
   const define = (to, from) => {
     for (const name of Object.keys(from)) {

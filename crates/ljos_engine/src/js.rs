@@ -2214,7 +2214,7 @@ impl Engine {
             Ok(engine
                 .lookup_type(module, name)
                 .or_else(|| engine.lookup_type("QtQml", name))
-                .map_or(JsValue::Undefined, |m| engine.type_face(scope, &m)))
+                .map_or(JsValue::Undefined, |m| engine.type_face(scope, &m, None)))
         });
         // `value instanceof Type`, asked by what stands for the type
         // (incubator/types.rs).
