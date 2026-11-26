@@ -546,3 +546,62 @@ fn a_name_an_unknown_type_could_hide_says_which_type() {
         "{reason}"
     );
 }
+
+/// A file of the project beside this one whose root is a type of the
+/// program's own, `Card` built on `Swatch` or `Notice` on a `Text` two of
+/// its modules have.
+fn natives_beside(name: &str) -> Option<Root> {
+    let imports = |uris: &[&str]| uris.iter().map(ToString::to_string).collect();
+    match name {
+        "Card" => Some(Root {
+            imports: imports(&["QtQuick", "Studio.Kit"]),
+            ..root_of("Swatch", &[])
+        }),
+        "Notice" => Some(Root {
+            imports: imports(&["Studio.Print", "Studio.Press"]),
+            ..root_of("Text", &[])
+        }),
+        _ => None,
+    }
+}
+
+/// A file built on a type of the program's own has that type's members:
+/// `Swatch`'s `color` is its `Rectangle`'s, which Ljós calls `fill`, so
+/// the file is kept as one that names `Swatch` itself is.
+#[test]
+fn a_file_built_on_a_native_type_has_its_members() {
+    let Outcome::Kept(kept) = with_beside("Item { Card { color: \"red\" } }") else {
+        panic!("lowered");
+    };
+    assert!(
+        kept.to_string()
+            .contains("is Rectangle's, which Ljos.Ui calls `fill"),
+        "{kept}"
+    );
+}
+
+/// A root named by two modules of the program's own its file imports is
+/// not followed: what its `color` is is not known.
+#[test]
+fn a_file_built_on_a_name_two_native_modules_have_is_not_followed() {
+    let Outcome::Kept(kept) = with_beside("Item { Notice { color: \"red\" } }") else {
+        panic!("lowered");
+    };
+    assert!(
+        kept.to_string()
+            .contains("`color` is set on the object, whose type is not known"),
+        "{kept}"
+    );
+}
+
+/// `body`, importing QtQuick, beside the files of [`natives_beside`].
+fn with_beside(body: &str) -> Outcome {
+    lower(
+        &format!("import QtQuick\n{body}\n"),
+        &Styled {
+            locals: &natives_beside,
+            style: CONTROLS_STYLE,
+            natives: Some(&Kit),
+        },
+    )
+}
