@@ -17,8 +17,10 @@ use std::sync::OnceLock;
 use ljos_engine::{Engine, MetaBuilder, MetaObject, MetaRef, QmlType, Version};
 
 use crate::canvas::Canvas;
+use crate::effects::MultiEffect;
 use crate::font_enums::FontEnums;
 use crate::handlers::PointerDevice;
+use crate::rectangular_shadow::RectangularShadow;
 use crate::shapes::{
     ConicalGradient, LinearGradient, Path, PathAngleArc, PathArc, PathAttribute, PathCubic,
     PathCurve, PathLine, PathMove, PathMultiline, PathPercent, PathPolyline, PathQuad,
@@ -27,12 +29,12 @@ use crate::shapes::{
 use crate::transform::{Rotation, Scale, Translate};
 use crate::{
     Accessible, Animation, Behavior, ColorAnimation, DoubleValidator, Drag, DragHandler, DropArea,
-    Easing, Flickable, FontMetrics, Gradient, GradientStop, GridView, HoverHandler, Image,
-    IntValidator, Item, ListView, Loader, MouseArea, NumberAnimation, ParallelAnimation, PathView,
-    PauseAnimation, PointHandler, PropertyAction, PropertyAnimation, PropertyChanges, Rectangle,
-    RegularExpressionValidator, Repeater, RotationAnimation, ScriptAction, SequentialAnimation,
-    SmoothedAnimation, SpringAnimation, State, TapHandler, Text, TextEdit, TextInput, TextMetrics,
-    Transition, WheelHandler, focus, keys,
+    Easing, Flickable, FontMetrics, FrameAnimation, Gradient, GradientStop, GridView, HoverHandler,
+    Image, IntValidator, Item, LayoutMirroring, ListView, Loader, MouseArea, NumberAnimation,
+    ParallelAnimation, PathView, PauseAnimation, PointHandler, PropertyAction, PropertyAnimation,
+    PropertyChanges, Rectangle, RegularExpressionValidator, Repeater, RotationAnimation,
+    ScriptAction, SequentialAnimation, SmoothedAnimation, SpringAnimation, State, TapHandler, Text,
+    TextEdit, TextInput, TextMetrics, Transition, WheelHandler, focus, keys,
 };
 
 /// The module's name, as a file imports it.
@@ -228,13 +230,18 @@ pub(crate) fn register(engine: &Engine) {
     // attached only here; `ljos_controls` gives the one that is a root,
     // and `Screen` with it. `KeyNavigation` is kept as it is (§4.7), and
     // so are a `Canvas` and an item's transforms; `PathView` is a view
-    // as Qt's are, with what it attaches to a delegate.
+    // as Qt's are, with what it attaches to a delegate. The attached
+    // `LayoutMirroring` is how a file mirrors its anchors and reads that
+    // it does. Qt's `QtQuick.Effects` (`RectangularShadow`, `MultiEffect`)
+    // are items and visuals, so they are this module's, not one of their
+    // own.
     engine.register_module(ljos_engine::module!("Ljos.Ui" 1.0 => [
         Image, Flickable, focus::Window,
         TextInput, TextEdit, IntValidator, DoubleValidator, RegularExpressionValidator,
         TextMetrics, FontMetrics,
         keys::Keys, keys::KeyEventObject, keys::Shortcut, Accessible,
         keys::KeyNavigation, Canvas, PathView, Rotation, Scale, Translate,
+        LayoutMirroring, RectangularShadow, MultiEffect,
     ]));
     // Qt's animations, as they are (docs/DIALECT.md §4.9, M1): a `Behavior`,
     // a `Transition` and what they run. An animation's `property` names a
@@ -242,12 +249,13 @@ pub(crate) fn register(engine: &Engine) {
     // Ljós's API it is `fill` on a `Rectangle`; the compat pass renames it.
     // Those that move what Ljós does not have yet stay `QtQuick`'s:
     // `AnchorAnimation` and `ParentAnimation` (with `AnchorChanges` and
-    // `ParentChange`), the Animators, `AnimationController`,
-    // `FrameAnimation` and the 3D ones.
+    // `ParentChange`), the Animators, `AnimationController` and the 3D
+    // ones.
     engine.register_module(ljos_engine::module!("Ljos.Ui" 1.0 => [
         Animation, PropertyAnimation, NumberAnimation, ColorAnimation, RotationAnimation,
         SmoothedAnimation, SpringAnimation, SequentialAnimation, ParallelAnimation,
         PauseAnimation, ScriptAction, PropertyAction, Behavior, Transition, Easing,
+        FrameAnimation,
     ]));
     let version = Version::new(1, 0);
     for face in [
@@ -542,11 +550,28 @@ mod tests {
             ("Rotation", Rotation::static_meta()),
             ("Scale", Scale::static_meta()),
             ("Translate", Translate::static_meta()),
+            ("LayoutMirroring", LayoutMirroring::static_meta()),
+            ("FrameAnimation", FrameAnimation::static_meta()),
         ] {
             let ours = engine.lookup_type(MODULE, name).expect(name);
             let qt = engine.lookup_type("QtQuick", name).expect(name);
             assert!(ours.inherits(native) && qt.inherits(native), "{name}");
         }
+        for (name, native) in [
+            ("RectangularShadow", RectangularShadow::static_meta()),
+            ("MultiEffect", MultiEffect::static_meta()),
+        ] {
+            let ours = engine.lookup_type(MODULE, name).expect(name);
+            let qt = engine.lookup_type("QtQuick.Effects", name).expect(name);
+            assert!(ours.inherits(native) && qt.inherits(native), "{name}");
+        }
+        // The motion a user prefers is an enum of Ljos.Ui beside the
+        // contrast, though Qt 6.11's `Qt` has no such enum.
+        let motion = engine
+            .lookup_type(MODULE, "MotionPreference")
+            .expect("MotionPreference");
+        assert_eq!(motion.enum_key("None"), Some(0));
+        assert_eq!(motion.enum_key("Reduced"), Some(1));
     }
 
     #[test]

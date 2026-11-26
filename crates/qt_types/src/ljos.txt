@@ -1130,6 +1130,7 @@ module Ljos.Ui
 	FocusReason Ljos.Ui.FocusReason
 	Font QtQuick.Font
 	FontMetrics QtQuick.FontMetrics
+	FrameAnimation QtQuick.FrameAnimation
 	GestureState Ljos.Ui.GestureState
 	GestureType Ljos.Ui.GestureType
 	Gradient QtQuick.Gradient
@@ -1152,15 +1153,18 @@ module Ljos.Ui
 	KeyModifier Ljos.Ui.KeyModifier
 	KeyNavigation QtQuick.KeyNavigation
 	Keys QtQuick.Keys
+	LayoutMirroring QtQuick.LayoutMirroring
 	LinearGradient QtQuick.Shapes.LinearGradient
 	ListView Ljos.Ui.ListView
 	Loader Ljos.Ui.Loader
 	MaskMode Ljos.Ui.MaskMode
 	MatchFlag Ljos.Ui.MatchFlag
 	Modifier Ljos.Ui.Modifier
+	MotionPreference Ljos.Ui.MotionPreference
 	MouseButton Ljos.Ui.MouseButton
 	MouseEventFlag Ljos.Ui.MouseEventFlag
 	MouseEventSource Ljos.Ui.MouseEventSource
+	MultiEffect QtQuick.Effects.MultiEffect
 	NativeGestureType Ljos.Ui.NativeGestureType
 	NumberAnimation QtQuick.NumberAnimation
 	Orientation Ljos.Ui.Orientation
@@ -1193,6 +1197,7 @@ module Ljos.Ui
 	PropertyChanges QtQuick.PropertyChanges
 	RadialGradient QtQuick.Shapes.RadialGradient
 	Rectangle Ljos.Ui.Rectangle
+	RectangularShadow QtQuick.Effects.RectangularShadow
 	RegularExpressionValidator QtQuick.RegularExpressionValidator
 	Repeater QtQuick.Repeater
 	Rotation QtQuick.Rotation
@@ -1550,6 +1555,9 @@ module Ljos.Ui
 	type Ljos.Ui.Modifier Modifier
 		is uncreatable
 		flags Modifier None=0 Shift=33554432 Control=67108864 Alt=134217728 Meta=268435456 Keypad=536870912 GroupSwitch=1073741824 Mask=-33554432
+	type Ljos.Ui.MotionPreference MotionPreference
+		is uncreatable
+		enum MotionPreference None=0 Reduced=1
 	type Ljos.Ui.MouseButton MouseButton
 		is uncreatable
 		flags MouseButton None=0 Left=1 Right=2 Middle=4 Back=8 XButton1=8 ExtraButton1=8 Forward=16 XButton2=16 ExtraButton2=16 Task=32 ExtraButton3=32 ExtraButton4=64 ExtraButton5=128 ExtraButton6=256 ExtraButton7=512 ExtraButton8=1024 ExtraButton9=2048 ExtraButton10=4096 ExtraButton11=8192 ExtraButton12=16384 ExtraButton13=32768 ExtraButton14=65536 ExtraButton15=131072 ExtraButton16=262144 ExtraButton17=524288 ExtraButton18=1048576 ExtraButton19=2097152 ExtraButton20=4194304 ExtraButton21=8388608 ExtraButton22=16777216 ExtraButton23=33554432 ExtraButton24=67108864 All=134217727 Max=67108864 Mask=-1
