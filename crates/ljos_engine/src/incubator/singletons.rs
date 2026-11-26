@@ -351,8 +351,15 @@ impl Engine {
             };
             // Asked for by a module that has the type after another did:
             // the object is the one the first module's name stands for,
-            // as it is for a name asked for once both were there.
-            let state = if unscoped && native.home != ty {
+            // as it is for a name asked for once both were there. Only a
+            // name registered itself is: another module's type of the
+            // same bare name, which the lookup falls back to, is not its
+            // type, and the name's own may be registered later.
+            let own = match &ty {
+                TypeRef::Native { module, name } => self.is_native_singleton(module, name),
+                _ => false,
+            };
+            let state = if unscoped && own && native.home != ty {
                 let home = self.singleton_handle(&native.home, None);
                 all.index.borrow_mut().insert(ty, home);
                 State::Same(home)
@@ -1539,4 +1546,68 @@ pub(crate) fn enum_keys(meta: &MetaObject) -> JsValue {
         ));
     }
     JsValue::Map(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::js::obj_to_u64;
+    use crate::{QmlObject, qml_singleton};
+
+    #[derive(Debug, Default, QmlObject)]
+    #[qml(module = "Example", name = "Settings")]
+    #[qml_singleton]
+    struct Settings {
+        #[qml(notify)]
+        level: i32,
+    }
+
+    #[derive(Debug, Default, QmlObject)]
+    #[qml(module = "Example.Again", name = "Settings")]
+    #[qml_singleton]
+    struct AgainSettings {
+        #[qml(notify)]
+        level: i32,
+    }
+
+    #[derive(Debug, Default, QmlObject)]
+    #[qml(module = "Example", name = "Shared")]
+    #[qml_singleton]
+    struct Shared {
+        #[qml(notify)]
+        level: i32,
+    }
+
+    fn early(e: &Engine, module: &str, name: &str) -> usize {
+        let ty = TypeRef::Native {
+            module: module.into(),
+            name: name.into(),
+        };
+        e.singleton_handle(&ty, None)
+    }
+
+    /// A script keeps the handle it was given when it first asked, so the
+    /// handle, not only the name, reads its own module's object.
+    #[test]
+    fn a_handle_kept_from_before_registration_reads_its_own_modules_object() {
+        let e = Engine::new();
+        let handle = early(&e, "Example.Again", "Settings");
+        e.register_singleton::<Settings>("Example", Version::new(1, 0));
+        e.register_singleton::<AgainSettings>("Example.Again", Version::new(1, 0));
+        let theirs = e.singleton::<AgainSettings>().unwrap();
+        assert_ne!(theirs, e.singleton::<Settings>().unwrap());
+        assert_eq!(e.singleton_js(handle), JsValue::Object(obj_to_u64(theirs)));
+    }
+
+    /// One type registered in two modules is one object, read through a
+    /// handle the second module's name was given before either was there.
+    #[test]
+    fn a_handle_kept_for_a_type_in_two_modules_reads_the_one_object() {
+        let e = Engine::new();
+        let handle = early(&e, "Example.Again", "Shared");
+        e.register_singleton::<Shared>("Example", Version::new(1, 0));
+        e.register_singleton::<Shared>("Example.Again", Version::new(1, 0));
+        let one = e.singleton::<Shared>().unwrap();
+        assert_eq!(e.singleton_js(handle), JsValue::Object(obj_to_u64(one)));
+    }
 }

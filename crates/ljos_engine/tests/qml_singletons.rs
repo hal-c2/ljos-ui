@@ -345,6 +345,40 @@ fn a_native_singleton_asked_for_before_its_modules_is_one_object() {
     );
 }
 
+/// Another module's type of the same name is not the object a name asked
+/// for before either was there stands for: each keeps its own.
+#[test]
+fn a_singleton_asked_for_early_is_not_another_modules_of_its_name() {
+    let h = engine();
+    assert_eq!(
+        h.engine.singleton_by_name("Example.Again", "Settings"),
+        None
+    );
+    h.engine
+        .register_singleton::<Settings>("Example", Version::new(1, 0));
+    h.engine
+        .register_singleton::<AgainSettings>("Example.Again", Version::new(1, 0));
+    let ours = h.engine.singleton::<Settings>().unwrap();
+    let theirs = h.engine.singleton::<AgainSettings>().unwrap();
+    assert_ne!(ours, theirs);
+    assert_eq!(
+        h.engine.singleton_by_name("Example.Again", "Settings"),
+        Some(theirs)
+    );
+    assert_eq!(
+        h.engine.singleton_by_name("Example", "Settings"),
+        Some(ours)
+    );
+}
+
+#[derive(Debug, Default, QmlObject)]
+#[qml(module = "Example.Again", name = "Settings")]
+#[qml_singleton]
+pub struct AgainSettings {
+    #[qml(notify)]
+    pub level: i32,
+}
+
 #[test]
 fn a_native_singleton_that_is_not_registered_is_an_error() {
     let h = engine();
