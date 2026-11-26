@@ -107,6 +107,24 @@ Feature: Camera and CaptureSession
       Then the property "size" of "root" is "64x48"
       And the property "frames" of "root" is at least 1
 
+    # Qt's own examples declare the output first as often as last.
+    Scenario: A session declared after its output shows the camera there
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtMultimedia
+        Item {
+          id: root; objectName: "root"; width: 200; height: 200
+          VideoOutput { id: shown; anchors.fill: parent }
+          Camera { id: back; active: true }
+          CaptureSession { camera: back; videoOutput: shown }
+          readonly property string size: shown.videoSink.videoSize.width + "x" + shown.videoSink.videoSize.height
+        }
+        """
+      When the camera "Back camera" captures a 64 by 48 picture
+      And 10 milliseconds pass
+      Then the property "size" of "root" is "64x48"
+
     Scenario: A camera that is not started shows nothing
       Given the QML:
         """qml

@@ -170,7 +170,11 @@ pub(crate) fn gain_of(e: &Engine, output: Option<ObjectId>) -> f32 {
 
 /// `MediaDevices` (QtMultimedia): the system's audio and video devices.
 /// One output at most is listed: the default, which is where sound goes.
-/// The cameras are the engine's [`crate::CameraService`]'s.
+/// The cameras are the engine's [`crate::CameraService`]'s. The lists
+/// are read once, as the object is completed: a camera plugged in or
+/// taken out afterwards is in the lists of a `MediaDevices` made after
+/// it, and `videoInputsChanged` is not emitted yet, as a service says
+/// nothing of a change.
 #[derive(Debug, Default, QmlObject)]
 #[qml(module = "QtMultimedia", name = "MediaDevices", extends = QtObject)]
 pub struct MediaDevices {
