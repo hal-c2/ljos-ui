@@ -17,6 +17,9 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 ljos = { path = "../../crates/ljos", default-features = false, features = ["shell", "user-qml"] }
 
+# The store the scenarios keep their secrets in (`ScenarioSecrets`).
+ljos_secrets = { path = "../../crates/ljos_secrets" }
+
 [target.'cfg(target_os = "android")'.dependencies]
 ljos = { path = "../../crates/ljos", default-features = false, features = ["android", "user-qml"] }
 

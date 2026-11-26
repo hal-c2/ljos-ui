@@ -631,8 +631,10 @@ phone or emulator on adb (`ANDROID_SERIAL` picks one of several). It installs on
 `examples/android_scenarios`, once, and starts it anew for each scenario with the scenario's files
 in the application's own directory, so a scenario takes no build; the steps ask the application's
 inspector over adb. It provides `@android`; a scenario that also names `@headless` runs headless.
-The pointer, keys, the platform's clipboard, pictures and the system's store of secrets are not
-yet driven on the phone, so their steps are pending there.
+The pointer, keys, the platform's clipboard and pictures are not yet driven on the phone, so their
+steps are pending there. A secret goes through the application's own store: the scenario
+application makes a `ScenarioSecrets` over `ljos_secrets` and puts it in the root's scope as
+`scenarioSecrets`, and the runner calls it there through the inspector's scripts.
 
 | Step | Meaning |
 |---|---|
