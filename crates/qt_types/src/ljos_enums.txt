@@ -1115,3 +1115,7 @@ Key enum Key
 	Key_Zoom Zoom 16908294
 	Key_Exit Exit 16908298
 	Key_Cancel Cancel 16908289
+
+MotionPreference enum MotionPreference
+	NoPreference None 0
+	ReducedMotion Reduced 1
