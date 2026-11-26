@@ -34,6 +34,7 @@ const APP: &str = "App";
 const COLOR: &str = "Color";
 const FONT: &str = "Font";
 const LOCALE: &str = "Locale";
+const COMPONENT: &str = "Component";
 
 /// The makers `Ljos.Core` calls as `Qt` does.
 const SAME: &[&str] = &[
@@ -127,6 +128,8 @@ pub fn where_is(member: &str) -> Where {
         match member {
             "callLater" => "later",
             "resolvedUrl" => "url",
+            "createComponent" => "Component.load",
+            "createQmlObject" => "Component.createFromText",
             "binding" => "bind",
             "color" => "Color.of",
             "font" => "Font.of",
@@ -160,6 +163,7 @@ pub(crate) fn introduced(member: &str) -> Option<&'static str> {
     match member {
         "font" | "fontFamilies" => Some(FONT),
         "locale" | "formatDate" | "formatTime" | "formatDateTime" => Some(LOCALE),
+        "createComponent" | "createQmlObject" => Some(COMPONENT),
         _ => None,
     }
 }
@@ -376,6 +380,33 @@ impl Members {
                     });
                 }
             },
+            // `Component.load` and `Component.createFromText` read an
+            // address from the file the script is written in, as `Qt`'s
+            // makers do; a mode, a parent, a module or a spread has no
+            // home yet.
+            "createComponent" | "createQmlObject" => {
+                let Some(call) = call else {
+                    return Err(Cause::QtNoHome {
+                        member: member.to_owned(),
+                    });
+                };
+                let takes = match member {
+                    "createComponent" => 1..=1,
+                    _ => 2..=3,
+                };
+                if !takes.contains(&call.arguments.len())
+                    || call.arguments.iter().any(Option::is_none)
+                {
+                    return Err(Cause::QtMakerArguments {
+                        member: member.to_owned(),
+                    });
+                }
+                let method = match member {
+                    "createComponent" => "load",
+                    _ => "createFromText",
+                };
+                named(format!("{COMPONENT}.{method}"), COMPONENT)
+            }
             "locale" => match call {
                 Some(call) if call.arguments.is_empty() => Lowered {
                     changes: vec![(call.span.clone(), format!("{LOCALE}.current"))],
@@ -497,8 +528,13 @@ impl Members {
         let elsewhere = words(source, name).any(|at| {
             // What a file of Qt reads off `Screen` is the attached
             // `Screen` Ljos.Ui has as it is.
-            let read_off = name == SCREEN && source[at + name.len()..].starts_with('.');
-            !read_off && !own(&at) && !self.typed.iter().any(|t| t.contains(&at))
+            let after = &source[at + name.len()..];
+            let read_off = name == SCREEN && after.starts_with('.');
+            // `Component.Ready` or `Component { }` of Qt's QML is the
+            // component type `Ljos.Core` has as it is.
+            let component = name == COMPONENT
+                && (after.starts_with('.') || after.trim_start().starts_with('{'));
+            !read_off && !component && !own(&at) && !self.typed.iter().any(|t| t.contains(&at))
         });
         elsewhere.then_some(Hider::Word)
     }

@@ -119,7 +119,7 @@ pub enum Cause {
     },
     /// `grabPermissions`, which Ljós's API has as a gesture's `takeOver`.
     GrabPermissions,
-    /// `Qt.createQmlObject`.
+    /// `createQmlObject` read off something other than the global `Qt`.
     QmlText,
     /// An attached object read off a non-item `on`.
     AttachedOffNoItem {
@@ -227,6 +227,11 @@ pub enum Cause {
     /// `Qt.exit` given a code not written as 0, which `App.exit` does not
     /// carry to the process yet.
     QtExitCode,
+    /// `Qt.createComponent` or `Qt.createQmlObject` given other than the
+    /// arguments `Component.load` and `Component.createFromText` take.
+    QtMakerArguments {
+        member: String,
+    },
     /// A type a script names whose name in Ljós's API is a global of
     /// JavaScript's there (`QtObject`, which is `Object`).
     RenamedToGlobal {
@@ -629,7 +634,7 @@ impl fmt::Display for Cause {
                 "`grabPermissions` is a gesture's `takeOver` in Ljós's API only as `PointerHandler.CanTakeOverFromAnything`, set on a gesture that has one",
             ),
             Cause::QmlText => {
-                f.write_str("it makes objects from QML text, which is not lowered yet")
+                f.write_str("it makes objects from QML text through an object other than `Qt`, which the pass cannot follow")
             }
             Cause::AttachedOffNoItem { name, on } => write!(
                 f,
@@ -699,6 +704,14 @@ impl fmt::Display for Cause {
             ),
             Cause::QtApplicationWhole => f.write_str(
                 "`Qt.application` handed on whole has no home in Ljós's API yet: `App` is read member by member",
+            ),
+            Cause::QtMakerArguments { member } => write!(
+                f,
+                "`Qt.{member}` given other than {} has no home in Ljós's API yet",
+                match member.as_str() {
+                    "createComponent" => "one address (a mode, a parent, a module)",
+                    _ => "a text, a parent and a place",
+                }
             ),
             Cause::QtExitCode => f.write_str(
                 "`Qt.exit` with a code other than 0 has no home in Ljós's API yet: `App.exit` does not carry the code to the process",

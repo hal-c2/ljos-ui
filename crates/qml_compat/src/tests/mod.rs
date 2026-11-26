@@ -288,7 +288,7 @@ fn a_file_is_kept_for_a_type_its_module_lacks() {
 #[test]
 fn a_file_is_kept_for_what_its_scripts_read() {
     assert_eq!(
-        cause_of("import QtQuick\nItem { function f() { Qt.createQmlObject(\"\", this) } }\n"),
+        cause_of("import QtQuick\nItem { function f(q) { q.createQmlObject(\"\", this) } }\n"),
         Cause::QmlText
     );
     assert_eq!(

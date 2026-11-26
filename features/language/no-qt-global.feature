@@ -160,7 +160,8 @@ Feature: No Qt global in a file of Ljós's API
           property int align: Qt.AlignLeft
           property int calls: 0
           function tick(): void { Qt.callLater(() => calls += 1) }
-          function make(): void { Qt.createComponent("Page.qml") }
+          function make(): void { Qt.include("lib.js") }
+          function load(): void { Qt.createComponent("Page.qml") }
         }
         """
       When the files are checked
@@ -168,9 +169,10 @@ Feature: No Qt global in a file of Ljós's API
         """
         Main.qml:4:31: error: `Qt.AlignLeft` is not in a Ljós file: use `Align.Left` (Ljos.Ui) [qt-global]
         Main.qml:6:35: error: `Qt.callLater` is not in a Ljós file: use `later` (Ljos.Core) [qt-global]
-        Main.qml:7:35: error: `Qt.createComponent` is not in a Ljós file, and Ljós's API has no home for it yet: write the file in Qt's QML [qt-global]
-        1 files, 3 errors, 0 warnings
-        ljos: 3 errors
+        Main.qml:7:35: error: `Qt.include` is not in a Ljós file, and Ljós's API has no home for it yet: write the file in Qt's QML [qt-global]
+        Main.qml:8:35: error: `Qt.createComponent` is not in a Ljós file: use `Component.load` (Ljos.Core) [qt-global]
+        1 files, 4 errors, 0 warnings
+        ljos: 4 errors
         """
 
     @ljos-only @headless
@@ -304,13 +306,13 @@ Feature: No Qt global in a file of Ljós's API
         import QtQuick
         Item {
           property point at: Qt.point(3, 4)
-          function make() { return Qt.createComponent("Page.qml") }
+          function make() { return Qt.include("lib.js") }
         }
         """
       When the author runs "ljos migrate --write ."
       Then the command prints:
         """
-        kept ./Maker.qml:4:28: `Qt.createComponent` has no home in Ljós's API yet
+        kept ./Maker.qml:4:28: `Qt.include` has no home in Ljós's API yet
         1 files, 0 lowered, 1 kept
         """
 
