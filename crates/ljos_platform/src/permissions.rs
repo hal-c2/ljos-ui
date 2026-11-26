@@ -614,11 +614,14 @@ fn answered(engine: &Engine, obj: ObjectId, asked: Permission, status: Option<Pe
         }
         _ => check(engine, obj),
     }
+    // The badge is the application's, not the asking object's: a grant
+    // that comes after the object went still shows the count again.
     let granted = PermissionStatus::Granted.to_qt();
-    if asked == Permission::Notifications
-        && was.is_some_and(|was| was != granted)
-        && int(engine, obj, "status") == granted
-    {
+    let now_granted = match was {
+        Some(_) => int(engine, obj, "status") == granted,
+        None => status == Some(PermissionStatus::Granted),
+    };
+    if asked == Permission::Notifications && was != Some(granted) && now_granted {
         show_badge_again(engine);
     }
 }

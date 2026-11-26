@@ -144,8 +144,6 @@ fn front_record(activities: &str) -> Option<&str> {
         .next()
 }
 
-/// The permission (as the steps name it) the system's question on screen
-/// asks for, by its English words.
 /// The count the system shows on `package`'s icon, from `dumpsys
 /// notification --noredact`: the number of its notification in the badge
 /// channel, when the system lets that notification show a badge (the
@@ -174,6 +172,8 @@ fn badge_in(dump: &str, package: &str) -> u32 {
         })
 }
 
+/// The permission (as the steps name it) the system's question on screen
+/// asks for, by its English words.
 fn permission_asked(nodes: &[ScreenNode]) -> Option<&'static str> {
     let message = nodes
         .iter()
