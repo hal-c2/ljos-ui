@@ -750,16 +750,17 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
         let quit = sig(self, Vec::new(), Ty::VOID);
         let exit = sig(self, vec![param("code", Ty::NUMBER, true)], Ty::VOID);
         let arguments = self.arena.array(Ty::STRING, true);
-        // DECISION: the input method, the style hints, the screens and the
-        // application's font are Qt's objects with no type in the oracle
-        // yet: what is read off them is not checked.
+        let hints = self.hints();
+        // DECISION: the input method, the screens and the application's
+        // font are Qt's objects with no type in the oracle yet: what is
+        // read off them is not checked.
         self.arena.intern(Kind::Record(Box::new([
             field("arguments", arguments, true),
             field("displayName", Ty::STRING, false),
             field("domain", Ty::STRING, false),
             field("exit", exit, true),
             field("font", Ty::ERROR, true),
-            field("hints", Ty::ERROR, true),
+            field("hints", hints, true),
             field("inputMethod", Ty::ERROR, true),
             field("language", Ty::STRING, false),
             field("layoutDirection", Ty::NUMBER, true),
@@ -774,6 +775,77 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
             field("supportsMultipleWindows", Ty::BOOLEAN, true),
             field("version", Ty::STRING, false),
         ])))
+    }
+
+    /// `App.hints`: the engine's `StyleHints` (crates/ljos_quick/src/
+    /// system_prefs.rs), member by member, with the preferences of its
+    /// `accessibility` as the enums of `Ljos.Ui` they are, so
+    /// `motionPreference === MotionPreference.Reduced` is checked.
+    fn hints(&mut self) -> Ty {
+        let field = |name: &str, ty: Ty, readonly: bool| Field {
+            name: name.into(),
+            ty,
+            optional: false,
+            readonly,
+        };
+        let contrast = self.ljos_ui_enum("ContrastPreference");
+        let motion = self.ljos_ui_enum("MotionPreference");
+        let scheme = self.ljos_ui_enum("ColorScheme");
+        let trigger = self.ljos_ui_enum("ContextMenuTrigger");
+        let tab_focus = self.ljos_ui_enum("TabFocusBehavior");
+        let accessibility = self.arena.intern(Kind::Record(Box::new([
+            field("contrastPreference", contrast, true),
+            field("fontScale", Ty::NUMBER, true),
+            field("motionPreference", motion, true),
+            field("screenReaderActive", Ty::BOOLEAN, true),
+        ])));
+        let number = |name: &str| field(name, Ty::NUMBER, true);
+        let boolean = |name: &str| field(name, Ty::BOOLEAN, true);
+        self.arena.intern(Kind::Record(Box::new([
+            field("accessibility", accessibility, true),
+            field("colorScheme", scheme, false),
+            field("contextMenuTrigger", trigger, false),
+            number("cursorFlashTime"),
+            number("fontSmoothingGamma"),
+            number("keyboardAutoRepeatRate"),
+            number("keyboardAutoRepeatRateF"),
+            number("keyboardInputInterval"),
+            boolean("menuSelectionWraps"),
+            number("mouseDoubleClickDistance"),
+            number("mouseDoubleClickInterval"),
+            number("mousePressAndHoldInterval"),
+            field("mouseQuickSelectionThreshold", Ty::NUMBER, false),
+            field("passwordMaskCharacter", Ty::STRING, true),
+            number("passwordMaskDelay"),
+            boolean("setFocusOnTouchRelease"),
+            boolean("showIsFullScreen"),
+            boolean("showIsMaximized"),
+            field("showShortcutsInContextMenus", Ty::BOOLEAN, false),
+            boolean("singleClickActivation"),
+            number("startDragDistance"),
+            number("startDragTime"),
+            number("startDragVelocity"),
+            field("tabFocusBehavior", tab_focus, true),
+            number("touchDoubleTapDistance"),
+            field("useHoverEffects", Ty::BOOLEAN, false),
+            boolean("useRtlExtensions"),
+            number("wheelScrollLines"),
+        ])))
+    }
+
+    /// The enum of `Ljos.Ui` named `name` (docs/DIALECT.md §4.3.1), or a
+    /// number where the types at hand have no `Ljos.Ui`.
+    fn ljos_ui_enum(&mut self, name: &str) -> Ty {
+        match self.c.types.oracle.module_type("Ljos.Ui", name) {
+            Some(ty) => {
+                let object = self.obj(Obj::Native(ty));
+                self.arena.intern(Kind::Enum {
+                    object,
+                    name: name.into(),
+                })
+            }
+            None => Ty::NUMBER,
+        }
     }
 
     /// What a type of Ljos.Core or Ljos.Ui has of what was `Qt`'s
