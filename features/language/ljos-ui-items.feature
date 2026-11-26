@@ -3,6 +3,9 @@
 #   https://doc.qt.io/qt-6/qml-qtquick-textinput.html
 #   https://doc.qt.io/qt-6/qml-qtquick-keys.html
 #   https://doc.qt.io/qt-6/qml-qtquick-shortcut.html
+#   https://doc.qt.io/qt-6/qml-qtquick-focusscope.html
+#   https://doc.qt.io/qt-6/qml-qtquick-application.html
+#   https://doc.qt.io/qt-6/qml-qtquick-controls-overlay.html
 #   https://doc.qt.io/qt-6/qml-qtquick-screen.html
 #   https://doc.qt.io/qt-6/qml-qtquick-window.html
 #   https://doc.qt.io/qt-6/qml-qtquick-gridview.html
@@ -24,7 +27,8 @@
 # the place of it.
 
 Feature: The items Ljós's API has as Qt Quick has them
-  An image, a flickable, a text field, its keys, its shortcuts, what it
+  An image, a flickable, a text field, its keys, its shortcuts and the
+  platform's standard keys, a focus scope, the application, what it
   says to assistive technology, the window and screen it is shown on, a
   grid, a path view, a canvas, key navigation, an item's transforms,
   mirroring, an animation run on every update of the window, a shadow, an effect and the motion
@@ -164,6 +168,29 @@ Feature: The items Ljós's API has as Qt Quick has them
       Then the property "atX" of "root" is within 0.001 of 0
       And the property "atY" of "root" is within 0.001 of 20
       And the property "active" of "root" is "b"
+
+    # The size is features/window/application.feature's: the application's font, which text has
+    # when nothing sets one, read from Ljos.Ui as from Qt Quick.
+    @ljos-only
+    Scenario: A focus scope, a shortcut on a standard key and the application's font
+      Given the QML:
+        """qml
+        import Ljos.Ui
+        FocusScope {
+          id: root
+          objectName: "root"
+          width: 200; height: 100
+          focus: true
+          property int finds: 0
+          property int size: Application.font.pixelSize
+          TextInput { objectName: "field"; width: 200; height: 20; focus: true }
+          Shortcut { sequences: [StandardKey.Find]; onActivated: root.finds += 1 }
+        }
+        """
+      Then the property "activeFocus" of "field" is true
+      And the property "size" of "root" is 12
+      When the user presses "Ctrl+F"
+      Then the property "finds" of "root" is 1
 
   Rule: Mirroring, per-update animations, shadows, effects and the motion preference are Ljos.Ui's
 
@@ -461,6 +488,39 @@ Feature: The items Ljós's API has as Qt Quick has them
       When the author runs "ljos render . --out kept.png --settle 0 --compat keep"
       And the author runs "ljos render . --out lowered.png --settle 0 --compat lower"
       Then the pictures "kept.png" and "lowered.png" have the same pixels
+
+    # A popup's usual parent is its window's overlay, which Ljos.Controls.Basic has as every style
+    # does.
+    @ljos-only @headless
+    Scenario: A focus scope, standard keys, the application and a popup on the overlay are lowered
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        FocusScope {
+          width: 160; height: 100
+          property string face: Application.font.family
+          Shortcut { sequences: [StandardKey.Find]; onActivated: finder.open() }
+          Popup { id: finder; parent: Overlay.overlay; modal: true; Label { text: "Find" } }
+        }
+        """
+      When the author runs "ljos migrate --style Basic --write ."
+      Then the command prints:
+        """
+        lowered ./Main.qml (2 edits)
+        1 files, 1 lowered, 0 kept
+        """
+      And the file "Main.qml" is:
+        """qml
+        import Ljos.Ui
+        import Ljos.Controls.Basic
+        FocusScope {
+          width: 160; height: 100
+          property string face: Application.font.family
+          Shortcut { sequences: [StandardKey.Find]; onActivated: finder.open() }
+          Popup { id: finder; parent: Overlay.overlay; modal: true; Label { text: "Find" } }
+        }
+        """
 
     @ljos-only @headless
     Scenario: The lowered file is the Qt file with its imports changed
