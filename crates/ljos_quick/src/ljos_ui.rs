@@ -14,7 +14,10 @@
 
 use std::sync::OnceLock;
 
-use ljos_engine::{Engine, MetaBuilder, MetaObject, MetaRef, QmlType, Version};
+use ljos_engine::{
+    Engine, MetaBuilder, MetaObject, MetaRef, PropertyFlags, QmlObject, QmlType, TypeTag, Value,
+    Version,
+};
 
 use crate::canvas::Canvas;
 use crate::effects::MultiEffect;
@@ -137,16 +140,64 @@ const GESTURE_RENAMES: [(&str, &str); 4] = [
 ];
 
 /// A gesture: a pointer handler under Ljós's names, for what it accepts (a
-/// `WheelHandler` accepts no buttons).
+/// `WheelHandler` accepts no buttons), and for a handler that has grab
+/// permissions, `takeOver`.
 fn gesture(name: &str, of: &'static MetaObject) -> MetaObject {
-    GESTURE_RENAMES
+    let face = GESTURE_RENAMES
         .iter()
         .filter(|(old, _)| of.property_index(old).is_some())
         .fold(
             MetaBuilder::new(name).module(MODULE).face(of),
             |face, (old, new)| face.rename(old, new),
-        )
-        .build()
+        );
+    if of.property_index("grabPermissions").is_none() {
+        return face.build();
+    }
+    // A face cannot leave `grabPermissions` out, so `takeOver` is a view
+    // of it rather than storage of its own.
+    face.field(
+        "takeOver",
+        TypeTag::Bool,
+        PropertyFlags::empty(),
+        false,
+        |o| Value::Bool(grab_permissions(o).is_some_and(|p| *p == take_over::ON)),
+        |o, v| {
+            let on = v.to_boolean();
+            if let Some(p) = grab_permissions_mut(o) {
+                *p = if on { take_over::ON } else { take_over::OFF };
+            }
+            Ok(())
+        },
+    )
+    .build()
+}
+
+/// What `takeOver` stands for in a handler's grab permissions: true is
+/// taking over from anything and approving nothing, as a handler whose
+/// `grabPermissions` is `CanTakeOverFromAnything` alone is; false is the
+/// handler's default (docs/DIALECT.md §4.7).
+mod take_over {
+    use crate::handlers::grab_permission as g;
+    pub(super) const ON: i32 = g::CAN_TAKE_OVER_FROM_ANYTHING;
+    pub(super) const OFF: i32 = g::DEFAULT;
+}
+
+/// The grab permissions of the handler `o`, which a `TapHandler` keeps
+/// itself and every other handler that has them as a `PointerHandler`.
+fn grab_permissions(o: &dyn QmlObject) -> Option<&i32> {
+    match ljos_engine::downcast_chain::<TapHandler>(o) {
+        Some(tap) => Some(&tap.grab_permissions),
+        None => {
+            ljos_engine::downcast_chain::<crate::PointerHandler>(o).map(|h| &h.grab_permissions)
+        }
+    }
+}
+
+fn grab_permissions_mut(o: &mut dyn QmlObject) -> Option<&mut i32> {
+    if ljos_engine::downcast_chain::<TapHandler>(o).is_some() {
+        return ljos_engine::downcast_chain_mut::<TapHandler>(o).map(|t| &mut t.grab_permissions);
+    }
+    ljos_engine::downcast_chain_mut::<crate::PointerHandler>(o).map(|h| &mut h.grab_permissions)
 }
 
 /// `TapHandler`, called `Tap`: a gesture is a child of the item it acts on,
@@ -339,6 +390,50 @@ mod tests {
         assert_eq!(face.own_properties().len(), native.own_properties().len());
     }
 
+    /// `takeOver` is the handler's grab permissions seen as one boolean:
+    /// true is Qt's `CanTakeOverFromAnything` alone, false the handler's
+    /// default (docs/DIALECT.md §4.7). A `Wheel` has no grab permissions,
+    /// so no `takeOver`.
+    #[test]
+    fn a_gestures_take_over_is_its_handlers_grab_permissions() {
+        use crate::handlers::{PointerHandler, grab_permission as g};
+        use ljos_engine::{Value, WriteKind};
+        let engine = engine();
+        for name in ["Tap", "Hover", "Drag", "Pointer"] {
+            let face = engine.lookup_type(MODULE, name).expect("registered");
+            let take_over = face.property_index("takeOver").expect(name);
+            let perms = face.property_index("grabPermissions").expect(name);
+            let gesture = engine.create_by_name(MODULE, name, None).expect(name);
+            let read = |p| engine.read(gesture, p);
+            assert_eq!(read(take_over), Value::Bool(false), "{name}");
+            assert_eq!(read(perms).to_number() as i32, g::DEFAULT, "{name}");
+            engine
+                .write(gesture, take_over, Value::Bool(true), WriteKind::Imperative)
+                .expect(name);
+            assert_eq!(
+                read(perms).to_number() as i32,
+                g::CAN_TAKE_OVER_FROM_ANYTHING
+            );
+            assert_eq!(read(take_over), Value::Bool(true), "{name}");
+            engine
+                .write(
+                    gesture,
+                    take_over,
+                    Value::Bool(false),
+                    WriteKind::Imperative,
+                )
+                .expect(name);
+            assert_eq!(read(perms).to_number() as i32, g::DEFAULT, "{name}");
+        }
+        let wheel = engine.lookup_type(MODULE, "Wheel").expect("registered");
+        assert_eq!(wheel.property_index("takeOver"), None);
+        // Qt's handlers keep Qt's names only.
+        assert_eq!(
+            PointerHandler::static_meta().property_index("takeOver"),
+            None
+        );
+    }
+
     #[test]
     fn a_renamed_type_is_found_by_its_new_name_only() {
         let engine = engine();
@@ -439,10 +534,12 @@ mod tests {
         assert!(!own("acceptedDevices"));
         let prototype = hover.prototype().expect("a prototype");
         assert!(!prototype.inherits(crate::PointerHandler::static_meta()));
+        // And `takeOver`, its grab permissions seen as one boolean.
         assert_eq!(
             hover.own_properties().len(),
             native.own_properties().len()
                 + crate::PointerHandler::static_meta().own_properties().len()
+                + 1
         );
     }
 
