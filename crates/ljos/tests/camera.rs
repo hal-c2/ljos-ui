@@ -86,3 +86,92 @@ fn only_a_camera_can_be_tapped() {
     let root = common::create_main(&engine, MAIN);
     assert!(tap_camera(&engine, root, |_| {}).is_err());
 }
+
+const TWO_SESSIONS: &str = r#"
+import QtQuick
+import QtMultimedia
+Item {
+    id: root
+    width: 100; height: 100
+    property alias camera: camera
+    property alias older: older
+    property alias newer: newer
+    readonly property string first: one.videoSink.videoSize.width + "x" + one.videoSink.videoSize.height
+    readonly property string second: two.videoSink.videoSize.width + "x" + two.videoSink.videoSize.height
+    Camera { id: camera; objectName: "camera" }
+    VideoOutput { id: one; width: 50; height: 50 }
+    VideoOutput { id: two; width: 50; height: 50 }
+    CaptureSession { id: older; camera: camera; videoOutput: one }
+    CaptureSession { id: newer; videoOutput: two }
+}
+"#;
+
+#[test]
+fn only_the_session_that_joined_a_camera_takes_it_away_and_a_gone_session_shows_nothing() {
+    let engine = ljos::engine();
+    let cameras = FakeCameras::default();
+    cameras.add("Desk camera");
+    set_cameras(&engine, std::rc::Rc::new(cameras.clone()));
+    let root = common::create_main(&engine, TWO_SESSIONS);
+    let camera = engine.read_by_name(root, "camera").as_object().unwrap();
+    let older = engine.read_by_name(root, "older").as_object().unwrap();
+    let newer = engine.read_by_name(root, "newer").as_object().unwrap();
+    engine.invoke_by_name(camera, "start", &[]).unwrap();
+    let shown = |w, h| {
+        cameras.capture("Desk camera", &grey(w, h));
+        Platform::of(&engine).deliver(&engine);
+        (
+            engine.read_by_name(root, "first").to_js_string(),
+            engine.read_by_name(root, "second").to_js_string(),
+        )
+    };
+
+    assert_eq!(shown(6, 4), ("6x4".into(), "-1x-1".into()));
+
+    // The newer session joins the camera last, so it is shown there.
+    engine
+        .write_by_name(newer, "camera", Value::Object(camera))
+        .unwrap();
+    assert_eq!(shown(2, 2), ("6x4".into(), "2x2".into()));
+
+    // The older session letting go leaves the newer one's output be.
+    engine.write_by_name(older, "camera", Value::Null).unwrap();
+    assert_eq!(shown(8, 2), ("6x4".into(), "8x2".into()));
+
+    // A session that is gone shows the camera, which outlives it, no more.
+    engine.destroy_now(newer);
+    assert_eq!(shown(4, 4), ("6x4".into(), "8x2".into()));
+}
+
+const DEVICES: &str = r#"
+import QtQuick
+import QtMultimedia
+Item {
+    property var devices: null
+    readonly property string seen: devices ? devices.defaultVideoInput.description + " " + devices.defaultVideoInput.isDefault : ""
+    Component { id: made; MediaDevices { } }
+    function look() { devices = made.createObject(this) }
+}
+"#;
+
+#[test]
+fn a_camera_that_became_the_default_is_a_default_device() {
+    let engine = ljos::engine();
+    let cameras = FakeCameras::default();
+    cameras.add("Desk camera");
+    cameras.add("Back camera");
+    set_cameras(&engine, std::rc::Rc::new(cameras.clone()));
+    let root = common::create_main(&engine, DEVICES);
+    engine.invoke_by_name(root, "look", &[]).unwrap();
+    assert_eq!(
+        engine.read_by_name(root, "seen").to_js_string(),
+        "Desk camera true"
+    );
+
+    assert!(cameras.disconnect("Desk camera"));
+    engine.invoke_by_name(root, "look", &[]).unwrap();
+    assert_eq!(
+        engine.read_by_name(root, "seen").to_js_string(),
+        "Back camera true"
+    );
+}

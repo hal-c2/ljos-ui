@@ -4,7 +4,7 @@
 //!
 //! The system's cameras are a [`CameraService`]'s, installed per engine
 //! with [`set_cameras`]. Without one the host's own is used: V4L2 on
-//! Linux (the `v4l2` feature), none elsewhere yet ([`NoCameras`]). A test
+//! 64-bit Linux (the `v4l2` feature), none elsewhere yet ([`NoCameras`]). A test
 //! installs [`FakeCameras`], whose pictures it gives itself.
 //!
 //! A capture runs on the service's thread. Each picture goes, on that
@@ -123,9 +123,9 @@ pub fn cameras(engine: &Engine) -> Rc<dyn CameraService> {
 }
 
 fn host_cameras() -> Rc<dyn CameraService> {
-    #[cfg(all(feature = "v4l2", target_os = "linux"))]
+    #[cfg(all(feature = "v4l2", target_os = "linux", target_pointer_width = "64"))]
     return Rc::new(crate::v4l2::V4l2Cameras);
-    #[cfg(not(all(feature = "v4l2", target_os = "linux")))]
+    #[cfg(not(all(feature = "v4l2", target_os = "linux", target_pointer_width = "64")))]
     Rc::new(NoCameras)
 }
 
@@ -140,8 +140,9 @@ struct Shared {
     /// The capture whose pictures are wanted; 0 while none is.
     current: AtomicU64,
     taps: Mutex<Vec<Tap>>,
-    /// The output a session joined the camera to.
-    preview: Mutex<Option<VideoFrameInput>>,
+    /// The output a session joined the camera to, and that session: only
+    /// it takes the camera from the output again.
+    preview: Mutex<Option<(ObjectId, VideoFrameInput)>>,
 }
 
 static NEXT: AtomicU64 = AtomicU64::new(1);
@@ -182,7 +183,7 @@ impl CameraFrames {
         for (_, tap) in lock(&self.shared.taps).iter_mut() {
             tap(&frame);
         }
-        let preview = lock(&self.shared.preview).clone();
+        let preview = lock(&self.shared.preview).as_ref().map(|(_, i)| i.clone());
         if let Some(input) = preview {
             // A picture that cannot be converted is not shown; the taps
             // had it all the same.
@@ -234,8 +235,10 @@ pub enum CameraTapError {
 /// Gives every picture `camera` (a `Camera`) captures to `tap`, on the
 /// capture's thread, before it is shown, for as long as the returned
 /// [`CameraTap`] lives; across `stop()` and `start()` too. A tap that
-/// takes long holds the camera's next picture back: one that decodes
-/// (a QR code, say) hands the frame to a thread of its own. A tap must
+/// takes long holds the camera's next picture back, and stopping the
+/// camera too, which waits on the capture's thread (on the Engine
+/// thread, for V4L2): one that decodes (a QR code, say) hands the frame
+/// to a thread of its own. A tap must
 /// not drop a [`CameraTap`] of the same camera from inside.
 ///
 /// # Errors
@@ -299,16 +302,28 @@ pub struct CameraDevice {
 #[qml_impl]
 impl CameraDevice {}
 
-/// The devices this engine has handed out, by camera id; `None` is the
-/// device of no camera.
+/// The devices this engine has handed out, by camera id, with what the
+/// service said of the camera then; `None` is the device of no camera.
 #[derive(Default)]
-struct Known(RefCell<HashMap<Option<String>, ObjectId>>);
+struct Known(RefCell<HashMap<Option<String>, Handed>>);
+
+/// A device, and what its camera was when it was made.
+type Handed = (ObjectId, Option<CameraInfo>);
 
 fn device_of(e: &Engine, info: Option<&CameraInfo>) -> Option<ObjectId> {
     let known = e.extension::<Known>();
     let key = info.map(|i| i.id.clone());
-    if let Some(&id) = known.0.borrow().get(&key).filter(|id| e.is_alive(**id)) {
-        return Some(id);
+    // A device's properties are constant, so a camera the service now
+    // describes otherwise (the default since the one before it went) is
+    // a new device.
+    let cached = known
+        .0
+        .borrow()
+        .get(&key)
+        .filter(|(id, was)| e.is_alive(*id) && was.as_ref() == info)
+        .map(|(id, _)| *id);
+    if cached.is_some() {
+        return cached;
     }
     let device = match info {
         Some(i) => CameraDevice {
@@ -323,7 +338,7 @@ fn device_of(e: &Engine, info: Option<&CameraInfo>) -> Option<ObjectId> {
     };
     let id = e.create_native_incomplete(device, None).ok()?;
     let _ = e.complete(id);
-    known.0.borrow_mut().insert(key, id);
+    known.0.borrow_mut().insert(key, (id, info.cloned()));
     Some(id)
 }
 
@@ -582,9 +597,30 @@ pub struct CaptureSession {
     pub camera: Option<ObjectId>,
     #[qml(notify)]
     pub video_output: Option<ObjectId>,
-    /// The camera this session last joined to an output.
-    #[qml(skip)]
-    joined: Cell<Option<ObjectId>>,
+}
+
+/// The camera each session last joined to an output, and whether a
+/// session's destruction is listened for: a camera that outlives its
+/// session is no longer shown through it.
+#[derive(Default)]
+struct Sessions {
+    joined: RefCell<HashMap<ObjectId, ObjectId>>,
+    listening: Cell<bool>,
+    /// The outputs, by session, whose sink a session waits for.
+    waiting: RefCell<std::collections::HashSet<(ObjectId, ObjectId)>>,
+}
+
+fn sessions_destroyed(e: &Engine, gone: &[ObjectId]) {
+    let left: Vec<(ObjectId, ObjectId)> = {
+        let sessions = e.extension::<Sessions>();
+        let mut joined = sessions.joined.borrow_mut();
+        gone.iter()
+            .filter_map(|s| Some((*s, joined.remove(s)?)))
+            .collect()
+    };
+    for (session, camera) in left {
+        preview_of(e, camera, session, None);
+    }
 }
 
 #[qml_impl]
@@ -592,6 +628,10 @@ impl CaptureSession {
     #[qml(on_complete)]
     fn completed(cx: &Cx) -> Result<(), EngineError> {
         let (e, me) = (cx.engine, cx.this);
+        let sessions = e.extension::<Sessions>();
+        if !sessions.listening.replace(true) {
+            e.on_destroyed(sessions_destroyed);
+        }
         join(e, me);
         e.watch(me, CaptureSession::CAMERA.index, move |e, _| join(e, me))?;
         e.watch(me, CaptureSession::VIDEO_OUTPUT.index, move |e, _| {
@@ -601,9 +641,17 @@ impl CaptureSession {
     }
 }
 
-fn preview_of(e: &Engine, camera: ObjectId, input: Option<VideoFrameInput>) {
-    if let Ok(shared) = e.with::<Camera, _>(camera, |c| Arc::clone(&c.run.shared)) {
-        *lock(&shared.preview) = input;
+/// Joins `camera` to `input` for `session`, or, with none, takes it
+/// from the output `session` joined it to; another session's stays.
+fn preview_of(e: &Engine, camera: ObjectId, session: ObjectId, input: Option<VideoFrameInput>) {
+    let Ok(shared) = e.with::<Camera, _>(camera, |c| Arc::clone(&c.run.shared)) else {
+        return;
+    };
+    let mut preview = lock(&shared.preview);
+    match input {
+        Some(input) => *preview = Some((session, input)),
+        None if preview.as_ref().is_some_and(|(s, _)| *s == session) => *preview = None,
+        None => {}
     }
 }
 
@@ -616,16 +664,49 @@ fn join(e: &Engine, me: ObjectId) {
         .untrack(|| e.get(me, CaptureSession::VIDEO_OUTPUT))
         .ok()
         .flatten();
-    let Ok(before) = e.with::<CaptureSession, _>(me, |s| s.joined.replace(camera)) else {
-        return;
+    let before = {
+        let sessions = e.extension::<Sessions>();
+        let mut joined = sessions.joined.borrow_mut();
+        match camera {
+            Some(c) => joined.insert(me, c),
+            None => joined.remove(&me),
+        }
     };
     if let Some(old) = before.filter(|old| Some(*old) != camera) {
-        preview_of(e, old, None);
+        preview_of(e, old, me, None);
     }
     if let Some(camera) = camera {
         let input = output.and_then(|o| VideoFrameInput::new(e, o).ok());
-        preview_of(e, camera, input);
+        if input.is_none()
+            && let Some(o) = output
+        {
+            wait_for_sink(e, me, o);
+        }
+        preview_of(e, camera, me, input);
     }
+}
+
+/// A `VideoOutput` makes its sink as it completes, which may be after a
+/// session declared before it joined it: the session joins again then.
+fn wait_for_sink(e: &Engine, me: ObjectId, output: ObjectId) {
+    if e.with::<crate::video::VideoOutput, _>(output, |_| ())
+        .is_err()
+    {
+        return;
+    }
+    let sessions = e.extension::<Sessions>();
+    if !sessions.waiting.borrow_mut().insert((me, output)) {
+        return;
+    }
+    let _ = e.watch(
+        output,
+        crate::video::VideoOutput::VIDEO_SINK.index,
+        move |e, _| {
+            if e.is_alive(me) {
+                join(e, me);
+            }
+        },
+    );
 }
 
 // ------------------------------------------------------------ FakeCameras
@@ -694,12 +775,18 @@ impl FakeCameras {
     }
 
     /// The camera `name` is unplugged: it is no longer listed, and its
-    /// captures stop. Whether there was such a camera.
+    /// captures stop; the first left is the default, as a system makes
+    /// one. Whether there was such a camera.
     pub fn disconnect(&self, name: &str) -> bool {
         let mut cameras = self.0.cameras.borrow_mut();
         let before = cameras.len();
         cameras.retain(|c| c.id != name);
         let found = cameras.len() != before;
+        if !cameras.iter().any(|c| c.is_default)
+            && let Some(first) = cameras.first_mut()
+        {
+            first.is_default = true;
+        }
         drop(cameras);
         let open: Vec<CameraFrames> = self
             .0
