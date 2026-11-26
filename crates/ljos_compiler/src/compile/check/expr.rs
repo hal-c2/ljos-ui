@@ -780,7 +780,9 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
     /// `App.hints`: the engine's `StyleHints` (crates/ljos_quick/src/
     /// system_prefs.rs), member by member, with the preferences of its
     /// `accessibility` as the enums of `Ljos.Ui` they are, so
-    /// `motionPreference === MotionPreference.Reduced` is checked.
+    /// `motionPreference === MotionPreference.Reduced` is checked. Every
+    /// member but `accessibility` notifies, so each has its `…Changed`
+    /// signal, left unchecked as `App.quitting` is.
     fn hints(&mut self) -> Ty {
         let field = |name: &str, ty: Ty, readonly: bool| Field {
             name: name.into(),
@@ -793,7 +795,15 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
         let scheme = self.ljos_ui_enum("ColorScheme");
         let trigger = self.ljos_ui_enum("ContextMenuTrigger");
         let tab_focus = self.ljos_ui_enum("TabFocusBehavior");
-        let accessibility = self.arena.intern(Kind::Record(Box::new([
+        let notifying = |fields: Vec<Field>| -> Box<[Field]> {
+            let signals: Vec<Field> = fields
+                .iter()
+                .filter(|f| &*f.name != "accessibility")
+                .map(|f| field(&format!("{}Changed", f.name), Ty::ERROR, true))
+                .collect();
+            fields.into_iter().chain(signals).collect()
+        };
+        let accessibility = self.arena.intern(Kind::Record(notifying(vec![
             field("contrastPreference", contrast, true),
             field("fontScale", Ty::NUMBER, true),
             field("motionPreference", motion, true),
@@ -801,7 +811,7 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
         ])));
         let number = |name: &str| field(name, Ty::NUMBER, true);
         let boolean = |name: &str| field(name, Ty::BOOLEAN, true);
-        self.arena.intern(Kind::Record(Box::new([
+        self.arena.intern(Kind::Record(notifying(vec![
             field("accessibility", accessibility, true),
             field("colorScheme", scheme, false),
             field("contextMenuTrigger", trigger, false),

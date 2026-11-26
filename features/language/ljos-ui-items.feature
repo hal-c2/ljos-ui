@@ -27,7 +27,7 @@ Feature: The items Ljós's API has as Qt Quick has them
   An image, a flickable, a text field, its keys, its shortcuts, what it
   says to assistive technology, the window and screen it is shown on, a
   grid, a path view, a canvas, key navigation, an item's transforms,
-  mirroring, an animation of frames, a shadow, an effect and the motion
+  mirroring, an animation run on every update of the window, a shadow, an effect and the motion
   the user prefers say the one thing they are in Qt Quick, so Ljós's API has them under
   the same names. A file written for Qt Quick that uses them is lowered
   with nothing changed for them.
@@ -165,7 +165,7 @@ Feature: The items Ljós's API has as Qt Quick has them
       And the property "atY" of "root" is within 0.001 of 20
       And the property "active" of "root" is "b"
 
-  Rule: Mirroring, frames, shadows, effects and the motion preference are Ljos.Ui's
+  Rule: Mirroring, per-update animations, shadows, effects and the motion preference are Ljos.Ui's
 
     # The numbers are features/layouts/layout-mirroring.feature's: 200 wide, less 40, less 7.
     @ljos-only
@@ -186,7 +186,7 @@ Feature: The items Ljós's API has as Qt Quick has them
       And the property "x" of "child" is 153
 
     @ljos-only
-    Scenario: A frame animation of Ljós's API counts the frames it runs
+    Scenario: A FrameAnimation of Ljós's API counts the updates it runs on
       Given the QML:
         """qml
         import Ljos.Ui
@@ -194,8 +194,8 @@ Feature: The items Ljós's API has as Qt Quick has them
           id: root
           objectName: "root"
           property int ticks: 0
-          FrameAnimation { id: frames; running: true; onTriggered: root.ticks++ }
-          readonly property bool counted: root.ticks > 0 && root.ticks === frames.currentFrame
+          FrameAnimation { id: updates; running: true; onTriggered: root.ticks++ }
+          readonly property bool counted: root.ticks > 0 && root.ticks === updates.currentFrame
         }
         """
       When 300 milliseconds pass
@@ -256,6 +256,8 @@ Feature: The items Ljós's API has as Qt Quick has them
           RectangularShadow { anchors.fill: card; blur: calm ? 4 : 12 }
           MultiEffect { source: card; anchors.fill: card; shadowEnabled: !calm }
           FrameAnimation { running: !calm; onTriggered: ticks = ticks + 1 }
+          function follow() { ticks = 0 }
+          Component.onCompleted: App.hints.colorSchemeChanged.connect(follow)
         }
         """
       When the files are checked
