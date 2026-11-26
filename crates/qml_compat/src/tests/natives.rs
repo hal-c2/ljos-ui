@@ -3,9 +3,9 @@
 use super::*;
 
 /// A program's own module `Studio.Kit`: `Tone` with a `color` of its own,
-/// `Swatch` built on Qt's `Rectangle`, and the singleton `Look` holding a
-/// `Palette` of `Tone`s and a `Swatch`. And `Studio.Print`, `Studio.Press`
-/// and `Studio.Clock`, whose types are named as Qt's are, and
+/// `Swatch` built on Qt's `Rectangle`, the singleton `Look` holding a
+/// `Palette` of `Tone`s and a `Swatch`, and `Meter` with a `size`. And
+/// `Studio.Print`, `Studio.Press` and `Studio.Clock`, whose types are named as Qt's are, and
 /// `Studio.Touch`, whose type is named as Ljós's is.
 struct Kit;
 
@@ -28,6 +28,7 @@ const KIT: &[KitType] = &[
         None,
         &[("palette", Some("Palette")), ("card", Some("Swatch"))],
     ),
+    ("Meter", false, None, &[("size", None)]),
 ];
 
 /// A `Text` with no `color`, a `MouseArea` and a `Button` with one, built
@@ -491,4 +492,38 @@ fn a_slot_is_lowered_as_the_item_it_is_built_on() {
         "import QtQuick\nimport Ljos.Blocks\nItem { Slot { id: s }\n property bool on: s.Drag.active }\n",
     );
     assert!(drag.contains("s.DragSource.active"), "{drag}");
+}
+
+/// An object of the program's own type hides what its description says it
+/// has, and nothing else: `Tone` has no `rgba`, so `Qt.rgba` is lowered.
+#[test]
+fn an_object_of_the_programs_own_type_hides_only_its_members() {
+    let Outcome::Lowered(done) = with_kit(
+        "import QtQuick\nimport Studio.Kit\nItem { Tone { } property color c: Qt.rgba(1, 0, 0, 1) }\n",
+    ) else {
+        panic!("not lowered");
+    };
+    assert!(done.text.contains("c: rgba(1, 0, 0, 1)"), "{}", done.text);
+    let Outcome::Kept(kept) = with_kit(
+        "import QtQuick\nimport Studio.Kit\nItem { Meter { } property var s: Qt.size(1, 2) }\n",
+    ) else {
+        panic!("lowered");
+    };
+    assert!(
+        kept.to_string()
+            .contains("`Qt.size` needs `size`, which a member of an object's type hides"),
+        "{kept}"
+    );
+}
+
+/// Where an object's type is not known, the file is kept for it by name,
+/// so that the program can describe it.
+#[test]
+fn a_name_an_unknown_type_could_hide_says_which_type() {
+    let reason =
+        kept_for("import QtQuick\nItem { Gadget { } property color c: Qt.rgba(1, 0, 0, 1) }\n");
+    assert!(
+        reason.contains("`rgba`, which an object of `Gadget`, a type the pass does not know"),
+        "{reason}"
+    );
 }

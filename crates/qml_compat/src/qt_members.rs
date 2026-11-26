@@ -28,7 +28,7 @@ use std::ops::Range;
 use qt_types::{Type, ljos_enums};
 
 use crate::rules::font::SCREEN;
-use crate::{Cause, Font, Hider, Kept};
+use crate::{Cause, Font, Hider, Kept, Native, Natives};
 
 const APP: &str = "App";
 const COLOR: &str = "Color";
@@ -212,8 +212,12 @@ pub(crate) struct Members {
     colours: Vec<Range<usize>>,
     /// The file has a delegate, whose model's roles are in sight.
     delegate: bool,
-    /// The file has an object whose type the pass does not know.
-    unknown: bool,
+    /// The first of the file's objects whose type the pass does not know,
+    /// by the name it is written as.
+    unknown: Option<String>,
+    /// The program's own types of the file's objects, whose members are in
+    /// sight as their description has them.
+    natives: Vec<Native>,
     /// Where `Qt` is in `Qt.application.member`: the application read
     /// off, where `App` is it.
     read_off: Vec<usize>,
@@ -424,11 +428,18 @@ impl Members {
         });
     }
 
-    pub(crate) fn object_type(&mut self, ty: Option<&'static Type>) {
-        match ty {
-            Some(ty) => self.types.push(ty),
-            None => self.unknown = true,
-        }
+    pub(crate) fn object_type(&mut self, ty: &'static Type) {
+        self.types.push(ty);
+    }
+
+    /// An object of the type `name`, which the pass does not know.
+    pub(crate) fn unknown_type(&mut self, name: &str) {
+        self.unknown.get_or_insert_with(|| name.to_owned());
+    }
+
+    /// An object of the program's own type `ty`.
+    pub(crate) fn native(&mut self, ty: Native) {
+        self.natives.push(ty);
     }
 
     pub(crate) fn delegate(&mut self) {
@@ -446,17 +457,18 @@ impl Members {
     /// Whether the pass sees every name in sight of the file's scripts:
     /// it knows the type of every object, and the file has no delegate.
     pub(crate) fn sure(&self) -> bool {
-        !self.delegate && !self.unknown
+        !self.delegate && self.unknown.is_none()
     }
 
     /// What takes `name` in the file, if anything does: a property or a
     /// member in sight, what `beside` says is beside the file, or a word
     /// of `source` but where `own` says it is the lowering's own (or a
-    /// property's type).
+    /// property's type). `natives` describes the program's own types.
     pub(crate) fn hider(
         &self,
         source: &str,
         name: &str,
+        natives: Option<&dyn Natives>,
         beside: impl Fn(&str) -> Option<Hider>,
         own: impl Fn(&usize) -> bool,
     ) -> Option<Hider> {
@@ -470,14 +482,16 @@ impl Members {
             }
             if self.types.iter().any(|ty| {
                 ty.property(name).is_some() || ty.has_method(name) || ty.signal(name).is_some()
-            }) {
+            }) || natives
+                .is_some_and(|natives| self.natives.iter().any(|ty| natives.has_member(*ty, name)))
+            {
                 return Some(Hider::Member);
             }
             if self.delegate {
                 return Some(Hider::Role);
             }
-            if self.unknown {
-                return Some(Hider::UnknownType);
+            if let Some(ty) = &self.unknown {
+                return Some(Hider::UnknownType(ty.clone()));
             }
         }
         let elsewhere = words(source, name).any(|at| {
@@ -501,6 +515,7 @@ impl Members {
     pub(crate) fn settle(
         mut self,
         source: &str,
+        natives: Option<&dyn Natives>,
         beside: impl Fn(&str) -> Option<Hider>,
     ) -> Result<Settled, Kept> {
         self.uses.sort_by_key(|u| u.at);
@@ -511,7 +526,7 @@ impl Members {
             .flat_map(|l| l.changes.iter().map(|(range, _)| range.clone()))
             .collect();
         let hider = |name: &str| {
-            self.hider(source, name, &beside, |at| {
+            self.hider(source, name, natives, &beside, |at| {
                 changed.iter().any(|c| c.contains(at))
             })
         };

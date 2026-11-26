@@ -230,7 +230,7 @@ pub enum Cause {
 }
 
 /// What takes a name a member of `Qt` lowers to.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Hider {
     /// A property, a function or a variable of the file of that name.
@@ -239,8 +239,9 @@ pub enum Hider {
     Member,
     /// A role of a delegate's model.
     Role,
-    /// An object of a type the pass does not know, which may have it.
-    UnknownType,
+    /// An object of a type the pass does not know, which may have it: the
+    /// type, by the name the file writes.
+    UnknownType(String),
     /// A type of a directory or module the file imports by path.
     Directory,
     /// A file beside the file, or what the root of one declares.
@@ -251,15 +252,20 @@ pub enum Hider {
 
 impl Hider {
     /// What takes the name, as a keep reason says it after the name.
-    fn which(self) -> &'static str {
+    fn which(&self) -> std::borrow::Cow<'static, str> {
         match self {
-            Hider::Own => "which a property of the file hides",
-            Hider::Member => "which a member of an object's type hides",
-            Hider::Role => "which a role of a delegate could hide",
-            Hider::UnknownType => "which an object of a type the pass does not know could have",
-            Hider::Directory => "which a type of a directory the file imports could be",
-            Hider::Beside => "which a file beside it has",
-            Hider::Word => "which the file names something else",
+            Hider::Own => "which a property of the file hides".into(),
+            Hider::Member => "which a member of an object's type hides".into(),
+            Hider::Role => "which a role of a delegate could hide".into(),
+            // Named so that a program can describe the type to the pass
+            // (`--types`), or the file can be lowered by hand there.
+            Hider::UnknownType(ty) => {
+                format!("which an object of `{ty}`, a type the pass does not know, could have")
+                    .into()
+            }
+            Hider::Directory => "which a type of a directory the file imports could be".into(),
+            Hider::Beside => "which a file beside it has".into(),
+            Hider::Word => "which the file names something else".into(),
         }
     }
 }
@@ -290,7 +296,7 @@ impl Owner {
 }
 
 /// Why a font's member keeps a file.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Font {
     /// `.pointSize` read or written in a script: Ljós's font has only a

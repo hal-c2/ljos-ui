@@ -665,7 +665,13 @@ impl<'s> Pass<'s> {
                 written.iter().any(|r| r.contains(at)) || self.quoted.iter().any(|r| r.contains(at))
             };
             if members
-                .hider(self.source, name, |n| self.scope.may_be_beside(n), own)
+                .hider(
+                    self.source,
+                    name,
+                    self.scope.natives,
+                    |n| self.scope.may_be_beside(n),
+                    own,
+                )
                 .is_some()
             {
                 return Err(Kept {
@@ -731,7 +737,9 @@ impl<'s> Pass<'s> {
         self.object(&document.root, root, root, true)?;
         let members = std::mem::take(&mut self.members);
         self.messages(&members)?;
-        let settled = members.settle(self.source, |name| self.scope.may_be_beside(name))?;
+        let settled = members.settle(self.source, self.scope.natives, |name| {
+            self.scope.may_be_beside(name)
+        })?;
         let lowered: Vec<Change> = settled
             .changes
             .iter()
@@ -1006,7 +1014,7 @@ impl<'s> Pass<'s> {
     fn object(&mut self, object: &QmlObject<'_>, ty: Ty, root: Ty, a_root: bool) -> Step {
         match ty {
             Ty::Exact(t) | Ty::Derived(t) => {
-                self.members.object_type(Some(t));
+                self.members.object_type(t);
                 // The lowered file's object is Ljós's, whose members are
                 // in sight there.
                 let ljos = rules::new_name(t.name).unwrap_or(t.name);
@@ -1014,7 +1022,7 @@ impl<'s> Pass<'s> {
                     .into_iter()
                     .find_map(|of| self.scope.modules.ljos(of)?.type_named(ljos))
                 {
-                    self.members.object_type(Some(t));
+                    self.members.object_type(t);
                 }
                 // A delegate's model gives it roles, which come before
                 // anything else in sight.
@@ -1027,9 +1035,15 @@ impl<'s> Pass<'s> {
                     self.members.delegate();
                 }
             }
-            // What the program's type has is in its description, not in
-            // Qt's table.
-            Ty::Unknown | Ty::Native(..) | Ty::Kept => self.members.object_type(None),
+            // What the program's type has is in its description, and in
+            // Qt's table as far as the toolkit type it is built on.
+            Ty::Native(native, _) => {
+                self.members.native(native);
+                if let Some(base) = self.scope.toolkit_base(native) {
+                    self.members.object_type(base);
+                }
+            }
+            Ty::Unknown | Ty::Kept => self.members.unknown_type(&object.type_name.to_string()),
             Ty::Plain | Ty::Font => {}
         }
         // A `Component` a view is given by id is its delegate as if it
