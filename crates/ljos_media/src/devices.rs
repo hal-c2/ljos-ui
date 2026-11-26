@@ -1,5 +1,5 @@
 //! `AudioOutput`, `AudioDevice` and `MediaDevices`: where a player's sound
-//! goes and what the system has to play it on.
+//! goes, what the system has to play it on, and its cameras.
 //!
 //! Qt's `audioDevice` is a value type; here a device is an uncreatable
 //! object, one per device the engine has seen, so `output.device ===
@@ -170,6 +170,7 @@ pub(crate) fn gain_of(e: &Engine, output: Option<ObjectId>) -> f32 {
 
 /// `MediaDevices` (QtMultimedia): the system's audio and video devices.
 /// One output at most is listed: the default, which is where sound goes.
+/// The cameras are the engine's [`crate::CameraService`]'s.
 #[derive(Debug, Default, QmlObject)]
 #[qml(module = "QtMultimedia", name = "MediaDevices", extends = QtObject)]
 pub struct MediaDevices {
@@ -185,8 +186,8 @@ pub struct MediaDevices {
     pub default_audio_input: Option<ObjectId>,
     #[qml(readonly, object = "AudioDevice")]
     pub default_audio_output: Option<ObjectId>,
-    #[qml(readonly)]
-    pub default_video_input: Value,
+    #[qml(readonly, object = "CameraDevice")]
+    pub default_video_input: Option<ObjectId>,
 }
 
 #[qml_impl]
@@ -213,6 +214,9 @@ impl MediaDevices {
         cx.set(MediaDevices::AUDIO_OUTPUTS, outputs)?;
         cx.set(MediaDevices::DEFAULT_AUDIO_OUTPUT, output)?;
         cx.set(MediaDevices::DEFAULT_AUDIO_INPUT, null_input(e))?;
+        let (cameras, default_camera) = crate::camera::video_inputs(e);
+        cx.set(MediaDevices::VIDEO_INPUTS, cameras)?;
+        cx.set(MediaDevices::DEFAULT_VIDEO_INPUT, default_camera)?;
         Ok(())
     }
 }

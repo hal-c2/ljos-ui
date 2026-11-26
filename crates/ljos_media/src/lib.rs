@@ -44,13 +44,20 @@
 //!   decodes with the same [`Decoder`] on a thread of its own, and
 //!   converts the pictures it keeps with [`VideoFrame::into_rgba`].
 //!
-//! Camera, CaptureSession, MediaRecorder, ImageCapture, ScreenCapture,
-//! WindowCapture, AudioInput and subtitles are not built.
+//! - **Cameras**: a `Camera` captures from one of the system's cameras
+//!   (a [`CameraService`]: V4L2 on Linux, or one the host installs with
+//!   [`set_cameras`]), a `CaptureSession` shows what it captures in a
+//!   `VideoOutput`, and the program's Rust is handed every picture on
+//!   the capture's thread through [`tap_camera`].
+//!
+//! MediaRecorder, ImageCapture, ScreenCapture, WindowCapture, AudioInput
+//! and subtitles are not built.
 
 // Without a decoder no frame, sample or metadata is ever made, so the
 // paths that carry them are unreachable but kept, to keep one shape.
 #![cfg_attr(not(feature = "decode"), allow(dead_code))]
 
+mod camera;
 mod container_bytes;
 mod devices;
 mod frame_input;
@@ -65,6 +72,9 @@ mod units;
 mod video;
 mod video_sink;
 
+#[cfg(all(feature = "v4l2", target_os = "linux"))]
+mod v4l2;
+
 #[cfg(feature = "decode")]
 mod decoder;
 #[cfg(feature = "decode")]
@@ -72,8 +82,15 @@ mod mp4_video;
 
 use ljos_engine::Engine;
 
+pub use camera::{
+    Camera, CameraDevice, CameraFrames, CameraInfo, CameraPosition, CameraService, CameraTap,
+    CameraTapError, Capture, CaptureSession, FakeCameras, NoCameras, cameras, set_cameras,
+    tap_camera,
+};
 pub use devices::{AudioDevice, AudioOutput, MediaDevices};
-pub use frame_input::{FrameError, VideoFrame, VideoFrameInput, YuvColour, YuvMatrix};
+pub use frame_input::{
+    FrameError, PixelFormat, Plane, StridedPlane, VideoFrame, VideoFrameInput, YuvColour, YuvMatrix,
+};
 pub use meta::MediaMetaData;
 pub use player::MediaPlayer;
 pub use sound::SoundEffect;
@@ -97,6 +114,9 @@ pub fn register(engine: &Engine) {
         Video,
         VideoSink,
         SoundEffect,
+        Camera,
+        CameraDevice,
+        CaptureSession,
     ]));
     video::register_paint(engine);
     engine.add_memory_owner(decoded_media);

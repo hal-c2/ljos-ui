@@ -250,6 +250,30 @@ impl Platform for LjosBackend {
         live.settle()
     }
 
+    fn add_camera(&mut self, name: &str) -> Result<()> {
+        if self.live.is_some() {
+            return Err(failed("say what cameras the system has before the QML"));
+        }
+        self.platform.add_camera(name);
+        Ok(())
+    }
+
+    fn camera_captures(&mut self, name: &str, width: u32, height: u32) -> Result<()> {
+        self.live()?;
+        self.platform.camera_captures(name, width, height)?;
+        let live = self.live()?;
+        ljos_platform::Platform::of(&live.engine).finish(&live.engine);
+        live.settle()
+    }
+
+    fn camera_disconnected(&mut self, name: &str) -> Result<()> {
+        self.live()?;
+        self.platform.camera_disconnected(name)?;
+        let live = self.live()?;
+        ljos_platform::Platform::of(&live.engine).finish(&live.engine);
+        live.settle()
+    }
+
     fn system_position(&mut self, latitude: f64, longitude: f64, altitude: f64) -> Result<()> {
         if self.live.is_some() {
             return Err(failed("say where the system is before the QML"));

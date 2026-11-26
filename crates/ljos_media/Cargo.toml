@@ -9,7 +9,7 @@ repository.workspace = true
 publish.workspace = true
 
 [features]
-default = ["decode", "audio"]
+default = ["decode", "audio", "v4l2"]
 # Demux and decode with FilmCraft. Without it every source is an error
 # (MediaPlayer.FormatError, SoundEffect.Error).
 decode = [
@@ -25,6 +25,10 @@ decode = [
 # Play sound on the system's device. Without it, or with no device, sound
 # goes to a null sink and the engine's clock is the media clock.
 audio = ["dep:cpal"]
+# The host's cameras on Linux, through the kernel's V4L2 interface (no
+# library of the system's). Without it, or elsewhere, there are none unless
+# the host installs a `CameraService`.
+v4l2 = ["dep:libc"]
 
 [dependencies]
 ljos_engine = { path = "../ljos_engine" }
@@ -47,6 +51,9 @@ filmcraft-bitstream = { workspace = true, optional = true }
 # FilmCraft's sources keep for an editor (src/mp4_video.rs).
 filmcraft-isobmff = { workspace = true, optional = true }
 cpal = { workspace = true, optional = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = { workspace = true, optional = true }
 
 [dev-dependencies]
 ljos_compiler = { path = "../ljos_compiler" }

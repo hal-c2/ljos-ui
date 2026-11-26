@@ -31,6 +31,21 @@ fn permissions_ask(w: &mut LjosWorld) -> StepResult {
     w.each(|b| b.platform()?.permissions_ask())
 }
 
+#[given(regex = r#"^the system has a camera named "([^"]+)"$"#)]
+fn system_has_camera(w: &mut LjosWorld, name: String) -> StepResult {
+    w.each(|b| b.platform()?.add_camera(&name))
+}
+
+#[when(regex = r#"^the camera "([^"]+)" captures a ([0-9]+) by ([0-9]+) picture$"#)]
+fn camera_captures(w: &mut LjosWorld, name: String, width: u32, height: u32) -> StepResult {
+    w.each(|b| b.platform()?.camera_captures(&name, width, height))
+}
+
+#[when(regex = r#"^the camera "([^"]+)" is disconnected$"#)]
+fn camera_disconnected(w: &mut LjosWorld, name: String) -> StepResult {
+    w.each(|b| b.platform()?.camera_disconnected(&name))
+}
+
 #[given(regex = r"^the system has an? ([a-z ]+)$")]
 fn system_has_sensor(w: &mut LjosWorld, kind: String) -> StepResult {
     w.each(|b| b.platform()?.add_sensor(&kind))
