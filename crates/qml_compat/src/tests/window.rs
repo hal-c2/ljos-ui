@@ -24,6 +24,22 @@ fn the_items_ljos_ui_has_as_they_are_are_lowered_unchanged() {
     );
 }
 
+/// A focus scope as a file's root, a shortcut on the platform's standard
+/// keys and the application's font are Ljos.Ui's as they are Qt Quick's.
+#[test]
+fn focus_scopes_standard_keys_and_the_application_are_lowered_unchanged() {
+    let source = "import QtQuick\nFocusScope {\n    property string face: Application.font.family\n    \
+                  property bool shown: Application.active\n    \
+                  Shortcut { sequences: [StandardKey.Find] }\n}\n";
+    assert_eq!(
+        lowered(source),
+        format!(
+            "pragma Scripts: JavaScript; import Ljos.Ui\n{}",
+            source.split_once('\n').expect("an import").1
+        )
+    );
+}
+
 #[test]
 fn an_aliased_window_import_keeps_the_file() {
     assert!(

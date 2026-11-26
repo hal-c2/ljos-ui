@@ -36,12 +36,12 @@ Rectangle {
 }
 ";
 
-// `FocusScope` is not in Ljos.Ui yet, so this file is kept, and so is the
+// `Flipable` is not in Ljos.Ui yet, so this file is kept, and so is the
 // `Button` it names.
 const MAIN: &str = "import QtQuick
 Item {
     Button { color: \"blue\" }
-    FocusScope { }
+    Flipable { }
 }
 ";
 
@@ -234,12 +234,12 @@ fn a_kept_file_keeps_the_files_it_names_and_says_where() {
     let lines: Vec<&str> = out.lines().collect();
     assert!(
         lines.contains(
-            &"kept app/Button.qml:1:1: it is used by `Main.qml`, which is kept: `FocusScope` is not in Ljos.Ui yet"
+            &"kept app/Button.qml:1:1: it is used by `Main.qml`, which is kept: `Flipable` is not in Ljos.Ui yet"
         ),
         "{out}"
     );
     assert!(
-        lines.contains(&"kept app/Main.qml:4:5: `FocusScope` is not in Ljos.Ui yet"),
+        lines.contains(&"kept app/Main.qml:4:5: `Flipable` is not in Ljos.Ui yet"),
         "{out}"
     );
     assert!(lines.contains(&"lowered other/Lone.qml (2 edits)"), "{out}");

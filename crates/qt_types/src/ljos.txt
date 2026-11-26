@@ -1101,6 +1101,7 @@ module Ljos.Ui
 	Accessible QtQuick.Accessible
 	Align Ljos.Ui.Align
 	Animation QtQuick.Animation
+	Application QtQuick.Application
 	ApplicationState Ljos.Ui.ApplicationState
 	ArrowType Ljos.Ui.ArrowType
 	AspectRatioMode Ljos.Ui.AspectRatioMode
@@ -1140,6 +1141,7 @@ module Ljos.Ui
 	Flickable QtQuick.Flickable
 	FocusPolicy Ljos.Ui.FocusPolicy
 	FocusReason Ljos.Ui.FocusReason
+	FocusScope QtQuick.FocusScope
 	Font QtQuick.Font
 	FontMetrics QtQuick.FontMetrics
 	FrameAnimation QtQuick.FrameAnimation
@@ -1232,6 +1234,7 @@ module Ljos.Ui
 	SortOrder Ljos.Ui.SortOrder
 	SplitBehavior Ljos.Ui.SplitBehavior
 	SpringAnimation QtQuick.SpringAnimation
+	StandardKey QtQuick.StandardKey
 	State QtQuick.State
 	TabFocusBehavior Ljos.Ui.TabFocusBehavior
 	Tap Ljos.Ui.Tap
