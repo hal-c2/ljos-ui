@@ -44,6 +44,19 @@ impl Import {
     }
 }
 
+/// Where a file of the project is, as this one finds it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Home {
+    /// This file: an inline component.
+    Here,
+    /// The directory this file is in.
+    Beside,
+    /// A module of the project.
+    Module(String),
+    /// A directory this file imports, as written.
+    Dir(String),
+}
+
 pub(crate) struct Scope<'s> {
     /// The modules the file imports, Qt's and the Ljós modules they lower
     /// to, and which line of [`imports`](Self::imports) each Ljós module
@@ -474,6 +487,22 @@ impl<'s> Scope<'s> {
             .borrow_mut()
             .insert(name.to_string(), found.clone());
         found
+    }
+
+    /// What [`local_root`](Self::local_root) finds, with where its file
+    /// is: the names its root is written with are that file's.
+    pub(crate) fn local_root_home(&self, name: &str) -> Option<(Root, Home)> {
+        if let Some((_, root)) = self.inline.iter().find(|(n, _)| n == name) {
+            return Some((root.clone(), Home::Here));
+        }
+        if let Some((at, root)) = self.imported_root(name) {
+            let home = match self.imports[at].imported()? {
+                Imported::Module(uri) => Home::Module(uri.to_owned()),
+                Imported::Dir(path) => Home::Dir(path.to_owned()),
+            };
+            return Some((root, home));
+        }
+        self.locals.root(name).map(|root| (root, Home::Beside))
     }
 
     /// The Qt type `name` is of one of the modules of `group`

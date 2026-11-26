@@ -362,6 +362,16 @@ fn layout_files(name: &str) -> Option<Root> {
         "Inner" => Some(valued("ColumnLayout", &[], &[])),
         "Gone" => Some(valued("Mystery", &[], &[])),
         "Celled" => Some(valued("Item", &[("Layout.row", "1")], &[])),
+        // It would fill, if it were shown.
+        "Hidden" => Some(valued(
+            "Rectangle",
+            &[
+                ("visible", "false"),
+                ("Layout.fillWidth", "true"),
+                ("implicitHeight", "4"),
+            ],
+            &[],
+        )),
         // Its file imports the controls, whose `Button` it is, though the
         // file that holds it need not.
         "Pressed" => Some(Root {
@@ -453,6 +463,12 @@ fn a_layout_child_is_kept_by_its_files_root() {
         ),
         (
             "RowLayout { width: 100; Chip { } }",
+            "RowLayout",
+            "spreads the room",
+        ),
+        // A child that is not shown takes no room, and fills none.
+        (
+            "RowLayout { width: 100; Hidden { } Chip { } Chip { } }",
             "RowLayout",
             "spreads the room",
         ),
@@ -676,6 +692,67 @@ fn where_a_grid_positioner_and_ljos_grid_disagree_the_file_is_kept() {
     lowered(&format!(
         "import QtQuick\nGrid {{ columns: 2; spacing: 2; {TILE} {TILE} Rectangle {{ visible: false }} Item {{ width: 0 }} }}\n"
     ));
+}
+
+/// The files of [`layout_files`], with a `Base` beside them that a file
+/// of a directory or a module of the project does not see: it names
+/// another `Base`, or none.
+struct Homes;
+
+impl Locals for Homes {
+    fn root(&self, name: &str) -> Option<Root> {
+        match name {
+            "Base" => layout_files("Chip"),
+            // Its file imports a module this one does not, whose `Base` it
+            // is built on.
+            "Kitted" => Some(Root {
+                imports: vec!["QtQuick".to_owned(), "My.Kit".to_owned()],
+                ..valued("Base", &[], &[])
+            }),
+            _ => layout_files(name),
+        }
+    }
+
+    fn module(&self, uri: &str) -> Option<ProjectModule> {
+        (uri == "My.Kit").then_some(ProjectModule::Files)
+    }
+
+    fn imported(&self, from: Imported<'_>, name: &str) -> Option<Root> {
+        match (from, name) {
+            (Imported::Module("My.Kit"), "Base") => Some(valued("ColumnLayout", &[], &[])),
+            // `parts` has no `Base`.
+            (Imported::Dir("parts"), "Widget") => Some(valued("Base", &[], &[])),
+            (Imported::Dir("parts"), "Strip") => Some(valued("Tile", &[], &[])),
+            (Imported::Dir("parts"), "Tile") => layout_files("Chip"),
+            _ => None,
+        }
+    }
+}
+
+/// A root built on a name is built on what the name is in the root's file,
+/// not in the file that holds the type: a name of that file's own
+/// directory and imports, or none it can tell.
+#[test]
+fn a_roots_base_is_what_its_own_file_names() {
+    let source =
+        format!("{LAYOUTS}import \"parts\"\nItem {{ RowLayout {{ Strip {{ }} Base {{ }} }} }}\n");
+    let Outcome::Lowered(_) = lower(&source, &Homes) else {
+        panic!("{source}: kept");
+    };
+    for (body, child) in [
+        ("Item { RowLayout { Widget { } } }", "Widget"),
+        ("Item { RowLayout { Kitted { } } }", "Kitted"),
+    ] {
+        let source = format!("{LAYOUTS}import \"parts\"\n{body}\n");
+        let Outcome::Kept(kept) = lower(&source, &Homes) else {
+            panic!("{body}: lowered");
+        };
+        assert!(
+            kept.to_string().contains("a file of the project"),
+            "{body}: {kept}"
+        );
+        assert_eq!(kept.at, source.rfind(child).unwrap(), "{body}: {kept}");
+    }
 }
 
 /// A directory `parts` with a `GridLayout` of its own, built on the type

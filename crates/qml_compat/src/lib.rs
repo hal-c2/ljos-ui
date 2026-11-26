@@ -57,6 +57,7 @@ use qt_types::Type;
 use rows::{Delegate, Owns, Rows};
 use rules::states::animation::Animating;
 use rules::{arrange, font, gesture, messages};
+use scope::Home;
 
 pub use cause::Xhr;
 pub use cause::{Animated, Cause, Differs, Font, Hider, Layout, Loader, Message, Owner, Row};
@@ -169,6 +170,9 @@ pub struct Root {
     /// in which the type it is written as is looked up; none for the root
     /// of an inline component, which is in sight of the file's imports.
     pub imports: Vec<String>,
+    /// Whether its file imports a directory by path, whose types the type
+    /// it is written as may be: the pass does not look in it from here.
+    pub imports_a_dir: bool,
     /// The properties it declares: a `model` it declares is its own, not a
     /// delegate's row.
     pub properties: Vec<String>,
@@ -528,6 +532,10 @@ fn root_in(parsed: &qml_syntax::Parsed<'_>) -> Option<Root> {
             QmlImportSource::Path(_) => None,
         })
         .collect();
+    root.imports_a_dir = parsed.document.imports.iter().any(|import| {
+        import.alias.is_none()
+            && matches!(&import.source, QmlImportSource::Path(path) if !group::is_script(path))
+    });
     (!parsed.panicked && !root.type_name.is_empty()).then_some(root)
 }
 
@@ -538,6 +546,7 @@ impl Root {
             bindings: arrange::binding_names(object),
             values: arrange::literal_values(object),
             imports: Vec::new(),
+            imports_a_dir: false,
             properties: object
                 .members
                 .iter()
@@ -1961,49 +1970,60 @@ impl rules::File for Pass<'_> {
     fn file_root(&self, name: &str) -> Option<rules::FileRoot> {
         let mut found: Option<rules::FileRoot> = None;
         let mut name = name.to_string();
-        // The imports of the file the name is written in, when that is a
-        // root's file and not this one.
-        let mut imports: Option<Vec<String>> = None;
+        // The file the name is written in, and that file's root, when it
+        // is not this one.
+        let mut written: Option<(Home, Root)> = None;
         // A root built on another file of the project binds what that
         // file's root binds too; as far as `named_type` follows it.
         for _ in 0..16 {
-            let qt = match &imports {
-                Some(imports) => self.qt_type_in(imports, &name),
-                None => self.qt_type(&name),
+            let base = match &written {
+                None => match self.qt_type(&name) {
+                    Some(qt) => Base::Qt(qt),
+                    None => match self.scope.local_root_home(&name) {
+                        Some((root, home)) => Base::File(root, home),
+                        None => Base::Stop,
+                    },
+                },
+                Some((home, root)) => self.step_in(home, root, &name),
             };
-            if let Some(qt) = qt {
-                if let Some(found) = &mut found {
-                    found.qt = Some(qt);
+            let (root, home) = match base {
+                Base::Qt(qt) => {
+                    if let Some(found) = &mut found {
+                        found.qt = Some(qt);
+                    }
+                    break;
                 }
-                break;
-            }
-            let Some(mut root) = self
-                .scope
-                .local_root(&name, self.scope.imported_root(&name))
-            else {
-                break;
+                Base::Stop => break,
+                Base::File(root, home) => (root, home),
             };
-            if !root.imports.is_empty() {
-                imports = Some(std::mem::take(&mut root.imports));
-            }
             let found = found.get_or_insert_default();
-            for bound in root.bindings {
-                if found.said(&bound).is_none() {
+            for bound in &root.bindings {
+                if found.said(bound).is_none() {
                     let value = root
                         .values
                         .iter()
-                        .find(|(n, _)| *n == bound)
+                        .find(|(n, _)| n == bound)
                         .map(|(_, v)| v.clone());
-                    found.bindings.push((bound, value));
+                    found.bindings.push((bound.clone(), value));
                 }
             }
             if root.type_name == name {
                 break;
             }
-            name = root.type_name;
+            name.clone_from(&root.type_name);
+            // An inline component's root is written in this file.
+            written = (home != Home::Here || written.is_some()).then_some((home, root));
         }
         found
     }
+}
+
+/// What a name a root is built on is, as `file_root` follows it.
+enum Base {
+    Qt(&'static Type),
+    File(Root, Home),
+    /// Nothing the pass can tell.
+    Stop,
 }
 
 /// The modules of Qt's whose types say how an object is placed and sized,
@@ -2034,6 +2054,61 @@ impl Pass<'_> {
             };
             module?.type_named(name)
         })
+    }
+
+    /// What `name` is where `root`'s file, at `home`, writes it: of the
+    /// Qt types that file's imports bring, the files of its directory and
+    /// those of the modules it imports, the one that has the name. One
+    /// that two of them have, or that what the pass cannot see may have,
+    /// is not followed.
+    fn step_in(&self, home: &Home, root: &Root, name: &str) -> Base {
+        let locals = self.scope.locals;
+        if root.imports_a_dir {
+            return Base::Stop;
+        }
+        let qt = self.qt_type_in(&root.imports, name);
+        let mut files = Vec::new();
+        let beside = match home {
+            Home::Here | Home::Beside => locals.root(name),
+            Home::Module(uri) => locals.imported(Imported::Module(uri), name),
+            Home::Dir(path) => locals.imported(Imported::Dir(path), name),
+        };
+        files.extend(beside.map(|root| (root, home.clone())));
+        for uri in &root.imports {
+            if matches!(home, Home::Module(own) if own == uri) {
+                continue;
+            }
+            if let Some(row) = modules::row(uri) {
+                let theirs = || qt_types::module(row.uri)?.type_named(name);
+                if qt.is_none() && !PLACED.contains(&row.qt) && theirs().is_some() {
+                    return Base::Stop;
+                }
+                continue;
+            }
+            if let Some(natives) = self.scope.natives.filter(|n| n.has_module(uri)) {
+                if natives.module_type(uri, name).is_some() {
+                    return Base::Stop;
+                }
+                continue;
+            }
+            let from = Imported::Module(uri);
+            match locals.module(uri) {
+                Some(ProjectModule::Files) => match locals.imported(from, name) {
+                    Some(root) => files.push((root, Home::Module(uri.clone()))),
+                    None if locals.imports_type(from, name) == Some(true) => return Base::Stop,
+                    None => {}
+                },
+                Some(ProjectModule::Native) | None => return Base::Stop,
+            }
+        }
+        match (qt, files.len()) {
+            (Some(qt), 0) => Base::Qt(qt),
+            (None, 1) => {
+                let (root, home) = files.remove(0);
+                Base::File(root, home)
+            }
+            _ => Base::Stop,
+        }
     }
 }
 

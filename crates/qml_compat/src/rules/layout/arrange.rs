@@ -66,6 +66,8 @@
 //! Ljós's `Flow` is Qt's; a `Flow` is held to a positioner's rules so that
 //! what Ljós's arrangement would read differently is not written to it.
 
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::ops::Range;
 
 use oxc_ast::ast::Expression;
@@ -230,6 +232,7 @@ fn arrange(
         a_root,
         types,
         changes: Vec::new(),
+        roots: RefCell::default(),
     };
     match shape {
         Shape::Positioner { .. } | Shape::Flow => a.positioner(object)?,
@@ -250,6 +253,9 @@ struct Arrange<'s, 't> {
     a_root: bool,
     types: &'t dyn File,
     changes: Vec<Change>,
+    /// What [`File::file_root`] found, by the child's type: the pass asks
+    /// it of a child for each name it reads.
+    roots: RefCell<HashMap<String, Option<FileRoot>>>,
 }
 
 /// The anchors that place a child on each axis, by the axis: what a
@@ -308,10 +314,15 @@ impl Arrange<'_, '_> {
     /// the project or an inline component.
     fn file_root(&self, child: &QmlObject<'_>) -> Option<FileRoot> {
         let name = child.type_name.to_string();
-        if self.types.qt_type(&name).is_some() {
-            return None;
+        if let Some(known) = self.roots.borrow().get(&name) {
+            return known.clone();
         }
-        self.types.file_root(&name)
+        let found = match self.types.qt_type(&name) {
+            Some(_) => None,
+            None => self.types.file_root(&name),
+        };
+        self.roots.borrow_mut().insert(name, found.clone());
+        found
     }
 
     /// What `child` says of `name`: its own binding, else its file's
@@ -701,12 +712,24 @@ impl Arrange<'_, '_> {
     ) -> Result<(), Kept> {
         let (qt, ljos) = (self.shape.qt(), self.shape.ljos());
         let mut fills = Some(false);
+        let maybe_none = self.maybe_none(object);
         for child in children {
+            // A hidden child takes no room, and fills none; one shown and
+            // hidden as the file runs, or a delegate of a model that may
+            // have no entry, fills only some of the time.
+            let shown = self.said(child, "visible").map(|s| s.boolean());
+            if shown == Some(Some(false)) {
+                continue;
+            }
+            let some = !maybe_none.iter().any(|d| std::ptr::eq(*d, *child));
             let name = child.type_name.to_string();
-            let told = match self.line_layout(&name) {
+            let mut told = match self.line_layout(&name) {
                 Some(line) => Some(Some(self.nested_fills(child, line, axis)?)),
                 None => self.said(child, FILL[axis]).map(|s| s.boolean()),
             };
+            if told == Some(Some(true)) && (shown == Some(None) || !some) {
+                told = Some(None);
+            }
             match told {
                 Some(Some(true)) => fills = fills.map(|_| true),
                 Some(None) => fills = None,
@@ -886,6 +909,7 @@ impl Arrange<'_, '_> {
             a_root: false,
             types: self.types,
             changes: Vec::new(),
+            roots: RefCell::default(),
         };
         let mut grows = false;
         let maybe_none = inner.maybe_none(nested);
