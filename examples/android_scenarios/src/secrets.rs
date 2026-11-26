@@ -111,7 +111,7 @@ fn call(
     let me = cx.this;
     let reply = Platform::of(cx.engine).expect_for("a secret from the system's store", Some(me));
     std::thread::spawn(move || {
-        let answer = work(&store()).map_err(|e| e.to_string());
+        let answer = answer_of(work, &store());
         reply.send(move |e| {
             if e.is_alive(me) {
                 let _ = show(&Cx::new(e, me), answer);
@@ -119,6 +119,19 @@ fn call(
         });
     });
     Ok(())
+}
+
+/// What `work` answered against `store`. A store that panics still
+/// answers, as a failure: otherwise `busy` would never fall and every
+/// later call would be refused.
+fn answer_of(
+    work: impl FnOnce(&SecretStore) -> Result<Answer, ljos_secrets::SecretError>,
+    store: &SecretStore,
+) -> Result<Answer, String> {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| work(store))) {
+        Ok(done) => done.map_err(|e| e.to_string()),
+        Err(_) => Err("the store panicked".to_owned()),
+    }
 }
 
 fn show(cx: &Cx, answer: Result<Answer, String>) -> Result<(), EngineError> {
@@ -138,4 +151,20 @@ fn show(cx: &Cx, answer: Result<Answer, String>) -> Result<(), EngineError> {
 /// Registers `ScenarioSecrets` (module `LjosScenarios`) on `engine`.
 pub fn register(engine: &Engine) {
     engine.register_module(ljos::module!("LjosScenarios" 1.0 => [ScenarioSecrets]));
+}
+
+#[cfg(test)]
+mod tests {
+    use ljos_secrets::{MemorySecrets, SecretStore};
+
+    use super::{Answer, answer_of};
+
+    #[test]
+    fn a_store_that_panics_still_answers() {
+        let store = SecretStore::new(MemorySecrets::new());
+        let answer = answer_of(|_| panic!("the store went away"), &store);
+        assert!(matches!(answer, Err(why) if why.contains("panicked")));
+        let kept = answer_of(|s| s.write("s", "k", b"v").map(|()| Answer::Kept), &store);
+        assert!(matches!(kept, Ok(Answer::Kept)));
+    }
 }
