@@ -336,6 +336,19 @@ mod tests {
     }
 
     #[test]
+    fn an_enum_written_by_hand_is_one_qt_s_table_lacks() {
+        // Once Qt's table is measured off a Qt that lists one of these,
+        // the hand-written entry would make a second enum of that name:
+        // this says to take it out instead.
+        for (qt, _) in AFTER_QT {
+            assert!(
+                !QT_ENUMS.iter().any(|e| e.name == *qt),
+                "Qt's table now lists `{qt}`: take it out of AFTER_QT"
+            );
+        }
+    }
+
+    #[test]
     fn the_names_docs_dialect_gives_are_the_tables() {
         assert_eq!(key("Align", "AlignLeft"), "Left");
         assert_eq!(key("Align", "AlignHCenter"), "HCenter");
