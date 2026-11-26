@@ -475,6 +475,22 @@ impl<'s> Scope<'s> {
         (!self.shadows(own_at, &[Qt::Quick])).then_some(new)
     }
 
+    /// QtQuick's type `name`, where the file names it: no inline component,
+    /// file of the project or import after QtQuick has the name.
+    pub(crate) fn quick_type(&self, name: &str) -> Option<&'static Type> {
+        if self.inline.iter().any(|(n, _)| n == name) || self.locals.root(name).is_some() {
+            return None;
+        }
+        let own_at = self
+            .imported_root(name)
+            .map(|(at, _)| at)
+            .max(self.native_type(name).map(|(at, _)| at));
+        if self.shadows(own_at, &[Qt::Quick]) {
+            return None;
+        }
+        self.modules.quick().type_named(name)
+    }
+
     /// The toolkit type of Qt's table the native type `ty` is built on.
     pub(crate) fn toolkit_base(&self, ty: Native) -> Option<&'static Type> {
         let (module, name) = self.natives?.toolkit_base(ty)?;

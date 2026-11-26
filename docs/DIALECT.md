@@ -1016,9 +1016,16 @@ MouseArea.
 - A MouseArea with children, a geometry of its own, or `mouse.accepted`
   keeps its file as a `PointerArea` (phase 1's face) until M3.
 
-DECISION: `grabPermissions` and `PointerHandler`'s enum keep the file
-until `takeOver` is built: Qt's flags say more than the one boolean, so
-there is no one-for-one lowering. `cursorShape` keeps its name, which
+DECISION: `takeOver` is a view of the handler's grab permissions, on
+every gesture whose handler has them (a `Wheel` has none). True is Qt's
+`CanTakeOverFromAnything` alone: the gesture takes the pointer from
+anything, and nothing approves taking it back. False is the handler's
+default. So `grabPermissions: PointerHandler.CanTakeOverFromAnything`,
+the key read through any Qt handler's name, lowers to `takeOver: true`
+one for one. Any other value, a read of `grabPermissions`, its change
+handler, or one of its keys read elsewhere keeps the file: Qt's flags say
+more than the one boolean. A face cannot leave a member out, so
+`grabPermissions` is still on the gesture under Qt's name. `cursorShape` keeps its name, which
 `PointerArea` shares, and `gesturePolicy` its name and keys.
 
 DECISION: a gesture is a face of its handler, so a member a base of the
@@ -4015,7 +4022,7 @@ PR: a lane puts its corpus counts in its PR body.
 
 | M | Builds | Exit criteria |
 |---|---|---|
-| **M1** Ui and Layout | `ljos run --compat`; `Ljos.Layout` (Row/Column/Grid/Flow and `QtQuick.Layouts`); `Ljos.Ui` items the corpus keeps for (`Image`, `Behavior` and animations, `ListView`, `Flickable`, `Repeater`, `Loader`, `Window`, `Screen`); the gestures, for the `*Handler`s (§4.7); a load-time budget gate. Built: `Tap`, `Hover`, `Drag`, `Pointer` and `Wheel` (`TapHandler`, `HoverHandler`, `DragHandler`, `PointHandler`, `WheelHandler`), by member; `DragSource` (the attached `Drag`); a filling `MouseArea` that clicks as a `Tap` and `Hover`. Remaining: `Pinch`, `LongPress`, a MouseArea's `drag.*` and `hoverEnabled`, `takeOver` | the features pair for each rename; compat sweep identical; ≥ 25 % of corpus example files lowered |
+| **M1** Ui and Layout | `ljos run --compat`; `Ljos.Layout` (Row/Column/Grid/Flow and `QtQuick.Layouts`); `Ljos.Ui` items the corpus keeps for (`Image`, `Behavior` and animations, `ListView`, `Flickable`, `Repeater`, `Loader`, `Window`, `Screen`); the gestures, for the `*Handler`s (§4.7); a load-time budget gate. Built: `Tap`, `Hover`, `Drag`, `Pointer` and `Wheel` (`TapHandler`, `HoverHandler`, `DragHandler`, `PointHandler`, `WheelHandler`), by member; `DragSource` (the attached `Drag`); a filling `MouseArea` that clicks as a `Tap` and `Hover`. `takeOver`, on the gestures that have grab permissions. Remaining: `Pinch`, `LongPress`, a MouseArea's `drag.*` and `hoverEnabled` | the features pair for each rename; compat sweep identical; ≥ 25 % of corpus example files lowered |
 | **M2** Core | `Ljos.Core` (`Timer`, `Component`, `Connections`, value-type constructors, `App`, `later`), with `Qt.*` lowered to it and `Ljos.Ui`'s `QtQml` import dropped | sweep identical; no lowered file reaches the `Qt` object |
 | **M3** Tools | migrate on `qml_edit`; MCP `migrate`, `explain`; Studio shows the API; enum cleanup (`Qt.Align*`) | migrate round-trip on the corpus re-lowers to itself; Studio edits a Ljós file losslessly |
 | **M4** Types | TS modules imported by QML; `property T` of TS types; generated `.d.ts`; decoders; every rule of §5.1; tier-1 typed opcodes | a Ljós file passes `tsc --noEmit` with the generated `.d.ts` iff the checker accepts its scripts' types; tier-1 coverage of the features' Ljós files 100 % |
