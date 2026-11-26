@@ -725,10 +725,10 @@ impl Scope<'_> {
     }
 
     /// What `name` is where `root`'s file, at `home`, writes it: of the
-    /// Qt types that file's imports bring, the files of its directory and
-    /// those of the modules it imports, the one that has the name. One
-    /// that two of them have, or that what the pass cannot see may have,
-    /// is not followed.
+    /// Qt types that file's imports bring and the files of the modules it
+    /// imports, the one that has the name, else the file of its own
+    /// directory that does. One that two imports have, or that what the
+    /// pass cannot see may have, is not followed.
     pub(crate) fn step_in(&self, home: &Home, root: &Root, name: &str) -> Base {
         let locals = self.locals;
         if root.imports_a_dir {
@@ -737,24 +737,7 @@ impl Scope<'_> {
         let qt = self.qt_type_in(&root.imports, name);
         let mut native = None;
         let mut files = Vec::new();
-        let beside = match home {
-            Home::Here | Home::Beside => locals.root(name),
-            // A file of a module finds the files of its directory the
-            // module does not list too, after those it does.
-            Home::Module(uri) => match locals.imported(Imported::Module(uri), name) {
-                Some(root) => Some(root),
-                None => match locals.unlisted(uri, name) {
-                    Some(found) => found,
-                    None => return Base::Stop,
-                },
-            },
-            Home::Dir(path) => locals.imported(Imported::Dir(path), name),
-        };
-        files.extend(beside.map(|root| (root, home.clone())));
         for uri in &root.imports {
-            if matches!(home, Home::Module(own) if own == uri) {
-                continue;
-            }
             if let Some(row) = modules::row(uri) {
                 let theirs = || qt_types::module(row.uri)?.type_named(name);
                 if qt.is_none() && !PLACED.contains(&row.qt) && theirs().is_some() {
@@ -781,15 +764,33 @@ impl Scope<'_> {
                 Some(ProjectModule::Native) | None => return Base::Stop,
             }
         }
+        // Qt 6.11: what a file imports comes before its own directory; a
+        // file there, listed by its module or not, has the name only when
+        // no import does.
         match (qt, native, files.len()) {
-            (Some((qt, ty)), None, 0) => Base::Qt(qt, ty),
-            (None, Some(ty), 0) => Base::Native(ty),
+            (Some((qt, ty)), None, 0) => return Base::Qt(qt, ty),
+            (None, Some(ty), 0) => return Base::Native(ty),
             (None, None, 1) => {
                 let (root, home) = files.remove(0);
-                Base::File(root, home)
+                return Base::File(root, home);
             }
-            _ => Base::Stop,
+            (None, None, 0) => {}
+            _ => return Base::Stop,
         }
+        let beside = match home {
+            Home::Here | Home::Beside => locals.root(name),
+            // A file of a module finds the files of its directory the
+            // module does not list too, after those it does.
+            Home::Module(uri) => match locals.imported(Imported::Module(uri), name) {
+                Some(root) => Some(root),
+                None => match locals.unlisted(uri, name) {
+                    Some(found) => found,
+                    None => return Base::Stop,
+                },
+            },
+            Home::Dir(path) => locals.imported(Imported::Dir(path), name),
+        };
+        beside.map_or(Base::Stop, |root| Base::File(root, home.clone()))
     }
 }
 

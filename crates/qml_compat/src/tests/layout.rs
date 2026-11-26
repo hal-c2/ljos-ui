@@ -850,8 +850,8 @@ fn the_type_a_roots_base_is_is_what_its_own_file_names() {
 /// A module `Kit` of the project whose `Widget` is built on `Base`, and a
 /// module `Other` whose `Base` is a sized `Rectangle`.
 struct Kits {
-    /// Whether `Kit` lists a sized `Base` of its own.
-    lists_base: bool,
+    /// The `Base` `Kit` lists, if it lists one.
+    listed: Option<Root>,
     /// Whether `Widget`'s file imports `Other`.
     imports_other: bool,
     /// The `Base` a directory of `Kit`'s files has that `Kit` does not
@@ -869,7 +869,6 @@ impl Locals for Kits {
     }
 
     fn imported(&self, from: Imported<'_>, name: &str) -> Option<Root> {
-        let chip = &[("implicitWidth", "40"), ("implicitHeight", "20")];
         match (from, name) {
             (Imported::Module("Kit"), "Widget") => Some(Root {
                 imports: ["QtQuick", "Other"][..1 + usize::from(self.imports_other)]
@@ -878,10 +877,8 @@ impl Locals for Kits {
                     .collect(),
                 ..valued("Base", &[], &[])
             }),
-            (Imported::Module("Kit"), "Base") if self.lists_base => {
-                Some(valued("Rectangle", chip, &[]))
-            }
-            (Imported::Module("Other"), "Base") => Some(valued("Rectangle", chip, &[])),
+            (Imported::Module("Kit"), "Base") => self.listed.clone(),
+            (Imported::Module("Other"), "Base") => Some(valued("Rectangle", CHIP, &[])),
             _ => None,
         }
     }
@@ -899,33 +896,52 @@ impl Locals for Kits {
     }
 }
 
+/// A sized `Rectangle`'s members.
+const CHIP: &[(&str, &str)] = &[("implicitWidth", "40"), ("implicitHeight", "20")];
+
 /// A file of a module finds the files of its own directory that the
 /// module does not list, as one beside a file of a directory does; one
-/// the module lists comes first.
+/// the module lists comes first, and what the file imports before both.
 #[test]
 fn a_module_files_root_is_found_among_its_directorys_unlisted_files() {
     let source = format!("{LAYOUTS}import Kit\nItem {{ RowLayout {{ Widget {{ }} }} }}\n");
-    let chip = &[("implicitWidth", "40"), ("implicitHeight", "20")];
-    let column = Some(valued("ColumnLayout", &[], &[]));
-    let kits = |lists_base, imports_other, unlisted| Kits {
-        lists_base,
+    let chip = || Some(valued("Rectangle", CHIP, &[]));
+    let column = || Some(valued("ColumnLayout", &[], &[]));
+    let kits = |listed, imports_other, unlisted| Kits {
+        listed,
         imports_other,
         unlisted,
     };
-    // An unlisted `Base` that is sized is the one it is built on.
-    let Outcome::Lowered(_) = lower(
-        &source,
-        &kits(false, false, Some(Some(valued("Rectangle", chip, &[])))),
-    ) else {
-        panic!("an unlisted sized Base: kept");
-    };
-    // `Kit`'s own `Base` and `Other`'s are two: which it is is not told.
-    // Of more than one directory's, which it is is not known either.
-    for (unlisted, case) in [
-        (Some(column.clone()), "an unlisted Base beside Other's"),
-        (None, "Bases of two directories"),
+    for (kits, case) in [
+        // An unlisted `Base` that is sized is the one it is built on.
+        (kits(None, false, Some(chip())), "an unlisted sized Base"),
+        // `Other`'s `Base` comes before any of `Kit`'s directory.
+        (
+            kits(None, true, Some(column())),
+            "Other's Base over an unlisted one",
+        ),
+        (kits(None, true, None), "Other's Base over two directories'"),
+        (
+            kits(column(), true, Some(None)),
+            "Other's Base over a listed one",
+        ),
+        // Listed, `Kit`'s `Base` comes before one it does not list.
+        (kits(chip(), false, Some(column())), "a listed Base"),
     ] {
-        let Outcome::Kept(kept) = lower(&source, &kits(false, true, unlisted)) else {
+        let Outcome::Lowered(_) = lower(&source, &kits) else {
+            panic!("{case}: kept");
+        };
+    }
+    for (kits, case) in [
+        (
+            kits(None, false, Some(column())),
+            "an unlisted ColumnLayout",
+        ),
+        // Of more than one directory's, which it is is not known.
+        (kits(None, false, None), "Bases of two directories"),
+        (kits(column(), false, Some(chip())), "a listed ColumnLayout"),
+    ] {
+        let Outcome::Kept(kept) = lower(&source, &kits) else {
             panic!("{case}: lowered");
         };
         assert!(
@@ -933,11 +949,51 @@ fn a_module_files_root_is_found_among_its_directorys_unlisted_files() {
             "{case}: {kept}"
         );
     }
-    // Listed, `Kit`'s `Base` is the one it is built on, whatever else is
-    // in its directory.
-    let Outcome::Lowered(_) = lower(&source, &kits(true, false, Some(column))) else {
-        panic!("a listed Base: kept");
-    };
+}
+
+/// A `Widget` beside this file that imports `Other` and is built on
+/// `Base`, and a `Plain` built on `Rectangle`, each beside a `Base` and a
+/// `Rectangle` that are `ColumnLayout`s.
+struct Shadowed;
+
+impl Locals for Shadowed {
+    fn root(&self, name: &str) -> Option<Root> {
+        match name {
+            "Widget" => Some(Root {
+                imports: vec!["QtQuick".to_owned(), "Other".to_owned()],
+                ..valued("Base", &[], &[])
+            }),
+            "Plain" => Some(valued("Rectangle", CHIP, &[])),
+            "Base" | "Rectangle" => Some(valued("ColumnLayout", &[], &[])),
+            _ => None,
+        }
+    }
+
+    fn module(&self, uri: &str) -> Option<ProjectModule> {
+        (uri == "Other").then_some(ProjectModule::Files)
+    }
+
+    fn imported(&self, from: Imported<'_>, name: &str) -> Option<Root> {
+        matches!((from, name), (Imported::Module("Other"), "Base"))
+            .then(|| valued("Rectangle", CHIP, &[]))
+    }
+
+    fn imports_type(&self, from: Imported<'_>, name: &str) -> Option<bool> {
+        Some(self.imported(from, name).is_some())
+    }
+}
+
+/// What a root's file imports has a name before a file beside it does:
+/// the `Base` and the `Rectangle` its directory has are not the ones it is
+/// built on.
+#[test]
+fn a_roots_imports_come_before_its_directory() {
+    for body in ["Widget { }", "Plain { }"] {
+        let source = format!("{LAYOUTS}Item {{ RowLayout {{ {body} }} }}\n");
+        let Outcome::Lowered(_) = lower(&source, &Shadowed) else {
+            panic!("{body}: kept");
+        };
+    }
 }
 
 /// A directory `parts` with a `GridLayout` of its own, built on the type
