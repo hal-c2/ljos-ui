@@ -41,6 +41,23 @@ pub fn allow_local_file_read(engine: &ljos::prelude::Engine, files: &Path) {
     }
 }
 
+/// The file the runner leaves in the files directory for a scenario whose
+/// application sets its badge as it starts: the count, in decimal. QML
+/// has no member for the badge, as Qt's has none; an application sets it
+/// from Rust.
+pub const BADGE: &str = "badge";
+
+/// Sets the application's badge to the count `files` holds for it, if
+/// any.
+pub fn badge_at_start(engine: &ljos::prelude::Engine, files: &Path) {
+    let count = std::fs::read_to_string(files.join(BADGE))
+        .ok()
+        .and_then(|text| text.trim().parse::<u32>().ok());
+    if let Some(count) = count {
+        ljos::prelude::Platform::of(engine).set_badge_number(count);
+    }
+}
+
 /// The application, ready to build or run.
 #[must_use]
 pub fn app() -> ljos::App {
@@ -48,6 +65,7 @@ pub fn app() -> ljos::App {
         .register(|engine| {
             if let Some(files) = scenario_dir().parent() {
                 allow_local_file_read(engine, files);
+                badge_at_start(engine, files);
             }
         })
         .source(ljos::include_qml!("qml.pack"))
