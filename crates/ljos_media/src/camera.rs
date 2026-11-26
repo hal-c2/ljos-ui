@@ -613,6 +613,12 @@ struct Sessions {
 fn sessions_destroyed(e: &Engine, gone: &[ObjectId]) {
     let left: Vec<(ObjectId, ObjectId)> = {
         let sessions = e.extension::<Sessions>();
+        // A pair whose session or output is gone waits for nothing: the
+        // output's watch went with it, and an `ObjectId` is never reused.
+        sessions
+            .waiting
+            .borrow_mut()
+            .retain(|(s, o)| !gone.contains(s) && !gone.contains(o));
         let mut joined = sessions.joined.borrow_mut();
         gone.iter()
             .filter_map(|s| Some((*s, joined.remove(s)?)))
