@@ -517,47 +517,43 @@ fn a_module_is_read_with_its_importers_however_it_is_named() {
 }
 
 /// A file of a module finds a file of its directory the `qmldir` does not
-/// list, as `qml` does: here `Widget`'s `Base` is that file and `Other`'s
-/// both, so what it is in a layout is not told.
+/// list, as `qml` does, when no module the file imports has the name: a
+/// `Base` of `Other`, imported, comes first.
 #[test]
 fn a_module_files_root_is_found_among_its_directorys_unlisted_files() {
-    let dir = tempfile::tempdir().unwrap();
-    write(
-        dir.path(),
-        "app/Kit/qmldir",
-        "module Kit\nWidget 1.0 Widget.qml\n",
-    );
-    write(
-        dir.path(),
-        "app/Kit/Widget.qml",
-        "import QtQuick\nimport Other\nBase { }\n",
-    );
-    write(
-        dir.path(),
-        "app/Kit/Base.qml",
-        "import QtQuick\nimport QtQuick.Layouts\nColumnLayout { }\n",
-    );
-    write(
-        dir.path(),
-        "app/Other/qmldir",
-        "module Other\nBase 1.0 Base.qml\n",
-    );
-    write(
-        dir.path(),
-        "app/Other/Base.qml",
-        "import QtQuick\nRectangle { implicitWidth: 40; implicitHeight: 20 }\n",
-    );
-    let main = "import QtQuick\nimport QtQuick.Layouts\nimport Kit\n\
-                Item { RowLayout { Widget { } } }\n";
-    write(dir.path(), "app/Main.qml", main);
-    let (status, out, err) = ljos(dir.path(), &["migrate", "app/Main.qml"]);
-    assert_eq!(status, 0, "{out}{err}");
-    let line = out
-        .lines()
-        .find(|line| line.contains("app/Main.qml"))
-        .unwrap_or_default();
-    assert!(line.starts_with("kept app/Main.qml:4:"), "{out}");
-    assert!(line.contains("a file of the project"), "{out}");
+    let sized = "import QtQuick\nRectangle { implicitWidth: 40; implicitHeight: 20 }\n";
+    let column = "import QtQuick\nimport QtQuick.Layouts\nColumnLayout { }\n";
+    for (imports, base, outcome) in [
+        ("", sized, "would lower app/Main.qml"),
+        ("", column, "kept app/Main.qml:4:"),
+        ("import Other\n", column, "would lower app/Main.qml"),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        write(
+            dir.path(),
+            "app/Kit/qmldir",
+            "module Kit\nWidget 1.0 Widget.qml\n",
+        );
+        let widget = format!("import QtQuick\n{imports}Base {{ }}\n");
+        write(dir.path(), "app/Kit/Widget.qml", &widget);
+        write(dir.path(), "app/Kit/Base.qml", base);
+        write(
+            dir.path(),
+            "app/Other/qmldir",
+            "module Other\nBase 1.0 Base.qml\n",
+        );
+        write(dir.path(), "app/Other/Base.qml", sized);
+        let main = "import QtQuick\nimport QtQuick.Layouts\nimport Kit\n\
+                    Item { RowLayout { Widget { } } }\n";
+        write(dir.path(), "app/Main.qml", main);
+        let (status, out, err) = ljos(dir.path(), &["migrate", "app/Main.qml"]);
+        assert_eq!(status, 0, "{widget}{base}{out}{err}");
+        let line = out
+            .lines()
+            .find(|line| line.contains("app/Main.qml"))
+            .unwrap_or_default();
+        assert!(line.starts_with(outcome), "{widget}{base}{out}");
+    }
 }
 
 /// A file below the project root is read with the root's project, so a
