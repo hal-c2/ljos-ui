@@ -294,6 +294,8 @@ Feature: The items Ljós's API has as Qt Quick has them
         import Ljos.Core
         Ui.Item {
           property Ui.ColorScheme scheme: App.hints.colorScheme
+          function paint(next: Ui.ColorScheme): void { scheme = next }
+          Component.onCompleted: paint(Ui.ColorScheme.Dark)
         }
         """
       And the file "Card.qml":

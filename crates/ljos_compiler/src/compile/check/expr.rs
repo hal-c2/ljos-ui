@@ -4741,7 +4741,9 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                             });
                         }
                         match types.find(&[left, right]) {
-                            Some(found) => self.object_ty(&found.kind),
+                            Some(found) => self
+                                .own_enum(&found.kind)
+                                .unwrap_or_else(|| self.object_ty(&found.kind)),
                             None => Ty::ERROR,
                         }
                     }
