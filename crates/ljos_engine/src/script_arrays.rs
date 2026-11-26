@@ -138,8 +138,12 @@ impl Engine {
             JsValue::LiveList { obj, prop } => self
                 .untrack(|| self.live_list(obj, prop))
                 .map_or_else(|| Value::list(Vec::new()), Value::List),
-            // `to_js` makes none.
-            JsValue::Map(_) => Value::Undefined,
+            // A record `to_js` made no script object for (records.rs keeps
+            // one only for a record something else holds too): the record
+            // again, not `undefined`, as a view reads it for `modelData`.
+            JsValue::Map(fields) => {
+                Value::map(fields.into_iter().map(|(k, v)| (k, self.unscripted(v))))
+            }
         }
     }
 
