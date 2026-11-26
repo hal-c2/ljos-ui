@@ -286,8 +286,9 @@ The phase-1 slice (`crates/ljos_quick/src/ljos_ui.rs`):
 - what says in Qt Quick the one thing it says in Ljós (§4.14, "none"),
   exported as it is: `Image`, `Flickable`, `Window` and `Screen` (with
   `Screen.points`, §4.3), `TextInput` and its validators, `TextEdit`,
-  `TextMetrics`, `FontMetrics`, `Shortcut`, `DropArea`, and the attached
-  `Keys` (with its `KeyEvent`) and `Accessible`. DECISION: a `Window`
+  `TextMetrics`, `FontMetrics`, `Shortcut`, `DropArea`, `FrameAnimation`,
+  `RectangularShadow`, `MultiEffect`, the enum `MotionPreference`, and the
+  attached `Keys` (with its `KeyEvent`), `Accessible` and `LayoutMirroring`. DECISION: a `Window`
   keeps `color`: it is what is behind the window's items, not a fill, and
   Qt's `Window` is no `Rectangle`. `Window` and `Screen` come from
   `ljos_controls`, which builds them, into the same module.
