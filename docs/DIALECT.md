@@ -3427,10 +3427,11 @@ is to a name of the Ljós API, and the text keeps every line. The edits are:
   of its types (`Timer`, `Component.onCompleted`, or a type it writes:
   `property QtObject o`, `signal picked(QtObject o)`) gets
   `; import Ljos.Core` on the import's line. A file of `QtQml` alone is
-  lowered to `Ljos.Core` alone. A `QtQuick.Shapes` import is left an empty
-  line, since `Ljos.Ui` has the shapes. A module imported twice is lowered
-  on the last import's line (the first, for the controls), and the other
-  import is left an empty line: no import of Qt's is left in a lowered file;
+  lowered to `Ljos.Core` alone. A `QtQuick.Shapes` or `QtQuick.Effects`
+  import is left an empty line, since `Ljos.Ui` has the shapes and the
+  effects. A module imported twice is lowered on the last import's line
+  (the first, for the controls), and the other import is left an empty
+  line: no import of Qt's is left in a lowered file;
 - a type, `MouseArea` → `PointerArea`, made or written
   (`property MouseArea area`);
 - a member, its handler (`onColorChanged`), `PropertyChanges` and
@@ -3440,19 +3441,22 @@ is to a name of the Ljós API, and the text keeps every line. The edits are:
   (§4.9);
 - `property var` / `variant` → `property unknown`.
 
-`QtQuick.Layouts`, `QtQuick.Shapes`, the controls (`QtQuick.Controls.Basic`,
-and `QtQuick.Controls` where the program starts with Basic),
-`QtQuick.Dialogs`' file and folder dialogs and `QtQml` are lowered (§4.6,
-§4.14, §4.16). `QtQuick.Window` leaves its line empty, since `Ljos.Ui` has
-what it names. A module of the project, and a directory imported by path,
-are files of the project: the file is lowered with them (§6.2). An import
-of the program's own types stays as written, beside `import Ljos.Ui`, where
-the pass is given their description (`locals.natives()`). Any other module
-import (`QtQuick.Controls.Material`, an aliased `QtQuick`, `QtQuick.Shapes`,
-`QtQuick.Window` or `QtQml`, a module of the project imported under a name,
-or one whose types are native and not described) keeps the file. So does a
-type of `QtQuick.Shapes` that `Ljos.Ui` doesn't have, made or read through
-(`` `X` is not in Ljos.Ui yet ``).
+`QtQuick.Layouts`, `QtQuick.Shapes`, `QtQuick.Effects`, the controls
+(`QtQuick.Controls.Basic`, and `QtQuick.Controls` where the program starts
+with Basic), `QtQuick.Dialogs`' file and folder dialogs and `QtQml` are
+lowered (§4.6, §4.14, §4.16). `QtQuick.Window` leaves its line empty, since
+`Ljos.Ui` has what it names. A module of the project, and a directory
+imported by path, are files of the project: the file is lowered with them
+(§6.2). An import of the program's own types stays as written, beside
+`import Ljos.Ui`, where the pass is given their description
+(`locals.natives()`). Any other module import (`QtQuick.Controls.Material`,
+an aliased `QtQuick`, `QtQuick.Shapes`, `QtQuick.Window` or `QtQml`, a
+module of the project imported under a name, or one whose types are native
+and not described) keeps the file. So does a type of `QtQuick.Shapes` that
+`Ljos.Ui` doesn't have, made or read through (`` `X` is not in Ljos.Ui yet
+``). A file kept for a module Ljós's API has nothing of yet
+(`QtQuick.Templates`, `QtQuick3D`, `QtMultimedia`, `QtQuick.Pdf`) says what
+is missing.
 
 The description is what the checker reads (`ljostypes.json`, §4.4). A
 lowered run passes its oracle's (`ljos_compiler::OracleNatives`), so a

@@ -3,6 +3,7 @@ use super::*;
 mod controls;
 mod core;
 mod dialogs;
+mod effects;
 mod gestures;
 mod groups;
 mod layout;
@@ -240,6 +241,28 @@ fn a_file_is_kept_for_its_imports() {
         cause_of("import QtQuick\nimport QtQuick.Controls\nItem { }\n"),
         Cause::ControlsStyle { style: None }
     );
+}
+
+/// A module of Qt's whose API Ljós's has nothing of yet keeps the file,
+/// saying what is missing, so a program knows what it waits for.
+#[test]
+fn a_module_ljos_has_no_api_for_says_what_is_missing() {
+    for (uri, missing) in [
+        (
+            "QtQuick.Templates",
+            "module of unstyled controls to build a style on",
+        ),
+        ("QtQuick3D", "module for 3D scenes"),
+        ("QtMultimedia", "module for media playback and capture"),
+        ("QtQuick.Pdf", "module for PDF documents"),
+    ] {
+        assert_eq!(
+            kept_for(&format!("import QtQuick\nimport {uri}\nItem {{ }}\n")),
+            format!(
+                "it imports `{uri}`, which is not lowered yet: Ljós's API has no {missing} yet"
+            )
+        );
+    }
 }
 
 #[test]

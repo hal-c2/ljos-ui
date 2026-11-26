@@ -68,13 +68,14 @@ pub(crate) enum Qt {
     Models,
     Layouts,
     Shapes,
+    Effects,
     Window,
     Controls,
     Dialogs,
 }
 
 impl Qt {
-    const COUNT: usize = 8;
+    const COUNT: usize = 9;
 
     /// The Ljós module its types lower to.
     pub(crate) fn lowers_to(self) -> Ljos {
@@ -91,6 +92,7 @@ impl Qt {
             Qt::Models => &[Qt::Models],
             Qt::Layouts => &[Qt::Layouts],
             Qt::Shapes => &[Qt::Shapes],
+            Qt::Effects => &[Qt::Effects],
             Qt::Window => &[Qt::Window],
             Qt::Controls => &[Qt::Controls],
             Qt::Dialogs => &[Qt::Dialogs],
@@ -207,6 +209,17 @@ pub(crate) const ROWS: &[Row] = &[
         takes_the_line: false,
         names_types: true,
     },
+    // `Ljos.Ui` has its types as they are.
+    Row {
+        uri: "QtQuick.Effects",
+        qt: Qt::Effects,
+        under_name: UnderName::Keeps,
+        styled: false,
+        described: Described::WhereImported,
+        lowers_to: Ljos::Ui,
+        takes_the_line: false,
+        names_types: true,
+    },
     // Its types are QtQuick's, and `Ljos.Ui` has them.
     Row {
         uri: "QtQuick.Window",
@@ -254,6 +267,26 @@ pub(crate) const ROWS: &[Row] = &[
     },
 ];
 
+/// Qt's modules that Ljós's API has nothing of yet, with what it lacks:
+/// what a program that imports one waits for.
+const NOT_IN_LJOS: &[(&str, &str)] = &[
+    (
+        "QtQuick.Templates",
+        "module of unstyled controls to build a style on",
+    ),
+    ("QtQuick3D", "module for 3D scenes"),
+    ("QtMultimedia", "module for media playback and capture"),
+    ("QtQuick.Pdf", "module for PDF documents"),
+];
+
+/// What Ljós's API lacks of the Qt module `uri`, when it has nothing of it.
+pub(crate) fn missing(uri: &str) -> Option<&'static str> {
+    NOT_IN_LJOS
+        .iter()
+        .find(|(qt, _)| *qt == uri)
+        .map(|(_, missing)| *missing)
+}
+
 /// The row of the module `uri`, when the pass lowers it.
 pub(crate) fn row(uri: &str) -> Option<&'static Row> {
     ROWS.iter().find(|row| row.uri == uri)
@@ -266,7 +299,7 @@ pub(crate) fn row(uri: &str) -> Option<&'static Row> {
 pub(crate) const LOOKED_UP: &[&[Qt]] = &[
     &[Qt::Layouts],
     &[Qt::Controls, Qt::Dialogs],
-    &[Qt::Shapes],
+    &[Qt::Shapes, Qt::Effects],
     &[Qt::Quick],
 ];
 

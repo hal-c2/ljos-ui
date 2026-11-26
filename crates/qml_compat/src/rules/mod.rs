@@ -15,6 +15,7 @@
 mod controls;
 mod core;
 mod dialogs;
+mod effects;
 pub(crate) mod gestures;
 pub(crate) mod layout;
 mod loader;
@@ -266,6 +267,7 @@ const AREAS: &[&Area] = &[
     &text::AREA,
     &gestures::AREA,
     &shapes::AREA,
+    &effects::AREA,
     &layout::AREA,
     &core::AREA,
     &models::AREA,
