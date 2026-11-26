@@ -10,7 +10,7 @@
 //! - remote resources ([`Fetcher`]), fetched off the Engine thread;
 //! - drags from other applications ([`ExternalDrag`]);
 //! - the permissions of `QtCore` ([`PermissionService`]): `CameraPermission`
-//!   and the rest;
+//!   and the rest, and `Ljos.Platform`'s `NotificationPermission`;
 //! - opening a URL in the user's application for it ([`OpenUrlService`],
 //!   `Qt.openUrlExternally`);
 //! - the application's badge, a count on its icon ([`BadgeService`],
@@ -99,8 +99,8 @@ pub use paths::{
 };
 pub use permissions::{
     BluetoothPermission, CalendarPermission, CameraPermission, ContactsPermission, FakePermissions,
-    LocationPermission, MicrophonePermission, Permission, PermissionAnswer, PermissionService,
-    PermissionStatus, UngatedPermissions,
+    LocationPermission, MicrophonePermission, NotificationPermission, Permission, PermissionAnswer,
+    PermissionService, PermissionStatus, UngatedPermissions,
 };
 pub use platform::{BUSY_WAIT, CATEGORY, Job, Platform, Post, Promise, Reply, RequestId, mounted};
 pub use raw_window_handle;
@@ -117,7 +117,7 @@ pub use window_handle::NativeWindow;
 #[derive(Default)]
 struct Registered(Cell<bool>);
 
-/// Registers `QtQuick.Dialogs`, `QtCore`, `QtSensors`, `QtNetwork`'s
+/// Registers `QtQuick.Dialogs`, `QtCore`, `Ljos.Platform`, `QtSensors`, `QtNetwork`'s
 /// `NetworkInformation`, `Qt.platform`, `Qt.openUrlExternally` and the
 /// `XMLHttpRequest` global. Calling it again does nothing. The drawn dialogs are QtQuick.Controls, so a host
 /// registers those too.
@@ -134,6 +134,11 @@ pub fn register(engine: &Engine) {
     engine.register_module(ljos_engine::module!("QtCore" 6.5 => [
         CameraPermission, MicrophonePermission, LocationPermission, CalendarPermission,
         ContactsPermission, BluetoothPermission,
+    ]));
+    // QtCore has no permission for notifications; Ljós's own is of the
+    // same shape (docs/DIALECT.md §4.1).
+    engine.register_module(ljos_engine::module!("Ljos.Platform" 1.0 => [
+        NotificationPermission,
     ]));
 
     sensors::register(engine);

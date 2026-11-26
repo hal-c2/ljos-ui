@@ -12,8 +12,9 @@
 # On a phone a permission of QtCore is one or more of Android's runtime
 # permissions, and request() shows the system's own question.
 # features/platform/permissions.feature pins the same behaviour with a
-# stand-in system. The scenarios' application declares the camera and the
-# microphone ([package.metadata.ljos.android] permissions), and each
+# stand-in system. The scenarios' application declares the camera, the
+# microphone and notifications ([package.metadata.ljos.android]
+# permissions), and each
 # scenario starts with it never asked for.
 @ljos-only @android
 Feature: A permission on a phone is the system's

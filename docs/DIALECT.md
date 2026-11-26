@@ -221,7 +221,7 @@ are quoted side by side below:
 | `Ljos.Models` | `ListModel`, `ListElement`, `Instantiator`, `XmlModel`, `FolderModel`, `TreeModel`; keyed views | `QtQml.Models`, `XmlListModel`, `FolderListModel` |
 | `Ljos.Core` | `Timer`, `Component`, `Connections`, `Binding`, `Clock`, `Instant`, `Locale`, `App`, `Random`, value types (§4.3) | `QtQml`, the `Qt` namespace |
 | `Ljos.Design` | `Theme` roles: colour, space, type, radius, motion (§4.12) | `palette`, `Material.*`, hand-rolled `Style` singletons |
-| `Ljos.Platform` | `StandardPaths`, notifications | `Qt.labs.platform`, `QtCore.StandardPaths` |
+| `Ljos.Platform` | `StandardPaths`, notifications (`NotificationPermission`, built) | `Qt.labs.platform`, `QtCore.StandardPaths` |
 | `Ljos.Blocks` | functional blocks and shells (ADR 0003) | (Ljós's own, already built) |
 
 A program's own modules, the types it registers from Rust, are neither

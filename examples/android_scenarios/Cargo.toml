@@ -25,9 +25,10 @@ ljos = { path = "../../crates/ljos", default-features = false, features = ["andr
 ljos = { path = "../../crates/ljos", default-features = false, features = ["build", "user-qml"] }
 
 # The permissions the scenarios ask the phone for (features/mobile/
-# permissions.feature); the others it denies without asking.
+# permissions.feature, notification-permission.feature); the others it
+# denies without asking.
 [package.metadata.ljos.android]
-permissions = ["CAMERA", "RECORD_AUDIO"]
+permissions = ["CAMERA", "RECORD_AUDIO", "POST_NOTIFICATIONS"]
 
 [lints]
 workspace = true

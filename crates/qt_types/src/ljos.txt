@@ -1085,6 +1085,14 @@ module Ljos.Models
 		method setProperty
 		method clear
 
+module Ljos.Platform
+	NotificationPermission Ljos.Platform.NotificationPermission
+	type Ljos.Platform.NotificationPermission NotificationPermission
+		prototype QtQml.QtObject named
+		prop status Qt::PermissionStatus readonly
+		signal statusChanged
+		method request
+
 module Ljos.Ui
 	Accessible QtQuick.Accessible
 	Align Ljos.Ui.Align

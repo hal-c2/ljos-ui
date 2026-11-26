@@ -1,6 +1,8 @@
 //! The permissions of QtCore (doc.qt.io/qt-6/permissions.html): what an
 //! application asks before it uses the camera, the microphone, the user's
-//! location, calendar or contacts, or Bluetooth.
+//! location, calendar or contacts, or Bluetooth. And Ljós's own of the same
+//! shape in `Ljos.Platform`, [`NotificationPermission`], to show the user
+//! notifications, which QtCore has no type for.
 //!
 //! The system decides through a [`PermissionService`]. A permission's
 //! `status` is what the service says now; `request()` asks it, and the
@@ -63,6 +65,9 @@ pub enum Permission {
     Bluetooth {
         modes: i32,
     },
+    /// To show the user notifications: `NotificationPermission` of
+    /// `Ljos.Platform`.
+    Notifications,
 }
 
 impl Permission {
@@ -75,6 +80,7 @@ impl Permission {
             Permission::Calendar { .. } => "calendar",
             Permission::Contacts { .. } => "contacts",
             Permission::Bluetooth { .. } => "bluetooth",
+            Permission::Notifications => "notifications",
         }
     }
 }
@@ -461,6 +467,43 @@ impl BluetoothPermission {
     }
 }
 
+/// `NotificationPermission` of `Ljos.Platform`: whether the application
+/// may show the user notifications, with the shape of QtCore's
+/// permissions, which have none for it. A desktop grants it; Android 13
+/// and later ask the user (`POST_NOTIFICATIONS`), and the versions before
+/// grant it at install.
+#[derive(Debug, QmlObject)]
+#[qml(module = "Ljos.Platform", name = "NotificationPermission", extends = QtObject)]
+pub struct NotificationPermission {
+    #[qml(base)]
+    pub object: QtObject,
+    #[qml(notify, readonly, enumeration = "Qt.PermissionStatus")]
+    pub status: i32,
+}
+
+impl Default for NotificationPermission {
+    fn default() -> Self {
+        NotificationPermission {
+            object: QtObject::default(),
+            status: MADE,
+        }
+    }
+}
+
+#[qml_impl]
+impl NotificationPermission {
+    #[qml(invokable)]
+    fn request(cx: &Cx) -> Result<(), EngineError> {
+        request(cx.engine, cx.this);
+        Ok(())
+    }
+
+    #[qml(on_complete)]
+    fn completed(cx: &Cx) -> Result<(), EngineError> {
+        complete(cx, &[])
+    }
+}
+
 // ---------------------------------------------------------------- behaviour
 
 fn int(engine: &Engine, obj: ObjectId, name: &str) -> i32 {
@@ -492,6 +535,8 @@ fn permission_of(engine: &Engine, obj: ObjectId) -> Option<Permission> {
         Permission::Bluetooth {
             modes: int(engine, obj, "communicationModes"),
         }
+    } else if is_a::<NotificationPermission>(engine, obj) {
+        Permission::Notifications
     } else {
         return None;
     })
