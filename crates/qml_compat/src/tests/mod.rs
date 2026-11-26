@@ -23,6 +23,8 @@ fn root_of(type_name: &str, bindings: &[&str]) -> Root {
     Root {
         type_name: type_name.to_string(),
         bindings: bindings.iter().map(ToString::to_string).collect(),
+        // A file of the project imports the module its root's type is of.
+        imports: vec!["QtQuick".to_owned()],
         ..Root::default()
     }
 }

@@ -1640,6 +1640,27 @@ impl<O: TypeOracle> qml_compat::Locals for Locals<'_, O> {
         self.around.root_of(&*self.held, &file)
     }
 
+    fn unlisted(&self, uri: &str, name: &str) -> Option<Option<qml_compat::Root>> {
+        let held = &*self.held;
+        let mut dirs = Vec::new();
+        let mut found = None;
+        for key in self.around.front.module_files(uri) {
+            let dir = key.rsplit_once('/').map_or("", |(dir, _)| dir);
+            if dirs.contains(&dir) {
+                continue;
+            }
+            dirs.push(dir);
+            // Which directory's file a file of the module finds is its
+            // own's, and the pass is not told which file asks.
+            if let Some(root) = self.around.root_beside(held, key, name)
+                && found.replace(root).is_some()
+            {
+                return None;
+            }
+        }
+        Some(found)
+    }
+
     fn imports_type(&self, from: qml_compat::Imported<'_>, name: &str) -> Option<bool> {
         let front = self.around.front;
         let tree = self.around.tree;

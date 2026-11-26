@@ -699,12 +699,20 @@ impl Scope<'_> {
         PLACED.iter().find_map(|&qt| {
             if qt == Qt::Quick {
                 let ty = self.modules.quick().type_named(name)?;
-                let qt = if self.modules.qml().has(ty) {
-                    Qt::Qml
-                } else {
-                    Qt::Quick
-                };
-                return Some((qt, ty));
+                let qml = self.modules.qml().has(ty);
+                // Qt 6.11: `QtQuick.Window` brings QtQuick's types, as
+                // `QtQuick` brings QtQml's; a module of the controls or
+                // the layouts brings neither.
+                let brought = imports
+                    .iter()
+                    .filter_map(|uri| modules::row(uri))
+                    .any(|row| {
+                        matches!(row.qt, Qt::Quick | Qt::Window) || (qml && row.qt == Qt::Qml)
+                    });
+                if !brought {
+                    return None;
+                }
+                return Some((if qml { Qt::Qml } else { Qt::Quick }, ty));
             }
             let ty = imports
                 .iter()
@@ -731,7 +739,15 @@ impl Scope<'_> {
         let mut files = Vec::new();
         let beside = match home {
             Home::Here | Home::Beside => locals.root(name),
-            Home::Module(uri) => locals.imported(Imported::Module(uri), name),
+            // A file of a module finds the files of its directory the
+            // module does not list too, after those it does.
+            Home::Module(uri) => match locals.imported(Imported::Module(uri), name) {
+                Some(root) => Some(root),
+                None => match locals.unlisted(uri, name) {
+                    Some(found) => found,
+                    None => return Base::Stop,
+                },
+            },
             Home::Dir(path) => locals.imported(Imported::Dir(path), name),
         };
         files.extend(beside.map(|root| (root, home.clone())));

@@ -1047,38 +1047,23 @@ impl Arrange<'_, '_> {
         for member in &object.members {
             match member {
                 QmlMember::Object(child) if !is_group(child) => {
-                    let name = child.type_name.to_string();
-                    let Some(ty) = self.types.qt_type(&name) else {
-                        if self.shape.positions() {
-                            // A positioner places any item the same as Ljós's
-                            // arrangement does; what it is does not matter.
+                    let Some(ty) = self.types.qt_type(&child.type_name.to_string()) else {
+                        if self.file_child(child)? {
                             out.push(child);
-                            continue;
                         }
-                        // A file whose roots end at an item of Qt's asks for
-                        // a size as that item does, with what they bind; one
-                        // that ends at a layout or a `Repeater` is sized or
-                        // made otherwise, and one the pass cannot follow
-                        // may be anything.
-                        match self.file_root(child).and_then(|root| root.qt) {
-                            Some(qt) if qt.module != "QtQuick.Layouts" && qt.name != "Repeater" => {
-                                if is_item(qt) {
-                                    out.push(child);
-                                }
-                                continue;
-                            }
-                            _ => {}
-                        }
-                        return Err(self.keep(
-                            Layout::FileSize {
-                                name,
-                                qt: self.shape.qt(),
-                            },
-                            child.type_name.span.start as usize,
-                        ));
+                        continue;
                     };
                     if ty.name == "Repeater" {
-                        out.push(self.delegate(child)?);
+                        // What a `Repeater` makes is a child of the layout
+                        // as one written there is.
+                        let delegate = self.delegate(child)?;
+                        let of_qt = self
+                            .types
+                            .qt_type(&delegate.type_name.to_string())
+                            .is_some();
+                        if of_qt || self.file_child(delegate)? {
+                            out.push(delegate);
+                        }
                     } else if is_item(ty) {
                         out.push(child);
                     }
@@ -1098,6 +1083,31 @@ impl Arrange<'_, '_> {
             }
         }
         Ok(out)
+    }
+
+    /// Whether `child`, of a type of the project's files, is an item the
+    /// layout arranges; the file is kept when what the layout makes of it
+    /// is not known.
+    fn file_child(&self, child: &QmlObject<'_>) -> Result<bool, Kept> {
+        if self.shape.positions() {
+            // A positioner places any item the same as Ljós's arrangement
+            // does; what it is does not matter.
+            return Ok(true);
+        }
+        // A file whose roots end at an item of Qt's asks for a size as that
+        // item does, with what they bind; one that ends at a layout or a
+        // `Repeater` is sized or made otherwise, and one the pass cannot
+        // follow may be anything.
+        match self.file_root(child).and_then(|root| root.qt) {
+            Some(qt) if qt.module != "QtQuick.Layouts" && qt.name != "Repeater" => Ok(is_item(qt)),
+            _ => Err(self.keep(
+                Layout::FileSize {
+                    name: child.type_name.to_string(),
+                    qt: self.shape.qt(),
+                },
+                child.type_name.span.start as usize,
+            )),
+        }
     }
 
     /// The delegates of the Repeaters among `object`'s children whose model

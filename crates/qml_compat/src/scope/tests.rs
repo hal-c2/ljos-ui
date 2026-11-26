@@ -11,7 +11,7 @@ fn built_on_item() -> Root {
         type_name: "Item".to_owned(),
         bindings: Vec::new(),
         values: Vec::new(),
-        imports: Vec::new(),
+        imports: vec!["QtQuick".to_owned()],
         imports_a_dir: false,
         properties: Vec::new(),
         declares: vec!["level".to_owned()],
