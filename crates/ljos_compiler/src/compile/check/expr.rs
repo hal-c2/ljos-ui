@@ -934,9 +934,11 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                     vec![
                         param("text", Ty::STRING),
                         param("parent", object),
+                        // Optional as a written `place?: string` is, so one
+                        // can be passed on.
                         Param {
                             optional: true,
-                            ..param("place", Ty::STRING)
+                            ..param("place", self.arena.or(Ty::STRING, Ty::UNDEFINED))
                         },
                     ],
                     object,
