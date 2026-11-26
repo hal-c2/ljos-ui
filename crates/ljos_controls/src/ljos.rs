@@ -16,7 +16,7 @@ use ljos_platform::{FileDialog, FolderDialog};
 
 use crate::style::BASIC;
 use crate::util;
-use crate::{AbstractButton, ButtonGroup};
+use crate::{AbstractButton, ButtonGroup, Overlay};
 
 /// The module's name, as a file imports it.
 pub const MODULE: &str = "Ljos.Controls.Basic";
@@ -65,9 +65,13 @@ pub(crate) const DRAWN: &[&str] = &[
 pub(crate) const OWN_BASIC: &str = "Ljos/Controls/Basic";
 
 /// The templates the module has: they draw nothing, so they are the same
-/// types in every style.
-pub(crate) const TEMPLATES: &[fn() -> &'static MetaObject] =
-    &[AbstractButton::static_meta, ButtonGroup::static_meta];
+/// types in every style. `Overlay` is what a popup attaches to reach its
+/// window's overlay (`parent: Overlay.overlay`).
+pub(crate) const TEMPLATES: &[fn() -> &'static MetaObject] = &[
+    AbstractButton::static_meta,
+    ButtonGroup::static_meta,
+    Overlay::static_meta,
+];
 
 pub(crate) fn register(engine: &Engine, basic: &[String], own_basic: &[String]) {
     let version = Version::new(1, 0);

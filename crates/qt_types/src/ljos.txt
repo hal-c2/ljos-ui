@@ -157,6 +157,7 @@ module Ljos.Controls
 	Menu Ljos/Controls/Menu.qml
 	MenuItem Ljos/Controls/MenuItem.qml
 	MenuSeparator Ljos/Controls/MenuSeparator.qml
+	Overlay QtQuick.Templates.Overlay
 	Page Ljos/Controls/Page.qml
 	Pane Ljos/Controls/Pane.qml
 	Popover Ljos/Controls/Popover.qml
@@ -470,6 +471,7 @@ module Ljos.Controls.Basic
 	Menu QtQuick/Controls/Basic/Menu.qml
 	MenuItem QtQuick/Controls/Basic/MenuItem.qml
 	MenuSeparator QtQuick/Controls/Basic/MenuSeparator.qml
+	Overlay QtQuick.Templates.Overlay
 	Page QtQuick/Controls/Basic/Page.qml
 	Pane QtQuick/Controls/Basic/Pane.qml
 	Popover Ljos/Controls/Basic/Popover.qml

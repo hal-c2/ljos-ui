@@ -288,3 +288,13 @@ fn button_groups_and_radio_buttons_are_lowered() {
          Label { text: size.checkedButton ? size.checkedButton.text : \"none\" }\n}\n",
     );
 }
+
+/// A popup's usual parent is its window's overlay, which every style has.
+#[test]
+fn a_popup_on_the_window_s_overlay_is_lowered() {
+    lowered_unchanged(
+        "import QtQuick\nimport QtQuick.Controls.Basic\nItem {\n  \
+         Popup { parent: Overlay.overlay; modal: true\n    \
+         Overlay.modal: Item { }\n    Label { text: \"Find\" }\n  }\n}\n",
+    );
+}
