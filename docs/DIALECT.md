@@ -382,11 +382,14 @@ nothing else. The pass cannot see every name in sight, so the new name must
 be no other word of the file (outside a property's type), no member of a
 type the file's objects are (Qt's or Ljós's), and nothing a file it is built
 on declares, and the file has no object of a type the pass does not know
-and no delegate, whose roles would come first. `App` is not free in a
-file that imports a directory by path without a name, since that directory
-may have an `App.qml`. A project lowers a file again when an `App.qml`
-comes beside it or goes. `Qt.resolvedUrl(u, ctx)` stays Qt's: Qt 6
-resolves it against `ctx`'s component, and `url` takes one argument.
+(the reason it is kept names the first) and no delegate, whose roles would
+come first. An object of a type of the program's own, whose description
+the pass is given (`--types`), hides only the members the description gives
+it. `App` is not free in a file that imports a directory by path without a
+name, since that directory may have an `App.qml`. A project lowers a file
+again when an `App.qml` comes beside it or goes. `Qt.resolvedUrl(u, ctx)`
+stays Qt's: Qt 6 resolves it against `ctx`'s component, and `url` takes
+one argument.
 Until S1, the member otherwise stays Qt's and `Qt` stays a global of every
 file; after it, the file is kept instead (§4.3.1).
 
