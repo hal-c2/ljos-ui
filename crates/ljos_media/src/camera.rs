@@ -125,7 +125,12 @@ pub fn cameras(engine: &Engine) -> Rc<dyn CameraService> {
 fn host_cameras() -> Rc<dyn CameraService> {
     #[cfg(all(feature = "v4l2", target_os = "linux", target_pointer_width = "64"))]
     return Rc::new(crate::v4l2::V4l2Cameras);
-    #[cfg(not(all(feature = "v4l2", target_os = "linux", target_pointer_width = "64")))]
+    #[cfg(target_os = "android")]
+    return Rc::new(crate::android_camera::AndroidCameras);
+    #[cfg(not(any(
+        all(feature = "v4l2", target_os = "linux", target_pointer_width = "64"),
+        target_os = "android"
+    )))]
     Rc::new(NoCameras)
 }
 

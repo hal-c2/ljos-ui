@@ -72,6 +72,8 @@ mod units;
 mod video;
 mod video_sink;
 
+#[cfg(target_os = "android")]
+mod android_camera;
 #[cfg(all(feature = "v4l2", target_os = "linux", target_pointer_width = "64"))]
 mod v4l2;
 
