@@ -393,6 +393,24 @@ fn a_system_that_asks_tells_the_answer_later() {
     assert_eq!(e.read_by_name(again, "status").to_number(), 2.0);
 }
 
+#[test]
+fn the_notification_permission_is_asked_for_on_its_own() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let e = engine(dir.path());
+    let fake = crate::FakePermissions::default();
+    let platform = Platform::of(&e);
+    platform.set_permissions(Rc::new(fake.clone()));
+    let p = make::<crate::NotificationPermission>(&e);
+    let camera = make::<crate::CameraPermission>(&e);
+    assert_eq!(e.read_by_name(p, "status").to_number(), 0.0);
+    e.invoke_by_name(p, "request", &[]).expect("requested");
+    assert_eq!(fake.asked(), vec!["notifications"]);
+    assert!(fake.answer("notifications", true));
+    platform.finish(&e);
+    assert_eq!(e.read_by_name(p, "status").to_number(), 1.0);
+    assert_eq!(e.read_by_name(camera, "status").to_number(), 0.0);
+}
+
 /// A system whose answers the test sends when it likes, and that grants
 /// nothing it is asked of.
 #[derive(Default)]

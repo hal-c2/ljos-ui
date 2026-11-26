@@ -57,9 +57,10 @@ const XHR_LOCAL_READ: &str = "files/xhr-local-read";
 
 /// The permissions `examples/android_scenarios` declares, which each
 /// scenario starts from never asked for.
-const DECLARED: [&str; 2] = [
+const DECLARED: [&str; 3] = [
     "android.permission.CAMERA",
     "android.permission.RECORD_AUDIO",
+    "android.permission.POST_NOTIFICATIONS",
 ];
 /// What the template's `LjosPermissions` remembers it asked for.
 const ASKED: &str = "shared_prefs/dev.ljos.permissions.xml";
@@ -152,6 +153,7 @@ fn permission_asked(nodes: &[ScreenNode]) -> Option<&'static str> {
         ("calendar", "calendar"),
         ("contacts", "contacts"),
         ("nearby devices", "bluetooth"),
+        ("send you notifications", "notifications"),
     ]
     .into_iter()
     .find(|(words, _)| message.contains(words))
@@ -1545,6 +1547,11 @@ mod tests {
         assert_eq!(permission_asked(&microphone), Some("microphone"));
         assert_eq!(permission_button(&microphone, true), Some((50, 125)));
         assert_eq!(permission_button(&microphone, false), Some((50, 225)));
+        let notifications = question(
+            "Allow ljos_example_android_scenarios to send you notifications?",
+            &["permission_allow_button", "permission_deny_button"],
+        );
+        assert_eq!(permission_asked(&notifications), Some("notifications"));
         assert_eq!(permission_asked(&screen_nodes("")), None);
     }
 

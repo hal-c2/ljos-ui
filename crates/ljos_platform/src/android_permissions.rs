@@ -16,6 +16,7 @@
 //! | `ContactsPermission` | `READ_CONTACTS`, and `WRITE_CONTACTS` to write |
 //! | `BluetoothPermission.Access` | `BLUETOOTH_SCAN` and `BLUETOOTH_CONNECT` (Android 12); before, `BLUETOOTH`, `BLUETOOTH_ADMIN` and `ACCESS_FINE_LOCATION` |
 //! | `BluetoothPermission.Advertise` | `BLUETOOTH_ADVERTISE` (Android 12); before, `BLUETOOTH` and `BLUETOOTH_ADMIN` |
+//! | `NotificationPermission` (`Ljos.Platform`) | `POST_NOTIFICATIONS` (Android 13) |
 //!
 //! A permission Android added after the phone's version is one that
 //! version grants when the application is installed, so it is granted;
@@ -120,6 +121,13 @@ pub fn stages(permission: Permission) -> Vec<Vec<Runtime>> {
             }
             vec![out]
         }
+        // Before Android 13 an application showed notifications without
+        // asking; that version grants it, as `since` says.
+        Permission::Notifications => vec![vec![Runtime {
+            name: "android.permission.POST_NOTIFICATIONS",
+            since: 33,
+            until: None,
+        }]],
     }
 }
 
@@ -425,6 +433,23 @@ mod tests {
             encode(&stages(access)).contains("android.permission.ACCESS_FINE_LOCATION@0-30"),
             "{}",
             encode(&stages(access))
+        );
+    }
+
+    #[test]
+    fn notifications_are_asked_for_since_android_13() {
+        assert_eq!(
+            names(Permission::Notifications),
+            [["android.permission.POST_NOTIFICATIONS"]]
+        );
+        assert!(on(32, Permission::Notifications).is_empty());
+        assert_eq!(
+            on(33, Permission::Notifications),
+            ["android.permission.POST_NOTIFICATIONS"]
+        );
+        assert_eq!(
+            encode(&stages(Permission::Notifications)),
+            "android.permission.POST_NOTIFICATIONS@33"
         );
     }
 
