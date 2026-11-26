@@ -275,7 +275,8 @@ Feature: The items Ljós's API has as Qt Quick has them
         """
 
     # A type a file writes, a property's or another component's parameter, names the enum of
-    # that name, so the component's callers are checked against it as well.
+    # that name, however the import names it, so the component's callers are checked against it
+    # as well.
     @ljos-only @headless
     Scenario: A property or parameter typed as a preference takes its values from another file
       Given the file "Painter.qml":
@@ -287,19 +288,31 @@ Feature: The items Ljós's API has as Qt Quick has them
           function paint(next: ColorScheme): void { scheme = next }
         }
         """
+      And the file "Swatch.qml":
+        """qml
+        import Ljos.Ui as Ui
+        import Ljos.Core
+        Ui.Item {
+          property Ui.ColorScheme scheme: App.hints.colorScheme
+        }
+        """
       And the file "Card.qml":
         """qml
         import Ljos.Ui
         import Ljos.Core
         Item {
           Painter { id: painter }
-          Component.onCompleted: { painter.paint(ColorScheme.Dark); painter.scheme = App.hints.colorScheme }
+          Swatch { id: swatch }
+          Component.onCompleted: {
+            painter.paint(ColorScheme.Dark); painter.scheme = App.hints.colorScheme
+            swatch.scheme = ColorScheme.Light
+          }
         }
         """
       When the files are checked
       Then the check reports:
         """
-        2 files, 0 errors, 0 warnings
+        3 files, 0 errors, 0 warnings
         """
 
     # Only a type that holds nothing but enums is its enum where it is written: an item that also
