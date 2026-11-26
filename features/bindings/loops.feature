@@ -262,6 +262,25 @@ Feature: Binding loops
       """
     Then the log has a warning matching "Binding loop detected for property .font.family."
 
+  # The size it reads back is the one the point size gave, but giving it makes the font a
+  # pixel-sized one, which is a change of the font it read.
+  Scenario: A font's pixel size that reads itself where a point size was given is a loop
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        Text {
+          objectName: "label"
+          text: "a"
+          font.pointSize: 9
+          font.pixelSize: font.pixelSize
+          font.bold: true
+        }
+      }
+      """
+    Then the property "font.pixelSize" of "label" is 12
+    And the log has a warning matching "Binding loop detected for property .font.pixelSize."
+
   @backlog
   Scenario: One member of a font that reads a size the font ignored is not a loop
     Given the QML:
