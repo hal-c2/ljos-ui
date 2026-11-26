@@ -321,6 +321,30 @@ Item { property int volume: Settings.volume }
     assert_eq!(h.num(root, "volume"), 7.0);
 }
 
+/// A name of the second module asked for before either module had the
+/// type is the same object too, not one made for that name.
+#[test]
+fn a_native_singleton_asked_for_before_its_modules_is_one_object() {
+    let h = engine();
+    assert_eq!(
+        h.engine.singleton_by_name("Example.Again", "Settings"),
+        None
+    );
+    h.engine
+        .register_singleton::<Settings>("Example", Version::new(1, 0));
+    h.engine
+        .register_singleton::<Settings>("Example.Again", Version::new(1, 0));
+    let settings = h.engine.singleton::<Settings>().unwrap();
+    assert_eq!(
+        h.engine.singleton_by_name("Example.Again", "Settings"),
+        Some(settings)
+    );
+    assert_eq!(
+        h.engine.singleton_by_name("Example", "Settings"),
+        Some(settings)
+    );
+}
+
 #[test]
 fn a_native_singleton_that_is_not_registered_is_an_error() {
     let h = engine();
