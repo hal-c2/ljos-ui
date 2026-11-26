@@ -247,6 +247,10 @@ struct Native {
     meta: &'static MetaObject,
     make: Make,
     scope: SingletonScope,
+    /// The type as the first module that had it names it. A module that
+    /// has it too (a dialect's module, beside the one it comes from) names
+    /// the same object.
+    home: TypeRef,
 }
 
 pub(crate) type Make = Rc<dyn Fn(&Engine) -> Box<dyn QmlObject>>;
@@ -310,10 +314,25 @@ impl Engine {
     ) {
         self.register_type(uri, version, MetaRef::Static(meta));
         let all = self.extension::<Singletons>();
-        all.natives.borrow_mut().insert(
+        let mut natives = all.natives.borrow_mut();
+        let home = natives
+            .values()
+            .find(|n| std::ptr::eq(n.meta, meta))
+            .map(|n| n.home.clone())
+            .unwrap_or_else(|| TypeRef::Native {
+                module: uri.to_owned(),
+                name: meta.name.to_string(),
+            });
+        natives.insert(
             (uri.to_owned(), meta.name.to_string()),
-            Native { meta, make, scope },
+            Native {
+                meta,
+                make,
+                scope,
+                home,
+            },
         );
+        drop(natives);
         // A script may have asked for the name before the type was there.
         let mut entries = all.entries.borrow_mut();
         let asked: Vec<usize> = (0..entries.len())
@@ -440,12 +459,9 @@ impl Engine {
         let all = self.extension::<Singletons>();
         let natives = all.natives.borrow();
         natives
-            .iter()
-            .find(|(_, n)| std::ptr::eq(n.meta, meta))
-            .map(|((module, name), _)| TypeRef::Native {
-                module: module.clone(),
-                name: name.clone(),
-            })
+            .values()
+            .find(|n| std::ptr::eq(n.meta, meta))
+            .map(|n| n.home.clone())
             .ok_or_else(|| EngineError::UnknownType {
                 uri: String::new(),
                 name: meta.name.to_string(),
@@ -619,6 +635,16 @@ impl Engine {
                 return None;
             }
             let i = self.singleton_handle(&file, None);
+            all.index.borrow_mut().insert(ty.clone(), i);
+            Some(i)
+        });
+        // So is a native type by any module that has it.
+        let found = found.or_else(|| {
+            let home = self.singleton_native(ty)?.home;
+            if home == *ty {
+                return None;
+            }
+            let i = self.singleton_handle(&home, None);
             all.index.borrow_mut().insert(ty.clone(), i);
             Some(i)
         });
