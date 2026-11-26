@@ -902,8 +902,10 @@ pub(crate) fn moved(
         match kind(engine, h) {
             Some(Kind::Drag) => {
                 drag::passive_move(engine, h, ev, press);
+                // A handler that holds the pointer is what holds it, and
+                // its grab permissions say whether `h` takes it over.
                 if taker.is_none()
-                    && exclusive.is_none()
+                    && (exclusive.is_none() || exclusive == held)
                     && drag::wants_grab(engine, h, ev, press)
                     && approves(engine, held, h)
                 {
