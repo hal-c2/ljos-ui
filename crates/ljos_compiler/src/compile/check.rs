@@ -539,7 +539,9 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
         }
         let parts: Vec<&str> = written.split('.').collect();
         if let Some(found) = types.find(&parts) {
-            return self.object_ty(&found.kind);
+            return self
+                .own_enum(&found.kind, plain(written))
+                .unwrap_or_else(|| self.object_ty(&found.kind));
         }
         // A value type the file's imports do not name: `font`, `point`.
         let oracle = self.c.types.oracle;

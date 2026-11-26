@@ -274,6 +274,34 @@ Feature: The items Ljós's API has as Qt Quick has them
         1 files, 0 errors, 0 warnings
         """
 
+    # A type a file writes, a property's or another component's parameter, names the enum of
+    # that name, so the component's callers are checked against it as well.
+    @ljos-only @headless
+    Scenario: A property or parameter typed as a preference takes its values from another file
+      Given the file "Painter.qml":
+        """qml
+        import Ljos.Ui
+        import Ljos.Core
+        Item {
+          property ColorScheme scheme: App.hints.colorScheme
+          function paint(next: ColorScheme): void { scheme = next }
+        }
+        """
+      And the file "Card.qml":
+        """qml
+        import Ljos.Ui
+        import Ljos.Core
+        Item {
+          Painter { id: painter }
+          Component.onCompleted: { painter.paint(ColorScheme.Dark); painter.scheme = App.hints.colorScheme }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        2 files, 0 errors, 0 warnings
+        """
+
     # `App.hints` is the engine's style hints, member by member, so what a file reads off it is
     # checked as what it holds.
     @ljos-only @headless
