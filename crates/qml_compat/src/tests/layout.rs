@@ -331,6 +331,146 @@ fn a_positioner_child_is_checked_by_its_files_root() {
     }
 }
 
+/// The root of a file of the project, binding `values` (each also a name
+/// it binds) and the names `others` with values the pass cannot read.
+fn valued(type_name: &str, values: &[(&str, &str)], others: &[&str]) -> Root {
+    let names = values.iter().map(|(n, _)| *n).chain(others.iter().copied());
+    Root {
+        values: values
+            .iter()
+            .map(|(n, v)| ((*n).to_owned(), (*v).to_owned()))
+            .collect(),
+        ..root_of(type_name, &names.collect::<Vec<_>>())
+    }
+}
+
+/// The files of the project the layout tests below hold.
+fn layout_files(name: &str) -> Option<Root> {
+    let chip = &[("implicitWidth", "40"), ("implicitHeight", "20")];
+    match name {
+        "Chip" => Some(valued("Rectangle", chip, &["color"])),
+        "Bar" => Some(valued(
+            "Rectangle",
+            &[("Layout.fillWidth", "true"), ("implicitHeight", "4")],
+            &[],
+        )),
+        "Dot" => Some(valued("Item", &[], &[])),
+        "Big" => Some(valued("Chip", &[("implicitWidth", "60")], &[])),
+        "Pinned" => Some(valued("Item", &[], &["anchors.centerIn"])),
+        "Odd" => Some(valued("Item", &[], &["Layout.preferredWidth"])),
+        "Aligned" => Some(valued("Item", chip, &["Layout.alignment"])),
+        "Inner" => Some(valued("ColumnLayout", &[], &[])),
+        "Gone" => Some(valued("Mystery", &[], &[])),
+        "Celled" => Some(valued("Item", &[("Layout.row", "1")], &[])),
+        // Its file imports the controls, whose `Button` it is, though the
+        // file that holds it need not.
+        "Pressed" => Some(Root {
+            imports: vec!["QtQuick".to_owned(), "QtQuick.Controls.Basic".to_owned()],
+            ..valued("Button", &[], &["text"])
+        }),
+        _ => None,
+    }
+}
+
+/// A child that is a file of the project is sized in a layout by what its
+/// root binds, under what the child binds: Qt's layout reads one item.
+#[test]
+fn a_layout_child_is_sized_by_its_files_root() {
+    for (body, out) in [
+        (
+            "Item { RowLayout { Chip { } } }",
+            "Item { Row { spacing: 5; Chip { Layout.alignment: Align.VCenter; } } }\n",
+        ),
+        // What the root fills leaves no room to spread.
+        (
+            "RowLayout { width: 100; Bar { } }",
+            "Row { spacing: 5; width: 100; Bar { Layout.alignment: Align.VCenter; } }\n",
+        ),
+        // A root with no size of its own is counted, as an `Item` is.
+        (
+            "Item { ColumnLayout { Dot { } } }",
+            "Item { Column { spacing: 5; Dot { Layout.fillWidth: false; } } }\n",
+        ),
+        // The child's own binding is read over its root's.
+        (
+            "Item { ColumnLayout { Big { implicitWidth: 0; width: 3 } } }",
+            "Item { Column { spacing: 5; Big { implicitWidth: 0; width: 3 } } }\n",
+        ),
+        // The root's type is the one its own file's imports name.
+        (
+            "Item { RowLayout { Pressed { } } }",
+            "Item { Row { spacing: 5; Pressed { Layout.alignment: Align.VCenter; } } }\n",
+        ),
+        // A layout in a layout grows where its child's root fills.
+        (
+            "Item { ColumnLayout { RowLayout { Bar { } } } }",
+            "Item { Column { spacing: 5; Row { Layout.fillWidth: true; spacing: 5; \
+             Bar { Layout.alignment: Align.VCenter; } } } }\n",
+        ),
+    ] {
+        let source = format!("{LAYOUTS}{body}\n");
+        let Outcome::Lowered(lowered) = lower(&source, &layout_files) else {
+            panic!("{body}: {:?}", lower(&source, &layout_files));
+        };
+        assert!(lowered.text.ends_with(out), "{body}: {}", lowered.text);
+    }
+}
+
+/// What a file's root binds keeps a file that holds it in a layout where
+/// the same written on the child would.
+#[test]
+fn a_layout_child_is_kept_by_its_files_root() {
+    for (body, child, why) in [
+        (
+            "Item { RowLayout { Pinned { } } }",
+            "Pinned",
+            "`anchors.centerIn` on a child",
+        ),
+        (
+            "Item { RowLayout { Big { width: 3 } } }",
+            "width",
+            "`width` of a `Big`",
+        ),
+        (
+            "Item { RowLayout { Odd { } } }",
+            "Odd",
+            "`Layout.preferredWidth` is not a whole number",
+        ),
+        (
+            "Item { RowLayout { Aligned { } } }",
+            "Aligned",
+            "`Layout.alignment` is not one the pass can read",
+        ),
+        (
+            "Item { RowLayout { Inner { } } }",
+            "Inner",
+            "a file of the project",
+        ),
+        (
+            "Item { RowLayout { Gone { } } }",
+            "Gone",
+            "a file of the project",
+        ),
+        (
+            "RowLayout { width: 100; Chip { } }",
+            "RowLayout",
+            "spreads the room",
+        ),
+        (
+            "Item { GridLayout { Celled { } } }",
+            "Celled",
+            "`Layout.row` puts a child",
+        ),
+    ] {
+        let source = format!("{LAYOUTS}{body}\n");
+        let Outcome::Kept(kept) = lower(&source, &layout_files) else {
+            panic!("{body}: lowered");
+        };
+        assert!(kept.to_string().contains(why), "{body}: {kept}");
+        assert_eq!(kept.at, source.rfind(child).unwrap(), "{body}: {kept}");
+    }
+}
+
 /// A layout at the root of a file, or of an inline component, may be sized
 /// by a file that uses it: with nothing to fill the room, Qt spreads it.
 #[test]

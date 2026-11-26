@@ -49,8 +49,8 @@ use qml_edit::Change;
 use qml_syntax::{
     Allocator,
     ast::{
-        QmlBinding, QmlBindingValue, QmlDocument, QmlMember, QmlObject, QmlQualifiedName,
-        QmlTypeName,
+        QmlBinding, QmlBindingValue, QmlDocument, QmlImportSource, QmlMember, QmlObject,
+        QmlQualifiedName, QmlTypeName,
     },
 };
 use qt_types::Type;
@@ -160,6 +160,15 @@ pub struct Root {
     /// The names it binds, with those of its groups (`anchors.left` for
     /// `anchors { left: … }`): what it says of how it is placed.
     pub bindings: Vec<String>,
+    /// Those of [`bindings`](Self::bindings) whose value is a number or
+    /// `true` or `false`, with that value as the pass writes it (`40`,
+    /// `2.5`, `true`): what a layout that holds the type can read of how it
+    /// is sized.
+    pub values: Vec<(String, String)>,
+    /// The modules its file imports without a name (`QtQuick.Controls`),
+    /// in which the type it is written as is looked up; none for the root
+    /// of an inline component, which is in sight of the file's imports.
+    pub imports: Vec<String>,
     /// The properties it declares: a `model` it declares is its own, not a
     /// delegate's row.
     pub properties: Vec<String>,
@@ -508,7 +517,17 @@ pub fn root(source: &str) -> Option<Root> {
 
 /// [`root`] of a file parsed already.
 fn root_in(parsed: &qml_syntax::Parsed<'_>) -> Option<Root> {
-    let root = Root::of(&parsed.document.root);
+    let mut root = Root::of(&parsed.document.root);
+    root.imports = parsed
+        .document
+        .imports
+        .iter()
+        .filter(|import| import.alias.is_none())
+        .filter_map(|import| match &import.source {
+            QmlImportSource::Module(name) => Some(name.to_string()),
+            QmlImportSource::Path(_) => None,
+        })
+        .collect();
     (!parsed.panicked && !root.type_name.is_empty()).then_some(root)
 }
 
@@ -517,6 +536,8 @@ impl Root {
         Root {
             type_name: object.type_name.to_string(),
             bindings: arrange::binding_names(object),
+            values: arrange::literal_values(object),
+            imports: Vec::new(),
             properties: object
                 .members
                 .iter()
@@ -1934,40 +1955,85 @@ impl rules::File for Pass<'_> {
     }
 
     fn qt_type(&self, name: &str) -> Option<&'static Type> {
-        self.scope.modules.qt_type(
-            &[
-                Qt::Quick,
-                Qt::Layouts,
-                Qt::Controls,
-                Qt::Shapes,
-                Qt::Dialogs,
-            ],
-            name,
-        )
+        self.scope.modules.qt_type(&PLACED, name)
     }
 
-    fn root_bindings(&self, name: &str) -> Option<Vec<String>> {
-        let mut found: Option<Vec<String>> = None;
+    fn file_root(&self, name: &str) -> Option<rules::FileRoot> {
+        let mut found: Option<rules::FileRoot> = None;
         let mut name = name.to_string();
+        // The imports of the file the name is written in, when that is a
+        // root's file and not this one.
+        let mut imports: Option<Vec<String>> = None;
         // A root built on another file of the project binds what that
         // file's root binds too; as far as `named_type` follows it.
         for _ in 0..16 {
-            if self.qt_type(&name).is_some() {
+            let qt = match &imports {
+                Some(imports) => self.qt_type_in(imports, &name),
+                None => self.qt_type(&name),
+            };
+            if let Some(qt) = qt {
+                if let Some(found) = &mut found {
+                    found.qt = Some(qt);
+                }
                 break;
             }
-            let Some(root) = self
+            let Some(mut root) = self
                 .scope
                 .local_root(&name, self.scope.imported_root(&name))
             else {
                 break;
             };
-            found.get_or_insert_default().extend(root.bindings);
+            if !root.imports.is_empty() {
+                imports = Some(std::mem::take(&mut root.imports));
+            }
+            let found = found.get_or_insert_default();
+            for bound in root.bindings {
+                if found.said(&bound).is_none() {
+                    let value = root
+                        .values
+                        .iter()
+                        .find(|(n, _)| *n == bound)
+                        .map(|(_, v)| v.clone());
+                    found.bindings.push((bound, value));
+                }
+            }
             if root.type_name == name {
                 break;
             }
             name = root.type_name;
         }
         found
+    }
+}
+
+/// The modules of Qt's whose types say how an object is placed and sized,
+/// in the order a name is looked up in them.
+const PLACED: [Qt; 5] = [
+    Qt::Quick,
+    Qt::Layouts,
+    Qt::Controls,
+    Qt::Shapes,
+    Qt::Dialogs,
+];
+
+impl Pass<'_> {
+    /// The type of Qt's `name` names in a file of the project that imports
+    /// `imports`: a file a root is in need not import what this one does
+    /// (a `Button` at the root of a file of the controls, used in one that
+    /// imports only `QtQuick`).
+    fn qt_type_in(&self, imports: &[String], name: &str) -> Option<&'static Type> {
+        PLACED.iter().find_map(|&qt| {
+            let module = if qt == Qt::Quick {
+                Some(self.scope.modules.quick())
+            } else {
+                imports
+                    .iter()
+                    .filter_map(|uri| modules::row(uri))
+                    .find(|row| row.qt == qt)
+                    .and_then(|row| qt_types::module(row.uri))
+            };
+            module?.type_named(name)
+        })
     }
 }
 

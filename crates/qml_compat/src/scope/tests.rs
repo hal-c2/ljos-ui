@@ -10,6 +10,8 @@ fn built_on_item() -> Root {
     Root {
         type_name: "Item".to_owned(),
         bindings: Vec::new(),
+        values: Vec::new(),
+        imports: Vec::new(),
         properties: Vec::new(),
         declares: vec!["level".to_owned()],
         kept: false,

@@ -802,6 +802,15 @@ measures both with budget cases.
   `Column` is a layout and rounds; in a `RowLayout` the `Layout.alignment`
   the pass writes does that. An explicit, preferred, least or largest size
   that is not a whole number keeps the file.
+- A child that is a file of the project, or an inline component, asks for
+  a size as the item of Qt's its roots are built on does (named as each
+  root's own file imports it), with what those roots bind as if the child
+  bound it: `implicitWidth: 40` on a root is
+  read as the child's, and anchors, a cell, a `Layout.alignment` or a size
+  the pass cannot read there keep the file as they would on the child. One
+  whose roots are built on a layout or a `Repeater`, or on a type the pass
+  does not know, keeps the file; one built on an object that is not an
+  item is not laid out.
 - A `RowLayout` nested in a `ColumnLayout` grows across the column where a
   child of it fills with no maximum, and otherwise keeps its own width; the
   pass writes `Layout.fillWidth: true` on the lowered `Row` there, and

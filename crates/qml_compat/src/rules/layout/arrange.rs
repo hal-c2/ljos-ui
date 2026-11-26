@@ -33,6 +33,10 @@
 //! when it is told to fill, and is held to its children's minimum, as
 //! Ljós's is; the pass writes the fill out.
 //!
+//! A child of a layout that is a file of the project or an inline component
+//! asks for a size as the item of Qt's its roots are built on does, and
+//! what those roots bind is read as the child's.
+//!
 //! A `GridLayout` is a `Grid` held to the same on both axes, with Qt's
 //! `columnSpacing` and `rowSpacing` of 5 written out. It is kept where Qt's
 //! reads it otherwise: a count across its flow (Qt's ignores it), a child
@@ -72,7 +76,7 @@ use qml_syntax::ast::{QmlBinding, QmlBindingValue, QmlMember, QmlObject};
 use qt_types::Type;
 
 use crate::cause::{Differs, Layout};
-use crate::rules::{File, Rule};
+use crate::rules::{File, FileRoot, Rule};
 use crate::{Kept, Ty};
 
 /// The rule of what the pass lowers to an arrangement.
@@ -300,6 +304,27 @@ impl Arrange<'_, '_> {
         usize::from(self.shape.vertical())
     }
 
+    /// What the root of `child`'s file binds, for a child that is a file of
+    /// the project or an inline component.
+    fn file_root(&self, child: &QmlObject<'_>) -> Option<FileRoot> {
+        let name = child.type_name.to_string();
+        if self.types.qt_type(&name).is_some() {
+            return None;
+        }
+        self.types.file_root(&name)
+    }
+
+    /// What `child` says of `name`: its own binding, else its file's
+    /// root's, which an object of the type has as much as one it writes.
+    fn said<'o, 'a>(&self, child: &'o QmlObject<'a>, name: &str) -> Option<Said<'o, 'a>> {
+        if let Some((_, b)) = bindings(child).into_iter().find(|(n, _)| n == name) {
+            return Some(Said::Written(b));
+        }
+        let root = self.file_root(child)?;
+        let value = root.said(name)?.map(str::to_owned);
+        Some(Said::Root(value))
+    }
+
     fn positioner(&mut self, object: &QmlObject<'_>) -> Result<(), Kept> {
         let qt = self.shape.qt();
         for (name, binding) in bindings(object) {
@@ -331,11 +356,9 @@ impl Arrange<'_, '_> {
             // What a file's root binds places it as much as what the child
             // binds; Qt's positioner ignores both alike.
             let ty = child.type_name.to_string();
-            if self.types.qt_type(&ty).is_none()
-                && let Some(names) = self.types.root_bindings(&ty)
-            {
+            if let Some(root) = self.file_root(child) {
                 let at = child.type_name.span.start as usize;
-                for name in names {
+                for (name, _) in root.bindings {
                     self.placed(&name, Some(&ty), at)?;
                 }
             }
@@ -682,7 +705,7 @@ impl Arrange<'_, '_> {
             let name = child.type_name.to_string();
             let told = match self.line_layout(&name) {
                 Some(line) => Some(Some(self.nested_fills(child, line, axis)?)),
-                None => bound(child, FILL[axis]).map(boolean),
+                None => self.said(child, FILL[axis]).map(|s| s.boolean()),
             };
             match told {
                 Some(Some(true)) => fills = fills.map(|_| true),
@@ -712,8 +735,18 @@ impl Arrange<'_, '_> {
         let name = child.type_name.to_string();
         let at = child.type_name.span.start as usize;
         let own = bindings(child);
-        if let Some((n, b)) = own.iter().find(|(n, _)| n.starts_with("anchors.")) {
-            return Err(self.anchored(n, b.span.start as usize));
+        let root = self.file_root(child);
+        // What the child and its file's root bind, with where the file says
+        // it: a root's binding is the child's, at its type's name.
+        let mut said: Vec<(&str, usize)> = own
+            .iter()
+            .map(|(n, b)| (n.as_str(), b.span.start as usize))
+            .collect();
+        if let Some(root) = &root {
+            said.extend(root.bindings.iter().map(|(n, _)| (n.as_str(), at)));
+        }
+        if let Some((n, at)) = said.iter().find(|(n, _)| n.starts_with("anchors.")) {
+            return Err(self.anchored(n, *at));
         }
         if self.shape == Shape::GridLayout {
             let cells = [
@@ -722,11 +755,16 @@ impl Arrange<'_, '_> {
                 "Layout.rowSpan",
                 "Layout.columnSpan",
             ];
-            if let Some((n, b)) = own.iter().find(|(n, _)| cells.contains(&n.as_str())) {
-                return Err(self.keep(Layout::Cell { name: n.clone() }, b.span.start as usize));
+            if let Some((n, at)) = said.iter().find(|(n, _)| cells.contains(n)) {
+                return Err(self.keep(
+                    Layout::Cell {
+                        name: (*n).to_owned(),
+                    },
+                    *at,
+                ));
             }
         }
-        let says_layout = own.iter().any(|(n, _)| n.starts_with("Layout."));
+        let says_layout = said.iter().any(|(n, _)| n.starts_with("Layout."));
         // Whether Ljós's box may leave the child out, or keep a size from its
         // content as it is: one whose children have no `Layout` does both.
         let mut needs_layout = false;
@@ -748,10 +786,17 @@ impl Arrange<'_, '_> {
             // its children otherwise.
             return Err(self.keep(Layout::Fills { name, qt, ljos }, at));
         } else {
-            let zero =
-                ZERO_IMPLICIT.contains(&name.as_str()) && self.types.qt_type(&name).is_some();
+            // A file's root is the item of Qt's its roots end at.
+            let zero = match &root {
+                Some(root) => root
+                    .qt
+                    .is_some_and(|t| t.module == "QtQuick" && ZERO_IMPLICIT.contains(&t.name)),
+                None => {
+                    ZERO_IMPLICIT.contains(&name.as_str()) && self.types.qt_type(&name).is_some()
+                }
+            };
             for axis in [W, H] {
-                match self.request(&own, &name, zero, axis)? {
+                match self.request(child, &name, zero, axis)? {
                     Ask::Size(size) => needs_layout |= size == 0.0,
                     Ask::Content => needs_layout = true,
                     Ask::Given => {}
@@ -762,11 +807,12 @@ impl Arrange<'_, '_> {
             // Qt's `RowLayout` and `GridLayout` centre a child across its row
             // unless it says otherwise; Ljós's `Row` and `Grid` put it at the
             // top.
-            match bindings(child)
-                .into_iter()
-                .find(|(n, _)| n == "Layout.alignment")
-            {
-                Some((_, binding)) => self.centre(binding)?,
+            match self.said(child, "Layout.alignment") {
+                Some(Said::Written(binding)) => self.centre(binding)?,
+                // The root's file says it, where this one cannot add to it.
+                Some(Said::Root(_)) => {
+                    return Err(self.keep(Layout::AlignmentUnread { qt, ljos }, at));
+                }
                 None => {
                     if let Some(at) = after_brace(self.source, child) {
                         self.insert(at, " Layout.alignment: Align.VCenter;");
@@ -847,7 +893,7 @@ impl Arrange<'_, '_> {
             // A hidden child takes no room in Qt's layout or in Ljós's box,
             // so it grows neither; one shown and hidden as the file runs
             // grows it only while shown, which no binding says.
-            let shown = bound(child, "visible").map(boolean);
+            let shown = inner.said(child, "visible").map(|s| s.boolean());
             if shown == Some(Some(false)) {
                 continue;
             }
@@ -859,8 +905,8 @@ impl Arrange<'_, '_> {
                 // One that fills up to a maximum lets Qt's layout grow
                 // only that far, which a Ljós box that fills does not
                 // stop at.
-                None => match bound(child, FILL[axis]).map(boolean) {
-                    Some(Some(true)) if bound(child, MAXIMUM[axis]).is_none() => true,
+                None => match inner.said(child, FILL[axis]).map(|s| s.boolean()) {
+                    Some(Some(true)) if inner.said(child, MAXIMUM[axis]).is_none() => true,
                     Some(Some(true)) | Some(None) => return Err(fills(self)),
                     _ => false,
                 },
@@ -881,15 +927,16 @@ impl Arrange<'_, '_> {
     /// The size `child` asks for along `axis`, or why the file is kept.
     fn request(
         &self,
-        own: &[(String, &QmlBinding<'_>)],
+        child: &QmlObject<'_>,
         name: &str,
         zero: bool,
         axis: usize,
     ) -> Result<Ask, Kept> {
         let qt = self.shape.qt();
         let ljos = self.shape.ljos();
-        let whole = |b: &QmlBinding<'_>, what: &str| -> Result<f64, Kept> {
-            match number(&b.value) {
+        let at = child.type_name.span.start as usize;
+        let whole = |s: &Said<'_, '_>, what: &str| -> Result<f64, Kept> {
+            match s.number() {
                 Some(n) if n >= 0.0 && n.fract() == 0.0 => Ok(n),
                 _ => Err(self.keep(
                     Layout::NotWhole {
@@ -897,23 +944,23 @@ impl Arrange<'_, '_> {
                         qt,
                         ljos,
                     },
-                    b.span.start as usize,
+                    s.at(at),
                 )),
             }
         };
-        let find = |n: &str| own.iter().find(|(m, _)| m == n).map(|(_, b)| *b);
+        let find = |n: &str| self.said(child, n);
         for bound in [MINIMUM[axis], MAXIMUM[axis]] {
             if let Some(b) = find(bound) {
-                whole(b, bound)?;
+                whole(&b, bound)?;
             }
         }
         if let Some(b) = find(PREFERRED[axis]) {
-            return whole(b, PREFERRED[axis]).map(|_| Ask::Given);
+            return whole(&b, PREFERRED[axis]).map(|_| Ask::Given);
         }
         let implicit = find(IMPLICIT[axis]);
         if let Some(b) = find(SIZE[axis]) {
-            let zero_implicit = match implicit {
-                Some(i) => number(&i.value) == Some(0.0),
+            let zero_implicit = match &implicit {
+                Some(i) => i.number() == Some(0.0),
                 None => zero,
             };
             if !zero_implicit {
@@ -925,13 +972,13 @@ impl Arrange<'_, '_> {
                         size: SIZE[axis],
                         preferred: PREFERRED[axis],
                     },
-                    b.span.start as usize,
+                    b.at(at),
                 ));
             }
-            return whole(b, SIZE[axis]).map(Ask::Size);
+            return whole(&b, SIZE[axis]).map(Ask::Size);
         }
         // Both round a size from the content up.
-        Ok(match implicit.and_then(|b| number(&b.value)) {
+        Ok(match implicit.as_ref().and_then(Said::number) {
             Some(n) if n.fract() == 0.0 => Ask::Size(n),
             Some(_) => Ask::Content,
             None if implicit.is_none() && zero => Ask::Size(0.0),
@@ -983,6 +1030,20 @@ impl Arrange<'_, '_> {
                             // arrangement does; what it is does not matter.
                             out.push(child);
                             continue;
+                        }
+                        // A file whose roots end at an item of Qt's asks for
+                        // a size as that item does, with what they bind; one
+                        // that ends at a layout or a `Repeater` is sized or
+                        // made otherwise, and one the pass cannot follow
+                        // may be anything.
+                        match self.types.file_root(&name).and_then(|root| root.qt) {
+                            Some(qt) if qt.module != "QtQuick.Layouts" && qt.name != "Repeater" => {
+                                if is_item(qt) {
+                                    out.push(child);
+                                }
+                                continue;
+                            }
+                            _ => {}
                         }
                         return Err(self.keep(
                             Layout::FileSize {
@@ -1081,6 +1142,40 @@ enum Ask {
     Content,
 }
 
+/// What a layout's child says of one name.
+enum Said<'o, 'a> {
+    /// A binding the child writes.
+    Written(&'o QmlBinding<'a>),
+    /// One the root of its file binds, with its value when that is a number
+    /// or `true` or `false`.
+    Root(Option<String>),
+}
+
+impl Said<'_, '_> {
+    fn number(&self) -> Option<f64> {
+        match self {
+            Said::Written(b) => number(&b.value),
+            Said::Root(value) => value.as_deref()?.parse().ok(),
+        }
+    }
+
+    fn boolean(&self) -> Option<bool> {
+        match self {
+            Said::Written(b) => boolean(&b.value),
+            Said::Root(value) => value.as_deref()?.parse().ok(),
+        }
+    }
+
+    /// Where the file says it: a root's binding is said at `child`, the
+    /// name of the child's type.
+    fn at(&self, child: usize) -> usize {
+        match self {
+            Said::Written(b) => b.span.start as usize,
+            Said::Root(_) => child,
+        }
+    }
+}
+
 /// How many children a positioner places, as far as the pass can tell.
 enum Shown {
     Between(usize, usize),
@@ -1128,6 +1223,21 @@ fn bindings<'o, 'a>(object: &'o QmlObject<'a>) -> Vec<(String, &'o QmlBinding<'a
 /// The names `object` binds, as [`bindings`] has them.
 pub(crate) fn binding_names(object: &QmlObject<'_>) -> Vec<String> {
     bindings(object).into_iter().map(|(n, _)| n).collect()
+}
+
+/// The bindings of `object` whose value is a number or a boolean, by name,
+/// with that value written out: what a layout reads of how an object of a
+/// type whose root `object` is asks to be sized.
+pub(crate) fn literal_values(object: &QmlObject<'_>) -> Vec<(String, String)> {
+    bindings(object)
+        .into_iter()
+        .filter_map(|(n, b)| {
+            let value = number(&b.value)
+                .map(|v| v.to_string())
+                .or_else(|| boolean(&b.value).map(|v| v.to_string()))?;
+            Some((n, value))
+        })
+        .collect()
 }
 
 fn bound<'o, 'a>(object: &'o QmlObject<'a>, name: &str) -> Option<&'o QmlBindingValue<'a>> {
