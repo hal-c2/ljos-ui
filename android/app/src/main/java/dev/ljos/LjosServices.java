@@ -1,11 +1,17 @@
 package dev.ljos;
 
+import android.Manifest;
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
 import android.content.ActivityNotFoundException;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.ContentResolver;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.net.Uri;
@@ -322,6 +328,79 @@ public final class LjosServices {
         } catch (ActivityNotFoundException | SecurityException e) {
             return false;
         }
+    }
+
+    // The badge.
+
+    /** The channel of the notification that carries the badge's count. */
+    static final String BADGE_CHANNEL = "ljos.badge";
+    /** That notification's id: the application has one badge. */
+    static final int BADGE_ID = 0x6c6a6f73;
+
+    /**
+     * Shows {@code count} on the application's icon; 0 takes it away.
+     * Android badges an icon only for the application's notifications, so
+     * the count is the number of one notification, in a channel that
+     * badges and makes no sound. Without the permission to show
+     * notifications it shows nothing and returns false: the user said no,
+     * and nothing is wrong.
+     */
+    public static boolean showBadge(Context context, int count) {
+        NotificationManager manager = context.getSystemService(NotificationManager.class);
+        if (manager == null) {
+            return false;
+        }
+        if (count <= 0) {
+            manager.cancel(BADGE_ID);
+            return true;
+        }
+        if (!mayNotify(context, manager)) {
+            return false;
+        }
+        CharSequence label = context.getApplicationInfo().loadLabel(context.getPackageManager());
+        NotificationChannel channel = new NotificationChannel(
+                BADGE_CHANNEL, "Badge", NotificationManager.IMPORTANCE_LOW);
+        channel.setShowBadge(true);
+        // Made again with every count: the system keeps the first and
+        // ignores the rest, and a user who changed it keeps their change.
+        manager.createNotificationChannel(channel);
+        int icon = context.getApplicationInfo().icon;
+        Notification.Builder builder = new Notification.Builder(context, BADGE_CHANNEL)
+                .setSmallIcon(icon != 0 ? icon : android.R.drawable.sym_def_app_icon)
+                .setContentTitle(label)
+                .setContentText(String.valueOf(count))
+                .setNumber(count)
+                .setBadgeIconType(Notification.BADGE_ICON_SMALL)
+                .setCategory(Notification.CATEGORY_STATUS)
+                .setOnlyAlertOnce(true)
+                .setShowWhen(false);
+        Intent launch = context.getPackageManager().getLaunchIntentForPackage(context.getPackageName());
+        if (launch != null) {
+            // Touched, the notification brings the application back.
+            builder.setContentIntent(PendingIntent.getActivity(
+                    context, BADGE_ID, launch,
+                    PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT));
+        }
+        try {
+            manager.notify(BADGE_ID, builder.build());
+            return true;
+        } catch (SecurityException e) {
+            return false;
+        }
+    }
+
+    /**
+     * Whether the application may show notifications: since Android 13 the
+     * user grants it (POST_NOTIFICATIONS), and in any version the user may
+     * turn them off for the application.
+     */
+    private static boolean mayNotify(Context context, NotificationManager manager) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+                && context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
+                        != PackageManager.PERMISSION_GRANTED) {
+            return false;
+        }
+        return manager.areNotificationsEnabled();
     }
 
     // The application's own directories: no other application reads them,

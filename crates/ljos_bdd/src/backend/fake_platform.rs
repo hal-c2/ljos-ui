@@ -3,21 +3,24 @@
 //! every file the application reads or writes, dialogs the scenario
 //! answers as the user, a system that asks for permissions when the
 //! scenario says so, sensors and a position that read what the scenario
-//! says, and an opener that only notes the URLs. Nothing reaches the real
+//! says, a badge on the application's icon, and an opener that only notes
+//! the URLs. Nothing reaches the real
 //! home directory, dialogs, devices or browser.
 //!
 //! It is a fixture of its own, apart from any backend: a backend gives it
 //! to an engine with [`FakePlatform::install`] and answers the platform
 //! steps from it.
 
+use std::cell::Cell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 
 use ljos_engine::Engine;
 use ljos_platform::{
-    DialogReply, FakeDialogs, FakePermissions, FakeSensors, HttpFetcher, Measurement, PathEnv,
-    Platform, RecordedDragOut, RecordedUrls, SensorKind,
+    BadgeService, DialogReply, FakeDialogs, FakePermissions, FakeSensors, HttpFetcher, Measurement,
+    PathEnv, Permission, PermissionService, PermissionStatus, Platform, RecordedDragOut,
+    RecordedUrls, SensorKind,
 };
 use ljos_positioning::{FixedPosition, GeoCoordinate, PositionFix};
 
@@ -49,6 +52,33 @@ pub struct FakePlatform {
     /// The system's menu bar, which says the system has one when the
     /// scenario says so.
     menu_bar: ljos_platform::RecordedMenuBar,
+    /// The count the system shows on the application's icon.
+    badge: Rc<Cell<u32>>,
+    /// The count the application sets as it starts, when the scenario
+    /// says one.
+    badge_at_start: Option<u32>,
+}
+
+/// The system's badge on the application's icon. A system that asks
+/// before it shows notifications shows no count until they are granted,
+/// and says nothing of the count it drops, as Android does with a
+/// notification's number. Taking a count away needs no permission.
+#[derive(Debug)]
+struct GatedBadge {
+    shown: Rc<Cell<u32>>,
+    asking: Option<FakePermissions>,
+}
+
+impl BadgeService for GatedBadge {
+    fn show(&self, count: u32) {
+        let may = self
+            .asking
+            .as_ref()
+            .is_none_or(|p| p.status(Permission::Notifications) == PermissionStatus::Granted);
+        if may || count == 0 {
+            self.shown.set(count);
+        }
+    }
 }
 
 impl std::fmt::Debug for FakePlatform {
@@ -99,6 +129,13 @@ impl FakePlatform {
         if let Some(asking) = &self.permissions {
             platform.set_permissions(Rc::new(asking.clone()));
         }
+        platform.set_badge(Rc::new(GatedBadge {
+            shown: Rc::clone(&self.badge),
+            asking: self.permissions.clone(),
+        }));
+        if let Some(count) = self.badge_at_start {
+            platform.set_badge_number(count);
+        }
         self.install_drag_out(engine);
         platform.set_menu_bar(Rc::new(self.menu_bar.clone()));
         platform.set_held(true);
@@ -135,6 +172,16 @@ impl FakePlatform {
             latitude, longitude, altitude,
         )));
         Ok(())
+    }
+
+    /// The application sets its badge to `count` as it starts.
+    pub fn badge_at_start(&mut self, count: u32) {
+        self.badge_at_start = Some(count);
+    }
+
+    /// The count the system shows on the application's icon; 0 for none.
+    pub fn badge_shown(&self) -> u32 {
+        self.badge.get()
     }
 
     /// The URLs the application asked the system to open, in order.
@@ -319,6 +366,32 @@ mod tests {
         platform.permissions_ask();
         assert!(platform.permission_requests().is_empty());
         assert!(platform.answer_permission("camera", true).is_err());
+    }
+
+    #[test]
+    fn a_badge_waits_for_the_permission_to_show_notifications() {
+        // Granting it is the feature's: an answer is only made by a request
+        // from QML.
+        let shown = Rc::new(Cell::new(2));
+        let badge = GatedBadge {
+            shown: Rc::clone(&shown),
+            asking: Some(FakePermissions::default()),
+        };
+        badge.show(3);
+        assert_eq!(shown.get(), 2);
+        badge.show(0);
+        assert_eq!(shown.get(), 0);
+    }
+
+    #[test]
+    fn a_badge_shows_at_once_where_nothing_asks() {
+        let shown = Rc::new(Cell::new(0));
+        let badge = GatedBadge {
+            shown: Rc::clone(&shown),
+            asking: None,
+        };
+        badge.show(5);
+        assert_eq!(shown.get(), 5);
     }
 
     #[test]

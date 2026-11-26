@@ -411,6 +411,44 @@ fn the_notification_permission_is_asked_for_on_its_own() {
     assert_eq!(e.read_by_name(camera, "status").to_number(), 0.0);
 }
 
+/// The badge's count, set before the user let the application show
+/// notifications, shown again once they do (on Android the badge is a
+/// notification's number); a denial shows nothing more.
+#[test]
+fn the_badge_is_shown_again_once_notifications_are_granted() {
+    for (granted, shown) in [(true, vec![3, 3]), (false, vec![3])] {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let e = engine(dir.path());
+        let fake = crate::FakePermissions::default();
+        let platform = Platform::of(&e);
+        platform.set_permissions(Rc::new(fake.clone()));
+        let badge = crate::RecordedBadge::default();
+        platform.set_badge(Rc::new(badge.clone()));
+        platform.set_badge_number(3);
+        let p = make::<crate::NotificationPermission>(&e);
+        e.invoke_by_name(p, "request", &[]).expect("requested");
+        assert!(fake.answer("notifications", granted));
+        platform.finish(&e);
+        assert_eq!(badge.counts(), shown, "granted: {granted}");
+    }
+}
+
+/// Only a permission newly granted shows the badge again: one granted
+/// from the start, asked for again, adds nothing.
+#[test]
+fn a_granted_notification_permission_asked_again_shows_the_badge_once() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let e = engine(dir.path());
+    let platform = Platform::of(&e);
+    let badge = crate::RecordedBadge::default();
+    platform.set_badge(Rc::new(badge.clone()));
+    platform.set_badge_number(2);
+    let p = make::<crate::NotificationPermission>(&e);
+    e.invoke_by_name(p, "request", &[]).expect("requested");
+    platform.finish(&e);
+    assert_eq!(badge.counts(), vec![2]);
+}
+
 /// A system whose answers the test sends when it likes, and that grants
 /// nothing it is asked of.
 #[derive(Default)]

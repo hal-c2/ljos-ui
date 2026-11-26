@@ -335,6 +335,20 @@ impl Platform for LjosBackend {
         live.settle()
     }
 
+    fn badge_at_start(&mut self, count: u32) -> Result<()> {
+        if self.live.is_some() {
+            return Err(failed(
+                "say what the application's badge is as it starts before the QML",
+            ));
+        }
+        self.platform.badge_at_start(count);
+        Ok(())
+    }
+
+    fn badge_shown(&mut self) -> Result<u32> {
+        Ok(self.platform.badge_shown())
+    }
+
     fn window_backdrop(&mut self, object: &str) -> Result<Option<crate::backend::BackdropAsked>> {
         let live = self.live()?;
         let win = live.find(object)?;

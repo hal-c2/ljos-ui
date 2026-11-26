@@ -1077,6 +1077,7 @@ mod tests {
             "public static void setClipboardHtml(Context context, String html, String text)",
             "public static int[] clipboardImage(Context context)",
             "public static void setClipboardImage(Context context, int[] argb, int width, int height)",
+            "public static boolean showBadge(Context context, int count)",
         ] {
             assert!(java.contains(method), "{method}");
         }

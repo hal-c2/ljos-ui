@@ -607,10 +607,29 @@ fn request(engine: &Engine, obj: ObjectId) {
 /// location always, say, after one in use was granted): the answer is not
 /// of what it asks for now.
 fn answered(engine: &Engine, obj: ObjectId, asked: Permission, status: Option<PermissionStatus>) {
+    let was = engine.is_alive(obj).then(|| int(engine, obj, "status"));
     match status {
         Some(status) if permission_of(engine, obj) == Some(asked) => {
             show_status(engine, obj, status);
         }
         _ => check(engine, obj),
+    }
+    let granted = PermissionStatus::Granted.to_qt();
+    if asked == Permission::Notifications
+        && was.is_some_and(|was| was != granted)
+        && int(engine, obj, "status") == granted
+    {
+        show_badge_again(engine);
+    }
+}
+
+/// Shows the badge's count again once the user lets the application show
+/// notifications: on Android the badge is a notification's number, and a
+/// count set before the user said yes was shown nowhere.
+fn show_badge_again(engine: &Engine) {
+    let platform = Platform::of(engine);
+    let count = platform.badge_number();
+    if count != 0 {
+        platform.badge().show(count);
     }
 }

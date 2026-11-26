@@ -7,6 +7,9 @@
 //!   that starts later calls for the count already set. It names the
 //!   application by its desktop entry (`Platform::desktop_file_name`).
 //! - macOS: the Dock tile's badge label.
+//! - Android: the number of one notification of the application's, in a
+//!   channel that badges (`ljos_platform::android::AndroidBadge`), shown
+//!   once the user lets the application show notifications.
 //! - Elsewhere the in-process service stays: the count is kept, not shown.
 //!   Windows shows a count only as an overlay icon the application draws,
 //!   which needs a picture per count; there is none yet.
@@ -26,7 +29,12 @@ pub(crate) fn service(platform: &Rc<Platform>) -> Option<Rc<dyn BadgeService>> {
         let _ = platform;
         Some(Rc::new(dock::DockBadge))
     }
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    #[cfg(target_os = "android")]
+    {
+        let _ = platform;
+        Some(Rc::new(ljos_platform::android::AndroidBadge))
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "android")))]
     {
         let _ = platform;
         None

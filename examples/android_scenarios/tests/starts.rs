@@ -44,3 +44,22 @@ fn local_files_are_read_only_where_the_runner_says_so() {
     allow_local_file_read(&engine, &said);
     assert!(platform.local_file_read());
 }
+
+#[test]
+fn the_badge_is_set_as_the_runner_says() {
+    use ljos_example_android_scenarios::{BADGE, badge_at_start};
+
+    let files = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"));
+    let (said, unsaid) = (files.join("badge-said"), files.join("badge-unsaid"));
+    std::fs::create_dir_all(&said).expect("a directory");
+    std::fs::write(said.join(BADGE), "3\n").expect("the count");
+
+    let (engine, _root) = ljos_example_android_scenarios::app()
+        .build()
+        .expect("the application starts");
+    let platform = ljos::prelude::Platform::of(&engine);
+    badge_at_start(&engine, &unsaid);
+    assert_eq!(platform.badge_number(), 0);
+    badge_at_start(&engine, &said);
+    assert_eq!(platform.badge_number(), 3);
+}

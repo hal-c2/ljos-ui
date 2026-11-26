@@ -1274,6 +1274,18 @@ pub trait Platform: Backend {
             "a system that asks for permissions",
         ))
     }
+
+    /// The application sets its badge to `count` as it starts. Said
+    /// before the QML.
+    fn badge_at_start(&mut self, _count: u32) -> Result<()> {
+        Err(BackendError::NotImplemented("the application's badge"))
+    }
+
+    /// The count the system shows on the application's icon; 0 when it
+    /// shows none.
+    fn badge_shown(&mut self) -> Result<u32> {
+        Err(BackendError::NotImplemented("the application's badge"))
+    }
 }
 
 /// What the application written around the QML does: windows of its

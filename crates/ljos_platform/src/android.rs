@@ -1,8 +1,9 @@
 //! An Android application's services, through its Java side
 //! (`dev.ljos.LjosServices` of Ljós's Android template, reached with
 //! `ljos_jni`): the system's clipboard (text, HTML and pictures), its
-//! opener of links, the directories the system keeps for the application,
-//! and how far a finger goes before a touch is a drag.
+//! opener of links, the application's badge, the directories the system
+//! keeps for the application, and how far a finger goes before a touch is
+//! a drag.
 //!
 //! Each call waits for the Java side, which runs the clipboard's calls on
 //! the main thread: call them from the application's thread, never from
@@ -14,7 +15,9 @@ use ljos_jni::jni::objects::{JIntArray, JString, JValue};
 use ljos_jni::jni::{jni_sig, jni_str};
 use ljos_jni::{services, with_java};
 
-use crate::{ClipboardError, ClipboardImage, ClipboardMode, ClipboardService, OpenUrlService};
+use crate::{
+    BadgeService, ClipboardError, ClipboardImage, ClipboardMode, ClipboardService, OpenUrlService,
+};
 
 /// Android's clipboard: text, HTML with its text, and a picture, which
 /// Android keeps as a content URI (here of the template's FileProvider). A
@@ -252,6 +255,36 @@ impl OpenUrlService for AndroidOpener {
             log::warn!("{url} was not opened: {e}");
             false
         })
+    }
+}
+
+/// The application's badge: Android badges the icon of an application
+/// with notifications, so the count is the number of one notification of
+/// the application's, in a channel that badges and makes no sound
+/// (`LjosServices.showBadge`). It needs the permission to show
+/// notifications (`NotificationPermission`); without it nothing is shown
+/// and nothing said, and the platform shows the count again once the user
+/// grants it.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct AndroidBadge;
+
+impl BadgeService for AndroidBadge {
+    fn show(&self, count: u32) {
+        let number = i32::try_from(count).unwrap_or(i32::MAX);
+        let shown = with_java(|env, context| {
+            let class = services(env, context)?;
+            env.call_static_method(
+                &class,
+                jni_str!("showBadge"),
+                jni_sig!("(Landroid/content/Context;I)Z"),
+                &[JValue::Object(context), JValue::Int(number)],
+            )?
+            .z()
+        });
+        // Not shown for want of the permission is what the user chose.
+        if let Err(e) = shown {
+            log::warn!("the badge {count} was not shown: {e}");
+        }
     }
 }
 

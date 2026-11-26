@@ -54,6 +54,12 @@ const FAULT: &str = "files/scenario-fault.txt";
 /// What lets the scenario's application read local files, when it is
 /// there (`examples/android_scenarios`).
 const XHR_LOCAL_READ: &str = "files/xhr-local-read";
+/// The count the scenario's application sets its badge to as it starts,
+/// when it is there (`examples/android_scenarios`).
+const BADGE: &str = "files/badge";
+/// The channel of the notification whose number is the application's
+/// badge (`showBadge` of the template's `LjosServices`).
+const BADGE_CHANNEL: &str = "ljos.badge";
 
 /// The permissions `examples/android_scenarios` declares, which each
 /// scenario starts from never asked for.
@@ -140,6 +146,34 @@ fn front_record(activities: &str) -> Option<&str> {
 
 /// The permission (as the steps name it) the system's question on screen
 /// asks for, by its English words.
+/// The count the system shows on `package`'s icon, from `dumpsys
+/// notification --noredact`: the number of its notification in the badge
+/// channel, when the system lets that notification show a badge (the
+/// record's own `mShowBadge`, which weighs the channel and the user's
+/// settings). 0 when there is none.
+fn badge_in(dump: &str, package: &str) -> u32 {
+    let pkg = format!(" pkg={package} ");
+    let channel = format!("Notification(channel={BADGE_CHANNEL} ");
+    dump.split("NotificationRecord(")
+        .skip(1)
+        .find(|record| {
+            let head = record.lines().next().unwrap_or_default();
+            format!(" {head}").contains(&pkg) && head.contains(&channel)
+        })
+        .map_or(0, |record| {
+            let field = |name: &str| {
+                record
+                    .lines()
+                    .find_map(|l| l.trim().strip_prefix(name).map(str::trim))
+            };
+            if field("mShowBadge=") == Some("true") {
+                field("number=").and_then(|n| n.parse().ok()).unwrap_or(0)
+            } else {
+                0
+            }
+        })
+}
+
 fn permission_asked(nodes: &[ScreenNode]) -> Option<&'static str> {
     let message = nodes
         .iter()
@@ -618,6 +652,8 @@ pub struct AndroidBackend {
     /// `download_dirs` the folders, outer before inner.
     downloads: Vec<String>,
     download_dirs: Vec<String>,
+    /// The count the application sets its badge to as it starts.
+    badge: Option<u32>,
     /// The object the scenario last called `open` of: the dialog the
     /// picker answers.
     opened: Option<String>,
@@ -812,11 +848,14 @@ impl Backend for AndroidBackend {
             .collect();
         phone.shell(&format!("{}; true", forget.join("; ")))?;
         phone.as_app(
-            &format!("rm -rf {FILES} {FAULT} {XHR_LOCAL_READ} {ASKED} && mkdir -p {FILES}"),
+            &format!("rm -rf {FILES} {FAULT} {XHR_LOCAL_READ} {BADGE} {ASKED} && mkdir -p {FILES}"),
             None,
         )?;
         if self.xhr_local_read {
             phone.as_app(&format!("touch {XHR_LOCAL_READ}"), None)?;
+        }
+        if let Some(count) = self.badge {
+            phone.as_app(&format!("echo {count} > {BADGE}"), None)?;
         }
         for f in files {
             let name = if f.name == entry {
@@ -943,6 +982,31 @@ impl Backend for AndroidBackend {
 }
 
 impl Platform for AndroidBackend {
+    fn badge_at_start(&mut self, count: u32) -> Result<()> {
+        if self.running.is_some() {
+            // It reads the count once, as it starts.
+            return Err(not_yet(
+                "setting the badge of a running application on the phone",
+            ));
+        }
+        self.badge = Some(count);
+        Ok(())
+    }
+
+    fn badge_shown(&mut self) -> Result<u32> {
+        let phone = self.phone()?.clone();
+        // The application posts its notification from the main thread, a
+        // moment after it sets the count; a count not there by then is
+        // not shown.
+        let shown = seen_until(
+            Instant::now() + ASKING,
+            ASKING,
+            || phone.shell("dumpsys notification --noredact"),
+            |dump: &String| Some(badge_in(dump, &phone.id)).filter(|n| *n != 0),
+        )?;
+        Ok(shown.unwrap_or(0))
+    }
+
     fn xhr_local_read(&mut self) -> Result<()> {
         if self.running.is_some() {
             // It reads the word once, as it starts.
@@ -1323,10 +1387,52 @@ impl Device for AndroidBackend {
 #[cfg(test)]
 mod tests {
     use super::{
-        BackendError, FORGET_EVENTS, Shown, abort_query, download_path, front_record,
+        BackendError, FORGET_EVENTS, Shown, abort_query, badge_in, download_path, front_record,
         permission_asked, permission_button, picker_shown, quoted, scenario_dir, screen_nodes,
         seen_until,
     };
+
+    // Trimmed from Android 16's `dumpsys notification --noredact`.
+    const NOTIFICATIONS: &str = "\
+  Notification List:
+    NotificationRecord(0x03c10bb5: pkg=dev.ljos.other user=UserHandle{0} id=1 tag=null importance=2 key=0|dev.ljos.other|1|null|10124: Notification(channel=ljos.badge shortcut=null flags=0 vis=PRIVATE))
+      uid=10124 userId=0
+      notification=
+            number=9
+      mShowBadge=true
+    NotificationRecord(0x0656b7a8: pkg=dev.ljos.scenarios user=UserHandle{0} id=1818783603 tag=null importance=2 key=0|dev.ljos.scenarios|1818783603|null|10123: Notification(channel=ljos.badge shortcut=null flags=ONLY_ALERT_ONCE vis=PRIVATE))
+      uid=10123 userId=0
+      notification=
+            fullscreenIntent=null
+            number=3
+            groupAlertBehavior=0
+      mShowBadge=true
+      effectiveNotificationChannel=NotificationChannel{mId='ljos.badge', mName=Badge, mShowBadge=true}
+";
+
+    #[test]
+    fn the_badge_is_the_number_of_the_applications_badge_notification() {
+        assert_eq!(badge_in(NOTIFICATIONS, "dev.ljos.scenarios"), 3);
+        assert_eq!(badge_in(NOTIFICATIONS, "dev.ljos.other"), 9);
+        assert_eq!(badge_in(NOTIFICATIONS, "dev.ljos.none"), 0);
+        // A package whose name another's begins with is not that one.
+        assert_eq!(badge_in(NOTIFICATIONS, "dev.ljos"), 0);
+        assert_eq!(badge_in("", "dev.ljos.scenarios"), 0);
+    }
+
+    #[test]
+    fn a_notification_that_may_show_no_badge_shows_none() {
+        let hidden = NOTIFICATIONS.replace(
+            "      mShowBadge=true\n    Notif",
+            "      mShowBadge=false\n    Notif",
+        );
+        assert_eq!(badge_in(&hidden, "dev.ljos.other"), 0);
+        let elsewhere = NOTIFICATIONS.replace(
+            "channel=ljos.badge shortcut=null flags=ONLY",
+            "channel=chat shortcut=null flags=ONLY",
+        );
+        assert_eq!(badge_in(&elsewhere, "dev.ljos.scenarios"), 0);
+    }
 
     // The main and crash logs are the whole phone's: another application's
     // crash, or another run's scenario on the same phone, is not ours to

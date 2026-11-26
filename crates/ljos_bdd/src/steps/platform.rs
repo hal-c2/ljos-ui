@@ -337,6 +337,37 @@ fn user_answers_permission(w: &mut LjosWorld, how: String, name: String) -> Step
     w.each(|b| b.platform()?.answer_permission(&name, how == "grants"))
 }
 
+// Before the QML: the application sets it as it starts, before anything
+// could have asked for the permission to show it.
+#[given(regex = r"^the application's badge is (\d+) as it starts$")]
+fn badge_at_start(w: &mut LjosWorld, count: u32) -> StepResult {
+    w.each(|b| b.platform()?.badge_at_start(count))
+}
+
+#[then(regex = r"^the system shows (\d+) on the application's icon$")]
+fn badge_shown(w: &mut LjosWorld, count: u32) -> StepResult {
+    w.each(|b| {
+        let shown = b.platform()?.badge_shown()?;
+        if shown == count {
+            Ok(())
+        } else {
+            Err(BackendError::Failed(format!(
+                "the system shows {shown} on the application's icon, not {count}"
+            )))
+        }
+    })
+}
+
+#[then("the system shows nothing on the application's icon")]
+fn badge_shown_nothing(w: &mut LjosWorld) -> StepResult {
+    w.each(|b| match b.platform()?.badge_shown()? {
+        0 => Ok(()),
+        shown => Err(BackendError::Failed(format!(
+            "the system shows {shown} on the application's icon"
+        ))),
+    })
+}
+
 #[given("the application may read local files through XMLHttpRequest")]
 fn xhr_local_read_given(w: &mut LjosWorld) -> StepResult {
     w.each(|b| b.platform()?.xhr_local_read())
