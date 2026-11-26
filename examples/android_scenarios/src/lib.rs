@@ -11,7 +11,7 @@
 use std::path::{Path, PathBuf};
 
 mod secrets;
-pub use secrets::{ScenarioSecrets, keep_secrets_in};
+pub use secrets::{NAMESPACE as SECRETS_NAMESPACE, ScenarioSecrets, keep_secrets_in};
 
 /// Where the scenario's files are: `qml/` beside the inspector's token
 /// file, which the activity puts in the application's files directory

@@ -68,10 +68,14 @@ fn the_badge_is_set_as_the_runner_says() {
 fn a_secret_goes_through_the_store_as_the_runner_reaches_it() {
     use std::time::Duration;
 
-    use ljos_example_android_scenarios::keep_secrets_in;
-    use ljos_secrets::{MemorySecrets, SecretStore};
+    use ljos_example_android_scenarios::{SECRETS_NAMESPACE, keep_secrets_in};
+    use ljos_secrets::{MemorySecrets, SecretBackend, SecretStore};
 
-    assert!(keep_secrets_in(SecretStore::new(MemorySecrets::new())));
+    let memory = MemorySecrets::new();
+    memory
+        .write("accounts", "token", b"the application's own")
+        .expect("kept");
+    assert!(keep_secrets_in(SecretStore::new(memory.clone())));
     let (engine, root) = ljos_example_android_scenarios::app()
         .build()
         .expect("the application starts");
@@ -110,6 +114,22 @@ fn a_secret_goes_through_the_store_as_the_runner_reaches_it() {
     assert_eq!(
         answer(r#"read("accounts", "token")"#),
         r#"{"value":[false,true,"s3cret",""],"truncated":false}"#
+    );
+    // The scenarios' secrets are kept apart from the application's others,
+    // which the scenario's QML neither reads nor overwrites.
+    let kept = |service: &str| {
+        memory
+            .read(service, "token")
+            .expect("read")
+            .map(|s| s.as_bytes().to_vec())
+    };
+    assert_eq!(
+        kept(&format!("{SECRETS_NAMESPACE}accounts")).as_deref(),
+        Some(&b"s3cret"[..])
+    );
+    assert_eq!(
+        kept("accounts").as_deref(),
+        Some(&b"the application's own"[..])
     );
     assert_eq!(
         answer(r#"remove("accounts", "token")"#),

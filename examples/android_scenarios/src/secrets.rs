@@ -17,6 +17,15 @@ use ljos_secrets::SecretStore;
 /// scope by, for the runner (`ljos_bdd`'s `@android` backend) to call.
 pub(crate) const NAME: &str = "scenarioSecrets";
 
+/// What every service the scenarios name is kept under in the store: the
+/// scenario application's QML may not reach the store's other secrets
+/// through `ScenarioSecrets`, only the scenarios' own.
+pub const NAMESPACE: &str = "ljos-scenarios/";
+
+fn scenarios(service: &str) -> String {
+    format!("{NAMESPACE}{service}")
+}
+
 static STORE: OnceLock<Arc<SecretStore>> = OnceLock::new();
 
 /// Keeps the scenarios' secrets in `store` in place of the system's, for
@@ -58,30 +67,32 @@ pub struct ScenarioSecrets {
 
 #[qml_impl]
 impl ScenarioSecrets {
-    /// Keeps `secret` as `key` of `service`.
+    /// Keeps `secret` as `key` of the scenarios' `service`.
     #[qml(invokable)]
     fn keep(cx: &Cx, service: String, key: String, secret: String) -> Result<(), EngineError> {
         call(cx, move |s| {
-            s.write(&service, &key, secret.as_bytes())
+            s.write(&scenarios(&service), &key, secret.as_bytes())
                 .map(|()| Answer::Kept)
         })
     }
 
-    /// Reads the secret kept as `key` of `service`.
+    /// Reads the secret kept as `key` of the scenarios' `service`.
     #[qml(invokable)]
     fn read(cx: &Cx, service: String, key: String) -> Result<(), EngineError> {
         call(cx, move |s| {
-            let found = s.read(&service, &key)?;
+            let found = s.read(&scenarios(&service), &key)?;
             Ok(Answer::Read(found.map(|f| {
                 String::from_utf8_lossy(f.as_bytes()).into_owned()
             })))
         })
     }
 
-    /// Removes the secret kept as `key` of `service`.
+    /// Removes the secret kept as `key` of the scenarios' `service`.
     #[qml(invokable)]
     fn remove(cx: &Cx, service: String, key: String) -> Result<(), EngineError> {
-        call(cx, move |s| s.remove(&service, &key).map(Answer::Removed))
+        call(cx, move |s| {
+            s.remove(&scenarios(&service), &key).map(Answer::Removed)
+        })
     }
 }
 
