@@ -162,6 +162,10 @@ enum State {
     Outside,
     /// Its window is gone.
     Gone,
+    /// The entry of another name for the type: a name looked up before
+    /// the module that has the type was there, which a script may still
+    /// hold.
+    Same(usize),
 }
 
 struct Entry {
@@ -334,15 +338,41 @@ impl Engine {
         );
         drop(natives);
         // A script may have asked for the name before the type was there.
-        let mut entries = all.entries.borrow_mut();
-        let asked: Vec<usize> = (0..entries.len())
-            .filter(|&i| matches!(entries[i].state, State::Keys(_)))
-            .collect();
-        for i in asked {
-            let window = self.singleton_native(&entries[i].ty).map(|n| n.scope)
-                == Some(SingletonScope::Window);
-            entries[i].window = window;
-            entries[i].state = State::Unmade;
+        let asked: Vec<(usize, TypeRef, bool)> = {
+            let entries = all.entries.borrow();
+            (0..entries.len())
+                .filter(|&i| matches!(entries[i].state, State::Keys(_) | State::Unmade))
+                .map(|i| (i, entries[i].ty.clone(), entries[i].scope.is_none()))
+                .collect()
+        };
+        for (i, ty, unscoped) in asked {
+            let Some(native) = self.singleton_native(&ty) else {
+                continue;
+            };
+            // Asked for by a module that has the type after another did:
+            // the object is the one the first module's name stands for,
+            // as it is for a name asked for once both were there.
+            let state = if unscoped && native.home != ty {
+                let home = self.singleton_handle(&native.home, None);
+                all.index.borrow_mut().insert(ty, home);
+                State::Same(home)
+            } else {
+                State::Unmade
+            };
+            let mut entries = all.entries.borrow_mut();
+            entries[i].window = native.scope == SingletonScope::Window;
+            if matches!(entries[i].state, State::Keys(_)) || matches!(state, State::Same(_)) {
+                entries[i].state = state;
+            }
+        }
+    }
+
+    /// The entry `handle` stands for: its own, or for another name of the
+    /// type, that name's.
+    fn singleton_entry(&self, handle: usize) -> usize {
+        match self.extension::<Singletons>().entries.borrow()[handle].state {
+            State::Same(home) => home,
+            _ => handle,
         }
     }
 
@@ -754,6 +784,7 @@ impl Engine {
     }
 
     fn singleton_value_at(&self, handle: usize) -> JsValue {
+        let handle = self.singleton_entry(handle);
         if let Some(o) = self.singleton_made(handle) {
             return self.to_js(&Value::Object(o));
         }
@@ -824,6 +855,7 @@ impl Engine {
 
     /// The object of the entry `handle`, made now if it was not.
     fn singleton_made(&self, handle: usize) -> Option<ObjectId> {
+        let handle = self.singleton_entry(handle);
         let all = self.extension::<Singletons>();
         let sources = all.sources.get();
         // The object as it stands, and whether its file has to be looked
@@ -839,7 +871,10 @@ impl Engine {
                     Some((*obj, file.clone()))
                 }
                 State::Making(obj) => return *obj,
-                State::Failed | State::Keys(_) | State::Outside | State::Gone => return None,
+                // `Same` is followed above, and leads to an entry of its own.
+                State::Failed | State::Keys(_) | State::Outside | State::Gone | State::Same(_) => {
+                    return None;
+                }
                 State::Again {
                     due: false, woken, ..
                 } => {
