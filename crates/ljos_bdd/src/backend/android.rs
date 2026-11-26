@@ -251,9 +251,17 @@ fn secrets_call(method: &str, args: &[&str]) -> String {
     format!("{SECRETS}.{method}({})", args.join(", "))
 }
 
-/// What the store answered, once it has: `None` while a call is under
-/// way, and the failure it gave as an error.
-fn secrets_answer(state: &Value) -> Option<Result<(bool, String)>> {
+/// What the store answered, read from `said`, the reply to the poll:
+/// `None` while a call is under way, and the failure it gave as an error.
+fn secrets_answer(said: &Value) -> Option<Result<(bool, String)>> {
+    // The inspector cuts a long reply, a long secret among it, and says
+    // so: what is left is no secret the store kept.
+    if said["truncated"] == Value::Bool(true) {
+        return Some(Err(BackendError::Failed(
+            "the system's store of secrets answered more than comes back whole".into(),
+        )));
+    }
+    let state = &said["value"];
     if state["busy"] != Value::Bool(false) {
         return None;
     }
@@ -849,7 +857,7 @@ impl AndroidBackend {
         let until = Instant::now() + SECRET_WAIT;
         loop {
             let said = running.ask("app_eval", json!({"source": state, "target": root}))?;
-            if let Some(answer) = secrets_answer(&said["value"]) {
+            if let Some(answer) = secrets_answer(&said) {
                 return answer;
             }
             if Instant::now() > until {
@@ -1798,16 +1806,32 @@ mod tests {
     #[test]
     fn the_stores_answer_is_read_once_it_is_not_busy() {
         use serde_json::json;
-        assert!(secrets_answer(&json!({"busy": true})).is_none());
-        let read = json!({"busy": false, "found": true, "secret": "s3cret", "error": ""});
+        let said = |value| json!({"value": value, "truncated": false});
+        assert!(secrets_answer(&said(json!({"busy": true}))).is_none());
+        let read = said(json!({"busy": false, "found": true, "secret": "s3cret", "error": ""}));
         assert_eq!(
             secrets_answer(&read).map(|a| a.ok()),
             Some(Some((true, "s3cret".to_owned())))
         );
-        let failed = json!({"busy": false, "found": false, "secret": "", "error": "locked"});
+        let failed = said(json!({"busy": false, "found": false, "secret": "", "error": "locked"}));
         assert!(matches!(
             secrets_answer(&failed),
             Some(Err(BackendError::Failed(why))) if why.contains("locked")
         ));
+    }
+
+    #[test]
+    fn a_secret_too_long_to_come_back_whole_is_a_failure() {
+        use serde_json::json;
+        let cut = json!({
+            "value": {"busy": false, "found": true, "secret": "s3c", "error": ""},
+            "truncated": true,
+        });
+        assert!(matches!(
+            secrets_answer(&cut),
+            Some(Err(BackendError::Failed(why))) if why.contains("whole")
+        ));
+        let replaced = json!({"value": "<an object too large to show>", "truncated": true});
+        assert!(matches!(secrets_answer(&replaced), Some(Err(_))));
     }
 }
