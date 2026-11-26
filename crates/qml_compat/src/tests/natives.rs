@@ -4,7 +4,8 @@ use super::*;
 
 /// A program's own module `Studio.Kit`: `Tone` with a `color` of its own,
 /// `Swatch` built on Qt's `Rectangle`, the singleton `Look` holding a
-/// `Palette` of `Tone`s and a `Swatch`, and `Meter` with a `size`. And
+/// `Palette` of `Tone`s and a `Swatch`, `Meter` with a `size`, and `Rows`
+/// built on Qt's `Repeater`. And
 /// `Studio.Print`, `Studio.Press` and `Studio.Clock`, whose types are named as Qt's are, and
 /// `Studio.Touch`, whose type is named as Ljós's is.
 struct Kit;
@@ -29,6 +30,7 @@ const KIT: &[KitType] = &[
         &[("palette", Some("Palette")), ("card", Some("Swatch"))],
     ),
     ("Meter", false, None, &[("size", None)]),
+    ("Rows", false, Some("Repeater"), &[]),
 ];
 
 /// A `Text` with no `color`, a `MouseArea` and a `Button` with one, built
@@ -512,6 +514,23 @@ fn an_object_of_the_programs_own_type_hides_only_its_members() {
     assert!(
         kept.to_string()
             .contains("`Qt.size` needs `size`, which a member of an object's type hides"),
+        "{kept}"
+    );
+}
+
+/// An object of the program's own type built on a view holds the delegate
+/// its default property takes, whose model's roles a lowered name could
+/// read: `Rows` is built on `Repeater`.
+#[test]
+fn a_native_type_built_on_a_view_holds_its_delegate() {
+    let Outcome::Kept(kept) = with_kit(
+        "import QtQuick\nimport Studio.Kit\nItem { Rows { model: 3; Rectangle { color: Qt.rgba(1, 0, 0, 1) } } }\n",
+    ) else {
+        panic!("lowered");
+    };
+    assert!(
+        kept.to_string()
+            .contains("`Qt.rgba` needs `rgba`, which a role of a delegate could hide"),
         "{kept}"
     );
 }
