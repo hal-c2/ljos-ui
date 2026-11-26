@@ -91,6 +91,13 @@ pub trait TypeOracle {
         true
     }
 
+    /// The keys of the plain enum `name` of the type, so a `match` that
+    /// gives each a case covers it. `None` for flags, whose keys combine,
+    /// and where the oracle cannot tell.
+    fn plain_enum_keys(&self, _ty: Self::Type, _name: &str) -> Option<Vec<String>> {
+        None
+    }
+
     /// The properties whoever makes an object of the type has to set.
     fn required(&self, ty: Self::Type) -> Vec<String>;
 
@@ -465,6 +472,14 @@ impl TypeOracle for QtTypeOracle {
 
     fn enum_is_flags(&self, ty: QtType, name: &str) -> bool {
         ty.0.enum_is_flags(name).unwrap_or(false)
+    }
+
+    fn plain_enum_keys(&self, ty: QtType, name: &str) -> Option<Vec<String>> {
+        if ty.0.enum_is_flags(name)? {
+            return None;
+        }
+        let keys = ty.0.enum_keys(name)?;
+        Some(keys.into_iter().map(str::to_string).collect())
     }
 
     fn required(&self, ty: QtType) -> Vec<String> {

@@ -3753,10 +3753,11 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
     }
 
     /// `ty` as the cases it is made of: `boolean` as `true | false`, and
-    /// an enum a QML file declares as its keys.
+    /// an enum a QML file declares, or a plain enum of a native type
+    /// (`MotionPreference`), as its keys.
     ///
-    /// DECISION: an enum of a native type is one value, as in `exhaustive`:
-    /// Qt combines its keys as flags.
+    /// DECISION: a flags enum of a native type is one value, as in
+    /// `exhaustive`: its keys combine, so no list of them covers it.
     fn cases(&mut self, ty: Ty) -> Ty {
         let mut parts = Vec::new();
         for part in self.arena.members(ty) {
@@ -3786,10 +3787,16 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
     }
 
     /// The keys of the enum `name` of the object `o`, where a QML file
-    /// declares it.
+    /// declares it or it is a plain enum of a native type.
     fn declared_keys(&self, o: u32, name: &str) -> Option<Vec<String>> {
         let kind = self.kind_of(o)?;
-        self.c.types.enum_keys(&kind, name)
+        if let Some(keys) = self.c.types.enum_keys(&kind, name) {
+            return Some(keys);
+        }
+        match &self.objs[o as usize] {
+            Obj::Native(ty) => self.c.types.oracle.plain_enum_keys(*ty, name),
+            _ => None,
+        }
     }
 
     /// Facts of `left && right` being false (or of `||` being true, when
@@ -4776,7 +4783,9 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
         if self.module.is_none()
             && let Some(found) = self.c.types.find(&[name])
         {
-            return self.object_ty(&found.kind);
+            return self
+                .own_enum(&found.kind, name)
+                .unwrap_or_else(|| self.object_ty(&found.kind));
         }
         match Web::named(name) {
             Some(class) => self.arena.intern(Kind::Web(class)),
