@@ -664,6 +664,23 @@ impl Type {
         })
     }
 
+    /// The keys of the enum `name` of the type, its extension or what it
+    /// inherits, in the order declared: those of the enum a flags name
+    /// (`Alignment`) is made of, too.
+    pub fn enum_keys(&'static self, name: &str) -> Option<Vec<&'static str>> {
+        self.find(true, &|ty| {
+            ty.enums
+                .iter()
+                .find(|enumeration| enumeration.name == name)
+                .or_else(|| {
+                    ty.enums
+                        .iter()
+                        .find(|enumeration| enumeration.alias == Some(name))
+                })
+                .map(|enumeration| enumeration.keys.iter().map(|(key, _)| *key).collect())
+        })
+    }
+
     /// The first thing `get` finds in the type, its extension or what it
     /// inherits, in the order QML looks.
     fn find<T>(&'static self, enums: bool, get: &impl Fn(&'static Type) -> Option<T>) -> Option<T> {

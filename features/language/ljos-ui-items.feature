@@ -256,8 +256,16 @@ Feature: The items Ljós's API has as Qt Quick has them
           RectangularShadow { anchors.fill: card; blur: calm ? 4 : 12 }
           MultiEffect { source: card; anchors.fill: card; shadowEnabled: !calm }
           FrameAnimation { running: !calm; onTriggered: ticks = ticks + 1 }
+          readonly property string pace: match (App.hints.accessibility.motionPreference) {
+            when MotionPreference.None: "any"; when MotionPreference.Reduced: "calm";
+          }
           function follow() { ticks = 0 }
-          Component.onCompleted: App.hints.colorSchemeChanged.connect(follow)
+          function paint(scheme: ColorScheme): void {}
+          Component.onCompleted: {
+            App.hints.colorSchemeChanged.connect(follow)
+            paint(App.hints.colorScheme)
+            paint(ColorScheme.Dark)
+          }
         }
         """
       When the files are checked

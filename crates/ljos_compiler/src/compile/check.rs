@@ -437,6 +437,24 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
         self.arena.intern(Kind::Object(o))
     }
 
+    /// The enum a native type of the name is, where it declares an enum of
+    /// its own name (`ColorScheme`, `MotionPreference`: docs/DIALECT.md
+    /// §4.3.1), so `scheme: ColorScheme` takes `ColorScheme.Dark` and what
+    /// `App.hints.colorScheme` holds.
+    fn own_enum(&mut self, kind: &QKind<O::Type>, name: &str) -> Option<Ty> {
+        let QKind::Builtin(ty) = kind else {
+            return None;
+        };
+        if !self.c.types.oracle.has_enum(*ty, name) {
+            return None;
+        }
+        let object = self.obj(Obj::Native(*ty));
+        Some(self.arena.intern(Kind::Enum {
+            object,
+            name: name.into(),
+        }))
+    }
+
     fn obj_name(&self, o: u32) -> String {
         match &self.objs[o as usize] {
             Obj::Native(ty) => self.c.types.oracle.name(*ty).to_string(),

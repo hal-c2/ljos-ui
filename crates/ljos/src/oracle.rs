@@ -608,6 +608,19 @@ impl TypeOracle for EngineOracle {
         }
     }
 
+    fn plain_enum_keys(&self, ty: EngineType, name: &str) -> Option<Vec<String>> {
+        match ty {
+            EngineType::Qt(ty) => QtTypeOracle.plain_enum_keys(ty, name),
+            EngineType::Native(i) => {
+                if self.enum_is_flags(ty, name) {
+                    return None;
+                }
+                let keys = self.native(i).enumeration(name)?;
+                Some(keys.iter().map(|(key, _)| key.to_string()).collect())
+            }
+        }
+    }
+
     fn required(&self, ty: EngineType) -> Vec<String> {
         match ty {
             EngineType::Qt(ty) => QtTypeOracle.required(ty),
