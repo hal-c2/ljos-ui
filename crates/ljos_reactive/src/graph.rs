@@ -1926,6 +1926,36 @@ impl<V: Clone + 'static> Graph<V> {
             .is_some_and(|f| f.node.is_some())
     }
 
+    /// Takes back the running binding's reads of its own value so far, as if
+    /// it had not made them: true where it had. A binding made of parts (a
+    /// value type's members, each bound alone in Qt) asks after each part,
+    /// and gives a read back with [`Graph::self_read`] only where that
+    /// part's own result changed what it read. A self-read leaves no edge;
+    /// it is what makes a change of the binding's result its change coming
+    /// back, a loop.
+    pub fn take_self_read(&self) -> bool {
+        let mut g = self.inner.borrow_mut();
+        let i = &mut *g;
+        let Some(n) = i.frames.last().and_then(|f| f.node) else {
+            return false;
+        };
+        i.nodes
+            .get_mut(n)
+            .is_some_and(|node| node.flags.take(Flags::SELF_READ))
+    }
+
+    /// Records that the running binding read its own value
+    /// ([`Graph::take_self_read`]).
+    pub fn self_read(&self) {
+        let mut g = self.inner.borrow_mut();
+        let i = &mut *g;
+        if let Some(n) = i.frames.last().and_then(|f| f.node)
+            && let Some(node) = i.nodes.get_mut(n)
+        {
+            node.flags.set(Flags::SELF_READ, true);
+        }
+    }
+
     /// Says that the run going on now (the innermost binding or effect, past
     /// any [`Graph::untrack`]) was stopped by a fault that may not come
     /// again, such as a full heap or an interrupt, before it read all it

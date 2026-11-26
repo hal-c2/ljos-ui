@@ -279,6 +279,42 @@ fn self_reading_binding_is_a_loop() {
 }
 
 #[test]
+fn a_self_read_taken_back_is_no_loop() {
+    let g = Graph::new();
+    let a = g.property(g.root(), 5).unwrap();
+    // Reads itself and gives back what it read, beside a part that
+    // changes the result.
+    g.bind(a, move |g| {
+        let own = g.get(a);
+        assert!(g.take_self_read());
+        own - own % 10 + 7
+    })
+    .unwrap();
+    assert_eq!(g.get(a), 7);
+    assert!(g.take_diagnostics().is_empty());
+    assert!(g.sources(a).is_empty(), "no self edge");
+}
+
+#[test]
+fn a_self_read_given_back_is_a_loop() {
+    let g = Graph::new();
+    let a = g.property(g.root(), 5).unwrap();
+    g.bind(a, move |g| {
+        let own = g.get(a);
+        assert!(g.take_self_read());
+        assert!(!g.take_self_read(), "taken");
+        g.self_read();
+        own + 1
+    })
+    .unwrap();
+    assert_eq!(g.get(a), 6);
+    assert!(matches!(
+        g.take_diagnostics()[..],
+        [Diagnostic::BindingLoop { node, .. }] if node == a
+    ));
+}
+
+#[test]
 fn handler_ping_pong_is_capped() {
     let g = Graph::new();
     let r = g.root();
