@@ -25,10 +25,11 @@ decode = [
 # Play sound on the system's device. Without it, or with no device, sound
 # goes to a null sink and the engine's clock is the media clock.
 audio = ["dep:cpal"]
-# The host's cameras on Linux, through the kernel's V4L2 interface (no
-# library of the system's). Without it, or elsewhere, there are none unless
-# the host installs a `CameraService`.
-v4l2 = ["dep:libc"]
+# The host's cameras on 64-bit Linux, through the kernel's V4L2 interface
+# (no library of the system's). Without it, or elsewhere, there are none
+# unless the host installs a `CameraService`. Its pictures are Y'CbCr,
+# converted for a viewfinder with `decode`'s colour code.
+v4l2 = ["dep:libc", "decode"]
 
 [dependencies]
 ljos_engine = { path = "../ljos_engine" }
