@@ -631,7 +631,15 @@ impl Arena {
             Kind::Global(Global::Class(web)) => format!("typeof {}", web.name()),
             Kind::Global(global) => global.name().into(),
             Kind::Enum { object: o, name } | Kind::EnumNs { object: o, name } => {
-                format!("{}.{name}", object(*o))
+                // An enum of Ljos.Ui is a type of its own name
+                // (docs/DIALECT.md §4.3.1): `MotionPreference`, not
+                // `MotionPreference.MotionPreference`.
+                let of = object(*o);
+                if of == **name {
+                    of
+                } else {
+                    format!("{of}.{name}")
+                }
             }
             Kind::Key { object: o, key } => format!("{}.{key}", object(*o)),
             Kind::Method(_, method) => match method {
