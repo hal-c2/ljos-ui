@@ -10,7 +10,8 @@
 //! listed.
 //!
 //! The structures below are the kernel's UAPI (`linux/videodev2.h`) as
-//! laid out on a 64-bit target; the module is built on those alone.
+//! laid out on a 64-bit target; the module is built there alone, and a
+//! 32-bit Linux lists no cameras of its own.
 
 #![allow(unsafe_code)]
 
@@ -43,6 +44,23 @@ const TAKEN: [u32; 3] = [NV12, YU12, YUYV];
 const BUF_TYPE_VIDEO_CAPTURE: u32 = 1;
 const MEMORY_MMAP: u32 = 1;
 const FIELD_NONE: u32 = 1;
+/// `priv` saying the fields after it (`ycbcr_enc`, `quantization`) are
+/// meant; without it a driver may leave them as anything.
+const PIX_FMT_PRIV_MAGIC: u32 = 0xfeed_cafe;
+const COLORSPACE_SMPTE240M: u32 = 2;
+const COLORSPACE_REC709: u32 = 3;
+const COLORSPACE_JPEG: u32 = 7;
+const COLORSPACE_BT2020: u32 = 10;
+const COLORSPACE_DCI_P3: u32 = 12;
+const YCBCR_ENC_601: u32 = 1;
+const YCBCR_ENC_709: u32 = 2;
+const YCBCR_ENC_XV601: u32 = 3;
+const YCBCR_ENC_XV709: u32 = 4;
+const YCBCR_ENC_BT2020: u32 = 6;
+const YCBCR_ENC_BT2020_CONST_LUM: u32 = 7;
+const YCBCR_ENC_SMPTE240M: u32 = 8;
+const QUANTIZATION_FULL_RANGE: u32 = 1;
+const QUANTIZATION_LIM_RANGE: u32 = 2;
 const CAP_VIDEO_CAPTURE: u32 = 0x0000_0001;
 const CAP_STREAMING: u32 = 0x0400_0000;
 const CAP_DEVICE_CAPS: u32 = 0x8000_0000;
@@ -348,6 +366,7 @@ impl Stream {
             height: WANTED.1,
             pixelformat,
             field: FIELD_NONE,
+            private: PIX_FMT_PRIV_MAGIC,
             ..zeroed()
         };
         // SAFETY: S_FMT takes a Format.
@@ -484,16 +503,44 @@ fn buffer(index: u32) -> Buffer {
     b
 }
 
-/// Webcams send standard-definition video's colours.
-const COLOUR: YuvColour = YuvColour {
-    matrix: YuvMatrix::Bt601,
-    full_range: false,
-};
+/// The colours the driver says its pictures are in, with the defaults
+/// of `videodev2.h`'s `V4L2_MAP_*_DEFAULT` where it says nothing: most
+/// webcams send BT.601 at video range, but not all.
+fn colour(pix: &PixFormat) -> YuvColour {
+    let extended = pix.private == PIX_FMT_PRIV_MAGIC;
+    let enc = if extended { pix.ycbcr_enc } else { 0 };
+    let quantization = if extended { pix.quantization } else { 0 };
+    let enc = match enc {
+        0 => match pix.colorspace {
+            COLORSPACE_REC709 | COLORSPACE_DCI_P3 => YCBCR_ENC_709,
+            COLORSPACE_BT2020 => YCBCR_ENC_BT2020,
+            COLORSPACE_SMPTE240M => YCBCR_ENC_SMPTE240M,
+            _ => YCBCR_ENC_601,
+        },
+        enc => enc,
+    };
+    let matrix = match enc {
+        YCBCR_ENC_709 | YCBCR_ENC_XV709 => YuvMatrix::Bt709,
+        YCBCR_ENC_BT2020 | YCBCR_ENC_BT2020_CONST_LUM => YuvMatrix::Bt2020,
+        // SMPTE 240M's coefficients are within a hair of BT.709's, the
+        // nearest matrix converted with.
+        YCBCR_ENC_SMPTE240M => YuvMatrix::Bt709,
+        YCBCR_ENC_601 | YCBCR_ENC_XV601 => YuvMatrix::Bt601,
+        _ => YuvMatrix::Bt601,
+    };
+    let full_range = match quantization {
+        QUANTIZATION_FULL_RANGE => true,
+        QUANTIZATION_LIM_RANGE => false,
+        _ => pix.colorspace == COLORSPACE_JPEG,
+    };
+    YuvColour { matrix, full_range }
+}
 
 /// One buffer's picture, in the format the driver chose.
 fn picture(pix: &PixFormat, bytes: &[u8]) -> Option<VideoFrame> {
     let (w, h) = (pix.width, pix.height);
     let stride = pix.bytesperline as usize;
+    let colour = colour(pix);
     fn plane(data: &[u8], row_stride: usize, pixel_stride: usize) -> StridedPlane<'_> {
         StridedPlane {
             data,
@@ -512,12 +559,14 @@ fn picture(pix: &PixFormat, bytes: &[u8]) -> Option<VideoFrame> {
                     plane(uv, stride, 2),
                     plane(uv.get(1..)?, stride, 2),
                 ],
-                COLOUR,
+                colour,
             )
             .ok()
         }
         YU12 => {
-            let half = stride / 2;
+            // Each chroma row is half a luma row, rounded up for an odd
+            // one as the kernel lays it out.
+            let half = stride.div_ceil(2);
             let u = bytes.get(stride * h as usize..)?;
             let v = u.get(half * (h as usize).div_ceil(2)..)?;
             VideoFrame::yuv420_strided(
@@ -528,18 +577,24 @@ fn picture(pix: &PixFormat, bytes: &[u8]) -> Option<VideoFrame> {
                     plane(u, half, 1),
                     plane(v, half, 1),
                 ],
-                COLOUR,
+                colour,
             )
             .ok()
         }
-        YUYV => yuyv(w, h, stride, bytes),
+        YUYV => yuyv(w, h, stride, bytes, colour),
         _ => None,
     }
 }
 
 /// Y'CbCr 4:2:2 packed as Y0 Cb Y1 Cr, taken to 4:2:0 by keeping the
 /// chroma of every other row.
-fn yuyv(width: u32, height: u32, stride: usize, bytes: &[u8]) -> Option<VideoFrame> {
+fn yuyv(
+    width: u32,
+    height: u32,
+    stride: usize,
+    bytes: &[u8],
+    colour: YuvColour,
+) -> Option<VideoFrame> {
     let (w, h) = (width as usize, height as usize);
     let (cw, ch) = (w.div_ceil(2), h.div_ceil(2));
     if w == 0 || h == 0 || stride < w * 2 || bytes.len() < (h - 1) * stride + w * 2 {
@@ -558,7 +613,7 @@ fn yuyv(width: u32, height: u32, stride: usize, bytes: &[u8]) -> Option<VideoFra
             }
         }
     }
-    VideoFrame::yuv420(width, height, [luma, cb, cr], COLOUR).ok()
+    VideoFrame::yuv420(width, height, [luma, cb, cr], colour).ok()
 }
 
 #[cfg(test)]
@@ -580,12 +635,12 @@ mod tests {
     fn yuyv_keeps_every_luma_and_every_other_rows_chroma() {
         // 2 by 2, rows of 6 bytes (2 of padding).
         let bytes = [10, 100, 11, 200, 0, 0, 12, 101, 13, 201, 0, 0];
-        let frame = yuyv(2, 2, 6, &bytes).unwrap();
+        let frame = yuyv(2, 2, 6, &bytes, YuvColour::default()).unwrap();
         assert_eq!(frame.format(), PixelFormat::Yuv420P8);
         let planes = frame.planes();
         assert_eq!(planes[0].data, &[10, 11, 12, 13]);
         assert_eq!((planes[1].data, planes[2].data), (&[100][..], &[200][..]));
-        assert!(yuyv(2, 2, 6, &bytes[..9]).is_none());
+        assert!(yuyv(2, 2, 6, &bytes[..9], YuvColour::default()).is_none());
     }
 
     #[test]
@@ -601,6 +656,86 @@ mod tests {
         let planes = frame.planes();
         assert_eq!(planes[0].data, &[1, 2, 3, 4]);
         assert_eq!((planes[1].data, planes[2].data), (&[50][..], &[60][..]));
+    }
+
+    #[test]
+    fn yu12_from_a_buffer() {
+        let pix = PixFormat {
+            width: 2,
+            height: 2,
+            pixelformat: YU12,
+            bytesperline: 2,
+            ..zeroed()
+        };
+        let frame = picture(&pix, &[1, 2, 3, 4, 50, 60]).unwrap();
+        let planes = frame.planes();
+        assert_eq!(planes[0].data, &[1, 2, 3, 4]);
+        assert_eq!((planes[1].data, planes[2].data), (&[50][..], &[60][..]));
+        assert!(picture(&pix, &[1, 2, 3, 4, 50]).is_none());
+    }
+
+    #[test]
+    fn yu12_of_an_odd_width_keeps_its_last_chroma_column() {
+        // 3 by 3: luma rows of 3, chroma rows of 2, two of each.
+        let pix = PixFormat {
+            width: 3,
+            height: 3,
+            pixelformat: YU12,
+            bytesperline: 3,
+            ..zeroed()
+        };
+        let mut bytes: Vec<u8> = (1..=9).collect();
+        bytes.extend([50, 51, 52, 53, 60, 61, 62, 63]);
+        let frame = picture(&pix, &bytes).unwrap();
+        let planes = frame.planes();
+        assert_eq!(planes[1].data, &[50, 51, 52, 53]);
+        assert_eq!(planes[2].data, &[60, 61, 62, 63]);
+    }
+
+    #[test]
+    fn colours_are_the_drivers_or_its_colorspaces() {
+        let pix = |colorspace, private, ycbcr_enc, quantization| PixFormat {
+            colorspace,
+            private,
+            ycbcr_enc,
+            quantization,
+            ..zeroed()
+        };
+        let c = |matrix, full_range| YuvColour { matrix, full_range };
+        // Nothing said: SMPTE 170M's, as most webcams send.
+        assert_eq!(colour(&pix(0, 0, 0, 0)), c(YuvMatrix::Bt601, false));
+        assert_eq!(
+            colour(&pix(COLORSPACE_REC709, 0, 0, 0)),
+            c(YuvMatrix::Bt709, false)
+        );
+        // JPEG's colorspace is full range unless the driver says not.
+        assert_eq!(
+            colour(&pix(COLORSPACE_JPEG, 0, 0, 0)),
+            c(YuvMatrix::Bt601, true)
+        );
+        assert_eq!(
+            colour(&pix(
+                COLORSPACE_JPEG,
+                PIX_FMT_PRIV_MAGIC,
+                0,
+                QUANTIZATION_LIM_RANGE
+            )),
+            c(YuvMatrix::Bt601, false)
+        );
+        assert_eq!(
+            colour(&pix(
+                0,
+                PIX_FMT_PRIV_MAGIC,
+                YCBCR_ENC_BT2020,
+                QUANTIZATION_FULL_RANGE
+            )),
+            c(YuvMatrix::Bt2020, true)
+        );
+        // Without the magic the extended fields are not the driver's.
+        assert_eq!(
+            colour(&pix(0, 0, YCBCR_ENC_709, QUANTIZATION_FULL_RANGE)),
+            c(YuvMatrix::Bt601, false)
+        );
     }
 
     #[test]
