@@ -730,9 +730,11 @@ impl Arrange<'_, '_> {
             if told == Some(Some(true)) && (shown == Some(None) || !some) {
                 told = Some(None);
             }
+            // One that always fills takes the room, whatever one that
+            // fills only some of the time does.
             match told {
-                Some(Some(true)) => fills = fills.map(|_| true),
-                Some(None) => fills = None,
+                Some(Some(true)) => fills = Some(true),
+                Some(None) if fills != Some(true) => fills = None,
                 _ => {}
             }
         }
@@ -911,7 +913,9 @@ impl Arrange<'_, '_> {
             changes: Vec::new(),
             roots: RefCell::default(),
         };
-        let mut grows = false;
+        // One child that always grows it outweighs one that grows it only
+        // some of the time.
+        let (mut grows, mut maybe) = (false, false);
         let maybe_none = inner.maybe_none(nested);
         for child in inner.laid_out(nested)? {
             // A hidden child takes no room in Qt's layout or in Ljós's box,
@@ -931,14 +935,22 @@ impl Arrange<'_, '_> {
                 // stop at.
                 None => match inner.said(child, FILL[axis]).map(|s| s.boolean()) {
                     Some(Some(true)) if inner.said(child, MAXIMUM[axis]).is_none() => true,
-                    Some(Some(true)) | Some(None) => return Err(fills(self)),
+                    Some(Some(true)) => return Err(fills(self)),
+                    Some(None) => {
+                        maybe = true;
+                        false
+                    }
                     _ => false,
                 },
             };
             if can && (shown == Some(None) || !some) {
-                return Err(fills(self));
+                maybe = true;
+                continue;
             }
             grows |= can;
+        }
+        if maybe && !grows {
+            return Err(fills(self));
         }
         match bound(nested, FILL[axis]).map(boolean) {
             Some(Some(true)) if !grows => Err(fills(self)),
