@@ -53,13 +53,11 @@ Feature: A component made from an address or from QML text, in Ljós's API
           property bool ready: made.status === Component.Ready
           property int n: made.createObject(root).n
           property int fromText: maker.fromText(root).n
-          property bool none: Qt.createComponent("") === null
         }
         """
       Then the property "ready" of "root" is true
       And the property "n" of "root" is 2
       And the property "fromText" of "root" is 2
-      And the property "none" of "root" is true
 
     @ljos-only
     Scenario: Component.load and Component.createFromText read it from the file whose script asks
@@ -87,18 +85,42 @@ Feature: A component made from an address or from QML text, in Ljós's API
           property bool ready: made.status === Component.Ready
           property int n: made.createObject(root).n
           property int fromText: maker.fromText(root).n
-          property bool none: Component.load("") === null
         }
         """
       Then the property "ready" of "root" is true
       And the property "n" of "root" is 2
       And the property "fromText" of "root" is 2
-      And the property "none" of "root" is true
+
+    @qt-parity
+    Scenario: Qt's component of an empty address is null
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          property bool none: Qt.createComponent("") === null
+        }
+        """
+      Then the property "none" of "root" is true
+
+    @ljos-only
+    Scenario: Component.load of an empty address is null
+      Given the QML:
+        """qml
+        pragma Scripts: JavaScript
+        import Ljos.Ui
+        import Ljos.Core
+        Item {
+          id: root; objectName: "root"
+          property bool none: Component.load("") === null
+        }
+        """
+      Then the property "none" of "root" is true
 
   Rule: An object made from text is the one Qt's QML makes
 
     @qt-parity
-    Scenario: Qt's object from text reads the names of the parent's file and is called inline
+    Scenario: Qt's object from text reads the names of the parent's file
       Given the QML:
         """qml
         import QtQuick
@@ -106,24 +128,12 @@ Feature: A component made from an address or from QML text, in Ljós's API
           id: root; objectName: "root"
           property int base: 5
           property var kid: Qt.createQmlObject("import QtQuick; Item { objectName: 'made'; width: root.base * 2 }", root)
-          property string caught: ""
-          property bool unnamed: false
-          Component.onCompleted: {
-            try { Qt.createQmlObject("import QtQuick\nItem { nothing: 3 }", root) } catch (e) {
-              unnamed = e.qmlErrors[0].fileName.endsWith("/inline")
-            }
-            try { Qt.createQmlObject("import QtQuick; Item { }", null) } catch (e) {
-              caught = e.message
-            }
-          }
         }
         """
       Then the property "width" of "root/made" is 10
-      And the property "unnamed" of "root" is true
-      And the property "caught" of "root" is "Qt.createQmlObject(): Missing parent object"
 
     @ljos-only
-    Scenario: Component.createFromText makes it so in a file of Ljós's API
+    Scenario: Component.createFromText reads the names of the parent's file
       Given the QML:
         """qml
         pragma Scripts: JavaScript
@@ -132,22 +142,82 @@ Feature: A component made from an address or from QML text, in Ljós's API
         Item {
           id: root; objectName: "root"
           property int base: 5
-          property Object kid: Component.createFromText("import QtQuick; Item { objectName: 'made'; width: root.base * 2 }", root)
-          property string caught: ""
+          Component.onCompleted: Component.createFromText("import QtQuick; Item { objectName: 'made'; width: root.base * 2 }", root)
+        }
+        """
+      Then the property "width" of "root/made" is 10
+
+    @qt-parity
+    Scenario: Qt's object from text that does not compile is told of in a file called inline
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          property bool unnamed: false
+          Component.onCompleted: {
+            try { Qt.createQmlObject("import QtQuick\nItem { nothing: 3 }", root) } catch (e) {
+              unnamed = e.qmlErrors[0].fileName.endsWith("/inline")
+            }
+          }
+        }
+        """
+      Then the property "unnamed" of "root" is true
+
+    @ljos-only
+    Scenario: Component.createFromText of text that does not compile is told of in a file called inline
+      Given the QML:
+        """qml
+        pragma Scripts: JavaScript
+        import Ljos.Ui
+        import Ljos.Core
+        Item {
+          id: root; objectName: "root"
           property bool unnamed: false
           Component.onCompleted: {
             try { Component.createFromText("import QtQuick\nItem { nothing: 3 }", root) } catch (e) {
               unnamed = e.qmlErrors[0].fileName.endsWith("/inline")
             }
+          }
+        }
+        """
+      Then the property "unnamed" of "root" is true
+
+    @qt-parity
+    Scenario: Qt's object from text without a parent throws
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          property string caught: ""
+          Component.onCompleted: {
+            try { Qt.createQmlObject("import QtQuick; Item { }", null) } catch (e) {
+              caught = e.message
+            }
+          }
+        }
+        """
+      Then the property "caught" of "root" is "Qt.createQmlObject(): Missing parent object"
+
+    @ljos-only
+    Scenario: Component.createFromText without a parent throws
+      Given the QML:
+        """qml
+        pragma Scripts: JavaScript
+        import Ljos.Ui
+        import Ljos.Core
+        Item {
+          id: root; objectName: "root"
+          property string caught: ""
+          Component.onCompleted: {
             try { Component.createFromText("import QtQuick; Item { }", null) } catch (e) {
               caught = e.message
             }
           }
         }
         """
-      Then the property "width" of "root/made" is 10
-      And the property "unnamed" of "root" is true
-      And the property "caught" of "root" is "Component.createFromText(): Missing parent object"
+      Then the property "caught" of "root" is "Component.createFromText(): Missing parent object"
 
     @ljos-only @headless
     Scenario: The file in Ljós's API checks clean
@@ -162,6 +232,7 @@ Feature: A component made from an address or from QML text, in Ljós's API
             return made.status === Component.Ready
           }
           function fromText(text: string): Object { return Component.createFromText(text, root, "dyn/at") }
+          function fromTextAt(text: string, place?: string): Object { return Component.createFromText(text, root, place) }
         }
         """
       When the files are checked
