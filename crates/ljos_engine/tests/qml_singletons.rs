@@ -294,6 +294,33 @@ fn a_native_singleton_is_one_object_of_the_engine() {
     assert_eq!(other.read_by_name(theirs, "volume").to_number(), 0.0);
 }
 
+/// A module that has a singleton another module has, as a dialect has a
+/// type of the one it comes from, has the same object: what a file of
+/// either reads and what the host is given are one.
+#[test]
+fn a_native_singleton_of_two_modules_is_one_object() {
+    let h = with_settings();
+    h.engine
+        .register_singleton::<Settings>("Example.Again", Version::new(1, 0));
+    let settings = h.engine.singleton::<Settings>().unwrap();
+    assert_eq!(
+        h.engine.singleton_by_name("Example.Again", "Settings"),
+        Some(settings)
+    );
+    assert_eq!(
+        h.engine.singleton_by_name("Example", "Settings"),
+        Some(settings)
+    );
+    h.engine.set(settings, Settings::VOLUME, 7).unwrap();
+    let root = h.load(
+        r#"import QtQuick
+import Example.Again
+Item { property int volume: Settings.volume }
+"#,
+    );
+    assert_eq!(h.num(root, "volume"), 7.0);
+}
+
 #[test]
 fn a_native_singleton_that_is_not_registered_is_an_error() {
     let h = engine();
