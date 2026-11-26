@@ -97,6 +97,25 @@ fn a_layout_in_a_layout_is_told_to_fill_where_it_grows() {
     }
 }
 
+/// A child that always fills takes the room whatever one shown only some
+/// of the time does, in a layout that is sized and in one that grows.
+#[test]
+fn a_child_that_always_fills_outweighs_one_that_fills_some_of_the_time() {
+    for body in [
+        "Item { property bool on; RowLayout { width: 50; Item { Layout.fillWidth: true } \
+         Item { visible: on; Layout.fillWidth: true } } }",
+        "Item { property bool on; RowLayout { width: 50; Item { visible: on; Layout.fillWidth: true } \
+         Item { Layout.fillWidth: true } } }",
+        "Item { property bool on; ColumnLayout { RowLayout { Item { Layout.fillWidth: true } \
+         Item { visible: on; Layout.fillWidth: true } } } }",
+        "Item { property bool on; ColumnLayout { RowLayout { Item { visible: on; Layout.fillWidth: true } \
+         Item { Layout.fillWidth: true } } } }",
+    ] {
+        let text = lowered(&format!("{LAYOUTS}{body}\n"));
+        assert!(text.contains("Row {"), "{body}: {text}");
+    }
+}
+
 /// A `GridLayout` is a `Grid` with Qt's gaps written out, and each child
 /// centred in its row; a name of it in a script is `Grid`'s.
 #[test]
