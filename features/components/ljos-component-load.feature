@@ -169,3 +169,76 @@ Feature: A component made from an address or from QML text, in Ljós's API
         """
         3 files, 0 errors, 0 warnings
         """
+
+  Rule: ljos migrate writes Qt's makers as the component type's
+
+    @api-QtQml.Qt.createComponent @api-QtQml.Qt.createQmlObject
+    @ljos-only @headless
+    Scenario: A file that makes objects through Qt is lowered to Component's makers
+      Given the file "Host.qml":
+        """qml
+        import QtQuick
+        Item {
+          id: host
+          property string url: "Part.qml"
+          function load() {
+            const component = Qt.createComponent(url)
+            return component.status === Component.Ready ? component.createObject(host) : null
+          }
+          function fromText(text, file) { return Qt.createQmlObject(text, host, file) }
+          Component.onCompleted: load()
+        }
+        """
+      When the author runs "ljos migrate --write ."
+      Then the command prints:
+        """
+        lowered ./Host.qml (3 edits)
+        scripts of ./Host.qml stay JavaScript: typed, ljos check finds 3
+        lowered ./Part.qml (1 edits)
+        lowered ./dyn/Part.qml (1 edits)
+        3 files, 3 lowered, 0 kept
+        """
+      And the file "Host.qml" is:
+        """qml
+        pragma Scripts: JavaScript
+        import Ljos.Ui
+        import Ljos.Core
+        Item {
+          id: host
+          property string url: "Part.qml"
+          function load() {
+            const component = Component.load(url)
+            return component.status === Component.Ready ? component.createObject(host) : null
+          }
+          function fromText(text, file) { return Component.createFromText(text, host, file) }
+          Component.onCompleted: load()
+        }
+        """
+
+    @ljos-only
+    Scenario: The file as written in Qt's QML, lowered, reads the address from its own file
+      Given Qt QML is lowered to the Ljós API
+      And the file "dyn/Maker.qml":
+        """qml
+        import QtQuick
+        Item {
+          function load() { return Qt.createComponent("Part.qml") }
+          function fromText(parent) { return Qt.createQmlObject("import QtQuick; Part { }", parent) }
+        }
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        import "dyn" as D
+        Item {
+          id: root; objectName: "root"
+          D.Maker { id: maker }
+          property Component made: maker.load()
+          property bool ready: made.status === Component.Ready
+          property int n: made.createObject(root).n
+          property int fromText: maker.fromText(root).n
+        }
+        """
+      Then the property "ready" of "root" is true
+      And the property "n" of "root" is 2
+      And the property "fromText" of "root" is 2

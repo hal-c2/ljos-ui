@@ -2853,10 +2853,9 @@ impl<'a> Visit<'a> for Script<'_, '_> {
             self.pass.members.read_off(qt.span.start as usize);
         }
         // A parameter or a local called `Qt` is no global: its members stay.
-        if let Expression::Identifier(qt) = &it.object
-            && qt.name == "Qt"
-            && !self.own.binds("Qt", qt.span.start)
-        {
+        let global_qt = matches!(&it.object, Expression::Identifier(qt)
+            if qt.name == "Qt" && !self.own.binds("Qt", qt.span.start));
+        if global_qt && let Expression::Identifier(qt) = &it.object {
             let span = |s: qml_syntax::Span| s.start as usize..s.end as usize;
             self.pass.members.qt(
                 span(it.span),
@@ -2866,8 +2865,10 @@ impl<'a> Visit<'a> for Script<'_, '_> {
                 None,
             );
         }
-        if name == "createQmlObject" {
-            // The text is compiled when the script runs, as written.
+        if name == "createQmlObject" && !global_qt {
+            // Read off something the pass cannot follow to `Qt`: the text is
+            // compiled when the script runs, through an object it does not
+            // know.
             self.keep(Cause::QmlText, it.property.span.start);
         }
         if is_grab_permissions(name) {

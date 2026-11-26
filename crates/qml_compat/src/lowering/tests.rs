@@ -175,7 +175,7 @@ fn a_file_is_lowered_again_when_one_it_uses_through_another_turns() {
     lowering.settle(&project);
     assert!(text(&lowering, "app/Main").contains("fill: \"red\""));
 
-    let kept = "import QtQuick\nRectangle { function f() { Qt.createQmlObject(\"\", this) } }\n";
+    let kept = "import QtQuick\nRectangle { function f(q) { q.createQmlObject(\"\", this) } }\n";
     lowering.put("app/Swatch", kept.to_string());
     lowering.settle(&project);
     cause(&lowering, "app/Swatch");
@@ -219,7 +219,7 @@ fn a_file_is_lowered_again_when_one_it_uses_is_kept_or_lowered() {
     lowering.settle(&project);
     assert!(text_of(&lowering).contains("fill: \"red\""));
 
-    let kept = "import QtQuick\nRectangle { function f() { Qt.createQmlObject(\"\", this) } }\n";
+    let kept = "import QtQuick\nRectangle { function f(q) { q.createQmlObject(\"\", this) } }\n";
     lowering.put("app/Swatch", kept.to_string());
     lowering.settle(&project);
     cause(&lowering, "app/Swatch");

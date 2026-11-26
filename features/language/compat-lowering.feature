@@ -293,7 +293,7 @@ Feature: Qt's QML lowered to Ljós's API
         import QtQuick
         Rectangle {
           width: 60; height: 60; color: "#203040"
-          function copy() { return Qt.createQmlObject("import QtQuick; Item {}", this) }
+          function copy(q) { return q.createQmlObject("import QtQuick; Item {}", this) }
           Needle { x: 28; y: 6 }
         }
         """
@@ -310,8 +310,8 @@ Feature: Qt's QML lowered to Ljós's API
       When the author runs "ljos migrate app"
       Then the command prints:
         """
-        kept app/Gauges/Dial.qml:4:31: it makes objects from QML text, which is not lowered yet
-        kept app/Gauges/Needle.qml:1:1: it is used by `Dial.qml`, which is kept: it makes objects from QML text, which is not lowered yet
+        kept app/Gauges/Dial.qml:4:31: it makes objects from QML text through an object other than `Qt`, which the pass cannot follow
+        kept app/Gauges/Needle.qml:1:1: it is used by `Dial.qml`, which is kept: it makes objects from QML text through an object other than `Qt`, which the pass cannot follow
         would lower app/Main.qml (3 edits)
         3 files, 1 lowered, 2 kept
         """

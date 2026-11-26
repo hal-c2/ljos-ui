@@ -2,10 +2,98 @@
 
 use super::*;
 
+/// `Qt.createComponent(address)` is `Component.load(address)`, which
+/// resolves the address against the file the script is written in, as
+/// `Qt`'s does: the call is renamed and nothing else of it changes.
 #[test]
-fn qml_text_made_while_the_file_runs_keeps_it() {
+fn a_component_of_an_address_is_loaded_through_component() {
+    assert_eq!(
+        lowered(
+            "import QtQuick\nItem {\n  property string url: \"Page.qml\"\n  function f() { const c = Qt.createComponent(url); return c.status === Component.Ready }\n  Component.onCompleted: f()\n  Component { id: c; Item { } }\n}\n"
+        ),
+        "pragma Scripts: JavaScript; import Ljos.Ui; import Ljos.Core\nItem {\n  property string url: \"Page.qml\"\n  function f() { const c = Component.load(url); return c.status === Component.Ready }\n  Component.onCompleted: f()\n  Component { id: c; Item { } }\n}\n"
+    );
+}
+
+#[test]
+fn a_component_asked_for_with_a_mode_a_parent_or_by_module_keeps_the_file() {
+    for written in [
+        "Qt.createComponent(\"Page.qml\", Component.Asynchronous)",
+        "Qt.createComponent(\"Page.qml\", Component.PreferSynchronous, this)",
+        "Qt.createComponent(\"QtQuick\", \"Rectangle\")",
+        "Qt.createComponent(...[\"Page.qml\"])",
+        "Qt.createComponent()",
+    ] {
+        assert_eq!(
+            kept_for(&format!(
+                "import QtQuick\nItem {{ function f() {{ return {written} }} }}\n"
+            )),
+            "`Qt.createComponent` given other than one address (a mode, a parent, a module) has no home in Ljós's API yet",
+            "{written}"
+        );
+    }
+    assert_eq!(
+        kept_for("import QtQuick\nItem { property var make: Qt.createComponent }\n"),
+        "`Qt.createComponent` has no home in Ljós's API yet"
+    );
+}
+
+/// `Qt.createQmlObject(text, parent, place)` is
+/// `Component.createFromText(text, parent, place)`; the text is compiled
+/// as written when the script runs, as Qt's QML when it imports Qt's
+/// modules.
+#[test]
+fn qml_text_made_while_the_file_runs_is_made_through_component() {
+    assert_eq!(
+        lowered(
+            "import QtQuick\nItem { function f(t, at) { return [Qt.createQmlObject(t, this), Qt.createQmlObject(t, this, at)] } }\n"
+        ),
+        "pragma Scripts: JavaScript; import Ljos.Ui; import Ljos.Core\nItem { function f(t, at) { return [Component.createFromText(t, this), Component.createFromText(t, this, at)] } }\n"
+    );
+    for written in [
+        "Qt.createQmlObject(t)",
+        "Qt.createQmlObject(t, this, \"a\", 4)",
+        "Qt.createQmlObject(...[t, this])",
+    ] {
+        assert_eq!(
+            kept_for(&format!(
+                "import QtQuick\nItem {{ function f(t) {{ return {written} }} }}\n"
+            )),
+            "`Qt.createQmlObject` given other than a text, a parent and a place has no home in Ljós's API yet",
+            "{written}"
+        );
+    }
+}
+
+/// `Component` read off (`Component.Ready`) or made (`Component { }`) is
+/// the one `Ljos.Core` has; any other word of that name takes it.
+#[test]
+fn a_maker_of_qt_whose_component_the_file_names_otherwise_keeps_the_file() {
+    assert_eq!(
+        kept_for(
+            "import QtQuick\nItem { function f() { const Component = 1; return Qt.createComponent(\"Page.qml\") } }\n"
+        ),
+        "`Qt.createComponent` needs `Component`, which the file names something else"
+    );
+    let beside = |name: &str| (name == "Component").then(|| root_of("Item", &[]));
+    let Outcome::Kept(kept) = lower(
+        "import QtQuick\nItem { function f(t) { return Qt.createQmlObject(t, this) } }\n",
+        &beside,
+    ) else {
+        panic!("lowered");
+    };
+    assert_eq!(
+        kept.to_string(),
+        "`Qt.createQmlObject` needs `Component`, which a file beside it has"
+    );
+}
+
+/// A `createQmlObject` read off something other than the global `Qt` is
+/// one the pass cannot follow.
+#[test]
+fn qml_text_made_through_another_object_keeps_the_file() {
     assert!(
-        kept_for("import QtQuick\nItem { function f() { Qt.createQmlObject(\"import QtQuick; Rectangle {}\", this) } }\n")
+        kept_for("import QtQuick\nItem { function f(q) { q.createQmlObject(\"import QtQuick; Rectangle {}\", this) } }\n")
             .contains("QML text")
     );
 }
