@@ -25,6 +25,13 @@ in place.
   directories, and its secrets, kept with AES-GCM under a key in the Android
   Keystore. Keep its methods if the application shrinks its code (R8): the
   native side calls them by name.
+- `dev.ljos.LjosCamera` is the system's cameras for ljos_media's
+  `Camera`: Camera2 streams YUV_420_888 pictures into an `ImageReader`, and
+  each one's planes reach the native side as direct buffers with their
+  strides. An application that uses a camera declares `"CAMERA"` in
+  `[package.metadata.ljos.android] permissions` and asks for it
+  (QtCore's `CameraPermission`) before starting the camera; without it the camera's
+  `error` says the system refused.
 - The inspector: `ljos android run --mcp=inspect` builds the library with
   `ljos/mcp` and starts the activity with the `dev.ljos.MCP` extra, which
   `LjosActivity` hands to the application as `LJOS_MCP` (in a debuggable

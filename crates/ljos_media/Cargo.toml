@@ -56,6 +56,13 @@ cpal = { workspace = true, optional = true }
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = { workspace = true, optional = true }
 
+# The system's cameras on Android, through the template's Camera2 class.
+[target.'cfg(target_os = "android")'.dependencies]
+ljos_jni = { path = "../ljos_jni" }
+# Named here as well: `jni_str!` and `jni_sig!` expand to paths in `::jni`.
+jni.workspace = true
+log.workspace = true
+
 [dev-dependencies]
 ljos_compiler = { path = "../ljos_compiler" }
 

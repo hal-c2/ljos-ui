@@ -4688,13 +4688,16 @@ dependencies = [
  "filmcraft-isobmff",
  "filmcraft-media",
  "filmcraft-time",
+ "jni",
  "libc",
  "ljos_compiler",
  "ljos_engine",
+ "ljos_jni",
  "ljos_platform",
  "ljos_quick",
  "ljos_render",
  "ljos_runtime",
+ "log",
  "thiserror 2.0.21",
 ]
 

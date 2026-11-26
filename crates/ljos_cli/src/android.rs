@@ -46,7 +46,7 @@ const MCP_EXTRA: &str = "dev.ljos.MCP";
 const TOKEN_DIR: &str = "files/target/ljos";
 
 /// The Gradle template, by the path it is written to in the project.
-const TEMPLATE: [(&str, &str); 13] = [
+const TEMPLATE: [(&str, &str); 14] = [
     (
         "settings.gradle.kts",
         include_str!("../../../android/settings.gradle.kts"),
@@ -88,6 +88,10 @@ const TEMPLATE: [(&str, &str); 13] = [
     (
         "app/src/main/java/dev/ljos/LjosPermissions.java",
         include_str!("../../../android/app/src/main/java/dev/ljos/LjosPermissions.java"),
+    ),
+    (
+        "app/src/main/java/dev/ljos/LjosCamera.java",
+        include_str!("../../../android/app/src/main/java/dev/ljos/LjosCamera.java"),
     ),
     (
         "app/src/debug/AndroidManifest.xml",
@@ -1050,6 +1054,28 @@ mod tests {
             .map(|(_, t)| *t)
             .unwrap();
         assert!(activity.contains("LjosPermissions.answered(this, code, names, results);"));
+    }
+
+    #[test]
+    fn the_camera_answers_the_native_side() {
+        let java = TEMPLATE
+            .iter()
+            .find(|(p, _)| p.ends_with("LjosCamera.java"))
+            .map(|(_, t)| *t)
+            .unwrap();
+        // ljos_media's AndroidCameras calls these by name and signature, and
+        // Java_dev_ljos_LjosCamera_nativeFrame / _nativeLost hear the
+        // capture.
+        assert!(java.contains("public final class LjosCamera"));
+        for method in [
+            "public static String list(Context context)",
+            "public static void open(Context context, String id, long handle)",
+            "public static void close(long handle)",
+            "private static native void nativeLost(long handle, String why);",
+            "private static native void nativeFrame(",
+        ] {
+            assert!(java.contains(method), "{method}");
+        }
     }
 
     #[test]
