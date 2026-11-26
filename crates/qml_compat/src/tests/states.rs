@@ -156,3 +156,23 @@ fn names_no_type_renames_are_left_as_they_are_wherever_they_point() {
     assert!(text.contains("properties: \"x,opacity\""), "{text}");
     assert!(text.contains("property: \"opacity\"; from: 0"), "{text}");
 }
+
+/// Qt's table has `Easing` among QtQml's own types, and Ljós has it in
+/// `Ljos.Ui` with its animations: an animation's curve is lowered as it is
+/// written, whichever module the file reads it from.
+#[test]
+fn an_easing_curve_is_lowered_as_it_is_written() {
+    for (source, out) in [
+        (
+            "import QtQuick\nItem { Behavior on x { NumberAnimation { easing.type: Easing.OutCubic } } }\n",
+            "import Ljos.Ui\nItem { Behavior on x { NumberAnimation { easing.type: Easing.OutCubic } } }\n",
+        ),
+        (
+            "import QtQml\nimport QtQuick\nItem { property int curve: Easing.InOutQuad }\n",
+            "Item { property int curve: Easing.InOutQuad }\n",
+        ),
+    ] {
+        let text = lowered(source);
+        assert!(text.ends_with(out), "{source}: {text}");
+    }
+}
