@@ -93,7 +93,7 @@ ljos = { path = ".", features = ["dev-qml", "build", "render", "testing"] }
 x11rb.workspace = true
 
 [features]
-default = ["shell", "media", "media-audio", "collation", "woff"]
+default = ["shell", "media", "media-audio", "media-camera", "collation", "woff"]
 # An application's own Rust on a page: its derive and `#[qml_impl]` also
 # generate the face `ljos-web faces` builds. Nothing on any other target.
 web = ["dep:ljos_web"]
@@ -119,6 +119,10 @@ media = ["dep:ljos_media", "ljos_shell?/media"]
 # (`default-features = false, features = ["media"]`). Without it sound
 # goes to a null sink.
 media-audio = ["media", "ljos_media/audio", "ljos_shell?/media-audio"]
+# The host's cameras for Camera (V4L2 on Linux, through the kernel's
+# interface alone: no library of the system's). On by default; without it
+# a Camera finds none unless the program gives it some (`set_cameras`).
+media-camera = ["media", "ljos_media/v4l2", "ljos_shell?/media-camera"]
 # QtWebEngine (WebEngineView and its kin), in the Engine `engine()` makes
 # and, with `shell`, in the shell's: live pages drawn off-screen by the
 # Chromium Embedded Framework into the scene. Off by default: it needs

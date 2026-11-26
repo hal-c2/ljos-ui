@@ -1214,6 +1214,23 @@ pub trait Platform: Backend {
         ))
     }
 
+    /// The system has the camera `name`, the first one its default. Said
+    /// before the QML; without it there is none.
+    fn add_camera(&mut self, _name: &str) -> Result<()> {
+        Err(BackendError::NotImplemented("a camera the system has"))
+    }
+
+    /// The camera `name` captures a picture of one colour, `width` by
+    /// `height`.
+    fn camera_captures(&mut self, _name: &str, _width: u32, _height: u32) -> Result<()> {
+        Err(BackendError::NotImplemented("a camera the system has"))
+    }
+
+    /// The camera `name` is taken away.
+    fn camera_disconnected(&mut self, _name: &str) -> Result<()> {
+        Err(BackendError::NotImplemented("a camera the system has"))
+    }
+
     /// The system's position service is at `latitude`, `longitude` and
     /// `altitude` (NaN when it is not known). Said before anything is
     /// loaded; without it there is no service, as on a desktop.

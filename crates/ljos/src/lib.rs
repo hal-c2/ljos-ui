@@ -226,8 +226,10 @@ pub mod reload {
 #[cfg(not(target_arch = "wasm32"))]
 pub mod media {
     pub use ljos_media::{
-        DecodeError, Decoder, FrameError, MediaStream, StreamError, StreamFormat, StreamOptions,
-        VideoFrame, VideoFrameInput, VideoSink, YuvColour, YuvMatrix,
+        CameraFrames, CameraInfo, CameraPosition, CameraService, CameraTap, CameraTapError,
+        Capture, DecodeError, Decoder, FakeCameras, FrameError, MediaStream, NoCameras,
+        PixelFormat, Plane, StreamError, StreamFormat, StreamOptions, StridedPlane, VideoFrame,
+        VideoFrameInput, VideoSink, YuvColour, YuvMatrix, cameras, set_cameras, tap_camera,
     };
 }
 #[cfg(feature = "render")]

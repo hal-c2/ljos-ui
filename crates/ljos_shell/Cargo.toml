@@ -148,7 +148,7 @@ android_logger = { workspace = true, optional = true }
 libc.workspace = true
 
 [features]
-default = ["media", "media-audio"]
+default = ["media", "media-audio", "media-camera"]
 # The Android shell (src/android.rs): the application on a thread of its
 # own, lent a surface by each activity. Only does anything on Android.
 android = ["ljos_host/android", "dep:android-activity", "dep:ndk", "dep:log", "dep:raw-window-handle", "dep:android_logger"]
@@ -157,6 +157,8 @@ android = ["ljos_host/android", "dep:android-activity", "dep:ndk", "dep:log", "d
 media = ["dep:ljos_media"]
 # Sound through the system's output device (cpal).
 media-audio = ["media", "ljos_media/audio"]
+# The host's cameras (V4L2 on Linux; the kernel's interface alone).
+media-camera = ["media", "ljos_media/v4l2"]
 # QtWebEngine: live pages drawn off-screen by CEF into the scene.
 webengine = ["dep:ljos_webengine", "ljos_webengine/cef"]
 # QtQuick3D's views: drawn by the painter on its own device (egui-wgpu's, or

@@ -2374,6 +2374,9 @@ module QtCore
 module QtMultimedia
 	AudioDevice QtMultimedia.AudioDevice
 	AudioOutput QtMultimedia.AudioOutput
+	Camera QtMultimedia.Camera
+	CameraDevice QtMultimedia.CameraDevice
+	CaptureSession QtMultimedia.CaptureSession
 	MediaDevices QtMultimedia.MediaDevices
 	MediaMetaData QtMultimedia.MediaMetaData
 	MediaPlayer QtMultimedia.MediaPlayer
@@ -2400,6 +2403,34 @@ module QtMultimedia
 		method setVolume
 		method setMuted
 		method setDevice
+	type QtMultimedia.Camera Camera
+		prototype QtQml.QtObject named
+		enum Error NoError=0 CameraError=1
+		prop active QtQml.bool named
+		prop cameraDevice QtMultimedia.CameraDevice named pointer
+		prop error Error readonly
+		prop errorString QtQml.string named readonly
+		signal activeChanged
+		signal cameraDeviceChanged
+		signal errorChanged
+		signal errorOccurred error:int errorString:string
+		method start
+		method stop
+		method setActive
+	type QtMultimedia.CameraDevice CameraDevice
+		prototype QtQml.QtObject named
+		is uncreatable
+		enum Position UnspecifiedPosition=0 BackFace=1 FrontFace=2
+		prop id QtQml.string named readonly
+		prop description QtQml.string named readonly
+		prop isDefault QtQml.bool named readonly
+		prop position Position readonly
+	type QtMultimedia.CaptureSession CaptureSession
+		prototype QtQml.QtObject named
+		prop camera QtMultimedia.Camera named pointer
+		prop videoOutput QtQml.QtObject named pointer
+		signal cameraChanged
+		signal videoOutputChanged
 	type QtMultimedia.MediaDevices MediaDevices
 		prototype QtQml.QtObject named
 		prop audioInputs QtQml.var named list readonly
@@ -2407,7 +2438,7 @@ module QtMultimedia
 		prop videoInputs QtQml.var named list readonly
 		prop defaultAudioInput QtMultimedia.AudioDevice named pointer readonly
 		prop defaultAudioOutput QtMultimedia.AudioDevice named pointer readonly
-		prop defaultVideoInput QtQml.var named readonly
+		prop defaultVideoInput QtMultimedia.CameraDevice named pointer readonly
 		signal audioInputsChanged
 		signal audioOutputsChanged
 		signal videoInputsChanged

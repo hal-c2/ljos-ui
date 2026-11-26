@@ -57,6 +57,9 @@ pub struct FakePlatform {
     /// The count the application sets as it starts, when the scenario
     /// says one.
     badge_at_start: Option<u32>,
+    /// The system's cameras, which capture what the scenario says; none
+    /// unless it says so, and never the machine's own.
+    cameras: ljos_media::FakeCameras,
 }
 
 /// The system's badge on the application's icon. A system that asks
@@ -123,6 +126,7 @@ impl FakePlatform {
         if let Some(position) = &self.position {
             ljos_positioning::set_service(engine, Rc::new(position.clone()));
         }
+        ljos_media::set_cameras(engine, Rc::new(self.cameras.clone()));
         // A real network, as Qt has: a scenario reaches its own web server
         // on the loopback interface, and nothing else it names answers.
         platform.set_fetcher(Arc::new(HttpFetcher::new()));
@@ -155,6 +159,32 @@ impl FakePlatform {
         // driver gives nothing to who does not listen.
         self.sensors.feed(kind, Measurement::new(timestamp, values));
         Ok(())
+    }
+
+    /// The system has the camera `name`; the first is the default.
+    pub fn add_camera(&self, name: &str) {
+        self.cameras.add(name);
+    }
+
+    /// The camera `name` captures a `width` by `height` picture of one
+    /// colour; only a started camera is given it.
+    pub fn camera_captures(&self, name: &str, width: u32, height: u32) -> Result<()> {
+        let pixels = [0x20, 0x80, 0xe0, 0xff].repeat((width * height) as usize);
+        let frame = ljos_media::VideoFrame::rgba(width, height, pixels).map_err(failed)?;
+        if self.cameras.capture(name, &frame) {
+            Ok(())
+        } else {
+            Err(failed(format!("the system has no camera {name:?}")))
+        }
+    }
+
+    /// The camera `name` is taken away while the system runs.
+    pub fn camera_disconnected(&self, name: &str) -> Result<()> {
+        if self.cameras.disconnect(name) {
+            Ok(())
+        } else {
+            Err(failed(format!("the system has no camera {name:?}")))
+        }
     }
 
     /// The system is at the position given, and has a position service.
