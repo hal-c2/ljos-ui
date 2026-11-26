@@ -44,6 +44,8 @@ struct NativeType {
     /// Registered as one object ([`Engine::register_singleton`]): a file
     /// reads its members, it does not make one.
     singleton: bool,
+    /// A file may make one: it is not only a holder of enums.
+    creatable: bool,
     /// Inherited first; a later one of a name shadows an earlier.
     properties: Vec<NativeProperty>,
     signals: Vec<(String, Vec<String>)>,
@@ -82,6 +84,7 @@ impl NativeType {
             module,
             name: meta.name.to_string(),
             singleton,
+            creatable: meta.create.is_some(),
             properties: meta
                 .properties
                 .iter()
@@ -127,6 +130,7 @@ impl NativeType {
         ty.module = module;
         ty.name.clone_from(&entry.name);
         ty.singleton = entry.singleton;
+        ty.creatable = entry.creatable;
         for p in &entry.properties {
             ty.properties.push(NativeProperty {
                 name: p.name.clone(),
@@ -463,6 +467,13 @@ impl TypeOracle for EngineOracle {
         match ty {
             EngineType::Qt(ty) => QtTypeOracle.is_singleton(ty),
             EngineType::Native(i) => self.native(i).singleton,
+        }
+    }
+
+    fn is_creatable(&self, ty: EngineType) -> bool {
+        match ty {
+            EngineType::Qt(ty) => QtTypeOracle.is_creatable(ty),
+            EngineType::Native(i) => self.native(i).creatable,
         }
     }
 
