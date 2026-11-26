@@ -53,6 +53,11 @@ impl Bindings {
         }
     }
 
+    /// Whether the script binds `name` anywhere in it.
+    pub(crate) fn binds_anywhere(&self, name: &str) -> bool {
+        self.bound.iter().any(|(bound, _)| bound == name)
+    }
+
     /// Whether `name`, read at `at`, is one of the script's own.
     pub(crate) fn binds(&self, name: &str, at: u32) -> bool {
         seen(&self.bound, name, at)

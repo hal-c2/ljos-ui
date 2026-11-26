@@ -27,6 +27,7 @@ use std::ops::Range;
 
 use qt_types::{Type, ljos_enums};
 
+use crate::bindings::Bindings;
 use crate::rules::font::SCREEN;
 use crate::{Cause, Font, Hider, Kept, Native, Natives};
 
@@ -212,6 +213,9 @@ pub(crate) struct Members {
     typed: Vec<Range<usize>>,
     /// The names of the properties and functions the file declares.
     declared: Vec<String>,
+    /// A script of the file binds `Component` itself, so no word of that
+    /// name is surely the component type.
+    component_bound: bool,
     /// The values that go to a `color`.
     colours: Vec<Range<usize>>,
     /// The file has a delegate, whose model's roles are in sight.
@@ -485,6 +489,11 @@ impl Members {
         self.declared.push(name.to_owned());
     }
 
+    /// The names a script of the file binds itself.
+    pub(crate) fn script(&mut self, own: &Bindings) {
+        self.component_bound |= own.binds_anywhere(COMPONENT);
+    }
+
     /// Whether the pass sees every name in sight of the file's scripts:
     /// it knows the type of every object, and the file has no delegate.
     pub(crate) fn sure(&self) -> bool {
@@ -531,8 +540,10 @@ impl Members {
             let after = &source[at + name.len()..];
             let read_off = name == SCREEN && after.starts_with('.');
             // `Component.Ready` or `Component { }` of Qt's QML is the
-            // component type `Ljos.Core` has as it is.
+            // component type `Ljos.Core` has as it is, unless a script binds
+            // the name: `class Component {}` is no type of Ljós's.
             let component = name == COMPONENT
+                && !self.component_bound
                 && (after.starts_with('.') || after.trim_start().starts_with('{'));
             !read_off && !component && !own(&at) && !self.typed.iter().any(|t| t.contains(&at))
         });
