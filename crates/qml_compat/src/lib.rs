@@ -218,6 +218,14 @@ pub trait Locals {
         None
     }
 
+    /// The root of a file `name` in a directory of the module `uri`'s
+    /// files that the module does not list, as a file of the module finds
+    /// it: `Some(None)` when no such directory has one, none when more
+    /// than one has.
+    fn unlisted(&self, _uri: &str, _name: &str) -> Option<Option<Root>> {
+        Some(None)
+    }
+
     /// The program's own types, as the checker is told them
     /// (`ljostypes.json`); none when they are not described, and a file
     /// that imports a module of them is kept. Ljós's own modules
@@ -305,6 +313,10 @@ impl Locals for Styled<'_> {
 
     fn imports_type(&self, from: Imported<'_>, name: &str) -> Option<bool> {
         self.locals.imports_type(from, name)
+    }
+
+    fn unlisted(&self, uri: &str, name: &str) -> Option<Option<Root>> {
+        self.locals.unlisted(uri, name)
     }
 
     fn controls_style(&self) -> Option<&str> {
@@ -1974,8 +1986,10 @@ impl rules::File for Pass<'_> {
         // is not this one.
         let mut written: Option<(Home, Root)> = None;
         // A root built on another file of the project binds what that
-        // file's root binds too; as far as `named_type` follows it.
-        for _ in 0..16 {
+        // file's root binds too; as far as `named_type` follows it. The
+        // 17th step may reach the type of Qt's the 16th file is built on,
+        // not another file.
+        for step in 0..=16 {
             let base = match &written {
                 None => match self.qt_type(&name) {
                     Some(qt) => {
@@ -1999,6 +2013,7 @@ impl rules::File for Pass<'_> {
                     break;
                 }
                 Base::Native(_) | Base::Stop => break,
+                Base::File(..) if step == 16 => break,
                 Base::File(root, home) => (root, home),
             };
             let found = found.get_or_insert_default();

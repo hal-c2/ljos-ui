@@ -360,6 +360,12 @@ fn layout_files(name: &str) -> Option<Root> {
         "Odd" => Some(valued("Item", &[], &["Layout.preferredWidth"])),
         "Aligned" => Some(valued("Item", chip, &["Layout.alignment"])),
         "Inner" => Some(valued("ColumnLayout", &[], &[])),
+        // Its file imports no module that brings `Rectangle`: Qt does not
+        // load it.
+        "Bare" => Some(Root {
+            imports: vec!["QtQuick.Layouts".to_owned()],
+            ..valued("Rectangle", &[("implicitWidth", "40")], &[])
+        }),
         "Gone" => Some(valued("Mystery", &[], &[])),
         "Celled" => Some(valued("Item", &[("Layout.row", "1")], &[])),
         // It would fill, if it were shown.
@@ -461,6 +467,17 @@ fn a_layout_child_is_kept_by_its_files_root() {
             "Gone",
             "a file of the project",
         ),
+        // A delegate is a child of the layout as one written there is.
+        (
+            "Item { RowLayout { Repeater { model: 1; Inner { } } } }",
+            "Inner",
+            "a file of the project",
+        ),
+        (
+            "Item { RowLayout { Bare { } } }",
+            "Bare",
+            "a file of the project",
+        ),
         (
             "RowLayout { width: 100; Chip { } }",
             "RowLayout",
@@ -485,6 +502,42 @@ fn a_layout_child_is_kept_by_its_files_root() {
         assert!(kept.to_string().contains(why), "{body}: {kept}");
         assert_eq!(kept.at, source.rfind(child).unwrap(), "{body}: {kept}");
     }
+}
+
+/// A project of `files` files, `Link1` built on `Link2` and so on, the
+/// last on a sized `Rectangle`.
+fn chain(files: usize) -> impl Fn(&str) -> Option<Root> {
+    move |name: &str| {
+        let at: usize = name.strip_prefix("Link")?.parse().ok()?;
+        let base = if at == files {
+            "Rectangle".to_owned()
+        } else {
+            format!("Link{}", at + 1)
+        };
+        let size = [("implicitWidth", "40"), ("implicitHeight", "20")];
+        (1..=files).contains(&at).then(|| valued(&base, &size, &[]))
+    }
+}
+
+/// A child's roots are followed through 16 files to the item of Qt's the
+/// last is built on; a 17th is past what the pass follows.
+#[test]
+fn a_layout_childs_roots_are_followed_through_sixteen_files() {
+    let source = format!("{LAYOUTS}Item {{ RowLayout {{ Link1 {{ }} }} }}\n");
+    let Outcome::Lowered(lowered) = lower(&source, &chain(16)) else {
+        panic!("16 files: {:?}", lower(&source, &chain(16)));
+    };
+    assert!(
+        lowered
+            .text
+            .contains("Link1 { Layout.alignment: Align.VCenter; }"),
+        "{}",
+        lowered.text
+    );
+    let Outcome::Kept(kept) = lower(&source, &chain(17)) else {
+        panic!("17 files: lowered");
+    };
+    assert!(kept.to_string().contains("a file of the project"), "{kept}");
 }
 
 /// A layout at the root of a file, or of an inline component, may be sized
@@ -791,6 +844,99 @@ fn the_type_a_roots_base_is_is_what_its_own_file_names() {
     let source = "import QtQuick\nItem { Base { property color c: Qt.rgba(1, 0, 0, 1) } }\n";
     let Outcome::Lowered(_) = lower(source, &Homes) else {
         panic!("{source}: kept");
+    };
+}
+
+/// A module `Kit` of the project whose `Widget` is built on `Base`, and a
+/// module `Other` whose `Base` is a sized `Rectangle`.
+struct Kits {
+    /// Whether `Kit` lists a sized `Base` of its own.
+    lists_base: bool,
+    /// Whether `Widget`'s file imports `Other`.
+    imports_other: bool,
+    /// The `Base` a directory of `Kit`'s files has that `Kit` does not
+    /// list: none known, one, or more than one.
+    unlisted: Option<Option<Root>>,
+}
+
+impl Locals for Kits {
+    fn root(&self, _: &str) -> Option<Root> {
+        None
+    }
+
+    fn module(&self, uri: &str) -> Option<ProjectModule> {
+        matches!(uri, "Kit" | "Other").then_some(ProjectModule::Files)
+    }
+
+    fn imported(&self, from: Imported<'_>, name: &str) -> Option<Root> {
+        let chip = &[("implicitWidth", "40"), ("implicitHeight", "20")];
+        match (from, name) {
+            (Imported::Module("Kit"), "Widget") => Some(Root {
+                imports: ["QtQuick", "Other"][..1 + usize::from(self.imports_other)]
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect(),
+                ..valued("Base", &[], &[])
+            }),
+            (Imported::Module("Kit"), "Base") if self.lists_base => {
+                Some(valued("Rectangle", chip, &[]))
+            }
+            (Imported::Module("Other"), "Base") => Some(valued("Rectangle", chip, &[])),
+            _ => None,
+        }
+    }
+
+    fn imports_type(&self, from: Imported<'_>, name: &str) -> Option<bool> {
+        Some(self.imported(from, name).is_some())
+    }
+
+    fn unlisted(&self, uri: &str, name: &str) -> Option<Option<Root>> {
+        if (uri, name) == ("Kit", "Base") {
+            self.unlisted.clone()
+        } else {
+            Some(None)
+        }
+    }
+}
+
+/// A file of a module finds the files of its own directory that the
+/// module does not list, as one beside a file of a directory does; one
+/// the module lists comes first.
+#[test]
+fn a_module_files_root_is_found_among_its_directorys_unlisted_files() {
+    let source = format!("{LAYOUTS}import Kit\nItem {{ RowLayout {{ Widget {{ }} }} }}\n");
+    let chip = &[("implicitWidth", "40"), ("implicitHeight", "20")];
+    let column = Some(valued("ColumnLayout", &[], &[]));
+    let kits = |lists_base, imports_other, unlisted| Kits {
+        lists_base,
+        imports_other,
+        unlisted,
+    };
+    // An unlisted `Base` that is sized is the one it is built on.
+    let Outcome::Lowered(_) = lower(
+        &source,
+        &kits(false, false, Some(Some(valued("Rectangle", chip, &[])))),
+    ) else {
+        panic!("an unlisted sized Base: kept");
+    };
+    // `Kit`'s own `Base` and `Other`'s are two: which it is is not told.
+    // Of more than one directory's, which it is is not known either.
+    for (unlisted, case) in [
+        (Some(column.clone()), "an unlisted Base beside Other's"),
+        (None, "Bases of two directories"),
+    ] {
+        let Outcome::Kept(kept) = lower(&source, &kits(false, true, unlisted)) else {
+            panic!("{case}: lowered");
+        };
+        assert!(
+            kept.to_string().contains("a file of the project"),
+            "{case}: {kept}"
+        );
+    }
+    // Listed, `Kit`'s `Base` is the one it is built on, whatever else is
+    // in its directory.
+    let Outcome::Lowered(_) = lower(&source, &kits(true, false, Some(column))) else {
+        panic!("a listed Base: kept");
     };
 }
 
