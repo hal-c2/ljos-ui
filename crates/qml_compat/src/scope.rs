@@ -186,12 +186,12 @@ impl<'s> Scope<'s> {
                     // those are Qt's until Ljós has its own
                     // (docs/DIALECT.md).
                     None => {
-                        return Err(no(
-                            Cause::ModuleNotLowered {
-                                uri: other.to_owned(),
-                            },
-                            at,
-                        ));
+                        let uri = other.to_owned();
+                        let cause = match modules::missing(other) {
+                            Some(missing) => Cause::NoLjosApi { uri, missing },
+                            None => Cause::ModuleNotLowered { uri },
+                        };
+                        return Err(no(cause, at));
                     }
                 },
             }

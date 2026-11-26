@@ -40,6 +40,12 @@ pub enum Cause {
     ModuleNotLowered {
         uri: String,
     },
+    /// An import of a module of Qt's that Ljós's API has nothing of yet,
+    /// with what it lacks.
+    NoLjosApi {
+        uri: String,
+        missing: &'static str,
+    },
     /// An import, beside Qt's modules, of a Ljós module the pass writes
     /// for them: the lowered file would import it twice, and its types
     /// stand for Qt's where they share a name.
@@ -556,6 +562,10 @@ impl fmt::Display for Cause {
             Cause::ModuleNotLowered { uri } => {
                 write!(f, "it imports `{uri}`, which is not lowered yet")
             }
+            Cause::NoLjosApi { uri, missing } => write!(
+                f,
+                "it imports `{uri}`, which is not lowered yet: Ljós's API has no {missing} yet"
+            ),
             Cause::ImportsWhatItLowersTo { uri } => write!(
                 f,
                 "it imports `{uri}` beside Qt's modules, which lower to it"
