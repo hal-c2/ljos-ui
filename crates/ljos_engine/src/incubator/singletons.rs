@@ -682,7 +682,14 @@ impl Engine {
                 return None;
             }
             let i = self.singleton_handle(&home, None);
-            all.index.borrow_mut().insert(ty.clone(), i);
+            // Only a name registered itself is the home's for good: one the
+            // lookup reached by its bare name may be registered as a type of
+            // its own later, so it is looked up again each time.
+            if let TypeRef::Native { module, name } = ty
+                && self.is_native_singleton(module, name)
+            {
+                all.index.borrow_mut().insert(ty.clone(), i);
+            }
             Some(i)
         });
         let base = match found {
