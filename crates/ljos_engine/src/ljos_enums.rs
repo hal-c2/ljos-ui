@@ -123,6 +123,16 @@ const KEY_NAMES: &[(&str, &str, &str)] = &[
 /// (`"red"`), where it goes to a `color`.
 const NOT_ENUMS: &[&str] = &["GlobalColor"];
 
+/// Enums of `Qt` that Qt 6.11's description of its types does not list,
+/// written here by hand with the numbers Qt documents: the motion a user
+/// prefers (`Qt::MotionPreference`, from 6.12), which
+/// `App.hints.accessibility.motionPreference` holds and the engine gives
+/// `Qt` (crates/ljos_quick/src/system_prefs.rs).
+const AFTER_QT: &[(&str, &[(&str, i64)])] = &[(
+    "MotionPreference",
+    &[("NoPreference", 0), ("ReducedMotion", 1)],
+)];
+
 /// The table, made once. Panics when the table is refused: that is a
 /// mistake in this file, which the `own_types` test of `ljos_cli` and the
 /// tests here say first.
@@ -169,7 +179,8 @@ pub fn table() -> Result<Vec<LjosEnum>, TableError> {
                 .filter(|(key, _)| key.starts_with("Key_"))
                 .copied()
                 .collect(),
-        )));
+        )))
+        .chain(AFTER_QT.iter().map(|(qt, keys)| (*qt, "", keys.to_vec())));
     keys.map(|(qt, alias, keys)| made(qt, alias, &keys))
         .collect()
 }
@@ -344,6 +355,9 @@ mod tests {
         assert_eq!(key("Direction", "RightToLeft"), "RightToLeft");
         assert_eq!(key("Permission.Status", "Granted"), "Granted");
         assert_eq!(key("ItemFlag", "NoItemFlags"), "None");
+        assert_eq!(key("ContrastPreference", "HighContrast"), "High");
+        assert_eq!(key("MotionPreference", "NoPreference"), "None");
+        assert_eq!(key("MotionPreference", "ReducedMotion"), "Reduced");
     }
 
     #[test]
