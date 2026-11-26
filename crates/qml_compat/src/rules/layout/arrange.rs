@@ -1060,7 +1060,7 @@ impl Arrange<'_, '_> {
                         // that ends at a layout or a `Repeater` is sized or
                         // made otherwise, and one the pass cannot follow
                         // may be anything.
-                        match self.types.file_root(&name).and_then(|root| root.qt) {
+                        match self.file_root(child).and_then(|root| root.qt) {
                             Some(qt) if qt.module != "QtQuick.Layouts" && qt.name != "Repeater" => {
                                 if is_item(qt) {
                                     out.push(child);
