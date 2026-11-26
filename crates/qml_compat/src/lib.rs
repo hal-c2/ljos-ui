@@ -1784,6 +1784,7 @@ impl<'s> Pass<'s> {
         };
         node.visit(&mut script);
         script.row_done();
+        script.pass.members.script(&script.own);
         if let Some(kept) = script.kept {
             return Err(kept);
         }

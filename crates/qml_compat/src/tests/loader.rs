@@ -88,6 +88,25 @@ fn a_maker_of_qt_whose_component_the_file_names_otherwise_keeps_the_file() {
     );
 }
 
+/// A script's own `Component` followed by a block or a body is still the
+/// script's, not the component type, so the file is kept for it.
+#[test]
+fn a_component_a_script_declares_before_a_block_keeps_the_file() {
+    let taken = "`Qt.createComponent` needs `Component`, which the file names something else";
+    assert_eq!(
+        kept_for(
+            "import QtQuick\nItem { function f() { class Component {} return Qt.createComponent(\"Page.qml\") } }\n"
+        ),
+        taken
+    );
+    assert_eq!(
+        kept_for(
+            "import QtQuick\nItem { function f() { var Component\n {}\n return Qt.createComponent(\"Page.qml\") } }\n"
+        ),
+        taken
+    );
+}
+
 /// A `createQmlObject` read off something other than the global `Qt` is
 /// one the pass cannot follow.
 #[test]
