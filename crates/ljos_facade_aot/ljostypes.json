@@ -44,6 +44,33 @@
               "returnType": "void"
             }
           ]
+        },
+        {
+          "name": "Offers",
+          "since": "1.0",
+          "base": "QtObject",
+          "baseModule": "QtQml",
+          "singleton": false,
+          "enums": [],
+          "creatable": true,
+          "defaultProperty": null,
+          "attached": null,
+          "properties": [
+            {
+              "name": "suggestions",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "suggestionsChanged"
+            }
+          ],
+          "signals": [],
+          "methods": []
         }
       ]
     }

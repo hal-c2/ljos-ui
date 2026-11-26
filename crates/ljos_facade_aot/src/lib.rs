@@ -27,10 +27,18 @@ impl Counter {
     }
 }
 
+/// A native type whose `suggestions` Rust sets to a list of records.
+#[derive(Debug, Default, QmlObject)]
+#[qml(module = "Example", name = "Offers")]
+pub struct Offers {
+    #[qml(notify)]
+    pub suggestions: Value,
+}
+
 /// Registers the native module; `tests/types.rs` writes its type dump
 /// file from this.
 pub fn register(engine: &Engine) {
-    engine.register_module(ljos::module!("Example" 1.0 => [Counter]));
+    engine.register_module(ljos::module!("Example" 1.0 => [Counter, Offers]));
 }
 
 /// The application, ready to build or run.
