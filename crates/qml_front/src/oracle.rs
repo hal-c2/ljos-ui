@@ -34,6 +34,13 @@ pub trait TypeOracle {
     /// `QML_SINGLETON`).
     fn is_singleton(&self, ty: Self::Type) -> bool;
 
+    /// Whether a file may make one (`Flow { }`); a type that only holds
+    /// enums (`ColorScheme`) may not. An oracle that cannot tell says it
+    /// may.
+    fn is_creatable(&self, _ty: Self::Type) -> bool {
+        true
+    }
+
     fn property(&self, ty: Self::Type, name: &str) -> Option<Property<Self::Type>>;
 
     /// The names a handler of the signal `name` may call its arguments; None
@@ -406,6 +413,10 @@ impl TypeOracle for QtTypeOracle {
 
     fn is_singleton(&self, ty: QtType) -> bool {
         ty.0.is_singleton
+    }
+
+    fn is_creatable(&self, ty: QtType) -> bool {
+        ty.0.is_creatable
     }
 
     fn property(&self, ty: QtType, name: &str) -> Option<Property<QtType>> {

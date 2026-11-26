@@ -437,15 +437,18 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
         self.arena.intern(Kind::Object(o))
     }
 
-    /// The enum a native type of the name is, where it declares an enum of
-    /// its own name (`ColorScheme`, `MotionPreference`: docs/DIALECT.md
-    /// §4.3.1), so `scheme: ColorScheme` takes `ColorScheme.Dark` and what
-    /// `App.hints.colorScheme` holds.
+    /// The enum a native type of the name is, where it only holds enums,
+    /// one of its own name (`ColorScheme`, `MotionPreference`:
+    /// docs/DIALECT.md §4.3.1), so `scheme: ColorScheme` takes
+    /// `ColorScheme.Dark` and what `App.hints.colorScheme` holds. A type a
+    /// file may make stays itself: `f: Flow` is the item, though it has an
+    /// enum `Flow`.
     fn own_enum(&mut self, kind: &QKind<O::Type>, name: &str) -> Option<Ty> {
         let QKind::Builtin(ty) = kind else {
             return None;
         };
-        if !self.c.types.oracle.has_enum(*ty, name) {
+        let oracle = self.c.types.oracle;
+        if oracle.is_creatable(*ty) || !oracle.has_enum(*ty, name) {
             return None;
         }
         let object = self.obj(Obj::Native(*ty));

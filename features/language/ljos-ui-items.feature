@@ -302,6 +302,26 @@ Feature: The items Ljós's API has as Qt Quick has them
         2 files, 0 errors, 0 warnings
         """
 
+    # Only a type that holds nothing but enums is its enum where it is written: an item that also
+    # declares an enum of its own name stays the item.
+    @ljos-only @headless
+    Scenario: A parameter typed as an item that has an enum of its name is the item
+      Given the file "Card.qml":
+        """qml
+        import Ljos.Ui
+        import Ljos.Layout
+        Item {
+          readonly property real gap: arrange(row)
+          function arrange(next: Flow): real { return next.spacing }
+          Flow { id: row; flow: Flow.TopToBottom }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        1 files, 0 errors, 0 warnings
+        """
+
     # `App.hints` is the engine's style hints, member by member, so what a file reads off it is
     # checked as what it holds.
     @ljos-only @headless
