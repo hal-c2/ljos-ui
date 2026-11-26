@@ -518,10 +518,16 @@ impl<'s> Scope<'s> {
             Qt::Layouts => (Ljos::Layout, rules::layout::LOWERED.contains(&name)),
             // The models are [`MODELS_MODULE`]'s.
             Qt::Qml if MODELS.contains(&name) => (Ljos::Models, true),
-            Qt::Qml => (
-                Ljos::Core,
-                name == "Qt" || has(Ljos::Core, rules::new_name(name).unwrap_or(name)),
-            ),
+            Qt::Qml => {
+                let new = rules::new_name(name).unwrap_or(name);
+                // Qt's QML builtins hold `Easing`, which Ljós keeps beside
+                // the animations that read it.
+                if name != "Qt" && !has(Ljos::Core, new) && has(Ljos::Ui, new) {
+                    (Ljos::Ui, true)
+                } else {
+                    (Ljos::Core, name == "Qt" || has(Ljos::Core, new))
+                }
+            }
             // What arranges children is `Ljos.Layout`'s.
             Qt::Quick => {
                 let new = rules::new_name(name).unwrap_or(name);
