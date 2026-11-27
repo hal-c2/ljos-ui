@@ -28,6 +28,10 @@ pub struct PathEnv {
     /// The user's directories are macOS's: `~/Library/Preferences`,
     /// `Application Support` and `Caches`.
     pub library: bool,
+    /// The directories are the application's alone, as a phone's are: no
+    /// location adds the organization's or the application's name below
+    /// them, as Qt's table for Android has it.
+    pub own: bool,
 }
 
 /// Names the user's real home in a run that moved its directories (a test
@@ -62,6 +66,7 @@ impl PathEnv {
             vars,
             root: None,
             library: cfg!(target_os = "macos"),
+            own: false,
         }
     }
 
@@ -129,6 +134,7 @@ impl PathEnv {
                 .collect(),
             root: self.root,
             library: self.library,
+            own: self.own,
         }
     }
 
@@ -141,12 +147,12 @@ impl PathEnv {
         let path = |p: PathBuf| p.to_string_lossy().into_owned();
         let vars = [
             ("XDG_DATA_HOME", path(files.to_path_buf())),
-            ("XDG_CONFIG_HOME", path(files.join("config"))),
+            ("XDG_CONFIG_HOME", path(files.join("settings"))),
             ("XDG_STATE_HOME", path(files.join("state"))),
             ("XDG_CACHE_HOME", path(cache.to_path_buf())),
             ("XDG_RUNTIME_DIR", path(cache.join("run"))),
             ("XDG_DATA_DIRS", path(files.to_path_buf())),
-            ("XDG_CONFIG_DIRS", path(files.join("config"))),
+            ("XDG_CONFIG_DIRS", path(files.join("settings"))),
             ("TMPDIR", path(cache.join("tmp"))),
         ]
         .into_iter()
@@ -157,6 +163,7 @@ impl PathEnv {
             vars,
             root: None,
             library: false,
+            own: true,
         }
     }
 
@@ -168,6 +175,7 @@ impl PathEnv {
             vars: HashMap::new(),
             root: Some(root.into()),
             library: false,
+            own: false,
         }
     }
 
@@ -267,6 +275,12 @@ impl PathEnv {
 
     pub fn state_home(&self) -> PathBuf {
         self.xdg("XDG_STATE_HOME", ".local/state", "Preferences/State")
+    }
+
+    /// The organization and application a location is named by: none
+    /// when the directories are the application's own.
+    fn names<'a>(&self, org: &'a str, app: &'a str) -> (&'a str, &'a str) {
+        if self.own { ("", "") } else { (org, app) }
     }
 
     /// The directories the user's own files are written in.
@@ -375,6 +389,7 @@ impl Location {
 
     /// Where the application writes, given its organization and name.
     pub fn writable(self, env: &PathEnv, org: &str, app: &str) -> PathBuf {
+        let (org, app) = env.names(org, app);
         let own = |base: PathBuf| app_dir(base, org, app);
         if env.library {
             return self.in_library(env, org, app);
@@ -442,6 +457,7 @@ impl Location {
 
     /// Every directory looked in, the writable one first.
     pub fn all(self, env: &PathEnv, org: &str, app: &str) -> Vec<PathBuf> {
+        let (org, app) = env.names(org, app);
         let mut out = vec![self.writable(env, org, app)];
         if env.library {
             let system = |dir: &str| PathBuf::from("/Library").join(dir);
@@ -473,6 +489,10 @@ impl Location {
             Location::AppConfig => out.extend(config().into_iter().map(|d| app_dir(d, org, app))),
             _ => {}
         }
+        // An application's own directories are its data and its config at
+        // once; each is looked in once.
+        let mut seen = std::collections::HashSet::new();
+        out.retain(|dir| seen.insert(dir.clone()));
         out
     }
 }
@@ -698,14 +718,18 @@ mod tests {
                 );
             }
         }
-        assert_eq!(
-            Location::AppData.writable(&env, "Org", "App"),
-            files.join("Org/App")
-        );
-        assert_eq!(
-            Location::Cache.writable(&env, "Org", "App"),
-            cache.join("Org/App")
-        );
+        // Qt's table for Android: the system's directories are the
+        // application's already, so none takes its name below it.
+        let w = |l: Location| l.writable(&env, "Org", "App");
+        assert_eq!(w(Location::AppData), files);
+        assert_eq!(w(Location::AppLocalData), files);
+        assert_eq!(w(Location::Home), files);
+        assert_eq!(w(Location::Cache), cache);
+        assert_eq!(w(Location::GenericCache), cache);
+        assert_eq!(w(Location::AppConfig), files.join("settings"));
+        assert_eq!(w(Location::Config), files.join("settings"));
+        assert_eq!(w(Location::State), files.join("state"));
+        assert_eq!(Location::AppData.all(&env, "Org", "App"), [files]);
     }
 
     #[test]
@@ -879,6 +903,7 @@ mod tests {
                 .collect(),
             root: None,
             library: false,
+            own: false,
         }
     }
 
