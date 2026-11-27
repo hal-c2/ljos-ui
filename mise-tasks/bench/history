@@ -1,0 +1,112 @@
+#!/usr/bin/env bash
+#MISE description="Measure the bench apps on earlier commits next to this checkout's: build each commit's ljos in a scratch clone, measure them all interleaved in one report in the headless sandbox, tabulate each metric per commit; report in target/bench-history"
+#MISE dir="{{config_root}}"
+#USAGE arg "<step>" help="build <rev…> | measure [rev…] | table | all <rev…>"
+#USAGE arg "[args]..." var=#true help="Revisions (build, measure, all), then options for every ljos bench run"
+set -euo pipefail
+# A regression shows as one commit's numbers set against its neighbours',
+# measured in the same run on the same machine, so a slow afternoon moves
+# every column alike. See docs/BENCHMARKS.md, "Ljós against its own past".
+#
+#   build <rev…>    each revision's release ljos, built once, kept by its
+#                   commit in $BENCH_HISTORY_DIR/bin/<commit>/ljos. Run it
+#                   inside whatever caps a build on the machine.
+#   measure [rev…]  the bench apps on every built revision (or those named)
+#                   and on this checkout's ljos, one report, interleaved.
+#   table           history.md beside the report: a column per revision.
+#   all <rev…>      the three in turn.
+#
+# BENCH_HISTORY_DIR (default target/bench-history) holds the clone, the
+# builds and the report; BENCH_DEFAULTS replaces `--warm-up --repeat 3`;
+# BENCH_HISTORY_APPS names the bench/*.qml apps measured beside the inbox
+# (default "minimal feed list1000").
+# shellcheck source-path=SCRIPTDIR source=../_lib/env.sh
+. "$(dirname "$0")/../_lib/env.sh"
+root="$ljos_root"
+dir="${BENCH_HISTORY_DIR:-$(checkout_dir bench-history)}"
+step="${1:-}"
+[ $# -gt 0 ] && shift
+revs=()
+opts=()
+# mise drops a `--`, so the options start at the first argument that
+# looks like one.
+while [ $# -gt 0 ]; do
+  if [ "$1" = -- ]; then shift; fi
+  if [[ ${1:-} == -* ]]; then
+    opts=("$@")
+    break
+  fi
+  [ $# -gt 0 ] && revs+=("$1")
+  shift
+done
+
+# The clone shares this checkout's objects, so a revision is there as soon
+# as this checkout has fetched it, and a build there never touches the
+# files of this one.
+clone() {
+  local src="$dir/src" common
+  common="$(git -C "$root" rev-parse --path-format=absolute --git-common-dir)"
+  if [ ! -d "$src/.git" ]; then
+    mkdir -p "$dir"
+    git clone --quiet --shared --no-checkout "$common" "$src"
+  fi
+  git -C "$src" fetch --quiet "$common" '+refs/heads/*:refs/remotes/local/*' '+refs/remotes/origin/*:refs/remotes/origin/*'
+  printf '%s\n' "$src"
+}
+
+commit_of() {
+  git -C "$root" rev-parse --verify --quiet "$1^{commit}" || die "bench:history: no commit $1"
+}
+
+build() {
+  local src rev commit into sub
+  [ ${#revs[@]} -gt 0 ] || die "bench:history build: name the revisions to build"
+  src="$(clone)"
+  for rev in "${revs[@]}"; do
+    commit="$(commit_of "$rev")"
+    into="$dir/bin/$commit"
+    if [ -x "$into/ljos" ]; then
+      echo "bench:history: $rev ($commit) already built"
+      continue
+    fi
+    git -C "$src" checkout --quiet --force --detach "$commit"
+    git -C "$src" clean --quiet -fdx -e /target
+    # Each submodule the build needs is fetched from this checkout's own
+    # copy, so an old revision builds offline: the commit it pins must be
+    # one that copy has fetched. A submodule this checkout has not set up
+    # is one its builds do without.
+    while read -r sub; do
+      [ -e "$root/$sub/.git" ] || continue
+      git -C "$src" submodule init --quiet -- "$sub"
+      git -C "$src" config "submodule.$sub.url" "$root/$sub"
+      git -C "$src" -c protocol.file.allow=always submodule update --quiet --force -- "$sub" ||
+        die "bench:history: $rev pins $sub at a commit $root/$sub has not fetched"
+    done < <(git -C "$src" ls-tree -r "$commit" | awk '$2 == "commit" { print $4 }')
+    echo "bench:history: building $rev ($commit)"
+    # The clone's own target: an old revision's build must never be taken
+    # for this checkout's, nor overwrite its build directory.
+    (cd "$src" && CARGO_TARGET_DIR="$dir/target" cargo build --quiet --release -p ljos_cli --bin ljos) ||
+      die "bench:history: $rev did not build"
+    mkdir -p "$into"
+    cp -p "$dir/target/release/ljos" "$into/ljos"
+    git -C "$root" show -s --format='%H %cI %s' "$commit" > "$into/commit"
+  done
+}
+
+case "$step" in
+  build) build ;;
+  measure | table | all)
+    # shellcheck source-path=SCRIPTDIR source=../../scripts/bench-history.sh
+    . "$root/scripts/bench-history.sh"
+    case "$step" in
+      measure) history_measure ;;
+      table) history_table ;;
+      all)
+        build
+        history_measure
+        history_table
+        ;;
+    esac
+    ;;
+  *) die "bench:history: the step is build, measure, table or all, not '${step}'" ;;
+esac
