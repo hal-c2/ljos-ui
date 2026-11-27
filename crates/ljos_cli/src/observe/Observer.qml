@@ -8,12 +8,13 @@
 // shown up to date and adds a point to the charts.
 //
 // An inspector is to cost less than what it watches: words are Text, not
-// Label, each in the theme's colour (a Label costs over twice a Text to
+// Label, each in a colour of Ljos.Design (a Label costs over twice a Text to
 // make and hold), and a page out of sight lets the rows of its view go.
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import QtQuick.Shapes
+import Ljos.Design
 import Ljos.Observer
 
 ApplicationWindow {
@@ -22,51 +23,47 @@ ApplicationWindow {
 
     visible: true
     title: "Observer — " + (client.url === "" ? "connecting" : client.url)
-    color: theme.bg
-
-    // The system's scheme, light or dark, as the rest of the desktop.
-    readonly property bool dark: Qt.styleHints.colorScheme === Qt.ColorScheme.Dark
+    color: Colors.canvas
 
     // The controls inherit the window's palette: a field, a box to tick
-    // and a button are drawn in the theme's colours, not the style's.
-    palette.window: theme.bg
-    palette.windowText: theme.text
-    palette.base: theme.card
-    palette.alternateBase: theme.cardAlt
-    palette.text: theme.text
-    palette.placeholderText: theme.subtle
-    palette.button: window.dark ? "#2a2f38" : "#e2e5ea"
-    palette.buttonText: theme.text
-    palette.highlight: theme.accent
-    palette.highlightedText: window.dark ? "#15171c" : "#ffffff"
-    palette.mid: theme.rule
-    palette.dark: theme.subtle
-    palette.light: theme.cardAlt
-    palette.midlight: theme.rule
+    // and a button are drawn in the colours of Ljos.Design, not the style's.
+    palette.window: Colors.canvas
+    palette.windowText: Colors.text
+    palette.base: Colors.surfaceRaised
+    palette.alternateBase: Colors.canvas
+    palette.text: Colors.text
+    palette.placeholderText: Colors.textMuted
+    palette.button: Colors.surfaceHover
+    palette.buttonText: Colors.text
+    palette.highlight: Colors.accent
+    palette.highlightedText: Colors.textOnAccent
+    palette.mid: Colors.separator
+    palette.dark: Colors.textMuted
+    palette.light: Colors.canvas
+    palette.midlight: Colors.separator
     // A colour set above is the disabled group's too, so a disabled
     // button would look as the others: these make it look disabled.
-    palette.disabled.button: window.dark ? "#22262d" : "#eceef1"
-    palette.disabled.buttonText: window.dark ? "#5c6370" : "#a3a9b2"
-    palette.disabled.text: window.dark ? "#5c6370" : "#a3a9b2"
-    palette.disabled.windowText: window.dark ? "#5c6370" : "#a3a9b2"
+    palette.disabled.button: Colors.surface
+    palette.disabled.buttonText: Colors.textDisabled
+    palette.disabled.text: Colors.textDisabled
+    palette.disabled.windowText: Colors.textDisabled
 
-    QtObject {
-        id: theme
-        readonly property color bg: window.dark ? "#15171c" : "#f4f5f7"
-        readonly property color side: window.dark ? "#1b1e24" : "#e9ebef"
-        readonly property color card: window.dark ? "#20242b" : "#ffffff"
-        readonly property color cardAlt: window.dark ? "#252a32" : "#f6f7f9"
-        readonly property color text: window.dark ? "#e4e7ec" : "#1b1e23"
-        readonly property color subtle: window.dark ? "#8f97a4" : "#636a75"
-        readonly property color rule: window.dark ? "#2e333c" : "#dfe2e7"
-        readonly property color accent: window.dark ? "#78a9ff" : "#1f55b8"
-        readonly property color accentSoft: Qt.rgba(accent.r, accent.g, accent.b, window.dark ? 0.22 : 0.12)
-        readonly property color good: window.dark ? "#4cc27c" : "#2f9e5c"
-        readonly property color warn: window.dark ? "#f0b44c" : "#c98a12"
-        readonly property color bad: window.dark ? "#f07068" : "#d2443c"
-        readonly property color violet: window.dark ? "#b896ff" : "#7a4fd6"
-        readonly property string mono: "monospace"
+    // Code and figures are set in the system's monospace face.
+    readonly property string mono: "monospace"
+    // A row of a table is as tall as its design says, or as a line of
+    // text needs at the font size the user asked for, if that is more.
+    FontMetrics { id: metrics }
+    function row(least) {
+        return Math.max(least, Math.ceil(metrics.height) + Spacing.xs)
     }
+
+    // A chart with more parts than Ljos.Design has roles tells the rest
+    // apart by these. They are marks beside a name, never text, so they
+    // hold to no contrast; the palette has no categorical scale yet.
+    readonly property var series: ({
+        teal: "#3fa7a0", pink: "#d77fae", slate: "#8a8f99", indigo: "#6b7fb5",
+        lime: "#8fcf6f", ochre: "#c9a35a", grey: "#b7bcc5"
+    })
 
     // A value as the inspector gives it, with every digit it has: an edit
     // of 736.0003 must not read 736. The Objects and Trace pages both
@@ -542,10 +539,10 @@ ApplicationWindow {
 
     function stateColor(state) {
         if (state === "running" || state === "busy")
-            return theme.warn
+            return Colors.warning
         if (state === "blocked")
-            return theme.bad
-        return theme.good
+            return Colors.danger
+        return Colors.success
     }
 
     // Below this width the list of pages folds into tabs above the page,
@@ -558,7 +555,7 @@ ApplicationWindow {
     readonly property real headHeight: headProbe.implicitHeight
     readonly property real titleHeight: headTitleProbe.implicitHeight
     Button { id: headProbe; visible: false; text: "Clear" }
-    Text { id: headTitleProbe; visible: false; text: "Mailboxes"; font.pixelSize: 19; font.bold: true }
+    Text { id: headTitleProbe; visible: false; text: "Mailboxes"; font.pixelSize: Typography.titleSize; font.bold: true }
 
     GridLayout {
         anchors.fill: parent
@@ -572,7 +569,7 @@ ApplicationWindow {
             Layout.fillWidth: window.compact
             Layout.preferredWidth: 210
             Layout.preferredHeight: window.compact ? nav.implicitHeight + 2 * nav.anchors.margins : -1
-            color: theme.side
+            color: Colors.surface
 
             ColumnLayout {
                 id: nav
@@ -583,15 +580,15 @@ ApplicationWindow {
                 Text {
                     visible: !window.compact
                     text: "Observer"
-                    color: theme.text
-                    font.pixelSize: 21
+                    color: Colors.text
+                    font.pixelSize: Typography.titleSize
                     font.bold: true
                 }
                 Text {
                     visible: !window.compact
-                    Layout.bottomMargin: 18
+                    Layout.bottomMargin: Spacing.md
                     text: processes.process ? "pid " + processes.process.pid : "ljos observe"
-                    color: theme.subtle
+                    color: Colors.textMuted
                 }
 
                 // One list of tabs for both forms: beside the page each is
@@ -616,8 +613,8 @@ ApplicationWindow {
                                    : tabs.width
                             height: window.compact ? 28 : 34
                             radius: 7
-                            color: shown ? theme.accentSoft
-                                 : hover.containsMouse ? Qt.rgba(theme.text.r, theme.text.g, theme.text.b, 0.05)
+                            color: shown ? Colors.surfaceSelected
+                                 : hover.containsMouse ? Colors.surfaceHover
                                  : "transparent"
                             // The tab is what the keyboard and an
                             // assistive technology reach, so it is what
@@ -636,7 +633,7 @@ ApplicationWindow {
                                     tabs.at = -1
                             }
                             border.width: activeFocus ? 2 : 0
-                            border.color: theme.accent
+                            border.color: Colors.accent
                             function go(by) {
                                 var n = window.pages.length
                                 tabList.itemAt((tab.index + by + n) % n).forceActiveFocus()
@@ -666,7 +663,7 @@ ApplicationWindow {
                                 width: window.compact ? tab.width - 16 : 3
                                 height: window.compact ? 2 : 16
                                 radius: 2
-                                color: theme.accent
+                                color: Colors.accent
                             }
                             Text {
                                 id: label
@@ -674,18 +671,18 @@ ApplicationWindow {
                                 anchors.leftMargin: window.compact ? 10 : 14
                                 anchors.verticalCenter: parent.verticalCenter
                                 text: tab.modelData
-                                color: tab.shown ? theme.accent : theme.text
+                                color: tab.shown ? Colors.accent : Colors.text
                                 font.bold: tab.shown
                             }
                             Text {
                                 id: unread
                                 anchors.right: parent.right
-                                anchors.rightMargin: 10
+                                anchors.rightMargin: Spacing.sm
                                 anchors.verticalCenter: parent.verticalCenter
                                 visible: (tab.index === 4 && logs.unread > 0) || (tab.index === 5 && trace.unread > 0)
                                 text: tab.index === 4 ? logs.unread : trace.unread
-                                color: theme.subtle
-                                font.pixelSize: 11
+                                color: Colors.textMuted
+                                font.pixelSize: Typography.captionSize
                             }
                             MouseArea {
                                 id: hover
@@ -715,8 +712,8 @@ ApplicationWindow {
                         spacing: 8
                         Rectangle {
                             width: 9; height: 9; radius: 5
-                            color: !client.connected ? theme.bad
-                                 : watcher.live ? theme.good : theme.subtle
+                            color: !client.connected ? Colors.danger
+                                 : watcher.live ? Colors.success : Colors.textMuted
                         }
                         Text {
                             Layout.fillWidth: true
@@ -725,28 +722,28 @@ ApplicationWindow {
                                 : !watcher.live ? "paused"
                                 : watcher.quietSince !== "" ? "idle since " + watcher.quietSince
                                 : "live"
-                            color: theme.subtle
+                            color: Colors.textMuted
                         }
                     }
                     // The window's title names it too, which is where a
                     // narrow window leaves it.
-                    Text {
+                    Elided {
                         visible: !window.compact
                         Layout.fillWidth: true
                         text: client.url
                         elide: Text.ElideMiddle
-                        color: theme.subtle
-                        font.pixelSize: 11
+                        color: Colors.textMuted
+                        font.pixelSize: Typography.captionSize
                     }
                     RowLayout {
                         Layout.topMargin: window.compact ? 0 : 6
                         Layout.fillWidth: !window.compact
-                        Button {
+                        ToolButton {
                             Layout.fillWidth: true
                             text: watcher.live ? "Pause" : "Follow"
                             onClicked: watcher.live = !watcher.live
                         }
-                        Button {
+                        ToolButton {
                             Layout.fillWidth: true
                             text: "Refresh"
                             onClicked: window.refresh()
@@ -761,7 +758,7 @@ ApplicationWindow {
                 y: window.compact ? parent.height - 1 : 0
                 width: window.compact ? parent.width : 1
                 height: window.compact ? 1 : parent.height
-                color: theme.rule
+                color: Colors.separator
             }
         }
 
@@ -778,7 +775,10 @@ ApplicationWindow {
                 // A page is as wide as the window leaves it, not as the
                 // widest page wants: the one shown makes do, each in its
                 // own way, and nothing goes past the window's edge.
+                // So high: the tallest page never makes the window's row
+                // taller than the window, pushing the sidebar's buttons off.
                 Layout.minimumWidth: 0
+                Layout.minimumHeight: 0
 
                 // ----- Overview ----------------------------------------
                 // The page scrolls when the window is too short for its
@@ -917,14 +917,14 @@ ApplicationWindow {
                             Layout.fillWidth: true
                             Text {
                                 Accessible.role: Accessible.Heading
-                                text: "Overview"; color: theme.text; font.pixelSize: 19; font.bold: true
+                                text: "Overview"; color: Colors.text; font.pixelSize: Typography.titleSize; font.bold: true
                             }
                             Text {
                                 Layout.fillWidth: true
                                 Layout.minimumWidth: 0
                                 horizontalAlignment: Text.AlignRight
                                 elide: Text.ElideRight
-                                color: theme.subtle
+                                color: Colors.textMuted
                                 text: "one point each time the application changed"
                             }
                         }
@@ -950,19 +950,19 @@ ApplicationWindow {
                                     // than one figure.
                                     Layout.preferredHeight: Math.max(62, figure.implicitHeight + 20)
                                     radius: 9
-                                    color: theme.card
-                                    border.color: theme.rule
+                                    color: Colors.surfaceRaised
+                                    border.color: Colors.separator
                                     Column {
                                         id: figure
                                         anchors.fill: parent
-                                        anchors.margins: 10
+                                        anchors.margins: Spacing.sm
                                         spacing: 2
                                         Text {
                                             width: parent.width
                                             elide: Text.ElideRight
                                             text: modelData[0]
-                                            color: theme.subtle
-                                            font.pixelSize: 11
+                                            color: Colors.textMuted
+                                            font.pixelSize: Typography.captionSize
                                         }
                                         Text {
                                             property var v: overview.latest[modelData[1]]
@@ -971,8 +971,8 @@ ApplicationWindow {
                                             text: unknown ? "not measured on this platform"
                                                 : v === undefined || v === null ? "—"
                                                 : modelData[1] === "rss" ? window.bytes(v) : v
-                                            color: unknown ? theme.subtle
-                                                : modelData[1] === "overruns" && v > 0 ? theme.bad : theme.text
+                                            color: unknown ? Colors.textMuted
+                                                : modelData[1] === "overruns" && v > 0 ? Colors.danger : Colors.text
                                             font.pixelSize: unknown ? 12 : 19
                                             font.bold: !unknown
                                             wrapMode: unknown ? Text.WordWrap : Text.NoWrap
@@ -996,25 +996,25 @@ ApplicationWindow {
 
                             Repeater {
                                 model: [
-                                    { title: "Frame time", key: "frameMs", unit: "ms", tone: "accent" },
-                                    { title: "Passes drawn and skipped", key: "drawn", second: "skipped", unit: "", tone: "good" },
-                                    { title: "Memory, resident", key: "rss", unit: "MiB", tone: "violet" },
-                                    { title: "Wakeups per second, all threads", key: "wakeups", unit: "/s", tone: "warn" },
-                                    { title: "Messages waiting in the mailboxes", key: "inbox", unit: "", tone: "bad" }
+                                    { title: "Frame time", key: "frameMs", unit: "ms", tone: Colors.accent },
+                                    { title: "Passes drawn and skipped", key: "drawn", second: "skipped", unit: "", tone: Colors.success },
+                                    { title: "Memory, resident", key: "rss", unit: "MiB", tone: Colors.info },
+                                    { title: "Wakeups per second, all threads", key: "wakeups", unit: "/s", tone: Colors.warning },
+                                    { title: "Messages waiting in the mailboxes", key: "inbox", unit: "", tone: Colors.danger }
                                 ]
                                 delegate: Rectangle {
                                     id: chart
                                     required property var modelData
                                     required property int index
-                                    readonly property color tone: theme[modelData.tone]
+                                    readonly property color tone: modelData.tone
                                     Layout.fillWidth: true
                                     Layout.fillHeight: true
                                     // The last one alone fills its row.
                                     Layout.columnSpan: index === 4 ? charts.columns : 1
                                     Layout.minimumHeight: 120
                                     radius: 9
-                                    color: theme.card
-                                    border.color: theme.rule
+                                    color: Colors.surfaceRaised
+                                    border.color: Colors.separator
 
                                     readonly property var values: overview.series[modelData.key]
                                     readonly property var seconds: modelData.second ? overview.series[modelData.second] : []
@@ -1034,7 +1034,7 @@ ApplicationWindow {
                                                                           : chart.width - 36 - chartValue.width)
                                         elide: Text.ElideRight
                                         text: chart.modelData.title
-                                        color: theme.subtle
+                                        color: Colors.textMuted
                                     }
                                     Text {
                                         id: chartValue
@@ -1047,7 +1047,7 @@ ApplicationWindow {
                                             : (Math.round(chart.now * 10) / 10) + (chart.modelData.unit === "" ? "" : " " + chart.modelData.unit)
                                               + (chart.modelData.second && chart.seconds.length > 0
                                                  ? " drawn  ·  " + chart.seconds[chart.seconds.length - 1] + " skipped" : "")
-                                        color: theme.text
+                                        color: Colors.text
                                         font.bold: true
                                     }
                                     // Lines, not a canvas: a canvas keeps a
@@ -1150,9 +1150,9 @@ ApplicationWindow {
                                             return out
                                         }
 
-                                        Rectangle { width: plot.width; height: 1; color: theme.rule }
-                                        Rectangle { y: Math.round(plot.height / 2); width: plot.width; height: 1; color: theme.rule }
-                                        Rectangle { y: plot.height - 1; width: plot.width; height: 1; color: theme.rule }
+                                        Rectangle { width: plot.width; height: 1; color: Colors.separator }
+                                        Rectangle { y: Math.round(plot.height / 2); width: plot.width; height: 1; color: Colors.separator }
+                                        Rectangle { y: plot.height - 1; width: plot.width; height: 1; color: Colors.separator }
                                         Shape {
                                             x: plot.width - plot.head
                                             width: Math.max(0, plot.head)
@@ -1172,7 +1172,7 @@ ApplicationWindow {
                                                 PathLine { x: plot.line.length > 0 ? plot.line[0].x : 0; y: plot.height }
                                             }
                                             ShapePath {
-                                                strokeColor: theme.accent
+                                                strokeColor: Colors.accent
                                                 strokeWidth: 2
                                                 fillColor: "transparent"
                                                 PathPolyline { path: plot.second }
@@ -1196,16 +1196,16 @@ ApplicationWindow {
                                             x: 2
                                             visible: chart.values.length > 0
                                             text: String(Math.round(plot.highest * 10) / 10)
-                                            color: theme.subtle
-                                            font.pixelSize: 10
+                                            color: Colors.textMuted
+                                            font.pixelSize: Typography.captionSize
                                         }
                                         Text {
                                             x: 4
                                             anchors.verticalCenter: parent.verticalCenter
                                             visible: chart.values.length === 0
                                             text: "waiting for the application to change"
-                                            color: theme.subtle
-                                            font.pixelSize: 12
+                                            color: Colors.textMuted
+                                            font.pixelSize: Typography.captionSize
                                         }
                                     }
                                 }
@@ -1217,7 +1217,7 @@ ApplicationWindow {
                 // ----- Processes ---------------------------------------
                 ColumnLayout {
                     id: processes
-                    spacing: 10
+                    spacing: Spacing.xs
                     // A busy application is shown anew each second. The
                     // view's rows are a ListModel set row by row from the
                     // answer (`held` is what it holds): a row whose values
@@ -1236,7 +1236,18 @@ ApplicationWindow {
                     property string kind: ""
                     // Kind, name, state, work, wakeups, detail: the heads
                     // and the rows share them, so they line up.
-                    readonly property var widths: [118, 0, 110, 96, 86, 230]
+                    // A column is never narrower than its head at the
+                    // font size the user asked for.
+                    readonly property var heads: ["Kind", "Name", "State", "Work", "Wakeups", "Detail"]
+                    FontMetrics { id: headMetrics; font.pixelSize: Typography.captionSize; font.bold: true }
+                    readonly property var widths: {
+                        var base = [118, 0, 110, 96, 86, 230]
+                        var out = []
+                        for (var i = 0; i < base.length; ++i)
+                            out.push(i === 1 ? 0 : Math.max(base[i], Math.ceil(headMetrics.advanceWidth(heads[i])
+                                + (i === 3 || i === 4 ? 12 : 0) + Spacing.sm)))
+                        return out
+                    }
 
                     function load() {
                         var args = kind === "" ? {} : { kind: kind }
@@ -1360,12 +1371,12 @@ ApplicationWindow {
                         Layout.fillWidth: true
                         // Asks for no width of its own: see window.spare.
                         Layout.preferredWidth: 0
-                        spacing: 10
+                        spacing: Spacing.xs
                         Text {
                             height: window.headHeight
                             verticalAlignment: Text.AlignVCenter
                             Accessible.role: Accessible.Heading
-                            text: "Processes"; color: theme.text; font.pixelSize: 19; font.bold: true
+                            text: "Processes"; color: Colors.text; font.pixelSize: Typography.titleSize; font.bold: true
                         }
                         Text {
                             width: Math.min(implicitWidth, processesHead.width)
@@ -1373,7 +1384,7 @@ ApplicationWindow {
                             verticalAlignment: Text.AlignVCenter
                             elide: Text.ElideRight
                             visible: processes.process !== null
-                            color: theme.subtle
+                            color: Colors.textMuted
                             text: processes.summary(processes.process)
                         }
                         Item {
@@ -1402,8 +1413,8 @@ ApplicationWindow {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         radius: 9
-                        color: theme.card
-                        border.color: theme.rule
+                        color: Colors.surfaceRaised
+                        border.color: Colors.separator
                         clip: true
                         readonly property real line: width - 16
                         // The columns past the name, and the least a name has.
@@ -1417,8 +1428,8 @@ ApplicationWindow {
                             y: 0
                             width: procTable.line
                             Repeater {
-                                model: ["Kind", "Name", "State", "Work", "Wakeups", "Detail"]
-                                delegate: Text {
+                                model: processes.heads
+                                delegate: Elided {
                                     required property string modelData
                                     required property int index
                                     width: processes.column(index, procTable.line)
@@ -1427,13 +1438,13 @@ ApplicationWindow {
                                     horizontalAlignment: index === 3 || index === 4 ? Text.AlignRight : Text.AlignLeft
                                     rightPadding: index === 3 || index === 4 ? 12 : 0
                                     text: modelData
-                                    color: theme.subtle
-                                    font.pixelSize: 12
+                                    color: Colors.textMuted
+                                    font.pixelSize: Typography.captionSize
                                     font.bold: true
                                 }
                             }
                         }
-                        Rectangle { y: heads.height; width: parent.width; height: 1; color: theme.rule }
+                        Rectangle { y: heads.height; width: parent.width; height: 1; color: Colors.separator }
 
                         // Where the platform lists no threads, the table
                         // says so rather than leaving them out unsaid.
@@ -1445,10 +1456,10 @@ ApplicationWindow {
                             elide: Text.ElideRight
                             visible: processes.threadsUnmeasured
                                 && (processes.kind === "" || processes.kind === "thread")
-                            height: visible ? 32 : 0
+                            height: visible ? window.row(32) : 0
                             verticalAlignment: Text.AlignVCenter
                             text: "Threads: not measured on this platform"
-                            color: theme.subtle
+                            color: Colors.textMuted
                         }
 
                         ListView {
@@ -1474,24 +1485,24 @@ ApplicationWindow {
                                 required property bool pickable
                                 width: ListView.view.width
                                 height: procTable.narrow ? procCells.height : 32
-                                color: rowHover.containsMouse ? theme.accentSoft
-                                     : index % 2 ? theme.cardAlt : "transparent"
+                                color: rowHover.containsMouse ? Colors.surfaceSelected
+                                     : index % 2 ? Colors.canvas : "transparent"
                                 Flow {
                                     id: procCells
                                     x: 8
                                     width: procTable.line
-                                    Text {
+                                    Elided {
                                         width: processes.column(0, procTable.line); height: procTable.lineHeight
                                         verticalAlignment: Text.AlignVCenter
                                         text: prow.what
-                                        color: theme.subtle
+                                        color: Colors.textMuted
                                         elide: Text.ElideRight
                                     }
-                                    Text {
+                                    Elided {
                                         width: processes.column(1, procTable.line); height: procTable.lineHeight
                                         verticalAlignment: Text.AlignVCenter
                                         text: prow.name + (prow.truncated ? "…" : "")
-                                        color: prow.pickable ? theme.accent : theme.text
+                                        color: prow.pickable ? Colors.link : Colors.text
                                         elide: Text.ElideMiddle
                                         font.bold: prow.name === "UI thread"
                                     }
@@ -1506,35 +1517,35 @@ ApplicationWindow {
                                         }
                                         Text {
                                             anchors.left: dot.right
-                                            anchors.leftMargin: 7
+                                            anchors.leftMargin: Spacing.xs
                                             anchors.verticalCenter: parent.verticalCenter
                                             text: prow.status
-                                            color: theme.text
+                                            color: Colors.text
                                         }
                                     }
-                                    Text {
+                                    Elided {
                                         width: processes.column(3, procTable.line); height: procTable.lineHeight
                                         verticalAlignment: Text.AlignVCenter
                                         horizontalAlignment: Text.AlignRight
                                         rightPadding: 12
                                         text: prow.work
-                                        color: theme.text
-                                        font.family: theme.mono
+                                        color: Colors.text
+                                        font.family: window.mono
                                     }
-                                    Text {
+                                    Elided {
                                         width: processes.column(4, procTable.line); height: procTable.lineHeight
                                         verticalAlignment: Text.AlignVCenter
                                         horizontalAlignment: Text.AlignRight
                                         rightPadding: 12
                                         text: prow.wakeups
-                                        color: theme.text
-                                        font.family: theme.mono
+                                        color: Colors.text
+                                        font.family: window.mono
                                     }
-                                    Text {
+                                    Elided {
                                         width: processes.column(5, procTable.line); height: procTable.lineHeight
                                         verticalAlignment: Text.AlignVCenter
                                         elide: Text.ElideRight
-                                        color: theme.subtle
+                                        color: Colors.textMuted
                                         text: prow.detail
                                     }
                                 }
@@ -1543,8 +1554,13 @@ ApplicationWindow {
                                     anchors.fill: parent
                                     hoverEnabled: prow.pickable
                                     enabled: prow.pickable
-                                    Accessible.role: Accessible.ListItem
-                                    Accessible.name: prow.name
+                                    // A row that opens an object is pressed;
+                                    // the rest are read. Kind and detail tell
+                                    // apart rows of the same name.
+                                    Accessible.role: prow.pickable ? Accessible.ListItem : Accessible.Row
+                                    Accessible.name: prow.what + " " + prow.name
+                                        + (prow.detail !== "" ? ", " + prow.detail : "")
+                                    Accessible.description: prow.pickable ? "Opens it on the Objects page" : ""
                                     onClicked: {
                                         window.page = 3
                                         objects.load(true)
@@ -1559,7 +1575,7 @@ ApplicationWindow {
                 // ----- Mailboxes ---------------------------------------
                 ColumnLayout {
                     id: mailboxes
-                    spacing: 10
+                    spacing: Spacing.xs
                     // Row by row, as the processes are: a box whose
                     // figures are the same is left alone. There are few
                     // boxes, so all are set in one go.
@@ -1620,7 +1636,7 @@ ApplicationWindow {
                         spacing: 12
                         Text {
                             Accessible.role: Accessible.Heading
-                            text: "Mailboxes"; color: theme.text; font.pixelSize: 19; font.bold: true
+                            text: "Mailboxes"; color: Colors.text; font.pixelSize: Typography.titleSize; font.bold: true
                         }
                         Text {
                             width: Math.min(implicitWidth, mailboxesHead.width)
@@ -1630,7 +1646,7 @@ ApplicationWindow {
                             verticalAlignment: Text.AlignVCenter
                             wrapMode: Text.WordWrap
                             text: "counted since the inspector started · kinds only, never contents"
-                            color: theme.subtle
+                            color: Colors.textMuted
                         }
                     }
 
@@ -1660,22 +1676,22 @@ ApplicationWindow {
                             height: boxes.cellHeight
                             Rectangle {
                                 anchors.fill: parent
-                                anchors.margins: 6
+                                anchors.margins: Spacing.xs
                                 radius: 9
-                                color: theme.card
-                                border.color: theme.rule
+                                color: Colors.surfaceRaised
+                                border.color: Colors.separator
                                 ColumnLayout {
                                     anchors.fill: parent
-                                    anchors.margins: 14
-                                    spacing: 7
+                                    anchors.margins: Spacing.sm
+                                    spacing: Spacing.xs
                                     RowLayout {
-                                        Text { text: box.name; color: theme.text; font.bold: true; font.pixelSize: 15 }
-                                        Text { visible: box.batch; text: "batch"; color: theme.subtle }
+                                        Text { text: box.name; color: Colors.text; font.bold: true; font.pixelSize: Typography.subtitleSize }
+                                        Text { visible: box.batch; text: "batch"; color: Colors.textMuted }
                                         Item { Layout.fillWidth: true }
                                         Text {
                                             text: box.depth + " / " + box.capacity
-                                            color: theme.text
-                                            font.family: theme.mono
+                                            color: Colors.text
+                                            font.family: window.mono
                                         }
                                     }
                                     // How full it is.
@@ -1683,47 +1699,48 @@ ApplicationWindow {
                                         Layout.fillWidth: true
                                         height: 6
                                         radius: 3
-                                        color: theme.rule
+                                        color: Colors.separator
                                         Rectangle {
                                             height: parent.height
                                             radius: 3
                                             width: parent.width * Math.min(1, box.depth / Math.max(1, box.capacity))
-                                            color: box.depth >= box.capacity ? theme.bad
-                                                 : box.depth > 0 ? theme.warn : theme.good
+                                            color: box.depth >= box.capacity ? Colors.danger
+                                                 : box.depth > 0 ? Colors.warning : Colors.success
                                         }
                                     }
                                     GridLayout {
                                         columns: 4
                                         columnSpacing: 12
                                         rowSpacing: 2
-                                        Text { text: "sent"; color: theme.subtle }
-                                        Text { text: box.sent; color: theme.text; font.family: theme.mono }
-                                        Text { text: "drained"; color: theme.subtle }
-                                        Text { text: box.drained; color: theme.text; font.family: theme.mono }
-                                        Text { text: "refused"; color: theme.subtle }
+                                        Text { text: "sent"; color: Colors.textMuted }
+                                        Text { text: box.sent; color: Colors.text; font.family: window.mono }
+                                        Text { text: "drained"; color: Colors.textMuted }
+                                        Text { text: box.drained; color: Colors.text; font.family: window.mono }
+                                        Text { text: "refused"; color: Colors.textMuted }
                                         Text {
                                             text: box.refused
-                                            font.family: theme.mono
-                                            color: box.refused > 0 ? theme.bad : theme.text
+                                            font.family: window.mono
+                                            color: Colors.text
+                                            font.bold: box.refused > 0
                                         }
-                                        Text { text: "replaced"; color: theme.subtle }
-                                        Text { text: box.replaced; color: theme.text; font.family: theme.mono }
-                                        Text { text: "senders"; color: theme.subtle }
-                                        Text { text: box.senders; color: theme.text; font.family: theme.mono }
-                                        Text { text: "oldest"; color: theme.subtle }
-                                        Text { text: box.oldest; color: theme.text; font.family: theme.mono }
-                                        Text { visible: box.batch; text: "evicted"; color: theme.subtle }
-                                        Text {
+                                        Text { text: "replaced"; color: Colors.textMuted }
+                                        Text { text: box.replaced; color: Colors.text; font.family: window.mono }
+                                        Text { text: "senders"; color: Colors.textMuted }
+                                        Text { text: box.senders; color: Colors.text; font.family: window.mono }
+                                        Text { text: "oldest"; color: Colors.textMuted }
+                                        Text { text: box.oldest; color: Colors.text; font.family: window.mono }
+                                        Text { visible: box.batch; text: "evicted"; color: Colors.textMuted }
+                                        Elided {
                                             visible: box.batch
                                             text: box.evicted
-                                            font.family: theme.mono
-                                            color: box.evicted !== "0" ? theme.warn : theme.text
+                                            font.family: window.mono
+                                            color: box.evicted !== "0" ? Colors.warning : Colors.text
                                         }
                                     }
-                                    Text {
+                                    Elided {
                                         Layout.fillWidth: true
                                         elide: Text.ElideRight
-                                        color: theme.subtle
+                                        color: Colors.textMuted
                                         text: box.kinds
                                     }
                                     Item { Layout.fillHeight: true }
@@ -2386,8 +2403,8 @@ ApplicationWindow {
                         Layout.preferredWidth: Math.max(160, Math.min(300, objects.width * 0.3))
                         Layout.fillHeight: true
                         radius: 9
-                        color: theme.card
-                        border.color: theme.rule
+                        color: Colors.surfaceRaised
+                        border.color: Colors.separator
                         clip: true
 
                         TextField {
@@ -2398,33 +2415,25 @@ ApplicationWindow {
                             // A field is not named by its placeholder.
                             Accessible.name: "Filter objects"
                         }
-                        Text {
+                        // What the order is, and pressing it turns it.
+                        ToolButton {
                             id: sizeOrder
                             anchors.right: parent.right
-                            anchors.rightMargin: 12
-                            anchors.top: treeFilter.bottom
-                            anchors.topMargin: 6
+                            anchors.rightMargin: Spacing.xs
+                            anchors.verticalCenter: treeCount.verticalCenter
                             text: objects.bySize ? "largest first" : "tree order"
-                            color: sizeHover.containsMouse ? theme.accent : theme.subtle
-                            font.pixelSize: 11
-                            MouseArea {
-                                id: sizeHover
-                                anchors.fill: parent
-                                anchors.margins: -4
-                                hoverEnabled: true
-                                Accessible.role: Accessible.Button
-                                Accessible.name: objects.bySize ? "Show in tree order" : "Show largest first"
-                                onClicked: objects.bySize = !objects.bySize
-                            }
+                            font.pixelSize: Typography.captionSize
+                            Accessible.name: text + (objects.bySize ? ", show in tree order" : ", show largest first")
+                            onClicked: objects.bySize = !objects.bySize
                         }
-                        Text {
-                            x: 12
-                            width: sizeOrder.x - 18
-                            elide: Text.ElideRight
+                        Elided {
+                            id: treeCount
+                            x: Spacing.sm
+                            width: sizeOrder.x - x - Spacing.xs
                             anchors.top: treeFilter.bottom
-                            anchors.topMargin: 6
-                            color: theme.subtle
-                            font.pixelSize: 11
+                            anchors.topMargin: Spacing.sm
+                            color: Colors.textMuted
+                            font.pixelSize: Typography.captionSize
                             text: objects.shownCount + " of " + objects.treeCount + " objects"
                                   + (objects.treeComing || objects.partCursor !== "" ? ", more coming"
                                      : objects.truncated ? ", the most shown"
@@ -2434,7 +2443,7 @@ ApplicationWindow {
                         ListView {
                             id: treeView
                             anchors.fill: parent
-                            anchors.topMargin: treeFilter.height + 34
+                            anchors.topMargin: Math.max(treeCount.y + treeCount.height, sizeOrder.y + sizeOrder.height) + Spacing.xxs
                             clip: true
                             model: window.page === 3 ? treeRows : null
                             // Where it was scrolled to, kept while the
@@ -2456,30 +2465,33 @@ ApplicationWindow {
                                 required property real size
                                 width: ListView.view.width
                                 height: objects.rowHeight
-                                color: objects.picked === node.handle ? theme.accentSoft
-                                     : nodeHover.containsMouse ? Qt.rgba(theme.text.r, theme.text.g, theme.text.b, 0.05)
+                                color: objects.picked === node.handle ? Colors.surfaceSelected
+                                     : nodeHover.containsMouse ? Colors.surfaceHover
                                      : "transparent"
                                 Row {
                                     id: nodeRow
-                                    x: 10 + (objects.listed ? 0 : node.depth * 14)
+                                    // Deep in a narrow window, the indent stops
+                                    // short of the size, which is never drawn over.
+                                    x: 10 + (objects.listed ? 0
+                                        : Math.min(node.depth * 14, Math.max(0, node.width - 240)))
                                     height: parent.height
-                                    spacing: 6
+                                    spacing: Spacing.xs
                                     Rectangle {
                                         anchors.verticalCenter: parent.verticalCenter
                                         width: 6; height: 6; radius: node.isItem ? 1 : 3
-                                        color: !node.isItem ? theme.violet
-                                             : node.dim ? theme.subtle : theme.accent
+                                        color: !node.isItem ? Colors.info
+                                             : node.dim ? Colors.textMuted : Colors.accent
                                     }
                                     Text {
                                         id: nodeKind
                                         anchors.verticalCenter: parent.verticalCenter
                                         text: node.kind
-                                        color: node.dim ? theme.subtle : theme.text
+                                        color: node.dim ? Colors.textMuted : Colors.text
                                         font.bold: objects.picked === node.handle
                                     }
                                     // A long name is cut to what the row
                                     // leaves it, short of the size.
-                                    Text {
+                                    Elided {
                                         anchors.verticalCenter: parent.verticalCenter
                                         visible: text !== ""
                                         width: Math.max(24, Math.min(implicitWidth,
@@ -2490,7 +2502,7 @@ ApplicationWindow {
                                         elide: Text.ElideRight
                                         text: node.ident ? "#" + node.ident
                                             : node.oname ? "\"" + node.oname + "\"" : ""
-                                        color: theme.accent
+                                        color: Colors.link
                                     }
                                     // Without an id or a name, the handle tells
                                     // one Timer from the next; so it does
@@ -2501,8 +2513,8 @@ ApplicationWindow {
                                         anchors.verticalCenter: parent.verticalCenter
                                         visible: objects.listed || !node.ident && !node.oname
                                         text: node.handle
-                                        color: theme.subtle
-                                        font.pixelSize: 11
+                                        color: Colors.textMuted
+                                        font.pixelSize: Typography.captionSize
                                     }
                                     // What a row left out opens it; an
                                     // opened row closes.
@@ -2512,7 +2524,7 @@ ApplicationWindow {
                                         visible: text !== ""
                                         text: node.hidden >= 0 ? "+" + node.hidden
                                             : objects.opened.indexOf(node.handle) >= 0 ? "−" : ""
-                                        color: discloseHover.containsMouse ? theme.accent : theme.subtle
+                                        color: discloseHover.containsMouse ? Colors.link : Colors.textMuted
                                         font.bold: discloseHover.containsMouse
                                     }
                                 }
@@ -2520,20 +2532,24 @@ ApplicationWindow {
                                 Text {
                                     id: nodeSize
                                     anchors.right: parent.right
-                                    anchors.rightMargin: 10
+                                    anchors.rightMargin: Spacing.sm
                                     anchors.verticalCenter: parent.verticalCenter
                                     visible: node.size > 0
                                     text: objects.sizeText(node.size)
-                                    color: theme.subtle
-                                    font.family: theme.mono
-                                    font.pixelSize: 11
+                                    color: Colors.textMuted
+                                    font.family: window.mono
+                                    font.pixelSize: Typography.captionSize
                                 }
                                 MouseArea {
                                     id: nodeHover
                                     anchors.fill: parent
                                     hoverEnabled: true
                                     Accessible.role: Accessible.ListItem
-                                    Accessible.name: node.kind + (node.ident ? "#" + node.ident : "")
+                                    // What the row shows, so two Texts are
+                                    // told apart as they are by eye.
+                                    Accessible.name: node.kind
+                                        + (node.ident ? " #" + node.ident : node.oname ? " \"" + node.oname + "\"" : "")
+                                        + (nodeHandle.visible ? " " + node.handle : "")
                                     onClicked: objects.pick(node.handle,
                                                             node.kind + (node.ident ? "#" + node.ident : ""))
                                 }
@@ -2545,7 +2561,7 @@ ApplicationWindow {
                                     height: parent.height
                                     hoverEnabled: true
                                     Accessible.role: Accessible.Button
-                                    Accessible.name: node.hidden >= 0 ? "Open" : "Close"
+                                    Accessible.name: (node.hidden >= 0 ? "Open " : "Close ") + nodeHover.Accessible.name
                                     onClicked: {
                                         if (node.hidden >= 0)
                                             objects.open(node.handle)
@@ -2563,14 +2579,14 @@ ApplicationWindow {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         radius: 9
-                        color: theme.card
-                        border.color: theme.rule
+                        color: Colors.surfaceRaised
+                        border.color: Colors.separator
                         clip: true
 
                         ColumnLayout {
                             anchors.fill: parent
                             anchors.margins: 12
-                            spacing: 6
+                            spacing: Spacing.xs
 
                             // In a narrow card the buttons go under the
                             // name; the card is never widened for them.
@@ -2580,13 +2596,13 @@ ApplicationWindow {
                                 Layout.fillWidth: true
                                 Layout.minimumWidth: 0
                                 columns: narrow ? 3 : 4
-                                Text {
+                                Elided {
                                     Layout.fillWidth: true
                                     Layout.columnSpan: propHead.narrow ? 3 : 1
                                     text: objects.picked === "" ? "Pick an object" : objects.head
-                                    color: theme.text
+                                    color: Colors.text
                                     font.bold: true
-                                    font.pixelSize: 15
+                                    font.pixelSize: Typography.subtitleSize
                                     elide: Text.ElideRight
                                 }
                                 Button {
@@ -2613,18 +2629,18 @@ ApplicationWindow {
                                     }
                                 }
                             }
-                            Text {
+                            Elided {
                                 visible: objects.picked !== ""
                                 Layout.fillWidth: true
                                 Layout.minimumWidth: 0
                                 elide: Text.ElideRight
                                 text: objects.picked + (objects.where === "" ? "" : "  ·  " + objects.where)
                                       + "  ·  =expression binds"
-                                color: theme.subtle
-                                font.family: theme.mono
-                                font.pixelSize: 11
+                                color: Colors.textMuted
+                                font.family: window.mono
+                                font.pixelSize: Typography.captionSize
                             }
-                            Rectangle { Layout.fillWidth: true; height: 1; color: theme.rule }
+                            Rectangle { Layout.fillWidth: true; height: 1; color: Colors.separator }
 
                             ListView {
                                 Layout.fillWidth: true
@@ -2656,30 +2672,30 @@ ApplicationWindow {
                                     property bool typing: false
                                     Rectangle {
                                         anchors.fill: parent
-                                        color: prop.index % 2 ? theme.cardAlt : "transparent"
+                                        color: prop.index % 2 ? Colors.canvas : "transparent"
                                     }
                                     Item {
                                         id: line
                                         width: parent.width
                                         height: 36
                                     }
-                                    Text {
+                                    Elided {
                                         id: propName
                                         x: 6
                                         width: Math.max(72, Math.min(130, prop.width * 0.3))
                                         anchors.verticalCenter: line.verticalCenter
                                         text: prop.modelData.name || ""
-                                        color: theme.text
+                                        color: Colors.text
                                         elide: Text.ElideRight
                                     }
-                                    Text {
+                                    Elided {
                                         id: propType
                                         anchors.left: propName.right
                                         anchors.verticalCenter: line.verticalCenter
                                         width: 60
                                         text: prop.modelData.type || ""
-                                        color: theme.subtle
-                                        font.pixelSize: 11
+                                        color: Colors.textMuted
+                                        font.pixelSize: Typography.captionSize
                                         elide: Text.ElideRight
                                     }
                                     // A value that can be changed is framed, so
@@ -2697,17 +2713,17 @@ ApplicationWindow {
                                         clip: true
                                         color: "transparent"
                                         border.color: !prop.editable ? "transparent"
-                                            : valueArea.containsMouse ? theme.subtle : theme.rule
-                                        Text {
+                                            : valueArea.containsMouse ? Colors.textMuted : Colors.separator
+                                        Elided {
                                             anchors.left: parent.left
                                             anchors.leftMargin: prop.editable ? 6 : 0
                                             anchors.right: parent.right
-                                            anchors.rightMargin: 6
+                                            anchors.rightMargin: Spacing.xs
                                             anchors.verticalCenter: parent.verticalCenter
                                             visible: !prop.typing && !prop.boolean
                                             text: prop.modelData.value === null && !prop.editable ? "—"
                                                 : objects.valueText(prop.modelData.value)
-                                            color: prop.modelData.handle !== undefined ? theme.accent : theme.text
+                                            color: prop.modelData.handle !== undefined ? Colors.link : Colors.text
                                             elide: Text.ElideRight
                                         }
                                         // A check for a value that is true or false.
@@ -2726,22 +2742,25 @@ ApplicationWindow {
                                                 Rectangle {
                                                     anchors.verticalCenter: parent.verticalCenter
                                                     width: 16; height: 16; radius: 4
-                                                    color: prop.modelData.value === "true" && !prop.fixed ? theme.accent : "transparent"
-                                                    border.color: prop.modelData.value === "true" && !prop.fixed ? theme.accent
-                                                        : valueArea.containsMouse ? theme.subtle : theme.rule
+                                                    color: prop.modelData.value === "true" && !prop.fixed ? Colors.accent : "transparent"
+                                                    border.color: prop.modelData.value === "true" && !prop.fixed ? Colors.accent
+                                                        : valueArea.containsMouse ? Colors.textMuted : Colors.separator
                                                     Text {
                                                         anchors.centerIn: parent
+                                                        width: parent.width - 2 * Spacing.md
+                                                        horizontalAlignment: Text.AlignHCenter
+                                                        wrapMode: Text.Wrap
                                                         visible: prop.modelData.value === "true"
                                                         text: "✓"
-                                                        color: prop.fixed ? theme.subtle : theme.bg
-                                                        font.pixelSize: 12
+                                                        color: prop.fixed ? Colors.textMuted : Colors.canvas
+                                                        font.pixelSize: Typography.captionSize
                                                         font.bold: true
                                                     }
                                                 }
                                                 Text {
                                                     anchors.verticalCenter: parent.verticalCenter
                                                     text: prop.modelData.value === null ? "" : String(prop.modelData.value)
-                                                    color: theme.text
+                                                    color: Colors.text
                                                 }
                                             }
                                         }
@@ -2792,17 +2811,17 @@ ApplicationWindow {
                                                 id: field
                                                 topPadding: 4
                                                 bottomPadding: 4
-                                                leftPadding: 6
+                                                leftPadding: Spacing.xs
                                                 clip: true
-                                                color: theme.text
+                                                color: Colors.text
                                                 // Named as the value it takes
                                                 // the place of, so that what
                                                 // pressed that value finds it.
                                                 Accessible.name: prop.modelData.name || ""
                                                 background: Rectangle {
                                                     radius: 5
-                                                    color: theme.bg
-                                                    border.color: theme.accent
+                                                    color: Colors.canvas
+                                                    border.color: Colors.accent
                                                 }
                                                 // A bound value is typed in as the
                                                 // expression it is bound to.
@@ -2834,16 +2853,16 @@ ApplicationWindow {
                                         anchors.right: parent.right
                                         anchors.rightMargin: 4
                                         y: prop.stacked ? line.height : (line.height - height) / 2
-                                        spacing: 6
+                                        spacing: Spacing.xs
                                         Rectangle {
                                             height: 20
                                             width: chipText.implicitWidth + 14
                                             radius: 10
                                             anchors.verticalCenter: parent.verticalCenter
-                                            readonly property color tone: prop.edited ? theme.warn
-                                                : prop.modelData.provenance === "bound" ? theme.accent
-                                                : prop.modelData.provenance === "animated" ? theme.violet
-                                                : theme.subtle
+                                            readonly property color tone: prop.edited ? Colors.warning
+                                                : prop.modelData.provenance === "bound" ? Colors.accent
+                                                : prop.modelData.provenance === "animated" ? Colors.info
+                                                : Colors.textMuted
                                             color: Qt.rgba(tone.r, tone.g, tone.b, 0.16)
                                             // That the binding is kept below an
                                             // edit is told on hover: in the chip
@@ -2864,7 +2883,7 @@ ApplicationWindow {
                                                     : prop.fixed ? (prop.modelData.provenance || "") + " · read-only"
                                                     : prop.modelData.provenance || ""
                                                 color: parent.tone
-                                                font.pixelSize: 11
+                                                font.pixelSize: Typography.captionSize
                                             }
                                             MouseArea {
                                                 id: chipArea
@@ -2877,8 +2896,8 @@ ApplicationWindow {
                                             visible: prop.edited
                                             anchors.verticalCenter: parent.verticalCenter
                                             text: "Revert"
-                                            color: theme.accent
-                                            font.pixelSize: 12
+                                            color: Colors.link
+                                            font.pixelSize: Typography.captionSize
                                             font.underline: revertArea.containsMouse
                                             MouseArea {
                                                 id: revertArea
@@ -2901,7 +2920,7 @@ ApplicationWindow {
                                 visible: objects.bindings && objects.picked !== ""
                                 Layout.fillWidth: true
                                 height: 1
-                                color: theme.rule
+                                color: Colors.separator
                             }
                             ListView {
                                 id: bindingList
@@ -2915,20 +2934,20 @@ ApplicationWindow {
                                 Text {
                                     visible: bindingList.count === 0
                                     text: "No bindings written for it"
-                                    color: theme.subtle
+                                    color: Colors.textMuted
                                 }
                                 delegate: Column {
                                     id: bound
                                     required property int index
                                     readonly property var modelData: objects.binds[index] || ({})
                                     width: ListView.view.width
-                                    bottomPadding: 6
-                                    Text {
+                                    bottomPadding: Spacing.xs
+                                    Elided {
                                         width: parent.width
                                         elide: Text.ElideRight
                                         text: bound.modelData.property
                                               + (bound.modelData.tier ? "  ·  tier " + bound.modelData.tier : "")
-                                        color: theme.text
+                                        color: Colors.text
                                         font.bold: true
                                     }
                                     // Each end that is an object is a link
@@ -2943,14 +2962,14 @@ ApplicationWindow {
                                             spacing: 4
                                             Text {
                                                 text: endRow.modelData[0]
-                                                color: theme.subtle
-                                                font.pixelSize: 11
+                                                color: Colors.textMuted
+                                                font.pixelSize: Typography.captionSize
                                             }
                                             Text {
                                                 visible: endRow.modelData[1].length === 0
                                                 text: "nothing"
-                                                color: theme.subtle
-                                                font.pixelSize: 11
+                                                color: Colors.textMuted
+                                                font.pixelSize: Typography.captionSize
                                             }
                                             Repeater {
                                                 model: endRow.modelData[1]
@@ -2961,8 +2980,8 @@ ApplicationWindow {
                                                     readonly property bool linked: !!modelData.handle
                                                     text: objects.endText(modelData)
                                                           + (index + 1 < endRow.modelData[1].length ? "," : "")
-                                                    color: linked ? theme.accent : theme.subtle
-                                                    font.pixelSize: 11
+                                                    color: linked ? Colors.link : Colors.textMuted
+                                                    font.pixelSize: Typography.captionSize
                                                     font.underline: endArea.containsMouse
                                                     MouseArea {
                                                         id: endArea
@@ -2981,8 +3000,8 @@ ApplicationWindow {
                                     Text {
                                         visible: bound.modelData.truncated === true
                                         text: "and more"
-                                        color: theme.subtle
-                                        font.pixelSize: 11
+                                        color: Colors.textMuted
+                                        font.pixelSize: Typography.captionSize
                                     }
                                 }
                             }
@@ -2997,8 +3016,8 @@ ApplicationWindow {
                         visible: objects.width >= 760
                         Layout.fillHeight: true
                         radius: 9
-                        color: theme.card
-                        border.color: theme.rule
+                        color: Colors.surfaceRaised
+                        border.color: Colors.separator
                         // Two pictures take turns: the next one loads
                         // under the one shown and comes to the top once
                         // it is ready, so that a picture that keeps
@@ -3037,12 +3056,14 @@ ApplicationWindow {
                             width: frame.shown.paintedWidth + 2
                             height: frame.shown.paintedHeight + 2
                             color: "transparent"
-                            border.color: theme.rule
+                            border.color: Colors.separator
                         }
                         Image {
                             id: shotA
                             property string asked: ""
                             Accessible.name: "The picked object as drawn"
+                            // The one loading underneath is not read out.
+                            Accessible.ignored: frame.front !== 0 || status !== Image.Ready
                             anchors.centerIn: parent
                             z: frame.front === 0 ? 1 : 0
                             opacity: frame.front === 0 ? 1 : 0
@@ -3055,6 +3076,8 @@ ApplicationWindow {
                             id: shotB
                             property string asked: ""
                             Accessible.name: "The picked object as drawn"
+                            // The one loading underneath is not read out.
+                            Accessible.ignored: frame.front !== 1 || status !== Image.Ready
                             anchors.centerIn: parent
                             z: frame.front === 1 ? 1 : 0
                             opacity: frame.front === 1 ? 1 : 0
@@ -3069,7 +3092,7 @@ ApplicationWindow {
                             wrapMode: Text.Wrap
                             horizontalAlignment: Text.AlignHCenter
                             visible: objects.picture === ""
-                            color: theme.subtle
+                            color: Colors.textMuted
                             text: objects.pictureNote !== "" ? objects.pictureNote : "No picture"
                         }
                     }
@@ -3078,7 +3101,7 @@ ApplicationWindow {
                 // ----- Logs --------------------------------------------
                 ColumnLayout {
                     id: logs
-                    spacing: 10
+                    spacing: Spacing.xs
                     property var entries: []
                     property var since: null
                     property int unread: 0
@@ -3153,9 +3176,9 @@ ApplicationWindow {
                     ListModel { id: shownLines }
 
                     function tone(level) {
-                        return level === "critical" ? theme.bad
-                             : level === "warning" ? theme.warn
-                             : level === "info" ? theme.accent : theme.subtle
+                        return level === "critical" ? Colors.danger
+                             : level === "warning" ? Colors.warning
+                             : level === "info" ? Colors.accent : Colors.textMuted
                     }
 
                     Connections {
@@ -3171,18 +3194,18 @@ ApplicationWindow {
                         Layout.fillWidth: true
                         // Asks for no width of its own: see window.spare.
                         Layout.preferredWidth: 0
-                        spacing: 10
+                        spacing: Spacing.xs
                         Text {
                             height: window.headHeight
                             verticalAlignment: Text.AlignVCenter
                             Accessible.role: Accessible.Heading
-                            text: "Logs"; color: theme.text; font.pixelSize: 19; font.bold: true
+                            text: "Logs"; color: Colors.text; font.pixelSize: Typography.titleSize; font.bold: true
                         }
                         Text {
                             height: window.headHeight
                             verticalAlignment: Text.AlignVCenter
                             text: shownLines.count + " of " + logs.entries.length + " lines"
-                            color: theme.subtle
+                            color: Colors.textMuted
                         }
                         Item {
                             id: logsGap
@@ -3196,6 +3219,7 @@ ApplicationWindow {
                             onTextChanged: logs.filter = text
                         }
                         ComboBox {
+                            Accessible.name: "Lowest level shown"
                             model: ["debug and up", "info and up", "warnings and up", "critical only"]
                             onActivated: function(index) { logs.level = logs.levels[index] }
                         }
@@ -3212,13 +3236,13 @@ ApplicationWindow {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         radius: 9
-                        color: theme.card
-                        border.color: theme.rule
+                        color: Colors.surfaceRaised
+                        border.color: Colors.separator
                         clip: true
                         ListView {
                             id: logView
                             anchors.fill: parent
-                            anchors.margins: 6
+                            anchors.margins: Spacing.xs
                             clip: true
                             model: window.page === 4 ? shownLines : null
                             onModelChanged: if (model !== null) Qt.callLater(logView.positionViewAtEnd)
@@ -3238,33 +3262,33 @@ ApplicationWindow {
                                 height: narrow ? 24 + entryMessage.height + 4 : 24
                                 Rectangle {
                                     anchors.fill: parent
-                                    color: entry.index % 2 ? theme.cardAlt : "transparent"
+                                    color: entry.index % 2 ? Colors.canvas : "transparent"
                                 }
                                 Text {
                                     x: 6
                                     width: 64
-                                    height: 24
+                                    height: window.row(24)
                                     verticalAlignment: Text.AlignVCenter
                                     // A line of the log has no name of its own: each of its words
                                     // is read out by itself, as it is shown.
                                     Accessible.role: Accessible.StaticText
                                     Accessible.name: text
                                     text: entry.level
-                                    color: logs.tone(entry.level)
+                                    tone: logs.tone(entry.level)
                                     font.bold: entry.level === "warning" || entry.level === "critical"
-                                    font.pixelSize: 12
+                                    font.pixelSize: Typography.captionSize
                                 }
                                 Text {
                                     x: 80
                                     width: 110
-                                    height: 24
+                                    height: window.row(24)
                                     verticalAlignment: Text.AlignVCenter
                                     Accessible.role: Accessible.StaticText
                                     Accessible.name: text
                                     text: entry.category
-                                    color: theme.subtle
+                                    color: Colors.textMuted
                                     elide: Text.ElideRight
-                                    font.pixelSize: 12
+                                    font.pixelSize: Typography.captionSize
                                 }
                                 Text {
                                     id: entryMessage
@@ -3276,33 +3300,36 @@ ApplicationWindow {
                                     Accessible.role: Accessible.StaticText
                                     Accessible.name: text
                                     text: entry.message
-                                    color: theme.text
+                                    color: Colors.text
                                     wrapMode: entry.narrow ? Text.WrapAnywhere : Text.NoWrap
                                     maximumLineCount: entry.narrow ? 6 : 1
                                     elide: Text.ElideRight
-                                    font.family: theme.mono
-                                    font.pixelSize: 12
+                                    font.family: window.mono
+                                    font.pixelSize: Typography.captionSize
                                 }
                                 Text {
                                     x: entry.narrow ? 200 : entry.width - 6 - 160
                                     width: entry.narrow ? entry.width - 200 - 6 : 160
-                                    height: 24
+                                    height: window.row(24)
                                     verticalAlignment: Text.AlignVCenter
                                     horizontalAlignment: Text.AlignRight
                                     Accessible.role: Accessible.StaticText
                                     Accessible.name: text
                                     text: entry.where
-                                    color: theme.subtle
+                                    color: Colors.textMuted
                                     elide: Text.ElideLeft
-                                    font.pixelSize: 11
+                                    font.pixelSize: Typography.captionSize
                                 }
                             }
                         }
                         Text {
                             anchors.centerIn: parent
+                            width: parent.width - 2 * Spacing.md
+                            horizontalAlignment: Text.AlignHCenter
+                            wrapMode: Text.Wrap
                             visible: shownLines.count === 0
                             text: logs.entries.length === 0 ? "Nothing logged yet" : "No line matches"
-                            color: theme.subtle
+                            color: Colors.textMuted
                         }
                     }
                 }
@@ -3313,7 +3340,7 @@ ApplicationWindow {
                 // messages of a process.
                 ColumnLayout {
                     id: trace
-                    spacing: 10
+                    spacing: Spacing.xs
                     property var since: null
                     property var tracing: []
                     property int dropped: 0
@@ -3424,9 +3451,9 @@ ApplicationWindow {
                     }
 
                     function tone(kind) {
-                        return kind === "destroyed" || kind === "same value" ? theme.bad
-                             : kind === "signal" ? theme.warn
-                             : kind === "binding" ? theme.violet : theme.accent
+                        return kind === "destroyed" || kind === "same value" ? Colors.danger
+                             : kind === "signal" ? Colors.warning
+                             : kind === "binding" ? Colors.info : Colors.accent
                     }
 
                     ListModel { id: traceLines }
@@ -3444,12 +3471,12 @@ ApplicationWindow {
                         Layout.fillWidth: true
                         // Asks for no width of its own: see window.spare.
                         Layout.preferredWidth: 0
-                        spacing: 10
+                        spacing: Spacing.xs
                         Text {
                             height: window.headHeight
                             verticalAlignment: Text.AlignVCenter
                             Accessible.role: Accessible.Heading
-                            text: "Trace"; color: theme.text; font.pixelSize: 19; font.bold: true
+                            text: "Trace"; color: Colors.text; font.pixelSize: Typography.titleSize; font.bold: true
                         }
                         Text {
                             width: Math.min(implicitWidth, traceHead.width)
@@ -3458,7 +3485,7 @@ ApplicationWindow {
                             elide: Text.ElideRight
                             text: traceLines.count + " events"
                                   + (trace.dropped > 0 ? " · " + trace.dropped + " older gave way" : "")
-                            color: theme.subtle
+                            color: Colors.textMuted
                         }
                         Item {
                             id: traceGap
@@ -3474,6 +3501,7 @@ ApplicationWindow {
                         Button {
                             text: "Stop all"
                             enabled: trace.tracing.length > 0
+                            Accessible.description: enabled ? "Stop every trace" : "Nothing is traced: start one on the Objects page"
                             onClicked: trace.toggle()
                         }
                         Button {
@@ -3486,14 +3514,14 @@ ApplicationWindow {
                     Flow {
                         id: tracedFlow
                         Layout.fillWidth: true
-                        spacing: 6
+                        spacing: Spacing.xs
                         Text {
                             visible: trace.tracing.length === 0
                             width: Math.min(implicitWidth, tracedFlow.width)
                             wrapMode: Text.WordWrap
                             text: "Nothing is traced. Pick an object on the Objects page and press Trace; "
                                   + "a traced object's bindings are followed with + bindings."
-                            color: theme.subtle
+                            color: Colors.textMuted
                         }
                         Repeater {
                             model: trace.tracing
@@ -3503,18 +3531,18 @@ ApplicationWindow {
                                 width: chipRow.implicitWidth + 16
                                 height: 28
                                 radius: 14
-                                color: theme.accentSoft
+                                color: Colors.surfaceSelected
                                 Row {
                                     id: chipRow
                                     x: 8
                                     anchors.verticalCenter: parent.verticalCenter
-                                    spacing: 6
+                                    spacing: Spacing.xs
                                     Text {
                                         anchors.verticalCenter: parent.verticalCenter
                                         text: chip.modelData.name
                                               + (chip.modelData.names.length > 0 ? " · only " + chip.modelData.names.join(", ") : "")
-                                        color: theme.accent
-                                        font.pixelSize: 12
+                                        color: Colors.link
+                                        font.pixelSize: Typography.captionSize
                                     }
                                     // Its bindings' runs: what woke each,
                                     // what it cost, whether it was for
@@ -3522,8 +3550,8 @@ ApplicationWindow {
                                     Text {
                                         anchors.verticalCenter: parent.verticalCenter
                                         text: chip.modelData.bindings ? "− bindings" : "+ bindings"
-                                        color: chip.modelData.bindings ? theme.violet : theme.subtle
-                                        font.pixelSize: 12
+                                        color: chip.modelData.bindings ? Colors.link : Colors.textMuted
+                                        font.pixelSize: Typography.captionSize
                                         MouseArea {
                                             anchors.fill: parent
                                             anchors.margins: -4
@@ -3537,8 +3565,8 @@ ApplicationWindow {
                                     Text {
                                         anchors.verticalCenter: parent.verticalCenter
                                         text: "✕"
-                                        color: theme.subtle
-                                        font.pixelSize: 12
+                                        color: Colors.textMuted
+                                        font.pixelSize: Typography.captionSize
                                         MouseArea {
                                             anchors.fill: parent
                                             anchors.margins: -4
@@ -3556,13 +3584,13 @@ ApplicationWindow {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         radius: 9
-                        color: theme.card
-                        border.color: theme.rule
+                        color: Colors.surfaceRaised
+                        border.color: Colors.separator
                         clip: true
                         ListView {
                             id: traceView
                             anchors.fill: parent
-                            anchors.margins: 6
+                            anchors.margins: Spacing.xs
                             clip: true
                             Accessible.role: Accessible.List
                             Accessible.name: "Trace"
@@ -3591,13 +3619,13 @@ ApplicationWindow {
                                 height: narrow ? 44 : 24
                                 Rectangle {
                                     anchors.fill: parent
-                                    color: traceRow.index % 2 ? theme.cardAlt : "transparent"
+                                    color: traceRow.index % 2 ? Colors.canvas : "transparent"
                                 }
                                 Row {
                                     x: 6
-                                    height: 24
-                                    spacing: 10
-                                    Text {
+                                    height: window.row(24)
+                                    spacing: Spacing.xs
+                                    Elided {
                                         width: 80
                                         anchors.verticalCenter: parent.verticalCenter
                                         horizontalAlignment: Text.AlignRight
@@ -3606,65 +3634,68 @@ ApplicationWindow {
                                         Accessible.role: Accessible.StaticText
                                         Accessible.name: text
                                         text: traceRow.at
-                                        color: theme.subtle
-                                        font.family: theme.mono
-                                        font.pixelSize: 12
+                                        color: Colors.textMuted
+                                        font.family: window.mono
+                                        font.pixelSize: Typography.captionSize
                                     }
-                                    Text {
+                                    Elided {
                                         width: traceRow.narrow ? Math.max(40, traceRow.width - 6 - 80 - 10 - 10 - 70 - 6) : 180
                                         anchors.verticalCenter: parent.verticalCenter
                                         Accessible.role: Accessible.StaticText
                                         Accessible.name: text
                                         text: traceRow.object
-                                        color: theme.text
+                                        color: Colors.text
                                         elide: Text.ElideRight
-                                        font.pixelSize: 12
+                                        font.pixelSize: Typography.captionSize
                                     }
-                                    Text {
+                                    Marked {
                                         width: 70
                                         anchors.verticalCenter: parent.verticalCenter
                                         Accessible.role: Accessible.StaticText
                                         Accessible.name: text
                                         text: traceRow.kind
-                                        color: trace.tone(traceRow.kind)
-                                        font.pixelSize: 12
+                                        tone: trace.tone(traceRow.kind)
+                                        font.pixelSize: Typography.captionSize
                                     }
                                 }
                                 Row {
                                     x: traceRow.narrow ? 6 + 80 + 10 : 6 + 80 + 10 + 180 + 10 + 70 + 10
                                     y: traceRow.narrow ? 20 : 0
-                                    height: 24
-                                    spacing: 10
-                                    Text {
+                                    height: window.row(24)
+                                    spacing: Spacing.xs
+                                    Elided {
                                         width: 150
                                         anchors.verticalCenter: parent.verticalCenter
                                         Accessible.role: Accessible.StaticText
                                         Accessible.name: text
                                         text: traceRow.name
-                                        color: theme.text
+                                        color: Colors.text
                                         font.bold: true
                                         elide: Text.ElideRight
-                                        font.pixelSize: 12
+                                        font.pixelSize: Typography.captionSize
                                     }
-                                    Text {
+                                    Elided {
                                         width: Math.max(0, traceRow.width - parent.x - 150 - 10 - 6)
                                         anchors.verticalCenter: parent.verticalCenter
                                         Accessible.role: Accessible.StaticText
                                         Accessible.name: text
                                         text: traceRow.what
-                                        color: theme.text
+                                        color: Colors.text
                                         elide: Text.ElideRight
-                                        font.family: theme.mono
-                                        font.pixelSize: 12
+                                        font.family: window.mono
+                                        font.pixelSize: Typography.captionSize
                                     }
                                 }
                             }
                         }
                         Text {
                             anchors.centerIn: parent
+                            width: parent.width - 2 * Spacing.md
+                            horizontalAlignment: Text.AlignHCenter
+                            wrapMode: Text.Wrap
                             visible: traceLines.count === 0
                             text: "Nothing written down yet"
-                            color: theme.subtle
+                            color: Colors.textMuted
                         }
                     }
                 }
@@ -3688,7 +3719,7 @@ ApplicationWindow {
                         id: supervision
                         width: supervisionScroll.width
                         height: supervisionScroll.contentHeight
-                        spacing: 10
+                        spacing: Spacing.xs
                         // Row by row, as the mailboxes are: a row whose
                         // values are the same is left alone.
                         ListModel { id: supRows }
@@ -3776,7 +3807,7 @@ ApplicationWindow {
                             spacing: 12
                             Text {
                                 Accessible.role: Accessible.Heading
-                                text: "Supervision"; color: theme.text; font.pixelSize: 19; font.bold: true
+                                text: "Supervision"; color: Colors.text; font.pixelSize: Typography.titleSize; font.bold: true
                             }
                             Text {
                                 width: Math.min(implicitWidth, supervisionHead.width)
@@ -3786,7 +3817,7 @@ ApplicationWindow {
                                 verticalAlignment: Text.AlignVCenter
                                 wrapMode: Text.WordWrap
                                 text: "every boundary, from when it is made · the last 32 faults"
-                                color: theme.subtle
+                                color: Colors.textMuted
                             }
                         }
 
@@ -3799,8 +3830,8 @@ ApplicationWindow {
                             // them leave the faults below room of their own.
                             Layout.preferredHeight: supHeads.height + 1 + Math.min(narrow ? 3 : 10, Math.max(1, supRows.count)) * rowHeight
                             radius: 9
-                            color: theme.card
-                            border.color: theme.rule
+                            color: Colors.surfaceRaised
+                            border.color: Colors.separator
                             clip: true
                             // Narrower than its columns, a row is laid out over
                             // more lines, the supervisor on the first; the heads
@@ -3818,20 +3849,20 @@ ApplicationWindow {
                                 width: supTable.line
                                 Repeater {
                                     model: ["Supervisor", "Strategy", "Restarts used", "State", "Content"]
-                                    delegate: Text {
+                                    delegate: Elided {
                                         required property string modelData
                                         required property int index
                                         width: supTable.column(index)
                                         height: supTable.narrow ? supTable.lineHeight : 32
                                         verticalAlignment: Text.AlignVCenter
                                         text: modelData
-                                        color: theme.subtle
-                                        font.pixelSize: 12
+                                        color: Colors.textMuted
+                                        font.pixelSize: Typography.captionSize
                                         font.bold: true
                                     }
                                 }
                             }
-                            Rectangle { y: supHeads.height; width: parent.width; height: 1; color: theme.rule }
+                            Rectangle { y: supHeads.height; width: parent.width; height: 1; color: Colors.separator }
                             ListView {
                                 anchors.fill: parent
                                 anchors.topMargin: supHeads.height + 1
@@ -3850,31 +3881,31 @@ ApplicationWindow {
                                     required property string handle
                                     width: ListView.view.width
                                     height: supTable.rowHeight
-                                    color: supHover.containsMouse ? theme.accentSoft
-                                         : index % 2 ? theme.cardAlt : "transparent"
+                                    color: supHover.containsMouse ? Colors.surfaceSelected
+                                         : index % 2 ? Colors.canvas : "transparent"
                                     Flow {
                                         x: 8
                                         width: supTable.line
-                                        Text {
+                                        Elided {
                                             width: supTable.column(0); height: supTable.lineHeight
                                             verticalAlignment: Text.AlignVCenter
                                             leftPadding: srow.depth * 18
                                             text: srow.name
-                                            color: srow.handle !== "" ? theme.accent : theme.text
+                                            color: srow.handle !== "" ? Colors.link : Colors.text
                                             elide: Text.ElideMiddle
                                         }
                                         Text {
                                             width: supTable.column(1); height: supTable.lineHeight
                                             verticalAlignment: Text.AlignVCenter
                                             text: srow.strategy
-                                            color: theme.subtle
+                                            color: Colors.textMuted
                                         }
                                         Text {
                                             width: supTable.column(2); height: supTable.lineHeight
                                             verticalAlignment: Text.AlignVCenter
                                             text: srow.used
-                                            color: theme.text
-                                            font.family: theme.mono
+                                            color: Colors.text
+                                            font.family: window.mono
                                         }
                                         Item {
                                             width: supTable.column(3); height: supTable.lineHeight
@@ -3882,21 +3913,21 @@ ApplicationWindow {
                                                 id: supDot
                                                 width: 8; height: 8; radius: 4
                                                 anchors.verticalCenter: parent.verticalCenter
-                                                color: srow.status === "down" ? theme.bad : theme.good
+                                                color: srow.status === "down" ? Colors.danger : Colors.success
                                             }
                                             Text {
                                                 anchors.left: supDot.right
-                                                anchors.leftMargin: 7
+                                                anchors.leftMargin: Spacing.xs
                                                 anchors.verticalCenter: parent.verticalCenter
                                                 text: srow.status
-                                                color: theme.text
+                                                color: Colors.text
                                             }
                                         }
                                         Text {
                                             width: supTable.column(4); height: supTable.lineHeight
                                             verticalAlignment: Text.AlignVCenter
                                             text: srow.content
-                                            color: srow.content.indexOf("stopped") === 0 ? theme.bad : theme.subtle
+                                            color: srow.content.indexOf("stopped") === 0 ? Colors.danger : Colors.textMuted
                                             elide: Text.ElideRight
                                         }
                                     }
@@ -3905,7 +3936,7 @@ ApplicationWindow {
                                         anchors.fill: parent
                                         hoverEnabled: srow.handle !== ""
                                         enabled: srow.handle !== ""
-                                        Accessible.role: Accessible.ListItem
+                                        Accessible.role: enabled ? Accessible.ListItem : Accessible.Row
                                         Accessible.name: srow.name
                                         onClicked: supervision.show(srow.handle, srow.name)
                                     }
@@ -3919,12 +3950,12 @@ ApplicationWindow {
                             // The supervisors above never take all the room.
                             Layout.minimumHeight: 160
                             radius: 9
-                            color: theme.card
-                            border.color: theme.rule
+                            color: Colors.surfaceRaised
+                            border.color: Colors.separator
                             clip: true
                             ListView {
                                 anchors.fill: parent
-                                anchors.margins: 6
+                                anchors.margins: Spacing.xs
                                 clip: true
                                 spacing: 2
                                 model: window.page === 6 ? faultRows : null
@@ -3949,41 +3980,41 @@ ApplicationWindow {
                                     width: ListView.view.width
                                     height: 52 + (open ? stackText.implicitHeight + 6 : 0)
                                     radius: 6
-                                    color: index % 2 ? theme.cardAlt : "transparent"
+                                    color: index % 2 ? Colors.canvas : "transparent"
                                     MouseArea {
                                         anchors.fill: parent
                                         enabled: frow.depth > 0
-                                        Accessible.role: Accessible.ListItem
+                                        Accessible.role: enabled ? Accessible.ListItem : Accessible.Row
                                         Accessible.name: frow.fault + ": " + frow.message
                                         onClicked: supervision.opened = frow.open ? -1 : frow.seq
                                     }
                                     Column {
                                         x: 8
                                         y: 5
-                                        width: parent.width - 16
+                                        width: parent.width - 2 * Spacing.xs
                                         spacing: 3
                                         Row {
-                                            spacing: 10
+                                            spacing: Spacing.xs
                                             Text {
                                                 text: frow.fault
-                                                color: frow.takenBy === "log" ? theme.warn : theme.bad
+                                                color: Colors.text
                                                 font.bold: true
                                             }
                                             Text {
                                                 width: frow.width - 300
                                                 text: frow.message
-                                                color: theme.text
+                                                color: Colors.text
                                                 elide: Text.ElideRight
                                             }
                                         }
                                         Row {
-                                            spacing: 14
-                                            Text { text: frow.at; color: theme.subtle; font.family: theme.mono; font.pixelSize: 12 }
-                                            Text { text: frow.place; color: theme.subtle; font.family: theme.mono; font.pixelSize: 12 }
+                                            spacing: Spacing.sm
+                                            Text { text: frow.at; color: Colors.textMuted; font.family: window.mono; font.pixelSize: Typography.captionSize }
+                                            Text { text: frow.place; color: Colors.textMuted; font.family: window.mono; font.pixelSize: Typography.captionSize }
                                             Text {
                                                 text: frow.origin === "" ? "" : "in " + frow.origin
-                                                color: frow.originHandle !== "" ? theme.accent : theme.subtle
-                                                font.pixelSize: 12
+                                                color: frow.originHandle !== "" ? Colors.link : Colors.textMuted
+                                                font.pixelSize: Typography.captionSize
                                                 MouseArea {
                                                     anchors.fill: parent
                                                     visible: frow.originHandle !== ""
@@ -3994,8 +4025,8 @@ ApplicationWindow {
                                             }
                                             Text {
                                                 text: "taken by " + frow.takenBy
-                                                color: frow.takenHandle !== "" ? theme.accent : theme.subtle
-                                                font.pixelSize: 12
+                                                color: frow.takenHandle !== "" ? Colors.link : Colors.textMuted
+                                                font.pixelSize: Typography.captionSize
                                                 MouseArea {
                                                     anchors.fill: parent
                                                     visible: frow.takenHandle !== ""
@@ -4007,8 +4038,8 @@ ApplicationWindow {
                                             Text {
                                                 visible: frow.depth > 0
                                                 text: (frow.open ? "▾ " : "▸ ") + frow.depth + (frow.depth === 1 ? " frame" : " frames")
-                                                color: theme.subtle
-                                                font.pixelSize: 12
+                                                color: Colors.textMuted
+                                                font.pixelSize: Typography.captionSize
                                                 MouseArea {
                                                     anchors.fill: parent
                                                     Accessible.role: Accessible.Button
@@ -4022,9 +4053,9 @@ ApplicationWindow {
                                             visible: frow.open
                                             leftPadding: 12
                                             text: frow.stack
-                                            color: theme.text
-                                            font.family: theme.mono
-                                            font.pixelSize: 12
+                                            color: Colors.text
+                                            font.family: window.mono
+                                            font.pixelSize: Typography.captionSize
                                         }
                                     }
                                 }
@@ -4035,7 +4066,7 @@ ApplicationWindow {
                                 Accessible.role: Accessible.StaticText
                                 Accessible.name: text
                                 text: "No faults"
-                                color: theme.subtle
+                                color: Colors.textMuted
                             }
                         }
                     }
@@ -4047,7 +4078,7 @@ ApplicationWindow {
                 // recording is held by this window, so it ends with it.
                 ColumnLayout {
                     id: timeline
-                    spacing: 10
+                    spacing: Spacing.xs
                     property var since: null
                     property bool recording: false
                     property int dropped: 0
@@ -4071,14 +4102,14 @@ ApplicationWindow {
                     // and a frame both carry is listed once.
                     property int lastSeq: 0
                     readonly property var parts: [
-                        { key: "timers", name: "timers", tone: theme.warn },
-                        { key: "animations", name: "animations", tone: theme.violet },
-                        { key: "layout", name: "layout", tone: theme.accent },
-                        { key: "create", name: "create", tone: theme.good },
-                        { key: "scene", name: "scene build", tone: "#3fa7a0" },
-                        { key: "other", name: "other", tone: theme.subtle },
-                        { key: "render", name: "render", tone: theme.bad },
-                        { key: "present", name: "present", tone: "#d77fae" }
+                        { key: "timers", name: "timers", tone: Colors.warning },
+                        { key: "animations", name: "animations", tone: Colors.info },
+                        { key: "layout", name: "layout", tone: Colors.accent },
+                        { key: "create", name: "create", tone: Colors.success },
+                        { key: "scene", name: "scene build", tone: window.series.teal },
+                        { key: "other", name: "other", tone: Colors.textMuted },
+                        { key: "render", name: "render", tone: Colors.danger },
+                        { key: "present", name: "present", tone: window.series.pink }
                     ]
 
                     function args() {
@@ -4222,9 +4253,9 @@ ApplicationWindow {
                     }
 
                     function wokeTone(woke) {
-                        return woke.indexOf("input") >= 0 ? theme.accent
-                             : woke.indexOf("animation") >= 0 ? theme.violet
-                             : woke.indexOf("timer") >= 0 ? theme.warn : theme.subtle
+                        return woke.indexOf("input") >= 0 ? Colors.accent
+                             : woke.indexOf("animation") >= 0 ? Colors.info
+                             : woke.indexOf("timer") >= 0 ? Colors.warning : Colors.textMuted
                     }
 
                     ListModel { id: frameRows }
@@ -4236,12 +4267,12 @@ ApplicationWindow {
                         Layout.fillWidth: true
                         // Asks for no width of its own: see window.spare.
                         Layout.preferredWidth: 0
-                        spacing: 10
+                        spacing: Spacing.xs
                         Text {
                             height: recordButton.implicitHeight
                             verticalAlignment: Text.AlignVCenter
                             Accessible.role: Accessible.Heading
-                            text: "Frames"; color: theme.text; font.pixelSize: 19; font.bold: true
+                            text: "Frames"; color: Colors.text; font.pixelSize: Typography.titleSize; font.bold: true
                         }
                         Text {
                             width: Math.min(implicitWidth, framesHead.width)
@@ -4253,7 +4284,7 @@ ApplicationWindow {
                                   + (timeline.hideOwn && timeline.ownCount > 0
                                      ? " · " + timeline.ownCount + " woken by this window hidden" : "")
                                   + (timeline.dropped > 0 ? " · " + timeline.dropped + " older gave way" : "")
-                            color: timeline.recording ? theme.good : theme.subtle
+                            color: timeline.recording ? Colors.success : Colors.textMuted
                         }
                         Item {
                             id: framesGap
@@ -4279,23 +4310,24 @@ ApplicationWindow {
                         Button {
                             text: "Save trace"
                             enabled: frameRows.count > 0 || timeline.recording
+                            Accessible.description: enabled ? "Save the frames as a trace file" : "No frames yet: record some first"
                             onClicked: timeline.save()
                         }
                     }
 
-                    Text {
+                    Elided {
                         Layout.fillWidth: true
                         visible: timeline.savedTo !== ""
                         elide: Text.ElideMiddle
                         text: "Saved " + timeline.savedTo
-                        color: theme.subtle
-                        font.pixelSize: 11
+                        color: Colors.textMuted
+                        font.pixelSize: Typography.captionSize
                     }
 
                     // p50 · p95 · max of each part over the frames listed.
                     Flow {
                         Layout.fillWidth: true
-                        spacing: 14
+                        spacing: Spacing.sm
                         visible: timeline.summary !== null
                         Repeater {
                             model: ["total", "layout", "scene", "bindings", "text", "render", "present"]
@@ -4303,14 +4335,14 @@ ApplicationWindow {
                                 required property string modelData
                                 Text {
                                     text: modelData === "scene" ? "scene build" : modelData
-                                    color: theme.subtle
-                                    font.pixelSize: 11
+                                    color: Colors.textMuted
+                                    font.pixelSize: Typography.captionSize
                                 }
                                 Text {
                                     text: timeline.spread(modelData)
-                                    color: theme.text
-                                    font.family: theme.mono
-                                    font.pixelSize: 12
+                                    color: Colors.text
+                                    font.family: window.mono
+                                    font.pixelSize: Typography.captionSize
                                 }
                             }
                         }
@@ -4324,13 +4356,13 @@ ApplicationWindow {
                             model: timeline.parts
                             delegate: Row {
                                 required property var modelData
-                                spacing: 5
+                                spacing: Spacing.xxs
                                 Rectangle {
                                     width: 10; height: 10; radius: 2
                                     anchors.verticalCenter: parent.verticalCenter
                                     color: modelData.tone
                                 }
-                                Text { text: modelData.name; color: theme.subtle; font.pixelSize: 11 }
+                                Text { text: modelData.name; color: Colors.textMuted; font.pixelSize: Typography.captionSize }
                             }
                         }
                     }
@@ -4339,13 +4371,13 @@ ApplicationWindow {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         radius: 9
-                        color: theme.card
-                        border.color: theme.rule
+                        color: Colors.surfaceRaised
+                        border.color: Colors.separator
                         clip: true
                         ListView {
                             id: frameView
                             anchors.fill: parent
-                            anchors.margins: 6
+                            anchors.margins: Spacing.xs
                             clip: true
                             model: window.page === 7 ? frameRows : null
                             onModelChanged: if (model !== null) Qt.callLater(frameView.positionViewAtEnd)
@@ -4391,7 +4423,7 @@ ApplicationWindow {
                                                  + ", " + window.ms(total)
                                 Rectangle {
                                     anchors.fill: parent
-                                    color: frameRow.index % 2 ? theme.cardAlt : "transparent"
+                                    color: frameRow.index % 2 ? Colors.canvas : "transparent"
                                 }
                                 // Placed by hand, not in a Row, so that one
                                 // set of cells takes either form.
@@ -4401,9 +4433,9 @@ ApplicationWindow {
                                     verticalAlignment: Text.AlignVCenter
                                     horizontalAlignment: Text.AlignRight
                                     text: frameRow.seq
-                                    color: theme.subtle
-                                    font.family: theme.mono
-                                    font.pixelSize: 12
+                                    color: Colors.textMuted
+                                    font.family: window.mono
+                                    font.pixelSize: Typography.captionSize
                                 }
                                 Text {
                                     x: frameRow.narrow ? 6 : 66
@@ -4412,9 +4444,9 @@ ApplicationWindow {
                                     verticalAlignment: Text.AlignVCenter
                                     horizontalAlignment: Text.AlignRight
                                     text: frameRow.at
-                                    color: theme.subtle
-                                    font.family: theme.mono
-                                    font.pixelSize: 12
+                                    color: Colors.textMuted
+                                    font.family: window.mono
+                                    font.pixelSize: Typography.captionSize
                                 }
                                 // Which window's scene ran it.
                                 Text {
@@ -4422,20 +4454,20 @@ ApplicationWindow {
                                     width: 60; height: 24
                                     verticalAlignment: Text.AlignVCenter
                                     text: frameRow.win
-                                    color: frameRow.win === "main" ? theme.subtle : theme.accent
+                                    color: frameRow.win === "main" ? Colors.textMuted : Colors.link
                                     elide: Text.ElideRight
-                                    font.family: theme.mono
-                                    font.pixelSize: 12
+                                    font.family: window.mono
+                                    font.pixelSize: Typography.captionSize
                                 }
                                 Text {
                                     x: frameRow.narrow ? 136 : 216
                                     width: frameRow.narrow ? Math.max(0, frameRow.width - 6 - 70 - 10 - 136) : 140
-                                    height: 24
+                                    height: window.row(24)
                                     verticalAlignment: Text.AlignVCenter
                                     text: frameRow.woke === "" ? "—" : frameRow.woke
                                     color: timeline.wokeTone(frameRow.woke)
                                     elide: Text.ElideRight
-                                    font.pixelSize: 12
+                                    font.pixelSize: Typography.captionSize
                                 }
                                 Text {
                                     x: frameRow.narrow ? frameRow.width - 6 - 70 : 366
@@ -4443,9 +4475,9 @@ ApplicationWindow {
                                     verticalAlignment: Text.AlignVCenter
                                     horizontalAlignment: Text.AlignRight
                                     text: window.ms(frameRow.total)
-                                    color: theme.text
-                                    font.family: theme.mono
-                                    font.pixelSize: 12
+                                    color: Colors.text
+                                    font.family: window.mono
+                                    font.pixelSize: Typography.captionSize
                                 }
                                 // The passes, then painting, to one scale
                                 // for every row.
@@ -4464,25 +4496,28 @@ ApplicationWindow {
                                         }
                                     }
                                 }
-                                Text {
+                                Elided {
                                     x: frameRow.narrow ? frameRow.width - 6 - 180 : 456 + frameRow.barWidth
                                     y: frameRow.narrow ? 22 : 0
                                     width: 180; height: 24
                                     verticalAlignment: Text.AlignVCenter
                                     text: "bindings " + window.ms(frameRow.bindings) + " (" + frameRow.runs + ")"
                                           + " · text " + window.ms(frameRow.text) + " (" + frameRow.layouts + ")"
-                                    color: theme.subtle
+                                    color: Colors.textMuted
                                     elide: Text.ElideRight
-                                    font.pixelSize: 11
+                                    font.pixelSize: Typography.captionSize
                                 }
                             }
                         }
                         Text {
                             anchors.centerIn: parent
+                            width: parent.width - 2 * Spacing.md
+                            horizontalAlignment: Text.AlignHCenter
+                            wrapMode: Text.Wrap
                             visible: frameRows.count === 0
                             text: timeline.recording ? "No frame since recording began: the application is at rest"
                                                      : "Press Record to keep each frame's times"
-                            color: theme.subtle
+                            color: Colors.textMuted
                         }
                     }
                 }
@@ -4507,7 +4542,7 @@ ApplicationWindow {
                         id: memory
                         width: memoryScroll.width
                         height: memoryScroll.contentHeight
-                        spacing: 10
+                        spacing: Spacing.xs
                         property var last: null
                         // What each owner held, a sample each time the page
                         // asked, the oldest first: the chart over time.
@@ -4520,30 +4555,30 @@ ApplicationWindow {
                         // The owners stacked, bottom first: together they are
                         // what the process holds. Textures are not among them.
                         readonly property var stack: [
-                            { key: "program", tone: "#8a8f99" },
-                            { key: "compiled", tone: "#6b7fb5" },
-                            { key: "script", tone: theme.warn },
-                            { key: "objects", tone: theme.accent },
-                            { key: "reactive", tone: theme.violet },
-                            { key: "scene", tone: "#d77fae" },
-                            { key: "text", tone: theme.good },
-                            { key: "glyph_atlas", tone: "#8fcf6f" },
-                            { key: "meshes", tone: theme.bad },
-                            { key: "images", tone: "#3fa7a0" },
-                            { key: "models", tone: "#c9a35a" },
-                            { key: "allocator_free", tone: "#b7bcc5" },
-                            { key: "not_attributed", tone: theme.rule }
+                            { key: "program", tone: window.series.slate },
+                            { key: "compiled", tone: window.series.indigo },
+                            { key: "script", tone: Colors.warning },
+                            { key: "objects", tone: Colors.accent },
+                            { key: "reactive", tone: Colors.info },
+                            { key: "scene", tone: window.series.pink },
+                            { key: "text", tone: Colors.success },
+                            { key: "glyph_atlas", tone: window.series.lime },
+                            { key: "meshes", tone: Colors.danger },
+                            { key: "images", tone: window.series.teal },
+                            { key: "models", tone: window.series.ochre },
+                            { key: "allocator_free", tone: window.series.grey },
+                            { key: "not_attributed", tone: Colors.separator }
                         ]
                         // The largest part, so that bars compare.
                         property real most: 1
                         readonly property var parts: [
-                            { key: "objects", name: "objects", tone: theme.accent },
-                            { key: "script", name: "script heap", tone: theme.warn },
-                            { key: "reactive", name: "reactive graph", tone: theme.violet },
-                            { key: "text", name: "text caches", tone: theme.good },
-                            { key: "images", name: "images", tone: "#3fa7a0" },
-                            { key: "scenes", name: "scenes", tone: "#d77fae" },
-                            { key: "renderers", name: "renderers", tone: theme.bad }
+                            { key: "objects", name: "objects", tone: Colors.accent },
+                            { key: "script", name: "script heap", tone: Colors.warning },
+                            { key: "reactive", name: "reactive graph", tone: Colors.info },
+                            { key: "text", name: "text caches", tone: Colors.success },
+                            { key: "images", name: "images", tone: window.series.teal },
+                            { key: "scenes", name: "scenes", tone: window.series.pink },
+                            { key: "renderers", name: "renderers", tone: Colors.danger }
                         ]
 
                         function load() {
@@ -4687,12 +4722,12 @@ ApplicationWindow {
                             Layout.fillWidth: true
                             // Asks for no width of its own: see window.spare.
                             Layout.preferredWidth: 0
-                            spacing: 10
+                            spacing: Spacing.xs
                             Text {
                                 height: window.headHeight
                                 verticalAlignment: Text.AlignVCenter
                                 Accessible.role: Accessible.Heading
-                                text: "Memory"; color: theme.text; font.pixelSize: 19; font.bold: true
+                                text: "Memory"; color: Colors.text; font.pixelSize: Typography.titleSize; font.bold: true
                             }
                             Text {
                                 width: Math.min(implicitWidth, memoryHead.width)
@@ -4709,14 +4744,14 @@ ApplicationWindow {
                                          ? " · " + window.bytes(Math.max(0, memory.last.reconciled.not_attributed_bytes))
                                            + " not attributed (" + Math.round(memory.last.reconciled.not_attributed_share * 100) + " %)"
                                          : "")
-                                color: theme.subtle
+                                color: Colors.textMuted
                             }
                             Item {
                                 id: memoryGap
                                 width: window.spare(memoryHead, memoryGap)
                                 height: 1
                             }
-                            Button {
+                            ToolButton {
                                 text: "Refresh"
                                 onClicked: memory.load()
                             }
@@ -4728,19 +4763,19 @@ ApplicationWindow {
                             Layout.fillWidth: true
                             Layout.preferredHeight: 150 + legend.implicitHeight
                             radius: 9
-                            color: theme.card
-                            border.color: theme.rule
+                            color: Colors.surfaceRaised
+                            border.color: Colors.separator
                             visible: memory.history.length > 0
                             Item {
                                 id: memoryChart
-                                x: 8; y: 8
-                                width: parent.width - 16
-                                height: 120
+                                x: Spacing.xs; y: Spacing.xs
+                                width: parent.width - 2 * Spacing.xs
+                                height: parent.height - legend.implicitHeight - 3 * Spacing.xs - 6
                                 onWidthChanged: memory.draw()
                                 Accessible.role: Accessible.Chart
                                 Accessible.name: "Memory by owner over the last " + memory.history.length + " samples"
-                                Rectangle { width: parent.width; height: 1; color: theme.rule }
-                                Rectangle { y: parent.height - 1; width: parent.width; height: 1; color: theme.rule }
+                                Rectangle { width: parent.width; height: 1; color: Colors.separator }
+                                Rectangle { y: parent.height - 1; width: parent.width; height: 1; color: Colors.separator }
                                 Repeater {
                                     model: window.page === 8 ? memory.bands : null
                                     delegate: Shape {
@@ -4758,15 +4793,15 @@ ApplicationWindow {
                                 Text {
                                     x: 4; y: 2
                                     text: window.bytes(memory.stackTop)
-                                    color: theme.subtle
-                                    font.pixelSize: 10
+                                    color: Colors.textMuted
+                                    font.pixelSize: Typography.captionSize
                                 }
                             }
                             Flow {
                                 id: legend
                                 x: 8
                                 y: memoryChart.y + memoryChart.height + 8
-                                width: parent.width - 16
+                                width: parent.width - 2 * Spacing.xs
                                 spacing: 12
                                 Repeater {
                                     model: window.page === 8 && memory.last && memory.last.owners ? memory.last.owners : null
@@ -4784,15 +4819,15 @@ ApplicationWindow {
                                             anchors.verticalCenter: parent.verticalCenter
                                             width: 9; height: 9; radius: 2
                                             color: key.tone
-                                            border.color: key.modelData.gpu ? theme.subtle : "transparent"
+                                            border.color: key.modelData.gpu ? Colors.textMuted : "transparent"
                                         }
                                         Text {
                                             text: key.modelData.label + " " + window.bytes(key.modelData.bytes)
                                                   + (key.modelData.of !== "" && key.modelData.count > 0
                                                      ? " · " + key.modelData.count + " " + key.modelData.of : "")
                                                   + (key.modelData.gpu ? " (GPU, not stacked)" : "")
-                                            color: key.modelData.owner === "not_attributed" ? theme.warn : theme.subtle
-                                            font.pixelSize: 11
+                                            color: key.modelData.owner === "not_attributed" ? Colors.text : Colors.textMuted
+                                            font.pixelSize: Typography.captionSize
                                         }
                                     }
                                 }
@@ -4808,21 +4843,21 @@ ApplicationWindow {
                             Layout.fillWidth: true
                             Layout.preferredHeight: (split !== null && split.known ? mappedRow.implicitHeight : 18) + 16
                             radius: 9
-                            color: theme.card
-                            border.color: theme.rule
+                            color: Colors.surfaceRaised
+                            border.color: Colors.separator
                             visible: memory.last !== null && memory.last.mappings !== null
                                      && memory.last.mappings !== undefined
                             readonly property var split: visible ? memory.last.mappings : null
-                            Text {
-                                x: 8; y: 8
+                            Elided {
+                                x: Spacing.xs; y: Spacing.xs
                                 visible: mapped.split !== null && !mapped.split.known
                                 text: "By mapping: not known on this platform"
-                                color: theme.subtle
+                                color: Colors.textMuted
                             }
                             Row {
                                 id: mappedRow
-                                x: 8; y: 8
-                                width: parent.width - 16
+                                x: Spacing.xs; y: Spacing.xs
+                                width: parent.width - 2 * Spacing.xs
                                 spacing: 16
                                 visible: mapped.split !== null && mapped.split.known === true
                                 Repeater {
@@ -4833,10 +4868,10 @@ ApplicationWindow {
                                         required property var modelData
                                         width: (mappedRow.width - 16) / 2
                                         spacing: 2
-                                        Text {
+                                        Elided {
                                             text: half.modelData[0]
-                                            color: theme.subtle
-                                            font.pixelSize: 12
+                                            color: Colors.textMuted
+                                            font.pixelSize: Typography.captionSize
                                             font.bold: true
                                         }
                                         Repeater {
@@ -4846,22 +4881,22 @@ ApplicationWindow {
                                                 id: mapRow
                                                 required property var modelData
                                                 spacing: 8
-                                                Accessible.role: Accessible.ListItem
+                                                Accessible.role: enabled ? Accessible.ListItem : Accessible.Row
                                                 Accessible.name: modelData.label + ", " + window.bytes(modelData.bytes)
-                                                Text {
+                                                Elided {
                                                     width: half.width - 88
                                                     text: mapRow.modelData.label
                                                     elide: Text.ElideRight
-                                                    color: theme.text
-                                                    font.pixelSize: 12
+                                                    color: Colors.text
+                                                    font.pixelSize: Typography.captionSize
                                                 }
-                                                Text {
+                                                Elided {
                                                     width: 80
                                                     horizontalAlignment: Text.AlignRight
                                                     text: window.bytes(mapRow.modelData.bytes)
-                                                    color: theme.text
-                                                    font.family: theme.mono
-                                                    font.pixelSize: 12
+                                                    color: Colors.text
+                                                    font.family: window.mono
+                                                    font.pixelSize: Typography.captionSize
                                                 }
                                             }
                                         }
@@ -4876,12 +4911,12 @@ ApplicationWindow {
                             Layout.fillWidth: true
                             Layout.preferredHeight: partColumn.implicitHeight + 16
                             radius: 9
-                            color: theme.card
-                            border.color: theme.rule
+                            color: Colors.surfaceRaised
+                            border.color: Colors.separator
                             Column {
                                 id: partColumn
-                                x: 8; y: 8
-                                width: parent.width - 16
+                                x: Spacing.xs; y: Spacing.xs
+                                width: parent.width - 2 * Spacing.xs
                                 spacing: 4
                                 Repeater {
                                     model: window.page === 8 ? partRows : null
@@ -4890,23 +4925,23 @@ ApplicationWindow {
                                         required property string name
                                         required property string tone
                                         required property real bytes
-                                        spacing: 10
-                                        Accessible.role: Accessible.ListItem
+                                        spacing: Spacing.xs
+                                        Accessible.role: enabled ? Accessible.ListItem : Accessible.Row
                                         Accessible.name: name + ", " + window.bytes(bytes)
-                                        Text { width: 120; text: partRow.name; color: theme.text; font.pixelSize: 12 }
-                                        Text {
+                                        Elided { width: 120; text: partRow.name; color: Colors.text; font.pixelSize: Typography.captionSize }
+                                        Elided {
                                             width: 80
                                             horizontalAlignment: Text.AlignRight
                                             text: window.bytes(partRow.bytes)
-                                            color: theme.text
-                                            font.family: theme.mono
-                                            font.pixelSize: 12
+                                            color: Colors.text
+                                            font.family: window.mono
+                                            font.pixelSize: Typography.captionSize
                                         }
                                         Rectangle {
                                             anchors.verticalCenter: parent.verticalCenter
                                             height: 10
                                             radius: 2
-                                            width: Math.max(1, (partColumn.width - 230) * partRow.bytes / memory.most)
+                                            width: Math.max(1, (partColumn.cell - 230) * partRow.bytes / memory.most)
                                             color: partRow.tone
                                         }
                                     }
@@ -4914,11 +4949,11 @@ ApplicationWindow {
                             }
                         }
 
-                        Text {
+                        Elided {
                             text: !memory.last ? "" : "Objects by type · " + memory.last.objects.count + " objects"
                                   + (memory.last.objects.types_left_out > 0
                                      ? " · " + memory.last.objects.types_left_out + " smaller types not listed" : "")
-                            color: theme.subtle
+                            color: Colors.textMuted
                         }
                         Rectangle {
                             Layout.fillWidth: true
@@ -4927,12 +4962,12 @@ ApplicationWindow {
                             // room for some rows and the page scrolls instead.
                             Layout.minimumHeight: 200
                             radius: 9
-                            color: theme.card
-                            border.color: theme.rule
+                            color: Colors.surfaceRaised
+                            border.color: Colors.separator
                             clip: true
                             ListView {
                                 anchors.fill: parent
-                                anchors.margins: 6
+                                anchors.margins: Spacing.xs
                                 clip: true
                                 model: window.page === 8 ? typeRows : null
                                 ScrollBar.vertical: ScrollBar {}
@@ -4948,41 +4983,41 @@ ApplicationWindow {
                                     // another, it has a line of its own below.
                                     readonly property bool narrow: width - 370 < 120
                                     height: narrow ? 34 : 22
-                                    Accessible.role: Accessible.ListItem
+                                    Accessible.role: enabled ? Accessible.ListItem : Accessible.Row
                                     Accessible.name: type + ", " + count + (count === 1 ? " object, " : " objects, ") + window.bytes(bytes)
                                     Rectangle {
                                         anchors.fill: parent
-                                        color: typeRow.index % 2 ? theme.cardAlt : "transparent"
+                                        color: typeRow.index % 2 ? Colors.canvas : "transparent"
                                     }
                                     Row {
                                         x: 6
-                                        height: 22
-                                        spacing: 10
-                                        Text {
+                                        height: window.row(22)
+                                        spacing: Spacing.xs
+                                        Elided {
                                             width: typeRow.narrow ? Math.max(40, typeRow.width - 6 - 60 - 10 - 80 - 10 - 6 - 10) : 180
                                             anchors.verticalCenter: parent.verticalCenter
                                             text: typeRow.type
-                                            color: theme.text
+                                            color: Colors.text
                                             elide: Text.ElideRight
-                                            font.pixelSize: 12
+                                            font.pixelSize: Typography.captionSize
                                         }
-                                        Text {
+                                        Elided {
                                             width: 60
                                             anchors.verticalCenter: parent.verticalCenter
                                             horizontalAlignment: Text.AlignRight
                                             text: typeRow.count
-                                            color: theme.subtle
-                                            font.family: theme.mono
-                                            font.pixelSize: 12
+                                            color: Colors.textMuted
+                                            font.family: window.mono
+                                            font.pixelSize: Typography.captionSize
                                         }
-                                        Text {
+                                        Elided {
                                             width: 80
                                             anchors.verticalCenter: parent.verticalCenter
                                             horizontalAlignment: Text.AlignRight
                                             text: window.bytes(typeRow.bytes)
-                                            color: theme.text
-                                            font.family: theme.mono
-                                            font.pixelSize: 12
+                                            color: Colors.text
+                                            font.family: window.mono
+                                            font.pixelSize: Typography.captionSize
                                         }
                                         Rectangle {
                                             visible: !typeRow.narrow
@@ -4990,7 +5025,7 @@ ApplicationWindow {
                                             height: 10
                                             radius: 2
                                             width: Math.max(1, (typeRow.width - 370) * typeRow.bytes / memory.most)
-                                            color: theme.accent
+                                            color: Colors.accent
                                         }
                                     }
                                     Rectangle {
@@ -5000,7 +5035,7 @@ ApplicationWindow {
                                         height: 6
                                         radius: 2
                                         width: Math.max(1, (typeRow.width - 12) * typeRow.bytes / memory.most)
-                                        color: theme.accent
+                                        color: Colors.accent
                                     }
                                 }
                             }
@@ -5018,9 +5053,9 @@ ApplicationWindow {
                                 // Wrapped, so that a renderer with much to say
                                 // grows the page, which scrolls only up and down.
                                 // Read out line by line, as each is shown.
-                                Text { Accessible.role: Accessible.StaticText; Accessible.name: text; width: windowRow.width; wrapMode: Text.Wrap; text: windowRow.name; color: theme.text; font.pixelSize: 12; font.bold: true }
-                                Text { Accessible.role: Accessible.StaticText; Accessible.name: text; width: windowRow.width; wrapMode: Text.Wrap; text: "scene: " + windowRow.scene; color: theme.subtle; font.pixelSize: 12 }
-                                Text { Accessible.role: Accessible.StaticText; Accessible.name: text; width: windowRow.width; wrapMode: Text.Wrap; text: "renderer: " + windowRow.render; color: theme.subtle; font.pixelSize: 12 }
+                                Text { Accessible.role: Accessible.StaticText; Accessible.name: text; width: windowRow.width; wrapMode: Text.Wrap; text: windowRow.name; color: Colors.text; font.pixelSize: Typography.captionSize; font.bold: true }
+                                Text { Accessible.role: Accessible.StaticText; Accessible.name: text; width: windowRow.width; wrapMode: Text.Wrap; text: "scene: " + windowRow.scene; color: Colors.textMuted; font.pixelSize: Typography.captionSize }
+                                Text { Accessible.role: Accessible.StaticText; Accessible.name: text; width: windowRow.width; wrapMode: Text.Wrap; text: "renderer: " + windowRow.render; color: Colors.textMuted; font.pixelSize: Typography.captionSize }
                             }
                         }
                     }
@@ -5036,7 +5071,7 @@ ApplicationWindow {
                 // page is shown.
                 ColumnLayout {
                     id: models
-                    spacing: 10
+                    spacing: Spacing.xs
                     property var list: []
                     // The model picked, by handle, and the page of it shown.
                     property string picked: ""
@@ -5128,12 +5163,12 @@ ApplicationWindow {
                         Layout.fillWidth: true
                         // Asks for no width of its own: see window.spare.
                         Layout.preferredWidth: 0
-                        spacing: 10
+                        spacing: Spacing.xs
                         Text {
                             height: window.headHeight
                             verticalAlignment: Text.AlignVCenter
                             Accessible.role: Accessible.Heading
-                            text: "Models"; color: theme.text; font.pixelSize: 19; font.bold: true
+                            text: "Models"; color: Colors.text; font.pixelSize: Typography.titleSize; font.bold: true
                         }
                         Text {
                             width: Math.min(implicitWidth, modelsHead.width)
@@ -5141,14 +5176,14 @@ ApplicationWindow {
                             verticalAlignment: Text.AlignVCenter
                             elide: Text.ElideRight
                             text: models.list.length + (models.list.length === 1 ? " model" : " models")
-                            color: theme.subtle
+                            color: Colors.textMuted
                         }
                         Item {
                             id: modelsGap
                             width: window.spare(modelsHead, modelsGap)
                             height: 1
                         }
-                        Button {
+                        ToolButton {
                             text: "Refresh"
                             onClicked: models.load()
                         }
@@ -5172,12 +5207,12 @@ ApplicationWindow {
                             Layout.preferredHeight: modelsBody.narrow ? 160 : -1
                             Layout.fillHeight: !modelsBody.narrow
                             radius: 9
-                            color: theme.card
-                            border.color: theme.rule
+                            color: Colors.surfaceRaised
+                            border.color: Colors.separator
                             clip: true
                             ListView {
                                 anchors.fill: parent
-                                anchors.margins: 6
+                                anchors.margins: Spacing.xs
                                 clip: true
                                 model: window.page === 9 ? models.list : []
                                 ScrollBar.vertical: ScrollBar {}
@@ -5193,35 +5228,35 @@ ApplicationWindow {
                                     width: ListView.view.width
                                     height: 54
                                     radius: 6
-                                    color: models.picked === modelData.model ? theme.accentSoft : "transparent"
+                                    color: models.picked === modelData.model ? Colors.surfaceSelected : "transparent"
                                     Column {
                                         x: 8
                                         anchors.verticalCenter: parent.verticalCenter
                                         width: parent.width - 16
-                                        Text {
+                                        Elided {
                                             width: parent.width
                                             elide: Text.ElideRight
                                             text: modelRow.name
-                                            color: models.picked === modelRow.modelData.model ? theme.accent : theme.text
-                                            font.pixelSize: 12
+                                            color: models.picked === modelRow.modelData.model ? Colors.link : Colors.text
+                                            font.pixelSize: Typography.captionSize
                                             font.bold: models.picked === modelRow.modelData.model
                                         }
-                                        Text {
+                                        Elided {
                                             width: parent.width
                                             elide: Text.ElideRight
                                             text: modelRow.modelData.count + " rows"
                                                   + (modelRow.modelData.roles.length > 0 ? " · " + modelRow.modelData.roles.join(", ") : "")
                                                   + (modelRow.modelData.writable ? " · writable" : "")
-                                            color: theme.subtle
-                                            font.pixelSize: 11
+                                            color: Colors.textMuted
+                                            font.pixelSize: Typography.captionSize
                                         }
-                                        Text {
+                                        Elided {
                                             width: parent.width - viewLink.width - 8
                                             elide: Text.ElideRight
                                             text: (modelRow.modelData.shown_by || []).length === 0 ? "shown by no view"
                                                   : "shown by " + modelRow.modelData.shown_by.map(function(v) { return v.name }).join(", ")
-                                            color: theme.subtle
-                                            font.pixelSize: 11
+                                            color: Colors.textMuted
+                                            font.pixelSize: Typography.captionSize
                                         }
                                     }
                                     MouseArea {
@@ -5236,11 +5271,11 @@ ApplicationWindow {
                                         anchors.right: parent.right
                                         anchors.rightMargin: 8
                                         anchors.bottom: parent.bottom
-                                        anchors.bottomMargin: 6
+                                        anchors.bottomMargin: Spacing.xs
                                         visible: modelRow.view !== null
                                         text: "view ›"
-                                        color: theme.accent
-                                        font.pixelSize: 11
+                                        color: Colors.link
+                                        font.pixelSize: Typography.captionSize
                                         font.underline: viewHover.containsMouse
                                         MouseArea {
                                             id: viewHover
@@ -5254,13 +5289,22 @@ ApplicationWindow {
                                     }
                                 }
                             }
+                            Text {
+                                anchors.centerIn: parent
+                                width: parent.width - 2 * Spacing.md
+                                horizontalAlignment: Text.AlignHCenter
+                                wrapMode: Text.Wrap
+                                visible: window.page === 9 && models.list.length === 0
+                                text: "No model is alive in the app"
+                                color: Colors.textMuted
+                            }
                         }
 
                         // A page of the rows of the model picked.
                         ColumnLayout {
                             Layout.fillWidth: true
                             Layout.fillHeight: true
-                            spacing: 6
+                            spacing: Spacing.xs
 
                             // In one row while it fits, the buttons at its
                             // end; wrapped onto more where it does not.
@@ -5270,12 +5314,12 @@ ApplicationWindow {
                                 // Asks for no width of its own: see window.spare.
                                 Layout.preferredWidth: 0
                                 spacing: 8
-                                Text {
+                                Elided {
                                     width: Math.min(implicitWidth, rowsHead.width)
                                     height: window.headHeight
                                     verticalAlignment: Text.AlignVCenter
                                     elide: Text.ElideRight
-                                    color: theme.subtle
+                                    color: Colors.textMuted
                                     text: !models.table
                                         ? (models.picked === "" ? "Pick a model to see its rows" : "")
                                         : models.table.count === 0 ? models.table.type + " · no rows"
@@ -5300,11 +5344,15 @@ ApplicationWindow {
                                 Button {
                                     text: "Previous"
                                     enabled: !!models.table && models.offset > 0
+                                    Accessible.description: enabled ? "Show the rows before these"
+                                        : !models.table ? "Pick a model first" : "These are its first rows"
                                     onClicked: models.turn(-1)
                                 }
                                 Button {
                                     text: "Next"
                                     enabled: !!models.table && models.table.next_offset !== null
+                                    Accessible.description: enabled ? "Show the rows after these"
+                                        : !models.table ? "Pick a model first" : "These are its last rows"
                                     onClicked: models.turn(1)
                                 }
                             }
@@ -5313,14 +5361,14 @@ ApplicationWindow {
                                 Layout.fillWidth: true
                                 Layout.fillHeight: true
                                 radius: 9
-                                color: theme.card
-                                border.color: theme.rule
+                                color: Colors.surfaceRaised
+                                border.color: Colors.separator
                                 clip: true
 
                                 Flickable {
                                     id: tableScroll
                                     anchors.fill: parent
-                                    anchors.margins: 6
+                                    anchors.margins: Spacing.xs
                                     clip: true
                                     contentWidth: Math.max(width, models.tableWidth)
                                     contentHeight: height
@@ -5341,8 +5389,8 @@ ApplicationWindow {
                                             Accessible.role: Accessible.StaticText
                                             Accessible.name: text
                                             text: "row"
-                                            color: theme.subtle
-                                            font.pixelSize: 11
+                                            color: Colors.textMuted
+                                            font.pixelSize: Typography.captionSize
                                             font.bold: true
                                         }
                                         Repeater {
@@ -5354,8 +5402,8 @@ ApplicationWindow {
                                                 Accessible.role: Accessible.StaticText
                                                 Accessible.name: text
                                                 text: modelData
-                                                color: theme.subtle
-                                                font.pixelSize: 11
+                                                color: Colors.textMuted
+                                                font.pixelSize: Typography.captionSize
                                                 font.bold: true
                                             }
                                         }
@@ -5386,21 +5434,21 @@ ApplicationWindow {
                                             required property var modelData
                                             required property int index
                                             width: ListView.view.width
-                                            height: 24
+                                            height: window.row(24)
                                             Rectangle {
                                                 anchors.fill: parent
-                                                color: tableRow.index % 2 ? theme.cardAlt : "transparent"
+                                                color: tableRow.index % 2 ? Colors.canvas : "transparent"
                                             }
                                             Row {
                                                 x: 6
                                                 height: parent.height
-                                                Text {
+                                                Elided {
                                                     width: 60
                                                     anchors.verticalCenter: parent.verticalCenter
                                                     text: tableRow.modelData.index
-                                                    color: theme.subtle
-                                                    font.family: theme.mono
-                                                    font.pixelSize: 12
+                                                    color: Colors.textMuted
+                                                    font.family: window.mono
+                                                    font.pixelSize: Typography.captionSize
                                                 }
                                                 Repeater {
                                                     model: models.columns
@@ -5411,15 +5459,15 @@ ApplicationWindow {
                                                         readonly property string key: tableRow.modelData.index + "/" + modelData
                                                         width: models.columnWidth
                                                         height: tableRow.height
-                                                        Text {
+                                                        Elided {
                                                             anchors.fill: parent
                                                             anchors.rightMargin: 8
                                                             verticalAlignment: Text.AlignVCenter
                                                             elide: Text.ElideRight
                                                             visible: models.editing !== cell.key
                                                             text: window.shown(cell.value)
-                                                            color: theme.text
-                                                            font.pixelSize: 12
+                                                            color: Colors.text
+                                                            font.pixelSize: Typography.captionSize
                                                         }
                                                         MouseArea {
                                                             anchors.fill: parent
@@ -5445,12 +5493,12 @@ ApplicationWindow {
                                                                 bottomPadding: 2
                                                                 leftPadding: 4
                                                                 clip: true
-                                                                color: theme.text
+                                                                color: Colors.text
                                                                 Accessible.name: cell.modelData + " " + tableRow.modelData.index
                                                                 background: Rectangle {
                                                                     radius: 4
-                                                                    color: theme.bg
-                                                                    border.color: theme.accent
+                                                                    color: Colors.canvas
+                                                                    border.color: Colors.accent
                                                                 }
                                                                 text: window.shown(cell.value)
                                                                 onAccepted: models.write(tableRow.modelData.index, cell.modelData,
@@ -5463,6 +5511,15 @@ ApplicationWindow {
                                             }
                                         }
                                     }
+                                }
+                                Text {
+                                    anchors.centerIn: parent
+                                    width: parent.width - 2 * Spacing.md
+                                    horizontalAlignment: Text.AlignHCenter
+                                    wrapMode: Text.Wrap
+                                    visible: window.page === 9 && (!models.table || models.table.rows.length === 0)
+                                    text: models.table ? "The model has no rows" : "Pick a model to show its rows"
+                                    color: Colors.textMuted
                                 }
                             }
                         }
@@ -5479,7 +5536,7 @@ ApplicationWindow {
                 // asked for, and never move the watch.
                 ColumnLayout {
                     id: wakes
-                    spacing: 10
+                    spacing: Spacing.xs
                     property var since: null
                     property bool recording: false
                     property int dropped: 0
@@ -5499,9 +5556,9 @@ ApplicationWindow {
                     // `since` list a wake once.
                     property int lastSeq: 0
                     readonly property var tones: ({
-                        input: theme.accent, timer: theme.warn, animation: theme.violet,
-                        message: theme.subtle, redraw: theme.bad, window: "#3fa7a0",
-                        dirty: theme.good, deadline: "#d77fae", "requested redraw": theme.rule
+                        input: Colors.accent, timer: Colors.warning, animation: Colors.info,
+                        message: Colors.textMuted, redraw: Colors.danger, window: window.series.teal,
+                        dirty: Colors.success, deadline: window.series.pink, "requested redraw": Colors.separator
                     })
 
                     function args() {
@@ -5526,8 +5583,8 @@ ApplicationWindow {
                     function tone(causes) {
                         for (var i = 0; i < causes.length; ++i)
                             if (causes[i] !== "message")
-                                return tones[causes[i]] || theme.subtle
-                        return theme.subtle
+                                return tones[causes[i]] || Colors.textMuted
+                        return Colors.textMuted
                     }
 
                     function add(s) {
@@ -5546,7 +5603,7 @@ ApplicationWindow {
                                 atMs: w.at_ms,
                                 at: (w.at_ms / 1000).toFixed(3) + " s",
                                 causes: w.causes.join(", "),
-                                // As text: a colour the theme gives and one
+                                // As text: a colour Ljos.Design gives and one
                                 // written here would be two types to a role.
                                 tone: String(tone(w.causes)),
                                 own: w.requests_only,
@@ -5682,12 +5739,12 @@ ApplicationWindow {
                         Layout.fillWidth: true
                         // Asks for no width of its own: see window.spare.
                         Layout.preferredWidth: 0
-                        spacing: 10
+                        spacing: Spacing.xs
                         Text {
                             height: window.headHeight
                             verticalAlignment: Text.AlignVCenter
                             Accessible.role: Accessible.Heading
-                            text: "Wakes"; color: theme.text; font.pixelSize: 19; font.bold: true
+                            text: "Wakes"; color: Colors.text; font.pixelSize: Typography.titleSize; font.bold: true
                         }
                         // Elided where the row is narrower than it; the
                         // buttons go onto a row of their own then.
@@ -5701,7 +5758,7 @@ ApplicationWindow {
                                   + (wakes.hideOwn && wakes.ownCount > 0
                                      ? " · " + wakes.ownCount + " woken by this window hidden" : "")
                                   + (wakes.dropped > 0 ? " · " + wakes.dropped + " older gave way" : "")
-                            color: wakes.recording ? theme.good : theme.subtle
+                            color: wakes.recording ? Colors.success : Colors.textMuted
                         }
                         Item {
                             id: wakesGap
@@ -5731,13 +5788,13 @@ ApplicationWindow {
                             model: ["input", "timer", "animation", "message", "redraw", "window", "dirty", "deadline"]
                             delegate: Row {
                                 required property string modelData
-                                spacing: 5
+                                spacing: Spacing.xxs
                                 Rectangle {
                                     width: 10; height: 10; radius: 2
                                     anchors.verticalCenter: parent.verticalCenter
                                     color: wakes.tones[modelData]
                                 }
-                                Text { text: modelData; color: theme.subtle; font.pixelSize: 11 }
+                                Text { text: modelData; color: Colors.textMuted; font.pixelSize: Typography.captionSize }
                             }
                         }
                     }
@@ -5748,8 +5805,8 @@ ApplicationWindow {
                         Layout.fillWidth: true
                         Layout.preferredHeight: 34
                         radius: 9
-                        color: theme.card
-                        border.color: theme.rule
+                        color: Colors.surfaceRaised
+                        border.color: Colors.separator
                         clip: true
                         Repeater {
                             model: window.page === 10 ? wakeRows : null
@@ -5770,8 +5827,8 @@ ApplicationWindow {
                             anchors.rightMargin: 8
                             anchors.bottom: parent.bottom
                             text: "last " + (wakes.span / 1000) + " s"
-                            color: theme.subtle
-                            font.pixelSize: 10
+                            color: Colors.textMuted
+                            font.pixelSize: Typography.captionSize
                         }
                     }
 
@@ -5807,13 +5864,13 @@ ApplicationWindow {
                                 Layout.fillHeight: true
                                 Layout.minimumHeight: wakesBody.narrow ? 120 : 0
                                 radius: 9
-                                color: theme.card
-                                border.color: theme.rule
+                                color: Colors.surfaceRaised
+                                border.color: Colors.separator
                                 clip: true
                                 ListView {
                                     id: wakeView
                                     anchors.fill: parent
-                                    anchors.margins: 6
+                                    anchors.margins: Spacing.xs
                                     clip: true
                                     model: window.page === 10 ? wakeRows : null
                                     Accessible.role: Accessible.List
@@ -5835,69 +5892,69 @@ ApplicationWindow {
                                         // too narrow to have it beside the rest.
                                         readonly property bool narrow: width < 560
                                         height: narrow ? 40 : 24
-                                        Accessible.role: Accessible.ListItem
+                                        Accessible.role: enabled ? Accessible.ListItem : Accessible.Row
                                         Accessible.name: "wake " + seq + ", woke by " + (causes === "" ? "nothing known" : causes)
                                                          + ", led to " + ledTo
                                         Rectangle {
                                             anchors.fill: parent
-                                            color: wakeRow.index % 2 ? theme.cardAlt : "transparent"
+                                            color: wakeRow.index % 2 ? Colors.canvas : "transparent"
                                         }
                                         Row {
                                             x: 6
-                                            height: 24
-                                            spacing: 10
-                                            Text {
+                                            height: window.row(24)
+                                            spacing: Spacing.xs
+                                            Elided {
                                                 width: 50
                                                 anchors.verticalCenter: parent.verticalCenter
                                                 horizontalAlignment: Text.AlignRight
                                                 text: wakeRow.seq
-                                                color: theme.subtle
-                                                font.family: theme.mono
-                                                font.pixelSize: 12
+                                                color: Colors.textMuted
+                                                font.family: window.mono
+                                                font.pixelSize: Typography.captionSize
                                             }
-                                            Text {
+                                            Elided {
                                                 width: 80
                                                 anchors.verticalCenter: parent.verticalCenter
                                                 horizontalAlignment: Text.AlignRight
                                                 text: wakeRow.at
-                                                color: theme.subtle
-                                                font.family: theme.mono
-                                                font.pixelSize: 12
+                                                color: Colors.textMuted
+                                                font.family: window.mono
+                                                font.pixelSize: Typography.captionSize
                                             }
-                                            Text {
+                                            Elided {
                                                 width: wakeRow.narrow ? Math.max(40, wakeRow.width - 6 - 50 - 80 - 90 - 30 - 6) : 170
                                                 anchors.verticalCenter: parent.verticalCenter
                                                 text: wakeRow.causes === "" ? "—" : wakeRow.causes
                                                 color: wakeRow.tone
                                                 elide: Text.ElideRight
-                                                font.pixelSize: 12
+                                                font.pixelSize: Typography.captionSize
                                             }
-                                            Text {
+                                            Elided {
                                                 width: 90
                                                 anchors.verticalCenter: parent.verticalCenter
                                                 text: wakeRow.ledTo
-                                                color: wakeRow.ledTo === "nothing" ? theme.subtle : theme.text
-                                                font.pixelSize: 12
+                                                color: wakeRow.ledTo === "nothing" ? Colors.textMuted : Colors.text
+                                                font.pixelSize: Typography.captionSize
                                             }
-                                            Text {
+                                            Elided {
                                                 visible: !wakeRow.narrow
                                                 width: Math.max(0, wakeRow.width - 446)
                                                 anchors.verticalCenter: parent.verticalCenter
                                                 text: wakeRow.detail
-                                                color: theme.subtle
+                                                color: Colors.textMuted
                                                 elide: Text.ElideRight
-                                                font.pixelSize: 11
+                                                font.pixelSize: Typography.captionSize
                                             }
                                         }
-                                        Text {
+                                        Elided {
                                             visible: wakeRow.narrow
                                             x: 6 + 50 + 10 + 80 + 10
                                             y: 22
                                             width: wakeRow.width - x - 6
                                             text: wakeRow.detail
-                                            color: theme.subtle
+                                            color: Colors.textMuted
                                             elide: Text.ElideRight
-                                            font.pixelSize: 11
+                                            font.pixelSize: Typography.captionSize
                                         }
                                         MouseArea {
                                             anchors.fill: parent
@@ -5915,7 +5972,7 @@ ApplicationWindow {
                                     visible: wakeRows.count === 0
                                     text: wakes.recording ? "No wake since keeping began: the application is at rest"
                                                           : "Press Record to keep each wake and its causes"
-                                    color: theme.subtle
+                                    color: Colors.textMuted
                                 }
                             }
 
@@ -5927,20 +5984,20 @@ ApplicationWindow {
                                 Layout.fillHeight: !wakesBody.narrow
                                 visible: wakes.one !== null
                                 radius: 9
-                                color: theme.card
-                                border.color: theme.accent
+                                color: Colors.surfaceRaised
+                                border.color: Colors.accent
                                 clip: true
-                                Text {
+                                Elided {
                                     id: oneTitle
                                     x: 10; y: 6
                                     width: parent.width - 80
                                     elide: Text.ElideRight
                                     text: wakes.one ? wakes.one.title : ""
-                                    color: theme.text
-                                    font.pixelSize: 12
+                                    color: Colors.text
+                                    font.pixelSize: Typography.captionSize
                                     font.bold: true
                                 }
-                                Button {
+                                ToolButton {
                                     anchors.right: parent.right
                                     anchors.rightMargin: 4
                                     y: 2
@@ -5948,18 +6005,18 @@ ApplicationWindow {
                                     flat: true
                                     onClicked: wakes.one = null
                                 }
-                                Text {
+                                Elided {
                                     x: 10; y: 26
                                     // Clear of the Close button.
                                     width: parent.width - 80
                                     wrapMode: Text.Wrap
                                     text: wakes.one ? wakes.one.took : ""
-                                    color: theme.subtle
-                                    font.pixelSize: 11
+                                    color: Colors.textMuted
+                                    font.pixelSize: Typography.captionSize
                                 }
                                 ListView {
                                     anchors.fill: parent
-                                    anchors.margins: 6
+                                    anchors.margins: Spacing.xs
                                     anchors.topMargin: 60
                                     clip: true
                                     model: window.page === 10 && wakes.one ? wakes.one.rows : []
@@ -5969,32 +6026,32 @@ ApplicationWindow {
                                         required property var modelData
                                         width: ListView.view.width
                                         height: 18
-                                        spacing: 6
-                                        Accessible.role: Accessible.ListItem
+                                        spacing: Spacing.xs
+                                        Accessible.role: enabled ? Accessible.ListItem : Accessible.Row
                                         Accessible.name: modelData.kind + " " + modelData.what
-                                        Text {
+                                        Elided {
                                             width: 70 + oneRow.modelData.depth * 12
                                             leftPadding: oneRow.modelData.depth * 12
                                             text: oneRow.modelData.kind
-                                            color: oneRow.modelData.kind === "handler" ? theme.accent
-                                                 : oneRow.modelData.kind === "binding" ? theme.violet
-                                                 : oneRow.modelData.kind === "changed" ? theme.good : theme.subtle
-                                            font.pixelSize: 11
+                                            color: oneRow.modelData.kind === "handler" ? Colors.link
+                                                 : oneRow.modelData.kind === "binding" || oneRow.modelData.kind === "changed" ? Colors.text
+                                                 : Colors.textMuted
+                                            font.pixelSize: Typography.captionSize
                                         }
-                                        Text {
+                                        Elided {
                                             width: oneRow.width - 150 - oneRow.modelData.depth * 12
                                             text: oneRow.modelData.what + (oneRow.modelData.at !== "" ? "  " + oneRow.modelData.at : "")
                                             elide: Text.ElideRight
-                                            color: theme.text
-                                            font.pixelSize: 11
+                                            color: Colors.text
+                                            font.pixelSize: Typography.captionSize
                                         }
-                                        Text {
+                                        Elided {
                                             width: 60
                                             horizontalAlignment: Text.AlignRight
                                             text: oneRow.modelData.took
-                                            color: theme.subtle
-                                            font.family: theme.mono
-                                            font.pixelSize: 11
+                                            color: Colors.textMuted
+                                            font.family: window.mono
+                                            font.pixelSize: Typography.captionSize
                                         }
                                     }
                                 }
@@ -6007,22 +6064,22 @@ ApplicationWindow {
                                 Layout.preferredHeight: wakesBody.narrow ? 140 : -1
                                 Layout.fillHeight: !wakesBody.narrow
                                 radius: 9
-                                color: theme.card
-                                border.color: theme.rule
+                                color: Colors.surfaceRaised
+                                border.color: Colors.separator
                                 clip: true
-                                Text {
+                                Elided {
                                     x: 10; y: 8
                                     width: parent.width - 20
                                     elide: Text.ElideRight
                                     text: "Why awake · " + wakes.scheduled + " scheduled"
                                           + (wakes.listening > 0 ? ", " + wakes.listening + " listening" : "")
-                                    color: wakes.scheduled > 0 ? theme.warn : theme.subtle
-                                    font.pixelSize: 11
+                                    color: wakes.scheduled > 0 ? Colors.text : Colors.textMuted
+                                    font.pixelSize: Typography.captionSize
                                     font.bold: true
                                 }
                                 ListView {
                                     anchors.fill: parent
-                                    anchors.margins: 6
+                                    anchors.margins: Spacing.xs
                                     anchors.topMargin: 28
                                     clip: true
                                     model: window.page === 10 ? wakes.due : []
@@ -6032,18 +6089,18 @@ ApplicationWindow {
                                         id: dueRow
                                         required property var modelData
                                         width: ListView.view.width
-                                        bottomPadding: 6
-                                        Accessible.role: Accessible.ListItem
+                                        bottomPadding: Spacing.xs
+                                        Accessible.role: enabled ? Accessible.ListItem : Accessible.Row
                                         Accessible.name: dueRow.modelData.source + " " + dueRow.modelData.owner
-                                        Text {
+                                        Elided {
                                             width: parent.width
                                             elide: Text.ElideRight
                                             text: dueRow.modelData.source + " · " + dueRow.modelData.owner
-                                            color: !dueRow.modelData.scheduled ? theme.subtle
-                                                   : dueRow.modelData.source === "timer" ? theme.warn
-                                                   : dueRow.modelData.source === "animation" ? theme.violet
-                                                   : theme.accent
-                                            font.pixelSize: 12
+                                            color: !dueRow.modelData.scheduled ? Colors.textMuted
+                                                   : dueRow.modelData.source === "timer" ? Colors.warning
+                                                   : dueRow.modelData.source === "animation" ? Colors.info
+                                                   : Colors.accent
+                                            font.pixelSize: Typography.captionSize
                                             font.underline: dueHover.containsMouse
                                             MouseArea {
                                                 id: dueHover
@@ -6057,12 +6114,12 @@ ApplicationWindow {
                                                 }
                                             }
                                         }
-                                        Text {
+                                        Elided {
                                             width: parent.width
                                             elide: Text.ElideRight
                                             text: (dueRow.modelData.scheduled ? "" : "listens · ") + dueRow.modelData.detail
-                                            color: theme.subtle
-                                            font.pixelSize: 11
+                                            color: Colors.textMuted
+                                            font.pixelSize: Typography.captionSize
                                         }
                                     }
                                 }
@@ -6073,7 +6130,7 @@ ApplicationWindow {
                                     wrapMode: Text.Wrap
                                     visible: wakes.due.length === 0
                                     text: "Nothing will wake the UI thread"
-                                    color: theme.subtle
+                                    color: Colors.textMuted
                                 }
                             }
                         }
@@ -6090,7 +6147,7 @@ ApplicationWindow {
                 // the watch settles.
                 ColumnLayout {
                     id: components
-                    spacing: 10
+                    spacing: Spacing.xs
                     property var list: []
                     property int live: 0
                     property int leftOut: 0
@@ -6182,12 +6239,12 @@ ApplicationWindow {
                         Layout.fillWidth: true
                         // Asks for no width of its own: see window.spare.
                         Layout.preferredWidth: 0
-                        spacing: 10
+                        spacing: Spacing.xs
                         Text {
                             height: window.headHeight
                             verticalAlignment: Text.AlignVCenter
                             Accessible.role: Accessible.Heading
-                            text: "Components"; color: theme.text; font.pixelSize: 19; font.bold: true
+                            text: "Components"; color: Colors.text; font.pixelSize: Typography.titleSize; font.bold: true
                         }
                         Text {
                             width: Math.min(implicitWidth, componentsHead.width)
@@ -6196,7 +6253,7 @@ ApplicationWindow {
                             elide: Text.ElideRight
                             text: components.list.length + " loaded · " + components.live + " instances live"
                                   + (components.leftOut > 0 ? " · " + components.leftOut + " not listed" : "")
-                            color: theme.subtle
+                            color: Colors.textMuted
                         }
                         Item {
                             id: componentsGap
@@ -6210,11 +6267,8 @@ ApplicationWindow {
                         Button {
                             text: "Since mark"
                             enabled: components.markedCount >= 0
+                            Accessible.description: enabled ? "Show what was made since the mark" : "No mark yet: press Mark first"
                             onClicked: components.sinceMark()
-                        }
-                        Button {
-                            text: "Refresh"
-                            onClicked: components.load()
                         }
                     }
 
@@ -6223,15 +6277,15 @@ ApplicationWindow {
                         Layout.fillWidth: true
                         Layout.preferredHeight: sinceColumn.implicitHeight + 16
                         radius: 9
-                        color: theme.card
-                        border.color: components.since && components.since.made > 0 ? theme.warn : theme.rule
+                        color: Colors.surfaceRaised
+                        border.color: components.since && components.since.made > 0 ? Colors.warning : Colors.separator
                         visible: components.markedCount >= 0
                         Column {
                             id: sinceColumn
                             x: 8; y: 8
                             width: parent.width - 16
                             spacing: 2
-                            Text {
+                            Elided {
                                 width: parent.width
                                 elide: Text.ElideRight
                                 text: !components.since
@@ -6242,23 +6296,23 @@ ApplicationWindow {
                                           + components.since.seconds.toFixed(1) + " s ago are alive, "
                                           + window.bytes(components.since.bytes) + "; "
                                           + components.since.gone + " of those marked are gone"
-                                color: components.since && components.since.made > 0 ? theme.warn : theme.subtle
-                                font.pixelSize: 12
+                                color: components.since && components.since.made > 0 ? Colors.text : Colors.textMuted
+                                font.pixelSize: Typography.captionSize
                             }
                             Repeater {
                                 model: window.page === 11 && components.since ? components.since.rows.slice(0, 12) : null
                                 delegate: Row {
                                     id: sinceRow
                                     required property var modelData
-                                    spacing: 10
+                                    spacing: Spacing.xs
                                     Accessible.role: Accessible.ListItem
                                     Accessible.name: modelData.what + " ×" + modelData.count + " at " + modelData.at
-                                    Text {
+                                    Elided {
                                         width: 220
                                         text: sinceRow.modelData.what
                                         elide: Text.ElideRight
-                                        color: sinceRow.modelData.handle !== "" ? theme.accent : theme.text
-                                        font.pixelSize: 12
+                                        color: sinceRow.modelData.handle !== "" ? Colors.link : Colors.text
+                                        font.pixelSize: Typography.captionSize
                                         font.underline: sinceHover.containsMouse
                                         MouseArea {
                                             id: sinceHover
@@ -6272,28 +6326,28 @@ ApplicationWindow {
                                             }
                                         }
                                     }
-                                    Text {
+                                    Elided {
                                         width: 50
                                         horizontalAlignment: Text.AlignRight
                                         text: "×" + sinceRow.modelData.count
-                                        color: theme.text
-                                        font.family: theme.mono
-                                        font.pixelSize: 12
+                                        color: Colors.text
+                                        font.family: window.mono
+                                        font.pixelSize: Typography.captionSize
                                     }
-                                    Text {
+                                    Elided {
                                         width: 80
                                         horizontalAlignment: Text.AlignRight
                                         text: sinceRow.modelData.bytes < 0 ? "" : window.bytes(sinceRow.modelData.bytes)
-                                        color: theme.text
-                                        font.family: theme.mono
-                                        font.pixelSize: 12
+                                        color: Colors.text
+                                        font.family: window.mono
+                                        font.pixelSize: Typography.captionSize
                                     }
-                                    Text {
+                                    Elided {
                                         width: sinceColumn.width - 380
                                         text: sinceRow.modelData.at
                                         elide: Text.ElideLeft
-                                        color: theme.subtle
-                                        font.pixelSize: 11
+                                        color: Colors.textMuted
+                                        font.pixelSize: Typography.captionSize
                                     }
                                 }
                             }
@@ -6315,12 +6369,12 @@ ApplicationWindow {
                             Layout.fillWidth: true
                             Layout.fillHeight: true
                             radius: 9
-                            color: theme.card
-                            border.color: theme.rule
+                            color: Colors.surfaceRaised
+                            border.color: Colors.separator
                             clip: true
                             ListView {
                                 anchors.fill: parent
-                                anchors.margins: 6
+                                anchors.margins: Spacing.xs
                                 clip: true
                                 model: window.page === 11 ? components.list : []
                                 Accessible.role: Accessible.List
@@ -6340,50 +6394,50 @@ ApplicationWindow {
                                     Rectangle {
                                         anchors.fill: parent
                                         radius: 4
-                                        color: compRow.current ? theme.cardAlt
-                                             : compRow.index % 2 ? theme.cardAlt : "transparent"
-                                        border.color: compRow.current ? theme.accent : "transparent"
+                                        color: compRow.current ? Colors.canvas
+                                             : compRow.index % 2 ? Colors.canvas : "transparent"
+                                        border.color: compRow.current ? Colors.accent : "transparent"
                                     }
                                     Row {
                                         x: 6
-                                        height: 24
-                                        spacing: 10
-                                        Text {
+                                        height: window.row(24)
+                                        spacing: Spacing.xs
+                                        Elided {
                                             width: 60
                                             anchors.verticalCenter: parent.verticalCenter
                                             text: compRow.modelData.kind
-                                            color: theme.subtle
-                                            font.pixelSize: 11
+                                            color: Colors.textMuted
+                                            font.pixelSize: Typography.captionSize
                                         }
-                                        Text {
+                                        Elided {
                                             width: 120
                                             anchors.verticalCenter: parent.verticalCenter
                                             text: compRow.modelData.name
-                                            color: theme.text
+                                            color: Colors.text
                                             elide: Text.ElideRight
-                                            font.pixelSize: 12
+                                            font.pixelSize: Typography.captionSize
                                         }
                                         // A file by its name; anything else
                                         // by where in its file it is, so that
                                         // two delegates of one type differ.
-                                        Text {
+                                        Elided {
                                             width: compRow.narrow ? Math.max(40, compRow.width - 6 - 60 - 10 - 120 - 10 - 6) : 200
                                             anchors.verticalCenter: parent.verticalCenter
                                             text: compRow.modelData.kind === "file"
                                                   ? compRow.modelData.url.substring(compRow.modelData.url.lastIndexOf("/") + 1)
                                                   : compRow.modelData.component
-                                            color: theme.subtle
+                                            color: Colors.textMuted
                                             elide: Text.ElideLeft
-                                            font.pixelSize: 11
+                                            font.pixelSize: Typography.captionSize
                                         }
                                     }
                                     Row {
                                         id: compCounts
                                         x: compRow.narrow ? 6 + 60 + 10 : 6 + 60 + 10 + 120 + 10 + 200 + 10
                                         y: compRow.narrow ? 20 : 0
-                                        height: 24
-                                        spacing: 10
-                                        Text {
+                                        height: window.row(24)
+                                        spacing: Spacing.xs
+                                        Elided {
                                             width: 50
                                             anchors.verticalCenter: parent.verticalCenter
                                             horizontalAlignment: Text.AlignRight
@@ -6392,20 +6446,20 @@ ApplicationWindow {
                                             Accessible.role: Accessible.StaticText
                                             Accessible.name: text + (compRow.modelData.instances === 1 ? " instance" : " instances")
                                             text: compRow.modelData.instances
-                                            color: compRow.modelData.instances > 0 ? theme.text : theme.subtle
-                                            font.family: theme.mono
-                                            font.pixelSize: 12
+                                            color: compRow.modelData.instances > 0 ? Colors.text : Colors.textMuted
+                                            font.family: window.mono
+                                            font.pixelSize: Typography.captionSize
                                         }
-                                        Text {
+                                        Elided {
                                             width: 80
                                             anchors.verticalCenter: parent.verticalCenter
                                             horizontalAlignment: Text.AlignRight
                                             Accessible.role: Accessible.StaticText
                                             Accessible.name: text
                                             text: window.bytes(compRow.modelData.bytes)
-                                            color: theme.text
-                                            font.family: theme.mono
-                                            font.pixelSize: 12
+                                            color: Colors.text
+                                            font.family: window.mono
+                                            font.pixelSize: Typography.captionSize
                                         }
                                         Rectangle {
                                             anchors.verticalCenter: parent.verticalCenter
@@ -6415,7 +6469,7 @@ ApplicationWindow {
                                             // compare at any width.
                                             width: Math.max(1, (compRow.width - compCounts.x - 50 - 10 - 80 - 10 - 6)
                                                                * compRow.modelData.bytes / components.most)
-                                            color: theme.accent
+                                            color: Colors.accent
                                         }
                                     }
                                     MouseArea {
@@ -6431,9 +6485,12 @@ ApplicationWindow {
                             }
                             Text {
                                 anchors.centerIn: parent
+                                width: parent.width - 2 * Spacing.md
+                                horizontalAlignment: Text.AlignHCenter
+                                wrapMode: Text.Wrap
                                 visible: components.list.length === 0
                                 text: "No component is loaded"
-                                color: theme.subtle
+                                color: Colors.textMuted
                             }
                         }
 
@@ -6444,37 +6501,48 @@ ApplicationWindow {
                             Layout.fillWidth: componentsBody.narrow
                             Layout.fillHeight: true
                             radius: 9
-                            color: theme.card
-                            border.color: theme.rule
+                            color: Colors.surfaceRaised
+                            border.color: Colors.separator
                             clip: true
                             ColumnLayout {
                                 anchors.fill: parent
                                 anchors.margins: 8
-                                spacing: 6
-                                Text {
+                                spacing: Spacing.xs
+                                Elided {
                                     Layout.fillWidth: true
                                     elide: Text.ElideRight
                                     text: !components.shown ? "Pick a component to list its instances"
                                         : components.shown.name + " · " + components.shown.count
                                           + (components.shown.count === 1 ? " instance" : " instances")
-                                    color: components.shown ? theme.text : theme.subtle
+                                    color: components.shown ? Colors.text : Colors.textMuted
                                     font.bold: components.shown !== null
                                 }
                                 ListView {
+                                    id: instView
                                     Layout.fillWidth: true
                                     Layout.fillHeight: true
                                     clip: true
                                     model: window.page === 11 && components.shown ? components.shown.instances : []
                                     ScrollBar.vertical: ScrollBar {}
+                                    Text {
+                                        y: Spacing.md
+                                        width: instView.width
+                                        horizontalAlignment: Text.AlignHCenter
+                                        wrapMode: Text.Wrap
+                                        visible: instView.count === 0
+                                        text: components.shown ? "None of its instances is alive"
+                                                               : "Pick a component on the left"
+                                        color: Colors.textMuted
+                                    }
                                     delegate: ItemDelegate {
                                         id: instRow
                                         required property var modelData
                                         width: ListView.view.width
-                                        height: 26
+                                        height: window.row(26)
                                         text: instRow.modelData.handle + "  " + instRow.modelData.type
                                               + (instRow.modelData.object_name ? "  \"" + instRow.modelData.object_name + "\"" : "")
                                               + "  " + window.bytes(instRow.modelData.bytes)
-                                        font.pixelSize: 12
+                                        font.pixelSize: Typography.captionSize
                                         onClicked: {
                                             window.page = 3
                                             objects.load(true)
@@ -6489,6 +6557,8 @@ ApplicationWindow {
                                     Button {
                                         text: "Previous"
                                         enabled: components.offset > 0
+                                        Accessible.description: enabled ? "Show the instances before these"
+                                                                        : "These are its first instances"
                                         onClicked: {
                                             components.offset = Math.max(0, components.offset - components.limit)
                                             components.instances()
@@ -6497,6 +6567,8 @@ ApplicationWindow {
                                     Button {
                                         text: "Next"
                                         enabled: components.shown !== null && components.shown.next_offset !== null
+                                        Accessible.description: enabled ? "Show the instances after these"
+                                                                        : "These are its last instances"
                                         onClicked: {
                                             components.offset = components.shown.next_offset
                                             components.instances()
@@ -6519,7 +6591,7 @@ ApplicationWindow {
                 // as the watch settles.
                 ColumnLayout {
                     id: hot
-                    spacing: 10
+                    spacing: Spacing.xs
                     property bool recording: false
                     property real windowMs: 0
                     property int count: 0
@@ -6534,6 +6606,12 @@ ApplicationWindow {
                         { key: "own", name: "own", width: 76 },
                         { key: "longest", name: "longest", width: 76 }
                     ]
+                    // Too narrow for every column, where a binding is set
+                    // goes after its name and what set it off is left to
+                    // the Objects page, so the figures are never cut off.
+                    readonly property bool narrow: width < 760
+                    readonly property real nameWidth: narrow
+                        ? Math.max(100, width - 2 * Spacing.sm - 288 - 5 * Spacing.xs) : 260
 
                     function load() {
                         window.ask("app_frames", { bindings: true, sort: sort, max: 200 }, "bindings")
@@ -6586,12 +6664,12 @@ ApplicationWindow {
                         Layout.fillWidth: true
                         // Asks for no width of its own: see window.spare.
                         Layout.preferredWidth: 0
-                        spacing: 10
+                        spacing: Spacing.xs
                         Text {
                             height: window.headHeight
                             verticalAlignment: Text.AlignVCenter
                             Accessible.role: Accessible.Heading
-                            text: "Bindings"; color: theme.text; font.pixelSize: 19; font.bold: true
+                            text: "Bindings"; color: Colors.text; font.pixelSize: Typography.titleSize; font.bold: true
                         }
                         Text {
                             width: Math.min(implicitWidth, bindingsHead.width)
@@ -6603,7 +6681,7 @@ ApplicationWindow {
                                   + " · " + hot.count + " ran"
                                   + (hot.rows.length < hot.count ? " · " + hot.rows.length + " shown" : "")
                                   + (hot.dropped > 0 ? " · " + hot.dropped + " runs not told apart" : "")
-                            color: hot.recording ? theme.good : theme.subtle
+                            color: hot.recording ? Colors.success : Colors.textMuted
                         }
                         Item {
                             id: bindingsGap
@@ -6614,10 +6692,6 @@ ApplicationWindow {
                             text: hot.recording ? "Stop" : "Record"
                             onClicked: hot.record(!hot.recording)
                         }
-                        Button {
-                            text: "Refresh"
-                            onClicked: hot.load()
-                        }
                     }
 
                     Rectangle {
@@ -6625,8 +6699,8 @@ ApplicationWindow {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         radius: 9
-                        color: theme.card
-                        border.color: theme.rule
+                        color: Colors.surfaceRaised
+                        border.color: Colors.separator
                         clip: true
                         // Narrower than its columns, a row is laid out over
                         // more lines: the binding on the first, its numbers
@@ -6655,27 +6729,27 @@ ApplicationWindow {
                             id: hotHead
                             x: 12; y: 8
                             width: hotTable.line
-                            spacing: 10
-                            Text {
+                            spacing: Spacing.xs
+                            Elided {
                                 width: hotTable.column("binding")
                                 height: hotTable.lineHeight
                                 verticalAlignment: Text.AlignVCenter
-                                text: "binding or handler"
-                                color: theme.subtle
-                                font.pixelSize: 11
+                                text: hot.narrow ? "binding or handler · where" : "binding or handler"
+                                color: Colors.textMuted
+                                font.pixelSize: Typography.captionSize
                                 font.bold: true
                             }
                             Repeater {
                                 model: hot.columns
-                                delegate: Text {
+                                delegate: Elided {
                                     required property var modelData
                                     width: modelData.width
                                     height: hotTable.lineHeight
                                     verticalAlignment: Text.AlignVCenter
                                     horizontalAlignment: Text.AlignRight
                                     text: modelData.name + (hot.sort === modelData.key ? " ▾" : "")
-                                    color: hot.sort === modelData.key ? theme.accent : theme.subtle
-                                    font.pixelSize: 11
+                                    color: hot.sort === modelData.key ? Colors.link : Colors.textMuted
+                                    font.pixelSize: Typography.captionSize
                                     font.bold: true
                                     MouseArea {
                                         anchors.fill: parent
@@ -6689,10 +6763,10 @@ ApplicationWindow {
                                 width: hotTable.column("where")
                                 height: hotTable.lineHeight
                                 verticalAlignment: Text.AlignVCenter
-                                leftPadding: 14
+                                leftPadding: Spacing.sm
                                 text: "where"
-                                color: theme.subtle
-                                font.pixelSize: 11
+                                color: Colors.textMuted
+                                font.pixelSize: Typography.captionSize
                                 font.bold: true
                             }
                             Text {
@@ -6700,15 +6774,15 @@ ApplicationWindow {
                                 height: hotTable.lineHeight
                                 verticalAlignment: Text.AlignVCenter
                                 text: "set off by"
-                                color: theme.subtle
-                                font.pixelSize: 11
+                                color: Colors.textMuted
+                                font.pixelSize: Typography.captionSize
                                 font.bold: true
                             }
                         }
 
                         ListView {
                             anchors.fill: parent
-                            anchors.margins: 6
+                            anchors.margins: Spacing.xs
                             anchors.topMargin: hotHead.height + 12
                             clip: true
                             model: window.page === 12 ? hot.rows : []
@@ -6724,14 +6798,14 @@ ApplicationWindow {
                                 Rectangle {
                                     anchors.fill: parent
                                     radius: 4
-                                    color: hotRow.index % 2 ? theme.cardAlt : "transparent"
+                                    color: hotRow.index % 2 ? Colors.canvas : "transparent"
                                 }
                                 // How it compares with the top row, behind it.
                                 Rectangle {
                                     x: 0; y: parent.height - 3
                                     height: 2
                                     width: Math.max(1, parent.width * hotRow.share)
-                                    color: hotRow.modelData.kind === "handler" ? theme.violet : theme.accent
+                                    color: hotRow.modelData.kind === "handler" ? Colors.info : Colors.accent
                                     opacity: 0.6
                                 }
                                 Flow {
@@ -6739,50 +6813,51 @@ ApplicationWindow {
                                     x: 6
                                     y: hotTable.narrow ? 2 : (parent.height - hotTable.lineHeight) / 2
                                     width: hotTable.line
-                                    spacing: 10
-                                    Text {
+                                    spacing: Spacing.xs
+                                    Elided {
                                         width: hotTable.column("binding")
                                         height: hotTable.lineHeight
                                         verticalAlignment: Text.AlignVCenter
                                         elide: Text.ElideRight
                                         text: hotRow.modelData.type + "." + hotRow.modelData.name
                                               + "  " + hotRow.modelData.object
-                                        color: hotRow.modelData.kind === "handler" ? theme.violet : theme.text
-                                        font.pixelSize: 12
+                                              + (hot.narrow ? " · " + hot.place(hotRow.modelData.at) : "")
+                                        color: hotRow.modelData.kind === "handler" ? Colors.link : Colors.text
+                                        font.pixelSize: Typography.captionSize
                                     }
-                                    Text {
+                                    Elided {
                                         width: 60
                                         height: hotTable.lineHeight
                                         verticalAlignment: Text.AlignVCenter
                                         horizontalAlignment: Text.AlignRight
                                         text: hotRow.modelData.runs
-                                        color: theme.text
-                                        font.family: theme.mono
-                                        font.pixelSize: 12
+                                        color: Colors.text
+                                        font.family: window.mono
+                                        font.pixelSize: Typography.captionSize
                                     }
                                     Repeater {
                                         model: ["total_us", "own_us", "longest_us"]
-                                        delegate: Text {
+                                        delegate: Elided {
                                             required property string modelData
                                             width: 76
                                             height: hotTable.lineHeight
                                             verticalAlignment: Text.AlignVCenter
                                             horizontalAlignment: Text.AlignRight
                                             text: window.ms(hotRow.modelData[modelData])
-                                            color: theme.text
-                                            font.family: theme.mono
-                                            font.pixelSize: 12
+                                            color: Colors.text
+                                            font.family: window.mono
+                                            font.pixelSize: Typography.captionSize
                                         }
                                     }
                                     Text {
                                         width: hotTable.column("where")
                                         height: hotTable.lineHeight
                                         verticalAlignment: Text.AlignVCenter
-                                        leftPadding: 14
+                                        leftPadding: Spacing.sm
                                         elide: Text.ElideLeft
                                         text: hot.place(hotRow.modelData.at)
-                                        color: theme.subtle
-                                        font.pixelSize: 11
+                                        color: Colors.textMuted
+                                        font.pixelSize: Typography.captionSize
                                     }
                                     Text {
                                         width: hotTable.narrow ? hotTable.column("cause") : hotTable.line - hotTable.wide + hotTable.causeLeast
@@ -6790,8 +6865,8 @@ ApplicationWindow {
                                         verticalAlignment: Text.AlignVCenter
                                         elide: Text.ElideRight
                                         text: hot.causes(hotRow.modelData) || "—"
-                                        color: theme.subtle
-                                        font.pixelSize: 11
+                                        color: Colors.textMuted
+                                        font.pixelSize: Typography.captionSize
                                     }
                                 }
                                 MouseArea {
@@ -6807,10 +6882,13 @@ ApplicationWindow {
                         }
                         Text {
                             anchors.centerIn: parent
+                            width: parent.width - 2 * Spacing.md
+                            horizontalAlignment: Text.AlignHCenter
+                            wrapMode: Text.Wrap
                             visible: hot.rows.length === 0
                             text: hot.recording ? "No binding has run since profiling began"
                                                 : "Press Record to count each binding's runs and time"
-                            color: theme.subtle
+                            color: Colors.textMuted
                         }
                     }
 
@@ -6820,19 +6898,19 @@ ApplicationWindow {
                         Layout.fillWidth: true
                         Layout.preferredHeight: Math.min(160, 40 + hot.loops.length * 24)
                         radius: 9
-                        color: theme.card
-                        border.color: theme.rule
+                        color: Colors.surfaceRaised
+                        border.color: Colors.separator
                         clip: true
                         Text {
                             x: 10; y: 8
                             text: hot.loops.length === 0 ? "No binding loop" : "Binding loops"
-                            color: hot.loops.length === 0 ? theme.subtle : theme.bad
-                            font.pixelSize: 11
+                            color: hot.loops.length === 0 ? Colors.textMuted : Colors.text
+                            font.pixelSize: Typography.captionSize
                             font.bold: true
                         }
                         ListView {
                             anchors.fill: parent
-                            anchors.margins: 6
+                            anchors.margins: Spacing.xs
                             anchors.topMargin: 28
                             clip: true
                             model: window.page === 12 ? hot.loops : []
@@ -6840,8 +6918,8 @@ ApplicationWindow {
                                 id: loopRow
                                 required property var modelData
                                 width: ListView.view.width
-                                height: 24
-                                Text {
+                                height: window.row(24)
+                                Elided {
                                     x: 6
                                     width: parent.width - 12
                                     anchors.verticalCenter: parent.verticalCenter
@@ -6854,8 +6932,8 @@ ApplicationWindow {
                                                + " " + loopRow.modelData.object + " at " + hot.place(loopRow.modelData.at)
                                                + " · " + loopRow.modelData.times + "× · through " + c.join(" → ")
                                     }
-                                    color: theme.text
-                                    font.pixelSize: 12
+                                    color: Colors.text
+                                    font.pixelSize: Typography.captionSize
                                 }
                                 MouseArea {
                                     anchors.fill: parent
@@ -6879,7 +6957,7 @@ ApplicationWindow {
                 // for it. Asked when shown and when a pass is drawn.
                 ColumnLayout {
                     id: growth
-                    spacing: 10
+                    spacing: Spacing.xs
                     property bool recording: false
                     property real windowMs: 0
                     property int samples: 0
@@ -6912,12 +6990,12 @@ ApplicationWindow {
                         Layout.fillWidth: true
                         // Asks for no width of its own: see window.spare.
                         Layout.preferredWidth: 0
-                        spacing: 10
+                        spacing: Spacing.xs
                         Text {
                             height: window.headHeight
                             verticalAlignment: Text.AlignVCenter
                             Accessible.role: Accessible.Heading
-                            text: "Growth"; color: theme.text; font.pixelSize: 19; font.bold: true
+                            text: "Growth"; color: Colors.text; font.pixelSize: Typography.titleSize; font.bold: true
                         }
                         Text {
                             width: Math.min(implicitWidth, growthHead.width)
@@ -6928,7 +7006,7 @@ ApplicationWindow {
                                                       + growth.samples + " samples"
                                                     : "not sampling")
                                   + " · " + growth.growing + " of " + growth.count + " keep growing"
-                            color: growth.growing > 0 ? theme.bad : growth.recording ? theme.good : theme.subtle
+                            color: growth.growing > 0 ? Colors.danger : growth.recording ? Colors.success : Colors.textMuted
                         }
                         Item {
                             id: growthGap
@@ -6939,25 +7017,21 @@ ApplicationWindow {
                             text: growth.recording ? "Stop" : "Record"
                             onClicked: growth.record(!growth.recording)
                         }
-                        Button {
-                            text: "Refresh"
-                            onClicked: growth.load()
-                        }
                     }
 
                     Rectangle {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         radius: 9
-                        color: theme.card
-                        border.color: theme.rule
+                        color: Colors.surfaceRaised
+                        border.color: Colors.separator
                         clip: true
                         ListView {
                             id: growthView
                             anchors.fill: parent
-                            anchors.margins: 6
+                            anchors.margins: Spacing.xs
                             clip: true
-                            spacing: 6
+                            spacing: Spacing.xs
                             model: window.page === 13 ? growth.list : []
                             ScrollBar.vertical: ScrollBar {}
                             // One chart a component: its instances at each
@@ -6970,8 +7044,8 @@ ApplicationWindow {
                                 width: ListView.view.width
                                 height: 64
                                 radius: 6
-                                color: chart.index % 2 ? theme.cardAlt : "transparent"
-                                border.color: chart.modelData.growing ? theme.bad : "transparent"
+                                color: chart.index % 2 ? Colors.canvas : "transparent"
+                                border.color: chart.modelData.growing ? Colors.danger : "transparent"
                                 Accessible.role: Accessible.ListItem
                                 Accessible.name: chart.modelData.kind + " " + chart.modelData.name
                                                  + (chart.modelData.growing ? ", keeps growing" : "")
@@ -6981,29 +7055,29 @@ ApplicationWindow {
                                     width: 250
                                     anchors.verticalCenter: parent.verticalCenter
                                     spacing: 2
-                                    Text {
+                                    Elided {
                                         width: parent.width
                                         elide: Text.ElideRight
                                         text: chart.modelData.name + "  " + chart.modelData.kind
-                                        color: chart.modelData.growing ? theme.bad : theme.text
-                                        font.pixelSize: 12
+                                        color: Colors.text
+                                        font.pixelSize: Typography.captionSize
                                         font.bold: chart.modelData.growing
                                     }
-                                    Text {
+                                    Elided {
                                         width: parent.width
                                         elide: Text.ElideLeft
                                         text: chart.modelData.kind === "file"
                                               ? chart.modelData.url.substring(chart.modelData.url.lastIndexOf("/") + 1)
                                               : chart.modelData.component
-                                        color: theme.subtle
-                                        font.pixelSize: 11
+                                        color: Colors.textMuted
+                                        font.pixelSize: Typography.captionSize
                                     }
                                     Text {
                                         text: chart.modelData.first + " → " + chart.modelData.last + " instances · "
                                               + chart.modelData.rises + " up, " + chart.modelData.falls + " down · "
                                               + window.bytes(chart.modelData.bytes)
-                                        color: theme.subtle
-                                        font.pixelSize: 11
+                                        color: Colors.textMuted
+                                        font.pixelSize: Typography.captionSize
                                     }
                                 }
                                 // The series, a bar a sample.
@@ -7017,7 +7091,7 @@ ApplicationWindow {
                                         anchors.bottom: parent.bottom
                                         width: parent.width
                                         height: 1
-                                        color: theme.rule
+                                        color: Colors.separator
                                     }
                                     Repeater {
                                         model: chart.modelData.series
@@ -7029,7 +7103,7 @@ ApplicationWindow {
                                             width: Math.max(1, step - 1)
                                             height: Math.max(1, plot.height * modelData[1] / chart.highest)
                                             anchors.bottom: parent.bottom
-                                            color: chart.modelData.growing ? theme.bad : theme.accent
+                                            color: chart.modelData.growing ? Colors.danger : Colors.accent
                                             opacity: 0.75
                                         }
                                     }
@@ -7037,18 +7111,21 @@ ApplicationWindow {
                                         anchors.right: parent.right
                                         anchors.top: parent.top
                                         text: chart.highest
-                                        color: theme.subtle
-                                        font.pixelSize: 10
+                                        color: Colors.textMuted
+                                        font.pixelSize: Typography.captionSize
                                     }
                                 }
                             }
                         }
                         Text {
                             anchors.centerIn: parent
+                            width: parent.width - 2 * Spacing.md
+                            horizontalAlignment: Text.AlignHCenter
+                            wrapMode: Text.Wrap
                             visible: growth.list.length === 0
                             text: growth.recording ? "No component has instances yet"
                                                    : "Press Record, then repeat an action or let the application rest"
-                            color: theme.subtle
+                            color: Colors.textMuted
                         }
                     }
                 }
@@ -7065,7 +7142,7 @@ ApplicationWindow {
                 // gave, from the bounds the finding has.
                 ColumnLayout {
                     id: audit
-                    spacing: 10
+                    spacing: Spacing.xs
                     property bool running: false
                     property bool asked: false
                     property string matrix: "current"
@@ -7193,12 +7270,12 @@ ApplicationWindow {
                     Flow {
                         id: auditHead
                         Layout.fillWidth: true
-                        spacing: 10
+                        spacing: Spacing.xs
                         Text {
                             height: window.headHeight
                             verticalAlignment: Text.AlignVCenter
                             Accessible.role: Accessible.Heading
-                            text: "Audit"; color: theme.text; font.pixelSize: 19; font.bold: true
+                            text: "Audit"; color: Colors.text; font.pixelSize: Typography.titleSize; font.bold: true
                         }
                         Text {
                             Accessible.role: Accessible.StaticText
@@ -7208,13 +7285,13 @@ ApplicationWindow {
                             verticalAlignment: Text.AlignVCenter
                             elide: Text.ElideRight
                             text: audit.summary()
-                            color: audit.report && (audit.report.counts.error > 0) ? theme.bad : theme.subtle
+                            color: audit.report && (audit.report.counts.error > 0) ? Colors.danger : Colors.textMuted
                         }
                     }
 
                     Flow {
                         Layout.fillWidth: true
-                        spacing: 10
+                        spacing: Spacing.xs
                         ComboBox {
                             model: ["Current settings", "Full matrix"]
                             Accessible.name: "Settings to audit under"
@@ -7248,7 +7325,7 @@ ApplicationWindow {
                     RowLayout {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
-                        spacing: 10
+                        spacing: Spacing.xs
 
                         // The findings, by rule.
                         Rectangle {
@@ -7257,13 +7334,13 @@ ApplicationWindow {
                             Layout.preferredWidth: 1
                             Layout.minimumWidth: 0
                             radius: 9
-                            color: theme.card
-                            border.color: theme.rule
+                            color: Colors.surfaceRaised
+                            border.color: Colors.separator
                             clip: true
                             ListView {
                                 id: auditView
                                 anchors.fill: parent
-                                anchors.margins: 6
+                                anchors.margins: Spacing.xs
                                 clip: true
                                 spacing: 2
                                 model: window.page === 14 ? audit.rows : null
@@ -7286,20 +7363,20 @@ ApplicationWindow {
                                         spacing: 8
                                         Text {
                                             text: arow.isRule ? arow.modelData.severity : ""
-                                            color: theme.text
+                                            color: Colors.text
                                             font.bold: true
-                                            font.pixelSize: 13
+                                            font.pixelSize: Typography.bodySize
                                         }
                                         Text {
                                             text: arow.isRule ? arow.modelData.code : ""
-                                            color: theme.text
-                                            font.family: theme.mono
-                                            font.pixelSize: 13
+                                            color: Colors.text
+                                            font.family: window.mono
+                                            font.pixelSize: Typography.bodySize
                                         }
                                         Text {
                                             text: arow.isRule ? "× " + arow.modelData.count : ""
-                                            color: theme.subtle
-                                            font.pixelSize: 13
+                                            color: Colors.textMuted
+                                            font.pixelSize: Typography.bodySize
                                         }
                                     }
                                     ItemDelegate {
@@ -7311,46 +7388,46 @@ ApplicationWindow {
                                         onClicked: audit.select(arow.modelData.index)
                                         background: Rectangle {
                                             radius: 6
-                                            color: parent.highlighted ? theme.accentSoft : "transparent"
+                                            color: parent.highlighted ? Colors.surfaceSelected : "transparent"
                                             Rectangle {
                                                 visible: parent.parent.highlighted
                                                 width: 3; height: 24; radius: 2
                                                 anchors.verticalCenter: parent.verticalCenter
-                                                color: theme.accent
+                                                color: Colors.accent
                                             }
                                         }
                                         contentItem: Column {
-                                            leftPadding: 10
+                                            leftPadding: Spacing.xs
                                             spacing: 2
-                                            Text {
+                                            Elided {
                                                 Accessible.role: Accessible.StaticText
                                                 Accessible.name: text
                                                 width: parent.width - 16
                                                 elide: Text.ElideRight
                                                 text: arow.isRule ? "" : (arow.f.name || arow.f.role || "item")
                                                       + (arow.f.locator ? "  " + arow.f.locator : "")
-                                                color: theme.text
-                                                font.pixelSize: 13
+                                                color: Colors.text
+                                                font.pixelSize: Typography.bodySize
                                                 font.bold: true
                                             }
-                                            Text {
+                                            Elided {
                                                 Accessible.role: Accessible.StaticText
                                                 Accessible.name: text
                                                 width: parent.width - 16
                                                 elide: Text.ElideRight
                                                 text: arow.isRule ? "" : arow.f.message
-                                                color: theme.text
-                                                font.pixelSize: 12
+                                                color: Colors.text
+                                                font.pixelSize: Typography.captionSize
                                             }
-                                            Text {
+                                            Elided {
                                                 Accessible.role: Accessible.StaticText
                                                 Accessible.name: text
                                                 width: parent.width - 16
                                                 elide: Text.ElideLeft
                                                 text: arow.isRule ? "" : (arow.f.measured ? arow.f.measured + " · " : "")
                                                       + (arow.f.source || "")
-                                                color: theme.subtle
-                                                font.pixelSize: 12
+                                                color: Colors.textMuted
+                                                font.pixelSize: Typography.captionSize
                                             }
                                         }
                                     }
@@ -7368,7 +7445,7 @@ ApplicationWindow {
                                     : audit.note !== "" ? audit.note
                                     : audit.report !== null ? "Nothing found at " + audit.report.points.join("; ")
                                     : "Press Run audit to hold what the application shows to the design rules"
-                                color: theme.subtle
+                                color: Colors.textMuted
                             }
                         }
 
@@ -7379,8 +7456,8 @@ ApplicationWindow {
                             Layout.minimumWidth: 0
                             visible: window.width >= 900
                             radius: 9
-                            color: theme.card
-                            border.color: theme.rule
+                            color: Colors.surfaceRaised
+                            border.color: Colors.separator
                             clip: true
                             Flickable {
                                 anchors.fill: parent
@@ -7400,9 +7477,9 @@ ApplicationWindow {
                                         Layout.fillWidth: true
                                         text: audit.finding ? audit.finding.code + "  (" + audit.finding.severity + ")" : ""
                                         wrapMode: Text.Wrap
-                                        color: theme.text
+                                        color: Colors.text
                                         font.bold: true
-                                        font.pixelSize: 15
+                                        font.pixelSize: Typography.subtitleSize
                                     }
                                     Text {
                                         Accessible.role: Accessible.StaticText
@@ -7410,30 +7487,30 @@ ApplicationWindow {
                                         Layout.fillWidth: true
                                         text: audit.finding ? audit.finding.message : ""
                                         wrapMode: Text.Wrap
-                                        color: theme.text
+                                        color: Colors.text
                                     }
-                                    Text { text: "Fix"; color: theme.subtle; font.pixelSize: 12 }
+                                    Text { text: "Fix"; color: Colors.textMuted; font.pixelSize: Typography.captionSize }
                                     Text {
                                         Accessible.role: Accessible.StaticText
                                         Accessible.name: text
                                         Layout.fillWidth: true
                                         text: audit.finding ? audit.finding.fix : ""
                                         wrapMode: Text.Wrap
-                                        color: theme.text
+                                        color: Colors.text
                                     }
                                     Button {
                                         text: "Open guide"
                                         onClicked: Qt.openUrlExternally(client.guideUrl(audit.finding.guide))
                                     }
-                                    Text {
+                                    Elided {
                                         Accessible.role: Accessible.StaticText
                                         Accessible.name: text
                                         Layout.fillWidth: true
                                         text: audit.finding ? audit.finding.guide : ""
                                         elide: Text.ElideLeft
-                                        color: theme.subtle
-                                        font.family: theme.mono
-                                        font.pixelSize: 12
+                                        color: Colors.textMuted
+                                        font.family: window.mono
+                                        font.pixelSize: Typography.captionSize
                                     }
                                     Text {
                                         Accessible.role: Accessible.StaticText
@@ -7442,7 +7519,7 @@ ApplicationWindow {
                                         visible: audit.finding !== null && !!audit.finding.measured
                                         text: audit.finding && audit.finding.measured ? "Measured: " + audit.finding.measured : ""
                                         wrapMode: Text.Wrap
-                                        color: theme.text
+                                        color: Colors.text
                                     }
                                     Text {
                                         Accessible.role: Accessible.StaticText
@@ -7451,9 +7528,9 @@ ApplicationWindow {
                                         visible: audit.finding !== null && !!audit.finding.source
                                         text: audit.finding && audit.finding.source ? "Made at " + audit.finding.source : ""
                                         wrapMode: Text.WrapAnywhere
-                                        color: theme.text
-                                        font.family: theme.mono
-                                        font.pixelSize: 12
+                                        color: Colors.text
+                                        font.family: window.mono
+                                        font.pixelSize: Typography.captionSize
                                     }
                                     Text {
                                         Accessible.role: Accessible.StaticText
@@ -7464,9 +7541,9 @@ ApplicationWindow {
                                               ? "Locator " + audit.finding.locator
                                                 + (audit.finding.role ? " · " + audit.finding.role : "") : ""
                                         wrapMode: Text.WrapAnywhere
-                                        color: theme.text
-                                        font.family: theme.mono
-                                        font.pixelSize: 12
+                                        color: Colors.text
+                                        font.family: window.mono
+                                        font.pixelSize: Typography.captionSize
                                     }
                                     Text {
                                         Accessible.role: Accessible.StaticText
@@ -7478,9 +7555,9 @@ ApplicationWindow {
                                                 + "  " + audit.finding.bounds.width + " × " + audit.finding.bounds.height
                                               : ""
                                         wrapMode: Text.WrapAnywhere
-                                        color: theme.text
-                                        font.family: theme.mono
-                                        font.pixelSize: 12
+                                        color: Colors.text
+                                        font.family: window.mono
+                                        font.pixelSize: Typography.captionSize
                                     }
                                     Text {
                                         Accessible.role: Accessible.StaticText
@@ -7489,7 +7566,7 @@ ApplicationWindow {
                                         visible: audit.finding !== null && !!audit.finding.points
                                         text: audit.finding && audit.finding.points ? "Shows at " + audit.finding.points.join("; ") : ""
                                         wrapMode: Text.Wrap
-                                        color: theme.text
+                                        color: Colors.text
                                     }
                                     // The window as it is now, with the box
                                     // where the finding's item was.
@@ -7514,8 +7591,8 @@ ApplicationWindow {
                                             y: b ? (shotImage.height - shotImage.paintedHeight) / 2 + b.y * k : 0
                                             width: b ? Math.max(2, b.width * k) : 0
                                             height: b ? Math.max(2, b.height * k) : 0
-                                            color: Qt.rgba(1, 0, 0, 0.14)
-                                            border.color: theme.bad
+                                            color: Qt.rgba(Colors.danger.r, Colors.danger.g, Colors.danger.b, 0.14)
+                                            border.color: Colors.danger
                                             border.width: 2
                                         }
                                     }
@@ -7529,8 +7606,8 @@ ApplicationWindow {
                                               + (audit.finding && audit.finding.points && audit.finding.points[0] !== "current"
                                                  ? " at " + audit.finding.points[0] : "")
                                         wrapMode: Text.Wrap
-                                        color: theme.subtle
-                                        font.pixelSize: 12
+                                        color: Colors.textMuted
+                                        font.pixelSize: Typography.captionSize
                                     }
                                 }
                                 Text {
@@ -7540,7 +7617,7 @@ ApplicationWindow {
                                     visible: audit.finding === null
                                     text: "Pick a finding to see the fix and where it is"
                                     wrapMode: Text.Wrap
-                                    color: theme.subtle
+                                    color: Colors.textMuted
                                 }
                             }
                         }
@@ -7549,19 +7626,26 @@ ApplicationWindow {
             }
 
             // What the last refusal or failure said.
-            Text {
+            Elided {
                 id: status
                 // How many answers about objects' values are awaited.
                 property int inspectsWaiting: 0
                 Accessible.role: Accessible.StaticText
                 Accessible.name: text
                 Layout.fillWidth: true
-                Layout.leftMargin: 18
-                Layout.rightMargin: 18
-                Layout.bottomMargin: 10
+                Layout.leftMargin: Spacing.md
+                Layout.rightMargin: Spacing.md
+                Layout.bottomMargin: Spacing.sm
                 elide: Text.ElideRight
-                color: theme.bad
+                color: Colors.text
+                leftPadding: Spacing.md
                 visible: text !== ""
+                // Red marks it as a failure; the words stay readable.
+                Rectangle {
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: 8; height: 8; radius: 4
+                    color: Colors.danger
+                }
             }
         }
     }

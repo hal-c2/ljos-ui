@@ -34,8 +34,15 @@ static TRUST: std::sync::OnceLock<Trust> = std::sync::OnceLock::new();
 
 /// The window, compiled when `ljos observe` starts: the binary carries
 /// it, so the observer runs wherever `ljos` does.
-const MAIN: &str = include_str!("observe/Observer.qml");
 const KEY: &str = "Observer";
+
+/// The window's files, each keyed as a file of one directory is, so that
+/// one names another by its file name as it would on disk.
+const FILES: &[(&str, &str)] = &[
+    (KEY, include_str!("observe/Observer.qml")),
+    ("Elided", include_str!("observe/Elided.qml")),
+    ("Marked", include_str!("observe/Marked.qml")),
+];
 
 #[derive(Args)]
 pub struct Observe {
@@ -131,17 +138,21 @@ impl Observe {
 /// The window's QML, against the table of types and `InspectorClient`.
 fn compile(engine: &Engine) -> anyhow::Result<MapSource> {
     let mut project = Project::new(ljos::dev::EngineOracle::from_engine(engine));
-    project.add(KEY, MAIN);
-    let compiled = match compile_file(&project, KEY) {
-        Ok(c) if !c.has_errors() => c,
-        Ok(c) => bail!(
-            "the observer's QML: {:?}",
-            c.all_diagnostics().collect::<Vec<_>>()
-        ),
-        Err(ds) => bail!("the observer's QML: {ds:?}"),
-    };
+    for &(key, text) in FILES {
+        project.add(key, text);
+    }
     let mut source = MapSource::new();
-    source.insert(KEY, compiled.file);
+    for &(key, _) in FILES {
+        let compiled = match compile_file(&project, key) {
+            Ok(c) if !c.has_errors() => c,
+            Ok(c) => bail!(
+                "the observer's {key}.qml: {:?}",
+                c.all_diagnostics().collect::<Vec<_>>()
+            ),
+            Err(ds) => bail!("the observer's {key}.qml: {ds:?}"),
+        };
+        source.insert(key, compiled.file);
+    }
     Ok(source)
 }
 
