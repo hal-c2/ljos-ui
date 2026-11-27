@@ -1042,6 +1042,10 @@ impl Engine {
 
     fn advance_timers_with(&self, now: Time, made: Option<(Range<TimerId>, Time)>) {
         let began = self.now();
+        // Qt 6.11: what `destroy()` let go of is gone before a timer that
+        // comes due next, even one of 0 ms, or a `Qt.callLater` fires: the
+        // deferred delete was asked for first (qml6).
+        self.process_deferred_deletes();
         let mut fired: FxHashMap<ObjectId, u32> = FxHashMap::default();
         loop {
             let next = {
@@ -1101,6 +1105,7 @@ impl Engine {
         if let Ok(mut st) = self.inner.timers.try_borrow_mut() {
             st.busy.retain(|&(_, end)| end > now);
         }
+        self.process_deferred_deletes();
         self.run_pending_calls();
         self.process_deferred_deletes();
         self.note_busy(began);

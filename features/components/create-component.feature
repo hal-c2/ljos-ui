@@ -203,6 +203,29 @@ Feature: Qt.createComponent
       And the property "whole" of "root" is true
       And the property "kept" of "root" is "qrc:/art/dot.png"
 
+  Rule: An object it made is gone once destroyed
+
+    Scenario: What destroy() lets go of is gone before a timer of 0 ms fires
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          property int before: -1
+          property int after: -1
+          Timer { id: later; interval: 0; onTriggered: after = root.children.length }
+          Component.onCompleted: {
+            const made = Qt.createComponent("Panel.qml").createObject(root)
+            before = root.children.length
+            made.destroy()
+            later.start()
+          }
+        }
+        """
+      When 100 milliseconds pass
+      Then the property "before" of "root" is 1
+      And the property "after" of "root" is 0
+
   Rule: A file that is not there
 
     Background:
