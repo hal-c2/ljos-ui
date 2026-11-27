@@ -104,6 +104,57 @@ Feature: Ljos.Core: timers, connections, bindings and components
         ljos: 1 errors
         """
 
+  Rule: An Object property holds any object, as a QtObject property does
+
+    @qt-parity
+    Scenario: A QtObject property holds an item, a timer and a plain object, as written in Qt's QML
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          property QtObject bound: inner
+          property QtObject held
+          property string kept: ""
+          readonly property string boundName: bound ? bound.objectName : ""
+          Item { id: inner; objectName: "inner" }
+          Timer { id: tick }
+          QtObject { id: plain }
+          function hold(o) { held = o; return held === o }
+          Component.onCompleted: kept = [hold(tick), hold(plain), hold(root)].join(",")
+        }
+        """
+      Then the property "boundName" of "root" is "inner"
+      And the property "kept" of "root" is "true,true,true"
+
+    @ljos-only
+    Scenario: An Object property holds an item, a timer and a plain object
+      Given the QML:
+        """qml
+        pragma Scripts: JavaScript
+        import Ljos.Ui
+        import Ljos.Core
+        Item {
+          id: root; objectName: "root"
+          property Object bound: inner
+          property Object held
+          property list<Object> all
+          property string kept: ""
+          readonly property string boundName: bound ? bound.objectName : ""
+          Item { id: inner; objectName: "inner" }
+          Timer { id: tick }
+          Object { id: plain }
+          function hold(o) { held = o; return held === o }
+          Component.onCompleted: {
+            kept = [hold(tick), hold(plain), hold(root)].join(",")
+            all = [tick, plain, root]
+          }
+        }
+        """
+      Then the property "boundName" of "root" is "inner"
+      And the property "kept" of "root" is "true,true,true"
+      And the property "all.length" of "root" is 3
+
   Rule: Qt's QtQml is lowered to Ljos.Core
 
     @ljos-only
