@@ -335,6 +335,11 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.13"
+      # The setup action deletes the image's SDK under /usr/local/lib/android for room, and
+      # setup-android cannot recreate that root-owned path; the job's own SDK lives in home.
+      - run: |
+          echo "ANDROID_HOME=$HOME/android-sdk" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$HOME/android-sdk" >> "$GITHUB_ENV"
       - uses: android-actions/setup-android@v3
       - run: sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0"
       # r30, the NDK the vendored QuickJS bindings were generated with (android-bindings).
