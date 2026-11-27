@@ -1862,6 +1862,17 @@ pub trait Probes: Backend {
         })
     }
 
+    /// The window is given that size in logical pixels, as a window
+    /// manager would, for an application laid out for a larger window
+    /// than the scenario's own.
+    fn window_size(&mut self, width: f64, height: f64) -> Result<()> {
+        let _ = (width, height);
+        Err(BackendError::Unsupported {
+            backend: self.name(),
+            what: "resizing the window",
+        })
+    }
+
     /// How many times the window's own thread, the UI thread, woke since
     /// [`Probes::count_wakes`].
     fn window_wakes_counted(&mut self) -> Result<u64> {

@@ -2089,6 +2089,13 @@ impl Reload for LjosBackend {
 }
 
 impl Probes for LjosBackend {
+    fn window_size(&mut self, width: f64, height: f64) -> Result<()> {
+        let live = self.live()?;
+        live.scene
+            .set_viewport(kurbo::Rect::new(0.0, 0.0, width, height));
+        Ok(())
+    }
+
     fn compiled_code(&mut self, file: &str) -> Result<(bool, u64)> {
         let live = self.live()?;
         let source = live

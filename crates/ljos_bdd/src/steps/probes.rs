@@ -73,6 +73,13 @@ fn text_measured_at_most(w: &mut LjosWorld, most: u64) -> StepResult {
     })
 }
 
+// An application laid out for a larger window than the scenario's 400 by
+// 400: what lies outside the window takes no input.
+#[when(regex = r"^the window is (\d+) by (\d+) pixels$")]
+fn window_is(w: &mut LjosWorld, width: u32, height: u32) -> StepResult {
+    w.each(|b| b.probes()?.window_size(f64::from(width), f64::from(height)))
+}
+
 // On the desktop the compositor shows another workspace in its place.
 #[when(regex = r"^the window is (put out of sight|brought back into sight)$")]
 fn window_out_of_sight(w: &mut LjosWorld, which: String) -> StepResult {
