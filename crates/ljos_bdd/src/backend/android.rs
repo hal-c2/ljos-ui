@@ -836,9 +836,9 @@ pub struct AndroidBackend {
     /// How many of the application's trims it had logged as the user
     /// last left it for the home screen.
     trims_before_home: usize,
-    /// The port here the developer's connect forwarded, as they
-    /// disconnected.
-    disconnected_port: Option<u16>,
+    /// The port here the developer's last connect forwarded, as they
+    /// disconnected or connected again to the application started anew.
+    left_port: Option<u16>,
     /// `put_back` stopped the scenario's application: Drop, which can run
     /// as the next scenario runs the same application, does not again.
     stopped: bool,
@@ -1009,6 +1009,20 @@ impl AndroidBackend {
             self.dir = Some(scenario_dir(&features)?);
         }
         Ok(self.dir.as_ref().expect("just made").path().to_owned())
+    }
+
+    /// The port here the developer's last connect forwarded, as its token
+    /// file names it.
+    fn connected_port(&mut self) -> Result<u16> {
+        let token = self.dir()?.join("token.json");
+        let text = std::fs::read_to_string(&token).map_err(|e| {
+            BackendError::Failed(format!("no connect wrote {}: {e}", token.display()))
+        })?;
+        let body = ljos_mcp_core::protocol::TokenFileBody::parse(&text)
+            .map_err(|e| BackendError::Failed(format!("{}: {e}", token.display())))?;
+        url_port(&body.url).ok_or_else(|| {
+            BackendError::Failed(format!("the connect's address {} has no port", body.url))
+        })
     }
 
     /// What the application said of the scenario's files, when they did
@@ -2162,22 +2176,37 @@ impl Device for AndroidBackend {
     fn disconnect_inspector(&mut self) -> Result<()> {
         self.running = None;
         let phone = self.phone()?.clone();
-        let token = self.dir()?.join("token.json");
-        let text = std::fs::read_to_string(&token).map_err(|e| {
-            BackendError::Failed(format!("no connect wrote {}: {e}", token.display()))
-        })?;
-        let body = ljos_mcp_core::protocol::TokenFileBody::parse(&text)
-            .map_err(|e| BackendError::Failed(format!("{}: {e}", token.display())))?;
-        self.disconnected_port = Some(url_port(&body.url).ok_or_else(|| {
-            BackendError::Failed(format!("the connect's address {} has no port", body.url))
-        })?);
+        self.left_port = Some(self.connected_port()?);
         self.disconnect(&phone)
+    }
+
+    fn connect_inspector_anew(&mut self) -> Result<()> {
+        let before = self.connected_port()?;
+        // The inspector chooses its port on the phone: a process started
+        // anew may get the last one's again, and then the connect keeps
+        // the forward it made, rightly. Started once more, it gets
+        // another; three alike say something keeps the port.
+        for _ in 0..3 {
+            self.start()?;
+            if self.connected_port()? != before {
+                self.left_port = Some(before);
+                return Ok(());
+            }
+        }
+        Err(BackendError::Failed(format!(
+            "the application, started anew three times, served its inspector at port {before} \
+             each time, the port of the connect before: no connect to another port replaced it"
+        )))
     }
 
     fn inspector_forwarded(&mut self) -> Result<bool> {
         let phone = self.phone()?.clone();
-        let port = self.disconnected_port.ok_or_else(|| {
-            BackendError::Failed("the developer did not disconnect from the inspector".into())
+        let port = self.left_port.ok_or_else(|| {
+            BackendError::Failed(
+                "the developer neither disconnected from the inspector nor connected to one \
+                 started anew"
+                    .into(),
+            )
         })?;
         let listed = phone.output(
             phone.adb().args(["forward", "--list"]),
