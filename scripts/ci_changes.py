@@ -7,6 +7,8 @@
     android     "true" when ljos_js is built for Android and its bundled
                 QuickJS bindings are held to bindgen's (scripts/android-bindings.sh),
                 and the Android host and shell are checked for each ABI
+    phone       "true" when the @android scenarios run on an emulator: a path that
+                names Android, or one of PHONE
     tests       a JSON list of test shards, each {"name", "packages", "doc"}
     lint        "true" when features:lint runs
     features    a JSON list of feature shards, each {"name", "files"}
@@ -74,6 +76,8 @@ NOTHING = (
     "LICENSE",
     "mise-tasks/",
     "scripts/bench-manifest.sh",
+    # The phone job's own script: PHONE runs it.
+    "scripts/ci-phone.sh",
     "scripts/dhat-subsystems.py",
     "scripts/drag-in-probe.qml",
     "scripts/gallery-assets.py",
@@ -156,6 +160,19 @@ ANDROID = "ljos_js"
 # The crates only an Android build compiles their Android code of: a change to
 # them is checked for Android too, or it is first built on a device.
 ANDROID_HOST = ("ljos_host", "ljos_shell")
+# Besides every path with "android" in it (the Gradle project, the scenario
+# application, the CLI's `ljos android`, the platform's and the runner's
+# Android code, the tasks): what the @android scenarios on an emulator are
+# about. Built from nearly every crate, the scenario application would run them
+# for any change; these are the paths whose break shows only on a phone.
+PHONE = (
+    "features/mobile/",
+    "crates/ljos_jni/",
+    "crates/ljos_host/",
+    "crates/ljos_secrets/",
+    ".github/workflows/ci.yml",
+    "scripts/ci-phone.sh",
+)
 
 # Shards: at most this many, each with at least about this much work.
 TEST_SHARDS = 3
@@ -460,6 +477,13 @@ def shard_count(total: int, per_shard: int, most: int) -> int:
     return max(1, min(most, math.ceil(total / per_shard)))
 
 
+def on_phone(path: str) -> bool:
+    """Whether a change to `path` can break what only a phone shows: notes and docs cannot."""
+    if path.endswith(".md") or path.startswith(("docs/", "corpus/")):
+        return False
+    return "android" in path.lower() or matches(path, PHONE) is not None
+
+
 def plan(mode: str, paths: list[str], ws: Workspace, features: dict[str, str]) -> tuple[dict, list[str]]:
     c = classify(paths, ws, set(features)) if mode == "pr" else Changes(full=True, why_full=[f"--mode {mode}"])
     log = []
@@ -512,6 +536,7 @@ def plan(mode: str, paths: list[str], ws: Workspace, features: dict[str, str]) -
         "lint": lint,
         "features": feature_shards,
         "acceptance": acceptance,
+        "phone": mode == "full" or any(on_phone(p) for p in paths),
     }
     log.append(
         f"crates changed: {', '.join(sorted(c.crates)) or 'none'}; tested: {len(tested)} packages; "
