@@ -571,6 +571,22 @@ pub trait Device: Backend {
         ))
     }
 
+    /// The developer undoes that connect (`ljos android disconnect`): the
+    /// port forwarded for it goes.
+    fn disconnect_inspector(&mut self) -> Result<()> {
+        Err(BackendError::NotImplemented(
+            "disconnecting from the inspector of the application on the phone",
+        ))
+    }
+
+    /// Whether the port the developer's connect forwarded, as they
+    /// disconnected, is still forwarded to the phone.
+    fn inspector_forwarded(&mut self) -> Result<bool> {
+        Err(BackendError::NotImplemented(
+            "the forwards of this computer to the phone",
+        ))
+    }
+
     /// The system tells the application it is short of memory (Android's
     /// `onTrimMemory`, `am send-trim-memory`).
     fn short_of_memory(&mut self) -> Result<()> {

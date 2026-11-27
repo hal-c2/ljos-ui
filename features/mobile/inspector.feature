@@ -10,7 +10,9 @@
 # `ljos android connect` forwards its port, the same on the computer, to it over adb,
 # reads the token with `run-as` (which only a debuggable package allows),
 # and writes a token file on the computer that `ljos observe`,
-# `ljos attach` and agents take.
+# `ljos attach` and agents take. `ljos android disconnect` removes that
+# forward again: adb keeps one until it restarts, and a port forwarded for
+# any phone refuses an inspector at that port on another (#822).
 @ljos-only @android
 Feature: An agent inspects an application running on a phone
   The developer starts the application on the phone with the inspector
@@ -35,3 +37,8 @@ Feature: An agent inspects an application running on a phone
     Given the inspector of the application on the phone is connected over adb
     When the agent requests a snapshot
     Then the snapshot contains "- label \"Hello from the phone\" [e2] obj=hello"
+
+  Scenario: The port forwarded to the inspector goes when the developer disconnects
+    Given the inspector of the application on the phone is connected over adb
+    When the developer disconnects from the inspector on the phone
+    Then no port of this computer is forwarded to the inspector on the phone
