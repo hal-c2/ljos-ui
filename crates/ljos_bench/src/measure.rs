@@ -883,23 +883,29 @@ fn run_session(on: Option<Target<'_>>, steps: &[Step], w: &mut Watch<'_>) -> Vec
                 alive = false;
                 break;
             }
+            // What a call marked counts even when it fails after: a
+            // press that reached the window and then could not let go
+            // still sent its input.
             let sent = match &step.action {
                 Action::Click(point) => {
                     on.zip(pointer.as_mut()).and_then(|((_, sway, rect), p)| {
                         let (x, y) = at(rect, *point);
                         let (x, y, extent) = on_layout(sway, rect, x, y)?;
-                        p.click(x, y, extent).ok()?;
-                        p.sent().last().copied()
+                        let before = p.sent().len();
+                        let _ = p.click(x, y, extent);
+                        p.sent().get(before).copied()
                     })
                 }
                 Action::Key { chord, .. } => keyboard.as_mut().and_then(|k| {
-                    k.press(*chord, hold).ok()?;
-                    k.sent().last().copied()
+                    let before = k.sent().len();
+                    let _ = k.press(*chord, hold);
+                    k.sent().get(before).copied()
                 }),
                 Action::Type { keys, .. } => keyboard.as_mut().and_then(|k| {
                     let key = keys.get(usize::try_from(i).ok()?)?;
-                    k.press(*key, hold).ok()?;
-                    k.sent().last().copied()
+                    let before = k.sent().len();
+                    let _ = k.press(*key, hold);
+                    k.sent().get(before).copied()
                 }),
                 Action::Wait(_) => None,
             };
