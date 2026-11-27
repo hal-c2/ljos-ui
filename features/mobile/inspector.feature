@@ -23,11 +23,15 @@ Feature: An agent inspects an application running on a phone
       import QtQuick
       Window {
         visible: true
-        Text { objectName: "hello"; text: "Hello from the phone" }
+        Text {
+          objectName: "hello"
+          text: "Hello from the phone"
+          Accessible.role: Accessible.StaticText
+        }
       }
       """
 
   Scenario: The agent sees the scene of the application on the phone
     Given the inspector of the application on the phone is connected over adb
     When the agent requests a snapshot
-    Then the snapshot has a "Text" named "hello" with a reference
+    Then the snapshot contains "- label \"Hello from the phone\" [e2] obj=hello"
