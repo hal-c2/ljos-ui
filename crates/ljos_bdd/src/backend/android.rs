@@ -1667,7 +1667,10 @@ struct Setting {
 
 /// The commands that put `saved` back, the last changed first. A key that
 /// was unset reads `null`, and is deleted again rather than set to that
-/// word.
+/// word. The rotation is put back by the window manager, which writes both
+/// of its settings itself: put through `settings`, its own record of the
+/// lock it was turned with can be written back after the new value, as a
+/// slow emulator showed (#823).
 fn restored(saved: &[Setting]) -> Vec<String> {
     saved
         .iter()
@@ -1677,9 +1680,14 @@ fn restored(saved: &[Setting]) -> Vec<String> {
                  namespace,
                  key,
                  was,
-             }| match was.as_str() {
-                "null" | "" => format!("settings delete {namespace} {key}"),
-                was => format!("settings put {namespace} {key} {}", quoted(was)),
+             }| match (*namespace, *key, was.as_str()) {
+                (_, _, "null" | "") => format!("settings delete {namespace} {key}"),
+                ("system", "user_rotation", turn @ ("0" | "1" | "2" | "3")) => {
+                    format!("cmd window user-rotation lock {turn}")
+                }
+                ("system", "accelerometer_rotation", "1") => "cmd window user-rotation free".into(),
+                ("system", "accelerometer_rotation", "0") => "cmd window user-rotation lock".into(),
+                (_, _, was) => format!("settings put {namespace} {key} {}", quoted(was)),
             },
         )
         .collect()
@@ -1944,9 +1952,10 @@ impl Device for AndroidBackend {
         self.save(&phone, "system", "accelerometer_rotation")?;
         self.save(&phone, "system", "user_rotation")?;
         // Turned by the user's own lock, not the sensor: an emulator's
-        // sensor says the phone stands, whatever it was told before.
-        phone.shell("settings put system accelerometer_rotation 0")?;
-        phone.shell(&format!("settings put system user_rotation {want}"))?;
+        // sensor says the phone stands, whatever it was told before. The
+        // window manager sets the lock, as the quick setting does, so its
+        // record and the settings agree when they are put back.
+        phone.shell(&format!("cmd window user-rotation lock {want}"))?;
         // Turned once the window the application sees is as wide as the
         // turn makes it: a frame drawn before that is of the old size.
         let until = Instant::now() + SEEN;
@@ -2322,8 +2331,34 @@ mod tests {
                 setting("system", "user_rotation", "1"),
             ]),
             [
-                "settings put system user_rotation '1'",
+                "cmd window user-rotation lock 1",
                 "settings delete system accelerometer_rotation",
+            ]
+        );
+    }
+
+    #[test]
+    fn the_rotation_is_put_back_by_the_window_manager() {
+        // Put through `settings`, the window manager's own record of the
+        // lock could write the old one back after the read.
+        assert_eq!(
+            restored(&[
+                setting("system", "accelerometer_rotation", "1"),
+                setting("system", "user_rotation", "0"),
+            ]),
+            [
+                "cmd window user-rotation lock 0",
+                "cmd window user-rotation free",
+            ]
+        );
+        assert_eq!(
+            restored(&[
+                setting("system", "accelerometer_rotation", "0"),
+                setting("system", "user_rotation", "3"),
+            ]),
+            [
+                "cmd window user-rotation lock 3",
+                "cmd window user-rotation lock",
             ]
         );
     }
@@ -2361,7 +2396,7 @@ mod tests {
         let mut shell = |command: &str| {
             ran.push(command.to_owned());
             match command {
-                "settings put system user_rotation '0'" => {
+                "cmd window user-rotation lock 0" => {
                     Err(BackendError::Failed("adb went away".into()))
                 }
                 "settings get system accelerometer_rotation" => Ok("null\n".to_owned()),
