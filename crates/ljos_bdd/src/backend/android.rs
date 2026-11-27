@@ -24,9 +24,10 @@ use std::time::{Duration, Instant};
 use serde_json::{Value, json};
 
 use super::attached::{Reached, Running, SEEN};
+use super::inspector::{Ask, Seen};
 use super::{
     Backend, BackendError, Device, LogEntry, LogLevel, Platform, PointerStep, QmlFile, Result,
-    SystemDialogAnswer,
+    SystemDialogAnswer, Tooling,
 };
 
 /// Names the device the scenarios run on, as `adb -s` takes it; set when
@@ -39,6 +40,9 @@ pub const ID_ENV: &str = "LJOS_BDD_ANDROID_ID";
 pub const DEFAULT_ID: &str = "dev.ljos.ljos_example_android_scenarios";
 /// The activity the Gradle template (`android/`) declares.
 const ACTIVITY: &str = "dev.ljos.LjosActivity";
+/// `Qt.ApplicationHidden` and `Qt.ApplicationActive`.
+const HIDDEN: i64 = 1;
+const ACTIVE: i64 = 4;
 /// The extra of the intent that starts the application with its inspector
 /// (`LjosActivity`).
 const MCP_EXTRA: &str = "dev.ljos.MCP";
@@ -821,6 +825,17 @@ pub struct AndroidBackend {
     /// seconds: what its main and crash logs say after it is the
     /// scenario's.
     started_at: Option<String>,
+    /// What the agent was last answered.
+    seen: Seen,
+    /// The phone's rotation settings before the scenario turned it
+    /// (`accelerometer_rotation`, `user_rotation`), put back as it ends.
+    rotation: Option<(String, String)>,
+    /// The scenario left the developer option that ends every activity
+    /// on: it is turned off as the scenario ends.
+    finishing: bool,
+    /// How many of the application's trims it had logged as the user
+    /// last left it for the home screen.
+    trims_before_home: usize,
 }
 
 impl Drop for AndroidBackend {
@@ -830,7 +845,17 @@ impl Drop for AndroidBackend {
             let _ = phone.shell(&format!("am force-stop {}", phone.id));
             // A scenario that ended on its way through `end_screen` would
             // leave every application's screen ending as it is hidden.
-            let _ = phone.shell("settings put global always_finish_activities 0");
+            if self.finishing {
+                let _ = phone.always_finish(false);
+            }
+            if let Some((auto, user)) = &self.rotation {
+                let _ = phone.shell(&format!(
+                    "settings put system user_rotation {} && \
+                     settings put system accelerometer_rotation {}",
+                    quoted(user.trim()),
+                    quoted(auto.trim())
+                ));
+            }
             // Only what the scenario made: the Downloads are the user's.
             for file in &self.downloads {
                 let _ = phone.shell(&format!("rm -f {}", quoted(file)));
@@ -846,6 +871,85 @@ impl AndroidBackend {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Waits until the application says it is in `state`
+    /// (`Qt.application.state`), as the system told it.
+    fn wait_state(&mut self, state: i64, what: &str) -> Result<()> {
+        let running = self.running()?;
+        let until = Instant::now() + SEEN;
+        loop {
+            let said = running.ask("app_eval", json!({"source": "Qt.application.state"}))?;
+            if said["value"].as_i64() == Some(state) {
+                return Ok(());
+            }
+            if Instant::now() > until {
+                return Err(BackendError::Failed(format!(
+                    "the application did not say it was {what} {} s after the system made it so; \
+                     its Qt.application.state is {}",
+                    SEEN.as_secs(),
+                    said["value"]
+                )));
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    }
+
+    /// The bytes each of the application's trims gave back, as it logged
+    /// them, oldest first. The shell logs them to the phone's log, not to
+    /// the application's own (`app_logs`), which holds what its QML and
+    /// scripts say.
+    fn trims(&mut self) -> Result<Vec<usize>> {
+        Ok(self.logged()?.lines().filter_map(trimmed_bytes).collect())
+    }
+
+    /// What the application's user logged in the phone's main and crash
+    /// logs since the scenario loaded: what is before is not the
+    /// scenario's. By the user, not the process, so that the lines of a
+    /// process that is gone are there too; logcat keeps to one user's
+    /// lines itself (`--uid`, Android 9).
+    fn logged(&mut self) -> Result<String> {
+        let phone = self.phone()?.clone();
+        let uid = phone.as_app("id -u", None)?.trim().to_owned();
+        let since = self
+            .started_at
+            .clone()
+            .ok_or_else(|| BackendError::Failed("no scenario's application was started".into()))?;
+        let query = abort_query(&uid, &since).ok_or_else(|| {
+            BackendError::Failed(format!(
+                "the application's user {uid:?} or the phone's clock {since:?} is not a number"
+            ))
+        })?;
+        phone.shell(&query)
+    }
+
+    /// Fails unless the application rests with nothing to do and nothing
+    /// wakes it: no wake asked for, no frame owed, nothing animating, and
+    /// no pass run while it is watched. The watch waits on the
+    /// inspector's thread, so it wakes the application for nothing.
+    fn rests(&mut self) -> Result<()> {
+        let running = self.running()?;
+        // What leaving it set going (its surface going, the system's
+        // trim) runs first.
+        running.rest_until(Instant::now() + SEEN, |rest| not_idle(rest).is_none())?;
+        let (rests, rest) = running.rest()?;
+        if let Some(why) = not_idle(&rest) {
+            return Err(BackendError::Failed(format!(
+                "the application is not idle {} s after it was left: {why}",
+                SEEN.as_secs()
+            )));
+        }
+        let turns = running.turns()?;
+        if running.turned_after(turns, Instant::now() + IDLE_WATCH)? {
+            let (now, _) = running.rest()?;
+            return Err(BackendError::Failed(format!(
+                "the application is not idle: it ran a pass within {} ms of resting \
+                 ({} rests since)",
+                IDLE_WATCH.as_millis(),
+                now.saturating_sub(rests)
+            )));
+        }
+        Ok(())
     }
 
     fn phone(&mut self) -> Result<&Phone> {
@@ -1221,6 +1325,31 @@ impl Backend for AndroidBackend {
     fn as_platform(&mut self) -> Option<&mut dyn Platform> {
         Some(self)
     }
+
+    fn as_tooling(&mut self) -> Option<&mut dyn Tooling> {
+        Some(self)
+    }
+}
+
+impl Tooling for AndroidBackend {
+    fn inspector(&mut self, ask: &Ask) -> Result<()> {
+        match ask {
+            Ask::Call { tool, args } => {
+                let answer = self.running()?.call(tool, args.clone())?;
+                self.seen.answer = Some(answer);
+                Ok(())
+            }
+            Ask::Rests => self.rests(),
+            _ => Err(BackendError::Unsupported {
+                backend: "android",
+                what: "an agent here only calls tools and sees the application rest",
+            }),
+        }
+    }
+
+    fn inspector_seen(&mut self) -> Result<Seen> {
+        Ok(self.seen.clone())
+    }
 }
 
 impl Platform for AndroidBackend {
@@ -1438,15 +1567,126 @@ const ABORTED: [&str; 4] = [
     "Abort message",
 ];
 
+/// The developer option the system ends a hidden activity at once by
+/// (`always_finish_activities`), as its Settings screen names it.
+const DONT_KEEP: &str = "Don't keep activities";
+
+/// Whether a node of the screen is the switch's row: the Settings
+/// application writes the apostrophe as a typographer's.
+fn is_dont_keep(node: &ScreenNode) -> bool {
+    node.text.replace('\u{2019}', "'") == DONT_KEEP
+}
+
+/// How many of `package`'s activities the system still keeps a screen of,
+/// in `dumpsys activity activities`: the records in its history (`Hist`)
+/// not destroyed. A destroyed one stays listed until its task goes, with
+/// no process (`app=null`) and `state=DESTROYED`.
+fn screens_kept(activities: &str, package: &str) -> usize {
+    let mut kept = 0;
+    let mut record: Option<bool> = None;
+    let theirs = format!(" {package}/");
+    for line in activities.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("* ") {
+            kept += usize::from(record.take().unwrap_or(false));
+            if trimmed.starts_with("* Hist ") && trimmed.contains(&theirs) {
+                record = Some(true);
+            }
+        } else if let Some(alive) = record.as_mut()
+            && (trimmed.starts_with("app=null") || trimmed.starts_with("state=DESTROYED"))
+        {
+            *alive = false;
+        }
+    }
+    kept + usize::from(record.unwrap_or(false))
+}
+
+/// The bytes one of the application's trims gave back, from the line the
+/// shell logs for it (`short of memory: trimmed at …, N bytes given
+/// back`), as logcat writes it after its time, process and tag; `None` for
+/// any other line.
+fn trimmed_bytes(line: &str) -> Option<usize> {
+    let (_, rest) = line.split_once("short of memory: trimmed at ")?;
+    let (_, freed) = rest.rsplit_once(", ")?;
+    freed.strip_suffix(" bytes given back")?.parse().ok()
+}
+
+/// What in the UI thread's last rest (`app_watch`'s `rest`) is still to
+/// be done, if anything: a wake it asked for, a frame it owes, an
+/// animation under way.
+fn not_idle(rest: &Value) -> Option<String> {
+    if let Some(ms) = rest["wake_in_ms"].as_u64() {
+        return Some(format!("it asks to be woken in {ms} ms"));
+    }
+    if rest["frame_owed"] == Value::Bool(true) {
+        return Some("it owes its window a frame".into());
+    }
+    if rest["animating"] == Value::Bool(true) {
+        return Some("an animation is under way".into());
+    }
+    None
+}
+
+/// How long an application at rest is watched for anything that wakes it.
+const IDLE_WATCH: Duration = Duration::from_secs(1);
+
+impl Phone {
+    /// Sets the developer option that ends every activity the user leaves
+    /// (`always_finish` on). The system follows the option only as its
+    /// Settings application sets it: `settings put` alone changes what
+    /// `settings get` says and not what the system does (Android 16), so
+    /// the switch is tapped on that screen, as the developer sets it.
+    fn always_finish(&self, on: bool) -> Result<()> {
+        let want = if on { "1" } else { "0" };
+        let setting = "settings get global always_finish_activities";
+        // The switch shows the setting: written the other way first, the
+        // tap turns it the way wanted whatever the system followed.
+        let other = if on { "0" } else { "1" };
+        self.shell(&format!(
+            "settings put global always_finish_activities {other}"
+        ))?;
+        self.shell("settings put global development_settings_enabled 1")?;
+        self.shell(
+            "am start -W -a android.settings.APPLICATION_DEVELOPMENT_SETTINGS \
+             --es :settings:fragment_args_key immediately_destroy_activities",
+        )?;
+        let at = self.wait_screen(&format!("developer option {DONT_KEEP:?}"), |nodes| {
+            nodes.iter().find(|n| is_dont_keep(n)).map(|n| n.at)
+        })?;
+        self.tap(at)?;
+        let until = Instant::now() + SEEN;
+        while self.shell(setting)?.trim() != want {
+            if Instant::now() > until {
+                return Err(BackendError::Failed(format!(
+                    "the developer option {DONT_KEEP:?} was not turned {} {} s after it was tapped",
+                    if on { "on" } else { "off" },
+                    SEEN.as_secs()
+                )));
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        self.shell("input keyevent KEYCODE_HOME").map(drop)
+    }
+}
+
 impl Device for AndroidBackend {
     fn leave_for_home(&mut self) -> Result<()> {
         let phone = self.phone()?.clone();
+        if self.running.is_some() {
+            self.trims_before_home = self.trims()?.len();
+        }
         phone.shell("input keyevent KEYCODE_HOME")?;
         if !phone.wait_front(false, SEEN)? {
             return Err(BackendError::Failed(format!(
                 "the application was still in front {} s after Home",
                 SEEN.as_secs()
             )));
+        }
+        // The system puts another activity in front before it tells the
+        // application it was stopped: what follows is for an application
+        // that knows it is hidden.
+        if self.running.is_some() {
+            self.wait_state(HIDDEN, "hidden")?;
         }
         Ok(())
     }
@@ -1466,27 +1706,45 @@ impl Device for AndroidBackend {
         if before.is_none() || phone.pid()? != before {
             self.connect()?;
         }
+        // In front once it has the keyboard, as the user sees it.
+        self.wait_state(ACTIVE, "active")?;
         self.settle()
     }
 
     fn turn(&mut self, landscape: bool) -> Result<()> {
         let phone = self.phone()?.clone();
         let want = if landscape { "1" } else { "0" };
-        let auto = phone.shell("settings get system accelerometer_rotation")?;
-        let now = phone.shell("settings get system user_rotation")?;
-        if auto.trim() == "0" && now.trim() == want {
-            return Ok(());
+        if self.rotation.is_none() {
+            self.rotation = Some((
+                phone.shell("settings get system accelerometer_rotation")?,
+                phone.shell("settings get system user_rotation")?,
+            ));
         }
-        let turns = self.running()?.turns()?;
+        // Turned by the user's own lock, not the sensor: an emulator's
+        // sensor says the phone stands, whatever it was told before.
         phone.shell("settings put system accelerometer_rotation 0")?;
         phone.shell(&format!("settings put system user_rotation {want}"))?;
-        // The window draws at its new size once the system has turned it.
-        let running = self.running()?;
-        if !running.turned_after(turns, Instant::now() + SEEN)? {
-            return Err(BackendError::Failed(format!(
-                "the application drew nothing in {} s after the phone turned",
-                SEEN.as_secs()
-            )));
+        // Turned once the window the application sees is as wide as the
+        // turn makes it: a frame drawn before that is of the old size.
+        let until = Instant::now() + SEEN;
+        loop {
+            let status = self.running()?.ask("app_status", json!({}))?;
+            let window = &status["windows"][0];
+            let (w, h) = (window["width"].as_f64(), window["height"].as_f64());
+            if let (Some(w), Some(h)) = (w, h)
+                && (w > h) == landscape
+                && w != h
+            {
+                break;
+            }
+            if Instant::now() > until {
+                return Err(BackendError::Failed(format!(
+                    "the application's window was {w:?} by {h:?} {} s after the phone turned to {}",
+                    SEEN.as_secs(),
+                    if landscape { "landscape" } else { "portrait" }
+                )));
+            }
+            std::thread::sleep(Duration::from_millis(100));
         }
         self.settle()
     }
@@ -1503,30 +1761,35 @@ impl Device for AndroidBackend {
         // of memory; told to end every screen it hides, it does so at
         // once. The application is hidden again the way the user hid it.
         let phone = self.phone()?.clone();
-        phone.shell("settings put global always_finish_activities 1")?;
+        self.finishing = true;
+        phone.always_finish(true)?;
         let ended = (|| {
             phone.start(false)?;
-            phone.wait_front(true, STARTUP)?;
+            if !phone.wait_front(true, STARTUP)? {
+                return Err(BackendError::Failed(format!(
+                    "the application was not in front {} s after it was opened",
+                    STARTUP.as_secs()
+                )));
+            }
             phone.shell("input keyevent KEYCODE_HOME")?;
             let until = Instant::now() + SEEN;
             loop {
-                let said = phone.shell(&format!(
-                    "dumpsys activity activities | grep -c {} || true",
-                    phone.id
-                ))?;
-                if said.trim() == "0" {
+                let said = phone.shell("dumpsys activity activities")?;
+                let kept = screens_kept(&said, &phone.id);
+                if kept == 0 {
                     return Ok(());
                 }
                 if Instant::now() > until {
                     return Err(BackendError::Failed(format!(
-                        "the system kept the application's screen {} s after it was hidden",
+                        "the system kept {kept} of the application's screens {} s after it was hidden",
                         SEEN.as_secs()
                     )));
                 }
                 std::thread::sleep(Duration::from_millis(100));
             }
         })();
-        phone.shell("settings put global always_finish_activities 0")?;
+        phone.always_finish(false)?;
+        self.finishing = false;
         ended
     }
 
@@ -1547,25 +1810,12 @@ impl Device for AndroidBackend {
     }
 
     fn aborts(&mut self) -> Result<Vec<String>> {
-        let phone = self.phone()?.clone();
-        // By the application's user, not its process: the process that
-        // aborted is gone. CheckJNI says what it refused in the main log,
-        // bionic what it caught (`FORTIFY:`) and the signal it ended on in
-        // the crash log, and the crash dump its abort message there too.
-        // logcat keeps to one user's lines itself (`--uid`, Android 9).
-        // Since the scenario loaded: what is before is not the scenario's.
-        let uid = phone.as_app("id -u", None)?.trim().to_owned();
-        let since = self
-            .started_at
-            .clone()
-            .ok_or_else(|| BackendError::Failed("no scenario's application was started".into()))?;
-        let query = abort_query(&uid, &since).ok_or_else(|| {
-            BackendError::Failed(format!(
-                "the application's user {uid:?} or the phone's clock {since:?} is not a number"
-            ))
-        })?;
-        let said = phone.shell(&query)?;
-        Ok(said
+        // The process that aborted is gone. CheckJNI says what it refused
+        // in the main log, bionic what it caught (`FORTIFY:`) and the
+        // signal it ended on in the crash log, and the crash dump its
+        // abort message there too.
+        Ok(self
+            .logged()?
             .lines()
             .filter(|l| ABORTED.iter().any(|said| l.contains(said)))
             .map(str::to_owned)
@@ -1574,6 +1824,35 @@ impl Device for AndroidBackend {
 
     fn connect_inspector(&mut self) -> Result<()> {
         self.connect()
+    }
+
+    fn short_of_memory(&mut self) -> Result<()> {
+        let phone = self.phone()?.clone();
+        let before = self.trims()?.len();
+        let pid = self.running()?.app.pid;
+        // `RUNNING_LOW`, which the system sends a process in front or
+        // behind; a background level it refuses for a process it still
+        // counts as seen, as it does for a while after Home.
+        phone.shell(&format!("am send-trim-memory {pid} RUNNING_LOW"))?;
+        let until = Instant::now() + SEEN;
+        while self.trims()?.len() <= before {
+            if Instant::now() > until {
+                return Err(BackendError::Failed(format!(
+                    "the application logged no trim {} s after the system said it was short of memory",
+                    SEEN.as_secs()
+                )));
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        Ok(())
+    }
+
+    fn memory_given_back(&mut self) -> Result<usize> {
+        // Hiding it is a trim of its own on a phone (`onTrimMemory` with
+        // `TRIM_MEMORY_UI_HIDDEN`), which gives back what the trim the
+        // scenario asked for then finds already given: all of them count.
+        let trims = self.trims()?;
+        Ok(trims.iter().skip(self.trims_before_home).sum())
     }
 
     fn end_process(&mut self) -> Result<()> {
@@ -1692,11 +1971,87 @@ impl Device for AndroidBackend {
 mod tests {
     use super::{
         BackendError, FORGET_EVENTS, Shown, abort_query, badge_in, clipboard_call, download_path,
-        front_record, kept_permissions, percent_decoded, permission_asked, permission_button,
-        picker_shown, picture_size, quoted, scenario_dir, screen_nodes, secrets_answer,
-        secrets_call, seen_until,
+        front_record, is_dont_keep, kept_permissions, not_idle, percent_decoded, permission_asked,
+        permission_button, picker_shown, picture_size, quoted, scenario_dir, screen_nodes,
+        screens_kept, secrets_answer, secrets_call, seen_until, trimmed_bytes,
     };
-    use serde_json::Value;
+    use serde_json::{Value, json};
+
+    // Trimmed from Android 16's `dumpsys activity activities`, the
+    // application's screen kept behind the home screen.
+    const KEPT: &str = "\
+  * Task{80cd59b #25 type=standard A=10216:dev.ljos.scenarios U=0 visible=false sz=1}
+    mLastPausedActivity: ActivityRecord{144717226 u0 dev.ljos.scenarios/dev.ljos.LjosActivity t25}
+    * Hist  #0: ActivityRecord{144717226 u0 dev.ljos.scenarios/dev.ljos.LjosActivity t25}
+      packageName=dev.ljos.scenarios processName=dev.ljos.scenarios
+      app=ProcessRecord{8d93077 7723:dev.ljos.scenarios/u0a216}
+      state=STOPPED delayedResume=false finishing=false
+  * Task{89217e2 #22 type=standard A=1000:com.android.settings U=0 visible=false sz=1}
+    * Hist  #0: ActivityRecord{141659222 u0 com.android.settings/.Settings t22}
+      app=ProcessRecord{b70751e 1319:com.android.settings/1000}
+      state=STOPPED delayedResume=false finishing=false
+      * Task{80cd59b #25 type=standard A=10216:dev.ljos.scenarios U=0 visible=false sz=1}
+        * ActivityRecord{144717226 u0 dev.ljos.scenarios/dev.ljos.LjosActivity t25}
+";
+
+    #[test]
+    fn a_screen_kept_behind_the_home_screen_is_counted() {
+        assert_eq!(screens_kept(KEPT, "dev.ljos.scenarios"), 1);
+        assert_eq!(screens_kept(KEPT, "com.android.settings"), 1);
+        assert_eq!(screens_kept(KEPT, "dev.ljos.other"), 0);
+    }
+
+    #[test]
+    fn a_destroyed_screen_still_listed_is_not_kept() {
+        let destroyed = KEPT
+            .replace(
+                "app=ProcessRecord{8d93077 7723:dev.ljos.scenarios/u0a216}",
+                "app=null",
+            )
+            .replacen("state=STOPPED", "state=DESTROYED", 1);
+        assert_eq!(screens_kept(&destroyed, "dev.ljos.scenarios"), 0);
+        assert_eq!(screens_kept(&destroyed, "com.android.settings"), 1);
+    }
+
+    #[test]
+    fn a_trim_says_the_bytes_it_gave_back() {
+        assert_eq!(
+            trimmed_bytes("short of memory: trimmed at Critical, 232 bytes given back"),
+            Some(232)
+        );
+        assert_eq!(
+            trimmed_bytes("short of memory: trimmed at Moderate, 0 bytes given back"),
+            Some(0)
+        );
+        assert_eq!(
+            trimmed_bytes(
+                "11-27 09:40:40.455  9684  9703 I ljos    : ljos_shell::android: \
+                 short of memory: trimmed at Critical, 264432 bytes given back"
+            ),
+            Some(264_432)
+        );
+        assert_eq!(trimmed_bytes("touch slop 8 dp"), None);
+        assert_eq!(trimmed_bytes("short of memory: trimmed at Critical"), None);
+    }
+
+    #[test]
+    fn an_application_at_rest_has_nothing_left_to_do() {
+        let rest = |wake: Value, owed: bool, animating: bool| json!({"wake_in_ms": wake, "frame_owed": owed, "animating": animating});
+        assert_eq!(not_idle(&rest(Value::Null, false, false)), None);
+        assert!(not_idle(&rest(json!(16), false, false)).is_some_and(|w| w.contains("16 ms")));
+        assert!(not_idle(&rest(Value::Null, true, false)).is_some_and(|w| w.contains("frame")));
+        assert!(not_idle(&rest(Value::Null, false, true)).is_some_and(|w| w.contains("animation")));
+    }
+
+    #[test]
+    fn the_developer_option_is_found_by_its_words() {
+        let shown = screen_nodes(
+            r#"<node text="Don’t keep activities" resource-id="android:id/title" class="android.widget.TextView" content-desc="" enabled="true" bounds="[0,10][100,30]" /><node text="Keep activities" resource-id="" class="" content-desc="" enabled="true" bounds="[0,40][100,60]" />"#,
+        );
+        let found: Vec<_> = shown.iter().filter(|n| is_dont_keep(n)).collect();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].at, (50, 20));
+    }
 
     // Trimmed from Android 16's `dumpsys notification --noredact`.
     const NOTIFICATIONS: &str = "\
