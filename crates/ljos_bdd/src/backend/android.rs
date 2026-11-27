@@ -827,9 +827,9 @@ pub struct AndroidBackend {
     started_at: Option<String>,
     /// What the agent was last answered.
     seen: Seen,
-    /// The phone's rotation settings before the scenario turned it
-    /// (`accelerometer_rotation`, `user_rotation`), put back as it ends.
-    rotation: Option<(String, String)>,
+    /// The phone's settings as the scenario found them, in the order it
+    /// first changed them: put back, the last first, as it ends.
+    saved: Vec<Setting>,
     /// The scenario left the developer option that ends every activity
     /// on: it is turned off as the scenario ends.
     finishing: bool,
@@ -841,6 +841,8 @@ pub struct AndroidBackend {
 impl Drop for AndroidBackend {
     fn drop(&mut self) {
         self.running = None;
+        // The phone is still here only if `put_back` never ran (no `after`
+        // hook): it takes the phone, and does all this then.
         if let Some(phone) = &self.phone {
             let _ = phone.shell(&format!("am force-stop {}", phone.id));
             // A scenario that ended on its way through `end_screen` would
@@ -848,12 +850,8 @@ impl Drop for AndroidBackend {
             if self.finishing {
                 let _ = phone.always_finish(false);
             }
-            if let Some((auto, user)) = &self.rotation {
-                let _ = phone.shell(&format!(
-                    "{} && {}",
-                    setting_restored("user_rotation", user),
-                    setting_restored("accelerometer_rotation", auto)
-                ));
+            for put in restored(&self.saved) {
+                let _ = phone.shell(&put);
             }
             // Only what the scenario made: the Downloads are the user's.
             for file in &self.downloads {
@@ -867,6 +865,46 @@ impl Drop for AndroidBackend {
 }
 
 impl AndroidBackend {
+    /// Stops the application and puts back the settings the scenario
+    /// changed, then reads them: an error says which read otherwise.
+    fn left_as_found(&mut self, phone: &Phone) -> Result<()> {
+        phone.shell(&format!("am force-stop {}", phone.id))?;
+        if self.finishing {
+            phone.always_finish(false)?;
+            self.finishing = false;
+        }
+        let saved = std::mem::take(&mut self.saved);
+        for put in restored(&saved) {
+            phone.shell(&put)?;
+        }
+        let read = |s: &Setting| phone.shell(&format!("settings get {} {}", s.namespace, s.key));
+        match not_put_back(&saved, read)? {
+            None => Ok(()),
+            Some(why) => Err(BackendError::Failed(format!(
+                "the phone was not left as the scenario found it: {why}"
+            ))),
+        }
+    }
+
+    /// Notes `key` as the scenario found it, unless it was noted already:
+    /// called before the scenario first changes it.
+    fn save(&mut self, phone: &Phone, namespace: &'static str, key: &'static str) -> Result<()> {
+        if self
+            .saved
+            .iter()
+            .any(|s| s.namespace == namespace && s.key == key)
+        {
+            return Ok(());
+        }
+        let was = phone.shell(&format!("settings get {namespace} {key}"))?;
+        self.saved.push(Setting {
+            namespace,
+            key,
+            was: was.trim().to_owned(),
+        });
+        Ok(())
+    }
+
     #[must_use]
     pub fn new() -> Self {
         Self::default()
@@ -931,24 +969,7 @@ impl AndroidBackend {
         // What leaving it set going (its surface going, the system's
         // trim) runs first.
         running.rest_until(Instant::now() + SEEN, |rest| not_idle(rest).is_none())?;
-        let (rests, rest) = running.rest()?;
-        if let Some(why) = not_idle(&rest) {
-            return Err(BackendError::Failed(format!(
-                "the application is not idle {} s after it was left: {why}",
-                SEEN.as_secs()
-            )));
-        }
-        let turns = running.turns()?;
-        if running.turned_after(turns, Instant::now() + IDLE_WATCH)? {
-            let (now, _) = running.rest()?;
-            return Err(BackendError::Failed(format!(
-                "the application is not idle: it ran a pass within {} ms of resting \
-                 ({} rests since)",
-                IDLE_WATCH.as_millis(),
-                now.saturating_sub(rests)
-            )));
-        }
-        Ok(())
+        stays_idle(running)
     }
 
     fn phone(&mut self) -> Result<&Phone> {
@@ -1171,6 +1192,29 @@ fn not_yet(what: &'static str) -> BackendError {
 impl Backend for AndroidBackend {
     fn name(&self) -> &'static str {
         "android"
+    }
+
+    /// All of the scenario's tidying is done here, at its end, and none
+    /// is left to Drop: cucumber hands the finished world to its writer
+    /// (`world.map(Arc::new)` in cucumber 0.23's runner), so Drop runs
+    /// whenever the writer lets go of it, which can be while the next
+    /// scenario turns the phone or runs the same application. The
+    /// application is stopped first, so nothing it does on its way out
+    /// comes after the settings are put back.
+    fn put_back(&mut self) -> Result<()> {
+        self.running = None;
+        let Some(phone) = self.phone.take() else {
+            return Ok(());
+        };
+        let left = self.left_as_found(&phone);
+        // Only what the scenario made: the Downloads are the user's.
+        for file in self.downloads.drain(..) {
+            let _ = phone.shell(&format!("rm -f {}", quoted(&file)));
+        }
+        for dir in self.download_dirs.drain(..).rev() {
+            let _ = phone.shell(&format!("rmdir {}", quoted(&dir)));
+        }
+        left
     }
 
     fn load(&mut self, files: &[QmlFile], entry: &str) -> Result<()> {
@@ -1600,14 +1644,56 @@ fn screens_kept(activities: &str, package: &str) -> usize {
     kept + usize::from(record.unwrap_or(false))
 }
 
-/// The command that puts a system setting back to what `settings get`
-/// read before the scenario changed it. A key that was unset reads
-/// `null`, and is deleted again rather than set to that word.
-fn setting_restored(key: &str, was: &str) -> String {
-    match was.trim() {
-        "null" | "" => format!("settings delete system {key}"),
-        was => format!("settings put system {key} {}", quoted(was)),
+/// One of the phone's settings as `settings get` read it before the
+/// scenario changed it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Setting {
+    /// `system`, `secure` or `global`.
+    namespace: &'static str,
+    key: &'static str,
+    was: String,
+}
+
+/// The commands that put `saved` back, the last changed first. A key that
+/// was unset reads `null`, and is deleted again rather than set to that
+/// word.
+fn restored(saved: &[Setting]) -> Vec<String> {
+    saved
+        .iter()
+        .rev()
+        .map(
+            |Setting {
+                 namespace,
+                 key,
+                 was,
+             }| match was.as_str() {
+                "null" | "" => format!("settings delete {namespace} {key}"),
+                was => format!("settings put {namespace} {key} {}", quoted(was)),
+            },
+        )
+        .collect()
+}
+
+/// What `read` says of each of `saved` that is not what it was, as one
+/// line per setting; `None` when all read back as they were.
+fn not_put_back(
+    saved: &[Setting],
+    mut read: impl FnMut(&Setting) -> Result<String>,
+) -> Result<Option<String>> {
+    // An unset key reads `null`; what `restored` deleted reads so again.
+    let unset = |v: &str| matches!(v, "null" | "");
+    let mut off = Vec::new();
+    for setting in saved {
+        let now = read(setting)?;
+        let now = now.trim();
+        if now != setting.was && !(unset(now) && unset(&setting.was)) {
+            off.push(format!(
+                "{} {} reads {now}, was {}",
+                setting.namespace, setting.key, setting.was
+            ));
+        }
     }
+    Ok((!off.is_empty()).then(|| off.join("; ")))
 }
 
 /// The bytes one of the application's trims gave back, from the line the
@@ -1634,6 +1720,53 @@ fn not_idle(rest: &Value) -> Option<String> {
         return Some("an animation is under way".into());
     }
     None
+}
+
+/// How the UI thread's turns are watched: what [`Running`] asks the
+/// inspector, apart so a test can turn the thread between the asks.
+trait Watched {
+    fn turns(&mut self) -> Result<(u64, u64)>;
+    fn rest(&mut self) -> Result<(u64, Value)>;
+    fn turned_after(&mut self, turns: (u64, u64), deadline: Instant) -> Result<bool>;
+}
+
+impl<P: Reached> Watched for Running<P> {
+    fn turns(&mut self) -> Result<(u64, u64)> {
+        Running::turns(self)
+    }
+
+    fn rest(&mut self) -> Result<(u64, Value)> {
+        Running::rest(self)
+    }
+
+    fn turned_after(&mut self, turns: (u64, u64), deadline: Instant) -> Result<bool> {
+        Running::turned_after(self, turns, deadline)
+    }
+}
+
+/// Fails unless the rest the UI thread is in has nothing left to do and
+/// it runs no pass while it is watched for [`IDLE_WATCH`].
+fn stays_idle(running: &mut impl Watched) -> Result<()> {
+    // Counted before the rest is read: a pass run between the two asks is
+    // then seen by one or the other, never by neither.
+    let turns = running.turns()?;
+    let (rests, rest) = running.rest()?;
+    if let Some(why) = not_idle(&rest) {
+        return Err(BackendError::Failed(format!(
+            "the application is not idle {} s after it was left: {why}",
+            SEEN.as_secs()
+        )));
+    }
+    if running.turned_after(turns, Instant::now() + IDLE_WATCH)? {
+        let (now, _) = running.rest()?;
+        return Err(BackendError::Failed(format!(
+            "the application is not idle: it ran a pass within {} ms of resting \
+             ({} rests since)",
+            IDLE_WATCH.as_millis(),
+            now.saturating_sub(rests)
+        )));
+    }
+    Ok(())
 }
 
 /// How long an application at rest is watched for anything that wakes it.
@@ -1723,12 +1856,8 @@ impl Device for AndroidBackend {
     fn turn(&mut self, landscape: bool) -> Result<()> {
         let phone = self.phone()?.clone();
         let want = if landscape { "1" } else { "0" };
-        if self.rotation.is_none() {
-            self.rotation = Some((
-                phone.shell("settings get system accelerometer_rotation")?,
-                phone.shell("settings get system user_rotation")?,
-            ));
-        }
+        self.save(&phone, "system", "accelerometer_rotation")?;
+        self.save(&phone, "system", "user_rotation")?;
         // Turned by the user's own lock, not the sensor: an emulator's
         // sensor says the phone stands, whatever it was told before.
         phone.shell("settings put system accelerometer_rotation 0")?;
@@ -1770,6 +1899,8 @@ impl Device for AndroidBackend {
         // of memory; told to end every screen it hides, it does so at
         // once. The application is hidden again the way the user hid it.
         let phone = self.phone()?.clone();
+        // The option's screen is reached only with developer settings on.
+        self.save(&phone, "global", "development_settings_enabled")?;
         self.finishing = true;
         phone.always_finish(true)?;
         let ended = (|| {
@@ -1979,12 +2110,14 @@ impl Device for AndroidBackend {
 #[cfg(test)]
 mod tests {
     use super::{
-        BackendError, FORGET_EVENTS, Shown, abort_query, badge_in, clipboard_call, download_path,
-        front_record, is_dont_keep, kept_permissions, not_idle, percent_decoded, permission_asked,
-        permission_button, picker_shown, picture_size, quoted, scenario_dir, screen_nodes,
-        screens_kept, secrets_answer, secrets_call, seen_until, setting_restored, trimmed_bytes,
+        BackendError, FORGET_EVENTS, Setting, Shown, Watched, abort_query, badge_in,
+        clipboard_call, download_path, front_record, is_dont_keep, kept_permissions, not_idle,
+        not_put_back, percent_decoded, permission_asked, permission_button, picker_shown,
+        picture_size, quoted, restored, scenario_dir, screen_nodes, screens_kept, secrets_answer,
+        secrets_call, seen_until, stays_idle, trimmed_bytes,
     };
     use serde_json::{Value, json};
+    use std::time::Instant;
 
     // Trimmed from Android 16's `dumpsys activity activities`, the
     // application's screen kept behind the home screen.
@@ -2043,15 +2176,100 @@ mod tests {
         assert_eq!(trimmed_bytes("short of memory: trimmed at Critical"), None);
     }
 
+    /// A UI thread at rest that runs one pass, which asks to be woken in
+    /// 2 s, just after the first of the inspector's asks is answered.
+    struct PassesAfterTheFirstAsk {
+        asks: u32,
+        rests: u64,
+        rest: Value,
+    }
+
+    impl PassesAfterTheFirstAsk {
+        fn ask(&mut self) {
+            self.asks += 1;
+            if self.asks == 2 {
+                self.rests += 1;
+                self.rest = json!({"wake_in_ms": 2000});
+            }
+        }
+    }
+
+    impl Watched for PassesAfterTheFirstAsk {
+        fn turns(&mut self) -> super::Result<(u64, u64)> {
+            self.ask();
+            Ok((0, self.rests))
+        }
+
+        fn rest(&mut self) -> super::Result<(u64, Value)> {
+            self.ask();
+            Ok((self.rests, self.rest.clone()))
+        }
+
+        fn turned_after(&mut self, (_, rests): (u64, u64), _: Instant) -> super::Result<bool> {
+            self.ask();
+            Ok(self.rests > rests)
+        }
+    }
+
+    #[test]
+    fn a_pass_between_the_asks_is_not_taken_for_rest() {
+        let mut thread = PassesAfterTheFirstAsk {
+            asks: 0,
+            rests: 5,
+            rest: json!({}),
+        };
+        assert!(stays_idle(&mut thread).is_err());
+    }
+
+    fn setting(namespace: &'static str, key: &'static str, was: &str) -> Setting {
+        Setting {
+            namespace,
+            key,
+            was: was.to_owned(),
+        }
+    }
+
     #[test]
     fn a_setting_that_was_unset_is_deleted_again() {
         assert_eq!(
-            setting_restored("user_rotation", "1\n"),
-            "settings put system user_rotation '1'"
+            restored(&[
+                setting("system", "accelerometer_rotation", "null"),
+                setting("system", "user_rotation", "1"),
+            ]),
+            [
+                "settings put system user_rotation '1'",
+                "settings delete system accelerometer_rotation",
+            ]
         );
+    }
+
+    #[test]
+    fn a_setting_read_back_otherwise_than_it_was_is_told() {
+        let saved = [
+            setting("system", "accelerometer_rotation", "null"),
+            setting("system", "user_rotation", "0"),
+            setting("global", "development_settings_enabled", "0"),
+        ];
+        let phone = |s: &Setting| {
+            Ok(match s.key {
+                "accelerometer_rotation" => "null\n",
+                "user_rotation" => "1\n",
+                _ => "0\n",
+            }
+            .to_owned())
+        };
         assert_eq!(
-            setting_restored("user_rotation", "null\n"),
-            "settings delete system user_rotation"
+            not_put_back(&saved, phone).unwrap(),
+            Some("system user_rotation reads 1, was 0".to_owned())
+        );
+        assert_eq!(not_put_back(&saved, |s| Ok(s.was.clone())).unwrap(), None);
+    }
+
+    #[test]
+    fn the_developer_settings_are_put_back_as_they_were() {
+        assert_eq!(
+            restored(&[setting("global", "development_settings_enabled", "0")]),
+            ["settings put global development_settings_enabled '0'"]
         );
     }
 

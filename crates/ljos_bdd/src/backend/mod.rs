@@ -319,6 +319,13 @@ pub trait Backend: fmt::Debug {
         Err(BackendError::NotImplemented("the window's pictures kept"))
     }
 
+    /// Puts back what the scenario changed outside its application (a
+    /// device's settings, say), once its steps are done, and fails with
+    /// what it reads if that is not as the scenario found it.
+    fn put_back(&mut self) -> Result<()> {
+        Ok(())
+    }
+
     fn as_input(&mut self) -> Option<&mut dyn Input> {
         None
     }

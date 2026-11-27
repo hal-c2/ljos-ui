@@ -85,6 +85,24 @@ impl LjosWorld {
         }
     }
 
+    /// Called from the `after` hook: each backend puts back what the
+    /// scenario changed around its application ([`Backend::put_back`]).
+    ///
+    /// # Errors
+    /// One line per backend that could not.
+    pub fn put_back(&mut self) -> Result<(), String> {
+        let failures: Vec<String> = self
+            .backends
+            .iter_mut()
+            .filter_map(|b| b.put_back().err().map(|e| format!("[{}] {e}", b.name())))
+            .collect();
+        if failures.is_empty() {
+            Ok(())
+        } else {
+            Err(failures.join("\n"))
+        }
+    }
+
     /// A file of the running application is saved with new text, or
     /// removed (`None`). A later `load` sees the files as they are now.
     ///
