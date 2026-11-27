@@ -1785,11 +1785,13 @@ fn restored(saved: &[Setting]) -> Vec<String> {
         .collect()
 }
 
-/// How long a setting put back has to read as it was.
-const SETTLES_IN: Duration = Duration::from_secs(2);
+/// How long a setting put back has to read as it was, and the display
+/// to turn back to the lock put back: a slow emulator's turn takes
+/// seconds.
+const SETTLES_IN: Duration = Duration::from_secs(5);
 
 /// [`tear_down`]'s pause on the phone: 50 ms at a time, [`SETTLES_IN`] in
-/// all for each setting.
+/// all for each wait.
 fn settles() -> impl FnMut(u32) -> bool {
     let mut until = Instant::now();
     move |tried| {
@@ -1820,8 +1822,11 @@ struct Left {
 /// failed stays in [`Left`] for another try. Each is read back before the
 /// next is put: the window manager turns a lock a moment after `cmd`
 /// returns, and that late write would undo a `free` put after it.
-/// `pause(tried)` waits a moment more for the setting to read as it was put
-/// (`tried` 0 as it is first read again), false once it is too late.
+/// A lock put back is also waited for until the display has turned to it,
+/// since the window manager writes the lock again as the turn ends.
+/// `pause(tried)` waits a moment more for the setting to read as it was put,
+/// or the display to turn (`tried` 0 as it is first read again), false once
+/// it is too late.
 fn tear_down(
     saved: Vec<Setting>,
     finishing: bool,
@@ -1860,8 +1865,28 @@ fn tear_down(
             }
         };
         if let Some(why) = off {
+            // A rotation that does not read as put back says what the
+            // window manager holds and where the display is turned: a
+            // late write of its own reads differently from a lost `cmd`.
+            let why = if setting.namespace == "system" && ROTATION.contains(&setting.key) {
+                format!("{why} ({})", rotation_now(shell))
+            } else {
+                why
+            };
             failed.push(why);
             undone[at] = true;
+        } else if let Some(turn) = locked_to(&command) {
+            // The settings read as locked before the display has turned
+            // back, and the window manager writes the lock again as the
+            // turn ends: a `free` put before then is locked once more
+            // (lifecycle.feature:65 after the landscape outline).
+            let mut tried = 0;
+            while display_turn(&shell("dumpsys display").unwrap_or_default())
+                .is_some_and(|now| now != turn)
+                && pause(tried)
+            {
+                tried += 1;
+            }
         }
     }
     // Turning the switch off again turns the developer settings on, so a
@@ -1878,6 +1903,46 @@ fn tear_down(
         finishing,
         failed,
     }
+}
+
+/// The settings the window manager writes as the phone is locked or freed.
+const ROTATION: [&str; 2] = ["accelerometer_rotation", "user_rotation"];
+
+/// The turn `command` locks the phone to, if it is a lock to one.
+fn locked_to(command: &str) -> Option<&str> {
+    command
+        .strip_prefix("cmd window user-rotation lock ")
+        .filter(|turn| matches!(*turn, "0" | "1" | "2" | "3"))
+}
+
+/// The turn of the default display in `dumpsys display`, as the window
+/// manager last gave it: the first logical display's `rotation`. `None`
+/// when the dump says none, and nothing is waited for.
+fn display_turn(dump: &str) -> Option<&str> {
+    let (_, info) = dump.split_once("mOverrideDisplayInfo=DisplayInfo{")?;
+    let line = info.lines().next()?;
+    let (_, turn) = line.split_once(", rotation ")?;
+    let end = turn
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(turn.len());
+    (end > 0).then(|| &turn[..end])
+}
+
+/// What the window manager holds of the rotation and where the display
+/// is turned, for a rotation that did not read as put back.
+fn rotation_now(shell: &mut dyn FnMut(&str) -> Result<String>) -> String {
+    let held = match shell("cmd window user-rotation") {
+        Ok(out) => format!("the window manager holds `{}`", out.trim()),
+        Err(e) => format!("the window manager's rotation could not be read: {e}"),
+    };
+    let turned = match shell("dumpsys display") {
+        Ok(dump) => match display_turn(&dump) {
+            Some(turn) => format!("the display is turned to {turn}"),
+            None => "the display's turn is not in its dump".to_owned(),
+        },
+        Err(e) => format!("the display could not be read: {e}"),
+    };
+    format!("{held}, {turned}")
 }
 
 /// What `read` says of each of `saved` that is not what it was, as one
@@ -2384,11 +2449,11 @@ fn forwards_port(listed: &str, serial: &str, port: u16) -> bool {
 mod tests {
     use super::{
         AndroidBackend, BackendError, FORGET_EVENTS, Setting, Shown, Watched, abort_query,
-        badge_in, clipboard_call, download_path, forwards_port, front_record, is_dont_keep,
-        kept_permissions, not_idle, not_put_back, percent_decoded, permission_asked,
-        permission_button, picker_shown, picture_size, port_taken_here, quoted, restored,
-        scenario_dir, screen_nodes, screens_kept, secrets_answer, secrets_call, seen_until,
-        stays_idle, tear_down, trimmed_bytes, url_port,
+        badge_in, clipboard_call, display_turn, download_path, forwards_port, front_record,
+        is_dont_keep, kept_permissions, locked_to, not_idle, not_put_back, percent_decoded,
+        permission_asked, permission_button, picker_shown, picture_size, port_taken_here, quoted,
+        restored, scenario_dir, screen_nodes, screens_kept, secrets_answer, secrets_call,
+        seen_until, stays_idle, tear_down, trimmed_bytes, url_port,
     };
     use serde_json::{Value, json};
     use std::time::Instant;
@@ -2672,6 +2737,92 @@ mod tests {
         assert!(left.failed.is_empty(), "{left:?} after {ran:?}");
         assert!(left.saved.is_empty(), "{left:?}");
         assert!(waited > 0, "the lock was not waited for: {ran:?}");
+    }
+
+    /// `dumpsys display`'s default display, turned to `turn`.
+    fn display_dump(turn: &str) -> String {
+        format!(
+            "  mBaseDisplayInfo=DisplayInfo{{\"Built-in Screen\", displayId 0, real 1080 x 2400, rotation 0, state ON}}\n  mOverrideDisplayInfo=DisplayInfo{{\"Built-in Screen\", displayId 0, cutout DisplayCutout{{insets=Rect(0, 0 - 0, 0)}}, real 1080 x 2400, rotation {turn}, state ON}}\n"
+        )
+    }
+
+    #[test]
+    fn a_rotation_is_freed_only_once_the_display_has_turned_back() {
+        // As the landscape outline leaves the phone: the settings read as
+        // locked at once, the display turns back a moment later, and as it
+        // does the window manager writes its lock again, over a `free` put
+        // before then (lifecycle.feature:65, main run 46016933337).
+        let saved = vec![
+            setting("system", "accelerometer_rotation", "1"),
+            setting("system", "user_rotation", "0"),
+        ];
+        let (mut user, mut accel, mut display) = ("1", "0", "1");
+        let mut turning: Option<u8> = None;
+        let mut ran = Vec::new();
+        let mut shell = |command: &str| {
+            ran.push(command.to_owned());
+            if let Some(left) = turning.as_mut() {
+                *left -= 1;
+                if *left == 0 {
+                    (display, accel) = ("0", "0");
+                    turning = None;
+                }
+            }
+            match command {
+                "cmd window user-rotation lock 0" => {
+                    (user, accel) = ("0", "0");
+                    turning = Some(3);
+                }
+                "cmd window user-rotation free" => accel = "1",
+                "settings get system user_rotation" => return Ok(format!("{user}\n")),
+                "settings get system accelerometer_rotation" => return Ok(format!("{accel}\n")),
+                "dumpsys display" => return Ok(display_dump(display)),
+                _ => {}
+            }
+            Ok(String::new())
+        };
+        let left = tear_down(saved, false, &mut shell, &mut || Ok(()), &mut |tried| {
+            tried < 10
+        });
+        assert!(left.failed.is_empty(), "{left:?} after {ran:?}");
+        assert!(left.saved.is_empty(), "{left:?}");
+        let free = ran
+            .iter()
+            .position(|c| c == "cmd window user-rotation free");
+        let turned = ran.iter().rposition(|c| c == "dumpsys display");
+        assert!(
+            turned < free,
+            "freed before the display turned back: {ran:?}"
+        );
+    }
+
+    #[test]
+    fn a_rotation_left_locked_says_what_the_window_manager_holds() {
+        let saved = vec![setting("system", "accelerometer_rotation", "1")];
+        let mut shell = |command: &str| {
+            Ok(match command {
+                "settings get system accelerometer_rotation" => "0\n".to_owned(),
+                "cmd window user-rotation" => "lock 0\n".to_owned(),
+                "dumpsys display" => display_dump("1"),
+                _ => String::new(),
+            })
+        };
+        let left = tear_down(saved, false, &mut shell, &mut || Ok(()), &mut |_| false);
+        assert_eq!(
+            left.failed,
+            [
+                "system accelerometer_rotation reads 0, was 1 (the window manager holds `lock 0`, the display is turned to 1)"
+            ]
+        );
+    }
+
+    #[test]
+    fn the_display_s_turn_is_read_from_its_override() {
+        assert_eq!(display_turn(&display_dump("3")), Some("3"));
+        assert_eq!(display_turn("Display Devices: size=1"), None);
+        assert_eq!(locked_to("cmd window user-rotation lock 2"), Some("2"));
+        assert_eq!(locked_to("cmd window user-rotation lock"), None);
+        assert_eq!(locked_to("cmd window user-rotation free"), None);
     }
 
     #[test]
