@@ -361,7 +361,7 @@ fn connect(adb: &Adb, application_id: &str, out: &Path) -> anyhow::Result<String
     // and a client names the port of the address it was given: the port
     // here is the device's.
     let forward = format!("tcp:{port}");
-    let listed = device_forwards(adb);
+    let listed = device_forwards(adb)?;
     let goes = |local: &str| {
         listed
             .iter()
@@ -432,15 +432,77 @@ fn connect(adb: &Adb, application_id: &str, out: &Path) -> anyhow::Result<String
 
 /// Removes the forward the connect that wrote `out` made, and `out`.
 fn disconnect(adb: &Adb, out: &Path) -> anyhow::Result<()> {
+    disconnect_asking(adb, out, &|port, path, token| {
+        unless_unheard(listens_on_device(adb, port), || {
+            who_answers(port, path, token)
+        })
+    })
+}
+
+/// Who answers at a port whose forward goes to the same port on the
+/// device, `listening` saying whether anything listens there (`None` when
+/// the device did not say): nobody when nothing does, what `ask` hears
+/// otherwise. adb closes a connection to where nothing listens, but a busy
+/// adb server closes it later than the question waits, and that silence
+/// would keep a forward that leads nowhere.
+fn unless_unheard(listening: Option<bool>, ask: impl FnOnce() -> Answer) -> Answer {
+    match listening {
+        Some(false) => Answer::Nobody,
+        _ => ask(),
+    }
+}
+
+/// Whether anything listens at `port` on the device, by its sockets.
+fn listens_on_device(adb: &Adb, port: u16) -> Option<bool> {
+    adb.output(&["shell", "cat /proc/net/tcp /proc/net/tcp6"])
+        .ok()
+        .map(|sockets| listens_at(&sockets, port))
+}
+
+/// Whether `sockets` (the kernel's `/proc/net/tcp` or `tcp6`) hold one
+/// listening at `port`.
+fn listens_at(sockets: &str, port: u16) -> bool {
+    // `sl local_address rem_address st …`, the address `<hex ip>:<hex
+    // port>`, and 0A the state LISTEN.
+    sockets.lines().any(|line| {
+        let mut fields = line.split_whitespace().skip(1);
+        let (Some(local), Some(_), Some(state)) = (fields.next(), fields.next(), fields.next())
+        else {
+            return false;
+        };
+        state == "0A"
+            && local
+                .rsplit_once(':')
+                .and_then(|(_, hex)| u16::from_str_radix(hex, 16).ok())
+                == Some(port)
+    })
+}
+
+/// [`disconnect`], asking `ask` who answers at a port here.
+fn disconnect_asking(
+    adb: &Adb,
+    out: &Path,
+    ask: &dyn Fn(u16, &str, &str) -> Answer,
+) -> anyhow::Result<()> {
     // Only while adb lists it as this device's, going where the connect
-    // made it go, and no other application's connect took it: `--remove`
-    // names the port alone, whoever holds it.
-    if let Some(port) = last_port(out) {
+    // made it go, and no other inspector answers through it: `--remove`
+    // names the port alone, whoever holds it. Another application's
+    // connect may have taken it with a token file anywhere, so the
+    // inspector is asked, not the files.
+    let last = std::fs::read_to_string(out)
+        .ok()
+        .and_then(|text| TokenFileBody::parse(&text).ok());
+    if let Some(last) = last
+        && let Ok((port, path)) = loopback_port(&last.url)
+    {
         let local = format!("tcp:{port}");
+        // A listing adb did not give is not one without the forward: the
+        // token file stays, naming it, for another try.
         let ours = device_forwards(adb)
+            .context("the forward could not be told apart from another's, so it was kept")?
             .iter()
             .any(|(here, there)| *here == local && *there == local);
-        if ours && !named_beside(out, port) {
+        if ours && ask(port, path, &last.token) != Answer::Another {
             adb.output(&["forward", "--remove", &local])?;
         }
     }
@@ -449,6 +511,63 @@ fn disconnect(adb: &Adb, out: &Path) -> anyhow::Result<()> {
             Err(anyhow::Error::new(e).context(format!("removing {}", out.display())))
         }
         _ => Ok(()),
+    }
+}
+
+/// Who answers at a port of this computer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Answer {
+    /// Nothing does, or the connection closes unanswered: adb closes it
+    /// when nothing listens at the port on the device.
+    Nobody,
+    /// An inspector that takes the token asked with.
+    Ours,
+    /// One that refuses it, or one that says nothing in time: what
+    /// cannot be told is kept.
+    Another,
+}
+
+/// How long a port here has to answer.
+const ASKED_FOR: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// Who answers a request to `path` at `port` here that carries `token`:
+/// an inspector refuses (401) a token not of its own start.
+fn who_answers(port: u16, path: &str, token: &str) -> Answer {
+    use std::io::{ErrorKind, Read, Write};
+    let at = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+    let Ok(mut stream) = std::net::TcpStream::connect_timeout(&at, ASKED_FOR) else {
+        return Answer::Nobody;
+    };
+    let _ = stream.set_read_timeout(Some(ASKED_FOR));
+    let _ = stream.set_write_timeout(Some(ASKED_FOR));
+    let path = if path.is_empty() { "/" } else { path };
+    let asked = format!(
+        "GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\
+         Authorization: Bearer {token}\r\nConnection: close\r\n\r\n"
+    );
+    if stream.write_all(asked.as_bytes()).is_err() {
+        return Answer::Nobody;
+    }
+    // `HTTP/1.1 401`: the status is all that is read.
+    let mut head = [0u8; 12];
+    let mut got = 0;
+    while got < head.len() {
+        match stream.read(&mut head[got..]) {
+            Ok(0) => break,
+            Ok(n) => got += n,
+            Err(e) if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {
+                return Answer::Another;
+            }
+            Err(_) => return Answer::Nobody,
+        }
+    }
+    if got == 0 {
+        return Answer::Nobody;
+    }
+    let head = String::from_utf8_lossy(&head[..got]);
+    match head.strip_prefix("HTTP/1.").and_then(|h| h.get(2..5)) {
+        Some("401" | "403") | None => Answer::Another,
+        Some(_) => Answer::Ours,
     }
 }
 
@@ -488,22 +607,17 @@ fn named_beside(out: &Path, port: u16) -> bool {
 }
 
 /// The forwards adb holds for this device, by their port here and where
-/// they go on it (`tcp:<port>` both); none when adb does not say.
-fn device_forwards(adb: &Adb) -> Vec<(String, String)> {
+/// they go on it (`tcp:<port>` both); an error when adb does not say.
+fn device_forwards(adb: &Adb) -> anyhow::Result<Vec<(String, String)>> {
     let serial = match &adb.device {
-        Some(device) => Some(device.clone()),
-        None => adb
-            .output(&["get-serialno"])
-            .ok()
-            .map(|s| s.trim().to_owned()),
+        Some(device) => device.clone(),
+        None => adb.output(&["get-serialno"])?.trim().to_owned(),
     };
-    let Some(serial) = serial.filter(|s| !s.is_empty()) else {
-        return Vec::new();
-    };
-    let Ok(listed) = adb.output(&["forward", "--list"]) else {
-        return Vec::new();
-    };
-    listed
+    if serial.is_empty() || serial == "unknown" {
+        bail!("adb names no device whose forwards to list");
+    }
+    let listed = adb.output(&["forward", "--list"])?;
+    Ok(listed
         .lines()
         .filter_map(|line| {
             let mut fields = line.split_whitespace();
@@ -511,7 +625,7 @@ fn device_forwards(adb: &Adb) -> Vec<(String, String)> {
                 .then(|| Some((fields.next()?.to_owned(), fields.next()?.to_owned())))
                 .flatten()
         })
-        .collect()
+        .collect())
 }
 
 /// The processes of `application_id` on the device. `pidof` exits 1 when
@@ -1499,7 +1613,7 @@ esac
         };
         let out = dir.path().join("target/ljos/android-dev.ljos.hello.json");
         connect(&adb, "dev.ljos.hello", &out).unwrap();
-        disconnect(&adb, &out).unwrap();
+        disconnect_asking(&adb, &out, &|_, _, _| Answer::Ours).unwrap();
         let log = std::fs::read_to_string(dir.path().join("log")).unwrap();
         assert!(log.contains("-s phone forward --remove tcp:4410"), "{log}");
         assert!(!out.exists(), "the token file names a forward that is gone");
@@ -1517,7 +1631,7 @@ esac
         connected_before(&out);
         // adb restarted since, and the port is another device's forward.
         std::fs::write(dir.path().join("forwards"), "tablet tcp:39001 tcp:39001\n").unwrap();
-        disconnect(&adb, &out).unwrap();
+        disconnect_asking(&adb, &out, &|_, _, _| Answer::Nobody).unwrap();
         let log = std::fs::read_to_string(dir.path().join("log")).unwrap();
         assert!(!log.contains("--remove"), "{log}");
         assert!(!out.exists());
@@ -1531,13 +1645,139 @@ esac
             program: fake_adb(dir.path(), &on_phone(4321, 4410).to_text(), None),
             device: Some("phone".into()),
         };
-        let out = dir.path().join("target/ljos/android-dev.ljos.hello.json");
+        // Named as no other connect's file is looked for: the inspector
+        // the forward reaches is asked, not the files.
+        let out = dir.path().join("elsewhere/mine.json");
         connected_before(&out);
         std::fs::write(dir.path().join("forwards"), "phone tcp:39001 tcp:39001\n").unwrap();
-        connected_before(&dir.path().join("target/ljos/android-dev.ljos.other.json"));
-        disconnect(&adb, &out).unwrap();
+        let asked = std::cell::RefCell::new(Vec::new());
+        let ask = |port: u16, path: &str, token: &str| {
+            asked
+                .borrow_mut()
+                .push((port, path.to_owned(), token.to_owned()));
+            Answer::Another
+        };
+        disconnect_asking(&adb, &out, &ask).unwrap();
         let log = std::fs::read_to_string(dir.path().join("log")).unwrap();
         assert!(!log.contains("--remove"), "{log}");
+        assert_eq!(
+            asked.into_inner(),
+            [(39001, "/mcp".to_owned(), "ab".repeat(32))]
+        );
+        assert!(!out.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn disconnect_removes_a_forward_nothing_answers_through() {
+        let dir = tempfile::tempdir().unwrap();
+        let adb = Adb {
+            program: fake_adb(dir.path(), &on_phone(4321, 4410).to_text(), None),
+            device: Some("phone".into()),
+        };
+        let out = dir.path().join("elsewhere/mine.json");
+        connected_before(&out);
+        std::fs::write(dir.path().join("forwards"), "phone tcp:39001 tcp:39001\n").unwrap();
+        disconnect_asking(&adb, &out, &|_, _, _| Answer::Nobody).unwrap();
+        let log = std::fs::read_to_string(dir.path().join("log")).unwrap();
+        assert!(log.contains("-s phone forward --remove tcp:39001"), "{log}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn disconnect_keeps_the_token_file_when_adb_does_not_list_the_forwards() {
+        let dir = tempfile::tempdir().unwrap();
+        let adb = Adb {
+            program: fake_adb(dir.path(), &on_phone(4321, 4410).to_text(), None),
+            device: Some("phone".into()),
+        };
+        let out = dir.path().join("target/ljos/android-dev.ljos.hello.json");
+        connected_before(&out);
+        // `forward --list` cats this file: without it, adb fails.
+        std::fs::remove_file(dir.path().join("forwards")).unwrap();
+        let err = format!(
+            "{:#}",
+            disconnect_asking(&adb, &out, &|_, _, _| Answer::Nobody).unwrap_err()
+        );
+        assert!(err.contains("kept"), "{err}");
+        assert!(out.exists(), "the token file is all that names the forward");
+        let log = std::fs::read_to_string(dir.path().join("log")).unwrap();
+        assert!(!log.contains("--remove"), "{log}");
+    }
+
+    /// A port here whose one connection gets `reply`, or is closed
+    /// unanswered when there is none, as adb closes one when nothing
+    /// listens on the device.
+    fn answering(reply: Option<&'static str>) -> u16 {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut asked = [0u8; 1024];
+            let _ = stream.read(&mut asked);
+            if let Some(reply) = reply {
+                let _ = stream.write_all(reply.as_bytes());
+            }
+        });
+        port
+    }
+
+    #[test]
+    fn an_inspector_that_refuses_the_token_is_another() {
+        let port = answering(Some(
+            "HTTP/1.1 401 Unauthorized\r\ncontent-length: 0\r\n\r\n",
+        ));
+        assert_eq!(who_answers(port, "/mcp", "ab"), Answer::Another);
+    }
+
+    #[test]
+    fn an_inspector_that_takes_the_token_is_ours() {
+        let port = answering(Some(
+            "HTTP/1.1 405 Method Not Allowed\r\ncontent-length: 0\r\n\r\n",
+        ));
+        assert_eq!(who_answers(port, "/mcp", "ab"), Answer::Ours);
+    }
+
+    #[test]
+    fn a_port_nothing_listens_at_on_the_device_has_nobody_however_slow_adb_is() {
+        // adb closes the connection when nothing listens on the device, but
+        // a busy adb server may close it later than the question waits: a
+        // silence then reads as another inspector's, and the forward of a
+        // stopped application stays (#824's phone run kept ten).
+        assert_eq!(
+            unless_unheard(Some(false), || Answer::Another),
+            Answer::Nobody
+        );
+        assert_eq!(
+            unless_unheard(Some(true), || Answer::Another),
+            Answer::Another
+        );
+        assert_eq!(unless_unheard(Some(true), || Answer::Ours), Answer::Ours);
+        assert_eq!(unless_unheard(None, || Answer::Another), Answer::Another);
+    }
+
+    #[test]
+    fn a_listening_socket_is_told_by_its_port_and_state() {
+        // An emulator's own, read through `adb shell`: 127.0.0.1:8872 and
+        // [::]:5555 listen (0A); 39001 only has a connection (01) left.
+        let sockets = "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode
+   0: 0100007F:22A8 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1002        0 13811 1 0000000000000000 100 0 0 10 0
+   1: 0100007F:9859 0100007F:BF5E 01 00000000:00000082 00:00000000 00000000 10144        0 16195 1 0000000000000000 20 4 28 10 -1
+  sl  local_address                         remote_address                        st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode
+   0: 00000000000000000000000000000000:15B3 00000000000000000000000000000000:0000 0A 00000000:00000000 00:00000000 00000000  2000        0 8578 1 0000000000000000 100 0 0 10 0
+";
+        assert!(listens_at(sockets, 8872));
+        assert!(listens_at(sockets, 5555));
+        assert!(!listens_at(sockets, 39001));
+        assert!(!listens_at(sockets, 4410));
+        assert!(!listens_at("", 8872));
+    }
+
+    #[test]
+    fn a_port_closed_unanswered_has_nobody() {
+        let port = answering(None);
+        assert_eq!(who_answers(port, "/mcp", "ab"), Answer::Nobody);
     }
 
     #[cfg(unix)]
