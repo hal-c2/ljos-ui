@@ -183,6 +183,18 @@ pub fn run() -> bool {
                 }
                 async {}.boxed_local()
             })
+            // A panic here fails the scenario (cucumber counts a failed
+            // `after` hook), which is how a phone left otherwise than it
+            // was found is told.
+            .after(|_, _, _, _, world| {
+                let put_back = world.map_or(Ok(()), |w| w.put_back());
+                async move {
+                    if let Err(why) = put_back {
+                        panic!("the scenario's changes were not put back: {why}");
+                    }
+                }
+                .boxed_local()
+            })
             .run(workspace_root().join("features")),
     );
     // Pages still open close before the process ends, or CEF's threads
