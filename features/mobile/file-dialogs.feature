@@ -75,3 +75,4 @@ Feature: A file dialog on a phone is the system's document picker
     When the method "open" of "folder" is called
     And the user chooses "letters" in the system dialog
     Then the property "scheme" of "folder" is "content"
+    And the system keeps the application's permission to the property "selectedFolder" of "folder"

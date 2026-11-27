@@ -635,6 +635,16 @@ pub trait Device: Backend {
         ))
     }
 
+    /// Whether the system keeps the application's permission to the
+    /// document or folder `url` of a provider for as long as the
+    /// application is installed, past its restarts.
+    fn keeps_permission(&mut self, url: &str) -> Result<bool> {
+        let _ = url;
+        Err(BackendError::NotImplemented(
+            "the permissions the system keeps to documents",
+        ))
+    }
+
     /// The phone's Downloads hold the file `path` (a `/` in it is a folder)
     /// with `text` in it, put there as the user would, before the
     /// application looks.

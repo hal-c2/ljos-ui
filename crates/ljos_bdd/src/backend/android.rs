@@ -309,6 +309,60 @@ fn picture_size(said: &str) -> Result<Option<(u32, u32)>> {
     })
 }
 
+/// The documents and folders whose permission the system keeps for
+/// `package` past its restarts, as `dumpsys activity permissions` lists
+/// them: each `UriPermission{… <url> [user N]}` line is followed by one
+/// naming its `targetPkg`, then one with its `persisted` modes.
+fn kept_permissions(dump: &str, package: &str) -> Vec<String> {
+    let mut kept = Vec::new();
+    let mut lines = dump.lines().map(str::trim);
+    while let Some(line) = lines.next() {
+        let Some(rest) = line.strip_prefix("UriPermission{") else {
+            continue;
+        };
+        let Some(url) = rest.split_whitespace().nth(1) else {
+            continue;
+        };
+        let (Some(target), Some(modes)) = (lines.next(), lines.next()) else {
+            break;
+        };
+        let ours = target
+            .split_whitespace()
+            .any(|w| w.strip_prefix("targetPkg=") == Some(package));
+        let persisted = modes
+            .split_whitespace()
+            .find_map(|w| w.strip_prefix("persisted="))
+            .is_some_and(|m| m != "0x0");
+        if ours && persisted && !kept.iter().any(|k| k == url) {
+            kept.push(url.to_owned());
+        }
+    }
+    kept
+}
+
+/// `text` with each `%XX` its byte: a provider's URL names the same
+/// document escaped or not.
+fn percent_decoded(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let hex = |b: u8| char::from(b).to_digit(16);
+        if let (b'%', Some(h), Some(l)) = (
+            bytes[i],
+            bytes.get(i + 1).copied().and_then(hex),
+            bytes.get(i + 2).copied().and_then(hex),
+        ) {
+            out.push(u8::try_from(h * 16 + l).unwrap_or(b'%'));
+            i += 3;
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
 /// How long the document picker may take to show what a step wants, and
 /// the application to hear its answer: a picked document is copied first.
 const PICKER: Duration = Duration::from_secs(20);
@@ -1563,6 +1617,15 @@ impl Device for AndroidBackend {
         Ok(found.then_some(secret))
     }
 
+    fn keeps_permission(&mut self, url: &str) -> Result<bool> {
+        let phone = self.phone()?.clone();
+        let dump = phone.shell("dumpsys activity permissions")?;
+        let url = percent_decoded(url);
+        Ok(kept_permissions(&dump, &phone.id)
+            .iter()
+            .any(|kept| percent_decoded(kept) == url))
+    }
+
     fn put_download(&mut self, path: &str, text: &str) -> Result<()> {
         let to = download_path(path)?;
         let phone = self.phone()?.clone();
@@ -1599,8 +1662,9 @@ impl Device for AndroidBackend {
 mod tests {
     use super::{
         BackendError, FORGET_EVENTS, Shown, abort_query, badge_in, clipboard_call, download_path,
-        front_record, permission_asked, permission_button, picker_shown, picture_size, quoted,
-        scenario_dir, screen_nodes, secrets_answer, secrets_call, seen_until,
+        front_record, kept_permissions, percent_decoded, permission_asked, permission_button,
+        picker_shown, picture_size, quoted, scenario_dir, screen_nodes, secrets_answer,
+        secrets_call, seen_until,
     };
     use serde_json::Value;
 
@@ -1967,5 +2031,41 @@ mod tests {
         assert_eq!(picture_size("").ok(), Some(None));
         assert!(picture_size("3").is_err());
         assert!(picture_size("wide 2").is_err());
+    }
+
+    // Trimmed from Android 16's `dumpsys activity permissions`.
+    const PERMISSIONS: &str = "\
+ACTIVITY MANAGER URI PERMISSIONS (dumpsys activity permissions)
+  Granted Uri Permissions:
+  * UID 1000 holds:
+    UriPermission{9577ec8 content://downloads/all_downloads/1 [user 0]}
+      targetUserId=0 sourcePkg=com.android.providers.downloads targetPkg=com.android.keychain
+      mode=0x3 owned=0x0 global=0x3 persistable=0x0 persisted=0x0
+  * UID 10217 holds:
+    UriPermission{6712f86 content://com.android.externalstorage.documents/tree/primary%3ADownload%2Fletters [user 0]}
+      targetUserId=0 sourcePkg=com.android.externalstorage targetPkg=dev.ljos.app
+      mode=0x3 owned=0x0 global=0x0 persistable=0x3 persisted=0x3 persistedCreate=1795712187756
+    UriPermission{10577a0 content://com.android.providers.downloads.documents/document/16 [user 0]}
+      targetUserId=0 sourcePkg=com.android.providers.downloads targetPkg=dev.ljos.app
+      mode=0x1 owned=0x0 global=0x0 persistable=0x3 persisted=0x0
+";
+
+    #[test]
+    fn only_a_permission_the_system_keeps_for_the_application_is_kept() {
+        assert_eq!(
+            kept_permissions(PERMISSIONS, "dev.ljos.app"),
+            ["content://com.android.externalstorage.documents/tree/primary%3ADownload%2Fletters"]
+        );
+        assert!(kept_permissions(PERMISSIONS, "com.android.keychain").is_empty());
+    }
+
+    #[test]
+    fn a_url_escaped_or_not_names_the_same_document() {
+        assert_eq!(
+            percent_decoded("tree/primary%3ADownload%2Fletters"),
+            "tree/primary:Download/letters"
+        );
+        assert_eq!(percent_decoded("100%"), "100%");
+        assert_eq!(percent_decoded("%zz"), "%zz");
     }
 }

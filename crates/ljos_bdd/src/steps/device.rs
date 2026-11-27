@@ -199,6 +199,27 @@ fn app_directory(w: &mut LjosWorld, property: String, object: String, name: Stri
     })
 }
 
+#[then(
+    regex = r#"^the system keeps the application's permission to the property "([^"]+)" of "([^"]+)"$"#
+)]
+fn keeps_permission(w: &mut LjosWorld, property: String, object: String) -> StepResult {
+    w.each(|b| {
+        let value = b.get(&object, &property)?;
+        let Some(url) = value.as_str().filter(|u| !u.is_empty()) else {
+            return Err(BackendError::Failed(format!(
+                "property {property:?} of {object:?} is {value}, not a URL"
+            )));
+        };
+        if b.device()?.keeps_permission(url)? {
+            Ok(())
+        } else {
+            Err(BackendError::Failed(format!(
+                "the system keeps no permission of the application's to {url:?}"
+            )))
+        }
+    })
+}
+
 #[then(regex = r#"^no file of the application holds "([^"]+)"$"#)]
 fn no_file_holds(w: &mut LjosWorld, text: String) -> StepResult {
     w.each(|b| {
