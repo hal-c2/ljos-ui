@@ -842,7 +842,7 @@ impl Drop for AndroidBackend {
     fn drop(&mut self) {
         self.running = None;
         // The phone is still here only if `put_back` never ran (no `after`
-        // hook): it takes the phone, and does all this then.
+        // hook) or left something undone: it takes the phone once done.
         if let Some(phone) = &self.phone {
             let _ = phone.shell(&format!("am force-stop {}", phone.id));
             // A scenario that ended on its way through `end_screen` would
@@ -868,21 +868,27 @@ impl AndroidBackend {
     /// Stops the application and puts back the settings the scenario
     /// changed, then reads them: an error says which read otherwise.
     fn left_as_found(&mut self, phone: &Phone) -> Result<()> {
-        phone.shell(&format!("am force-stop {}", phone.id))?;
-        if self.finishing {
-            phone.always_finish(false)?;
-            self.finishing = false;
+        let mut failed = Vec::new();
+        if let Err(e) = phone.shell(&format!("am force-stop {}", phone.id)) {
+            failed.push(format!("the application was not stopped: {e}"));
         }
-        let saved = std::mem::take(&mut self.saved);
-        for put in restored(&saved) {
-            phone.shell(&put)?;
-        }
-        let read = |s: &Setting| phone.shell(&format!("settings get {} {}", s.namespace, s.key));
-        match not_put_back(&saved, read)? {
-            None => Ok(()),
-            Some(why) => Err(BackendError::Failed(format!(
-                "the phone was not left as the scenario found it: {why}"
-            ))),
+        let mut finish = || phone.always_finish(false);
+        let left = tear_down(
+            std::mem::take(&mut self.saved),
+            self.finishing,
+            &mut |command| phone.shell(command),
+            &mut finish,
+        );
+        self.saved = left.saved;
+        self.finishing = left.finishing;
+        failed.extend(left.failed);
+        if failed.is_empty() {
+            Ok(())
+        } else {
+            Err(BackendError::Failed(format!(
+                "the phone was not left as the scenario found it: {}",
+                failed.join("; ")
+            )))
         }
     }
 
@@ -1203,7 +1209,7 @@ impl Backend for AndroidBackend {
     /// comes after the settings are put back.
     fn put_back(&mut self) -> Result<()> {
         self.running = None;
-        let Some(phone) = self.phone.take() else {
+        let Some(phone) = self.phone.clone() else {
             return Ok(());
         };
         let left = self.left_as_found(&phone);
@@ -1213,6 +1219,11 @@ impl Backend for AndroidBackend {
         }
         for dir in self.download_dirs.drain(..).rev() {
             let _ = phone.shell(&format!("rmdir {}", quoted(&dir)));
+        }
+        // What failed is tried once more by Drop, late as it may be: the
+        // scenario has failed already, and a phone left changed is worse.
+        if self.saved.is_empty() && !self.finishing {
+            self.phone = None;
         }
         left
     }
@@ -1674,6 +1685,70 @@ fn restored(saved: &[Setting]) -> Vec<String> {
         .collect()
 }
 
+/// What a scenario's tidying could not do: the settings still to put
+/// back, whether every activity still ends as it is left, and why.
+#[derive(Debug, PartialEq, Eq)]
+struct Left {
+    saved: Vec<Setting>,
+    finishing: bool,
+    failed: Vec<String>,
+}
+
+/// Turns `always_finish` off (`finish_off`) when `finishing`, puts back
+/// each of `saved`, the last changed first, and reads it back, through
+/// `shell`. Each step is tried whatever an earlier one did: a switch the
+/// Settings screen did not show still leaves the rotation put back. What
+/// failed stays in [`Left`] for another try.
+fn tear_down(
+    saved: Vec<Setting>,
+    finishing: bool,
+    shell: &mut dyn FnMut(&str) -> Result<String>,
+    finish_off: &mut dyn FnMut() -> Result<()>,
+) -> Left {
+    let mut left = Left {
+        saved: Vec::new(),
+        finishing,
+        failed: Vec::new(),
+    };
+    if finishing {
+        match finish_off() {
+            Ok(()) => left.finishing = false,
+            Err(e) => left.failed.push(e.to_string()),
+        }
+    }
+    let mut put = Vec::new();
+    for setting in saved.into_iter().rev() {
+        let command = restored(std::slice::from_ref(&setting)).remove(0);
+        match shell(&command) {
+            Ok(_) => put.push(setting),
+            Err(e) => {
+                left.failed.push(format!("`{command}` failed: {e}"));
+                left.saved.push(setting);
+            }
+        }
+    }
+    for setting in put {
+        let read = |s: &Setting| shell(&format!("settings get {} {}", s.namespace, s.key));
+        match not_put_back(std::slice::from_ref(&setting), read) {
+            Ok(None) => {}
+            Ok(Some(why)) => {
+                left.failed.push(why);
+                left.saved.push(setting);
+            }
+            Err(e) => {
+                left.failed.push(format!(
+                    "{} {} could not be read back: {e}",
+                    setting.namespace, setting.key
+                ));
+                left.saved.push(setting);
+            }
+        }
+    }
+    // Kept in the order they were changed, as `restored` takes them.
+    left.saved.reverse();
+    left
+}
+
 /// What `read` says of each of `saved` that is not what it was, as one
 /// line per setting; `None` when all read back as they were.
 fn not_put_back(
@@ -2114,7 +2189,7 @@ mod tests {
         clipboard_call, download_path, front_record, is_dont_keep, kept_permissions, not_idle,
         not_put_back, percent_decoded, permission_asked, permission_button, picker_shown,
         picture_size, quoted, restored, scenario_dir, screen_nodes, screens_kept, secrets_answer,
-        secrets_call, seen_until, stays_idle, trimmed_bytes,
+        secrets_call, seen_until, stays_idle, tear_down, trimmed_bytes,
     };
     use serde_json::{Value, json};
     use std::time::Instant;
@@ -2263,6 +2338,39 @@ mod tests {
             Some("system user_rotation reads 1, was 0".to_owned())
         );
         assert_eq!(not_put_back(&saved, |s| Ok(s.was.clone())).unwrap(), None);
+    }
+
+    #[test]
+    fn a_failed_step_of_the_tidying_leaves_the_others_done() {
+        let saved = vec![
+            setting("system", "accelerometer_rotation", "null"),
+            setting("system", "user_rotation", "0"),
+            setting("global", "development_settings_enabled", "0"),
+        ];
+        let mut ran = Vec::new();
+        let mut shell = |command: &str| {
+            ran.push(command.to_owned());
+            match command {
+                "settings put system user_rotation '0'" => {
+                    Err(BackendError::Failed("adb went away".into()))
+                }
+                "settings get system accelerometer_rotation" => Ok("null\n".to_owned()),
+                _ => Ok("0\n".to_owned()),
+            }
+        };
+        let mut finish_off = || Err(BackendError::Failed("no switch".into()));
+        let left = tear_down(saved, true, &mut shell, &mut finish_off);
+        assert!(left.finishing, "{left:?}");
+        assert_eq!(left.saved, [setting("system", "user_rotation", "0")]);
+        assert_eq!(left.failed.len(), 2, "{left:?}");
+        assert!(
+            ran.contains(&"settings put global development_settings_enabled '0'".to_owned()),
+            "{ran:?}"
+        );
+        assert!(
+            ran.contains(&"settings delete system accelerometer_rotation".to_owned()),
+            "{ran:?}"
+        );
     }
 
     #[test]
