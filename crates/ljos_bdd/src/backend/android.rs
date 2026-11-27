@@ -839,6 +839,9 @@ pub struct AndroidBackend {
     /// The port here the developer's connect forwarded, as they
     /// disconnected.
     disconnected_port: Option<u16>,
+    /// `put_back` stopped the scenario's application: Drop, which can run
+    /// as the next scenario runs the same application, does not again.
+    stopped: bool,
 }
 
 impl Drop for AndroidBackend {
@@ -847,7 +850,9 @@ impl Drop for AndroidBackend {
         // The phone is still here only if `put_back` never ran (no `after`
         // hook) or left something undone: it takes the phone once done.
         if let Some(phone) = &self.phone {
-            let _ = phone.shell(&format!("am force-stop {}", phone.id));
+            if self.stops_on_drop() {
+                let _ = phone.shell(&format!("am force-stop {}", phone.id));
+            }
             // A scenario that ended on its way through `end_screen` would
             // leave every application's screen ending as it is hidden.
             if self.finishing {
@@ -873,8 +878,9 @@ impl AndroidBackend {
     /// changed, then reads them: an error says which read otherwise.
     fn left_as_found(&mut self, phone: &Phone) -> Result<()> {
         let mut failed = Vec::new();
-        if let Err(e) = phone.shell(&format!("am force-stop {}", phone.id)) {
-            failed.push(format!("the application was not stopped: {e}"));
+        match phone.shell(&format!("am force-stop {}", phone.id)) {
+            Ok(_) => self.stopped = true,
+            Err(e) => failed.push(format!("the application was not stopped: {e}")),
         }
         let mut finish = || phone.always_finish(false);
         let left = tear_down(
@@ -882,6 +888,7 @@ impl AndroidBackend {
             self.finishing,
             &mut |command| phone.shell(command),
             &mut finish,
+            &mut settles(),
         );
         self.saved = left.saved;
         self.finishing = left.finishing;
@@ -1087,6 +1094,11 @@ impl AndroidBackend {
     fn start(&mut self) -> Result<()> {
         self.phone()?.start(true)?;
         self.reach(true)
+    }
+
+    /// Whether Drop stops the application: only when `put_back` did not.
+    fn stops_on_drop(&self) -> bool {
+        !self.stopped
     }
 
     /// Whether the tidying left nothing for Drop to try again, the
@@ -1759,6 +1771,25 @@ fn restored(saved: &[Setting]) -> Vec<String> {
         .collect()
 }
 
+/// How long a setting put back has to read as it was.
+const SETTLES_IN: Duration = Duration::from_secs(2);
+
+/// [`tear_down`]'s pause on the phone: 50 ms at a time, [`SETTLES_IN`] in
+/// all for each setting.
+fn settles() -> impl FnMut(u32) -> bool {
+    let mut until = Instant::now();
+    move |tried| {
+        if tried == 0 {
+            until = Instant::now() + SETTLES_IN;
+        }
+        if Instant::now() >= until {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+        true
+    }
+}
+
 /// What a scenario's tidying could not do: the settings still to put
 /// back, whether every activity still ends as it is left, and why.
 #[derive(Debug, PartialEq, Eq)]
@@ -1772,12 +1803,17 @@ struct Left {
 /// each of `saved`, the last changed first, and reads it back, through
 /// `shell`. Each step is tried whatever an earlier one did: a switch the
 /// Settings screen did not show still leaves the rotation put back. What
-/// failed stays in [`Left`] for another try.
+/// failed stays in [`Left`] for another try. Each is read back before the
+/// next is put: the window manager turns a lock a moment after `cmd`
+/// returns, and that late write would undo a `free` put after it.
+/// `pause(tried)` waits a moment more for the setting to read as it was put
+/// (`tried` 0 as it is first read again), false once it is too late.
 fn tear_down(
     saved: Vec<Setting>,
     finishing: bool,
     shell: &mut dyn FnMut(&str) -> Result<String>,
     finish_off: &mut dyn FnMut() -> Result<()>,
+    pause: &mut dyn FnMut(u32) -> bool,
 ) -> Left {
     let mut failed = Vec::new();
     let mut finishing = finishing;
@@ -1788,33 +1824,30 @@ fn tear_down(
         }
     }
     let mut undone = vec![false; saved.len()];
-    let mut put = Vec::new();
     for (at, setting) in saved.iter().enumerate().rev() {
         let command = restored(std::slice::from_ref(setting)).remove(0);
-        match shell(&command) {
-            Ok(_) => put.push(at),
-            Err(e) => {
-                failed.push(format!("`{command}` failed: {e}"));
-                undone[at] = true;
-            }
+        if let Err(e) = shell(&command) {
+            failed.push(format!("`{command}` failed: {e}"));
+            undone[at] = true;
+            continue;
         }
-    }
-    for at in put {
-        let setting = &saved[at];
-        let read = |s: &Setting| shell(&format!("settings get {} {}", s.namespace, s.key));
-        match not_put_back(std::slice::from_ref(setting), read) {
-            Ok(None) => {}
-            Ok(Some(why)) => {
-                failed.push(why);
-                undone[at] = true;
+        let mut tried = 0;
+        let off = loop {
+            let read = |s: &Setting| shell(&format!("settings get {} {}", s.namespace, s.key));
+            match not_put_back(std::slice::from_ref(setting), read) {
+                Ok(Some(_)) if pause(tried) => tried += 1,
+                Ok(off) => break off,
+                Err(e) => {
+                    break Some(format!(
+                        "{} {} could not be read back: {e}",
+                        setting.namespace, setting.key
+                    ));
+                }
             }
-            Err(e) => {
-                failed.push(format!(
-                    "{} {} could not be read back: {e}",
-                    setting.namespace, setting.key
-                ));
-                undone[at] = true;
-            }
+        };
+        if let Some(why) = off {
+            failed.push(why);
+            undone[at] = true;
         }
     }
     // Turning the switch off again turns the developer settings on, so a
@@ -2522,7 +2555,7 @@ mod tests {
             }
         };
         let mut finish_off = || Err(BackendError::Failed("no switch".into()));
-        let left = tear_down(saved, true, &mut shell, &mut finish_off);
+        let left = tear_down(saved, true, &mut shell, &mut finish_off, &mut |_| false);
         assert!(left.finishing, "{left:?}");
         // Turning the switch off again turns the developer settings on:
         // the retry needs every value, put back already or not.
@@ -2559,7 +2592,7 @@ mod tests {
             "settings get global development_settings_enabled" => Ok("1\n".to_owned()),
             _ => Ok("0\n".to_owned()),
         };
-        let left = tear_down(saved, false, &mut shell, &mut || Ok(()));
+        let left = tear_down(saved, false, &mut shell, &mut || Ok(()), &mut |_| false);
         assert!(!left.finishing, "{left:?}");
         assert_eq!(
             left.saved,
@@ -2568,6 +2601,48 @@ mod tests {
                 setting("global", "development_settings_enabled", "0"),
             ]
         );
+    }
+
+    #[test]
+    fn a_rotation_the_window_manager_locks_late_is_waited_for_before_it_is_freed() {
+        // The phone as the landscape scenario leaves it. The window manager
+        // turns its lock a moment after `cmd` returns while the display
+        // still turns back, and its late write turned the `free` after it
+        // back to locked (lifecycle.feature:65, reproduced on API 36).
+        let saved = vec![
+            setting("system", "accelerometer_rotation", "1"),
+            setting("system", "user_rotation", "0"),
+        ];
+        let (mut user, mut accel) = ("1", "0");
+        let mut late: Option<(u8, &str)> = None;
+        let mut ran = Vec::new();
+        let mut shell = |command: &str| {
+            ran.push(command.to_owned());
+            if let Some((calls, turn)) = late.as_mut() {
+                *calls -= 1;
+                if *calls == 0 {
+                    (user, accel) = (turn, "0");
+                    late = None;
+                }
+            }
+            match command {
+                "cmd window user-rotation lock 0" => late = Some((2, "0")),
+                "cmd window user-rotation free" => accel = "1",
+                "settings get system user_rotation" => return Ok(format!("{user}\n")),
+                "settings get system accelerometer_rotation" => return Ok(format!("{accel}\n")),
+                _ => {}
+            }
+            Ok(String::new())
+        };
+        let mut waited = 0;
+        let mut pause = |_| {
+            waited += 1;
+            waited < 10
+        };
+        let left = tear_down(saved, false, &mut shell, &mut || Ok(()), &mut pause);
+        assert!(left.failed.is_empty(), "{left:?} after {ran:?}");
+        assert!(left.saved.is_empty(), "{left:?}");
+        assert!(waited > 0, "the lock was not waited for: {ran:?}");
     }
 
     #[test]
@@ -2996,6 +3071,17 @@ ACTIVITY MANAGER URI PERMISSIONS (dumpsys activity permissions)
         );
         assert_eq!(percent_decoded("100%"), "100%");
         assert_eq!(percent_decoded("%zz"), "%zz");
+    }
+
+    #[test]
+    fn a_late_drop_leaves_the_next_scenarios_application_running() {
+        // Cucumber keeps a finished world until the writer lets go of it,
+        // which can be while the next scenario runs the same application:
+        // a forward left to Drop must not take that application down.
+        let mut backend = AndroidBackend::default();
+        assert!(backend.stops_on_drop(), "no `put_back` stopped it");
+        backend.stopped = true;
+        assert!(!backend.stops_on_drop());
     }
 
     #[test]
