@@ -435,6 +435,8 @@ struct Slot {
     latest: Option<Next>,
     /// A job is on its way to take `latest`.
     posted: bool,
+    /// [`VideoFrameInput::close`]d: nothing more is shown.
+    closed: bool,
 }
 
 enum Next {
@@ -483,9 +485,21 @@ impl VideoFrameInput {
         self.put(Next::Clear);
     }
 
+    /// Shows nothing more, not even what was sent and is not yet shown;
+    /// clones are closed too. The sink keeps the picture it has. Another
+    /// input to the same sink is not affected.
+    pub fn close(&self) {
+        let mut slot = lock(&self.slot);
+        slot.closed = true;
+        slot.latest = None;
+    }
+
     fn put(&self, next: Next) {
         let first = {
             let mut slot = lock(&self.slot);
+            if slot.closed {
+                return;
+            }
             slot.latest = Some(next);
             !std::mem::replace(&mut slot.posted, true)
         };

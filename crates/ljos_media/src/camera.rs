@@ -220,7 +220,15 @@ impl std::fmt::Debug for CameraTap {
 impl Drop for CameraTap {
     fn drop(&mut self) {
         if let Some(shared) = self.shared.upgrade() {
-            lock(&shared.taps).retain(|(id, _)| *id != self.id);
+            // Dropped once the lock is let go: a tap may own another
+            // `CameraTap` of this camera, whose drop takes the lock too.
+            let removed = {
+                let mut taps = lock(&shared.taps);
+                taps.iter()
+                    .position(|(id, _)| *id == self.id)
+                    .map(|at| taps.remove(at))
+            };
+            drop(removed);
         }
     }
 }
@@ -654,10 +662,15 @@ fn preview_of(e: &Engine, camera: ObjectId, session: ObjectId, input: Option<Vid
         return;
     };
     let mut preview = lock(&shared.preview);
-    match input {
-        Some(input) => *preview = Some((session, input)),
-        None if preview.as_ref().is_some_and(|(s, _)| *s == session) => *preview = None,
-        None => {}
+    let old = match input {
+        Some(input) => preview.replace((session, input)),
+        None if preview.as_ref().is_some_and(|(s, _)| *s == session) => preview.take(),
+        None => None,
+    };
+    // The capture thread may hold a clone of the old route: what it sends
+    // there, or sent and is not yet shown, goes nowhere now.
+    if let Some((_, old)) = old {
+        old.close();
     }
 }
 
@@ -708,7 +721,10 @@ fn wait_for_sink(e: &Engine, me: ObjectId, output: ObjectId) {
         output,
         crate::video::VideoOutput::VIDEO_SINK.index,
         move |e, _| {
-            if e.is_alive(me) {
+            // A session that went on to another output since waits for
+            // this one no more.
+            let still = e.untrack(|| e.get(me, CaptureSession::VIDEO_OUTPUT));
+            if e.is_alive(me) && matches!(still, Ok(Some(o)) if o == output) {
                 join(e, me);
             }
         },
@@ -794,15 +810,15 @@ impl FakeCameras {
             first.is_default = true;
         }
         drop(cameras);
-        let open: Vec<CameraFrames> = self
+        // Out of `open` now, so the camera captures nothing more while
+        // the Engine is still to hear it is gone.
+        let open: Vec<_> = self
             .0
             .open
-            .borrow()
-            .iter()
-            .filter(|(_, n, _)| n == name)
-            .map(|(.., f)| f.clone())
+            .borrow_mut()
+            .extract_if(.., |(_, n, _)| n == name)
             .collect();
-        for frames in open {
+        for (.., frames) in open {
             frames.fail("The camera was disconnected");
         }
         found
