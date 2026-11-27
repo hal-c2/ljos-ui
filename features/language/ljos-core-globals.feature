@@ -105,6 +105,22 @@ Feature: Ljos.Core: what Qt's QML has from the Qt global
         """
 
     @ljos-only
+    Scenario: url of an empty address is the empty url in Ljós's API
+      Given the QML:
+        """qml
+        pragma Scripts: JavaScript
+        import Ljos.Ui
+        import Ljos.Core
+        Item {
+          objectName: "root"
+          property string got: "[" + url("") + "]"
+          property string computed: "[" + url(["", ""].join("")) + "]"
+        }
+        """
+      Then the property "got" of "root" is "[]"
+      And the property "computed" of "root" is "[]"
+
+    @ljos-only
     Scenario: A property of the same name is the property, not Ljos.Core's
       Given the QML:
         """qml

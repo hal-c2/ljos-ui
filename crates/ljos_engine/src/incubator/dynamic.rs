@@ -528,6 +528,11 @@ impl Engine {
                 "__ljos_resolvedUrl",
                 host(|e, a| {
                     Ok(match (a.first(), a.get(1)) {
+                        // Qt 6.11: an empty address stays empty, though
+                        // RFC 3986 would make it the document's own (qml6).
+                        (_, Some(JsValue::String(url))) if url.is_empty() => {
+                            JsValue::String(String::new())
+                        }
                         (Some(JsValue::String(base)), Some(JsValue::String(url))) => {
                             JsValue::String(e.join_from(base, url))
                         }
