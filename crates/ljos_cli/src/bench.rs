@@ -22,10 +22,14 @@ pub struct Bench {
     files: Vec<PathBuf>,
     /// A JSON manifest of applications: `{"apps": [{"id", "file",
     /// "imports", "size", "ljos_args", "qt_args", "qt_file", "drive", "clicks",
-    /// "commands", "qt", "dir", "env"}]}`; "clicks" are where to click, as fractions of the
-    /// window, instead of the grid; "commands" are the same application
-    /// written for other toolkits, `{"runtime": [program, args…]}`;
-    /// "qt_file" is what qml6 opens in place of "file".
+    /// "session", "commands", "qt", "dir", "env"}]}`; "clicks" are where to click, as
+    /// fractions of the window, instead of the grid; "session" is what
+    /// `--gesture session` does, steps of `{"click": [fx, fy]}`,
+    /// `{"key": "Ctrl+A"}`, `{"type": "text"}` or `{"wait": ms}`, each
+    /// with an optional "name", a click or a key with "repeat" and
+    /// "every" (ms); "commands" are the same application written for
+    /// other toolkits, `{"runtime": [program, args…]}`; "qt_file" is what
+    /// qml6 opens in place of "file".
     #[arg(long)]
     manifest: Option<PathBuf>,
     /// Runtimes, comma separated: `ljos` (`ljos run`), `qt` (`qml6`), and
@@ -107,7 +111,10 @@ pub struct Bench {
     /// What drives the window under load: `click` (a grid of clicks over
     /// it), `drag` (up and down from its middle), `scroll` (the wheel),
     /// `type` (words typed into the focus, after clicking the first click
-    /// point if there is one) or `resize` (the window made smaller and back).
+    /// point if there is one), `resize` (the window made smaller and back)
+    /// or `session` (each application's own steps, from its manifest,
+    /// each step timed; the session runs to its end, and what is left of
+    /// `--load` after it lets the last step settle).
     #[arg(long, default_value = "click", value_parser = gesture)]
     gesture: Gesture,
     /// Measure each application this many times; the tables show the
@@ -309,6 +316,15 @@ impl Bench {
                 );
                 return Ok(REFUSED);
             }
+        }
+        if self.gesture == Gesture::Session
+            && let Some(app) = apps.iter().find(|a| a.session.is_empty())
+        {
+            eprintln!(
+                "ljos bench: --gesture session: {} has no session (a manifest's app gives one as \"session\")",
+                app.id
+            );
+            return Ok(REFUSED);
         }
         let profiles = self.profiles()?;
         let secs = Duration::from_secs_f64;

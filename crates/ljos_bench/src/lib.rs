@@ -22,6 +22,7 @@ pub mod motion;
 pub mod procfs;
 pub mod profile;
 pub mod report;
+pub mod session;
 pub mod sway;
 pub mod throttle;
 pub mod tree;
@@ -36,10 +37,11 @@ use std::{
 
 use serde::Deserialize;
 
-pub use measure::{Error, Gesture, Outcome, Phases, Run, Runtime, Setup};
+pub use measure::{Drive, Error, Gesture, Outcome, Phases, Run, Runtime, Setup};
 pub use motion::Motion;
 pub use profile::Profile;
 pub use report::Report;
+pub use session::{Step, StepTiming};
 
 /// An application to measure, as a manifest gives it.
 #[derive(Clone, Debug, Deserialize)]
@@ -73,6 +75,11 @@ pub struct App {
     /// finds them), clicked at the same places on every runtime.
     #[serde(default)]
     pub clicks: Vec<[f64; 2]>,
+    /// What `--gesture session` does with it, step by step, each step
+    /// timed ([`session::Step`]): the same clicks and keys on every
+    /// runtime, whatever toolkit draws it.
+    #[serde(default)]
+    pub session: Vec<session::Step>,
     /// The same application written for another toolkit, by the name of
     /// the runtime it is measured as: the program and its arguments. A
     /// runtime other than `ljos` and `qt` runs only the apps that give it
@@ -123,6 +130,7 @@ impl App {
             qt_file: None,
             drive: true,
             clicks: Vec::new(),
+            session: Vec::new(),
             commands: BTreeMap::new(),
             qt: true,
             dir: None,
@@ -251,7 +259,14 @@ pub fn run(
                     instructions: false,
                     frames3d: false,
                 };
-                measure::run(setup, &app.id, &rt, &Profile::desktop(), warm, false, &[])?;
+                measure::run(
+                    setup,
+                    &app.id,
+                    &rt,
+                    &Profile::desktop(),
+                    warm,
+                    Drive::default(),
+                )?;
             }
             for profile in &plan.profiles {
                 for repeat in 0..plan.repeat {
@@ -261,8 +276,11 @@ pub fn run(
                         &rt,
                         profile,
                         plan.phases,
-                        app.drive,
-                        &app.clicks,
+                        Drive {
+                            on: app.drive,
+                            clicks: &app.clicks,
+                            session: &app.session,
+                        },
                     )?;
                     r.repeat = repeat;
                     let line = format!(

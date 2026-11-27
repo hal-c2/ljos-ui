@@ -3,7 +3,7 @@
 use super::{Frames, LONG_KEPT};
 
 /// The value at quantile `q` of sorted `values`.
-fn quantile(values: &[f64], q: f64) -> Option<f64> {
+pub(crate) fn quantile(values: &[f64], q: f64) -> Option<f64> {
     #[allow(
         clippy::cast_possible_truncation,
         clippy::cast_sign_loss,
