@@ -136,6 +136,54 @@ Feature: Ljos.Core: what Qt's QML has from the Qt global
       Then the property "twice" of "root" is 6
       And the property "across" of "root" is 7
 
+  Rule: Ljos.Core imported under a name gives what it makes through the name
+
+    @ljos-only
+    Scenario: The makers of Ljos.Core under a name are there though a property has the bare name
+      Given the QML:
+        """qml
+        import Ljos.Ui
+        import Ljos.Core
+        import Ljos.Core as LjosCore
+        Item {
+          id: root; objectName: "root"
+          property size size: LjosCore.size(5, 6)
+          property real area: size.width * size.height
+          property real rgba: 1
+          property color tone: LjosCore.rgba(0.8, 0.4, 0.2, rgba)
+          property bool beside: LjosCore.url("a.png").toString().endsWith("/a.png")
+          property int calls: 0
+          function later() { calls = -1 }
+          Component.onCompleted: { LjosCore.later(() => calls = calls * 2); calls = 5 }
+        }
+        """
+      Then the property "area" of "root" is 30
+      And the property "tone" of "root" is "#cc6633"
+      And the property "beside" of "root" is true
+      When 50 milliseconds pass
+      Then the property "calls" of "root" is 10
+
+    @ljos-only @headless
+    Scenario: What Ljos.Core under a name makes checks clean
+      Given the file "Tile.qml":
+        """qml
+        import Ljos.Ui
+        import Ljos.Core
+        import Ljos.Core as LjosCore
+        Item {
+          property size size: LjosCore.size(5, 6)
+          property color tone: LjosCore.rgba(0.8, 0.4, 0.2, 1)
+          property url icon: LjosCore.url("tile.png")
+          property int calls: 0
+          Component.onCompleted: LjosCore.later(() => calls += 1)
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        1 files, 0 errors, 0 warnings
+        """
+
   Rule: Qt's members are lowered to Ljos.Core's
 
     @ljos-only
@@ -213,7 +261,7 @@ Feature: Ljos.Core: what Qt's QML has from the Qt global
         """
 
     @ljos-only @headless
-    Scenario: A file that uses a member's Ljós name for something else stays Qt's
+    Scenario: A file that uses a member's Ljós name for something else reaches it through Ljos.Core's name
       Given the file "Frame.qml":
         """qml
         import QtQuick
@@ -225,20 +273,39 @@ Feature: Ljos.Core: what Qt's QML has from the Qt global
       When the author runs "ljos migrate --write ."
       Then the command prints:
         """
-        kept ./Frame.qml:3:23: `Qt.size` needs `size`, which a property of the file hides
-        1 files, 0 lowered, 1 kept
+        lowered ./Frame.qml (3 edits)
+        1 files, 1 lowered, 0 kept
         """
       And the file "Frame.qml" is:
         """qml
-        import QtQuick
+        import Ljos.Ui
+        import Ljos.Core
+        import Ljos.Core as LjosCore
         Item {
-          property size size: Qt.size(5, 6)
-          property point at: Qt.point(3, 4)
+          property size size: LjosCore.size(5, 6)
+          property point at: point(3, 4)
         }
         """
 
     @ljos-only @headless
-    Scenario: A file with a delegate stays Qt's, as a role could hide a member's Ljós name
+    Scenario: A file whose own name is Ljos.Core's name for the module stays Qt's
+      Given the file "Frame.qml":
+        """qml
+        import QtQuick
+        Item {
+          property size size: Qt.size(5, 6)
+          property string where: LjosCore
+        }
+        """
+      When the author runs "ljos migrate --write ."
+      Then the command prints:
+        """
+        kept ./Frame.qml:3:23: `Qt.size` needs `size`, which a property of the file hides
+        1 files, 0 lowered, 1 kept
+        """
+
+    @ljos-only @headless
+    Scenario: A file with a delegate reaches a member's Ljós name through Ljos.Core's name, as a role could hide it
       Given the file "List.qml":
         """qml
         import QtQuick
@@ -252,12 +319,13 @@ Feature: Ljos.Core: what Qt's QML has from the Qt global
         }
         """
       When the author runs "ljos migrate --write ."
-      Then the command's output mentions "kept ./Dots.qml:3:39: `Qt.point` needs `point`, which a role of a delegate could hide"
+      Then the command's output mentions "lowered ./Dots.qml"
       And the file "Dots.qml" is:
         """qml
-        import QtQuick
+        import Ljos.Ui
+        import Ljos.Core as LjosCore
         List {
-          delegate: Item { property point at: Qt.point(1, 0) }
+          delegate: Item { property point at: LjosCore.point(1, 0) }
         }
         """
 
