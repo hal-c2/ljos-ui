@@ -624,7 +624,7 @@ mod tests {
         assert!(status.is_queue_empty(), "on {}: {status:?}", h.name);
     }
 
-    /// A view drawn frame after frame has its first drawing's GPU time read
+    /// A view drawn frame after frame has a timed drawing's GPU time read
     /// back two frames later, where the device could be asked to time it:
     /// the painter never polls, and the readings come back with its
     /// submits.
@@ -635,7 +635,11 @@ mod tests {
             .contains(wgpu::Features::TIMESTAMP_QUERY);
         let mut views = Views::default();
         let mut took = None;
-        for x in 0..8 {
+        // Only one frame in TIMED_EVERY is timed, counted by the frames the
+        // whole process has ended, so another device's rounds before this
+        // one decide which: as many frames as that, and two more for its
+        // reading to come back, hold one whatever ran first.
+        for x in 0..ljos_3d::TIMED_EVERY + 2 {
             let scene = cube_from(300.0 + x as f32);
             frame(h, device, &mut views, &scene, &[(7, [64, 64])]);
             took = took.or(views.take_gpu_time());
