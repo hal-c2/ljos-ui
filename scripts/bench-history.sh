@@ -210,23 +210,29 @@ for app, parts, main, size, edited, label in apps:
                     open(bar, "w").write(original if i % 2 else original.replace(label, changed, 1))
                     results[name]["saves"] += 1
                     time.sleep(1.5)
+                # The stop and its ten-second grace are inside the guard
+                # too: a stop arriving while it waits still ends the
+                # application.
+                if p.poll() is None:
+                    os.killpg(p.pid, signal.SIGTERM)
+                    try:
+                        p.wait(10)
+                    except subprocess.TimeoutExpired:
+                        os.killpg(p.pid, signal.SIGKILL)
+                        p.wait()
+                else:
+                    results[name]["exited"] += 1
             except BaseException:
                 # The application has a session of its own, so the
                 # interrupt never reached it: it is stopped here, or it
                 # runs on beside every later measurement.
                 if p.poll() is None:
-                    os.killpg(p.pid, signal.SIGKILL)
+                    try:
+                        os.killpg(p.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
                     p.wait()
                 raise
-            if p.poll() is None:
-                os.killpg(p.pid, signal.SIGTERM)
-                try:
-                    p.wait(10)
-                except subprocess.TimeoutExpired:
-                    os.killpg(p.pid, signal.SIGKILL)
-                    p.wait()
-            else:
-                results[name]["exited"] += 1
             for text in open(log, errors="replace"):
                 m = timed.search(text)
                 if m:
