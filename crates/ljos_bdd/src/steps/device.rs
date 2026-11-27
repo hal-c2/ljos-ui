@@ -5,6 +5,8 @@
 //! of secrets and places for the application's files, and the developer
 //! reaching the application's inspector over adb.
 
+use std::time::{Duration, Instant};
+
 use cucumber::{given, then, when};
 
 use crate::backend::{BackSwipe, BackendError};
@@ -66,18 +68,28 @@ fn in_front(w: &mut LjosWorld, where_: String) -> StepResult {
     })
 }
 
+/// How long a process that quit has to end. The process ends once the
+/// system has finished its activity, which takes its own time after the
+/// application asked.
+const ENDING: Duration = Duration::from_secs(10);
+
 // The application quit: its process is gone too, so the next start is a
 // new one.
 #[then("the application is no longer running")]
 fn ended(w: &mut LjosWorld) -> StepResult {
     w.each(|b| {
-        if b.device()?.running()? {
-            Err(BackendError::Failed(
-                "the application's process is still running".into(),
-            ))
-        } else {
-            Ok(())
+        let device = b.device()?;
+        let until = Instant::now() + ENDING;
+        while device.running()? {
+            if Instant::now() > until {
+                return Err(BackendError::Failed(format!(
+                    "the application's process is still running {} s after it quit",
+                    ENDING.as_secs()
+                )));
+            }
+            std::thread::sleep(Duration::from_millis(100));
         }
+        Ok(())
     })
 }
 
