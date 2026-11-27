@@ -93,6 +93,7 @@ public final class LjosCamera {
             manager.openCamera(id, capture.stateCallback(), capture.handler);
         } catch (CameraAccessException | RuntimeException e) {
             open.remove(handle);
+            capture.opening = false;
             capture.release();
             throw e;
         }
@@ -139,6 +140,14 @@ public final class LjosCamera {
         CameraDevice device;
         CameraCaptureSession session;
         volatile boolean closed;
+        /**
+         * The open is outstanding: its callback has yet to come. Read and
+         * written on the capture's thread only (or before it sees the
+         * capture), as is {@link #released}.
+         */
+        boolean opening = true;
+        /** {@link #release}'s cleanup has run on the capture's thread. */
+        boolean released;
 
         Capture(long handle, Size size) {
             this.handle = handle;
@@ -157,8 +166,10 @@ public final class LjosCamera {
                 public void onOpened(CameraDevice camera) {
                     if (closed) {
                         camera.close();
+                        opened();
                         return;
                     }
+                    opening = false;
                     device = camera;
                     stream();
                 }
@@ -166,12 +177,14 @@ public final class LjosCamera {
                 @Override
                 public void onDisconnected(CameraDevice camera) {
                     camera.close();
+                    opened();
                     lost("The camera was disconnected");
                 }
 
                 @Override
                 public void onError(CameraDevice camera, int error) {
                     camera.close();
+                    opened();
                     lost(error == ERROR_CAMERA_IN_USE || error == ERROR_MAX_CAMERAS_IN_USE
                             ? "The camera is in use"
                             : "The camera failed (" + error + ")");
@@ -246,11 +259,27 @@ public final class LjosCamera {
             nativeLost(handle, why);
         }
 
-        /** Stops everything, on the capture's thread, and ends it. */
+        /**
+         * The open's callback came. A capture released while it was opening
+         * ends only now: had its thread quit before, the callback would have
+         * been dropped with the camera it opened, held until the process dies.
+         */
+        void opened() {
+            opening = false;
+            if (released) {
+                thread.quitSafely();
+            }
+        }
+
+        /**
+         * Stops everything, on the capture's thread, and ends it once no
+         * open is outstanding.
+         */
         void release() {
             closed = true;
             handler.post(
                     () -> {
+                        released = true;
                         if (session != null) {
                             session.close();
                         }
@@ -258,7 +287,9 @@ public final class LjosCamera {
                             device.close();
                         }
                         reader.close();
-                        thread.quitSafely();
+                        if (!opening) {
+                            thread.quitSafely();
+                        }
                     });
         }
     }
