@@ -457,13 +457,17 @@ const NAMED: [(&str, u32); 24] = [
 /// it does not know.
 #[must_use]
 pub fn named(name: &str) -> Option<Chord> {
-    // `Ctrl++` is Control and the plus key.
-    let (prefix, key) = match name.strip_suffix("++") {
-        Some(prefix) => (Some(prefix), "+"),
-        None => match name.rsplit_once('+') {
-            Some((prefix, key)) => (Some(prefix), key),
-            None => (None, name),
-        },
+    // `Ctrl++` is Control and the plus key; `+` alone is the plus key.
+    let (prefix, key) = if name.chars().count() == 1 {
+        (None, name)
+    } else {
+        match name.strip_suffix("++") {
+            Some(prefix) => (Some(prefix), "+"),
+            None => match name.rsplit_once('+') {
+                Some((prefix, key)) => (Some(prefix), key),
+                None => (None, name),
+            },
+        }
     };
     let mut modifiers = Modifiers::NONE;
     for m in prefix.into_iter().flat_map(|p| p.split('+')) {
@@ -1031,6 +1035,7 @@ mod tests {
         assert_eq!(named("Alt+F4"), chord(62, false, false, true));
         assert_eq!(named("F12"), chord(88, false, false, false));
         assert_eq!(named("Ctrl++"), chord(13, true, true, false));
+        assert_eq!(named("+"), chord(13, false, true, false));
         assert_eq!(named("space"), chord(57, false, false, false));
         assert_eq!(named("Hyper+Q"), None);
         assert_eq!(named("F13"), None);
