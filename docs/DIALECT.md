@@ -390,6 +390,20 @@ name, since that directory may have an `App.qml`. A project lowers a file
 again when an `App.qml` comes beside it or goes. `Qt.resolvedUrl(u, ctx)`
 stays Qt's: Qt 6 resolves it against `ctx`'s component, and `url` takes
 one argument.
+
+A file that imports `Ljos.Core` under a name reads what the module gives
+through it (`import Ljos.Core as LjosCore`, then `LjosCore.rgba(…)`), as a
+module's type is read through its name; it is the same function as the bare
+one.
+
+DECISION: where a name of `Ljos.Core` the pass would write is hidden by
+one of those, the pass writes it through `LjosCore` instead and imports the
+module under that name too, unless `LjosCore` is a word of the file, a file
+beside it or a directory imported by path may have it. So
+`property int size; … Qt.size(1, 2)` lowers to `LjosCore.size(1, 2)`. The
+homes of capitalised names (`App`, `Color`, `Locale`, `Font`) are not
+members of the module's name, and keep the file as before.
+
 Until S1, the member otherwise stays Qt's and `Qt` stays a global of every
 file; after it, the file is kept instead (§4.3.1).
 
@@ -478,7 +492,7 @@ Ljós file: use `later` (Ljos.Core) ``. The compiled file is not handed
 member of it a home, and the free-name rules of §4.3 still decide whether
 a home's name can be written there. Where it cannot, the whole file stays
 Qt's and says which member kept it (`` kept Main.qml:12:9: `Qt.binding`
-needs `bind`, which a property of the file hides ``). So no lowered file
+needs `App`, which a file beside it has ``). So no lowered file
 reaches `Qt`, which was M2's exit criterion (§13).
 
 `QtObject` is renamed with the rest (§18 asks for the name). `Ljos.Ui` and
