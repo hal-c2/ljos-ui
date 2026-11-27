@@ -1300,8 +1300,8 @@ const NOT_YET: &[(&str, &str)] = &[
         "a byte array to Qt, which a script sees as an ArrayBuffer; Ljós has no such value, so the id is the device's name as text",
     ),
     (
-        "QtMultimedia: Camera",
-        "capture devices are not built, so QtMultimedia has no Camera; the name is here only as QtQuick3D's camera base",
+        "QtMultimedia.CameraDevice.id",
+        "a byte array to Qt, which a script sees as an ArrayBuffer; Ljós has no such value, so the id is the camera's device name as text (as `QtMultimedia.AudioDevice.id`)",
     ),
     (
         "QtMultimedia.Video",
@@ -1736,8 +1736,22 @@ const NOT_YET: &[(&str, &str)] = &[
 /// Differences that come with a Qt release: listed, and missed, only from
 /// the Qt the tuple names on. Each says what it would take, as in
 /// [`NOT_YET`].
-const NOT_YET_FROM_QT: &[((u32, u32), &str, &str)] = &[(
-    (6, 12),
-    "QtQml.Models.ItemSelectionModel.selectedIndexes",
-    "a QModelIndexList, which Qt 6.12's table does not mark a list (6.11's does); a list of indexes here",
-)];
+const NOT_YET_FROM_QT: &[((u32, u32), &str, &str)] = &[
+    (
+        (6, 12),
+        "QtQml.Models.ItemSelectionModel.selectedIndexes",
+        "a QModelIndexList, which Qt 6.12's table does not mark a list (6.11's does); a list of indexes here",
+    ),
+    // Lists of values that Qt 6.12's table marks a list (6.11's does not),
+    // as it does the other ProceduralMesh lists in `NOT_YET`.
+    (
+        (6, 12),
+        "QtQuick3D.Helpers.ProceduralMesh.uv0s",
+        "a list of values to Qt 6.12; a var holding an array here",
+    ),
+    (
+        (6, 12),
+        "QtQuick3D.Helpers.ProceduralMesh.uv1s",
+        "a list of values to Qt 6.12; a var holding an array here",
+    ),
+];
