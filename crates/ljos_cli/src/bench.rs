@@ -317,8 +317,17 @@ impl Bench {
                 return Ok(REFUSED);
             }
         }
+        // Only an app some chosen runtime runs needs a session: one no
+        // runtime runs is skipped, as it would be without the gesture.
+        let runs = |a: &App| {
+            self.runtime.iter().any(|name| match name.as_str() {
+                "ljos" => true,
+                "qt" => a.qt,
+                other => a.commands.get(other).is_some_and(|c| !c.is_empty()),
+            })
+        };
         if self.gesture == Gesture::Session
-            && let Some(app) = apps.iter().find(|a| a.session.is_empty())
+            && let Some(app) = apps.iter().find(|a| runs(a) && a.session.is_empty())
         {
             eprintln!(
                 "ljos bench: --gesture session: {} has no session (a manifest's app gives one as \"session\")",
