@@ -1705,48 +1705,58 @@ fn tear_down(
     shell: &mut dyn FnMut(&str) -> Result<String>,
     finish_off: &mut dyn FnMut() -> Result<()>,
 ) -> Left {
-    let mut left = Left {
-        saved: Vec::new(),
-        finishing,
-        failed: Vec::new(),
-    };
+    let mut failed = Vec::new();
+    let mut finishing = finishing;
     if finishing {
         match finish_off() {
-            Ok(()) => left.finishing = false,
-            Err(e) => left.failed.push(e.to_string()),
+            Ok(()) => finishing = false,
+            Err(e) => failed.push(e.to_string()),
         }
     }
+    let mut undone = vec![false; saved.len()];
     let mut put = Vec::new();
-    for setting in saved.into_iter().rev() {
-        let command = restored(std::slice::from_ref(&setting)).remove(0);
+    for (at, setting) in saved.iter().enumerate().rev() {
+        let command = restored(std::slice::from_ref(setting)).remove(0);
         match shell(&command) {
-            Ok(_) => put.push(setting),
+            Ok(_) => put.push(at),
             Err(e) => {
-                left.failed.push(format!("`{command}` failed: {e}"));
-                left.saved.push(setting);
+                failed.push(format!("`{command}` failed: {e}"));
+                undone[at] = true;
             }
         }
     }
-    for setting in put {
+    for at in put {
+        let setting = &saved[at];
         let read = |s: &Setting| shell(&format!("settings get {} {}", s.namespace, s.key));
-        match not_put_back(std::slice::from_ref(&setting), read) {
+        match not_put_back(std::slice::from_ref(setting), read) {
             Ok(None) => {}
             Ok(Some(why)) => {
-                left.failed.push(why);
-                left.saved.push(setting);
+                failed.push(why);
+                undone[at] = true;
             }
             Err(e) => {
-                left.failed.push(format!(
+                failed.push(format!(
                     "{} {} could not be read back: {e}",
                     setting.namespace, setting.key
                 ));
-                left.saved.push(setting);
+                undone[at] = true;
             }
         }
     }
-    // Kept in the order they were changed, as `restored` takes them.
-    left.saved.reverse();
-    left
+    // Turning the switch off again turns the developer settings on, so a
+    // retry of it needs every value, put back already or not. What is
+    // kept keeps the order it was changed in, as `restored` takes it.
+    let saved = saved
+        .into_iter()
+        .zip(undone)
+        .filter(|(_, undone)| finishing || *undone)
+        .map(|(setting, _)| setting)
+        .collect();
+    Left {
+        saved,
+        finishing,
+        failed,
+    }
 }
 
 /// What `read` says of each of `saved` that is not what it was, as one
@@ -2361,7 +2371,16 @@ mod tests {
         let mut finish_off = || Err(BackendError::Failed("no switch".into()));
         let left = tear_down(saved, true, &mut shell, &mut finish_off);
         assert!(left.finishing, "{left:?}");
-        assert_eq!(left.saved, [setting("system", "user_rotation", "0")]);
+        // Turning the switch off again turns the developer settings on:
+        // the retry needs every value, put back already or not.
+        assert_eq!(
+            left.saved,
+            [
+                setting("system", "accelerometer_rotation", "null"),
+                setting("system", "user_rotation", "0"),
+                setting("global", "development_settings_enabled", "0"),
+            ]
+        );
         assert_eq!(left.failed.len(), 2, "{left:?}");
         assert!(
             ran.contains(&"settings put global development_settings_enabled '0'".to_owned()),
@@ -2370,6 +2389,31 @@ mod tests {
         assert!(
             ran.contains(&"settings delete system accelerometer_rotation".to_owned()),
             "{ran:?}"
+        );
+    }
+
+    #[test]
+    fn what_the_tidying_left_undone_keeps_the_order_it_was_changed_in() {
+        let saved = vec![
+            setting("system", "accelerometer_rotation", "null"),
+            setting("system", "user_rotation", "0"),
+            setting("global", "development_settings_enabled", "0"),
+        ];
+        let mut shell = |command: &str| match command {
+            "settings delete system accelerometer_rotation" => {
+                Err(BackendError::Failed("adb went away".into()))
+            }
+            "settings get global development_settings_enabled" => Ok("1\n".to_owned()),
+            _ => Ok("0\n".to_owned()),
+        };
+        let left = tear_down(saved, false, &mut shell, &mut || Ok(()));
+        assert!(!left.finishing, "{left:?}");
+        assert_eq!(
+            left.saved,
+            [
+                setting("system", "accelerometer_rotation", "null"),
+                setting("global", "development_settings_enabled", "0"),
+            ]
         );
     }
 
