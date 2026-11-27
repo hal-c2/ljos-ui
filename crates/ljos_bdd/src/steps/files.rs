@@ -69,15 +69,36 @@ fn the_design_module_edited(w: &mut LjosWorld, unit: i32) -> StepResult {
 // says holds for the example as it ships.
 #[given(regex = r#"^the files of the example "([^"/.]+)"$"#)]
 fn the_example(w: &mut LjosWorld, id: String) -> StepResult {
+    application_files(w, "examples", &id, &[])
+}
+
+// An application of `bench/`, the same way, without the data its
+// generator writes into `data/`: that is the developer's own run's (and
+// ignored by git), so a scenario gives the small data it is about itself.
+#[given(regex = r#"^the files of the bench application "([^"/.]+)"$"#)]
+fn the_bench_application(w: &mut LjosWorld, id: String) -> StepResult {
+    application_files(w, "bench", &id, &["data"])
+}
+
+fn application_files(w: &mut LjosWorld, tree: &str, id: &str, skip: &[&str]) -> StepResult {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../examples")
-        .join(&id);
+        .join("../..")
+        .join(tree)
+        .join(id);
     let mut found = Vec::new();
     example_files(&root, &root, &mut found)?;
+    found.retain(|(name, _)| !skip.iter().any(|dir| name.starts_with(&format!("{dir}/"))));
     if found.is_empty() {
         return Err(format!("{} has no files", root.display()));
     }
     for (name, bytes) in found {
+        // `ljos run` installs the catalogues of `i18n/` beside the main
+        // file, so the application speaks its languages here as well.
+        if name.starts_with("i18n/") && name.ends_with(".po") {
+            let po = String::from_utf8(bytes).map_err(|e| format!("{name}: {e}"))?;
+            w.each(|b| b.environment()?.translation(&name, &po))?;
+            continue;
+        }
         let is_source = name.ends_with(".qml") || name.ends_with(".ts") || name.ends_with("qmldir");
         if is_source {
             let text = String::from_utf8(bytes).map_err(|e| format!("{name}: {e}"))?;
