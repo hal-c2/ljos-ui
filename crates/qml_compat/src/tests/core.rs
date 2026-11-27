@@ -116,17 +116,26 @@ fn a_member_of_qt_that_ljos_core_has_is_lowered_where_its_name_is_free() {
 }
 
 /// A property of the home's name, a local of it, or a file beside it of
-/// that name, is what the name is: the member has nowhere to go, and a
-/// lowered file has no `Qt`, so the file is kept.
+/// that name, is what the name is: a lowered file has no `Qt`, so a member
+/// whose home is a name of `Ljos.Core` reads it through the name the file
+/// imports the module under. One whose home is not, or a file that has
+/// that name too, has nowhere to go, and the file is kept.
 #[test]
-fn a_member_of_qt_whose_home_the_file_hides_keeps_the_file() {
+fn a_member_of_qt_whose_home_the_file_hides_reads_it_through_the_module() {
     assert_eq!(
-        kept_for("import QtQuick\nItem { property int size: 1; width: Qt.size(1, 2).width }\n"),
-        "`Qt.size` needs `size`, which a property of the file hides"
+        lowered("import QtQuick\nItem { property int size: 1; width: Qt.size(1, 2).width }\n"),
+        "pragma Scripts: JavaScript; import Ljos.Ui; import Ljos.Core as LjosCore\n\
+         Item { property int size: 1; width: LjosCore.size(1, 2).width }\n"
     );
     assert!(
-        kept_for("import QtQuick\nItem { function f(later) { Qt.callLater(later) } }\n")
-            .starts_with("`Qt.callLater` needs `later`"),
+        lowered("import QtQuick\nItem { function f(later) { Qt.callLater(later) } }\n")
+            .contains("{ LjosCore.later(later) }"),
+    );
+    assert_eq!(
+        kept_for(
+            "import QtQuick\nItem { property int size: 1; width: Qt.size(1, 2).width\n function f() { var LjosCore } }\n"
+        ),
+        "`Qt.size` needs `size`, which a property of the file hides"
     );
     let app = |name: &str| (name == "App").then(|| root_of("Item", &[]));
     let Outcome::Kept(kept) = lower("import QtQuick\nItem { x: Qt.platform.os.length }\n", &app)
@@ -144,28 +153,29 @@ fn a_member_of_qt_whose_home_the_file_hides_keeps_the_file() {
             ..root_of("Item", &[])
         })
     };
-    let Outcome::Kept(kept) = lower(
+    let Outcome::Lowered(done) = lower(
         "import QtQuick\nBase { property color c: Qt.rgba(1, 0, 0, 1) }\n",
         &base,
     ) else {
-        panic!("lowered");
+        panic!("kept");
     };
     assert!(
-        kept.to_string().starts_with("`Qt.rgba` needs `rgba`"),
-        "{kept}"
+        done.text.contains("c: LjosCore.rgba(1, 0, 0, 1)"),
+        "{}",
+        done.text
     );
 }
 
 /// A member of a type the file's objects are is in sight, though no other
 /// word of the file is its name: in a `Component`'s handler, `url` is the
-/// component's, so `Qt.resolvedUrl` has nowhere to go and keeps the file.
+/// component's, so `Qt.resolvedUrl` reads `url` through the module's name.
 #[test]
-fn a_member_of_qt_whose_home_a_type_of_the_file_s_objects_has_keeps_the_file() {
-    assert_eq!(
-        kept_for(
+fn a_member_of_qt_whose_home_a_type_of_the_file_s_objects_has_reads_it_through_the_module() {
+    assert!(
+        lowered(
             "import QtQuick\nItem { Component { Component.onCompleted: console.log(Qt.resolvedUrl(\"a.png\")) } }\n"
-        ),
-        "`Qt.resolvedUrl` needs `url`, which a member of an object's type hides"
+        )
+        .contains("console.log(LjosCore.url(\"a.png\"))")
     );
     // Where no object's type has it, the name is free.
     assert_eq!(

@@ -1234,7 +1234,17 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                 .or_else(|| self.attached_off(name)),
             Kind::Type(o) => self.type_member(o, name),
             Kind::Namespace(namespace) => {
-                let found = self.c.types.find(&[&namespace, name])?;
+                let Some(found) = self.c.types.find(&[&namespace, name]) else {
+                    // `LjosCore.rgba`: what `Ljos.Core` gives, through the
+                    // name the file imports it under.
+                    let core = matches!(
+                        self.c.types.namespace(&namespace),
+                        Some(qml_front::project::Source::Module(uri))
+                            if uri == qml_front::names::CORE
+                    );
+                    return (core && crate::compile::expressions::qualified_core(name))
+                        .then(|| self.core_global(name));
+                };
                 if self.c.types.is_singleton(&found.kind) {
                     Some(self.object_ty(&found.kind))
                 } else {

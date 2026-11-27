@@ -364,6 +364,8 @@ struct Compiler<'t, 'a, 'p, O: TypeOracle> {
     /// What of `Ljos.Core`'s the file's scripts name (`later`, `point`),
     /// which the module takes from the runtime.
     cores: std::collections::BTreeSet<String>,
+    /// The members of `Ljos.Core` the file reads through the module's name.
+    qualified_cores: std::collections::BTreeSet<String>,
     /// The type a property is declared with, by object and name.
     declared: HashMap<(usize, String), String>,
     /// The enums of the file's components: inline name, enum, keys.
@@ -443,6 +445,7 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
             context: stem(key).to_string(),
             translates: false,
             cores: std::collections::BTreeSet::new(),
+            qualified_cores: std::collections::BTreeSet::new(),
             declared: HashMap::new(),
             enums: Vec::new(),
             qt,
@@ -2446,12 +2449,33 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                 source.push_str(&format!("\nconst url = (u) => {qt}.resolvedUrl(u);\n"));
             }
         }
+        if !self.qualified_cores.is_empty() {
+            let given: Vec<String> = self
+                .qualified_cores
+                .iter()
+                .filter(|name| *name != "url")
+                .map(|name| format!("{name}: {}{name}", expressions::QUALIFIED_CORE))
+                .collect();
+            if !given.is_empty() {
+                source.push_str(&format!(
+                    "\nconst {{ {} }} = globalThis.{CORE};\n",
+                    given.join(", ")
+                ));
+            }
+            if self.qualified_cores.contains("url") {
+                let qt = if self.ljos_ui { FILE_QT } else { "Qt" };
+                source.push_str(&format!(
+                    "\nconst {}url = (u) => {qt}.resolvedUrl(u);\n",
+                    expressions::QUALIFIED_CORE
+                ));
+            }
+        }
         if self.ljos_ui {
             // A file of Ljós's API has no `Qt` (docs/DIALECT.md §4.3.1): the
             // module's own name hides the global, so a script that reaches
             // for it as it runs finds nothing. `url` resolves against the
             // file through a `Qt` only the module's helper can name.
-            if self.cores.contains("url") {
+            if self.cores.contains("url") || self.qualified_cores.contains("url") {
                 source.push_str(&format!(
                     "\nlet {FILE_QT} = globalThis.Qt;\nexport function {AT}(url) {{\n  {FILE_QT} = globalThis.{QT_AT}(url);\n}}\n"
                 ));

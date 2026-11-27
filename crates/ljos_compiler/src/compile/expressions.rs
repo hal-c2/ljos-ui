@@ -258,6 +258,11 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                 self.cores.insert(free.name.clone());
                 core_names.insert(free.name.clone());
             }
+            if let Some((text, _)) = &plan.replace
+                && let Some(core) = text.strip_prefix(QUALIFIED_CORE)
+            {
+                self.qualified_cores.insert(core.to_string());
+            }
             if !refs.contains(&r) {
                 refs.push(r);
             }
@@ -841,6 +846,19 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
             }
             Target::Type(found) => self.type_plan(name, found, None, chain, scope),
             Target::Namespace(source) => {
+                // `LjosCore.rgba(…)`: what the module gives, read through
+                // the name a file imports it under, is what it gives bare.
+                // A file whose own name hides the bare one reaches it so.
+                if matches!(source, qml_front::project::Source::Module(uri) if uri == qml_front::names::CORE)
+                    && let Some(member) = chain.first().filter(|m| qualified_core(m))
+                {
+                    return Plan {
+                        resolved: Resolved::Global { is_qml: true },
+                        param: None,
+                        rewrite: None,
+                        replace: Some((format!("{QUALIFIED_CORE}{member}"), 1)),
+                    };
+                }
                 let source = import_source(source);
                 // `S.Theme.accent`: the script reads a type of the module,
                 // which is what the reference is, through the namespace.
@@ -1335,4 +1353,15 @@ fn made_in_written(name: &str, base: &Plan, taken: &dyn Fn(&str) -> bool) -> Opt
         rewrite: Some(through),
         replace: None,
     })
+}
+
+/// What the file names a member of `Ljos.Core` it reads through the name it
+/// imports the module under (`LjosCore.rgba` is `$core_rgba`).
+pub(super) const QUALIFIED_CORE: &str = "$core_";
+
+/// A member of `Ljos.Core` a script reads through the module's name. What
+/// translates is lowered where it is called, so it is read bare only.
+pub(super) fn qualified_core(name: &str) -> bool {
+    qml_front::names::CORE_GLOBALS.contains(&name)
+        && !matches!(name, "t" | "msg" | "plural" | "select" | "selectOrdinal")
 }

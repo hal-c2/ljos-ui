@@ -506,41 +506,44 @@ fn an_object_of_the_programs_own_type_hides_only_its_members() {
         panic!("not lowered");
     };
     assert!(done.text.contains("c: rgba(1, 0, 0, 1)"), "{}", done.text);
-    let Outcome::Kept(kept) = with_kit(
+    let Outcome::Lowered(done) = with_kit(
         "import QtQuick\nimport Studio.Kit\nItem { Meter { } property var s: Qt.size(1, 2) }\n",
     ) else {
-        panic!("lowered");
+        panic!("kept");
     };
     assert!(
-        kept.to_string()
-            .contains("`Qt.size` needs `size`, which a member of an object's type hides"),
-        "{kept}"
+        done.text.contains("s: LjosCore.size(1, 2)"),
+        "{}",
+        done.text
     );
 }
 
 /// An object of the program's own type built on a view holds the delegate
 /// its default property takes, whose model's roles a lowered name could
-/// read: `Rows` is built on `Repeater`.
+/// read: `Rows` is built on `Repeater`, so `Qt.rgba` reads `rgba` through
+/// the name the file imports `Ljos.Core` under.
 #[test]
 fn a_native_type_built_on_a_view_holds_its_delegate() {
-    let Outcome::Kept(kept) = with_kit(
+    let Outcome::Lowered(done) = with_kit(
         "import QtQuick\nimport Studio.Kit\nItem { Rows { model: 3; Rectangle { color: Qt.rgba(1, 0, 0, 1) } } }\n",
     ) else {
-        panic!("lowered");
+        panic!("kept");
     };
     assert!(
-        kept.to_string()
-            .contains("`Qt.rgba` needs `rgba`, which a role of a delegate could hide"),
-        "{kept}"
+        done.text.contains("fill: LjosCore.rgba(1, 0, 0, 1)"),
+        "{}",
+        done.text
     );
 }
 
-/// Where an object's type is not known, the file is kept for it by name,
-/// so that the program can describe it.
+/// Where an object's type is not known, and the file has a name of its own
+/// where `Ljos.Core`'s would go, the file is kept for the type by name, so
+/// that the program can describe it.
 #[test]
 fn a_name_an_unknown_type_could_hide_says_which_type() {
-    let reason =
-        kept_for("import QtQuick\nItem { Gadget { } property color c: Qt.rgba(1, 0, 0, 1) }\n");
+    let reason = kept_for(
+        "import QtQuick\nItem { Gadget { } property color c: Qt.rgba(1, 0, 0, 1)\n function f() { var LjosCore } }\n",
+    );
     assert!(
         reason.contains("`rgba`, which an object of `Gadget`, a type the pass does not know"),
         "{reason}"

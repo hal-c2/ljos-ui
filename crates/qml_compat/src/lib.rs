@@ -832,12 +832,19 @@ impl<'s> Pass<'s> {
         // `Layout` in, `Ljos.Layout`.
         // A file whose constant tables are typed lists imports their rows
         // module on that line too.
-        let rows = match (self.stem, self.tables.is_empty()) {
+        let mut rows = match (self.stem, self.tables.is_empty()) {
             (Some(stem), false) => {
                 format!("; import \"{}\" as {}", rows_module(stem), tables::ALIAS)
             }
             _ => String::new(),
         };
+        if settled.qualified {
+            rows.push_str(&format!(
+                "; import {} as {}",
+                Ljos::Core.uri(),
+                qt_members::QUALIFIER
+            ));
+        }
         for ((_, span), line) in qt_imports.iter().zip(&lines) {
             let import = match line {
                 modules::Line::Takes(ljos) if *ljos == shared => {

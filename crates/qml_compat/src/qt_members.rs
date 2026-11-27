@@ -579,7 +579,29 @@ impl Members {
         };
         let mut changes = Vec::new();
         let mut core = false;
+        let mut qualified = false;
+        // A name of `Ljos.Core` the file hides is the module's through the
+        // name the file imports it under, where nothing takes that name.
+        let qualifier_free = hider(QUALIFIER).is_none();
         for u in &self.uses {
+            if let Ok(lowered) = &u.lowered
+                && let Some(name) = lowered.name
+                && qualifier_free
+                && !u.points
+                && name.starts_with(|c: char| c.is_ascii_lowercase())
+                && ljos_enums::home(&u.member).is_none()
+                && hider(name).is_some()
+            {
+                changes.extend(lowered.changes.iter().map(|(range, text)| {
+                    let text = match text.starts_with(name) {
+                        true => format!("{QUALIFIER}.{text}"),
+                        false => text.clone(),
+                    };
+                    (range.clone(), text)
+                }));
+                qualified = true;
+                continue;
+            }
             let cause = match &u.lowered {
                 Err(cause) => Some(cause.clone()),
                 Ok(lowered) => lowered.name.and_then(|name| {
@@ -602,7 +624,11 @@ impl Members {
                     !u.points && lowered.name.is_some() && ljos_enums::home(&u.member).is_none();
             }
         }
-        Ok(Settled { changes, core })
+        Ok(Settled {
+            changes,
+            core,
+            qualified,
+        })
     }
 }
 
@@ -612,7 +638,14 @@ pub(crate) struct Settled {
     pub(crate) changes: Vec<(Range<usize>, String)>,
     /// Some lower to a name of `Ljos.Core`, which the file then imports.
     pub(crate) core: bool,
+    /// Some lower to a name of `Ljos.Core` the file hides, which it reads
+    /// through [`QUALIFIER`]: the file imports the module under it too.
+    pub(crate) qualified: bool,
 }
+
+/// The name a file imports `Ljos.Core` under when one of the module's names
+/// is the file's own.
+pub(crate) const QUALIFIER: &str = "LjosCore";
 
 /// Where `name` is a whole word of `source`, as byte offsets.
 fn words<'a>(source: &'a str, name: &'a str) -> impl Iterator<Item = usize> + 'a {
