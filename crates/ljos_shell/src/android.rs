@@ -32,7 +32,7 @@ use ndk::native_window::NativeWindow;
 use crate::desktop::use_fonts;
 use crate::platform::Display;
 use crate::soft_keyboard::SoftKeyboard;
-use crate::wake::{Next, next_wake, posted_met};
+use crate::wake::{Next, next_wake, posted_met, undrawn};
 use crate::{Hosting, Setup, SetupError, ShellApp, ShellConfig};
 
 /// What reaches the application's thread besides the activity's events.
@@ -221,6 +221,9 @@ struct Phone<M, S> {
     /// The activity was stopped: the user cannot see the application,
     /// whether or not its surface has gone yet.
     hidden: bool,
+    /// What the system last said of the activity, as the application
+    /// reads it (`Qt.application.state`).
+    app_state: AppState,
     /// What of the screen the system keeps, in physical pixels.
     insets: Insets,
     /// What the activity was last told about Back: whether the
@@ -233,6 +236,11 @@ struct Phone<M, S> {
     /// The root whose colour, if it is a `Window`'s, asks for a frame
     /// when it changes: the window is cleared to it.
     color_heard: Option<ObjectId>,
+    /// Something asked for a pass since the last one: drawn when there is
+    /// a surface, run undrawn when there is none.
+    wanted: bool,
+    /// When the last pass without a surface ran, which paces the next.
+    last_undrawn: Option<Instant>,
 }
 
 /// How long after a frame that could not be drawn it is tried again, and
@@ -289,11 +297,15 @@ where
             waker,
             focused: true,
             hidden: false,
+            // As the relay starts: nothing is shown until the activity is.
+            app_state: AppState::Hidden,
             insets: Insets::default(),
             back_taken: crate::back_told::BackTold::default(),
             keyboard: SoftKeyboard::default(),
             retries: 0,
             color_heard: None,
+            wanted: false,
+            last_undrawn: None,
         }
     }
 
@@ -333,6 +345,7 @@ where
             Ok(mut app) => {
                 app.view_mut().set_resize_mode(ResizeMode::RootToView);
                 app.view_mut().set_drawn(!self.hidden);
+                tell_state(&app, self.app_state);
                 // Content is thrown and stopped as Android's own lists do.
                 ljos_quick::flickable::set_scroll_physics(
                     app.engine(),
@@ -607,17 +620,32 @@ where
         }
     }
 
-    /// One pass of the scene, drawn into the surface.
-    fn draw(&mut self, host: &mut RelayControl<'_, NativeWindow>) {
+    /// Asks for a pass: the next frame while there is a surface, and an
+    /// undrawn pass while there is none (see [`Phone::next_wake`]).
+    fn want_pass(&mut self, host: &mut RelayControl<'_, NativeWindow>) {
+        self.wanted = true;
+        host.request_redraw(WINDOW);
+    }
+
+    /// One pass of the scene, drawn into the surface when `paint` and
+    /// there is one. A pass that is not drawn still runs the engine's
+    /// timers, its messages and the inspector's calls: an application in
+    /// the background lives on (ARCHITECTURE.md §8.2, §10.2).
+    fn pass(&mut self, host: &mut RelayControl<'_, NativeWindow>, paint: bool) {
         // Met by this turn even when nothing can be drawn: a surface that
         // comes back asks for a pass of its own.
         posted_met(&self.due, Instant::now());
+        self.wanted = false;
         let Stage::Running(app) = &mut self.stage else {
             return;
         };
-        let (Some(gpu), Some(surface)) = (&mut self.gpu, &self.surface) else {
+        let Some(gpu) = &mut self.gpu else {
             return;
         };
+        let surface = self.surface.as_ref().filter(|_| paint);
+        if paint && surface.is_none() {
+            return;
+        }
         let scale = if self.scale > 0.0 { self.scale } else { 1.0 };
         // The keyboard's part of the screen is given up, as a window that
         // resizes for it (`adjustResize`) gives it up: what is at the
@@ -661,15 +689,21 @@ where
         let engine = Rc::clone(app.engine());
         let jobs = self.ctx.tessellate(output.shapes, output.pixels_per_point);
         let mut textures = output.textures_delta;
-        let painted = gpu.paint(
-            surface,
-            &jobs,
-            &textures,
-            output.pixels_per_point,
-            app.clear_color(),
-        );
-        // `paint` has handed every delta to the renderer on each of its
-        // ways out; a debug build of epaint panics on dropping any left.
+        let painted = match surface {
+            Some(surface) => gpu.paint(
+                surface,
+                &jobs,
+                &textures,
+                output.pixels_per_point,
+                app.clear_color(),
+            ),
+            None => {
+                gpu.apply(&textures);
+                Painted::Skipped
+            }
+        };
+        // Every delta is handed to the renderer on each way out; a debug
+        // build of epaint panics on dropping any left.
         textures.clear();
         match painted {
             Painted::Drawn => {
@@ -742,13 +776,81 @@ where
     }
 
     /// When the loop wakes by itself next: the scene's next frame, or
-    /// what another thread asked for.
+    /// what another thread asked for. Without a surface, what is due now
+    /// runs here as a pass that is not drawn; the relay draws only into a
+    /// surface, and would otherwise hold it until the activity is back.
     fn next_wake(&mut self, host: &mut RelayControl<'_, NativeWindow>) {
-        match next_wake(self.asked, &self.due, Instant::now()) {
-            Next::Now => host.request_redraw(WINDOW),
-            Next::At(at) => host.wake_at(at),
+        let undrawable = self.surface.is_none() && matches!(self.stage, Stage::Running(_));
+        loop {
+            let now = Instant::now();
+            let next = match next_wake(self.asked, &self.due, now) {
+                _ if self.wanted => Next::Now,
+                next => next,
+            };
+            if !undrawable {
+                self.last_undrawn = None;
+                match next {
+                    Next::Now => {
+                        host.request_redraw(WINDOW);
+                        self.record_rest(Some(now), self.surface.is_some());
+                    }
+                    Next::At(at) => {
+                        host.wake_at(at);
+                        self.record_rest(at, false);
+                    }
+                }
+                return;
+            }
+            match undrawn(next, self.last_undrawn, now) {
+                Next::Now => {
+                    self.last_undrawn = Some(now);
+                    self.pass(host, false);
+                    if self.quit_requested() {
+                        QUITTING.store(true, Ordering::Release);
+                        host.exit();
+                        return;
+                    }
+                }
+                // With nothing to draw into, no frame is owed.
+                Next::At(at) => {
+                    host.wake_at(at);
+                    self.record_rest(at, false);
+                    return;
+                }
+            }
         }
     }
+
+    /// Tells the inspector the loop sleeps until `wake_at`, whether the
+    /// screen owes a frame, and where the last pass saw the pointer: a
+    /// client that drove the application waits for this, not for a while.
+    #[cfg(feature = "mcp")]
+    fn record_rest(&mut self, wake_at: Option<Instant>, frame_owed: bool) {
+        let Stage::Running(app) = &mut self.stage else {
+            return;
+        };
+        if !app.inspected() {
+            return;
+        }
+        let pointer = self.ctx.input(|i| {
+            i.pointer.latest_pos().map(|p| ljos_dev::mcp::PointerSeen {
+                x: p.x,
+                y: p.y,
+                pressed: i.pointer.any_down(),
+            })
+        });
+        app.record_rest(
+            ljos_dev::mcp::Rest {
+                wake_at,
+                frame_owed,
+                pointer,
+            },
+            None,
+        );
+    }
+
+    #[cfg(not(feature = "mcp"))]
+    fn record_rest(&mut self, _: Option<Instant>, _: bool) {}
 }
 
 /// Asks for a turn at `at` unless one is due earlier already.
@@ -775,49 +877,51 @@ where
                 WindowEvent::Resized { px, scale } => {
                     self.resized(px, scale);
                     self.apply_insets();
-                    host.request_redraw(WINDOW);
+                    self.want_pass(host);
                 }
-                WindowEvent::RedrawRequested => self.draw(host),
+                WindowEvent::RedrawRequested => self.pass(host, true),
                 WindowEvent::Insets(insets) => {
                     self.insets = insets;
                     self.apply_insets();
-                    host.request_redraw(WINDOW);
+                    self.want_pass(host);
                 }
                 WindowEvent::Back { phase, progress } => {
                     self.back(host, phase, progress);
-                    host.request_redraw(WINDOW);
+                    self.want_pass(host);
                 }
-                WindowEvent::Theme { .. } => host.request_redraw(WINDOW),
+                WindowEvent::Theme { .. } => self.want_pass(host),
                 // What follows canPaste hears of another application's copy.
                 WindowEvent::ClipboardChanged => {
                     if let Stage::Running(app) = &self.stage {
                         let engine = app.engine();
                         ljos_quick::Clipboard::of(engine).refresh(engine);
                     }
-                    host.request_redraw(WINDOW);
+                    self.want_pass(host);
                 }
                 WindowEvent::Text(text) => {
                     self.text(text);
-                    host.request_redraw(WINDOW);
+                    self.want_pass(host);
                 }
                 other => {
                     self.input(other);
-                    host.request_redraw(WINDOW);
+                    self.want_pass(host);
                 }
             },
             Event::AppState(state) => {
                 self.hidden = matches!(state, AppState::Hidden | AppState::Suspended);
+                self.app_state = state;
                 // A stopped activity's passes still run; not drawn, they do
                 // not build again what a trim gave back.
                 if let Stage::Running(app) = &mut self.stage {
                     app.view_mut().set_drawn(!self.hidden);
+                    tell_state(app, state);
                 }
                 if state == AppState::Active {
-                    host.request_redraw(WINDOW);
+                    self.want_pass(host);
                 }
             }
             Event::MemoryPressure => self.trim(host),
-            Event::Wake | Event::User(Message::Wake) => host.request_redraw(WINDOW),
+            Event::Wake | Event::User(Message::Wake) => self.want_pass(host),
             Event::AboutToWait => {
                 if self.quit_requested() {
                     // Before the activity is asked to finish, so that it
@@ -1002,4 +1106,18 @@ fn surface_of(
     // SAFETY: the window outlives the surface: the relay keeps it until
     // the application has let go of the surface (`SurfaceDestroyed`).
     unsafe { instance.create_surface_unsafe(target) }.map_err(|e| e.to_string())
+}
+
+/// Tells the application what the system said of its activity
+/// (`Qt.application.state`), as the desktop shell tells it of its windows.
+fn tell_state<M: Send + 'static>(app: &ShellApp<M>, state: AppState) {
+    use ljos_controls::{ApplicationState, WindowSystem};
+    let engine = app.engine();
+    let state = match state {
+        AppState::Active => ApplicationState::Active,
+        AppState::Inactive => ApplicationState::Inactive,
+        AppState::Hidden => ApplicationState::Hidden,
+        AppState::Suspended => ApplicationState::Suspended,
+    };
+    WindowSystem::of(engine).set_application_state(engine, state);
 }
