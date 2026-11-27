@@ -86,8 +86,7 @@ fn application_files(w: &mut LjosWorld, tree: &str, id: &str, skip: &[&str]) -> 
         .join(tree)
         .join(id);
     let mut found = Vec::new();
-    example_files(&root, &root, &mut found)?;
-    found.retain(|(name, _)| !skip.iter().any(|dir| name.starts_with(&format!("{dir}/"))));
+    example_files(&root, &root, skip, &mut found)?;
     if found.is_empty() {
         return Err(format!("{} has no files", root.display()));
     }
@@ -110,9 +109,12 @@ fn application_files(w: &mut LjosWorld, tree: &str, id: &str, skip: &[&str]) -> 
     Ok(())
 }
 
+/// Every file under `dir`, named from `root`, except under the
+/// directories of `root` that `skip` names, which are not read at all.
 fn example_files(
     root: &std::path::Path,
     dir: &std::path::Path,
+    skip: &[&str],
     found: &mut Vec<(String, Vec<u8>)>,
 ) -> Result<(), String> {
     let entries = std::fs::read_dir(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
@@ -125,7 +127,12 @@ fn example_files(
     paths.sort();
     for path in paths {
         if path.is_dir() {
-            example_files(root, &path, found)?;
+            let skipped = path
+                .strip_prefix(root)
+                .is_ok_and(|rel| skip.iter().any(|dir| rel == std::path::Path::new(dir)));
+            if !skipped {
+                example_files(root, &path, skip, found)?;
+            }
         } else {
             let name = path
                 .strip_prefix(root)
