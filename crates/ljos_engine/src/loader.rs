@@ -900,6 +900,14 @@ pub(crate) struct LoadedFile {
 }
 
 impl LoadedFile {
+    /// Whether the file is written in Ljós's API: it imports `Ljos.Ui`.
+    pub(crate) fn is_ljos_ui(&self) -> bool {
+        self.ir
+            .imports
+            .iter()
+            .any(|i| matches!(&i.source, ljos_ir::ImportSource::Module(m) if m == "Ljos.Ui"))
+    }
+
     pub(crate) fn new(
         key: &str,
         url: String,
