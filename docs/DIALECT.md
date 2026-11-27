@@ -491,7 +491,7 @@ Ljós file: use `later` (Ljos.Core) ``. The compiled file is not handed
 **Lowering.** The pass lowers a file only when it can give every `Qt`
 member of it a home, and the free-name rules of §4.3 still decide whether
 a home's name can be written there. Where it cannot, the whole file stays
-Qt's and says which member kept it (`` kept Main.qml:12:9: `Qt.binding`
+Qt's and says which member kept it (`` kept Main.qml:12:9: `Qt.platform`
 needs `App`, which a file beside it has ``). So no lowered file
 reaches `Qt`, which was M2's exit criterion (§13).
 
