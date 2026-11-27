@@ -53,3 +53,26 @@ Feature: Resolving an address against the document
         | sub/a.qml    | @/sub/a.qml |
         | sub/../a.qml | @/a.qml     |
         | ./a.qml      | @/a.qml     |
+
+  Rule: An empty address stays empty
+
+    # Qt 6.11: an empty address is not resolved against the document, though RFC 3986
+    # would make it the document's own address (qml6).
+    Scenario: Qt.resolvedUrl of an empty address is the empty url
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          objectName: "root"
+          property url empty
+          property string got: "[" + Qt.resolvedUrl("") + "]"
+          property int length: String(Qt.resolvedUrl("")).length
+          property string unset: "[" + Qt.resolvedUrl(empty) + "]"
+          property string computed: "[" + Qt.resolvedUrl(["", ""].join("")) + "]"
+        }
+        """
+      Then the property "got" of "root" is "[]"
+      And the property "length" of "root" is 0
+      And the property "unset" of "root" is "[]"
+      And the property "computed" of "root" is "[]"
+
