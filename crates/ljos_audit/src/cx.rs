@@ -8,8 +8,8 @@ use std::rc::Rc;
 use ljos_a11y::{NodeData, NodeKey, Role, role_word};
 use ljos_engine::{Engine, MetaRef, ObjectId, QmlType};
 use ljos_quick::{Accessible, AccessibleAttached, Item, QuickScene, Text};
-use ljos_render::NodeId;
 use ljos_render::kurbo::{Point, Rect};
+use ljos_render::{DrawOp, FrameSnapshot, NodeId};
 
 use crate::Options;
 use crate::finding::{Bounds, Finding};
@@ -527,4 +527,32 @@ pub(crate) fn overhang_words(over: [f64; 4]) -> Option<String> {
         .map(|(n, side)| format!("the {side} edge by {} px", trim(*n)))
         .collect();
     (!parts.is_empty()).then(|| parts.join(" and "))
+}
+
+/// Whether anything under `part` is painted in a colour that can be seen.
+pub(crate) fn paints(cx: &Cx, snapshot: &FrameSnapshot, part: ObjectId) -> bool {
+    snapshot.items.iter().any(|p| {
+        p.opacity > 0.0
+            && cx
+                .scene
+                .item_of(p.node)
+                .is_some_and(|i| within(cx.engine, i, part))
+            && p.list.as_ref().is_some_and(|l| {
+                l.ops().iter().any(|op| match op {
+                    DrawOp::Rect { fill, border, .. } => {
+                        !fill.is_invisible()
+                            || border
+                                .as_ref()
+                                .is_some_and(|b| b.width > 0.0 && !b.paint.is_invisible())
+                    }
+                    DrawOp::Glyphs { .. }
+                    | DrawOp::Text { .. }
+                    | DrawOp::Path { .. }
+                    | DrawOp::Shape { .. }
+                    | DrawOp::Image { .. }
+                    | DrawOp::NinePatch { .. } => true,
+                    _ => false,
+                })
+            })
+    })
 }

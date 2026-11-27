@@ -21,10 +21,10 @@ use ljos_design::color::{Srgb, wcag_contrast};
 use ljos_design::limits::NONTEXT_CONTRAST;
 use ljos_engine::ObjectId;
 use ljos_quick::Item;
-use ljos_render::{DrawOp, FrameSnapshot};
+use ljos_render::FrameSnapshot;
 
 use crate::cx::{
-    Cx, declared_by_app, is_a, scene_rect, shown_items, takes_focus, trim, within, words,
+    Cx, declared_by_app, is_a, paints, scene_rect, shown_items, takes_focus, trim, within, words,
 };
 use crate::pixels::{Painter, backdrop};
 
@@ -60,34 +60,6 @@ fn icon_only(cx: &Cx, button: ObjectId) -> bool {
     let e = cx.engine;
     let text = e.untrack(|| e.read_by_name(button, "text")).to_js_string();
     text.as_str().trim().is_empty()
-}
-
-/// Whether anything under `part` is painted in a colour that can be seen.
-fn paints(cx: &Cx, snapshot: &FrameSnapshot, part: ObjectId) -> bool {
-    snapshot.items.iter().any(|p| {
-        p.opacity > 0.0
-            && cx
-                .scene
-                .item_of(p.node)
-                .is_some_and(|i| within(cx.engine, i, part))
-            && p.list.as_ref().is_some_and(|l| {
-                l.ops().iter().any(|op| match op {
-                    DrawOp::Rect { fill, border, .. } => {
-                        !fill.is_invisible()
-                            || border
-                                .as_ref()
-                                .is_some_and(|b| b.width > 0.0 && !b.paint.is_invisible())
-                    }
-                    DrawOp::Glyphs { .. }
-                    | DrawOp::Text { .. }
-                    | DrawOp::Path { .. }
-                    | DrawOp::Shape { .. }
-                    | DrawOp::Image { .. }
-                    | DrawOp::NinePatch { .. } => true,
-                    _ => false,
-                })
-            })
-    })
 }
 
 /// The most a pixel of `part` stands out from what is behind it, or

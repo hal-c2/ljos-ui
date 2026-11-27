@@ -904,6 +904,25 @@ Feature: The design audit checks layout and content in the live tree
         """
       Then the design audit does not report "layout-wrap-separator"
 
+    Scenario: A wrapped row whose spacer, which paints nothing, starts a line
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Rectangle {
+          width: 200; height: 160
+          color: "white"
+          Flow {
+            width: parent.width; spacing: 6
+            Text { text: "Frames recorded" }
+            Item { width: 150; height: 1 }
+            Button { text: "Record" }
+            Button { text: "Clear" }
+          }
+        }
+        """
+      Then the design audit does not report "layout-wrap-separator"
+
     Scenario: A menu a repeater fills with twelve items and no group
       Given the QML:
         """qml
