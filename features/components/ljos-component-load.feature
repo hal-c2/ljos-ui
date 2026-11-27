@@ -257,6 +257,46 @@ Feature: A component made from an address or from QML text, in Ljós's API
       Then the property "load" of "root" is "undefined"
       And the property "fromText" of "root" is "undefined"
 
+  Rule: An object the component type made is destroyed as any other
+
+    @ljos-only
+    Scenario: An object Component.load made is gone once a file of Qt's QML destroys it
+      Given the file "dyn/Maker.qml":
+        """qml
+        pragma Scripts: JavaScript
+        import Ljos.Ui
+        import Ljos.Core
+        Item {
+          function make(parent) { return Component.load("Part.qml").createObject(parent) }
+          function fromText(parent) {
+            return Component.createFromText("import QtQuick; Part { }", parent)
+          }
+        }
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        import "dyn" as D
+        Item {
+          id: root; objectName: "root"
+          property int before: -1
+          property int after: -1
+          D.Maker { id: maker }
+          Timer { id: later; interval: 0; onTriggered: after = root.children.length - 1 }
+          Component.onCompleted: {
+            const made = maker.make(root)
+            const text = maker.fromText(root)
+            before = root.children.length - 1
+            made.destroy()
+            text.destroy()
+            later.start()
+          }
+        }
+        """
+      When 100 milliseconds pass
+      Then the property "before" of "root" is 2
+      And the property "after" of "root" is 0
+
   Rule: ljos migrate writes Qt's makers as the component type's
 
     @api-QtQml.Qt.createComponent @api-QtQml.Qt.createQmlObject
