@@ -1089,6 +1089,13 @@ impl AndroidBackend {
         self.reach(true)
     }
 
+    /// Whether the tidying left nothing for Drop to try again, the
+    /// inspector's forward going as `forward` says: a forward left stays
+    /// until adb restarts.
+    fn nothing_left(&self, forward: &Result<()>) -> bool {
+        self.saved.is_empty() && !self.finishing && forward.is_ok()
+    }
+
     /// Undoes the developer's connect as `ljos android disconnect` does:
     /// the forward it made goes, unless another phone or application
     /// holds that port now.
@@ -1263,7 +1270,9 @@ impl Backend for AndroidBackend {
         // removes this one's forward, and adb keeps it until it restarts:
         // a port forwarded here for any phone refuses the next scenario's
         // inspector there (#822).
-        let left = match (left, self.disconnect(&phone)) {
+        let forward = self.disconnect(&phone);
+        let done = self.nothing_left(&forward);
+        let left = match (left, forward) {
             (Ok(()), forward) => forward,
             (Err(BackendError::Failed(why)), Err(e)) => {
                 Err(BackendError::Failed(format!("{why}; {e}")))
@@ -1279,7 +1288,7 @@ impl Backend for AndroidBackend {
         }
         // What failed is tried once more by Drop, late as it may be: the
         // scenario has failed already, and a phone left changed is worse.
-        if self.saved.is_empty() && !self.finishing {
+        if done {
             self.phone = None;
         }
         left
@@ -2312,11 +2321,12 @@ fn forwards_port(listed: &str, serial: &str, port: u16) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        BackendError, FORGET_EVENTS, Setting, Shown, Watched, abort_query, badge_in,
-        clipboard_call, download_path, forwards_port, front_record, is_dont_keep, kept_permissions,
-        not_idle, not_put_back, percent_decoded, permission_asked, permission_button, picker_shown,
-        picture_size, port_taken_here, quoted, restored, scenario_dir, screen_nodes, screens_kept,
-        secrets_answer, secrets_call, seen_until, stays_idle, tear_down, trimmed_bytes, url_port,
+        AndroidBackend, BackendError, FORGET_EVENTS, Setting, Shown, Watched, abort_query,
+        badge_in, clipboard_call, download_path, forwards_port, front_record, is_dont_keep,
+        kept_permissions, not_idle, not_put_back, percent_decoded, permission_asked,
+        permission_button, picker_shown, picture_size, port_taken_here, quoted, restored,
+        scenario_dir, screen_nodes, screens_kept, secrets_answer, secrets_call, seen_until,
+        stays_idle, tear_down, trimmed_bytes, url_port,
     };
     use serde_json::{Value, json};
     use std::time::Instant;
@@ -2986,6 +2996,13 @@ ACTIVITY MANAGER URI PERMISSIONS (dumpsys activity permissions)
         );
         assert_eq!(percent_decoded("100%"), "100%");
         assert_eq!(percent_decoded("%zz"), "%zz");
+    }
+
+    #[test]
+    fn a_forward_the_tidying_could_not_remove_is_left_to_drop() {
+        let backend = AndroidBackend::default();
+        assert!(backend.nothing_left(&Ok(())));
+        assert!(!backend.nothing_left(&Err(BackendError::Failed("adb went away".into()))));
     }
 
     #[test]
