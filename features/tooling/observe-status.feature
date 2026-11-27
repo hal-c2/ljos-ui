@@ -28,7 +28,7 @@ Feature: The observer keeps an error until what failed succeeds
       """
     When the application is observed
     And the observer's "text=Objects" is clicked
-    And the observer's "role=listitem[name=\"Scenario\"]" is clicked
+    And the observer's "role=listitem[name~=\"^Scenario @\"]" is clicked
     And the observer's "role=button[name=\"count\"]" is clicked
     And the observer is given the keys "x Return"
     Then the observer has "text=app_set_property: "
@@ -46,7 +46,7 @@ Feature: The observer keeps an error until what failed succeeds
       """
     When the application is observed
     And the observer's "text=Objects" is clicked
-    And the observer's "role=listitem[name=\"Scenario\"]" is clicked
+    And the observer's "role=listitem[name~=\"^Scenario @\"]" is clicked
     And the observer's "role=button[name=\"count\"]" is clicked
     And the observer is given the keys "x Return"
     Then the observer has "text=app_set_property: "
@@ -66,7 +66,7 @@ Feature: The observer keeps an error until what failed succeeds
       """
     When the application is observed
     And the observer's "text=Objects" is clicked
-    And the observer's "role=listitem[name=\"Scenario\"]" is clicked
+    And the observer's "role=listitem[name~=\"^Scenario @\"]" is clicked
     And the observer's "role=button[name=\"count\"]" is clicked
     And the observer is given the keys "x Return"
     Then the observer has "text=app_set_property: "
@@ -85,7 +85,7 @@ Feature: The observer keeps an error until what failed succeeds
       """
     When the application is observed
     And the observer's "text=Objects" is clicked
-    And the observer's "role=listitem[name=\"Scenario\"]" is clicked
+    And the observer's "role=listitem[name~=\"^Scenario @\"]" is clicked
     And the observer's "role=button[name=\"count\"]" is clicked
     And the observer is given the keys "x Return"
     Then the observer has "text=app_set_property: "

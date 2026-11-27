@@ -671,7 +671,7 @@ ApplicationWindow {
                                 anchors.leftMargin: window.compact ? 10 : 14
                                 anchors.verticalCenter: parent.verticalCenter
                                 text: tab.modelData
-                                color: tab.shown ? Colors.accent : Colors.text
+                                color: tab.shown ? Colors.link : Colors.text
                                 font.bold: tab.shown
                             }
                             Text {
@@ -931,18 +931,32 @@ ApplicationWindow {
 
                         // The figures now: in one row when there is room
                         // for them, else in as many columns as there is room
-                        // for, each wide enough for its name.
+                        // for, each wide enough for its name and a figure in
+                        // the font as large as it is asked to be.
                         GridLayout {
+                            id: figures
+                            readonly property var names: [
+                                ["Frames", "frames"], ["Over budget", "overruns"], ["Objects", "objects"],
+                                ["Threads", "threads"], ["Resident", "rss"], ["Passes drawn", "drawn"],
+                                ["Passes skipped", "skipped"]
+                            ]
+                            FontMetrics { id: figureName; font.pixelSize: Typography.captionSize }
+                            FontMetrics { id: figureValue; font.pixelSize: Typography.titleSize; font.bold: true }
+                            readonly property real least: {
+                                // A call is not followed: the heights are, and
+                                // change with the text size the system asks for.
+                                void (figureName.height + figureValue.height)
+                                var widest = figureValue.advanceWidth("888.8 MiB")
+                                for (var i = 0; i < names.length; ++i)
+                                    widest = Math.max(widest, figureName.advanceWidth(names[i][0]))
+                                return Math.max(130, Math.ceil(widest) + 2 * Spacing.sm + 2)
+                            }
                             Layout.fillWidth: true
-                            columns: Math.max(1, Math.min(7, Math.floor((width + columnSpacing) / 130)))
+                            columns: Math.max(1, Math.min(7, Math.floor((width + columnSpacing) / (least + columnSpacing))))
                             columnSpacing: 10
                             rowSpacing: 10
                             Repeater {
-                                model: [
-                                    ["Frames", "frames"], ["Over budget", "overruns"], ["Objects", "objects"],
-                                    ["Threads", "threads"], ["Resident", "rss"], ["Passes drawn", "drawn"],
-                                    ["Passes skipped", "skipped"]
-                                ]
+                                model: figures.names
                                 delegate: Rectangle {
                                     required property var modelData
                                     Layout.fillWidth: true
@@ -973,7 +987,7 @@ ApplicationWindow {
                                                 : modelData[1] === "rss" ? window.bytes(v) : v
                                             color: unknown ? Colors.textMuted
                                                 : modelData[1] === "overruns" && v > 0 ? Colors.danger : Colors.text
-                                            font.pixelSize: unknown ? 12 : 19
+                                            font.pixelSize: unknown ? Typography.captionSize : Typography.titleSize
                                             font.bold: !unknown
                                             wrapMode: unknown ? Text.WordWrap : Text.NoWrap
                                             maximumLineCount: 2
@@ -1027,7 +1041,7 @@ ApplicationWindow {
                                     readonly property bool stacked:
                                         chartTitle.implicitWidth + chartValue.implicitWidth + 36 > width
 
-                                    Text {
+                                    Elided {
                                         id: chartTitle
                                         x: 12; y: 10
                                         width: Math.max(0, chart.stacked ? chart.width - 24
@@ -1036,10 +1050,11 @@ ApplicationWindow {
                                         text: chart.modelData.title
                                         color: Colors.textMuted
                                     }
-                                    Text {
+                                    Elided {
                                         id: chartValue
                                         x: chart.stacked ? 12 : chart.width - 12 - width
-                                        y: chart.stacked ? 30 : 8
+                                        // Below the title as tall as its font makes it.
+                                        y: chart.stacked ? chartTitle.y + chartTitle.height + 2 : 8
                                         width: Math.max(0, Math.min(implicitWidth, chart.width - 24))
                                         elide: Text.ElideRight
                                         text: chart.unknown ? "not measured on this platform"
@@ -1059,7 +1074,8 @@ ApplicationWindow {
                                     Item {
                                         id: plot
                                         anchors.fill: parent
-                                        anchors.topMargin: chart.stacked ? 52 : 34
+                                        anchors.topMargin: Math.max(chart.stacked ? 52 : 34,
+                                                                    chartValue.y + chartValue.height + Spacing.xs)
                                         anchors.margins: 12
                                         visible: !chart.unknown
                                         // A point stays where it was drawn and
@@ -1306,7 +1322,8 @@ ApplicationWindow {
                             wakeups: typeof r.wakeups === "number" ? String(r.wakeups) : "",
                             detail: r.kind === "timer"
                                     ? "every " + r.interval_ms + " ms" + (r.repeat ? ", repeats" : "")
-                                    : r.locator || r.thread_name || "",
+                                    // Threads of one name are told apart by their id.
+                                    : r.locator || r.thread_name || (r.tid !== undefined ? "tid " + r.tid : ""),
                             handle: r.handle === undefined ? "" : r.handle,
                             pickable: r.handle !== undefined
                         }
@@ -1485,6 +1502,14 @@ ApplicationWindow {
                                 required property bool pickable
                                 width: ListView.view.width
                                 height: procTable.narrow ? procCells.height : 32
+                                // The row, not the area over it, is what is
+                                // read, so it says its place in the list. One
+                                // that opens an object is pressed; the rest
+                                // are read. Kind and detail tell apart rows
+                                // of the same name.
+                                Accessible.role: pickable ? Accessible.ListItem : Accessible.Row
+                                Accessible.name: what + " " + name + (detail !== "" ? ", " + detail : "")
+                                Accessible.description: pickable ? "Opens it on the Objects page" : ""
                                 color: rowHover.containsMouse ? Colors.surfaceSelected
                                      : index % 2 ? Colors.canvas : "transparent"
                                 Flow {
@@ -1554,13 +1579,6 @@ ApplicationWindow {
                                     anchors.fill: parent
                                     hoverEnabled: prow.pickable
                                     enabled: prow.pickable
-                                    // A row that opens an object is pressed;
-                                    // the rest are read. Kind and detail tell
-                                    // apart rows of the same name.
-                                    Accessible.role: prow.pickable ? Accessible.ListItem : Accessible.Row
-                                    Accessible.name: prow.what + " " + prow.name
-                                        + (prow.detail !== "" ? ", " + prow.detail : "")
-                                    Accessible.description: prow.pickable ? "Opens it on the Objects page" : ""
                                     onClicked: {
                                         window.page = 3
                                         objects.load(true)
@@ -2420,14 +2438,14 @@ ApplicationWindow {
                             id: sizeOrder
                             anchors.right: parent.right
                             anchors.rightMargin: Spacing.xs
-                            anchors.verticalCenter: treeCount.verticalCenter
+                            anchors.verticalCenter: countLine.verticalCenter
                             text: objects.bySize ? "largest first" : "tree order"
                             font.pixelSize: Typography.captionSize
                             Accessible.name: text + (objects.bySize ? ", show in tree order" : ", show largest first")
                             onClicked: objects.bySize = !objects.bySize
                         }
                         Elided {
-                            id: treeCount
+                            id: countLine
                             x: Spacing.sm
                             width: sizeOrder.x - x - Spacing.xs
                             anchors.top: treeFilter.bottom
@@ -2443,7 +2461,7 @@ ApplicationWindow {
                         ListView {
                             id: treeView
                             anchors.fill: parent
-                            anchors.topMargin: Math.max(treeCount.y + treeCount.height, sizeOrder.y + sizeOrder.height) + Spacing.xxs
+                            anchors.topMargin: Math.max(countLine.y + countLine.height, sizeOrder.y + sizeOrder.height) + Spacing.xxs
                             clip: true
                             model: window.page === 3 ? treeRows : null
                             // Where it was scrolled to, kept while the
@@ -2465,6 +2483,13 @@ ApplicationWindow {
                                 required property real size
                                 width: ListView.view.width
                                 height: objects.rowHeight
+                                // Read as the row, so it says its place. What
+                                // the row shows, so two Texts are told apart
+                                // as they are by eye.
+                                Accessible.role: Accessible.ListItem
+                                Accessible.name: ident ? kind + "#" + ident
+                                    : kind + (oname ? " \"" + oname + "\"" : "")
+                                      + (nodeHandle.visible ? " " + handle : "")
                                 color: objects.picked === node.handle ? Colors.surfaceSelected
                                      : nodeHover.containsMouse ? Colors.surfaceHover
                                      : "transparent"
@@ -2544,12 +2569,6 @@ ApplicationWindow {
                                     id: nodeHover
                                     anchors.fill: parent
                                     hoverEnabled: true
-                                    Accessible.role: Accessible.ListItem
-                                    // What the row shows, so two Texts are
-                                    // told apart as they are by eye.
-                                    Accessible.name: node.kind
-                                        + (node.ident ? " #" + node.ident : node.oname ? " \"" + node.oname + "\"" : "")
-                                        + (nodeHandle.visible ? " " + node.handle : "")
                                     onClicked: objects.pick(node.handle,
                                                             node.kind + (node.ident ? "#" + node.ident : ""))
                                 }
@@ -2561,7 +2580,7 @@ ApplicationWindow {
                                     height: parent.height
                                     hoverEnabled: true
                                     Accessible.role: Accessible.Button
-                                    Accessible.name: (node.hidden >= 0 ? "Open " : "Close ") + nodeHover.Accessible.name
+                                    Accessible.name: (node.hidden >= 0 ? "Open " : "Close ") + node.Accessible.name
                                     onClicked: {
                                         if (node.hidden >= 0)
                                             objects.open(node.handle)
@@ -2642,276 +2661,293 @@ ApplicationWindow {
                             }
                             Rectangle { Layout.fillWidth: true; height: 1; color: Colors.separator }
 
-                            ListView {
+                            // The view with what it says while it has no rows over it.
+                            Item {
                                 Layout.fillWidth: true
                                 Layout.minimumWidth: 0
                                 Layout.fillHeight: true
-                                clip: true
-                                model: window.page === 3 ? objects.propRows : 0
-                                ScrollBar.vertical: ScrollBar {}
-                                delegate: Item {
-                                    id: prop
-                                    required property int index
-                                    readonly property var modelData: objects.props[index] || ({})
-                                    width: ListView.view.width
-                                    // The value and its badge share the line
-                                    // while the value has room for a few
-                                    // words; else the badge goes below it,
-                                    // so that neither is drawn over the other.
-                                    readonly property bool stacked: width - valueBox.x - chips.width - 12 < 96
-                                    height: stacked ? 60 : 36
-                                    readonly property bool edited: modelData.assigned_by === "devtools"
-                                    readonly property bool fixed: modelData.read_only === true
-                                    readonly property bool boolean: modelData.type === "bool"
-                                    readonly property bool held: modelData.items !== undefined || modelData.handle !== undefined
-                                    readonly property bool editable: !fixed && !boolean && !held
-                                    // A row is text and frames until its value
-                                    // is typed in: a field is made for that and
-                                    // let go after, as a screenful of fields
-                                    // costs more to make than a frame has.
-                                    property bool typing: false
-                                    Rectangle {
-                                        anchors.fill: parent
-                                        color: prop.index % 2 ? Colors.canvas : "transparent"
-                                    }
-                                    Item {
-                                        id: line
-                                        width: parent.width
-                                        height: 36
-                                    }
-                                    Elided {
-                                        id: propName
-                                        x: 6
-                                        width: Math.max(72, Math.min(130, prop.width * 0.3))
-                                        anchors.verticalCenter: line.verticalCenter
-                                        text: prop.modelData.name || ""
-                                        color: Colors.text
-                                        elide: Text.ElideRight
-                                    }
-                                    Elided {
-                                        id: propType
-                                        anchors.left: propName.right
-                                        anchors.verticalCenter: line.verticalCenter
-                                        width: 60
-                                        text: prop.modelData.type || ""
-                                        color: Colors.textMuted
-                                        font.pixelSize: Typography.captionSize
-                                        elide: Text.ElideRight
-                                    }
-                                    // A value that can be changed is framed, so
-                                    // it reads apart from one that cannot.
-                                    Rectangle {
-                                        id: valueBox
-                                        anchors.left: propType.right
-                                        anchors.right: parent.right
-                                        anchors.rightMargin: prop.stacked ? 4 : chips.width + 12
-                                        anchors.verticalCenter: line.verticalCenter
-                                        height: 28
-                                        radius: 5
-                                        // What does not fit is cut at the frame,
-                                        // never drawn past it.
-                                        clip: true
-                                        color: "transparent"
-                                        border.color: !prop.editable ? "transparent"
-                                            : valueArea.containsMouse ? Colors.textMuted : Colors.separator
+                                ListView {
+                                    id: propList
+                                    anchors.fill: parent
+                                    clip: true
+                                    model: window.page === 3 ? objects.propRows : 0
+                                    ScrollBar.vertical: ScrollBar {}
+                                    delegate: Item {
+                                        id: prop
+                                        required property int index
+                                        readonly property var modelData: objects.props[index] || ({})
+                                        width: ListView.view.width
+                                        // The value and its badge share the line
+                                        // while the value has room for a few
+                                        // words; else the badge goes below it,
+                                        // so that neither is drawn over the other.
+                                        readonly property bool stacked: width - valueBox.x - chips.width - 12 < 96
+                                        height: stacked ? 60 : 36
+                                        readonly property bool edited: modelData.assigned_by === "devtools"
+                                        readonly property bool fixed: modelData.read_only === true
+                                        readonly property bool boolean: modelData.type === "bool"
+                                        readonly property bool held: modelData.items !== undefined || modelData.handle !== undefined
+                                        readonly property bool editable: !fixed && !boolean && !held
+                                        // A row is text and frames until its value
+                                        // is typed in: a field is made for that and
+                                        // let go after, as a screenful of fields
+                                        // costs more to make than a frame has.
+                                        property bool typing: false
+                                        Rectangle {
+                                            anchors.fill: parent
+                                            color: prop.index % 2 ? Colors.canvas : "transparent"
+                                        }
+                                        Item {
+                                            id: line
+                                            width: parent.width
+                                            height: 36
+                                        }
                                         Elided {
-                                            anchors.left: parent.left
-                                            anchors.leftMargin: prop.editable ? 6 : 0
-                                            anchors.right: parent.right
-                                            anchors.rightMargin: Spacing.xs
-                                            anchors.verticalCenter: parent.verticalCenter
-                                            visible: !prop.typing && !prop.boolean
-                                            text: prop.modelData.value === null && !prop.editable ? "—"
-                                                : objects.valueText(prop.modelData.value)
-                                            color: prop.modelData.handle !== undefined ? Colors.link : Colors.text
+                                            id: propName
+                                            x: 6
+                                            width: Math.max(72, Math.min(130, prop.width * 0.3))
+                                            anchors.verticalCenter: line.verticalCenter
+                                            text: prop.modelData.name || ""
+                                            color: Colors.text
                                             elide: Text.ElideRight
                                         }
-                                        // A check for a value that is true or false.
-                                        Loader {
-                                            active: prop.boolean
-                                            anchors.verticalCenter: parent.verticalCenter
-                                            sourceComponent: check
+                                        Elided {
+                                            id: propType
+                                            anchors.left: propName.right
+                                            anchors.verticalCenter: line.verticalCenter
+                                            width: 60
+                                            text: prop.modelData.type || ""
+                                            color: Colors.textMuted
+                                            font.pixelSize: Typography.captionSize
+                                            elide: Text.ElideRight
                                         }
-                                        Component {
-                                            id: check
-                                            Row {
-                                                spacing: 8
-                                                Accessible.role: Accessible.CheckBox
-                                                Accessible.name: prop.modelData.name || ""
-                                                Accessible.checked: prop.modelData.value === "true"
-                                                Rectangle {
-                                                    anchors.verticalCenter: parent.verticalCenter
-                                                    width: 16; height: 16; radius: 4
-                                                    color: prop.modelData.value === "true" && !prop.fixed ? Colors.accent : "transparent"
-                                                    border.color: prop.modelData.value === "true" && !prop.fixed ? Colors.accent
-                                                        : valueArea.containsMouse ? Colors.textMuted : Colors.separator
+                                        // A value that can be changed is framed, so
+                                        // it reads apart from one that cannot.
+                                        Rectangle {
+                                            id: valueBox
+                                            anchors.left: propType.right
+                                            anchors.right: parent.right
+                                            anchors.rightMargin: prop.stacked ? 4 : chips.width + 12
+                                            anchors.verticalCenter: line.verticalCenter
+                                            height: 28
+                                            radius: 5
+                                            // What does not fit is cut at the frame,
+                                            // never drawn past it.
+                                            clip: true
+                                            color: "transparent"
+                                            border.color: !prop.editable ? "transparent"
+                                                : valueArea.containsMouse ? Colors.textMuted : Colors.separator
+                                            Elided {
+                                                anchors.left: parent.left
+                                                anchors.leftMargin: prop.editable ? 6 : 0
+                                                anchors.right: parent.right
+                                                anchors.rightMargin: Spacing.xs
+                                                anchors.verticalCenter: parent.verticalCenter
+                                                visible: !prop.typing && !prop.boolean
+                                                text: prop.modelData.value === null && !prop.editable ? "—"
+                                                    : objects.valueText(prop.modelData.value)
+                                                color: prop.modelData.handle !== undefined ? Colors.link : Colors.text
+                                                elide: Text.ElideRight
+                                            }
+                                            // A check for a value that is true or false.
+                                            Loader {
+                                                active: prop.boolean
+                                                anchors.verticalCenter: parent.verticalCenter
+                                                sourceComponent: check
+                                            }
+                                            Component {
+                                                id: check
+                                                Row {
+                                                    spacing: 8
+                                                    Accessible.role: Accessible.CheckBox
+                                                    Accessible.name: prop.modelData.name || ""
+                                                    Accessible.checked: prop.modelData.value === "true"
+                                                    Rectangle {
+                                                        anchors.verticalCenter: parent.verticalCenter
+                                                        width: 16; height: 16; radius: 4
+                                                        color: prop.modelData.value === "true" && !prop.fixed ? Colors.accent : "transparent"
+                                                        border.color: prop.modelData.value === "true" && !prop.fixed ? Colors.accent
+                                                            : valueArea.containsMouse ? Colors.textMuted : Colors.separator
+                                                        Text {
+                                                            anchors.centerIn: parent
+                                                            width: parent.width - 2 * Spacing.md
+                                                            horizontalAlignment: Text.AlignHCenter
+                                                            wrapMode: Text.Wrap
+                                                            visible: prop.modelData.value === "true"
+                                                            text: "✓"
+                                                            color: prop.fixed ? Colors.textMuted : Colors.canvas
+                                                            font.pixelSize: Typography.captionSize
+                                                            font.bold: true
+                                                        }
+                                                    }
                                                     Text {
-                                                        anchors.centerIn: parent
-                                                        width: parent.width - 2 * Spacing.md
-                                                        horizontalAlignment: Text.AlignHCenter
-                                                        wrapMode: Text.Wrap
-                                                        visible: prop.modelData.value === "true"
-                                                        text: "✓"
-                                                        color: prop.fixed ? Colors.textMuted : Colors.canvas
-                                                        font.pixelSize: Typography.captionSize
-                                                        font.bold: true
+                                                        anchors.verticalCenter: parent.verticalCenter
+                                                        text: prop.modelData.value === null ? "" : String(prop.modelData.value)
+                                                        color: Colors.text
                                                     }
                                                 }
-                                                Text {
-                                                    anchors.verticalCenter: parent.verticalCenter
-                                                    text: prop.modelData.value === null ? "" : String(prop.modelData.value)
-                                                    color: Colors.text
-                                                }
-                                            }
-                                        }
-                                        MouseArea {
-                                            id: valueArea
-                                            anchors.fill: parent
-                                            enabled: objects.current && !prop.typing && (prop.editable || prop.modelData.handle !== undefined
-                                                                                          || (prop.boolean && !prop.fixed))
-                                            hoverEnabled: enabled
-                                            cursorShape: prop.editable ? Qt.IBeamCursor : Qt.PointingHandCursor
-                                            // The check below speaks for a true or false value.
-                                            Accessible.ignored: prop.boolean
-                                            Accessible.role: Accessible.Button
-                                            Accessible.name: prop.modelData.name || ""
-                                            Accessible.description: objects.valueText(prop.modelData.value)
-                                            onClicked: {
-                                                if (prop.modelData.handle !== undefined)
-                                                    objects.pick(prop.modelData.handle, prop.modelData.value)
-                                                else if (prop.boolean)
-                                                    objects.edit(prop.modelData.name, "bool", prop.modelData.value !== "true")
-                                                else
-                                                    prop.typing = true
-                                            }
-                                        }
-                                        Loader {
-                                            anchors.fill: parent
-                                            active: prop.typing
-                                            // Focus is given once the click that
-                                            // made the field is over.
-                                            onLoaded: {
-                                                objects.editing = prop.modelData.name
-                                                Qt.callLater(function() {
-                                                    if (!item)
-                                                        return
-                                                    item.forceActiveFocus()
-                                                    item.selectAll()
-                                                })
-                                            }
-                                            // The Loader's focus, not the field's:
-                                            // a Loader is a focus scope, so the
-                                            // field keeps its focus inside it
-                                            // when another value's field takes
-                                            // focus. Not active focus either,
-                                            // which the window losing activation
-                                            // takes.
-                                            onFocusChanged: if (!focus && prop.typing) prop.done()
-                                            sourceComponent: TextField {
-                                                id: field
-                                                topPadding: 4
-                                                bottomPadding: 4
-                                                leftPadding: Spacing.xs
-                                                clip: true
-                                                color: Colors.text
-                                                // Named as the value it takes
-                                                // the place of, so that what
-                                                // pressed that value finds it.
-                                                Accessible.name: prop.modelData.name || ""
-                                                background: Rectangle {
-                                                    radius: 5
-                                                    color: Colors.canvas
-                                                    border.color: Colors.accent
-                                                }
-                                                // A bound value is typed in as the
-                                                // expression it is bound to.
-                                                text: prop.modelData.expression !== undefined
-                                                    ? "=" + prop.modelData.expression
-                                                    : objects.valueText(prop.modelData.value)
-                                                onAccepted: {
-                                                    var name = prop.modelData.name
-                                                    var typed = text
-                                                    prop.done()
-                                                    if (typed.charAt(0) === "=")
-                                                        objects.bind(name, typed.substring(1))
-                                                    else
-                                                        objects.edit(name, prop.modelData.type,
-                                                                     objects.typed(prop.modelData.type, typed))
-                                                }
-                                                Keys.onEscapePressed: prop.done()
-                                            }
-                                        }
-                                    }
-                                    // The field is let go once its handler is over.
-                                    function done() {
-                                        if (objects.editing === modelData.name)
-                                            objects.editing = ""
-                                        Qt.callLater(function() { prop.typing = false })
-                                    }
-                                    Row {
-                                        id: chips
-                                        anchors.right: parent.right
-                                        anchors.rightMargin: 4
-                                        y: prop.stacked ? line.height : (line.height - height) / 2
-                                        spacing: Spacing.xs
-                                        Rectangle {
-                                            height: 20
-                                            width: chipText.implicitWidth + 14
-                                            radius: 10
-                                            anchors.verticalCenter: parent.verticalCenter
-                                            readonly property color tone: prop.edited ? Colors.warning
-                                                : prop.modelData.provenance === "bound" ? Colors.accent
-                                                : prop.modelData.provenance === "animated" ? Colors.info
-                                                : Colors.textMuted
-                                            color: Qt.rgba(tone.r, tone.g, tone.b, 0.16)
-                                            // That the binding is kept below an
-                                            // edit is told on hover: in the chip
-                                            // it left the value too narrow to
-                                            // click.
-                                            readonly property string kept: prop.edited && prop.modelData.binding_kept
-                                                ? "The binding is kept below the edit; Revert brings it back" : ""
-                                            Accessible.role: Accessible.StaticText
-                                            Accessible.name: chipText.text
-                                            Accessible.description: kept
-                                            ToolTip.text: kept
-                                            ToolTip.visible: kept !== "" && chipArea.containsMouse
-                                            ToolTip.delay: 400
-                                            Text {
-                                                id: chipText
-                                                anchors.centerIn: parent
-                                                text: prop.edited ? (prop.modelData.provenance === "bound" ? "rebound" : "edited")
-                                                    : prop.fixed ? (prop.modelData.provenance || "") + " · read-only"
-                                                    : prop.modelData.provenance || ""
-                                                color: parent.tone
-                                                font.pixelSize: Typography.captionSize
                                             }
                                             MouseArea {
-                                                id: chipArea
+                                                id: valueArea
                                                 anchors.fill: parent
-                                                enabled: parent.kept !== ""
+                                                enabled: objects.current && !prop.typing && (prop.editable || prop.modelData.handle !== undefined
+                                                                                              || (prop.boolean && !prop.fixed))
                                                 hoverEnabled: enabled
-                                            }
-                                        }
-                                        Text {
-                                            visible: prop.edited
-                                            anchors.verticalCenter: parent.verticalCenter
-                                            text: "Revert"
-                                            color: Colors.link
-                                            font.pixelSize: Typography.captionSize
-                                            font.underline: revertArea.containsMouse
-                                            MouseArea {
-                                                id: revertArea
-                                                anchors.fill: parent
-                                                anchors.margins: -4
-                                                enabled: objects.current && prop.edited
-                                                hoverEnabled: enabled
-                                                cursorShape: Qt.PointingHandCursor
+                                                cursorShape: prop.editable ? Qt.IBeamCursor : Qt.PointingHandCursor
+                                                // The check below speaks for a true or false value.
+                                                Accessible.ignored: prop.boolean
                                                 Accessible.role: Accessible.Button
-                                                Accessible.name: "Revert " + (prop.modelData.name || "")
-                                                onClicked: objects.revert(prop.modelData.name)
+                                                Accessible.name: prop.modelData.name || ""
+                                                Accessible.description: objects.valueText(prop.modelData.value)
+                                                onClicked: {
+                                                    if (prop.modelData.handle !== undefined)
+                                                        objects.pick(prop.modelData.handle, prop.modelData.value)
+                                                    else if (prop.boolean)
+                                                        objects.edit(prop.modelData.name, "bool", prop.modelData.value !== "true")
+                                                    else
+                                                        prop.typing = true
+                                                }
+                                            }
+                                            Loader {
+                                                anchors.fill: parent
+                                                active: prop.typing
+                                                // Focus is given once the click that
+                                                // made the field is over.
+                                                onLoaded: {
+                                                    objects.editing = prop.modelData.name
+                                                    Qt.callLater(function() {
+                                                        if (!item)
+                                                            return
+                                                        item.forceActiveFocus()
+                                                        item.selectAll()
+                                                    })
+                                                }
+                                                // The Loader's focus, not the field's:
+                                                // a Loader is a focus scope, so the
+                                                // field keeps its focus inside it
+                                                // when another value's field takes
+                                                // focus. Not active focus either,
+                                                // which the window losing activation
+                                                // takes.
+                                                onFocusChanged: if (!focus && prop.typing) prop.done()
+                                                sourceComponent: TextField {
+                                                    id: field
+                                                    topPadding: 4
+                                                    bottomPadding: 4
+                                                    leftPadding: Spacing.xs
+                                                    clip: true
+                                                    color: Colors.text
+                                                    // Named as the value it takes
+                                                    // the place of, so that what
+                                                    // pressed that value finds it.
+                                                    Accessible.name: prop.modelData.name || ""
+                                                    background: Rectangle {
+                                                        radius: 5
+                                                        color: Colors.canvas
+                                                        border.color: Colors.accent
+                                                    }
+                                                    // A bound value is typed in as the
+                                                    // expression it is bound to.
+                                                    text: prop.modelData.expression !== undefined
+                                                        ? "=" + prop.modelData.expression
+                                                        : objects.valueText(prop.modelData.value)
+                                                    onAccepted: {
+                                                        var name = prop.modelData.name
+                                                        var typed = text
+                                                        prop.done()
+                                                        if (typed.charAt(0) === "=")
+                                                            objects.bind(name, typed.substring(1))
+                                                        else
+                                                            objects.edit(name, prop.modelData.type,
+                                                                         objects.typed(prop.modelData.type, typed))
+                                                    }
+                                                    Keys.onEscapePressed: prop.done()
+                                                }
+                                            }
+                                        }
+                                        // The field is let go once its handler is over.
+                                        function done() {
+                                            if (objects.editing === modelData.name)
+                                                objects.editing = ""
+                                            Qt.callLater(function() { prop.typing = false })
+                                        }
+                                        Row {
+                                            id: chips
+                                            anchors.right: parent.right
+                                            anchors.rightMargin: 4
+                                            y: prop.stacked ? line.height : (line.height - height) / 2
+                                            spacing: Spacing.xs
+                                            Rectangle {
+                                                height: 20
+                                                width: chipText.implicitWidth + 14
+                                                radius: 10
+                                                anchors.verticalCenter: parent.verticalCenter
+                                                readonly property color tone: prop.edited ? Colors.warning
+                                                    : prop.modelData.provenance === "bound" ? Colors.accent
+                                                    : prop.modelData.provenance === "animated" ? Colors.info
+                                                    : Colors.textMuted
+                                                color: Qt.rgba(tone.r, tone.g, tone.b, 0.16)
+                                                // That the binding is kept below an
+                                                // edit is told on hover: in the chip
+                                                // it left the value too narrow to
+                                                // click.
+                                                readonly property string kept: prop.edited && prop.modelData.binding_kept
+                                                    ? "The binding is kept below the edit; Revert brings it back" : ""
+                                                Accessible.role: Accessible.StaticText
+                                                Accessible.name: chipText.text
+                                                Accessible.description: kept
+                                                ToolTip.text: kept
+                                                ToolTip.visible: kept !== "" && chipArea.containsMouse
+                                                ToolTip.delay: 400
+                                                Text {
+                                                    id: chipText
+                                                    anchors.centerIn: parent
+                                                    text: prop.edited ? (prop.modelData.provenance === "bound" ? "rebound" : "edited")
+                                                        : prop.fixed ? (prop.modelData.provenance || "") + " · read-only"
+                                                        : prop.modelData.provenance || ""
+                                                    color: parent.tone
+                                                    font.pixelSize: Typography.captionSize
+                                                }
+                                                MouseArea {
+                                                    id: chipArea
+                                                    anchors.fill: parent
+                                                    enabled: parent.kept !== ""
+                                                    hoverEnabled: enabled
+                                                }
+                                            }
+                                            Text {
+                                                visible: prop.edited
+                                                anchors.verticalCenter: parent.verticalCenter
+                                                text: "Revert"
+                                                color: Colors.link
+                                                font.pixelSize: Typography.captionSize
+                                                font.underline: revertArea.containsMouse
+                                                MouseArea {
+                                                    id: revertArea
+                                                    anchors.fill: parent
+                                                    anchors.margins: -4
+                                                    enabled: objects.current && prop.edited
+                                                    hoverEnabled: enabled
+                                                    cursorShape: Qt.PointingHandCursor
+                                                    Accessible.role: Accessible.Button
+                                                    Accessible.name: "Revert " + (prop.modelData.name || "")
+                                                    onClicked: objects.revert(prop.modelData.name)
+                                                }
                                             }
                                         }
                                     }
+                                }
+                                Text {
+                                    anchors.centerIn: parent
+                                    width: parent.width - 24
+                                    horizontalAlignment: Text.AlignHCenter
+                                    wrapMode: Text.Wrap
+                                    visible: propList.count === 0
+                                    Accessible.role: Accessible.StaticText
+                                    Accessible.name: text
+                                    text: objects.picked === "" ? "Pick an object in the tree to see its properties"
+                                                                : "It has no properties"
+                                    color: Colors.textMuted
                                 }
                             }
                             // The bindings, each with what it read and
@@ -3264,7 +3300,7 @@ ApplicationWindow {
                                     anchors.fill: parent
                                     color: entry.index % 2 ? Colors.canvas : "transparent"
                                 }
-                                Text {
+                                Marked {
                                     x: 6
                                     width: 64
                                     height: window.row(24)
@@ -3290,7 +3326,9 @@ ApplicationWindow {
                                     elide: Text.ElideRight
                                     font.pixelSize: Typography.captionSize
                                 }
-                                Text {
+                                // What a wrapped message still cuts off is in
+                                // its tool tip and description.
+                                Elided {
                                     id: entryMessage
                                     x: entry.narrow ? 6 : 200
                                     y: entry.narrow ? 24 : 0
@@ -3307,7 +3345,7 @@ ApplicationWindow {
                                     font.family: window.mono
                                     font.pixelSize: Typography.captionSize
                                 }
-                                Text {
+                                Elided {
                                     x: entry.narrow ? 200 : entry.width - 6 - 160
                                     width: entry.narrow ? entry.width - 200 - 6 : 160
                                     height: window.row(24)
@@ -3713,11 +3751,16 @@ ApplicationWindow {
                     contentHeight: Math.max(height, supervision.implicitHeight)
                     interactive: contentHeight > height
                     boundsBehavior: Flickable.StopAtBounds
-                    ScrollBar.vertical: ScrollBar {}
+                    // Shown only when the page scrolls, and then beside the
+                    // page, so it never lies over the lists' own bars.
+                    ScrollBar.vertical: ScrollBar {
+                        id: supervisionBar
+                        visible: supervisionScroll.interactive
+                    }
 
                     ColumnLayout {
                         id: supervision
-                        width: supervisionScroll.width
+                        width: supervisionScroll.width - (supervisionBar.visible ? supervisionBar.width : 0)
                         height: supervisionScroll.contentHeight
                         spacing: Spacing.xs
                         // Row by row, as the mailboxes are: a row whose
@@ -3881,6 +3924,9 @@ ApplicationWindow {
                                     required property string handle
                                     width: ListView.view.width
                                     height: supTable.rowHeight
+                                    // Read as the row, so it says its place.
+                                    Accessible.role: handle !== "" ? Accessible.ListItem : Accessible.Row
+                                    Accessible.name: name
                                     color: supHover.containsMouse ? Colors.surfaceSelected
                                          : index % 2 ? Colors.canvas : "transparent"
                                     Flow {
@@ -3936,8 +3982,6 @@ ApplicationWindow {
                                         anchors.fill: parent
                                         hoverEnabled: srow.handle !== ""
                                         enabled: srow.handle !== ""
-                                        Accessible.role: enabled ? Accessible.ListItem : Accessible.Row
-                                        Accessible.name: srow.name
                                         onClicked: supervision.show(srow.handle, srow.name)
                                     }
                                 }
@@ -3979,13 +4023,14 @@ ApplicationWindow {
                                     readonly property bool open: supervision.opened === seq
                                     width: ListView.view.width
                                     height: 52 + (open ? stackText.implicitHeight + 6 : 0)
+                                    // Read as the row, so it says its place.
+                                    Accessible.role: depth > 0 ? Accessible.ListItem : Accessible.Row
+                                    Accessible.name: fault + ": " + message
                                     radius: 6
                                     color: index % 2 ? Colors.canvas : "transparent"
                                     MouseArea {
                                         anchors.fill: parent
                                         enabled: frow.depth > 0
-                                        Accessible.role: enabled ? Accessible.ListItem : Accessible.Row
-                                        Accessible.name: frow.fault + ": " + frow.message
                                         onClicked: supervision.opened = frow.open ? -1 : frow.seq
                                     }
                                     Column {
@@ -4459,14 +4504,13 @@ ApplicationWindow {
                                     font.family: window.mono
                                     font.pixelSize: Typography.captionSize
                                 }
-                                Text {
+                                Marked {
                                     x: frameRow.narrow ? 136 : 216
                                     width: frameRow.narrow ? Math.max(0, frameRow.width - 6 - 70 - 10 - 136) : 140
                                     height: window.row(24)
                                     verticalAlignment: Text.AlignVCenter
                                     text: frameRow.woke === "" ? "—" : frameRow.woke
-                                    color: timeline.wokeTone(frameRow.woke)
-                                    elide: Text.ElideRight
+                                    tone: frameRow.woke === "" ? "transparent" : timeline.wokeTone(frameRow.woke)
                                     font.pixelSize: Typography.captionSize
                                 }
                                 Text {
@@ -4715,8 +4759,8 @@ ApplicationWindow {
                         ListModel { id: typeRows }
                         ListModel { id: windowRows }
 
-                        // In one row while it fits, the controls at its end;
-                        // wrapped onto more where it does not.
+                        // In one row while it fits, wrapped onto more where it
+                        // does not; the sidebar\'s Refresh loads it again.
                         Flow {
                             id: memoryHead
                             Layout.fillWidth: true
@@ -4729,7 +4773,7 @@ ApplicationWindow {
                                 Accessible.role: Accessible.Heading
                                 text: "Memory"; color: Colors.text; font.pixelSize: Typography.titleSize; font.bold: true
                             }
-                            Text {
+                            Elided {
                                 width: Math.min(implicitWidth, memoryHead.width)
                                 height: window.headHeight
                                 verticalAlignment: Text.AlignVCenter
@@ -4745,15 +4789,6 @@ ApplicationWindow {
                                            + " not attributed (" + Math.round(memory.last.reconciled.not_attributed_share * 100) + " %)"
                                          : "")
                                 color: Colors.textMuted
-                            }
-                            Item {
-                                id: memoryGap
-                                width: window.spare(memoryHead, memoryGap)
-                                height: 1
-                            }
-                            ToolButton {
-                                text: "Refresh"
-                                onClicked: memory.load()
                             }
                         }
 
@@ -4881,7 +4916,7 @@ ApplicationWindow {
                                                 id: mapRow
                                                 required property var modelData
                                                 spacing: 8
-                                                Accessible.role: enabled ? Accessible.ListItem : Accessible.Row
+                                                Accessible.role: Accessible.Row
                                                 Accessible.name: modelData.label + ", " + window.bytes(modelData.bytes)
                                                 Elided {
                                                     width: half.width - 88
@@ -4926,7 +4961,7 @@ ApplicationWindow {
                                         required property string tone
                                         required property real bytes
                                         spacing: Spacing.xs
-                                        Accessible.role: enabled ? Accessible.ListItem : Accessible.Row
+                                        Accessible.role: Accessible.Row
                                         Accessible.name: name + ", " + window.bytes(bytes)
                                         Elided { width: 120; text: partRow.name; color: Colors.text; font.pixelSize: Typography.captionSize }
                                         Elided {
@@ -4983,7 +5018,7 @@ ApplicationWindow {
                                     // another, it has a line of its own below.
                                     readonly property bool narrow: width - 370 < 120
                                     height: narrow ? 34 : 22
-                                    Accessible.role: enabled ? Accessible.ListItem : Accessible.Row
+                                    Accessible.role: Accessible.Row
                                     Accessible.name: type + ", " + count + (count === 1 ? " object, " : " objects, ") + window.bytes(bytes)
                                     Rectangle {
                                         anchors.fill: parent
@@ -5156,8 +5191,8 @@ ApplicationWindow {
                                    "model-edited")
                     }
 
-                    // In one row while it fits, the controls at its end;
-                    // wrapped onto more where it does not.
+                    // In one row while it fits, wrapped onto more where it
+                    // does not; the sidebar\'s Refresh loads it again.
                     Flow {
                         id: modelsHead
                         Layout.fillWidth: true
@@ -5177,15 +5212,6 @@ ApplicationWindow {
                             elide: Text.ElideRight
                             text: models.list.length + (models.list.length === 1 ? " model" : " models")
                             color: Colors.textMuted
-                        }
-                        Item {
-                            id: modelsGap
-                            width: window.spare(modelsHead, modelsGap)
-                            height: 1
-                        }
-                        ToolButton {
-                            text: "Refresh"
-                            onClicked: models.load()
                         }
                     }
 
@@ -5222,11 +5248,11 @@ ApplicationWindow {
                                     readonly property string name: modelData.owned_by_view
                                         ? modelData.type + " of " + (modelData.object_name ? "\"" + modelData.object_name + "\"" : modelData.model)
                                         : modelData.type + (modelData.object_name ? " \"" + modelData.object_name + "\"" : "")
-                                    // The view it is shown by, or what has it.
-                                    readonly property var view: modelData.shown_by && modelData.shown_by.length > 0
-                                        ? modelData.shown_by[0] : null
                                     width: ListView.view.width
                                     height: 54
+                                    // On the row, so that it says its place in the list.
+                                    Accessible.role: Accessible.ListItem
+                                    Accessible.name: name + ", " + modelData.count + " rows"
                                     radius: 6
                                     color: models.picked === modelData.model ? Colors.surfaceSelected : "transparent"
                                     Column {
@@ -5251,7 +5277,7 @@ ApplicationWindow {
                                             font.pixelSize: Typography.captionSize
                                         }
                                         Elided {
-                                            width: parent.width - viewLink.width - 8
+                                            width: parent.width
                                             elide: Text.ElideRight
                                             text: (modelRow.modelData.shown_by || []).length === 0 ? "shown by no view"
                                                   : "shown by " + modelRow.modelData.shown_by.map(function(v) { return v.name }).join(", ")
@@ -5261,31 +5287,7 @@ ApplicationWindow {
                                     }
                                     MouseArea {
                                         anchors.fill: parent
-                                        Accessible.role: Accessible.ListItem
-                                        Accessible.name: modelRow.name + ", " + modelRow.modelData.count + " rows"
                                         onClicked: models.open(modelRow.modelData.model)
-                                    }
-                                    // Over the row: opens the view on the Objects page.
-                                    Text {
-                                        id: viewLink
-                                        anchors.right: parent.right
-                                        anchors.rightMargin: 8
-                                        anchors.bottom: parent.bottom
-                                        anchors.bottomMargin: Spacing.xs
-                                        visible: modelRow.view !== null
-                                        text: "view ›"
-                                        color: Colors.link
-                                        font.pixelSize: Typography.captionSize
-                                        font.underline: viewHover.containsMouse
-                                        MouseArea {
-                                            id: viewHover
-                                            anchors.fill: parent
-                                            anchors.margins: -4
-                                            hoverEnabled: true
-                                            Accessible.role: Accessible.Link
-                                            Accessible.name: "open " + (modelRow.view ? modelRow.view.name : "") + " on Objects"
-                                            onClicked: models.reveal(modelRow.view.view, modelRow.view.name)
-                                        }
                                     }
                                 }
                             }
@@ -5892,7 +5894,7 @@ ApplicationWindow {
                                         // too narrow to have it beside the rest.
                                         readonly property bool narrow: width < 560
                                         height: narrow ? 40 : 24
-                                        Accessible.role: enabled ? Accessible.ListItem : Accessible.Row
+                                        Accessible.role: detailed ? Accessible.ListItem : Accessible.Row
                                         Accessible.name: "wake " + seq + ", woke by " + (causes === "" ? "nothing known" : causes)
                                                          + ", led to " + ledTo
                                         Rectangle {
@@ -6027,7 +6029,7 @@ ApplicationWindow {
                                         width: ListView.view.width
                                         height: 18
                                         spacing: Spacing.xs
-                                        Accessible.role: enabled ? Accessible.ListItem : Accessible.Row
+                                        Accessible.role: Accessible.Row
                                         Accessible.name: modelData.kind + " " + modelData.what
                                         Elided {
                                             width: 70 + oneRow.modelData.depth * 12
@@ -6057,11 +6059,13 @@ ApplicationWindow {
                                 }
                             }
 
-                            // What wakes it next.
+                            // What wakes it next. Stacked, it is no taller
+                            // than the page shows at once, so that the
+                            // page's end shows it whole, its heading too.
                             Rectangle {
                                 Layout.preferredWidth: wakesBody.narrow ? -1 : wakesBody.dueWidth
                                 Layout.fillWidth: wakesBody.narrow
-                                Layout.preferredHeight: wakesBody.narrow ? 140 : -1
+                                Layout.preferredHeight: wakesBody.narrow ? Math.max(60, Math.min(140, wakesScroll.height)) : -1
                                 Layout.fillHeight: !wakesBody.narrow
                                 radius: 9
                                 color: Colors.surfaceRaised
@@ -6085,41 +6089,50 @@ ApplicationWindow {
                                     model: window.page === 10 ? wakes.due : []
                                     ScrollBar.vertical: ScrollBar {}
                                     // A row with an object opens it on the Objects page.
-                                    delegate: Column {
+                                    delegate: Item {
                                         id: dueRow
                                         required property var modelData
                                         width: ListView.view.width
-                                        bottomPadding: Spacing.xs
-                                        Accessible.role: enabled ? Accessible.ListItem : Accessible.Row
+                                        height: dueLines.implicitHeight
+                                        Accessible.role: dueRow.modelData.handle !== "" ? Accessible.ListItem : Accessible.Row
                                         Accessible.name: dueRow.modelData.source + " " + dueRow.modelData.owner
-                                        Elided {
+                                        Column {
+                                            id: dueLines
                                             width: parent.width
-                                            elide: Text.ElideRight
-                                            text: dueRow.modelData.source + " · " + dueRow.modelData.owner
-                                            color: !dueRow.modelData.scheduled ? Colors.textMuted
-                                                   : dueRow.modelData.source === "timer" ? Colors.warning
-                                                   : dueRow.modelData.source === "animation" ? Colors.info
-                                                   : Colors.accent
-                                            font.pixelSize: Typography.captionSize
-                                            font.underline: dueHover.containsMouse
-                                            MouseArea {
-                                                id: dueHover
-                                                anchors.fill: parent
-                                                enabled: dueRow.modelData.handle !== ""
-                                                hoverEnabled: enabled
-                                                onClicked: {
-                                                    window.page = 3
-                                                    objects.load(true)
-                                                    objects.pick(dueRow.modelData.handle, dueRow.modelData.owner)
-                                                }
+                                            bottomPadding: Spacing.xs
+                                            Marked {
+                                                width: parent.width
+                                                text: dueRow.modelData.source + " · " + dueRow.modelData.owner
+                                                tone: !dueRow.modelData.scheduled ? "transparent"
+                                                      : dueRow.modelData.source === "timer" ? Colors.warning
+                                                      : dueRow.modelData.source === "animation" ? Colors.info
+                                                      : Colors.accent
+                                                color: dueRow.modelData.scheduled ? Colors.text : Colors.textMuted
+                                                font.pixelSize: Typography.captionSize
+                                                font.underline: dueHover.containsMouse
+                                            }
+                                            Elided {
+                                                width: parent.width
+                                                elide: Text.ElideRight
+                                                text: (dueRow.modelData.scheduled ? "" : "listens · ") + dueRow.modelData.detail
+                                                color: Colors.textMuted
+                                                font.pixelSize: Typography.captionSize
                                             }
                                         }
-                                        Elided {
-                                            width: parent.width
-                                            elide: Text.ElideRight
-                                            text: (dueRow.modelData.scheduled ? "" : "listens · ") + dueRow.modelData.detail
-                                            color: Colors.textMuted
-                                            font.pixelSize: Typography.captionSize
+                                        // The whole row is pressed, so a press of
+                                        // an assistive technology, at its middle,
+                                        // lands where the pointer's would.
+                                        MouseArea {
+                                            id: dueHover
+                                            anchors.fill: parent
+                                            enabled: dueRow.modelData.handle !== ""
+                                            hoverEnabled: enabled
+                                            cursorShape: Qt.PointingHandCursor
+                                            onClicked: {
+                                                window.page = 3
+                                                objects.load(true)
+                                                objects.pick(dueRow.modelData.handle, dueRow.modelData.owner)
+                                            }
                                         }
                                     }
                                 }

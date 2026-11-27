@@ -33,9 +33,9 @@ Feature: The observer's pages are chosen from the keyboard
     When the application is observed
     And the observer is given the keys "Tab Right Right Right"
     Then the observer has "role=tab[name=\"Objects\"][focused]"
-    And the observer does not have "role=listitem[name=\"Scenario\"]"
+    And the observer does not have "role=listitem[name~=\"^Scenario @\"]"
     When the observer is given the keys "Return"
-    Then the observer has "role=listitem[name=\"Scenario\"]"
+    Then the observer has "role=listitem[name~=\"^Scenario @\"]"
 
   Scenario: Left from the first tab is the last, and Space shows it
     When the application is observed
@@ -55,7 +55,7 @@ Feature: The observer's pages are chosen from the keyboard
     When the application is observed
     And the observer is given the keys "Tab Down Down Down Down Up"
     Then the observer has "role=tab[name=\"Objects\"][focused]"
-    And the observer does not have "role=listitem[name=\"Scenario\"]"
+    And the observer does not have "role=listitem[name~=\"^Scenario @\"]"
 
   Scenario Outline: Tab leaves the list forward from a tab not shown
     When the application is observed
@@ -77,4 +77,4 @@ Feature: The observer's pages are chosen from the keyboard
     And the observer is given the keys "Tab Down Down Down"
     Then the observer has "role=tab[name=\"Objects\"][focused]"
     When the observer is given the keys "Enter"
-    Then the observer has "role=listitem[name=\"Scenario\"]"
+    Then the observer has "role=listitem[name~=\"^Scenario @\"]"
