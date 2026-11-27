@@ -4,6 +4,8 @@
 //! reader finds in them (a dialog named by its title, the keyboard inside,
 //! Escape closing it) is in `features/platform/dialogs.feature`.
 
+use std::time::Duration;
+
 use ljos_a11y::{ColorScheme, SystemPrefs};
 use ljos_engine::{Engine, ObjectId};
 use ljos_quick::QuickScene;
@@ -11,8 +13,18 @@ use ljos_render::kurbo;
 use ljos_runtime::Time;
 use ljos_test::a11y::{Options, Report, audit};
 
+/// The turn budget the dialogs are held to on the machine's clock: one no
+/// runner misses. `health-turn-slow` is the one rule that reads a clock,
+/// and on a busy runner a debug build's first frame of a dialog can pass
+/// the default budget (119 ms against 100 ms on CI, #826), which says
+/// nothing about how the dialog is drawn. That its script is light is
+/// still judged, by `health-turn-over-budget`, which counts the script's
+/// work and so says the same on every machine.
+const TURN_BUDGET: Duration = Duration::from_secs(5);
+
 fn engine(scheme: ColorScheme) -> Engine {
     let e = Engine::new();
+    e.set_turn_budget(Some(TURN_BUDGET));
     ljos_quick::register(&e);
     ljos_controls::register(&e);
     ljos_quick::set_system_prefs(
