@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #MISE description="Measure the bench apps on earlier commits next to this checkout's: build each commit's ljos in a scratch clone, measure them all interleaved in one report in the headless sandbox, tabulate each metric per commit; report in target/bench-history"
 #MISE dir="{{config_root}}"
-#USAGE arg "<step>" help="build <rev…> | measure [rev…] | table | all <rev…>"
+#USAGE arg "<step>" help="build <rev…> | measure [rev…] | reload [rev…] | table | all <rev…>"
 #USAGE arg "[args]..." var=#true help="Revisions (build, measure, all), then options for every ljos bench run"
 set -euo pipefail
 # A regression shows as one commit's numbers set against its neighbours',
@@ -12,7 +12,9 @@ set -euo pipefail
 #                   commit in $BENCH_HISTORY_DIR/bin/<commit>/ljos. Run it
 #                   inside whatever caps a build on the machine.
 #   measure [rev…]  the bench apps on every built revision (or those named)
-#                   and on this checkout's ljos, one report, interleaved.
+#                   and on this checkout's ljos, one report, interleaved;
+#                   then hot reload on each.
+#   reload [rev…]   hot reload alone, on the same revisions.
 #   table           history.md beside the report: a column per revision.
 #   all <rev…>      the three in turn.
 #
@@ -24,6 +26,8 @@ set -euo pipefail
 . "$(dirname "$0")/../_lib/env.sh"
 root="$ljos_root"
 dir="${BENCH_HISTORY_DIR:-$(checkout_dir bench-history)}"
+# Absolute: the builds `cd` into the clone, and the manifests name files.
+dir="$(realpath -m -- "$dir")"
 step="${1:-}"
 [ $# -gt 0 ] && shift
 revs=()
@@ -31,7 +35,10 @@ opts=()
 # mise drops a `--`, so the options start at the first argument that
 # looks like one.
 while [ $# -gt 0 ]; do
-  if [ "$1" = -- ]; then shift; fi
+  if [ "$1" = -- ]; then
+    shift
+    continue
+  fi
   if [[ ${1:-} == -* ]]; then
     opts=("$@")
     break
@@ -61,11 +68,21 @@ commit_of() {
 build() {
   local src rev commit into sub
   [ ${#revs[@]} -gt 0 ] || die "bench:history build: name the revisions to build"
+  # One build at a time in a history directory: two would check different
+  # commits out in the one clone.
+  mkdir -p "$dir"
+  exec {lock}> "$dir/build.lock"
+  flock -n "$lock" || {
+    echo "bench:history: another build in $dir; waiting for it"
+    flock "$lock"
+  }
   src="$(clone)"
   for rev in "${revs[@]}"; do
     commit="$(commit_of "$rev")"
     into="$dir/bin/$commit"
-    if [ -x "$into/ljos" ]; then
+    # The commit file is written last, so a build stopped half-way is
+    # built again.
+    if [ -x "$into/ljos" ] && [ -f "$into/commit" ]; then
       echo "bench:history: $rev ($commit) already built"
       continue
     fi
@@ -88,18 +105,21 @@ build() {
     (cd "$src" && CARGO_TARGET_DIR="$dir/target" cargo build --quiet --release -p ljos_cli --bin ljos) ||
       die "bench:history: $rev did not build"
     mkdir -p "$into"
-    cp -p "$dir/target/release/ljos" "$into/ljos"
-    git -C "$root" show -s --format='%H %cI %s' "$commit" > "$into/commit"
+    cp -p "$dir/target/release/ljos" "$into/ljos.new"
+    mv -f "$into/ljos.new" "$into/ljos"
+    git -C "$root" show -s --format='%H %cI %s' "$commit" > "$into/commit.new"
+    mv -f "$into/commit.new" "$into/commit"
   done
 }
 
 case "$step" in
   build) build ;;
-  measure | table | all)
+  measure | reload | table | all)
     # shellcheck source-path=SCRIPTDIR source=../../scripts/bench-history.sh
     . "$root/scripts/bench-history.sh"
     case "$step" in
       measure) history_measure ;;
+      reload) history_reload_only ;;
       table) history_table ;;
       all)
         build
@@ -108,5 +128,5 @@ case "$step" in
         ;;
     esac
     ;;
-  *) die "bench:history: the step is build, measure, table or all, not '${step}'" ;;
+  *) die "bench:history: the step is build, measure, reload, table or all, not '${step}'" ;;
 esac
