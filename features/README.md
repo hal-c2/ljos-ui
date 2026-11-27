@@ -34,6 +34,7 @@ One directory per language or toolkit area, not per surface. Surfaces are tags.
 | `blocks/` | the module `Ljos.Blocks`: a `Slot` and the `Contribution`s it shows, and a `ShellLoader` that falls back when a shell does not work |
 | `design/` | the module `Ljos.Design`: its colours, motion, spacing and type, and the transitions and behaviours made of them |
 | `examples/` | the applications of `examples/`, loaded as they ship and driven by their controls |
+| `bench/` | the applications of `bench/` that the bench drives, loaded as they ship with small data of their own |
 | `parity/` | generated outlines (API ledger); never hand edited |
 
 ## Writing rules
@@ -159,6 +160,7 @@ Objects are named by `objectName`; `a/b` finds `b` below `a`. Properties may be 
 | `Given the files of the module Ljos.Design` | make the files `ljos design export` writes available in `Ljos/Design`, so that `import Ljos.Design` finds the module in the scenario's directory on either backend |
 | `Given the files of the module Ljos.Design with Spacing.unit edited to 5` | as `Given the files of the module Ljos.Design`, with the `unit` of `Spacing.qml` edited to that number, as an application that owns the files may do; below `edited/`, so a scenario imports them by their directory (`import "edited/Ljos/Design"`) and not the built-in module |
 | `Given the files of the example "smartwatch"` | make every file of `examples/smartwatch` available at its own path below the scenario's directory: its QML, scripts and `qmldir` files to load, anything else (models, pictures) beside them; nothing is created yet, so a scenario then loads its `Main.qml` |
+| `Given the files of the bench application "inbox"` | the same for `bench/inbox`, without its `data/` (what its generator writes there), so a scenario gives the data it is about |
 | `Given the translation file "X.ts":` + doc string | make the translations of a Qt Linguist file (doc string labelled `xml`) available for the language its `language` attribute names; give it before the QML |
 | `Given the translation file "X.po":` + doc string | make the `t` messages of a PO catalogue (doc string labelled `po`) available for the language its `Language:` header names, or else its file name; Ljós only |
 | `Given the application starts with the controls style "Kit"` | the Controls style the application starts with, as `QT_QUICK_CONTROLS_STYLE` chooses it: a built-in style's name, or a module of the scenario's own that is a custom style (a directory with a `qmldir`, given by `Given the file`); give it before the QML |
@@ -257,6 +259,7 @@ setter tries to write `depth` and logs the error it gets.
 | `When the window loses focus` / `When the window gains focus` | another window takes the keyboard, or gives it back; on `@desktop`, another client's window takes the compositor's focus, and the window gets it back |
 | `When the window is put out of sight` / `When the window is brought back into sight` | the compositor moves the window to a workspace it does not show, and so stops letting it draw; then shows that workspace (`@desktop` only) |
 | `Given the seat has no keyboard` | the seat has a pointer and no keyboard, from before the application starts (`@desktop`) |
+| `When the window is W by H pixels` | the window takes that size, for an application laid out for one larger than the scenario's 400 by 400, where nothing outside the window takes input (`@ljos-only`) |
 | `When the user touches X, Y` | touch at a position |
 | `When the user presses the pointer at X, Y` / `releases the pointer at X, Y` | the two halves of a click, for what happens while the button is held |
 | `When the user moves the pointer to X, Y` | move the pointer, with the button held if it was pressed and not released (a drag), without it otherwise (hover) |
