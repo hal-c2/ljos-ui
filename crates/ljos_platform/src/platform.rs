@@ -1259,12 +1259,33 @@ impl Platform {
     }
 }
 
-/// The program's file name without its extension.
+/// The program's file name without its extension. On Android every
+/// application is the system's `app_process64`, which the system then
+/// names by the application's id: that name is the application's.
 fn program_name() -> String {
+    #[cfg(target_os = "android")]
+    if let Some(id) = std::fs::read("/proc/self/cmdline")
+        .ok()
+        .and_then(|cmdline| process_name(&cmdline))
+    {
+        return id;
+    }
     std::env::current_exe()
         .ok()
         .and_then(|p| p.file_stem().map(|s| s.to_string_lossy().into_owned()))
         .unwrap_or_else(|| "ljos".to_owned())
+}
+
+/// The application's id in the name Android gives its process
+/// (`/proc/self/cmdline`): `dev.ljos.app`, or `dev.ljos.app:sync` for a
+/// process of its own the application runs. `None` before the system named
+/// it, while it is still the program's path.
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+fn process_name(cmdline: &[u8]) -> Option<String> {
+    let first = cmdline.split(|b| *b == 0).next()?;
+    let name = std::str::from_utf8(first).ok()?;
+    let id = name.split(':').next()?;
+    (!id.is_empty() && !id.contains('/')).then(|| id.to_owned())
 }
 
 /// The nearest object `obj` is declared in, itself first, that is an
@@ -1299,6 +1320,21 @@ mod tests {
 
     use super::*;
     use crate::fetch::Method;
+
+    #[test]
+    fn an_android_process_is_named_by_the_applications_id() {
+        assert_eq!(
+            process_name(b"dev.ljos.scenarios\0").as_deref(),
+            Some("dev.ljos.scenarios")
+        );
+        assert_eq!(
+            process_name(b"dev.ljos.scenarios:sync\0").as_deref(),
+            Some("dev.ljos.scenarios")
+        );
+        // Before the system names it, the process is still the program.
+        assert_eq!(process_name(b"/system/bin/app_process64\0-Xzygote\0"), None);
+        assert_eq!(process_name(b""), None);
+    }
 
     #[test]
     fn a_steady_stream_of_signals_does_not_hold_finish_up() {
