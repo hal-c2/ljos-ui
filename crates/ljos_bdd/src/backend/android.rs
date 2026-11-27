@@ -850,10 +850,9 @@ impl Drop for AndroidBackend {
             }
             if let Some((auto, user)) = &self.rotation {
                 let _ = phone.shell(&format!(
-                    "settings put system user_rotation {} && \
-                     settings put system accelerometer_rotation {}",
-                    quoted(user.trim()),
-                    quoted(auto.trim())
+                    "{} && {}",
+                    setting_restored("user_rotation", user),
+                    setting_restored("accelerometer_rotation", auto)
                 ));
             }
             // Only what the scenario made: the Downloads are the user's.
@@ -1601,6 +1600,16 @@ fn screens_kept(activities: &str, package: &str) -> usize {
     kept + usize::from(record.unwrap_or(false))
 }
 
+/// The command that puts a system setting back to what `settings get`
+/// read before the scenario changed it. A key that was unset reads
+/// `null`, and is deleted again rather than set to that word.
+fn setting_restored(key: &str, was: &str) -> String {
+    match was.trim() {
+        "null" | "" => format!("settings delete system {key}"),
+        was => format!("settings put system {key} {}", quoted(was)),
+    }
+}
+
 /// The bytes one of the application's trims gave back, from the line the
 /// shell logs for it (`short of memory: trimmed at …, N bytes given
 /// back`), as logcat writes it after its time, process and tag; `None` for
@@ -1973,7 +1982,7 @@ mod tests {
         BackendError, FORGET_EVENTS, Shown, abort_query, badge_in, clipboard_call, download_path,
         front_record, is_dont_keep, kept_permissions, not_idle, percent_decoded, permission_asked,
         permission_button, picker_shown, picture_size, quoted, scenario_dir, screen_nodes,
-        screens_kept, secrets_answer, secrets_call, seen_until, trimmed_bytes,
+        screens_kept, secrets_answer, secrets_call, seen_until, setting_restored, trimmed_bytes,
     };
     use serde_json::{Value, json};
 
@@ -2032,6 +2041,18 @@ mod tests {
         );
         assert_eq!(trimmed_bytes("touch slop 8 dp"), None);
         assert_eq!(trimmed_bytes("short of memory: trimmed at Critical"), None);
+    }
+
+    #[test]
+    fn a_setting_that_was_unset_is_deleted_again() {
+        assert_eq!(
+            setting_restored("user_rotation", "1\n"),
+            "settings put system user_rotation '1'"
+        );
+        assert_eq!(
+            setting_restored("user_rotation", "null\n"),
+            "settings delete system user_rotation"
+        );
     }
 
     #[test]
