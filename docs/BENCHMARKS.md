@@ -270,6 +270,38 @@ For each step, `report.json` has `runs[].steps[]` and `report.md` has a table fo
 Only the first load round's steps are kept. Without a compositor, the steps keep their timing but
 send nothing, and lag and settle are empty.
 
+## Ljós against its own past
+
+`mise run bench:history` measures earlier commits' `ljos` next to this checkout's, so a regression
+shows as one commit's numbers against its neighbours'.
+
+```sh
+mise run bench:history build <rev…>   # each revision's release ljos, once, in a scratch clone
+mise run bench:history measure        # every built revision and this checkout, one run each
+mise run bench:history table          # history.md: a column per revision, oldest first
+mise run bench:history all <rev…>     # the three in turn
+```
+
+The clone shares this checkout's objects and fetches its submodules from this checkout's copies, so
+an old revision builds offline. The commit a revision pins must be one that copy has fetched. Each
+build is kept under `bin/<commit>/ljos` and not made again. Run `build` inside whatever caps builds
+on the machine.
+
+`measure` gives every revision's `ljos` to one `ljos bench` run as a runtime of its own
+(`at-<commit>`, through the manifest's `"commands"`), beside `ljos` (this checkout), so the same
+harness measures them interleaved under one load. It makes two runs, as a run has one gesture:
+
+- the bench apps (`BENCH_HISTORY_APPS`, by default `minimal feed list1000`) under `--gesture
+  scroll`: startup, memory, idle CPU and wheel frames;
+- `bench/inbox` under its scripted session (`bench/inbox/session.json`): selection, 2 000 rows by
+  PageDown, search, typing in a validated field, saving, the theme, the language.
+
+Only the desktop profile is measured. `BENCH_DEFAULTS` replaces `--warm-up --repeat 3`. Options
+after `--` go to both runs. The reports are in `report/apps` and `report/inbox` under
+`BENCH_HISTORY_DIR` (by default the checkout's `bench-history` in the target). `table` writes the
+median of the repeats for each metric, its spread and the run count. A revision whose run did not
+end well shows its outcome instead.
+
 ## Noise
 
 Timings depend on the machine's load. Every run records the one-minute load average, and

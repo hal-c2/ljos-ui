@@ -30,6 +30,7 @@ bench|dry||release builds measured on Ljós and qml6 in the headless sandbox, mi
 bench:3d|dry||release builds measured on Ljós and qml6 in the headless sandbox, with the corpus's 3D apps
 bench:cross|dry||needs an aarch64 linker and a board's sysroot, which CI does not have
 bench:egui|dry||release builds measured on Ljós, qml6 and egui in the headless sandbox
+bench:history|dry|table|builds earlier commits' release ljos and measures them in the headless sandbox, an hour long
 bench:hot|dry|--check|needs valgrind, nm and the headless sandbox; --check says what a run would rewrite where they are
 bench:js|dry||a release ljos, valgrind and Qt's qmltestrunner, measured five times over
 build|run||
