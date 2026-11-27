@@ -340,7 +340,10 @@ jobs:
       - run: |
           echo "ANDROID_HOME=$HOME/android-sdk" >> "$GITHUB_ENV"
           echo "ANDROID_SDK_ROOT=$HOME/android-sdk" >> "$GITHUB_ENV"
+      # Its default packages name `tools`, which the SDK repository no longer has.
       - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
       - run: sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0"
       # r30, the NDK the vendored QuickJS bindings were generated with (android-bindings).
       - uses: nttld/setup-ndk@v1
