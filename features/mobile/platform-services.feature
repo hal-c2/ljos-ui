@@ -86,9 +86,13 @@ Feature: An application on a phone uses the system's services
     Then the property "opened" of "w" is true
     And the application is in the background
 
+  # As Qt's table for Android has them: the system's directories are the
+  # application's already, so no name of it is added below them.
   Scenario: The application's files are its own
     Then the property "data" of "w" is a directory of the application's own
+    And the property "data" of "w" is the application's "files" directory
     And the property "cache" of "w" is a directory of the application's own
+    And the property "cache" of "w" is the application's "cache" directory
 
   Scenario: A secret outlives the application's process
     When the application keeps the secret "s3cret" as "token" of "accounts"
