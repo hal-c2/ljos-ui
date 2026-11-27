@@ -135,6 +135,26 @@ fn disconnect_inspector(w: &mut LjosWorld) -> StepResult {
     w.each(|b| b.device()?.disconnect_inspector())
 }
 
+#[when("the developer connects to the inspector of the application started anew")]
+fn connect_inspector_anew(w: &mut LjosWorld) -> StepResult {
+    w.each(|b| b.device()?.connect_inspector_anew())
+}
+
+#[then("the port forwarded to the inspector before is forwarded no more")]
+fn last_forward_gone(w: &mut LjosWorld) -> StepResult {
+    w.each(|b| {
+        if b.device()?.inspector_forwarded()? {
+            Err(BackendError::Failed(
+                "the port the last connect forwarded, to the inspector of the process before, \
+                 is still forwarded to the phone"
+                    .into(),
+            ))
+        } else {
+            Ok(())
+        }
+    })
+}
+
 #[then("no port of this computer is forwarded to the inspector on the phone")]
 fn inspector_not_forwarded(w: &mut LjosWorld) -> StepResult {
     w.each(|b| {

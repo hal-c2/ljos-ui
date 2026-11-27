@@ -579,8 +579,19 @@ pub trait Device: Backend {
         ))
     }
 
-    /// Whether the port the developer's connect forwarded, as they
-    /// disconnected, is still forwarded to the phone.
+    /// The application is started anew, so that its inspector listens at
+    /// another port, and the developer connects to it again with the same
+    /// token file (`ljos android connect`): the forward the last connect
+    /// made leads nowhere now.
+    fn connect_inspector_anew(&mut self) -> Result<()> {
+        Err(BackendError::NotImplemented(
+            "connecting to the inspector of the application started anew",
+        ))
+    }
+
+    /// Whether the port the developer's last connect forwarded, as they
+    /// disconnected or connected to the application started anew, is
+    /// still forwarded to the phone.
     fn inspector_forwarded(&mut self) -> Result<bool> {
         Err(BackendError::NotImplemented(
             "the forwards of this computer to the phone",
