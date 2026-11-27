@@ -180,6 +180,10 @@ class Plans(unittest.TestCase):
             self.assertFalse(run(path)["phone"], path)
         self.assertTrue(run(mode="full")["phone"])
 
+    def test_a_change_that_builds_everything_also_runs_the_phone(self):
+        # A dependency or toolchain bump can compile and still break the app on a device.
+        self.assertTrue(run("Cargo.lock")["phone"])
+
     def test_the_web_crate_checks_the_web_build(self):
         self.assertTrue(run("crates/ljos_mcp_core/src/lib.rs")["wasm"])
 
