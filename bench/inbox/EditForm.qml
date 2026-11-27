@@ -170,13 +170,16 @@ Item {
 
     ComboBox {
         id: priority
+        objectName: "priority"
         x: 20
         y: 546
         width: 130
         height: 28
         Accessible.name: t`Priority`
         model: form.inbox.priorityNames()
-        currentIndex: form.priorityChoice
+        // Read with the model, so a model made again (a new language) shows
+        // the choice again instead of the first row.
+        currentIndex: priority.model !== undefined ? form.priorityChoice : 0
         onActivated: (index: number) => {
             form.priorityChoice = index
         }
@@ -184,14 +187,16 @@ Item {
 
     ComboBox {
         id: assignee
+        objectName: "assignee"
         x: 160
         y: 546
         width: 170
         height: 28
         Accessible.name: t`Assignee`
         model: form.inbox.assignees()
-        // Nobody until the people are gathered, then the one chosen.
-        currentIndex: form.assigneeChoice === "" ? 0 : form.inbox.people.indexOf(form.assigneeChoice) + 1
+        // Nobody until the people are gathered, then the one chosen; read
+        // with the model, as the priority's is.
+        currentIndex: assignee.model !== undefined && form.assigneeChoice !== "" ? form.inbox.people.indexOf(form.assigneeChoice) + 1 : 0
         onActivated: (index: number) => {
             form.assigneeChoice = index === 0 ? "" : form.inbox.people[index - 1] ?? ""
         }
