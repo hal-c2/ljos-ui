@@ -246,11 +246,11 @@ impl Default for Application {
     }
 }
 
-/// What the application is called before anything names it.
+/// What the application is called before anything names it: the
+/// platform's name for it, so that on Android it is the application's id
+/// rather than the system's `app_process64`.
 fn program_name() -> Atom {
-    let exe = std::env::current_exe().ok();
-    let stem = exe.as_deref().and_then(|p| p.file_stem()?.to_str());
-    Atom::from(stem.unwrap_or("ljos"))
+    Atom::from(ljos_platform::program_name().as_str())
 }
 
 /// The host says what command line the application was started with,
