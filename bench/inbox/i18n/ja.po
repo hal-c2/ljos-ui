@@ -1,0 +1,239 @@
+msgid ""
+msgstr ""
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Language: ja\n"
+"X-Generator: ljos i18n extract\n"
+
+#: ../Sidebar.qml:30
+msgid "Assigned to me"
+msgstr "自分の担当"
+
+#: ../Conversation.qml:114 ../EditForm.qml:163
+msgid "Assignee"
+msgstr "担当者"
+
+#: ../EditForm.qml:142
+msgid "At most 10 000 characters"
+msgstr "10,000 文字以内で入力してください"
+
+#: ../EditForm.qml:81
+msgid "At most 120 characters"
+msgstr "120 文字以内で入力してください"
+
+#: ../EditForm.qml:114
+msgid "At most 6 tags"
+msgstr "タグは 6 個までです"
+
+#: ../EditForm.qml:173
+msgid "Cancel"
+msgstr "キャンセル"
+
+#: ../SettingsDialog.qml:138
+msgid "Close"
+msgstr "閉じる"
+
+#: ../Conversation.qml:34
+msgid "Close issue"
+msgstr "課題をクローズ"
+
+#: ../Conversation.qml:101 ../Sidebar.qml:52
+msgid "Closed"
+msgstr "クローズ"
+
+#: ../Detail.qml:25
+msgid "Conversation"
+msgstr "会話"
+
+#: ../Store.qml:46
+msgid "Created"
+msgstr "作成日"
+
+#: ../Insights.qml:26
+msgid "Created per week"
+msgstr "週ごとの作成数"
+
+#: ../SettingsDialog.qml:95 ../TopBar.qml:82
+msgid "Dark"
+msgstr "ダーク"
+
+#: ../EditForm.qml:129 ../EditForm.qml:130
+msgid "Description"
+msgstr "説明"
+
+#: ../Detail.qml:29
+msgid "Edit"
+msgstr "編集"
+
+#: ../Store.qml:50
+msgid "High"
+msgstr "高"
+
+#: ../Sidebar.qml:19 ../TopBar.qml:21
+msgid "Inbox"
+msgstr "受信トレイ"
+
+#: ../Detail.qml:33
+msgid "Insights"
+msgstr "分析"
+
+#: ../IssueList.qml:50
+msgid "Issues"
+msgstr "課題"
+
+#: ../Sidebar.qml:64 ../Sidebar.qml:79
+msgid "Labels"
+msgstr "ラベル"
+
+#: ../SettingsDialog.qml:36
+msgid "Language"
+msgstr "言語"
+
+#: ../SettingsDialog.qml:84 ../TopBar.qml:82
+msgid "Light"
+msgstr "ライト"
+
+#: ../Store.qml:50
+msgid "Low"
+msgstr "低"
+
+#: ../SettingsDialog.qml:115
+msgid "Motion"
+msgstr "動き"
+
+#: ../TopBar.qml:71
+msgid "New issue"
+msgstr "新しい課題"
+
+#: ../IssueList.qml:109
+msgid "No issues match"
+msgstr "一致する課題はありません"
+
+#: ../Conversation.qml:111 ../Store.qml:54
+msgid "Nobody"
+msgstr "未割り当て"
+
+#: ../Store.qml:50
+msgid "Normal"
+msgstr "中"
+
+#: ../Conversation.qml:101
+msgid "Open"
+msgstr "オープン"
+
+#: ../Insights.qml:121
+msgid "Open: {open} · Closed: {closed}"
+msgstr "オープン: {open} · クローズ: {closed}"
+
+#: ../EditForm.qml:153 ../Store.qml:46
+msgid "Priority"
+msgstr "優先度"
+
+#: ../SettingsDialog.qml:127
+msgid "Reduce motion"
+msgstr "動きを減らす"
+
+#: ../Conversation.qml:34
+msgid "Reopen"
+msgstr "再オープン"
+
+#: ../EditForm.qml:188
+msgid "Save"
+msgstr "保存"
+
+#: ../TopBar.qml:35 ../TopBar.qml:36
+msgid "Search issues"
+msgstr "課題を検索"
+
+#: ../Detail.qml:40
+msgid "Select an issue"
+msgstr "課題を選択してください"
+
+#: ../SettingsDialog.qml:27 ../Sidebar.qml:99
+msgid "Settings"
+msgstr "設定"
+
+#: ../TopBar.qml:56
+msgid "Sort"
+msgstr "並べ替え"
+
+#: ../IssueRow.qml:93 ../Sidebar.qml:41
+msgid "Starred"
+msgstr "スター付き"
+
+#: ../SettingsDialog.qml:106
+msgid "System"
+msgstr "システム"
+
+#: ../EditForm.qml:89 ../EditForm.qml:102
+msgid "Tags"
+msgstr "タグ"
+
+#: ../EditForm.qml:113
+msgid "Tags are lowercase words"
+msgstr "タグは半角小文字の単語にしてください"
+
+#: ../SettingsDialog.qml:71
+msgid "Theme"
+msgstr "テーマ"
+
+#: ../EditForm.qml:44 ../EditForm.qml:69 ../Store.qml:46
+msgid "Title"
+msgstr "タイトル"
+
+#: ../EditForm.qml:80
+msgid "Title is required"
+msgstr "タイトルは必須です"
+
+#: ../Store.qml:123
+msgid "Untitled issue"
+msgstr "無題の課題"
+
+#: ../Store.qml:46
+msgid "Updated"
+msgstr "更新日"
+
+#: ../Store.qml:50
+msgid "Urgent"
+msgstr "緊急"
+
+#: ../Insights.qml:134
+msgid "Urgent: {urgent} · High: {high} · Normal: {normal} · Low: {low}"
+msgstr "緊急: {urgent} · 高: {high} · 中: {normal} · 低: {low}"
+
+#: ../Store.qml:99
+msgid "just now"
+msgstr "たった今"
+
+#: ../Store.qml:118
+msgid "{month}/{day}"
+msgstr "{month}/{day}"
+
+#: ../Store.qml:106
+msgid "{month}/{day}/{year}"
+msgstr "{year}/{month}/{day}"
+
+#: ../Store.qml:101
+msgid "{n, plural, one {# day ago} other {# days ago}}"
+msgstr "{n, plural, other {# 日前}}"
+
+#: ../Store.qml:100
+msgid "{n, plural, one {# hour ago} other {# hours ago}}"
+msgstr "{n, plural, other {# 時間前}}"
+
+#: ../IssueList.qml:28
+msgid "{n, plural, one {# issue} other {# issues}}"
+msgstr "{n, plural, other {# 件}}"
+
+#: ../Insights.qml:76
+msgid "{n, plural, one {{week}: # issue} other {{week}: # issues}}"
+msgstr "{n, plural, other {{week}: # 件}}"
+
+#: ../Store.qml:113
+msgid "{n, plural, other {#}}"
+msgstr "{n, plural, other {#}}"
+
+#: ../IssueRow.qml:26
+msgid "{position} of {total}"
+msgstr "{total} 件中 {position} 件目"
