@@ -236,21 +236,27 @@ pub fn timings(
         .enumerate()
         .map(|(index, (step, mark))| {
             // The step's own time runs to the next step's start; its
-            // answer may go on through waits, until a step sends again.
+            // answer may go on through waits, until the next input is
+            // sent. A step that sent nothing (its send failed) does not
+            // end it.
             let own_end = marks.get(index + 1).map_or(end, |m| m.start);
-            let answer_end = steps
+            let answer_end = marks
                 .iter()
-                .zip(marks)
                 .skip(index + 1)
-                .find(|(s, _)| s.inputs() > 0)
-                .map_or(end, |(_, m)| m.start);
+                .find_map(|m| m.sent.first().copied())
+                .map_or(end, |next| next.min(end));
             let lags: Vec<Option<f64>> = mark
                 .sent
                 .iter()
                 .map(|&sent| {
                     let frames = changed?;
                     let i = frames.partition_point(|&t| t <= sent);
-                    frames.get(i).map(|&t| ms(t - sent))
+                    // A frame after the next input, or after the span,
+                    // answers something else.
+                    frames
+                        .get(i)
+                        .filter(|&&t| t <= answer_end)
+                        .map(|&t| ms(t - sent))
                 })
                 .collect();
             let settle = changed
@@ -432,6 +438,41 @@ mod tests {
         let t = timings(&s, &marks, Some(&gappy), 0, 640 * MS);
         assert_eq!(t[0].long, Some(1));
         assert_eq!(t[0].p50_ms, Some(100.0));
+    }
+
+    #[test]
+    fn an_answer_is_bounded_by_the_next_input_sent_and_the_span() {
+        let s = steps(r#"[{"key": "a"}, {"key": "b"}, {"key": "c"}]"#).unwrap();
+        let marks = [
+            Marks {
+                start: 0,
+                sent: vec![10 * MS],
+            },
+            // Its send failed: it does not end the answer before it.
+            Marks {
+                start: 100 * MS,
+                sent: vec![],
+            },
+            Marks {
+                start: 200 * MS,
+                sent: vec![210 * MS],
+            },
+        ];
+        // "a" is answered at 150 ms, after "b" started, as "b" sent nothing.
+        let changed = [150 * MS, 260 * MS, 900 * MS];
+        let t = timings(&s, &marks, Some(&changed), 0, 500 * MS);
+        assert_eq!(t[0].lag_ms, Some(140.0));
+        assert_eq!(t[0].settle_ms, Some(140.0));
+        assert_eq!(t[2].lag_ms, Some(50.0));
+        // The first frame after "a" comes after "c" was sent: it answers
+        // "c", not "a"; one after the span answers nothing.
+        let late = [220 * MS, 900 * MS];
+        let t = timings(&s, &marks, Some(&late), 0, 500 * MS);
+        assert_eq!(t[0].lag_ms, None);
+        assert_eq!(t[2].lag_ms, Some(10.0));
+        let after = [900 * MS];
+        let t = timings(&s, &marks, Some(&after), 0, 500 * MS);
+        assert_eq!(t[2].lag_ms, None);
     }
 
     #[test]
