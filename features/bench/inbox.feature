@@ -127,6 +127,14 @@ Feature: The inbox bench application
       And the property "selected.title" of "store" is "Dark theme contrast again"
       And the property "selectedIndex" of "store" is 0
 
+    Scenario: A draft's priority and assignee stay shown and saved across a language change
+      When the UI language is set to "ja"
+      Then the property "currentIndex" of "priority" is 2
+      And the property "currentIndex" of "assignee" is 1
+      When the user touches 1196, 660
+      Then the property "selected.priority" of "store" is 2
+      And the property "selected.assignee" of "store" is "Ada Okafor"
+
   Rule: Closing and creating reports
 
     Scenario: Closing a report takes it out of the inbox and selects the next
