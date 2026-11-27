@@ -8,7 +8,7 @@
                 QuickJS bindings are held to bindgen's (scripts/android-bindings.sh),
                 and the Android host and shell are checked for each ABI
     phone       "true" when the @android scenarios run on an emulator: a path that
-                names Android, or one of PHONE
+                names Android, one of PHONE, or one that builds everything
     tests       a JSON list of test shards, each {"name", "packages", "doc"}
     lint        "true" when features:lint runs
     features    a JSON list of feature shards, each {"name", "files"}
@@ -536,7 +536,7 @@ def plan(mode: str, paths: list[str], ws: Workspace, features: dict[str, str]) -
         "lint": lint,
         "features": feature_shards,
         "acceptance": acceptance,
-        "phone": mode == "full" or any(on_phone(p) for p in paths),
+        "phone": c.full or any(on_phone(p) for p in paths),
     }
     log.append(
         f"crates changed: {', '.join(sorted(c.crates)) or 'none'}; tested: {len(tested)} packages; "
