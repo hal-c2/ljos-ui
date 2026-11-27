@@ -371,6 +371,9 @@ const SCREEN: &str = "/data/local/tmp/ljos-screen.xml";
 /// The id of a row's name in the picker's lists, and of the name's field
 /// when it saves.
 const TITLE: &str = "android:id/title";
+/// The end of the id of each crumb of the path the picker of a folder
+/// shows: the picker is Google's or the open-source one, by phone.
+const CRUMB: &str = "documentsui:id/breadcrumb_text";
 /// The id of the picker's button that saves or takes a folder, and of the
 /// button that then allows the folder.
 const CONFIRM: &str = "android:id/button1";
@@ -615,9 +618,36 @@ impl Phone {
         })?)
     }
 
+    /// Goes to the Downloads in the picker of a folder. It shows no roots:
+    /// it is in the phone's storage, or wherever it was left, and the
+    /// Downloads there are the storage's folder "Download", since Android
+    /// lets no application take the Downloads root itself as a folder.
+    fn folder_picker_to_downloads(&self) -> Result<()> {
+        // The first crumb of the path shown is the storage itself.
+        self.tap(self.wait_screen("crumb of the phone's storage", |nodes| {
+            nodes
+                .iter()
+                .filter(|n| n.id.ends_with(CRUMB))
+                .min_by_key(|n| n.at.0)
+                .map(|n| n.at)
+        })?)?;
+        self.tap(
+            self.wait_screen("the storage's folder \"Download\"", |nodes| {
+                nodes
+                    .iter()
+                    .find(|n| n.id == TITLE && n.text == "Download")
+                    .map(|n| n.at)
+            })?,
+        )
+    }
+
     /// Picks `name`, which is in the Downloads, in the picker of `kind`.
     fn pick(&self, kind: &str, name: &str) -> Result<()> {
-        self.picker_to_downloads()?;
+        if kind == "folder" {
+            self.folder_picker_to_downloads()?;
+        } else {
+            self.picker_to_downloads()?;
+        }
         if kind == "save file" {
             // The name is the one the application suggested: none is typed.
             self.wait_screen(&format!("field with the name {name:?}"), |nodes| {
