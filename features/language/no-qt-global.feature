@@ -315,7 +315,7 @@ Feature: No Qt global in a file of Ljós's API
         """
 
     @ljos-only @headless
-    Scenario: A file whose own property hides a home stays Qt's and says which
+    Scenario: A file whose own property hides a home reaches it through Ljos.Core's name
       Given the file "Main.qml":
         """qml
         import QtQuick
@@ -326,10 +326,17 @@ Feature: No Qt global in a file of Ljós's API
         }
         """
       When the author runs "ljos migrate --write ."
-      Then the command prints:
-        """
-        kept ./Main.qml:5:34: `Qt.binding` needs `bind`, which a property of the file hides
-        1 files, 0 lowered, 1 kept
+      Then the command's output mentions "lowered ./Main.qml"
+      And the file "Main.qml" is:
+        """qml
+        import Ljos.Ui
+        import Ljos.Core
+        import Ljos.Core as LjosCore
+        Item {
+          property int bind: 2
+          property int twice: 0
+          Component.onCompleted: twice = LjosCore.bind(() => bind * 2)
+        }
         """
 
     @ljos-only @headless
