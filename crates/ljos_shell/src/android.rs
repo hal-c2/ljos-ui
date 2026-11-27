@@ -32,7 +32,7 @@ use ndk::native_window::NativeWindow;
 use crate::desktop::use_fonts;
 use crate::platform::Display;
 use crate::soft_keyboard::SoftKeyboard;
-use crate::wake::{Next, next_wake, posted_met, undrawn};
+use crate::wake::{Next, Turned, Undrawn, next_wake, posted_met, undrawn_turn};
 use crate::{Hosting, Setup, SetupError, ShellApp, ShellConfig};
 
 /// What reaches the application's thread besides the activity's events.
@@ -781,42 +781,37 @@ where
     /// surface, and would otherwise hold it until the activity is back.
     fn next_wake(&mut self, host: &mut RelayControl<'_, NativeWindow>) {
         let undrawable = self.surface.is_none() && matches!(self.stage, Stage::Running(_));
-        loop {
+        if !undrawable {
+            self.last_undrawn = None;
             let now = Instant::now();
-            let next = match next_wake(self.asked, &self.due, now) {
-                _ if self.wanted => Next::Now,
-                next => next,
-            };
-            if !undrawable {
-                self.last_undrawn = None;
-                match next {
-                    Next::Now => {
-                        host.request_redraw(WINDOW);
-                        self.record_rest(Some(now), self.surface.is_some());
-                    }
-                    Next::At(at) => {
-                        host.wake_at(at);
-                        self.record_rest(at, false);
-                    }
-                }
-                return;
-            }
-            match undrawn(next, self.last_undrawn, now) {
+            match Undrawing::due_of(self, now) {
                 Next::Now => {
-                    self.last_undrawn = Some(now);
-                    self.pass(host, false);
-                    if self.quit_requested() {
-                        QUITTING.store(true, Ordering::Release);
-                        host.exit();
-                        return;
-                    }
+                    host.request_redraw(WINDOW);
+                    self.record_rest(Some(now), self.surface.is_some());
                 }
-                // With nothing to draw into, no frame is owed.
                 Next::At(at) => {
                     host.wake_at(at);
                     self.record_rest(at, false);
-                    return;
                 }
+            }
+            return;
+        }
+        let mut last = self.last_undrawn;
+        let turned = undrawn_turn(
+            &mut Undrawing { phone: self, host },
+            &mut last,
+            Instant::now,
+        );
+        self.last_undrawn = last;
+        match turned {
+            Turned::Quit => {
+                QUITTING.store(true, Ordering::Release);
+                host.exit();
+            }
+            // With nothing to draw into, no frame is owed.
+            Turned::Sleep(at) => {
+                host.wake_at(at);
+                self.record_rest(at, false);
             }
         }
     }
@@ -851,6 +846,38 @@ where
 
     #[cfg(not(feature = "mcp"))]
     fn record_rest(&mut self, _: Option<Instant>, _: bool) {}
+}
+
+/// The phone turning without a surface, for [`undrawn_turn`].
+struct Undrawing<'a, 'h, M, S> {
+    phone: &'a mut Phone<M, S>,
+    host: &'a mut RelayControl<'h, NativeWindow>,
+}
+
+impl<M, S> Undrawing<'_, '_, M, S> {
+    /// What is due: a pass something asked for, the scene's next frame,
+    /// or what another thread posted.
+    fn due_of(phone: &Phone<M, S>, now: Instant) -> Next {
+        match next_wake(phone.asked, &phone.due, now) {
+            _ if phone.wanted => Next::Now,
+            next => next,
+        }
+    }
+}
+
+impl<M, S> Undrawn for Undrawing<'_, '_, M, S>
+where
+    M: Send + 'static,
+    S: FnOnce(&mut Setup<'_, M>) -> Result<ObjectId, SetupError>,
+{
+    fn due(&mut self, now: Instant) -> Next {
+        Self::due_of(self.phone, now)
+    }
+
+    fn pass(&mut self) -> bool {
+        self.phone.pass(self.host, false);
+        self.phone.quit_requested()
+    }
 }
 
 /// Asks for a turn at `at` unless one is due earlier already.

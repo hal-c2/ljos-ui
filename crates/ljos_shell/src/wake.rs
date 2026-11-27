@@ -61,10 +61,52 @@ pub(crate) fn undrawn(next: Next, last: Option<Instant>, now: Instant) -> Next {
     }
 }
 
+/// A shell turning without a surface, as [`undrawn_turn`] drives it.
+pub(crate) trait Undrawn {
+    /// What is due as of `now`, before it is paced.
+    fn due(&mut self, now: Instant) -> Next;
+    /// Runs one pass that is not drawn; true when it asked to quit.
+    fn pass(&mut self) -> bool;
+}
+
+/// How a turn without a surface ends.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Turned {
+    /// Back to the host's loop, to be woken then (or by what arrives).
+    Sleep(Option<Instant>),
+    /// A pass asked the application to quit.
+    Quit,
+}
+
+/// One turn of a shell with nothing to draw into: at most one undrawn
+/// pass, if one is due ([`undrawn`]), `last` the start of the latest. A
+/// pass that leaves the next due at once still goes back to the host's
+/// loop first, so what arrived meanwhile (the surface coming back, the
+/// activity resumed) is heard before it.
+pub(crate) fn undrawn_turn(
+    shell: &mut impl Undrawn,
+    last: &mut Option<Instant>,
+    clock: impl Fn() -> Instant,
+) -> Turned {
+    let now = clock();
+    if undrawn(shell.due(now), *last, now) == Next::Now {
+        *last = Some(now);
+        if shell.pass() {
+            return Turned::Quit;
+        }
+    }
+    let now = clock();
+    match undrawn(shell.due(now), *last, now) {
+        Next::Now => Turned::Sleep(Some(now)),
+        Next::At(at) => Turned::Sleep(at),
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Next, next_wake, posted_met, undrawn};
+    use super::{Next, Turned, Undrawn, next_wake, posted_met, undrawn, undrawn_turn};
     use crate::desktop::HEARTBEAT;
+    use std::cell::Cell;
     use std::sync::Mutex;
     use std::time::{Duration, Instant};
 
@@ -136,5 +178,58 @@ mod tests {
             undrawn(Next::At(Some(later)), Some(now), now),
             Next::At(Some(later))
         );
+    }
+
+    /// Always has something due, and each pass takes `took` of a clock
+    /// that only passes move.
+    struct Busy<'a> {
+        clock: &'a Cell<Instant>,
+        took: Duration,
+        passes: usize,
+    }
+
+    impl Undrawn for Busy<'_> {
+        fn due(&mut self, _: Instant) -> Next {
+            Next::Now
+        }
+
+        fn pass(&mut self) -> bool {
+            self.passes += 1;
+            // A turn that never ends is caught here rather than hanging.
+            assert!(self.passes < 100, "the turn never went back to the loop");
+            self.clock.set(self.clock.get() + self.took);
+            false
+        }
+    }
+
+    #[test]
+    fn a_slow_undrawn_pass_goes_back_to_the_loop_before_the_next() {
+        let clock = Cell::new(Instant::now());
+        let mut busy = Busy {
+            clock: &clock,
+            took: 2 * HEARTBEAT,
+            passes: 0,
+        };
+        let mut last = None;
+        let turned = undrawn_turn(&mut busy, &mut last, || clock.get());
+        // What arrived during the pass (the surface coming back, say) is
+        // heard before the next pass, which is due at once.
+        assert_eq!(busy.passes, 1);
+        assert_eq!(turned, Turned::Sleep(Some(clock.get())));
+    }
+
+    #[test]
+    fn a_quick_undrawn_pass_sleeps_until_a_heartbeat_after_it() {
+        let start = Instant::now();
+        let clock = Cell::new(start);
+        let mut busy = Busy {
+            clock: &clock,
+            took: HEARTBEAT / 4,
+            passes: 0,
+        };
+        let mut last = None;
+        let turned = undrawn_turn(&mut busy, &mut last, || clock.get());
+        assert_eq!(busy.passes, 1);
+        assert_eq!(turned, Turned::Sleep(Some(start + HEARTBEAT)));
     }
 }
