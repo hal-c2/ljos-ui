@@ -1044,15 +1044,22 @@ impl Engine {
         let began = self.now();
         // Qt 6.11: what `destroy()` let go of is gone before a timer that
         // comes due next, even one of 0 ms, or a `Qt.callLater` fires: the
-        // deferred delete was asked for first (qml6).
+        // deferred delete was asked for first (qml6). What its handlers arm
+        // is the next turn's: they ran before the turn's timers, not as one.
+        let armed = self.next_timer_id();
         self.process_deferred_deletes();
+        let armed = armed..self.next_timer_id();
         let mut fired: FxHashMap<ObjectId, u32> = FxHashMap::default();
         loop {
             let next = {
                 let mut st = self.inner.timers.borrow_mut();
                 let d = match &made {
-                    Some((ids, by)) => st.sched.due_or_made(now, ids.clone(), *by).next(),
-                    None => st.sched.due(now).next(),
+                    Some((ids, by)) => st
+                        .sched
+                        .due_or_made(now, ids.clone(), *by)
+                        .but(armed.clone())
+                        .next(),
+                    None => st.sched.due(now).but(armed.clone()).next(),
                 };
                 d.and_then(|d| st.pending.remove(&d.id).map(|p| (d, p)))
             };

@@ -282,6 +282,7 @@ impl FrameScheduler {
             sched: self,
             now,
             made: None,
+            later: TimerId(0)..TimerId(0),
         }
     }
 
@@ -302,6 +303,7 @@ impl FrameScheduler {
             sched: self,
             now,
             made: Some((made, by)),
+            later: TimerId(0)..TimerId(0),
         }
     }
 
@@ -360,6 +362,18 @@ pub struct Due<'a> {
     sched: &'a mut FrameScheduler,
     now: Time,
     made: Option<(Range<TimerId>, Time)>,
+    later: Range<TimerId>,
+}
+
+impl Due<'_> {
+    /// Leaves the timers first armed in `later` for the next frame: what
+    /// some work asked for before the frame's timers ran waits for it, as
+    /// a handler's 0 ms call does when that work is not one of them.
+    #[must_use]
+    pub fn but(mut self, later: Range<TimerId>) -> Self {
+        self.later = later;
+        self
+    }
 }
 
 impl Iterator for Due<'_> {
@@ -369,6 +383,7 @@ impl Iterator for Due<'_> {
         let s = &mut *self.sched;
         let now = self.now;
         let made = self.made.as_ref();
+        let later = &self.later;
         let last = made.map_or(now, |(_, by)| now.max(*by));
         let &(_, id) =
             s.by_deadline
@@ -376,6 +391,7 @@ impl Iterator for Due<'_> {
                 .find(|(deadline, id)| {
                     let e = &s.timers[id];
                     s.is_active(e)
+                        && !later.contains(&e.origin)
                         && (*deadline <= now
                             || made
                                 .is_some_and(|(ids, by)| ids.contains(&e.origin) && deadline <= by))
@@ -421,6 +437,19 @@ mod tests {
         assert_eq!(s.next_deadline_of(ids), Some(ms(40)));
         assert_eq!(due_ids(&mut s, ms(40)), vec![before, after, made_later]);
         assert_eq!(s.next_deadline_of(mark..s.next_timer_id()), None);
+    }
+
+    #[test]
+    fn what_is_left_for_the_next_frame_waits_for_it() {
+        let mut s = FrameScheduler::new();
+        let due = s.add_timer(ms(0), TimerKind::Timer);
+        let mark = s.next_timer_id();
+        let later = s.add_timer(ms(0), TimerKind::Timer);
+        let armed = mark..s.next_timer_id();
+        let ran: Vec<_> = s.due(ms(0)).but(armed.clone()).map(|d| d.id).collect();
+        assert_eq!(ran, vec![due]);
+        assert_eq!(s.next_deadline_of(armed), Some(ms(0)), "it is still due");
+        assert_eq!(s.due(ms(0)).map(|d| d.id).collect::<Vec<_>>(), vec![later]);
     }
 
     #[test]
