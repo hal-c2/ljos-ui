@@ -70,7 +70,7 @@ is negative. `Typography`'s line heights do not follow
 one with its `{step}LineHeight`.
 
 The colour roles: `canvas`, `surface`, `surfaceRaised`, `surfaceHover`,
-`surfacePressed`, `surfaceSelected`, `border`, `borderStrong`, `focusRing`,
+`surfacePressed`, `surfaceSelected`, `separator`, `border`, `borderStrong`, `focusRing`,
 `accent`, `accentHover`, `accentPressed`, `textOnAccent`, `text`,
 `textMuted`, `textDisabled`, `link`, `danger`, `textOnDanger`, `warning`,
 `textOnWarning`, `success`, `textOnSuccess`, `info`, `textOnInfo`, `scrim`,

@@ -635,6 +635,7 @@ module Ljos.Design
 		prop surfaceHover QtQuick.color named readonly
 		prop surfacePressed QtQuick.color named readonly
 		prop surfaceSelected QtQuick.color named readonly
+		prop separator QtQuick.color named readonly
 		prop border QtQuick.color named readonly
 		prop borderStrong QtQuick.color named readonly
 		prop focusRing QtQuick.color named readonly
@@ -667,6 +668,7 @@ module Ljos.Design
 		signal surfaceHoverChanged
 		signal surfacePressedChanged
 		signal surfaceSelectedChanged
+		signal separatorChanged
 		signal borderChanged
 		signal borderStrongChanged
 		signal focusRingChanged

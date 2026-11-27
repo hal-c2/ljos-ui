@@ -19,8 +19,8 @@ Each hue is a ramp of 12 steps, light to dark in a light scheme (dark to light i
 | 3 | Control background at rest |
 | 4 | Control background on hover |
 | 5 | Control background pressed or selected |
-| 6 | Subtle borders and separators of things you cannot operate |
-| 7 | Borders of controls |
+| 6 | Subtle borders and separators of things you cannot operate (`Colors.separator`; step 8 in high contrast) |
+| 7 | Borders of controls (`Colors.border`, darkened until it meets 3:1) |
 | 8 | Strong borders, hovered borders, focus rings |
 | 9 | Solid fill: the purest colour (a primary button, a badge) |
 | 10 | Solid fill on hover |

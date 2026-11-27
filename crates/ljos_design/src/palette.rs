@@ -267,13 +267,14 @@ impl Palette {
 }
 
 /// Every role, in the order the module lists them.
-pub const ROLES: [&str; 27] = [
+pub const ROLES: [&str; 28] = [
     "canvas",
     "surface",
     "surfaceRaised",
     "surfaceHover",
     "surfacePressed",
     "surfaceSelected",
+    "separator",
     "border",
     "borderStrong",
     "focusRing",
@@ -382,6 +383,13 @@ pub fn palette(seed: Seed, scheme: Scheme, contrast: Contrast) -> Palette {
     // Text and marks move away from the surfaces: darker on light.
     let toward = light;
     let fix = |c: Oklch, bgs: &[Srgb], target: f32| reach(c, bgs, target, toward).unwrap_or(c);
+    // A separator marks what cannot be operated (step 6), so it holds to
+    // no contrast; asked for more, it takes the strong border's step, 8.
+    let separator = if contrast == Contrast::High {
+        n[7]
+    } else {
+        n[5]
+    };
     let border = fix(n[6], &grounds, nontext);
     let border_strong = fix(n[7], &grounds, limits::TEXT_CONTRAST);
     let focus = fix(a[8], &all_grounds, nontext);
@@ -418,6 +426,7 @@ pub fn palette(seed: Seed, scheme: Scheme, contrast: Contrast) -> Palette {
         ("surfaceHover", hex(hover)),
         ("surfacePressed", hex(pressed)),
         ("surfaceSelected", hex(selected)),
+        ("separator", hex(separator)),
         ("border", hex(border)),
         ("borderStrong", hex(border_strong)),
         ("focusRing", hex(focus)),

@@ -59,6 +59,29 @@ Feature: The design module as files an application imports
         | 20  | false | #bf5546 | #faf9f9 |
         | 240 | true  | #007cb7 | #0c0c0c |
 
+    Scenario Outline: A separator is fainter than a control's border, until more contrast is asked
+      Given the QML:
+        """qml
+        import QtQuick
+        import Ljos.Design
+        Item {
+          objectName: "root"
+          property color separator: Colors.separator
+          property color border: Colors.border
+          function pick() { Colors.dark = <dark>; Colors.highContrast = <high> }
+        }
+        """
+      When the method "pick" of "root" is called
+      Then the property "separator" of "root" is "<separator>"
+      And the property "border" of "root" is "<border>"
+
+      Examples:
+        | dark  | high  | separator | border  |
+        | false | false | #d6d9dc   | #8e9194 |
+        | true  | false | #323436   | #65686a |
+        | false | true  | #adb2b5   | #8e9194 |
+        | true  | true  | #585d60   | #65686a |
+
   Rule: Durations, curves and scales are the tokens the checks hold motion to
 
     Scenario: The numbers of motion, spacing and type
