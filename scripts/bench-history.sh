@@ -16,22 +16,38 @@ history_revisions() {
   if [ ${#revs[@]} -gt 0 ]; then
     for rev in "${revs[@]}"; do
       commit="$(commit_of "$rev")"
-      [ -x "$dir/bin/$commit/ljos" ] || die "bench:history: $rev is not built (bench:history build $rev)"
+      [ -x "$dir/bin/$commit/ljos" ] && [ -f "$dir/bin/$commit/commit" ] || die "bench:history: $rev is not built (bench:history build $rev)"
       printf '%s\n' "$commit"
     done
   else
     [ -d "$dir/bin" ] || die "bench:history: nothing is built in $dir/bin (bench:history build <rev…>)"
-    find "$dir/bin" -mindepth 2 -maxdepth 2 -name ljos -printf '%h\0' | xargs -0 -rn1 basename
+    find "$dir/bin" -mindepth 2 -maxdepth 2 -name commit -printf '%h\0' | xargs -0 -rn1 basename
   fi
 }
 
-history_measure() {
-  local programs ljos sandbox commits runtimes report
-  need_python3
-  need_systemd_run
+# This checkout's release ljos, pinned where a later build cannot change it.
+history_now() {
+  local programs ljos
   programs="$(pin_programs "$dir/now" build --quiet --release -p ljos_cli --bin ljos)" || die "bench:history: ljos did not build"
   ljos="$(pinned_program ljos "$programs")"
   [ -n "$ljos" ] || die "bench:history: the build made no ljos"
+  printf '%s\n' "$ljos"
+}
+
+history_reload_only() {
+  local ljos listed commits
+  ljos="$(history_now)" || exit 1
+  listed="$(history_revisions)" || exit 1
+  mapfile -t commits <<< "$listed"
+  [ ${#commits[@]} -gt 0 ] || die "bench:history: no revision to measure"
+  history_reload "$ljos" "${commits[@]}"
+}
+
+history_measure() {
+  local ljos sandbox commits runtimes report
+  need_python3
+  need_systemd_run
+  ljos="$(history_now)" || exit 1
   local listed
   listed="$(history_revisions)" || exit 1
   mapfile -t commits <<< "$listed"
@@ -110,11 +126,12 @@ PY
 }
 
 # Hot reload, which `ljos bench` does not drive: each revision's
-# `ljos run --watch` on a copy of the inbox, a label in TopBar.qml saved
-# again and again, and the times its own log gives for each save
-# ("reloaded in", and "shown … after the save", which runs from the file's
-# mtime to the first frame painted after it). The revisions take turns, a
-# round at a time, as the bench runs interleave.
+# `ljos run --watch` on a copy of an app, one label in it saved again and
+# again, and the times its own log gives for each save ("reloaded in", and
+# "shown … after the save", which runs from the file's mtime to the first
+# frame painted after it). The revisions take turns, a round at a time.
+# Two apps: the feed, which every revision runs, and the inbox, written in
+# today's dialect, which a revision older than it cannot load.
 history_reload() {
   local ljos="$1" sandbox
   shift
@@ -134,61 +151,76 @@ dated = sorted((datetime.fromisoformat(open(os.path.join(out, "bin", c, "commit"
                for c in commits)
 runtimes = [(f"at-{c[:9]}", os.path.join(out, "bin", c, "ljos")) for _, c in dated] + [("ljos", now)]
 
-# One copy, put back as it was before every run; the records are read
-# where the bench reads them.
-src = os.path.join(root, "bench", "inbox")
-copy = os.path.join(out, "reload", "inbox")
-shutil.copytree(src, copy, dirs_exist_ok=True, ignore=shutil.ignore_patterns("data"))
-if not os.path.lexists(os.path.join(copy, "data")):
-    os.symlink(os.path.join(src, "data"), os.path.join(copy, "data"))
-bar = os.path.join(copy, "TopBar.qml")
-original = open(os.path.join(src, "TopBar.qml")).read()
-if "t`Inbox`" not in original:
-    sys.exit("bench:history: TopBar.qml no longer has the label the reloads change")
-
+bench = os.path.join(root, "bench")
+reload_dir = os.path.join(out, "reload")
+# (name, what is copied, the file run, its size, the file saved, the label in it)
+apps = [
+    ("feed", [("feed.qml", None), ("feed", None)], "feed.qml", "1024x720", "feed/Feed.qml", 'text: "Reply"'),
+    ("inbox", [("inbox", ["data"])], "inbox/Main.qml", "1280x800", "inbox/TopBar.qml", "t`Inbox`"),
+]
 timed = re.compile(r"reloaded in ([\d.]+) ms \(compile ([\d.]+) ms, apply ([\d.]+) ms\)[^;\n]*(?:; shown ([\d.]+) ms after the save)?")
 keys = ("reload_ms", "compile_ms", "apply_ms", "shown_ms")
-results = {name: {**{k: [] for k in keys}, "saves": 0, "failed": 0, "exited": 0} for name, _ in runtimes}
-logs = os.path.join(out, "reload", "logs")
-os.makedirs(logs, exist_ok=True)
-for r in range(rounds):
-    for name, program in runtimes:
-        open(bar, "w").write(original)
-        log = os.path.join(logs, f"{name}-{r}.log")
-        with open(log, "w") as f:
-            p = subprocess.Popen([program, "run", "--watch", os.path.join(copy, "Main.qml"), "--size", "1280x800"],
-                                 env=env, stdout=f, stderr=subprocess.STDOUT, start_new_session=True)
-        # The records are read in the turns after the first frame; the
-        # saves start once they are in.
-        time.sleep(5)
-        for i in range(edits):
-            if p.poll() is not None:
-                break
-            open(bar, "w").write(original.replace("t`Inbox`", "t`Inbox`" if i % 2 else "t`Inbox ·`", 1))
-            results[name]["saves"] += 1
-            time.sleep(1.5)
-        if p.poll() is None:
-            os.killpg(p.pid, signal.SIGTERM)
-            try:
-                p.wait(10)
-            except subprocess.TimeoutExpired:
-                os.killpg(p.pid, signal.SIGKILL)
-                p.wait()
+report = {"order": [n for n, _ in runtimes], "apps": {}}
+for app, parts, main, size, edited, label in apps:
+    copy = os.path.join(reload_dir, app)
+    for part, skip in parts:
+        src, dst = os.path.join(bench, part), os.path.join(copy, part)
+        if os.path.isdir(src):
+            shutil.copytree(src, dst, dirs_exist_ok=True, ignore=shutil.ignore_patterns(*(skip or [])))
+            # The records are read where the bench reads them.
+            for d in skip or []:
+                if not os.path.lexists(os.path.join(dst, d)):
+                    os.symlink(os.path.join(src, d), os.path.join(dst, d))
         else:
-            results[name]["exited"] += 1
-        for text in open(log, errors="replace"):
-            m = timed.search(text)
-            if m:
-                for k, g in zip(keys, m.groups()):
-                    if g:
-                        results[name][k].append(float(g))
-            elif "reload failed" in text:
-                results[name]["failed"] += 1
-        print(f"bench:history: reload {name}, round {r + 1}: {len(results[name]['reload_ms'])} reloads of {results[name]['saves']} saves", flush=True)
-open(bar, "w").write(original)
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            shutil.copyfile(src, dst)
+    bar = os.path.join(copy, edited)
+    original = open(os.path.join(bench, edited)).read()
+    if label not in original:
+        sys.exit(f"bench:history: {edited} no longer has the label the reloads change ({label})")
+    changed = label[:-1] + " ·" + label[-1]
+    results = {name: {**{k: [] for k in keys}, "saves": 0, "failed": 0, "exited": 0} for name, _ in runtimes}
+    logs = os.path.join(reload_dir, "logs", app)
+    os.makedirs(logs, exist_ok=True)
+    for r in range(rounds):
+        for name, program in runtimes:
+            open(bar, "w").write(original)
+            log = os.path.join(logs, f"{name}-{r}.log")
+            with open(log, "w") as f:
+                p = subprocess.Popen([program, "run", "--watch", os.path.join(copy, main), "--size", size],
+                                     env=env, stdout=f, stderr=subprocess.STDOUT, start_new_session=True)
+            # The inbox reads its records in the turns after the first
+            # frame; the saves start once they are in.
+            time.sleep(5)
+            for i in range(edits):
+                if p.poll() is not None:
+                    break
+                open(bar, "w").write(original if i % 2 else original.replace(label, changed, 1))
+                results[name]["saves"] += 1
+                time.sleep(1.5)
+            if p.poll() is None:
+                os.killpg(p.pid, signal.SIGTERM)
+                try:
+                    p.wait(10)
+                except subprocess.TimeoutExpired:
+                    os.killpg(p.pid, signal.SIGKILL)
+                    p.wait()
+            else:
+                results[name]["exited"] += 1
+            for text in open(log, errors="replace"):
+                m = timed.search(text)
+                if m:
+                    for k, g in zip(keys, m.groups()):
+                        if g:
+                            results[name][k].append(float(g))
+                elif "reload failed" in text:
+                    results[name]["failed"] += 1
+            print(f"bench:history: reload {app} {name}, round {r + 1}: "
+                  f"{len(results[name]['reload_ms'])} reloads of {results[name]['saves']} saves", flush=True)
+    open(bar, "w").write(original)
+    report["apps"][app] = results
 os.makedirs(os.path.join(out, "report", "reload"), exist_ok=True)
-json.dump({"order": [n for n, _ in runtimes], "runtimes": results},
-          open(os.path.join(out, "report", "reload", "reload.json"), "w"), indent=1)
+json.dump(report, open(os.path.join(out, "report", "reload", "reload.json"), "w"), indent=1)
 PY
     die "bench:history: the reloads were not measured"
 }
@@ -291,21 +323,21 @@ for app in sorted({r["app"] for r in runs}):
     lines.append("")
 reload = os.path.join(out, "report", "reload", "reload.json")
 if os.path.exists(reload):
-    got = json.load(open(reload))["runtimes"]
-    cols = [rt for rt in order if rt in got]
-    lines += ["## inbox, hot reload", "",
-              "A label in TopBar.qml saved again and again under `ljos run --watch`; the times are the run's own log.", "",
-              "| metric | " + " | ".join(cols) + " |", "|---" * (len(cols) + 1) + "|"]
-    for label, key in (("reload, ms", "reload_ms"), ("compile, ms", "compile_ms"), ("apply, ms", "apply_ms"),
-                       ("shown after the save, ms", "shown_ms")):
-        cells = []
-        for rt in cols:
-            vals = got[rt][key]
-            cells.append(f"{fmt(statistics.median(vals))}<br>{fmt(min(vals))}–{fmt(max(vals))} ({len(vals)})" if vals else "—")
-        lines.append(f"| {label} | " + " | ".join(cells) + " |")
-    lines.append("| saves, failed reloads, exits | " + " | ".join(
-        f"{got[rt]['saves']}, {got[rt]['failed']}, {got[rt]['exited']}" for rt in cols) + " |")
-    lines.append("")
+    for app, got in json.load(open(reload))["apps"].items():
+        cols = [rt for rt in order if rt in got]
+        lines += [f"## {app}, hot reload", "",
+                  "One label saved again and again under `ljos run --watch`; the times are the run's own log.", "",
+                  "| metric | " + " | ".join(cols) + " |", "|---" * (len(cols) + 1) + "|"]
+        for label, key in (("reload, ms", "reload_ms"), ("compile, ms", "compile_ms"), ("apply, ms", "apply_ms"),
+                           ("shown after the save, ms", "shown_ms")):
+            cells = []
+            for rt in cols:
+                vals = got[rt][key]
+                cells.append(f"{fmt(statistics.median(vals))}<br>{fmt(min(vals))}–{fmt(max(vals))} ({len(vals)})" if vals else "—")
+            lines.append(f"| {label} | " + " | ".join(cells) + " |")
+        lines.append("| saves, failed reloads, exits | " + " | ".join(
+            f"{got[rt]['saves']}, {got[rt]['failed']}, {got[rt]['exited']}" for rt in cols) + " |")
+        lines.append("")
 lines += ["## Revisions", ""]
 for d in sorted(os.listdir(os.path.join(out, "bin")), key=lambda d: dates[f"at-{d[:9]}"]):
     c = open(os.path.join(out, "bin", d, "commit")).read().strip()
