@@ -180,6 +180,18 @@ class Plans(unittest.TestCase):
             self.assertFalse(run(path)["phone"], path)
         self.assertTrue(run(mode="full")["phone"])
 
+    def test_a_path_that_names_android_is_the_phones(self):
+        # Directly: through plan(), a path the synthetic workspace does not know builds everything.
+        for path in [
+            "crates/ljos_platform/src/android_documents.rs",
+            "examples/android_scenarios/src/lib.rs",
+            "android/app/build.gradle.kts",
+            "mise-tasks/features/android",
+        ]:
+            self.assertTrue(cc.on_phone(path), path)
+        self.assertFalse(cc.on_phone("docs/android.md"))
+        self.assertFalse(cc.on_phone("crates/ljos_engine/src/model.rs"))
+
     def test_a_change_that_builds_everything_also_runs_the_phone(self):
         # A dependency or toolchain bump can compile and still break the app on a device.
         self.assertTrue(run("Cargo.lock")["phone"])
