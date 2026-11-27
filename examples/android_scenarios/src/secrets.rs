@@ -148,11 +148,6 @@ fn show(cx: &Cx, answer: Result<Answer, String>) -> Result<(), EngineError> {
     cx.set(ScenarioSecrets::BUSY, false)
 }
 
-/// Registers `ScenarioSecrets` (module `LjosScenarios`) on `engine`.
-pub fn register(engine: &Engine) {
-    engine.register_module(ljos::module!("LjosScenarios" 1.0 => [ScenarioSecrets]));
-}
-
 #[cfg(test)]
 mod tests {
     use ljos_secrets::{MemorySecrets, SecretStore};
