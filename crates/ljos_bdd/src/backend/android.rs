@@ -1880,11 +1880,15 @@ fn tear_down(
             // back, and the window manager writes the lock again as the
             // turn ends: a `free` put before then is locked once more
             // (lifecycle.feature:65 after the landscape outline).
+            // A dump that could not be read is waited through like one
+            // still turning: taken as turned, it would free too early.
             let mut tried = 0;
-            while display_turn(&shell("dumpsys display").unwrap_or_default())
-                .is_some_and(|now| now != turn)
-                && pause(tried)
-            {
+            loop {
+                let turned = shell("dumpsys display")
+                    .is_ok_and(|dump| display_turn(&dump).is_none_or(|now| now == turn));
+                if turned || !pause(tried) {
+                    break;
+                }
                 tried += 1;
             }
         }
@@ -2758,6 +2762,7 @@ mod tests {
         ];
         let (mut user, mut accel, mut display) = ("1", "0", "1");
         let mut turning: Option<u8> = None;
+        let mut dumped = false;
         let mut ran = Vec::new();
         let mut shell = |command: &str| {
             ran.push(command.to_owned());
@@ -2776,6 +2781,11 @@ mod tests {
                 "cmd window user-rotation free" => accel = "1",
                 "settings get system user_rotation" => return Ok(format!("{user}\n")),
                 "settings get system accelerometer_rotation" => return Ok(format!("{accel}\n")),
+                // adb drops the first dump: it is waited through.
+                "dumpsys display" if !dumped => {
+                    dumped = true;
+                    return Err(BackendError::Failed("adb went away".into()));
+                }
                 "dumpsys display" => return Ok(display_dump(display)),
                 _ => {}
             }
