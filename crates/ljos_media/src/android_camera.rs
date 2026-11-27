@@ -15,7 +15,8 @@ use ljos_jni::jni::objects::{JByteBuffer, JClass, JString, JValue};
 use ljos_jni::jni::{Env, EnvUnowned, jni_sig, jni_str};
 use ljos_jni::{app_class, with_java};
 
-use crate::camera::{CameraFrames, CameraInfo, CameraPosition, CameraService, Capture};
+use crate::android_camera_list::parse;
+use crate::camera::{CameraFrames, CameraInfo, CameraService, Capture};
 use crate::frame_input::{StridedPlane, VideoFrame, YuvColour, YuvMatrix};
 
 /// The captures running, by the handle the Java side names them by.
@@ -35,45 +36,6 @@ fn next_handle() -> i64 {
 /// default, else the first.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct AndroidCameras;
-
-/// The cameras of `LjosCamera.list`'s lines.
-fn parse(listed: &str) -> Vec<CameraInfo> {
-    let mut found: Vec<CameraInfo> = listed
-        .lines()
-        .filter_map(|line| {
-            let (id, facing) = line.split_once('\t')?;
-            let (position, description) = match facing {
-                "back" => (CameraPosition::Back, "Back camera"),
-                "front" => (CameraPosition::Front, "Front camera"),
-                _ => (CameraPosition::Unspecified, "External camera"),
-            };
-            Some(CameraInfo {
-                id: id.to_owned(),
-                description: description.to_owned(),
-                position,
-                is_default: false,
-            })
-        })
-        .collect();
-    // Two cameras that face the same way are told apart by their ids.
-    for i in 0..found.len() {
-        let same = found
-            .iter()
-            .filter(|c| c.description == found[i].description)
-            .count();
-        if same > 1 {
-            found[i].description = format!("{} {}", found[i].description, found[i].id);
-        }
-    }
-    let default = found
-        .iter()
-        .position(|c| c.position == CameraPosition::Back)
-        .unwrap_or(0);
-    if let Some(c) = found.get_mut(default) {
-        c.is_default = true;
-    }
-    found
-}
 
 impl CameraService for AndroidCameras {
     fn cameras(&self) -> Vec<CameraInfo> {
@@ -243,18 +205,4 @@ pub extern "system" fn Java_dev_ljos_LjosCamera_nativeLost<'caller>(
             Ok(())
         })
         .resolve::<ljos_jni::jni::errors::ThrowRuntimeExAndDefault>()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn the_back_camera_is_the_default_and_alike_ones_are_told_apart() {
-        let found = parse("0\tfront\n1\tback\n2\tback\n");
-        let names: Vec<_> = found.iter().map(|c| c.description.as_str()).collect();
-        assert_eq!(names, ["Front camera", "Back camera 1", "Back camera 2"]);
-        assert_eq!(found.iter().position(|c| c.is_default), Some(1));
-        assert!(parse("").is_empty());
-    }
 }
