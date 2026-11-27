@@ -276,6 +276,39 @@ fn secrets_answer(said: &Value) -> Option<Result<(bool, String)>> {
     })
 }
 
+/// The name the scenario application (examples/android_scenarios) puts
+/// its `ScenarioClipboard` in the root's scope by: what the runner copies
+/// goes through the system's clipboard as another application's copy
+/// does.
+const CLIPBOARD: &str = "scenarioClipboard";
+
+/// How long the application may take to hear that the clipboard changed:
+/// the system tells it through its main thread a moment after the copy.
+const CLIPBOARD_HEARD: Duration = Duration::from_secs(2);
+
+/// The script, run in the scene's root, that calls `method` of the
+/// scenario application's clipboard with `args`.
+fn clipboard_call(method: &str, args: &[Value]) -> String {
+    let args: Vec<String> = args.iter().map(Value::to_string).collect();
+    format!("{CLIPBOARD}.{method}({})", args.join(", "))
+}
+
+/// The width and height in `said`, the scenario clipboard's "width
+/// height"; `None` for the empty answer of a clipboard without a picture.
+fn picture_size(said: &str) -> Result<Option<(u32, u32)>> {
+    if said.is_empty() {
+        return Ok(None);
+    }
+    let size = said
+        .split_once(' ')
+        .and_then(|(w, h)| Some((w.parse().ok()?, h.parse().ok()?)));
+    size.map(Some).ok_or_else(|| {
+        BackendError::Failed(format!(
+            "the clipboard's picture was said to be {said:?}, not a width and a height"
+        ))
+    })
+}
+
 /// How long the document picker may take to show what a step wants, and
 /// the application to hear its answer: a picked document is copied first.
 const PICKER: Duration = Duration::from_secs(20);
@@ -833,20 +866,29 @@ impl AndroidBackend {
         self.running()?.eval(object, source)
     }
 
+    /// The handle of the scene's root, where the scenario application's
+    /// own objects are in scope.
+    fn root(&mut self) -> Result<String> {
+        let roots = self
+            .running()?
+            .ask("app_objects", json!({"depth": 0, "max": 1}))?;
+        roots["objects"][0]["handle"]
+            .as_str()
+            .map(str::to_owned)
+            .ok_or_else(|| {
+                BackendError::Failed(
+                    "the scene has no root object to reach the scenario application's objects in"
+                        .into(),
+                )
+            })
+    }
+
     /// Calls `method` of the scenario application's secrets and waits
     /// for the store's answer: whether it found (or removed) one, and the
     /// secret it read.
     fn secrets(&mut self, method: &str, args: &[&str]) -> Result<(bool, String)> {
+        let root = self.root()?;
         let running = self.running()?;
-        let roots = running.ask("app_objects", json!({"depth": 0, "max": 1}))?;
-        let root = roots["objects"][0]["handle"]
-            .as_str()
-            .ok_or_else(|| {
-                BackendError::Failed(
-                    "the scene has no root object to reach the store of secrets from".into(),
-                )
-            })?
-            .to_owned();
         running.ask(
             "app_eval",
             json!({"source": secrets_call(method, args), "target": root}),
@@ -868,6 +910,42 @@ impl AndroidBackend {
             }
             std::thread::sleep(Duration::from_millis(50));
         }
+    }
+
+    /// Runs `source` in the scene's root, where the scenario
+    /// application's own objects are in scope: the value, whole.
+    fn in_root(&mut self, source: &str) -> Result<Value> {
+        let root = self.root()?;
+        let running = self.running()?;
+        let said = running.ask("app_eval", json!({"source": source, "target": root}))?;
+        if said["truncated"] == Value::Bool(true) {
+            return Err(BackendError::Failed(format!(
+                "the inspector cut the answer to {source}"
+            )));
+        }
+        Ok(said["value"].clone())
+    }
+
+    /// Calls `method` of the scenario application's clipboard, which
+    /// answers what went wrong, or nothing.
+    fn clipboard_does(&mut self, method: &str, args: &[Value]) -> Result<()> {
+        let said = self.in_root(&clipboard_call(method, args))?;
+        match said.as_str() {
+            Some("") => {}
+            Some(why) => return Err(BackendError::Failed(format!("the clipboard: {why}"))),
+            None => {
+                return Err(BackendError::Failed(format!(
+                    "the clipboard's {method}() answered {said}"
+                )));
+            }
+        }
+        // The system tells every application of a copy, this one too,
+        // through its main thread a turn after the copy's; a step after
+        // reads what it heard. Heard already, the wait is only longer.
+        let until = Instant::now() + CLIPBOARD_HEARD;
+        let turns = self.running()?.turns()?;
+        self.running()?.turned_after(turns, until)?;
+        self.settle()
     }
 
     /// Waits until the dialog has heard the picker: the picker is gone
@@ -1062,6 +1140,32 @@ impl Backend for AndroidBackend {
 }
 
 impl Platform for AndroidBackend {
+    fn set_clipboard(&mut self, text: &str) -> Result<()> {
+        self.clipboard_does("copyElsewhere", &[Value::from(text)])
+    }
+
+    fn clipboard(&mut self) -> Result<String> {
+        match self.in_root(&clipboard_call("text", &[]))? {
+            Value::String(text) => Ok(text),
+            said => Err(BackendError::Failed(format!(
+                "the system's clipboard could not be read: it answered {said}"
+            ))),
+        }
+    }
+
+    fn copy_picture(&mut self, width: u32, height: u32) -> Result<()> {
+        self.clipboard_does("copyPicture", &[Value::from(width), Value::from(height)])
+    }
+
+    fn clipboard_picture(&mut self) -> Result<Option<(u32, u32)>> {
+        match self.in_root(&clipboard_call("picture", &[]))? {
+            Value::String(said) => picture_size(&said),
+            said => Err(BackendError::Failed(format!(
+                "the clipboard's picture() answered {said}"
+            ))),
+        }
+    }
+
     fn badge_at_start(&mut self, count: u32) -> Result<()> {
         if self.running.is_some() {
             // It reads the count once, as it starts.
@@ -1494,10 +1598,11 @@ impl Device for AndroidBackend {
 #[cfg(test)]
 mod tests {
     use super::{
-        BackendError, FORGET_EVENTS, Shown, abort_query, badge_in, download_path, front_record,
-        permission_asked, permission_button, picker_shown, quoted, scenario_dir, screen_nodes,
-        secrets_answer, secrets_call, seen_until,
+        BackendError, FORGET_EVENTS, Shown, abort_query, badge_in, clipboard_call, download_path,
+        front_record, permission_asked, permission_button, picker_shown, picture_size, quoted,
+        scenario_dir, screen_nodes, secrets_answer, secrets_call, seen_until,
     };
+    use serde_json::Value;
 
     // Trimmed from Android 16's `dumpsys notification --noredact`.
     const NOTIFICATIONS: &str = "\
@@ -1842,5 +1947,25 @@ mod tests {
         ));
         let replaced = json!({"value": "<an object too large to show>", "truncated": true});
         assert!(matches!(secrets_answer(&replaced), Some(Err(_))));
+    }
+
+    #[test]
+    fn a_clipboard_call_quotes_its_text() {
+        assert_eq!(
+            clipboard_call("copyElsewhere", &[Value::from("it's \"so\"")]),
+            r#"scenarioClipboard.copyElsewhere("it's \"so\"")"#
+        );
+        assert_eq!(
+            clipboard_call("copyPicture", &[Value::from(3), Value::from(2)]),
+            "scenarioClipboard.copyPicture(3, 2)"
+        );
+    }
+
+    #[test]
+    fn a_picture_is_its_width_and_height_or_none() {
+        assert_eq!(picture_size("3 2").ok(), Some(Some((3, 2))));
+        assert_eq!(picture_size("").ok(), Some(None));
+        assert!(picture_size("3").is_err());
+        assert!(picture_size("wide 2").is_err());
     }
 }
