@@ -222,6 +222,54 @@ it is why "least memory" can be lower than "peak memory" for the same app. Treat
 "what this app needs on top of a system that already runs its runtime's libraries". On a small
 board with one app, add the libraries (the mapped-install row gives their size on disk).
 
+### A scripted session
+
+`--gesture session` drives each application through the steps its manifest gives as
+`"session"`. The same steps go to every runtime, whatever toolkit draws the window, including one
+started through a manifest's `"commands"`. An application with no session is refused (status 2).
+
+```json
+{"apps": [{"id": "inbox", "file": "bench/feed-still.qml", "session": [
+  {"name": "search", "click": [0.713, 0.033]},
+  {"type": "quick"},
+  {"key": "Ctrl+A"},
+  {"key": "BackSpace"},
+  {"name": "down", "key": "PageDown", "repeat": 3, "every": 33},
+  {"wait": 500}
+]}]}
+```
+
+A step is one of these:
+
+- `click`: a click at fractions of the window.
+- `key`: a key by name. The names are letters, digits and the layout's other characters, `Return`,
+  `Escape`, `Tab`, `BackSpace`, `Delete`, `Insert`, `Up`, `Down`, `Left`, `Right`, `Home`, `End`,
+  `PageUp`, `PageDown`, `space` and `F1` to `F12`, in any case. `Ctrl+`, `Shift+` and `Alt+` go
+  before the name. `Ctrl+A` is Control with the A key, not a capital.
+- `type`: text, a key every 80 ms. Capitals and shifted punctuation are typed with Shift on a US
+  layout.
+- `wait`: milliseconds with no input.
+
+Any step can have a `"name"`. A click or a key can have `"repeat"` and `"every"`, the time in ms
+between one input's start and the next (80 by default). The keys go through the wlr virtual
+keyboard, and modifiers are held as a hand holds them. A step lasts its inputs times its cadence,
+or its wait. The session runs to its end, even past `--load`. What is left of `--load` afterwards
+gives the last step time to settle.
+
+For each step, `report.json` has `runs[].steps[]` and `report.md` has a table for each run:
+
+- the inputs it has, and how many reached the compositor;
+- **lag**: from its first input to the first frame that changed after it, and the longest any of
+  its inputs waited;
+- **settle**: from its first input to the last changed frame before the window was still for
+  500 ms, or before the next step that sends input (a wait does not end the step before it);
+- the frames that changed from its start to the next step's start: how many there were, the
+  median, 95th percentile and longest interval between them, and how many intervals were longer
+  than 50 ms.
+
+Only the first load round's steps are kept. Without a compositor, the steps keep their timing but
+send nothing, and lag and settle are empty.
+
 ## Noise
 
 Timings depend on the machine's load. Every run records the one-minute load average, and
