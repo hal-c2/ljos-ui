@@ -656,6 +656,16 @@ impl Engine {
     /// What stands for the singleton `ty`, read by a script of `ctx`, in
     /// that script: the number `__ljos_single` is called with.
     pub(crate) fn singleton_handle(&self, ty: &TypeRef, ctx: Option<ContextId>) -> usize {
+        // A name the lookup reaches only by its bare name is another
+        // module's type: that one's object, never one of its own, until
+        // its own module registers it. It is looked up again each time,
+        // and an entry made for it before stays for that registration.
+        if let TypeRef::Native { module, name } = ty
+            && !self.is_native_singleton(module, name)
+            && let Some(native) = self.singleton_native(ty)
+        {
+            return self.singleton_handle(&native.home, ctx);
+        }
         let all = self.extension::<Singletons>();
         let found = all.index.borrow().get(ty).copied();
         // A module written in QML names its singleton by its file, and a
@@ -682,14 +692,7 @@ impl Engine {
                 return None;
             }
             let i = self.singleton_handle(&home, None);
-            // Only a name registered itself is the home's for good: one the
-            // lookup reached by its bare name may be registered as a type of
-            // its own later, so it is looked up again each time.
-            if let TypeRef::Native { module, name } = ty
-                && self.is_native_singleton(module, name)
-            {
-                all.index.borrow_mut().insert(ty.clone(), i);
-            }
+            all.index.borrow_mut().insert(ty.clone(), i);
             Some(i)
         });
         let base = match found {
