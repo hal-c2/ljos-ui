@@ -65,6 +65,7 @@ jobs:
       lint: ${{ steps.plan.outputs.lint }}
       features: ${{ steps.plan.outputs.features }}
       acceptance: ${{ steps.plan.outputs.acceptance }}
+      phone: ${{ steps.plan.outputs.phone }}
     steps:
       # A pull request is checked out as its merge with the base, whose first parent is the base.
       # A dispatch with a base needs the history back to it.
@@ -306,6 +307,69 @@ jobs:
       - run: mise run features:acceptance example
       - run: mise run features:acceptance-test
 
+  # The @android scenarios (features/mobile) on an emulator: what the application does on a
+  # phone, which no desktop job reaches. features:android builds and installs the scenario
+  # application with its inspector, then runs each scenario's QML over it. The runner's Android
+  # SDK goes with the setup action, so the SDK, the NDK, the JDK and Gradle are installed after
+  # it. On a failure the phone's log, its screen and the application's fault are kept.
+  phone:
+    needs: changes
+    if: needs.changes.outputs.phone == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      # The emulator runs on the runner's KVM, which its user may not open by default.
+      - run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      # android/build.gradle.kts's plugin 8.13 needs Gradle 8.13; `ljos android` finds it on PATH.
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.13"
+      - uses: android-actions/setup-android@v3
+      - run: sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0"
+      # r30, the NDK the vendored QuickJS bindings were generated with (android-bindings).
+      - uses: nttld/setup-ndk@v1
+        id: ndk
+        with:
+          ndk-version: r30
+          add-to-path: false
+      - run: |
+          mise exec -- rustup target add x86_64-linux-android
+          mise exec -- cargo install cargo-ndk --version 4.1.2 --locked
+      # The system image is the largest download; its key is the image's.
+      - uses: actions/cache@v4
+        with:
+          path: ${{ env.ANDROID_HOME }}/system-images/android-36/google_apis/x86_64
+          key: android-36-google_apis-x86_64
+      - uses: reactivecircus/android-emulator-runner@v2
+        env:
+          ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
+        with:
+          api-level: 36
+          target: google_apis
+          arch: x86_64
+          emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect
+          disable-animations: true
+          script: bash scripts/ci-phone.sh "$RUNNER_TEMP/phone"
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: phone
+          path: ${{ runner.temp }}/phone
+          retention-days: 7
+      - run: df -h /
+        if: always()
+
   # Builds what the other jobs build, on main, and saves it as the cache they restore. It
   # gates nothing: on main every other job builds the same things and checks them.
   cache:
@@ -336,7 +400,7 @@ jobs:
   # the jobs it did not need were left out.
   ci-ok:
     if: always()
-    needs: [changes, docs, tasks-smoke, clippy, android-bindings, test, features-build, lint, features, acceptance]
+    needs: [changes, docs, tasks-smoke, clippy, android-bindings, test, features-build, lint, features, acceptance, phone]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

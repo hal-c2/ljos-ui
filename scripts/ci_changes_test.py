@@ -166,6 +166,20 @@ class Plans(unittest.TestCase):
             out, _ = cc.plan("pr", [path], ws, FEATURES)
             self.assertTrue(out["android"], path)
 
+    def test_the_phone_runs_for_android_paths_only(self):
+        for path in [
+            "crates/ljos_platform/src/android_documents.rs",
+            "examples/android_scenarios/src/lib.rs",
+            "android/app/build.gradle.kts",
+            "mise-tasks/features/android",
+            "features/mobile/badge.feature",
+            "crates/ljos_jni/src/lib.rs",
+        ]:
+            self.assertTrue(run(path)["phone"], path)
+        for path in ["crates/ljos_engine/src/model.rs", "features/quick/text.feature", "docs/android.md"]:
+            self.assertFalse(run(path)["phone"], path)
+        self.assertTrue(run(mode="full")["phone"])
+
     def test_the_web_crate_checks_the_web_build(self):
         self.assertTrue(run("crates/ljos_mcp_core/src/lib.rs")["wasm"])
 
@@ -295,7 +309,7 @@ class Shards(unittest.TestCase):
     def test_output_is_one_line_per_key(self):
         text = cc.emit(run("crates/ljos_engine/src/model.rs"))
         keys = [line.split("=", 1)[0] for line in text.splitlines()]
-        self.assertEqual(keys, ["full", "clippy", "clippy_args", "wasm", "android", "tests", "lint", "features", "acceptance"])
+        self.assertEqual(keys, ["full", "clippy", "clippy_args", "wasm", "android", "tests", "lint", "features", "acceptance", "phone"])
         json.loads(dict(line.split("=", 1) for line in text.splitlines())["tests"])
 
 
