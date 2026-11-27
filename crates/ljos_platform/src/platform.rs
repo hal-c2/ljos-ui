@@ -1259,10 +1259,11 @@ impl Platform {
     }
 }
 
-/// The program's file name without its extension. On Android every
+/// What an application is called before anything names it: the
+/// program's file name without its extension. On Android every
 /// application is the system's `app_process64`, which the system then
 /// names by the application's id: that name is the application's.
-fn program_name() -> String {
+pub fn program_name() -> String {
     #[cfg(target_os = "android")]
     if let Some(id) = std::fs::read("/proc/self/cmdline")
         .ok()
