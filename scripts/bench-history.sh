@@ -96,10 +96,12 @@ PY
   value() { sed -n "s/^$1=//p" <<< "$sandbox"; }
   read -r -a defaults <<< "${BENCH_DEFAULTS---warm-up --repeat 3}"
   for report in apps inbox; do
-    local gesture=(--gesture scroll) started status=0
+    local gesture=(--gesture scroll) status=0
     [ "$report" = inbox ] && gesture=(--gesture session --load 2)
     mkdir -p "$dir/report/$report"
-    started="$(date +%s)"
+    # The last run's report goes first, so any report after this run is its
+    # own, even one a refusal cut short.
+    rm -f -- "$dir/report/$report/report.json" "$dir/report/$report/status"
     "$ljos" bench --manifest "$dir/$report.json" --runtime "$runtimes" --profile desktop \
       --sway "$(value SWAYSOCK)" --wayland "$(value WAYLAND_DISPLAY)" \
       --app-env "DBUS_SESSION_BUS_ADDRESS=$(value DBUS_SESSION_BUS_ADDRESS)" \
@@ -110,12 +112,11 @@ PY
       --note "on the sandbox's headless sway (${LJOS_CUA_GPU:-pixman}), as Wayland clients" \
       --out "$dir/report/$report" ${opts[@]+"${opts[@]}"} || status=$?
     # A refusal (2) ends the run with the report written so far, which the
-    # table marks as partial; a report older than this run is not it.
+    # table marks as partial.
     case "$status" in
       0) printf 'complete\n' > "$dir/report/$report/status" ;;
       2)
-        [ -f "$dir/report/$report/report.json" ] &&
-          [ "$(stat -c %Y "$dir/report/$report/report.json")" -ge "$started" ] ||
+        [ -f "$dir/report/$report/report.json" ] ||
           die "bench:history: the $report run was refused before it measured anything"
         printf 'partial: a refusal ended the run\n' > "$dir/report/$report/status"
         ;;
