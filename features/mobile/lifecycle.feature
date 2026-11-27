@@ -31,6 +31,7 @@ Feature: An application on a phone outlives its screen
         id: w; objectName: "w"; visible: true
         property int taps: 0
         property bool wide: width > height
+        property int state: Qt.application.state
         function tap() { taps++ }
         function quit() { Qt.quit() }
         Rectangle { anchors.fill: parent; color: "steelblue" }
@@ -45,6 +46,12 @@ Feature: An application on a phone outlives its screen
     Then the application is in front
     And the property "taps" of "w" is 2
     And the system has not found the application unresponsive
+
+  Scenario: Behind the home screen, the application knows it is hidden
+    When the user goes to the home screen
+    Then the property "state" of "w" is 1
+    When the user opens the application again
+    Then the property "state" of "w" is 4
 
   Scenario Outline: Turned to <to>, the window takes the new shape and keeps its values
     When the user turns the phone to landscape
