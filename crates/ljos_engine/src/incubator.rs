@@ -998,13 +998,14 @@ impl Engine {
                     TypeTag::Var
                 } else if p.is_list {
                     flags |= PropertyFlags::LIST;
-                    let inner =
+                    let inner_ty =
                         p.ty.strip_prefix("list<")
                             .and_then(|r| r.strip_suffix('>'))
                             .unwrap_or(&p.ty);
-                    TypeTag::List(Some(Atom::intern(inner)))
+                    let inner = self.faced_name(file, inner_ty);
+                    TypeTag::List(Some(Atom::intern(inner.as_deref().unwrap_or(inner_ty))))
                 } else {
-                    property_type(&p.ty, &own_enums, &aliases)
+                    self.faced(file, property_type(&p.ty, &own_enums, &aliases))
                 };
                 if p.is_default {
                     flags |= PropertyFlags::DEFAULT;
@@ -1028,8 +1029,9 @@ impl Engine {
                     .map(|p| {
                         (
                             Atom::new(&p.name),
-                            p.ty.as_deref()
-                                .map_or(TypeTag::Var, |t| property_type(t, &own_enums, &aliases)),
+                            p.ty.as_deref().map_or(TypeTag::Var, |t| {
+                                self.faced(file, property_type(t, &own_enums, &aliases))
+                            }),
                         )
                     })
                     .collect();
@@ -1056,6 +1058,41 @@ impl Engine {
             .borrow_mut()
             .insert((comp.0, obj as u32), meta.clone());
         Ok(meta)
+    }
+
+    /// A declared object type `tag` names, as the type it holds: a face
+    /// (`Object`, Ljos.Core's `QtObject`) holds what the type it faces
+    /// holds, so the check of what is assigned asks for that type's name.
+    fn faced(&self, file: &LoadedFile, tag: TypeTag) -> TypeTag {
+        match &tag {
+            TypeTag::Object(Some(name)) => match self.faced_name(file, name) {
+                Some(faced) => TypeTag::parse(&faced),
+                None => tag,
+            },
+            _ => tag,
+        }
+    }
+
+    /// The name of the type `name` (`Core.Object` or `Object`) is a face
+    /// of in a module the file imports; none for a name that is no face.
+    /// Only native modules are asked: a file's own component is no face.
+    fn faced_name(&self, file: &LoadedFile, name: &str) -> Option<String> {
+        let (alias, bare) = match name.split_once('.') {
+            Some((alias, bare)) => (Some(alias), bare),
+            None => (None, name),
+        };
+        let found = file.ir.imports.iter().find_map(|i| match &i.source {
+            ljos_ir::ImportSource::Module(m) if i.alias.as_deref() == alias && !i.in_project => {
+                self.lookup_type(m, bare)
+            }
+            _ => None,
+        });
+        let mut meta = found?;
+        meta.face_of()?;
+        while let Some(of) = meta.face_of() {
+            meta = of.clone();
+        }
+        Some(meta.name.to_string())
     }
 
     /// The type a [`TypeRef`] names, seen from `file`.
