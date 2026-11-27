@@ -14,6 +14,16 @@ Rectangle {
     Accessible.role: Accessible.Button
     Accessible.name: row.label
     Accessible.checked: row.active
+    // Reached with Tab and chosen with Return or Space, as a button is.
+    activeFocusOnTab: true
+    border.width: row.activeFocus ? 2 : 0
+    border.color: Theme.focus
+    Keys.onPressed: (event: KeyEvent) => {
+        if (event.key === Key.Return || event.key === Key.Enter || event.key === Key.Space) {
+            row.picked()
+            event.accepted = true
+        }
+    }
 
     Icon {
         x: 12

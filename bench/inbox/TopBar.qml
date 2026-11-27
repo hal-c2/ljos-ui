@@ -69,6 +69,7 @@ Rectangle {
         primary: true
         iconName: "plus"
         text: t`New issue`
+        enabled: bar.inbox.ready
         onClicked: bar.inbox.create()
     }
 
