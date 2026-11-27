@@ -27,43 +27,52 @@ fn face_name(meta: &MetaRef) -> String {
 /// is the number `__ljos_instanceOf` is asked with.
 #[derive(Default)]
 pub(crate) struct TypeFaces {
-    /// The face of each type, and whether `__ljos_typeStaticsAt` has
-    /// members of it that read an address from the file that asks.
-    faces: RefCell<Vec<(MetaRef, JsRef, bool)>>,
-    /// The face of such a type in one file, by its index and the file.
-    at: RefCell<FxHashMap<(usize, Atom), JsRef>>,
+    /// The face of each type a file of Qt's QML is given: its enums, and
+    /// none of Ljós's homes for what was `Qt`'s. Beside it, which homes the
+    /// type has in a file of Ljós's API: none, ones every file shares, or
+    /// ones that read an address from the file that asks.
+    faces: RefCell<Vec<(MetaRef, JsRef, Homes)>>,
+    /// The face of such a type in a file of Ljós's API, by its index and,
+    /// for a type with members that read an address, the file.
+    ljos: RefCell<FxHashMap<(usize, Option<Atom>), JsRef>>,
 }
 
 /// Puts `Symbol.hasInstance` on the enums of a type; not enumerable, so the
-/// type still lists only its enums. A type `__ljos_typeStatics` names by
-/// `module.name` also gets those members, its homes for what was `Qt`'s
-/// (docs/DIALECT.md §4.3.1): `Locale.current`, `Font.of`. One
-/// `__ljos_typeStaticsAt` names gets, in each file, members made with that
-/// file's address: `Component.load`, which reads a relative address from
-/// the file whose script asks, as `Qt.createComponent` does.
+/// type still lists only its enums. In a file of Ljós's API, a type
+/// `__ljos_typeStatics` names by `module.name` also gets those members, its
+/// homes for what was `Qt`'s (docs/DIALECT.md §4.3.1): `Locale.current`,
+/// `Font.of`. One `__ljos_typeStaticsAt` names gets, in each such file,
+/// members made with that file's address: `Component.load`, which reads a
+/// relative address from the file whose script asks, as
+/// `Qt.createComponent` does. A file of Qt's QML has `Qt`, and none of them.
 pub(crate) const TYPE_FACES: &str = r#"
-globalThis.__ljos_typeFace = (enums, index, name) => {
-  const statics = globalThis.__ljos_typeStatics?.[name];
-  if (statics)
-    for (const [key, d] of Object.entries(Object.getOwnPropertyDescriptors(statics)))
-      Object.defineProperty(enums, key, { ...d, enumerable: false });
-  return Object.defineProperty(enums, Symbol.hasInstance, {
+globalThis.__ljos_typeFace = (enums, index) =>
+  Object.defineProperty(enums, Symbol.hasInstance, {
     value: (v) => __ljos_instanceOf(v, index),
   });
-};
 globalThis.__ljos_typeFaceAt = (enums, index, name, url) => {
-  const face = __ljos_typeFace(enums, index, name);
-  const statics = globalThis.__ljos_typeStaticsAt[name](url);
-  for (const [key, d] of Object.entries(Object.getOwnPropertyDescriptors(statics)))
-    Object.defineProperty(face, key, { ...d, enumerable: false });
+  const face = __ljos_typeFace(enums, index);
+  const put = (statics) => {
+    for (const [key, d] of Object.entries(Object.getOwnPropertyDescriptors(statics ?? {})))
+      Object.defineProperty(face, key, { ...d, enumerable: false });
+  };
+  put(globalThis.__ljos_typeStatics?.[name]);
+  if (url !== undefined) put(globalThis.__ljos_typeStaticsAt?.[name]?.(url));
   return face;
 };
 "#;
 
 impl Engine {
     /// What stands for `meta` in a script of the file at `at`, or of no
-    /// file. Its enums alone when the object cannot be made.
-    pub(crate) fn type_face(&self, s: &Scope<'_>, meta: &MetaRef, at: Option<&Atom>) -> JsValue {
+    /// file; `ljos` for a file of Ljós's API, which reads the type's homes
+    /// for what was `Qt`'s off it.
+    pub(crate) fn type_face(
+        &self,
+        s: &Scope<'_>,
+        meta: &MetaRef,
+        at: Option<&Atom>,
+        ljos: bool,
+    ) -> JsValue {
         let all = self.extension::<TypeFaces>();
         let found = all
             .faces
@@ -77,34 +86,38 @@ impl Engine {
                 None => return super::singletons::enum_keys(meta),
             },
         };
-        let (face, per_file) = {
+        let (face, homes) = {
             let faces = all.faces.borrow();
             (faces[index].1.clone(), faces[index].2)
         };
-        let Some(url) = at.filter(|_| per_file) else {
+        if !ljos || homes == Homes::None {
             return JsValue::Handle(face);
-        };
+        }
+        let name = face_name(meta);
+        let url = at.filter(|_| homes == Homes::PerFile).cloned();
         let key = (index, url.clone());
-        if let Some(face) = all.at.borrow().get(&key) {
+        if let Some(face) = all.ljos.borrow().get(&key) {
             return JsValue::Handle(face.clone());
         }
         let made = (|| {
             let make: ljos_js::rquickjs::Function = s.ctx().globals().get("__ljos_typeFaceAt")?;
             let enums = super::singletons::enum_keys(meta);
+            let url = url.as_ref().map(ToString::to_string);
             let value: ljos_js::rquickjs::Value =
-                make.call((s.to_value(&enums)?, index, face_name(meta), url.to_string()))?;
+                make.call((s.to_value(&enums)?, index, name, url))?;
             Ok::<_, ljos_js::rquickjs::Error>(s.keep(value))
         })();
         match made {
             Ok(made) => {
-                all.at.borrow_mut().insert(key, made.clone());
+                all.ljos.borrow_mut().insert(key, made.clone());
                 JsValue::Handle(made)
             }
             Err(_) => JsValue::Handle(face),
         }
     }
 
-    /// Makes the face of `meta` every file shares, and gives its index.
+    /// Makes the face of `meta` every file of Qt's QML shares, and gives
+    /// its index.
     fn shared_type_face(&self, s: &Scope<'_>, meta: &MetaRef) -> Option<usize> {
         let all = self.extension::<TypeFaces>();
         let enums = super::singletons::enum_keys(meta);
@@ -113,14 +126,18 @@ impl Engine {
         let made = (|| {
             let globals = s.ctx().globals();
             let make: ljos_js::rquickjs::Function = globals.get("__ljos_typeFace")?;
-            let per_file = globals
-                .get::<_, Option<ljos_js::rquickjs::Object>>("__ljos_typeStaticsAt")?
-                .is_some_and(|at| at.contains_key(name.as_str()).unwrap_or(false));
-            let value: ljos_js::rquickjs::Value = make.call((s.to_value(&enums)?, index, name))?;
-            Ok::<_, ljos_js::rquickjs::Error>((s.keep(value), per_file))
+            let homes = if names(s, "__ljos_typeStaticsAt", &name) {
+                Homes::PerFile
+            } else if names(s, "__ljos_typeStatics", &name) {
+                Homes::Shared
+            } else {
+                Homes::None
+            };
+            let value: ljos_js::rquickjs::Value = make.call((s.to_value(&enums)?, index))?;
+            Ok::<_, ljos_js::rquickjs::Error>((s.keep(value), homes))
         })();
-        let (face, per_file) = made.ok()?;
-        all.faces.borrow_mut().push((meta.clone(), face, per_file));
+        let (face, homes) = made.ok()?;
+        all.faces.borrow_mut().push((meta.clone(), face, homes));
         Some(index)
     }
 
@@ -138,4 +155,24 @@ impl Engine {
         self.meta_of(crate::js::u64_to_obj(*o))
             .is_some_and(|meta| meta.inherits(ty))
     }
+}
+
+/// Whether the global table `table` has members of the type `name`.
+fn names(s: &Scope<'_>, table: &str, name: &str) -> bool {
+    s.ctx()
+        .globals()
+        .get::<_, Option<ljos_js::rquickjs::Object>>(table)
+        .ok()
+        .flatten()
+        .is_some_and(|at| at.contains_key(name).unwrap_or(false))
+}
+
+/// What a type has of Ljós's homes for what was `Qt`'s.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Homes {
+    None,
+    /// The same in every file (`Locale.current`).
+    Shared,
+    /// Some read an address from the file that asks (`Component.load`).
+    PerFile,
 }

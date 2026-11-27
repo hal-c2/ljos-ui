@@ -1008,9 +1008,13 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
         };
         match member {
             // What the type has of its own (`Component.load`) is read off
-            // the type, as the checker types it.
+            // the type, as the checker types it. A file of Qt's QML has
+            // `Qt` for it, and reads the member off what the type attached,
+            // as Qt does.
             Some(member)
-                if attaches && !super::statics::has_static(self.types.oracle, kind, member) =>
+                if attaches
+                    && !(self.ljos_ui
+                        && super::statics::has_static(self.types.oracle, kind, member)) =>
             {
                 // Its own parameter: the type's name may also be read for an
                 // enum in the same script (`Accessible.Button`), and that is

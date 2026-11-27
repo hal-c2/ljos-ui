@@ -206,6 +206,28 @@ Feature: No Qt global in a file of Ljós's API
         """
       Then the property "seesQt" of "root" is false
 
+  Rule: A file of Qt's QML has Qt's members, not their homes
+
+    @qt-parity
+    Scenario: Locale and Font in a file of Qt's QML have none of what was Qt's
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          objectName: "root"
+          property string current: typeof Locale.current
+          property string named: typeof Locale.named
+          property string of: typeof Font.of
+          property string families: typeof Font.families
+          property string qtLocale: typeof Qt.locale
+        }
+        """
+      Then the property "current" of "root" is "undefined"
+      And the property "named" of "root" is "undefined"
+      And the property "of" of "root" is "undefined"
+      And the property "families" of "root" is "undefined"
+      And the property "qtLocale" of "root" is "function"
+
   Rule: ljos migrate writes each member where it now is
 
     @api-QtQml.Qt.GlobalColor @api-QtQml.Qt.application @api-QtQml.Qt.quit

@@ -1567,11 +1567,7 @@ impl Engine {
     /// API (`import Ljos.Ui`).
     pub(crate) fn written_in_ljos_ui(&self, component: ObjectId) -> bool {
         self.with::<Component, _>(component, |c| {
-            c.template.as_ref().is_some_and(|t| {
-                t.file.ir.imports.iter().any(
-                    |i| matches!(&i.source, ljos_ir::ImportSource::Module(m) if m == "Ljos.Ui"),
-                )
-            })
+            c.template.as_ref().is_some_and(|t| t.file.is_ljos_ui())
         })
         .unwrap_or(false)
     }

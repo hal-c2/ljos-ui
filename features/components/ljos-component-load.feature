@@ -241,6 +241,22 @@ Feature: A component made from an address or from QML text, in Ljós's API
         3 files, 0 errors, 0 warnings
         """
 
+  Rule: A file of Qt's QML has Qt's makers, not the component type's
+
+    @qt-parity
+    Scenario: The component type in a file of Qt's QML has no load and no createFromText
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          property string load: typeof Component.load
+          property string fromText: typeof Component.createFromText
+        }
+        """
+      Then the property "load" of "root" is "undefined"
+      And the property "fromText" of "root" is "undefined"
+
   Rule: ljos migrate writes Qt's makers as the component type's
 
     @api-QtQml.Qt.createComponent @api-QtQml.Qt.createQmlObject
