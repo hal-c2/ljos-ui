@@ -397,6 +397,33 @@ fn a_name_read_through_another_modules_type_is_its_own_once_registered() {
     );
 }
 
+/// A name asked for before any module had its type is still its own
+/// module's type once that is registered, after another module's type
+/// stood for it by its bare name.
+#[test]
+fn a_name_asked_for_before_any_registration_is_its_own_once_registered() {
+    let h = engine();
+    assert_eq!(
+        h.engine.singleton_by_name("Example.Again", "Settings"),
+        None
+    );
+    h.engine
+        .register_singleton::<Settings>("Example", Version::new(1, 0));
+    let ours = h.engine.singleton::<Settings>().unwrap();
+    assert_eq!(
+        h.engine.singleton_by_name("Example.Again", "Settings"),
+        Some(ours)
+    );
+    h.engine
+        .register_singleton::<AgainSettings>("Example.Again", Version::new(1, 0));
+    let theirs = h.engine.singleton::<AgainSettings>().unwrap();
+    assert_ne!(ours, theirs);
+    assert_eq!(
+        h.engine.singleton_by_name("Example.Again", "Settings"),
+        Some(theirs)
+    );
+}
+
 #[derive(Debug, Default, QmlObject)]
 #[qml(module = "Example.Again", name = "Settings")]
 #[qml_singleton]
