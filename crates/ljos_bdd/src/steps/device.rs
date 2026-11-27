@@ -153,20 +153,47 @@ fn reads_no_secret(w: &mut LjosWorld, key: String, service: String) -> StepResul
     })
 }
 
+/// The path `value` names: a plain path, or the `file:` URL that
+/// `StandardPaths.writableLocation` gives, as Qt's does.
+fn local_path(value: &str) -> Option<String> {
+    let path = ljos_engine::url_path(value)?;
+    let path = path.to_str()?;
+    (!path.is_empty()).then(|| path.to_owned())
+}
+
 #[then(regex = r#"^the property "([^"]+)" of "([^"]+)" is a directory of the application's own$"#)]
 fn own_directory(w: &mut LjosWorld, property: String, object: String) -> StepResult {
     w.each(|b| {
         let value = b.get(&object, &property)?;
-        let Some(path) = value.as_str().filter(|p| !p.is_empty()) else {
+        let Some(path) = value.as_str().and_then(local_path) else {
             return Err(BackendError::Failed(format!(
                 "property {property:?} of {object:?} is {value}, not a path"
             )));
         };
-        if b.device()?.own_directory(path)? {
+        if b.device()?.own_directory(&path)? {
             Ok(())
         } else {
             Err(BackendError::Failed(format!(
                 "{path:?} is not a directory of the application's own"
+            )))
+        }
+    })
+}
+
+#[then(regex = r#"^the property "([^"]+)" of "([^"]+)" is the application's "([^"]+)" directory$"#)]
+fn app_directory(w: &mut LjosWorld, property: String, object: String, name: String) -> StepResult {
+    w.each(|b| {
+        let value = b.get(&object, &property)?;
+        let path = value.as_str().and_then(local_path).unwrap_or_default();
+        let path = path.trim_end_matches('/');
+        let names = b.device()?.app_directory(&name)?;
+        if names.iter().any(|n| n == path) {
+            Ok(())
+        } else {
+            Err(BackendError::Failed(format!(
+                "property {property:?} of {object:?} is {value}, not the application's {name:?} \
+                 directory ({})",
+                names.join(" or ")
             )))
         }
     })

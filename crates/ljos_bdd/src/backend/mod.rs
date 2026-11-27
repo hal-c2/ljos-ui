@@ -617,6 +617,16 @@ pub trait Device: Backend {
         ))
     }
 
+    /// The names the system gives the directory `name` it keeps for the
+    /// application (Android's `files` or `cache` under the application's
+    /// data directory), each one path to the same directory.
+    fn app_directory(&mut self, name: &str) -> Result<Vec<String>> {
+        let _ = name;
+        Err(BackendError::NotImplemented(
+            "a directory the system keeps for the application",
+        ))
+    }
+
     /// Whether any file of the application's own holds `text` as it is.
     fn files_hold(&mut self, text: &str) -> Result<bool> {
         let _ = text;

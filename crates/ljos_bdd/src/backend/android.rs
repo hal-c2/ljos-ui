@@ -1429,6 +1429,15 @@ impl Device for AndroidBackend {
         Ok(said.trim() == "yes")
     }
 
+    fn app_directory(&mut self, name: &str) -> Result<Vec<String>> {
+        let phone = self.phone()?.clone();
+        let data = phone.data_dir()?;
+        Ok(vec![
+            format!("{data}/{name}"),
+            format!("/data/data/{}/{name}", phone.id),
+        ])
+    }
+
     fn files_hold(&mut self, text: &str) -> Result<bool> {
         let said = self.phone()?.as_app(
             &format!("grep -rlF -- {} . 2>/dev/null || true", quoted(text)),
