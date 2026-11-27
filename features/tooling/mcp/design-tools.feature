@@ -83,7 +83,7 @@ Feature: Choosing colours and motion with the design tools
         """
       Then the answer's "/failing" is 0
       And the answer's "/roles/0/name" is "canvas"
-      And the answer's "/roles/13/name" is "text"
+      And the answer's "/roles/14/name" is "text"
       And the answer's "/checks/0/required" is 7
       And the answer's "/ramps/0/steps" has 12 entries
       And the answer's "/harmonies" has 4 entries
