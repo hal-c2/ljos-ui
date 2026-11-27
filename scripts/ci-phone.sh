@@ -11,14 +11,8 @@ mkdir -p "$out"
 app=dev.ljos.ljos_example_android_scenarios
 adb logcat -c
 status=0
-# Every phone feature but those whose scenarios do not pass on the emulator yet (#817): a file
-# goes back in when they do, and a new one runs from the start.
-waiting=(features/mobile/inspector.feature features/mobile/lifecycle.feature)
-files=()
-for f in features/mobile/*.feature; do
-  [[ " ${waiting[*]} " == *" $f "* ]] || files+=("$f")
-done
-mise run features:android "${files[@]}" -t @android || status=$?
+# Every phone feature: a new one runs from the start.
+mise run features:android features/mobile/*.feature -t @android || status=$?
 if [ "$status" -ne 0 ]; then
   adb logcat -d > "$out/logcat.txt" || true
   adb exec-out screencap -p > "$out/screen.png" || true
