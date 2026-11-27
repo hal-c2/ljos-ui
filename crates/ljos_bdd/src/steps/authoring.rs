@@ -297,6 +297,23 @@ fn file_is(w: &mut LjosWorld, name: String, step: &Step) -> StepResult {
     author.file_is(files, &name, &want)
 }
 
+// A report a command wrote, say, of which a line or two is what counts.
+#[then(regex = r#"^the file "([^"]+)" mentions "(.*)"$"#)]
+fn file_mentions(w: &mut LjosWorld, name: String, text: String) -> StepResult {
+    let text = unquoted(&text);
+    let (author, files) = w.author();
+    let path = author.project_path(files, &name)?;
+    let actual =
+        std::fs::read_to_string(&path).map_err(|e| format!("cannot read {name:?}: {e}"))?;
+    if actual.contains(&text) {
+        Ok(())
+    } else {
+        Err(format!(
+            "the file {name:?} does not mention {text:?}:\n{actual}"
+        ))
+    }
+}
+
 // The directory stands for `/`: `proc/meminfo`, `proc/self/cgroup` and
 // `sys/fs/cgroup/…/memory.max` are read under it.
 #[then(

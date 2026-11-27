@@ -496,6 +496,7 @@ inspector above (`When the agent calls the tool …`, `When the agent reads the 
 | `Then the agent is offered the prompts "a, b, c"` | the prompt list, in order |
 | `Then the authoring tools' instructions match "regex"` | what the server tells an agent when it connects |
 | `Then the file "X" is:` + doc string | the whole text of a file of the project, as it is now |
+| `Then the file "X" mentions "text"` | the text is somewhere in a file of the project, as it is now (a report a command wrote) |
 | `Then the project has no "X"` | no file, directory or link at that path of the project |
 | `Then the JSON file "X" has "/pointer" equal to V` | a value of a JSON file of the project, written as JSON (`null`, `true`, `"text"`, a number) |
 | `Then the picture "X.png" is W by H pixels` | the size of a PNG of the project, as a command wrote it |

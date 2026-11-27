@@ -659,6 +659,7 @@ pub fn markdown(report: &Report) -> String {
             out.push('\n');
         }
     }
+    session_steps(&mut out, &report.runs);
     if !report.min_memory.is_empty() {
         let _ = writeln!(
             out,
@@ -705,6 +706,57 @@ pub fn markdown(report: &Report) -> String {
         }
     }
     out
+}
+
+/// A table for each run driven by a session, a row for each step: a
+/// step's times are its own, so runs are not medians of one another.
+fn session_steps(out: &mut String, runs: &[Run]) {
+    let driven: Vec<&Run> = runs.iter().filter(|r| !r.steps.is_empty()).collect();
+    if driven.is_empty() {
+        return;
+    }
+    let _ = writeln!(
+        out,
+        "## Session steps\n\nEach step of a scripted session: the inputs it sent of those it has, from the first to the first frame that changed (lag, and the most any of its inputs waited), and to the last before the window was still for {} ms or the next step sent input (settle); then the frames from the step's start to the next's, the intervals between them, and how many were longer than {} ms.\n",
+        crate::session::STILL_FOR.as_millis(),
+        crate::session::LONG_FRAME.as_millis(),
+    );
+    for r in driven {
+        let _ = writeln!(
+            out,
+            "### {} on {}, {}, run {}\n\n| # | Step | Inputs (sent) | Lag ms | Lag max ms | Settle ms | Frames | p50 ms | p95 ms | max ms | > {} ms |\n|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+            r.app,
+            r.runtime,
+            r.profile,
+            r.repeat,
+            crate::session::LONG_FRAME.as_millis(),
+        );
+        for t in &r.steps {
+            let step = match &t.name {
+                Some(name) => format!("{name}: {}", t.step),
+                None => t.step.clone(),
+            };
+            let lag_max = t.lags_ms.iter().flatten().copied().reduce(f64::max);
+            let count = |n: Option<usize>| n.map_or("—".to_owned(), |n| n.to_string());
+            let _ = writeln!(
+                out,
+                "| {} | {} | {} / {} | {} | {} | {} | {} | {} | {} | {} | {} |",
+                t.index,
+                step.replace('|', "\\|"),
+                t.inputs,
+                t.sent,
+                cell(t.lag_ms),
+                cell(lag_max),
+                cell(t.settle_ms),
+                count(t.frames),
+                cell(t.p50_ms),
+                cell(t.p95_ms),
+                cell(t.max_ms),
+                count(t.long),
+            );
+        }
+        out.push('\n');
+    }
 }
 
 #[cfg(test)]

@@ -24,6 +24,7 @@ use crate::{
     gate::Gate,
     procfs,
     profile::Profile,
+    session::{self, Action, Marks, Step, StepTiming},
     sway::{Mapped, Sway},
     wayland::{self, FrameCounter, Keyboard, Pointer},
 };
@@ -35,6 +36,7 @@ mod process;
 
 use account::Accounting;
 use frames::frames;
+pub(crate) use frames::quantile;
 use process::{describe, stop, systemd_oom};
 
 #[derive(Debug, thiserror::Error)]
@@ -152,6 +154,9 @@ pub enum Gesture {
     /// The window made smaller and back again by the compositor, a step
     /// a frame, as a person dragging its corner would.
     Resize,
+    /// The application's own scripted session ([`crate::session`]), each
+    /// step timed; an application with none cannot be driven so.
+    Session,
 }
 
 impl Gesture {
@@ -164,17 +169,32 @@ impl Gesture {
             Self::Scroll => "scroll",
             Self::Type => "type",
             Self::Resize => "resize",
+            Self::Session => "session",
         }
     }
 
     /// Every gesture, in the order `--help` lists them.
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::Click,
         Self::Drag,
         Self::Scroll,
         Self::Type,
         Self::Resize,
+        Self::Session,
     ];
+}
+
+/// How an application is driven under load, besides the gesture.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Drive<'a> {
+    /// Whether it is driven at all: a window that would quit or change
+    /// beyond comparing when clicked is only watched.
+    pub on: bool,
+    /// Where [`Gesture::Click`] and [`Gesture::Type`] click, as fractions
+    /// of the window, in place of a grid.
+    pub clicks: &'a [[f64; 2]],
+    /// What [`Gesture::Session`] does.
+    pub session: &'a [Step],
 }
 
 /// How a run ended.
@@ -295,6 +315,10 @@ pub struct Span {
     /// for this span are those of the same time.
     #[serde(skip)]
     pub window: Option<crate::frames3d::Window>,
+    /// How each step of a session went, when one was run: the run keeps
+    /// them, as [`Run::steps`].
+    #[serde(skip)]
+    pub steps: Vec<StepTiming>,
 }
 
 /// What of an install the running application had mapped.
@@ -365,6 +389,10 @@ pub struct Run {
     /// What drove it under load.
     #[serde(default)]
     pub gesture: Gesture,
+    /// How each step of its session went, in the first load span, when
+    /// it was driven by one.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub steps: Vec<StepTiming>,
     pub install: Option<Install>,
     /// What each 3D frame cost, as the runtime counted it, when asked for
     /// and the runtime wrote it ([`crate::frames3d`]).
@@ -434,10 +462,10 @@ impl Watch<'_> {
 }
 
 /// Measures a window of time: CPU, wakeups and, when the compositor can
-/// be asked, frames; `drive` is the window `gesture` drives meanwhile,
-/// clicked at `points` (fractions of it) instead of a grid when given.
-/// `None` when the CPU cannot be read, which is found before the window
-/// starts.
+/// be asked, frames; `drive` is the window `gesture` drives meanwhile, as
+/// `how` says. A session runs to its end, past `time` if it must, and
+/// its timeline is kept without a compositor too, nothing sent. `None`
+/// when the CPU cannot be read, which is found before the window starts.
 #[allow(clippy::too_many_arguments)]
 fn span(
     setup: &Setup,
@@ -446,7 +474,7 @@ fn span(
     time: Duration,
     gesture: Gesture,
     drive: Option<(i32, i32, i32, i32)>,
-    points: &[[f64; 2]],
+    how: Drive<'_>,
     region: Option<(i32, i32, i32, i32)>,
     instructions: bool,
 ) -> Option<Span> {
@@ -468,14 +496,30 @@ fn span(
     let start = Instant::now();
     let mut clicks = None;
     let mut inputs = Vec::new();
+    let mut marks = Vec::new();
     match (drive, &setup.wayland, &setup.sway) {
+        _ if gesture == Gesture::Session && !how.session.is_empty() => {
+            let on = drive.zip(setup.wayland.as_deref()).zip(setup.sway.as_ref());
+            marks = run_session(on.map(|((r, d), s)| (d, s, r)), how.session, w);
+            inputs = marks.iter().flat_map(|m| m.sent.iter().copied()).collect();
+            clicks = Some(u32::try_from(inputs.len()).unwrap_or(u32::MAX));
+            // What is left of the span gives the last step its time to
+            // settle.
+            w.wait(time.saturating_sub(start.elapsed()));
+        }
         (Some(rect), Some(display), Some(sway)) => {
+            let points = how.clicks;
             let (n, sent) = match gesture {
                 Gesture::Click => click_grid(display, sway, rect, points, time, w),
                 Gesture::Drag => drag(display, sway, rect, time, w),
                 Gesture::Scroll => scroll(display, sway, rect, time, w),
                 Gesture::Type => type_words(display, sway, rect, points, time, w),
                 Gesture::Resize => resize(sway, pid, rect, time, w),
+                // Without steps there is nothing to drive with.
+                Gesture::Session => {
+                    w.wait(time);
+                    (0, Vec::new())
+                }
             };
             clicks = Some(n);
             inputs = sent;
@@ -484,6 +528,7 @@ fn span(
             w.wait(time);
         }
     }
+    let mono1 = wayland::monotonic_ns();
     let seconds = start.elapsed().as_secs_f64();
     let to_us = crate::frames3d::now_us();
     let cpu1 = w.cg.cpu_usec().unwrap_or(cpu0);
@@ -498,6 +543,17 @@ fn span(
         Err(why) => (None, Some(why)),
     };
     let times = counter.and_then(|c| c.finish().ok());
+    let steps = if marks.is_empty() {
+        Vec::new()
+    } else {
+        session::timings(
+            how.session,
+            &marks,
+            times.as_ref().map(|t| t.changed.as_slice()),
+            mono0,
+            mono1,
+        )
+    };
     let cpu_ms = ms(cpu1.saturating_sub(cpu0));
     #[allow(clippy::cast_precision_loss)]
     Some(Span {
@@ -522,6 +578,7 @@ fn span(
         }),
         clicks,
         window: Some(crate::frames3d::Window { from_us, to_us }),
+        steps,
         woken,
         thread_cpu_ms,
         busiest_thread,
@@ -547,16 +604,25 @@ fn wait_until_still(
     setup: &Setup,
     rect: (i32, i32, i32, i32),
     gesture: Gesture,
-    points: &[[f64; 2]],
+    how: Drive<'_>,
 ) -> Option<Duration> {
     let (Some(display), Some(sway)) = (&setup.wayland, &setup.sway) else {
         return None;
     };
     let (x, y, width, height) = rect;
-    let (px, py) = match (gesture, points.first()) {
-        (Gesture::Click | Gesture::Type, Some(&point)) => at(rect, point),
-        (Gesture::Click | Gesture::Type, None) => (x + width / 10, y + height / 10),
-        (Gesture::Drag | Gesture::Scroll | Gesture::Resize, _) => (x + width / 2, y + height / 2),
+    // A session's pointer waits where its first click will be.
+    let first_click = how.session.iter().find_map(|s| match s.action {
+        Action::Click(point) => Some(point),
+        _ => None,
+    });
+    let (px, py) = match (gesture, how.clicks.first(), first_click) {
+        (Gesture::Click | Gesture::Type, Some(&point), _) | (Gesture::Session, _, Some(point)) => {
+            at(rect, point)
+        }
+        (Gesture::Click | Gesture::Type, None, _) => (x + width / 10, y + height / 10),
+        (Gesture::Drag | Gesture::Scroll | Gesture::Resize | Gesture::Session, ..) => {
+            (x + width / 2, y + height / 2)
+        }
     };
     let (px, py, extent) = on_layout(sway, rect, px, py)?;
     let start = Instant::now();
@@ -782,6 +848,71 @@ fn type_words(
     (inputs, sent)
 }
 
+/// Where a session's input goes: the display, the compositor, and the
+/// window on it.
+type Target<'a> = (&'a Path, &'a Sway, (i32, i32, i32, i32));
+
+/// Runs `steps` in order, each for its [`Step::length`], its inputs at
+/// its cadence from its start, sent to the window of `on` (the display,
+/// the compositor and the window) when there is one: a step's time is
+/// kept without it, so a session lasts as long either way. What each
+/// step sent, and when it began.
+fn run_session(on: Option<Target<'_>>, steps: &[Step], w: &mut Watch<'_>) -> Vec<Marks> {
+    let clicks = steps.iter().any(|s| matches!(s.action, Action::Click(_)));
+    let keys = steps
+        .iter()
+        .any(|s| matches!(s.action, Action::Key { .. } | Action::Type { .. }));
+    let mut pointer = on
+        .filter(|_| clicks)
+        .and_then(|(display, ..)| Pointer::new(display).ok());
+    let mut keyboard = on
+        .filter(|_| keys)
+        .and_then(|(display, ..)| Keyboard::new(display).ok());
+    let hold = Duration::from_millis(20);
+    let mut marks = Vec::with_capacity(steps.len());
+    for step in steps {
+        let start = Instant::now();
+        let mut mark = Marks {
+            start: wayland::monotonic_ns(),
+            sent: Vec::new(),
+        };
+        let mut alive = true;
+        for i in 0..step.inputs() {
+            let due = start + step.cadence() * i;
+            if !w.wait(due.saturating_duration_since(Instant::now())) {
+                alive = false;
+                break;
+            }
+            let sent = match &step.action {
+                Action::Click(point) => {
+                    on.zip(pointer.as_mut()).and_then(|((_, sway, rect), p)| {
+                        let (x, y) = at(rect, *point);
+                        let (x, y, extent) = on_layout(sway, rect, x, y)?;
+                        p.click(x, y, extent).ok()?;
+                        p.sent().last().copied()
+                    })
+                }
+                Action::Key { chord, .. } => keyboard.as_mut().and_then(|k| {
+                    k.press(*chord, hold).ok()?;
+                    k.sent().last().copied()
+                }),
+                Action::Type { keys, .. } => keyboard.as_mut().and_then(|k| {
+                    let key = keys.get(usize::try_from(i).ok()?)?;
+                    k.press(*key, hold).ok()?;
+                    k.sent().last().copied()
+                }),
+                Action::Wait(_) => None,
+            };
+            mark.sent.extend(sent);
+        }
+        marks.push(mark);
+        if !alive || !w.wait((start + step.length()).saturating_duration_since(Instant::now())) {
+            break;
+        }
+    }
+    marks
+}
+
 /// How often [`Gesture::Resize`] asks for a new size: once a frame at 30
 /// frames a second, about as often as a compositor passes a dragged
 /// corner on.
@@ -933,12 +1064,11 @@ pub fn run(
     runtime: &Runtime,
     profile: &Profile,
     phases: Phases,
-    drive: bool,
-    points: &[[f64; 2]],
+    drive: Drive<'_>,
 ) -> Result<Run, Error> {
     let mut launch = 1;
     loop {
-        match run_once(setup, app, runtime, profile, phases, drive, points) {
+        match run_once(setup, app, runtime, profile, phases, drive) {
             // A refused application was stopped before its gate opened, so
             // it ran nothing and another launch measures as the first would.
             Err(Error::Refused(why)) if launch < LAUNCHES => {
@@ -962,8 +1092,7 @@ fn run_once(
     runtime: &Runtime,
     profile: &Profile,
     phases: Phases,
-    drive: bool,
-    points: &[[f64; 2]],
+    drive: Drive<'_>,
 ) -> Result<Run, Error> {
     static COUNT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
     let n = COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -1072,6 +1201,7 @@ fn run_once(
         load: None,
         quiet_ms: None,
         gesture: phases.gesture,
+        steps: Vec::new(),
         install: None,
         frames3d: None,
         enforcement: Some(enforcement),
@@ -1104,7 +1234,7 @@ fn run_once(
                 phases.idle,
                 phases.gesture,
                 None,
-                &[],
+                Drive::default(),
                 rect,
                 phases.instructions,
             );
@@ -1117,20 +1247,20 @@ fn run_once(
             }
         }
         if !phases.load.is_zero() && w.exited.is_none() {
-            if let (true, Some(rect)) = (drive, rect) {
-                out.quiet_ms = wait_until_still(setup, rect, phases.gesture, points)
+            if let (true, Some(rect)) = (drive.on, rect) {
+                out.quiet_ms = wait_until_still(setup, rect, phases.gesture, drive)
                     .map(|took| took.as_secs_f64() * 1000.0);
                 w.sample();
             }
             for round in 0..phases.rounds.max(1) {
-                let load = span(
+                let mut load = span(
                     setup,
                     &mut w,
                     pid,
                     phases.load,
                     phases.gesture,
-                    rect.filter(|_| drive),
-                    points,
+                    rect.filter(|_| drive.on),
+                    drive,
                     rect,
                     phases.instructions,
                 );
@@ -1138,6 +1268,9 @@ fn run_once(
                 // with runs of one round.
                 if round == 0 {
                     load_window = load.as_ref().and_then(|s| s.window);
+                    if let Some(load) = &mut load {
+                        out.steps = std::mem::take(&mut load.steps);
+                    }
                     out.load = load;
                 }
                 if w.exited.is_some() {
@@ -1262,8 +1395,7 @@ pub fn min_memory(
             runtime,
             &profile.with_memory_max(mib << 20),
             phases,
-            false,
-            &[],
+            Drive::default(),
         )?;
         let ok = r.outcome == Outcome::Ok && r.settled.is_some();
         probes.push((mib, ok));

@@ -117,6 +117,88 @@ Feature: Measuring an application under a limit
       And the JSON file "out/report.json" has "/runs/0/limits/cpu_quota_percent" equal to 20
       And the JSON file "out/report.json" has "/runs/0/limits/memory_max" equal to 268435456
 
+  Rule: A scripted session drives the application step by step, and each step is timed
+
+    # A manifest's application may give a session: clicks at fractions of
+    # the window, keys by name with Ctrl+, Shift+ and Alt+, text typed a key
+    # every 80 milliseconds, and waits, each step optionally named and a key
+    # or click repeated. `--gesture session` runs it under load in place of
+    # the grid, the same on every runtime. Here no compositor runs, so the
+    # steps keep their time but nothing reaches the application, and no
+    # step has a lag or a settle; on a compositor each step's lag is from
+    # its first input to the first change shown, and its settle to the
+    # last change before half a second of stillness or the next step.
+    Background:
+      Given the file "apps.json":
+        """json
+        {"apps": [{"id": "main", "file": "Main.qml", "session": [
+          {"name": "search", "click": [0.713, 0.033]},
+          {"type": "quick"},
+          {"key": "Ctrl+A"},
+          {"key": "BackSpace"},
+          {"name": "scroll", "key": "PageDown", "repeat": 3, "every": 33},
+          {"wait": 200}
+        ]}]}
+        """
+
+    Scenario: The session's steps are run in order and each is reported
+      When the author runs "ljos bench --manifest apps.json --runtime ljos --profile pi-zero --cpus 4 --cpu-list 0-3 --launcher launcher.sh --cgroup-root cg --ljos app.sh --gesture session --settle 0 --idle 0 --load 1 --startup-timeout 1 --out out"
+      Then the command exits with status 0
+      And the JSON file "out/report.json" has "/runs/0/gesture" equal to "session"
+      And the JSON file "out/report.json" has "/runs/0/steps/0/name" equal to "search"
+      And the JSON file "out/report.json" has "/runs/0/steps/0/step" equal to "click 0.713 0.033"
+      And the JSON file "out/report.json" has "/runs/0/steps/1/step" equal to "type \"quick\""
+      And the JSON file "out/report.json" has "/runs/0/steps/2/step" equal to "key Ctrl+A"
+      And the JSON file "out/report.json" has "/runs/0/steps/3/step" equal to "key BackSpace"
+      And the JSON file "out/report.json" has "/runs/0/steps/4/name" equal to "scroll"
+      And the JSON file "out/report.json" has "/runs/0/steps/4/step" equal to "key PageDown ×3 every 33 ms"
+      And the JSON file "out/report.json" has "/runs/0/steps/5/step" equal to "wait 200 ms"
+      And the JSON file "out/report.json" has "/runs/0/steps/5/index" equal to 5
+
+    Scenario: Typed text is a key for each letter, and a repeated key each time it is pressed
+      When the author runs "ljos bench --manifest apps.json --runtime ljos --profile pi-zero --cpus 4 --cpu-list 0-3 --launcher launcher.sh --cgroup-root cg --ljos app.sh --gesture session --settle 0 --idle 0 --load 1 --startup-timeout 1 --out out"
+      Then the command exits with status 0
+      And the JSON file "out/report.json" has "/runs/0/steps/0/inputs" equal to 1
+      And the JSON file "out/report.json" has "/runs/0/steps/1/inputs" equal to 5
+      And the JSON file "out/report.json" has "/runs/0/steps/2/inputs" equal to 1
+      And the JSON file "out/report.json" has "/runs/0/steps/4/inputs" equal to 3
+      And the JSON file "out/report.json" has "/runs/0/steps/5/inputs" equal to 0
+
+    Scenario: Without a compositor nothing reaches the application, and no step has a lag or a settle
+      When the author runs "ljos bench --manifest apps.json --runtime ljos --profile pi-zero --cpus 4 --cpu-list 0-3 --launcher launcher.sh --cgroup-root cg --ljos app.sh --gesture session --settle 0 --idle 0 --load 1 --startup-timeout 1 --out out"
+      Then the command exits with status 0
+      And the JSON file "out/report.json" has "/runs/0/steps/1/sent" equal to 0
+      And the JSON file "out/report.json" has "/runs/0/steps/1/lag_ms" equal to null
+      And the JSON file "out/report.json" has "/runs/0/steps/1/settle_ms" equal to null
+
+    Scenario: The steps of a session are a table of the report
+      When the author runs "ljos bench --manifest apps.json --runtime ljos --profile pi-zero --cpus 4 --cpu-list 0-3 --launcher launcher.sh --cgroup-root cg --ljos app.sh --gesture session --settle 0 --idle 0 --load 1 --startup-timeout 1 --out out"
+      Then the command exits with status 0
+      And the file "out/report.md" mentions "main on ljos, pi-zero, run 0"
+      And the file "out/report.md" mentions "| 4 | scroll: key PageDown ×3 every 33 ms | 3 / 0 |"
+
+    Scenario: An application with no session is refused for a session
+      When the author runs "ljos bench Main.qml --runtime ljos --profile pi-zero --cpus 4 --cpu-list 0-3 --launcher launcher.sh --cgroup-root cg --ljos app.sh --gesture session --settle 0 --idle 0 --load 1 --startup-timeout 1 --out out"
+      Then the command exits with status 2
+      And the command's output mentions "Main has no session"
+      And the command's output does not mention "report.json"
+
+    Scenario Outline: A session step that cannot be sent is refused: <what>
+      Given the file "apps.json":
+        """json
+        {"apps": [{"id": "main", "file": "Main.qml", "session": [<step>]}]}
+        """
+      When the author runs "ljos bench --manifest apps.json --runtime ljos --profile pi-zero --cpus 4 --cpu-list 0-3 --launcher launcher.sh --cgroup-root cg --ljos app.sh --gesture session --settle 0 --idle 0 --load 1 --startup-timeout 1 --out out"
+      Then the command exits with status 1
+      And the command's output mentions "<says>"
+
+      Examples:
+        | what                 | step                             | says                                     |
+        | an unknown key       | {"key": "Hyper+Q"}               | no key "Hyper+Q"                         |
+        | two actions in one   | {"key": "a", "wait": 10}         | a step is one of click, key, type, wait |
+        | text with no key     | {"type": "ü"}                    | no key types 'ü'                         |
+        | a repeated wait      | {"wait": 10, "repeat": 2}        | only a key or a click repeats            |
+
   Rule: The work of each thread is counted in instructions where the processor counts them
 
     # CPU time grows with what else the machine runs; the instructions a
