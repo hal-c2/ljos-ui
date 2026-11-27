@@ -1118,6 +1118,52 @@ fn observer_passes_audit(w: &mut LjosWorld) -> StepResult {
     })
 }
 
+// Every finding, warnings and hints too, at one point of the audit's
+// matrix ("scheme=dark", "font-scale=2", "size=760x600"): what a page of
+// the observer shows is held to all of its design rules, not only to its
+// errors.
+#[then(regex = r#"^the observer's own audit at "(.+)" finds nothing$"#)]
+fn observer_audit_finds_nothing(w: &mut LjosWorld, point: String) -> StepResult {
+    w.each(|b| {
+        let report = b.probes()?.observer_call(
+            "app_audit",
+            serde_json::json!({ "matrix": point, "max_findings": 50 }),
+        )?;
+        if let Some(error) = report.get("error") {
+            return Err(BackendError::Failed(format!(
+                "the audit at {point}: {error}"
+            )));
+        }
+        let found: Vec<String> = report["findings"]
+            .as_array()
+            .map(|all| {
+                all.iter()
+                    // How long its turns took is this machine's and this
+                    // build's, a debug one under test: not what it shows.
+                    .filter(|f| !f["code"].as_str().is_some_and(|c| c.starts_with("health-")))
+                    .map(|f| {
+                        format!(
+                            "{} {}: {} ({})",
+                            f["severity"].as_str().unwrap_or("?"),
+                            f["code"].as_str().unwrap_or("?"),
+                            f["message"].as_str().unwrap_or(""),
+                            f["source"].as_str().unwrap_or(""),
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        if found.is_empty() {
+            Ok(())
+        } else {
+            Err(BackendError::Failed(format!(
+                "at {point}: {}",
+                found.join("; ")
+            )))
+        }
+    })
+}
+
 #[when("the work of the application and its observer is counted")]
 fn work_is_counted(w: &mut LjosWorld) -> StepResult {
     w.each(|b| b.probes()?.count_work())

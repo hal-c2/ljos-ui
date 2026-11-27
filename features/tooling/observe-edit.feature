@@ -26,7 +26,7 @@ Feature: The observer types in one value at a time
   Scenario: Pressing another value lets the field of the first go
     When the application is observed
     And the observer's "text=Objects" is clicked
-    And the observer's "role=listitem[name=\"Scenario\"]" is clicked
+    And the observer's "role=listitem[name~=\"^Scenario @\"]" is clicked
     And the observer's "role=button[name=\"width\"]" is clicked
     Then the observer has "role=textinput[name=\"width\"]"
     When the observer's "role=button[name=\"height\"]" is clicked
